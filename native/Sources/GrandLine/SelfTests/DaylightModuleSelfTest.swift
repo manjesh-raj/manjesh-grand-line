@@ -655,25 +655,31 @@ enum DaylightModuleSelfTest {
         capped.append(BriefingClause(text: "+3 more on Fleet.", target: .none))
         let spanTwo = narrow * 2 + HomeCanvasController.gridSpacing
 
-        // The real five, at their most demanding: the longest key this card
-        // ever draws ("Session (5h)" uppercases to 12 characters), the
-        // longest figure ("$137.62"), and - on the three windows that have
-        // one - the painted reset line, which is the tallest state the strip
-        // has. A fixture without the captions would measure a card the app
-        // never builds.
-        let stripColumns: [HelmModuleStripColumn] = [
-            .init(label: "Session (5h)", value: "96%", fill: 0.96, state: .bad,
-                  detail: "Resets 23 Sep 2026 at 6:30 pm", caption: "Sun 6:30 pm"),
-            .init(label: "Week", value: "70%", fill: 0.70, state: .ok,
-                  detail: "Resets 27 Sep 2026 at 9:30 am", caption: "Sun 9:30 am"),
-            .init(label: "Fable week", value: "100%", fill: 1, state: .bad,
-                  detail: "Resets 28 Sep 2026 at 2:30 pm", caption: "Mon 2:30 pm"),
-            .init(label: "Extra usage", value: "$137.62", fill: 0.98, state: .bad),
-            .init(label: "Spend cap", value: "$140", fill: 1, state: .idle),
+        // The Claude usage report at its most demanding: the longest row
+        // title this card ever draws, the longest figures, and - on the
+        // three windows that have one - the painted reset line. A fixture
+        // without the captions would measure a card the app never builds.
+        let usageSections: [HelmModuleUsageSection] = [
+            .init(title: "Plan limits",
+                  status: .init(text: "Fable limit reached", state: .bad),
+                  content: .limits([
+                    .init(title: "Session (5h)", value: "96%", fill: 0.96, state: .bad,
+                          caption: "Sun 6:30 pm", detail: "Resets 23 Sep 2026 at 6:30 pm"),
+                    .init(title: "Week", value: "70%", fill: 0.70, state: .ok,
+                          caption: "Sun 9:30 am", detail: "Resets 27 Sep 2026 at 9:30 am"),
+                    .init(title: "Fable week", value: "100%", fill: 1, state: .bad,
+                          caption: "Mon 2:30 pm", detail: "Resets 28 Sep 2026 at 2:30 pm"),
+                  ])),
+            .init(title: "Extra usage", status: .init(text: "Near cap", state: .bad),
+                  content: .spend(.init(amount: "$137.62", against: "of $140 cap",
+                                        value: "98%", fill: 0.98, state: .bad,
+                                        footnote: "$2.38 left before the cap"))),
         ]
-        if stripColumns.allSatisfy({ $0.caption == nil }) {
-            fail("the strip fixture carries no reset lines - it would measure a state the "
+        guard case let .limits(usageRows) = usageSections[0].content,
+              !usageRows.allSatisfy({ $0.caption == nil }) else {
+            fail("the usage fixture carries no reset lines - it would measure a state the "
                  + "Claude card never renders", &ok)
+            return
         }
 
         // Swept across GL-32's chrome text scale, because that is what makes
@@ -693,16 +699,21 @@ enum DaylightModuleSelfTest {
             print("   \(title) (x\(scale)), card \(HelmModuleCard.standardHeight)pt:")
             for (name, body) in bodies { measure(name, body, width: narrow) }
             measure("paragraph", .paragraph(capped), width: spanTwo)
-            // The Claude status strip, at the span-2 width it is really
-            // built for and carrying the widest realistic figures - a
-            // six-character dollar amount under an eleven-character key.
-            measure("statusStrip", .statusStrip(stripColumns, perRow: HelmModuleCard.maxStripColumns),
-                    width: spanTwo)
-            // And the same five columns on a card `packRows` degraded to one
-            // column, which wraps them into two rows rather than truncating.
-            measure("statusStrip-1col",
-                    .statusStrip(stripColumns,
-                                 perRow: HomeCanvasController.claudeStripColumnsPerRow(forCardWidth: narrow)),
+            // The Claude usage report, at the span-2 width it is really
+            // built for and carrying the widest realistic figures.
+            //
+            // **This is the one body kind that is deliberately allowed past
+            // the card's floor**, on the captain's own instruction - so what
+            // `measure` checks for it is the same thing it checks for every
+            // other body (the content fits the area the card gives it, so
+            // nothing is clipped), against a card that has grown rather than
+            // against the floor.
+            measure("usageReport", .usageReport(usageSections, compact: false), width: spanTwo)
+            // And the same report on a card `packRows` degraded to one
+            // column, which reflows into stacked rows rather than truncating.
+            measure("usageReport-1col",
+                    .usageReport(usageSections,
+                                 compact: HomeCanvasController.claudeUsageIsCompact(forCardWidth: narrow)),
                     width: narrow)
             // And the same paragraph on a briefing `packRows` has degraded to
             // one column, which takes the narrower cap.

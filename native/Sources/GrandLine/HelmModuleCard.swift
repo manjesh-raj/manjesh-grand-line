@@ -98,79 +98,94 @@ struct HelmModulePeekRow: Equatable {
     }
 }
 
-/// One column of a `.statusStrip` body: a small uppercase key, a figure, and
-/// an optional hairline track under it.
+// MARK: - The usage report body
+
+/// A severity-coloured word on a `.usageReport` section's trailing edge -
+/// "Comfortable", "Near cap", "No limits reported".
+///
+/// It is a *state*, exactly like `HelmModuleChip`: a section header says how
+/// the readings below it are doing and never carries a domain hue. The text
+/// is painted through `HelmContrast.legibleTintedText` rather than in the
+/// raw state hue, because AGENTS.md's colour rules are explicit that a
+/// `HelmTint` hue is safe as a fill and is **not** automatically safe as
+/// text - which is the one thing the bars below may do and this label may
+/// not.
+struct HelmModuleUsageStatus: Equatable {
+    let text: String
+    let state: HelmModuleRowState
+}
+
+/// One row of a `.usageReport` section's aligned limit grid: a title, a
+/// figure, a full-width bar, and a caption about when the window turns over.
 ///
 /// **`value` is always a real reading or a stated gap, never a filled-in
-/// zero** (GL-14). A column whose source could not be read passes
-/// `isGap: true`, which renders `value` in the muted caption face instead of
-/// the figure face and draws no track at all - so "not reported" cannot be
-/// mistaken for "0%", which is the exact confusion a fabricated zero causes
-/// on a quota readout where zero is a real and alarming value.
-struct HelmModuleStripColumn: Equatable {
-    let label: String
+/// zero** (GL-14): on a quota readout `0%` is a real and alarming value
+/// rather than a synonym for "not reported". A row whose source carried
+/// nothing passes `isGap: true` and `fill: nil`, which renders the phrase in
+/// the muted caption face and draws no bar at all.
+struct HelmModuleUsageRow: Equatable {
+    let title: String
     let value: String
-    /// 0...1 of the track to fill, or `nil` for a column with no track.
-    /// A *limit* column (a cap, rather than a reading against one) passes
-    /// `1` with `state: .idle`, which draws the full neutral bar that says
-    /// "this is the ceiling" rather than "you are at 100%".
+    /// 0...1 of the track to fill, or `nil` for a row with no track.
     let fill: Double?
     let state: HelmModuleRowState
-    /// See the type's own note: a stated gap, rendered differently on
-    /// purpose.
+    /// See the type's own note.
     let isGap: Bool
-    /// One short sentence about this column that does not fit in it - the
-    /// Claude card's `Resets 5 Jan 2026 at 3:00 pm`, for instance.
-    ///
-    /// This is the **long** form, and it renders as the column's hover
-    /// tooltip - the same affordance `Content.HeaderAction` already uses for
-    /// the refresh button - which AppKit also serves to VoiceOver as the
-    /// cell's accessibility help. It is no longer the only way to read the
-    /// reading: see `caption`, which is the visible half, and which is what
-    /// the captain asked for after the first version of this shipped as a
-    /// tooltip alone.
-    ///
-    /// `nil` means this column genuinely has nothing extra to say, and a
-    /// column that has no such reading must pass `nil` rather than a
-    /// placeholder sentence (GL-14): a tooltip that appears on every column
-    /// teaches the captain that hovering is worthless.
+    /// The visible reset line - `QuotaWindow.resetsCompact`'s short form.
+    let caption: String?
+    /// The long form of `caption`, carried as the row's hover text and
+    /// therefore as what VoiceOver reads. `nil` where there is genuinely
+    /// nothing more to say; never a placeholder (GL-14).
     let detail: String?
 
-    /// The same reading as `detail`, short enough to be **painted** as a
-    /// third line under the column's figure and track.
-    ///
-    /// **Why two strings rather than one.** A strip column is about 74pt
-    /// wide at the Claude card's real span-2 width, and the long sentence
-    /// needs well over twice that - so a column that painted `detail`
-    /// verbatim would render `Resets 5 Jan 20...`, which is worse than no
-    /// line at all. The caller shortens it (`QuotaWindow.resetsCompactText`)
-    /// and keeps the full sentence on the hover, so nothing is lost.
-    ///
-    /// A column that passes this **grows the card by one caption line**, and
-    /// that is now the intended behaviour rather than a hazard: the card has
-    /// sized to its content above a floor since full review #3's PF2, and
-    /// `HelmResponsiveGrid`'s `equalHeights` makes a *row* uniform rather
-    /// than the whole canvas. `ClaudeStatusCardSelfTest` measures the growth
-    /// and asserts it is exactly one line, and
-    /// `DaylightModuleSelfTest.checkUniformCardHeight` measures the strip
-    /// carrying captions against the real body area.
-    ///
-    /// `nil` on a column with nothing to say, for `detail`'s own reasons -
-    /// and a column may legitimately carry `detail` without this, though no
-    /// caller does today.
-    let caption: String?
-
-    init(label: String, value: String, fill: Double?,
-         state: HelmModuleRowState, isGap: Bool = false,
-         detail: String? = nil, caption: String? = nil) {
-        self.label = label
+    init(title: String, value: String, fill: Double?, state: HelmModuleRowState,
+         isGap: Bool = false, caption: String? = nil, detail: String? = nil) {
+        self.title = title
         self.value = value
         self.fill = fill
         self.state = state
         self.isGap = isGap
-        self.detail = detail
         self.caption = caption
+        self.detail = detail
     }
+}
+
+/// A `.usageReport` section that leads with one money figure rather than a
+/// list - the Claude card's extra-usage pool against its spend cap.
+///
+/// Every field but `amount` is independently optional, because the response
+/// behind it genuinely is: `quota-axi` reports `extra_usage` with the
+/// dollars and no `percentRemaining` at all on some accounts. A missing cap
+/// renders the spend and says so in words, and draws **no** bar - a bar with
+/// no ceiling is a picture of a number nobody sent.
+struct HelmModuleUsageSpend: Equatable {
+    let amount: String
+    /// `of $140 cap`, or `spent, no cap set`.
+    let against: String?
+    /// `98%`, or `nil` when the response carried no percentage.
+    let value: String?
+    let fill: Double?
+    let state: HelmModuleRowState
+    /// `$2.38 left before the cap`.
+    let footnote: String?
+}
+
+/// One section of a `.usageReport` body: a title, an optional status word,
+/// and one of three content shapes.
+struct HelmModuleUsageSection: Equatable {
+    enum Content: Equatable {
+        /// The aligned grid - one row per window.
+        case limits([HelmModuleUsageRow])
+        /// The money figure over its own bar.
+        case spend(HelmModuleUsageSpend)
+        /// GL-14's stated gap for a whole section, where there is nothing to
+        /// list and pretending otherwise would mean drawing zeroes.
+        case note(String)
+    }
+
+    let title: String
+    let status: HelmModuleUsageStatus?
+    let content: Content
 }
 
 // MARK: - The card
@@ -206,23 +221,31 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// navigation target; a clause with `.none` renders as plain text
         /// rather than as a link that goes nowhere.
         case paragraph([BriefingClause])
-        /// One dense row of hairline-separated columns - the captain's
-        /// picked "Status strip" shape for the Claude usage card
-        /// (`docs/history/07-fleet-and-notifications.md`).
+        /// The sectioned usage report the captain's mockup replaced the
+        /// Claude card's `.statusStrip` with - a hairline-divided stack of
+        /// titled sections, each carrying either an aligned grid of
+        /// window rows or one money figure over its own bar.
         ///
-        /// Distinct from `.peekRows`, which stacks rows *vertically* and
-        /// carries a sentence per row: this carries several small figures
-        /// side by side, which is what makes five readings fit in a card
-        /// that stays at `minimumHeight`. `maxStripColumns` caps it for the
-        /// same reason `maxPeekRows` does - more than that is a table.
+        /// **Why this is a body kind rather than five more strip columns.**
+        /// A strip is one dense row of figures, and its whole economy is
+        /// that a reading costs about 74pt of width. This shape trades that
+        /// for a full-width bar per window and a reset caption beside it,
+        /// which is a taller card - deliberately, and with the captain's
+        /// explicit "if it ends up a bit taller than today's, that is fine".
+        /// `minimumHeight` is a floor rather than a fixed height (PF2), so
+        /// the card simply grows and `HelmResponsiveGrid`'s `equalHeights`
+        /// pulls its row up with it.
         ///
-        /// `perRow` is how many columns fit side by side at the width the
-        /// card was built for. A span-2 card takes all five; a card
-        /// `HelmResponsiveGrid.packRows` has degraded to one column takes
-        /// fewer and the strip **wraps** into aligned rows rather than
-        /// truncating - nothing is dropped, which is the whole point (see
-        /// `HomeCanvasController.claudeStripColumnsPerRow`).
-        case statusStrip([HelmModuleStripColumn], perRow: Int)
+        /// `compact` is the narrow reflow, and it is the same decision
+        /// `.statusStrip`'s `perRow` makes: at a width where the four
+        /// aligned columns would leave the bar a stub, a limit row stacks
+        /// into title + figure on one line, the bar across the full width
+        /// under it, and the caption under that. Nothing is dropped - the
+        /// card pays height instead of a reading, exactly as the strip
+        /// already did when it wrapped. See
+        /// `HomeCanvasController.claudeUsageIsCompact(forCardWidth:)`, which
+        /// picks between them at the same span-2 threshold.
+        case usageReport([HelmModuleUsageSection], compact: Bool)
         /// D3's layout-shaped placeholder, for a card whose real answer has
         /// not arrived yet.
         ///
@@ -248,18 +271,6 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// dropped rather than rendered, and the count is what the card's
     /// accessibility label reports.
     static let maxPeekRows = 3
-
-    /// `maxPeekRows`' horizontal twin, and set by the same argument: past
-    /// this many columns a strip is a table, and a table belongs on the drill
-    /// page. Five is what the Claude card needs and what a span-2 card's
-    /// width affords - at `HomeCanvasController.minModuleWidth * 2 + spacing`
-    /// (526pt) minus the card's own insets, five columns leave ~85pt each,
-    /// which `ClaudeStatusCardSelfTest` measures rather than assumes.
-    ///
-    /// The extras are dropped rather than rendered, exactly like
-    /// `maxPeekRows` - and, exactly like it, a caller with more to show is
-    /// expected to say so rather than let the cap swallow them silently.
-    static let maxStripColumns = 5
 
     /// The briefing paragraph's own cap, for the same reason `maxPeekRows`
     /// exists and enforced the same way (the caller truncates; the overflow is
@@ -318,7 +329,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// `gestureRecognizer(_:shouldAttemptToRecognizeWith:)` below, which needs
     /// two rules rather than one.
     ///
-    /// `nil` on every card but the Claude status strip, whose reading is a
+    /// `nil` on every card but the Claude usage card, whose reading is a
     /// `quota-axi` subprocess the captain may want re-taken on demand rather
     /// than at the next refresh cycle - see
     /// `docs/history/07-fleet-and-notifications.md`.
@@ -367,6 +378,17 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// See `HeaderAction`. `nil` on every card that is only a link to its
         /// own page, which is all but one of them.
         var headerAction: HeaderAction? = nil
+        /// One short caption under the chip, on the header's trailing edge -
+        /// the Claude card's `Updated 2 min ago`.
+        ///
+        /// It belongs in the header rather than in the body because it is a
+        /// fact about the *reading*, not about any one window: the whole
+        /// card is that old. `nil` on every other card, which leaves the
+        /// header exactly the shape it has always been - the label is an
+        /// arranged subview of a stack, so hiding it removes it from layout
+        /// rather than leaving a blank line (AGENTS.md gotcha (15)'s one
+        /// case where `isHidden` really does mean "out of the layout").
+        var headerCaption: String? = nil
     }
 
     // Geometry (§2.7, §2.6).
@@ -483,6 +505,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let chipView = NSView()
     private let chipLabel = NSTextField(labelWithString: "")
+    /// `Content.headerCaption`. Built with the rest of the chrome and hidden
+    /// when the content carries none, exactly like `chipView`.
+    private let headerCaptionLabel = NSTextField(labelWithString: "")
     private let bodyContainer = NSView()
     /// `Content.headerAction`'s control. Built once with the rest of the
     /// chrome and hidden when the content carries no action, exactly like
@@ -507,17 +532,25 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     private var progressBar: HelmProgressBar?
     private var peekDots: [(dot: NSView, state: HelmModuleRowState)] = []
     private var peekSeparators: [NSView] = []
-    private var stripLabels: [NSTextField] = []
-    private var stripValues: [(label: NSTextField, isGap: Bool)] = []
-    private var stripSeparators: [NSView] = []
-    private var stripTracks: [(track: NSView, fill: NSView, state: HelmModuleRowState)] = []
-    /// Every strip column's own cell view, in render order - the view that
-    /// carries `HelmModuleStripColumn.detail`'s tooltip and VoiceOver help.
-    private var stripCells: [NSView] = []
-    /// One entry per strip column, in render order, `nil` for a column that
-    /// carries no `caption`. Kept per column rather than as a dense list so
-    /// the anatomy can line captions up with the columns they belong to.
-    private var stripCaptions: [NSTextField?] = []
+
+    // `.usageReport`'s own views, kept for `applyTheme` and for the anatomy.
+    // Separate arrays rather than reusing the strip's: a suite asserting the
+    // new body must not be able to pass on a leftover strip view, and the
+    // two bodies paint their figures differently (a limit row's percentage
+    // takes the severity ink where a strip column's figure never does).
+    private var usageSectionTitles: [NSTextField] = []
+    private var usageStatusLabels: [(label: NSTextField, state: HelmModuleRowState)] = []
+    private var usageRowTitles: [NSTextField] = []
+    private var usageValues: [(label: NSTextField, state: HelmModuleRowState, isGap: Bool)] = []
+    private var usageCaptions: [NSTextField] = []
+    private var usageTracks: [(bed: NSView, fill: NSView, state: HelmModuleRowState)] = []
+    private var usageDividers: [NSView] = []
+    /// Each limit row's own cell, in render order - the view carrying
+    /// `HelmModuleUsageRow.detail`'s tooltip and, through AppKit's own
+    /// derivation, its VoiceOver help. Read back by the anatomy for the
+    /// reason `stripCells` is: the string reaching the model says nothing
+    /// about whether anything was wired to it.
+    private var usageRowCells: [NSView] = []
     private var peekTextLabels: [NSTextField] = []
     private var peekValueLabels: [NSTextField] = []
     private var noteLabels: [NSTextField] = []
@@ -627,13 +660,42 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         chipView.setContentHuggingPriority(.required, for: .horizontal)
         chipView.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        headerCaptionLabel.font = HelmType.captionSmall()
+        headerCaptionLabel.lineBreakMode = .byTruncatingTail
+        headerCaptionLabel.translatesAutoresizingMaskIntoConstraints = false
+        headerCaptionLabel.isHidden = true
+        // gotcha (13): `.defaultLow`, unlike the chip beside it. The chip is
+        // a fixed word the card must not truncate; this is a caption about
+        // freshness, and a label that will not yield is a width floor on
+        // every ancestor up to the window (`AppShellBodyWidthSelfTest`'s own
+        // finding, from this card's note label).
+        headerCaptionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        // The chip and the caption stack, right-aligned, with the refresh
+        // button beside them - the mockup's header shape. An empty caption
+        // is `isHidden`, which for an *arranged* subview really does take it
+        // out of the layout, so a card with no caption renders the chip at
+        // exactly the height it always had.
+        let statusStack = NSStackView(views: [chipView, headerCaptionLabel])
+        statusStack.orientation = .vertical
+        statusStack.alignment = .trailing
+        statusStack.spacing = 3
+        statusStack.translatesAutoresizingMaskIntoConstraints = false
+        // gotcha (12): the *stack*-level APIs. Hugging required so the stack
+        // never absorbs the header's slack (that is the text column's job);
+        // clipping resistance left low so the stack itself is not a floor -
+        // the chip inside carries the one required minimum here, exactly as
+        // it did when it sat in the header row directly.
+        statusStack.setHuggingPriority(.required, for: .horizontal)
+        statusStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+
         actionButton.target = self
         actionButton.action = #selector(headerActionTapped)
         actionButton.isHidden = true
         actionButton.setContentHuggingPriority(.required, for: .horizontal)
         actionButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let headerRow = NSStackView(views: [tile, textStack, chipView, actionButton])
+        let headerRow = NSStackView(views: [tile, textStack, statusStack, actionButton])
         headerRow.orientation = .horizontal
         headerRow.alignment = .centerY
         headerRow.spacing = HelmMetrics.s3
@@ -710,6 +772,14 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             chipLabel.stringValue = ""
         }
 
+        if let caption = content.headerCaption, !caption.isEmpty {
+            headerCaptionLabel.isHidden = false
+            headerCaptionLabel.stringValue = caption
+        } else {
+            headerCaptionLabel.isHidden = true
+            headerCaptionLabel.stringValue = ""
+        }
+
         if let action = content.headerAction {
             actionButton.isHidden = false
             actionButton.symbolName = action.symbol
@@ -729,6 +799,10 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         // otherwise be read out before the title.
         var spoken = [content.title, content.subtitle]
         if let chip = content.chip { spoken.append(chip.text) }
+        // The freshness caption is part of the reading, not chrome: "Updated
+        // 2 min ago" is what tells a captain whether the figures below are
+        // worth acting on, so VoiceOver gets it in the same breath.
+        if let caption = content.headerCaption, !caption.isEmpty { spoken.append(caption) }
         card.accessibilityLabelOverride = spoken.filter { !$0.isEmpty }.joined(separator: ", ")
 
         applyTheme(ThemeManager.shared.theme)
@@ -743,12 +817,14 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         progressBar = nil
         peekDots.removeAll()
         peekSeparators.removeAll()
-        stripLabels.removeAll()
-        stripValues.removeAll()
-        stripSeparators.removeAll()
-        stripTracks.removeAll()
-        stripCells.removeAll()
-        stripCaptions.removeAll()
+        usageSectionTitles.removeAll()
+        usageStatusLabels.removeAll()
+        usageRowTitles.removeAll()
+        usageValues.removeAll()
+        usageCaptions.removeAll()
+        usageTracks.removeAll()
+        usageDividers.removeAll()
+        usageRowCells.removeAll()
         peekTextLabels.removeAll()
         peekValueLabels.removeAll()
         noteLabels.removeAll()
@@ -769,8 +845,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             content = buildNote(text, maxLines: maxLines)
         case let .paragraph(clauses):
             content = buildParagraph(clauses)
-        case let .statusStrip(columns, perRow):
-            content = buildStatusStrip(Array(columns.prefix(Self.maxStripColumns)), perRow: perRow)
+        case let .usageReport(sections, compact):
+            content = buildUsageReport(sections, compact: compact)
         case let .skeleton(rows):
             content = buildSkeleton(rows: rows)
         }
@@ -959,215 +1035,313 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         return verticalStack(stacked, spacing: 0)
     }
 
-    /// The captain's "Status strip": equal-width columns, a 1pt vertical
-    /// hairline between each pair, and inside each one a small uppercase key
-    /// over a figure over an optional 4pt track.
+    // MARK: The usage report body
+
+    /// A capsule track with a fractional fill, at one of the report's two
+    /// weights - 6pt under a limit row, 8pt under the spend figure.
     ///
-    /// **Why `.fillEqually` and not `.fill`.** AGENTS.md gotcha (10): a
-    /// horizontal stack left at its default `.gravityAreas` hands leftover
-    /// width out by Auto Layout's own tie-breaking, so columns carrying
-    /// different-length figures ("96%" beside "$137.62") would render at
-    /// visibly different widths and the hairlines would not be evenly
-    /// spaced. `.fillEqually` is the one distribution that makes "five equal
-    /// columns" a declaration rather than a hope - and gotcha (12) is why it
-    /// is not attempted with hugging priorities on the column stacks, which
-    /// have no intrinsic size and would ignore them.
-    private func buildStatusStrip(_ columns: [HelmModuleStripColumn], perRow: Int) -> NSView {
-        guard !columns.isEmpty else { return noteLabel("Nothing to show yet.") }
-        let perRow = max(1, min(perRow, columns.count))
+    /// The fill is a *fraction of the bed*, never a baked width, so it
+    /// follows the card's real width at every window size - the same shape
+    /// the peek list's own dot already uses, and at `contentTie` (499) for
+    /// gotcha (13)'s reason.
+    private func makeUsageTrack(fill: Double, state: HelmModuleRowState, height: CGFloat) -> NSView {
+        let bed = NSView()
+        bed.wantsLayer = true
+        bed.layer?.cornerRadius = HelmMetrics.capsuleRadius(forHeight: height)
+        bed.translatesAutoresizingMaskIntoConstraints = false
+        bed.heightAnchor.constraint(equalToConstant: height).isActive = true
+        // A bare `NSView` has no intrinsic size, so no content-priority API
+        // can make it hold a width (gotcha (12)) - this floor has to be a
+        // real constraint. At `contentTie` it can still never reach the
+        // window as a floor (gotcha (13)), which means an extremely narrow
+        // card loses the bar rather than refusing to be narrow.
+        let floor = bed.widthAnchor.constraint(greaterThanOrEqualToConstant: 40)
+        floor.priority = HelmDaylightPriority.contentTie
+        floor.isActive = true
 
-        // Every column view in the whole strip, across rows - tied to one
-        // another below so a wrapped strip still reads as a grid rather than
-        // as two unrelated rows.
-        var columnViews: [NSView] = []
-        var rows: [NSView] = []
+        let bar = NSView()
+        bar.wantsLayer = true
+        bar.layer?.cornerRadius = HelmMetrics.capsuleRadius(forHeight: height)
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bed.addSubview(bar)
+        let fraction = bar.widthAnchor.constraint(
+            equalTo: bed.widthAnchor,
+            multiplier: max(0.0001, min(1, CGFloat(fill))))
+        fraction.priority = HelmDaylightPriority.contentTie
+        NSLayoutConstraint.activate([
+            fraction,
+            bar.leadingAnchor.constraint(equalTo: bed.leadingAnchor),
+            bar.topAnchor.constraint(equalTo: bed.topAnchor),
+            bar.bottomAnchor.constraint(equalTo: bed.bottomAnchor),
+        ])
+        usageTracks.append((bed, bar, state))
+        return bed
+    }
 
-        for start in stride(from: 0, to: columns.count, by: perRow) {
-            let slice = Array(columns[start..<min(start + perRow, columns.count)])
-            var cells: [NSView] = []
+    private func makeUsageDivider() -> NSView {
+        let divider = NSView()
+        divider.wantsLayer = true
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        usageDividers.append(divider)
+        return divider
+    }
 
-            for (indexInRow, column) in slice.enumerated() {
-                if indexInRow > 0 { cells.append(makeStripSeparator()) }
-                let cell = makeStripColumn(column, isFirstInRow: indexInRow == 0)
-                columnViews.append(cell)
-                cells.append(cell)
-            }
+    /// A section's header: the title, and the severity word on its trailing
+    /// edge. The word is a *label*, not a pill - the header pill above it is
+    /// the card's one badge, and a second capsule here competes with it.
+    private func makeUsageSectionHeader(_ section: HelmModuleUsageSection) -> NSView {
+        let title = NSTextField(labelWithString: section.title)
+        title.font = HelmType.rowTitle()
+        title.lineBreakMode = .byTruncatingTail
+        title.translatesAutoresizingMaskIntoConstraints = false
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        usageSectionTitles.append(title)
 
-            // Pad a short final row so its columns keep the same width as a
-            // full row's rather than stretching to fill it - the same reason
-            // `HelmResponsiveGrid.spanningRows` pads with column-width
-            // spacers, and what keeps the wrapped grid's edges aligned.
-            var padding = perRow - slice.count
-            while padding > 0 {
-                cells.append(makeStripSeparator())
-                let spacer = NSView()
-                spacer.translatesAutoresizingMaskIntoConstraints = false
-                columnViews.append(spacer)
-                cells.append(spacer)
-                padding -= 1
-            }
+        var views: [NSView] = [title]
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        views.append(spacer)
 
-            let row = compressibleStack(NSStackView(views: cells))
-            row.orientation = .horizontal
-            row.alignment = .top
-            row.spacing = 0
-            // Not `.fillEqually`: the 1pt hairlines are arranged subviews
-            // too, so dividing the width equally across *all* of them would
-            // make the separators as wide as the columns. The columns are
-            // tied to each other explicitly below instead, which is the same
-            // claim made only about the things that are columns.
-            row.distribution = .fill
-            row.translatesAutoresizingMaskIntoConstraints = false
-            rows.append(row)
+        if let status = section.status {
+            let label = NSTextField(labelWithString: status.text)
+            label.font = HelmType.chip()
+            label.lineBreakMode = .byTruncatingTail
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            usageStatusLabels.append((label, status.state))
+            views.append(label)
         }
 
-        // The container has to exist **before** the cross-row ties are
-        // activated: a constraint between two views needs a common ancestor,
-        // and until the rows are arranged subviews of one stack they have
-        // none. Activating them earlier throws "no common ancestor" at
-        // configure time - caught by `checkUniformCardHeight`'s own
-        // `statusStrip-1col` case, which is the only state with more than one
-        // row.
-        let container: NSView
-        if rows.count == 1 {
-            container = rows[0]
-        } else {
-            let stacked = verticalStack(rows, spacing: 12)
-            for row in rows {
-                row.widthAnchor.constraint(equalTo: stacked.widthAnchor).isActive = true
-            }
-            container = stacked
-        }
+        let row = compressibleStack(NSStackView(views: views))
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = HelmMetrics.s3
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }
 
-        // Every column the same width, across rows as well as within one, so
-        // a wrapped strip still reads as a grid rather than as two unrelated
-        // rows.
+    /// A limit row's title and figure, which are the two things that stay
+    /// side by side in **both** layouts.
+    private func makeUsageRowLabels(_ row: HelmModuleUsageRow) -> (title: NSTextField, value: NSTextField) {
+        let title = NSTextField(labelWithString: row.title)
+        title.font = HelmType.caption()
+        title.lineBreakMode = .byTruncatingTail
+        title.translatesAutoresizingMaskIntoConstraints = false
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // Hugging, so the column never absorbs the row's slack - the bar is
+        // the one thing that should grow. A *leaf* view with a real
+        // intrinsic size, so unlike gotcha (12)'s stacks the content API is
+        // the right one here.
         //
-        // gotcha (13): every one of these ties sits at `contentTie` (499),
-        // below `NSLayoutPriorityWindowSizeStayPut`, so a strip can never
-        // become a floor on the window's own width.
-        if let first = columnViews.first {
-            for other in columnViews.dropFirst() {
-                let equal = other.widthAnchor.constraint(equalTo: first.widthAnchor)
-                equal.priority = HelmDaylightPriority.contentTie
-                equal.isActive = true
+        // **`columnHug`, never `.required` and never `contentTie`** - that
+        // type's own note has the two measurements. The short version: a
+        // content hugging priority is a width *ceiling*, and this card ties
+        // its body to its own width with a required equality, so a label
+        // hugging hard enough caps the whole card.
+        title.setContentHuggingPriority(HelmDaylightPriority.columnHug, for: .horizontal)
+        usageRowTitles.append(title)
+
+        let value = NSTextField(labelWithString: row.value)
+        // Tabular digits: the figures sit in one column across rows, and
+        // proportional digits make a column of percentages ripple.
+        value.font = row.isGap ? HelmType.caption() : HelmType.metric(12, weight: .semibold)
+        value.alignment = .right
+        value.lineBreakMode = .byTruncatingTail
+        value.translatesAutoresizingMaskIntoConstraints = false
+        value.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        value.setContentHuggingPriority(HelmDaylightPriority.columnHug, for: .horizontal)
+        usageValues.append((value, row.state, row.isGap))
+
+        return (title, value)
+    }
+
+    private func makeUsageCaption(_ text: String, detail: String?) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = HelmType.captionSmall()
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.setContentHuggingPriority(HelmDaylightPriority.columnHug, for: .horizontal)
+        // GL-16: what VoiceOver reads is the *full* sentence, so the short
+        // painted form costs nothing.
+        label.setAccessibilityLabel(detail ?? text)
+        usageCaptions.append(label)
+        return label
+    }
+
+    /// The four-column grid, where the bars line up across rows.
+    ///
+    /// **`NSGridView`, not nested stacks** - AGENTS.md gotcha (2)'s tool, and
+    /// the alignment requirement is exactly what it is for: three of the four
+    /// columns are content-sized and the bar column is the one left
+    /// unconstrained, so it absorbs every point of slack and the bars start
+    /// and end at the same x on every row. Gotcha (2)'s own warning is the
+    /// other direction of this - a grid where the *wrong* column is left
+    /// unconstrained grows a gap instead - so the grid's own width is pinned
+    /// to its container below, giving the fill column a definite total.
+    private func buildUsageLimitsGrid(_ rows: [HelmModuleUsageRow]) -> NSView {
+        let grid = NSGridView(numberOfColumns: 4, rows: 0)
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        grid.rowSpacing = 8
+        grid.columnSpacing = HelmMetrics.s3
+        grid.yPlacement = .center
+        grid.column(at: 1).xPlacement = .trailing
+        grid.column(at: 3).xPlacement = .trailing
+
+        for row in rows {
+            let labels = makeUsageRowLabels(row)
+            // A row with no reading draws no bar at all (GL-14): an empty
+            // track beside three filled ones reads as "0%", which on a quota
+            // card is a real value rather than a synonym for "unknown".
+            let bar: NSView = row.fill.map { makeUsageTrack(fill: $0, state: row.state, height: 6) }
+                ?? NSGridCell.emptyContentView
+            let caption: NSView = row.caption.map { makeUsageCaption($0, detail: row.detail) }
+                ?? NSGridCell.emptyContentView
+            let gridRow = grid.addRow(with: [labels.title, labels.value, bar, caption])
+            // The row's own hover text, carrying the long form of the reset
+            // instant - and AppKit derives the accessibility help from it,
+            // so the pointer and VoiceOver get the same string by
+            // construction rather than by two call sites agreeing.
+            if let detail = row.detail {
+                for index in 0..<gridRow.numberOfCells {
+                    gridRow.cell(at: index).contentView?.toolTip = detail
+                }
+            }
+            usageRowCells.append(labels.title)
+        }
+        return grid
+    }
+
+    /// The compact reflow: title and figure on one line, the bar across the
+    /// full width under them, the reset caption under that.
+    ///
+    /// The same trade `.statusStrip`'s wrap makes - height instead of a
+    /// reading - and it mirrors the mockup's own `@media (max-width: 560px)`
+    /// rule rather than inventing a second narrow language.
+    private func buildUsageLimitsStack(_ rows: [HelmModuleUsageRow]) -> NSView {
+        var stacked: [NSView] = []
+        for row in rows {
+            let labels = makeUsageRowLabels(row)
+            let spacer = NSView()
+            spacer.translatesAutoresizingMaskIntoConstraints = false
+            let line = compressibleStack(NSStackView(views: [labels.title, spacer, labels.value]))
+            line.orientation = .horizontal
+            line.alignment = .firstBaseline
+            line.spacing = HelmMetrics.s2
+            line.distribution = .fill
+            line.translatesAutoresizingMaskIntoConstraints = false
+
+            var cellViews: [NSView] = [line]
+            if let fill = row.fill {
+                cellViews.append(makeUsageTrack(fill: fill, state: row.state, height: 6))
+            }
+            if let caption = row.caption {
+                cellViews.append(makeUsageCaption(caption, detail: row.detail))
+            }
+            let cell = verticalStack(cellViews, spacing: HelmMetrics.s1)
+            cell.alignment = .leading
+            cell.toolTip = row.detail
+            usageRowCells.append(cell)
+            stacked.append(cell)
+        }
+        let column = verticalStack(stacked, spacing: HelmMetrics.s2 + 2)
+        column.alignment = .leading
+        return column
+    }
+
+    /// The money figure, its cap, its percentage, its bar and its footnote.
+    private func buildUsageSpend(_ spend: HelmModuleUsageSpend) -> NSView {
+        let amount = NSTextField(labelWithString: spend.amount)
+        amount.font = HelmType.metric(20, weight: .semibold)
+        amount.lineBreakMode = .byTruncatingTail
+        amount.translatesAutoresizingMaskIntoConstraints = false
+        amount.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // `metricLabels` rather than an array of its own: this *is* the
+        // body's one big number, which is what that array means - and it
+        // puts the figure in `Anatomy.metricTexts` where every other body
+        // kind's headline number already is.
+        metricLabels.append(amount)
+
+        var top: [NSView] = [amount]
+        if let against = spend.against, !against.isEmpty {
+            top.append(makeUsageCaptionLine(against))
+        }
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        top.append(spacer)
+        if let value = spend.value {
+            let pct = NSTextField(labelWithString: value)
+            pct.font = HelmType.metric(12, weight: .semibold)
+            pct.alignment = .right
+            pct.translatesAutoresizingMaskIntoConstraints = false
+            pct.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            pct.setContentHuggingPriority(HelmDaylightPriority.columnHug, for: .horizontal)
+            usageValues.append((pct, spend.state, false))
+            top.append(pct)
+        }
+
+        let topRow = compressibleStack(NSStackView(views: top))
+        topRow.orientation = .horizontal
+        topRow.alignment = .firstBaseline
+        topRow.spacing = HelmMetrics.s1 + 2
+        topRow.distribution = .fill
+        topRow.translatesAutoresizingMaskIntoConstraints = false
+
+        var stacked: [NSView] = [topRow]
+        if let fill = spend.fill {
+            stacked.append(makeUsageTrack(fill: fill, state: spend.state, height: 8))
+        }
+        if let footnote = spend.footnote, !footnote.isEmpty {
+            stacked.append(makeUsageCaption(footnote, detail: nil))
+        }
+        let column = verticalStack(stacked, spacing: HelmMetrics.s1 + 2)
+        column.alignment = .leading
+        return column
+    }
+
+    /// The muted `of $140 cap` beside the spend figure - a caption that is
+    /// part of a baseline-aligned row rather than a line of its own, so it
+    /// keeps its own hugging rather than taking `makeUsageCaption`'s.
+    private func makeUsageCaptionLine(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = HelmType.caption()
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        usageCaptions.append(label)
+        return label
+    }
+
+    private func buildUsageReport(_ sections: [HelmModuleUsageSection], compact: Bool) -> NSView {
+        guard !sections.isEmpty else { return noteLabel("Nothing to show yet.") }
+
+        // The divider the mockup draws between the header and the first
+        // section. It belongs to the body rather than to the chrome so a
+        // card with any other body keeps the header it has always had.
+        var stacked: [NSView] = [makeUsageDivider()]
+        for (index, section) in sections.enumerated() {
+            if index > 0 { stacked.append(makeUsageDivider()) }
+            stacked.append(makeUsageSectionHeader(section))
+            switch section.content {
+            case let .limits(rows):
+                stacked.append(compact ? buildUsageLimitsStack(rows) : buildUsageLimitsGrid(rows))
+            case let .spend(spend):
+                stacked.append(buildUsageSpend(spend))
+            case let .note(text):
+                stacked.append(noteLabel(text))
             }
         }
 
-        return container
-    }
-
-    private func makeStripSeparator() -> NSView {
-        let separator = NSView()
-        separator.wantsLayer = true
-        separator.translatesAutoresizingMaskIntoConstraints = false
-        separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
-        separator.setContentHuggingPriority(.required, for: .horizontal)
-        separator.setContentCompressionResistancePriority(.required, for: .horizontal)
-        stripSeparators.append(separator)
-        return separator
-    }
-
-    /// One column: a small uppercase key over a figure over an optional 4pt
-    /// track.
-    private func makeStripColumn(_ column: HelmModuleStripColumn, isFirstInRow: Bool) -> NSView {
-        let key = NSTextField(labelWithString: column.label.uppercased())
-        key.font = HelmType.kicker()
-        key.lineBreakMode = .byTruncatingTail
-        key.translatesAutoresizingMaskIntoConstraints = false
-        key.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        stripLabels.append(key)
-
-        let figure = NSTextField(labelWithString: column.value)
-        // A stated gap is deliberately *not* set in the figure face: a short
-        // muted phrase reads as "no reading", where the same words at figure
-        // weight read as a value. See `HelmModuleStripColumn`.
-        figure.font = column.isGap ? HelmType.caption() : HelmType.rowTitle()
-        figure.lineBreakMode = .byTruncatingTail
-        figure.translatesAutoresizingMaskIntoConstraints = false
-        figure.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        stripValues.append((figure, column.isGap))
-
-        var stacked: [NSView] = [key, figure]
-        var track: NSView?
-        if let fill = column.fill {
-            let bed = NSView()
-            bed.wantsLayer = true
-            bed.layer?.cornerRadius = 2
-            bed.translatesAutoresizingMaskIntoConstraints = false
-            bed.heightAnchor.constraint(equalToConstant: 4).isActive = true
-
-            let bar = NSView()
-            bar.wantsLayer = true
-            bar.layer?.cornerRadius = 2
-            bar.translatesAutoresizingMaskIntoConstraints = false
-            bed.addSubview(bar)
-            // The fill is a *fraction of the track*, so it follows the
-            // column's real width at every window size rather than being
-            // baked to the width the card happened to be built at.
-            let fraction = bar.widthAnchor.constraint(
-                equalTo: bed.widthAnchor,
-                multiplier: max(0.0001, min(1, CGFloat(fill))))
-            fraction.priority = HelmDaylightPriority.contentTie
-            NSLayoutConstraint.activate([
-                fraction,
-                bar.leadingAnchor.constraint(equalTo: bed.leadingAnchor),
-                bar.topAnchor.constraint(equalTo: bed.topAnchor),
-                bar.bottomAnchor.constraint(equalTo: bed.bottomAnchor),
-            ])
-            stripTracks.append((bed, bar, column.state))
-            stacked.append(bed)
-            track = bed
-        }
-
-        // The visible reset line. It goes *under* the track rather than
-        // between the figure and the track: the bar is a picture of the
-        // figure directly above it, and a line wedged between them reads as
-        // a caption on the wrong thing.
-        var captionLabel: NSTextField?
-        if let caption = column.caption {
-            let line = NSTextField(labelWithString: caption)
-            line.font = HelmType.captionSmall()
-            line.lineBreakMode = .byTruncatingTail
-            line.translatesAutoresizingMaskIntoConstraints = false
-            line.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            // GL-16, and the reason the short form costs nothing: what the
-            // pointer reveals and what VoiceOver reads are the *full*
-            // sentence, so the abbreviation is a painting decision rather
-            // than a loss of information. `detail` is the long form; a
-            // caption with no long form reads as itself.
-            line.setAccessibilityLabel(column.detail ?? caption)
-            stripCaptions.append(line)
-            captionLabel = line
-            stacked.append(line)
-        } else {
-            stripCaptions.append(nil)
-        }
-
-        let cell = verticalStack(stacked, spacing: 6)
-        cell.alignment = .leading
-        // `verticalStack` aligns `.leading`, so without this the track would
-        // hug its own (zero) content width instead of spanning the column.
-        track?.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
-        // Same reason the track needs it: `verticalStack` aligns `.leading`,
-        // so a label left to hug its own content would not report truncation
-        // against the width the column really gives it.
-        captionLabel?.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
-        cell.edgeInsets = NSEdgeInsets(top: 0, left: isFirstInRow ? 0 : 12,
-                                       bottom: 0, right: 12)
-        // One line, and it covers both routes in: AppKit derives an
-        // `NSView`'s accessibility help from its `toolTip` when nothing else
-        // sets one, so the reading VoiceOver reads out and the reading the
-        // pointer reveals are the same string by construction rather than by
-        // two call sites agreeing. Measured, not assumed - deleting an
-        // explicit `setAccessibilityHelp(column.detail)` beside this line
-        // changed nothing that `checkTheResetAffordanceIsReallyWiredToTheCell`
-        // could see, so the explicit call was removed rather than kept as a
-        // second copy of the same claim. `nil` clears both, which is what a
-        // column with no extra reading wants (GL-16).
-        cell.toolTip = column.detail
-        stripCells.append(cell)
-        return cell
+        // `verticalStack` already pins each row leading-required /
+        // trailing-at-`contentTie`, which is what gives the grid a definite
+        // total for its fill column to absorb (gotcha (2)'s second half) -
+        // no extra width tie is needed here, and a second one would only be
+        // another chance to set a floor.
+        let column = verticalStack(stacked, spacing: HelmMetrics.s2 + 2)
+        column.alignment = .leading
+        return column
     }
 
     private func buildRing(value: Int, total: Int, title: String, note: String) -> NSView {
@@ -1511,42 +1685,83 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             separator.layer?.backgroundColor = line.withAlphaComponent(theme.isDaylight ? 1.0 : 0.5).cgColor
         }
         for (dot, state) in peekDots { dot.layer?.backgroundColor = state.color(in: theme).cgColor }
-        for label in stripLabels {
-            label.font = HelmType.kicker()
-            label.textColor = muted
+
+        headerCaptionLabel.font = HelmType.captionSmall()
+        headerCaptionLabel.textColor = muted
+
+        // `.usageReport`. The colour rule that runs through all of it:
+        // AGENTS.md's "a `HelmTint` hue is safe as a fill and is NOT
+        // automatically safe as text". The bars are fills and take the state
+        // hue raw; every *word* that carries a severity goes through
+        // `HelmContrast.legibleTintedText` against the card's own surface,
+        // which is what keeps the amber and green readable on the fifteen
+        // light palettes rather than only on the dark ones.
+        for label in usageSectionTitles { label.textColor = ink }
+        for (label, state) in usageStatusLabels {
+            label.font = HelmType.chip()
+            label.textColor = usageSeverityInk(state, theme: theme, surface: surface,
+                                               neutral: muted, tintOK: true)
         }
-        for (label, isGap) in stripValues {
-            label.font = isGap ? HelmType.caption() : HelmType.rowTitle()
-            // A gap is muted; a real figure is page ink, tinted only when the
-            // reading is genuinely a warning. `HelmModuleRowState.color` is
-            // a *fill* hue, so it is not used as text here - AGENTS.md's
-            // "a HelmTint hue is safe as a fill and is NOT automatically safe
-            // as text". The track below the figure carries the colour.
-            label.textColor = isGap ? muted : ink
+        for label in usageRowTitles { label.textColor = ink }
+        for (label, state, isGap) in usageValues {
+            // A stated gap is muted, a comfortable reading is plain page
+            // ink, and only a genuine warning is tinted - so the one
+            // coloured figure on the card is the one worth looking at.
+            label.textColor = isGap
+                ? muted
+                : usageSeverityInk(state, theme: theme, surface: surface,
+                                   neutral: ink, tintOK: false)
         }
-        for caption in stripCaptions.compactMap({ $0 }) {
-            caption.font = HelmType.captionSmall()
-            // The smallest role Daylight has, painted `mutedInk` - a
-            // secondary reading under a figure, the same treatment a peek
-            // row's value and a module's note already take. Never the
-            // column's state hue: `HelmModuleRowState.color` is a fill hue
-            // and AGENTS.md's colour rules forbid it as text.
-            caption.textColor = muted
-        }
-        for separator in stripSeparators {
-            separator.layer?.backgroundColor = line.withAlphaComponent(theme.isDaylight ? 1.0 : 0.5).cgColor
-        }
-        for (track, fill, state) in stripTracks {
-            track.layer?.backgroundColor = (theme.isDaylight
+        for label in usageCaptions { label.textColor = muted }
+        for (bed, fill, state) in usageTracks {
+            bed.layer?.backgroundColor = (theme.isDaylight
                 ? HelmTheme.nsColor(theme.daylightTokens.inset)
                 : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6)).cgColor
             fill.layer?.backgroundColor = state.color(in: theme).cgColor
+        }
+        for divider in usageDividers {
+            divider.layer?.backgroundColor = line.withAlphaComponent(theme.isDaylight ? 1.0 : 0.5).cgColor
         }
 
         ringGauge?.applyTheme(theme, hue: content?.hue ?? .green)
         progressBar?.applyTheme(theme, hue: content?.hue ?? .amber)
         paragraphView?.applyTheme(theme)
         applyShadow(theme, raised: isHovering)
+    }
+
+    /// The one place `.usageReport` turns a `HelmModuleRowState` into **text**
+    /// colour.
+    ///
+    /// `HelmModuleRowState.color(in:)` is a *fill* hue and AGENTS.md's colour
+    /// rules forbid using one as text unmodified, so every severity word on
+    /// this body resolves through `HelmContrast.legibleTintedText` against
+    /// the card's own surface - which raises an amber that clears 4.5:1 on a
+    /// light palette and leaves an already-legible hue alone on a dark one.
+    /// `.idle` never resolves to a hue at all: it is "no severity", and
+    /// `neutral` is what the caller wants said instead (page ink for a
+    /// figure, muted for a status word).
+    ///
+    /// `tintOK` is the one place the two callers genuinely differ. A section's
+    /// **status word** is a verdict, so "Comfortable" earns the green that
+    /// makes it readable at a glance. A **figure** is a reading, and tinting
+    /// every comfortable percentage green would leave the card with no
+    /// colour left to mean "look at this" - so a figure stays page ink until
+    /// it is genuinely a warning.
+    private func usageSeverityInk(_ state: HelmModuleRowState,
+                                  theme: HelmTheme,
+                                  surface: NSColor,
+                                  neutral: NSColor,
+                                  tintOK: Bool) -> NSColor {
+        switch state {
+        case .idle: return neutral
+        case .ok:
+            guard tintOK else { return neutral }
+            return HelmContrast.legibleTintedText(tintHex: theme.ansiHex[2], over: surface, theme: theme)
+        case .warn:
+            return HelmContrast.legibleTintedText(tintHex: theme.ansiHex[3], over: surface, theme: theme)
+        case .bad:
+            return HelmContrast.legibleTintedText(tintHex: theme.ansiHex[1], over: surface, theme: theme)
+        }
     }
 
     @objc private func cardClicked() { onOpen?() }
@@ -1609,46 +1824,39 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         let isCardActivatable: Bool
         let accessibilityLabel: String?
         let peekRowCount: Int
-        /// The `.statusStrip` body's columns, in render order - the label as
-        /// drawn (uppercased), the figure, and whether it is a stated gap.
-        /// Enough for a suite to assert the column order, the labels and the
-        /// gap treatment without reaching into the body enum.
-        let stripColumns: [(label: String, value: String, isGap: Bool)]
-        /// Each `.statusStrip` column's hover affordance, in the same order -
-        /// the tooltip and the accessibility help **as the real cell view
-        /// reports them**, not as passed in the model. The help is AppKit's
-        /// own derivation from the tooltip; reading it back is what proves
-        /// the reading is not mouse-only.
-        ///
-        /// Read from the view on purpose: `detail` reaching the column struct
-        /// says nothing about whether anything was ever wired to it, and this
-        /// app has already shipped a check that asserted a helper rather than
-        /// the wiring it was supposed to prove (AGENTS.md's `debug*` hook
-        /// convention).
-        let stripColumnAffordances: [(toolTip: String?, help: String?)]
-        /// Each `.statusStrip` column's **visible** reset line, in the same
-        /// order: the string the label really carries, whether that label is
-        /// in the view hierarchy and not hidden, and whether it truncated at
-        /// the width the column actually gave it.
-        ///
-        /// All three read off the real label after a real layout pass, for
-        /// the reason `stripColumnAffordances` gives: `caption` reaching the
-        /// column struct says nothing about whether anything painted it, and
-        /// a line that renders as `Resets 5 Jan 20...` is a defect the string
-        /// alone cannot show.
-        let stripColumnCaptions: [(text: String?, isPainted: Bool, isTruncated: Bool)]
-        /// Each `.statusStrip` column's track, as actually painted and laid
-        /// out: the fill view's own layer colour, and how much of its bed it
-        /// covers after a real layout pass.
-        ///
-        /// Both halves are what a colour assertion needs and neither is
-        /// visible from the model. `HelmModuleRowState` is a *state*, so the
-        /// only place the state-to-hue decision becomes a colour is
-        /// `state.color(in:)` writing this layer - and the fraction is the
-        /// other direction of the same question, since a bar painted the
-        /// right colour and filled the wrong way round would still read as
-        /// inverted.
-        let stripTrackFills: [(color: NSColor?, fraction: CGFloat)]
+        /// `Content.headerCaption` as the header actually painted it - the
+        /// string, and whether the label is in the hierarchy and not hidden.
+        /// `nil` on a card that carries no caption, which is every card but
+        /// the Claude usage one.
+        let headerCaption: (text: String, isPainted: Bool)?
+        /// The `.usageReport` body's sections, in render order: the title as
+        /// drawn and the status word beside it.
+        let usageSections: [(title: String, status: String?)]
+        /// The `.usageReport` body's limit rows, in render order - the title,
+        /// the figure and whether it is a stated gap. The spend section's own
+        /// figure is not a limit row and is read through `metricTexts`.
+        let usageRows: [(title: String, value: String, isGap: Bool)]
+        /// Each `.usageReport` row's hover affordance, read back from the
+        /// **real view** rather than from the model, for the reason
+        /// `usageRowAffordances` gives: the string reaching the struct
+        /// says nothing about whether anything was wired to it.
+        let usageRowAffordances: [(toolTip: String?, help: String?)]
+        /// Each painted caption on the `.usageReport` body, in render order -
+        /// the string, whether it is really in the hierarchy, and whether it
+        /// truncated at the width it actually got. A reset line rendering as
+        /// `Resets Sun 21...` is a defect the string alone cannot show.
+        let usageCaptions: [(text: String, isPainted: Bool, isTruncated: Bool)]
+        /// Every `.usageReport` bar, as actually painted and laid out: the
+        /// fill's own layer colour, how much of its bed it covers after a
+        /// real layout pass, and the bed's own width. The last of the three
+        /// is what proves the bars line up - a grid whose fill column
+        /// absorbed nothing leaves every bed at its 40pt floor.
+        let usageTrackFills: [(color: NSColor?, fraction: CGFloat, bedWidth: CGFloat)]
+        /// Every `.usageReport` severity word's painted colour, in render
+        /// order. The state-to-colour decision only becomes a colour when
+        /// `applyTheme` writes it, so nothing derived from the model can see
+        /// a word that was left page ink on a critical reading.
+        let usageStatusColors: [NSColor?]
         /// Every `note`-styled line the body rendered, in order. Enough to
         /// tell a loading state from real content without exposing the body
         /// enum itself.
@@ -1752,23 +1960,32 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
                 isCardActivatable: card.isActivatable,
                 accessibilityLabel: card.accessibilityLabelOverride,
                 peekRowCount: peekTextLabels.count,
-                stripColumns: zip(stripLabels, stripValues).map {
+                headerCaption: headerCaptionLabel.isHidden ? nil
+                    : (headerCaptionLabel.stringValue,
+                       headerCaptionLabel.window != nil
+                           && !headerCaptionLabel.isHiddenOrHasHiddenAncestor),
+                usageSections: usageSectionTitles.enumerated().map { index, label in
+                    (label.stringValue,
+                     index < usageStatusLabels.count ? usageStatusLabels[index].label.stringValue : nil)
+                },
+                usageRows: zip(usageRowTitles, usageValues).map {
                     ($0.stringValue, $1.label.stringValue, $1.isGap)
                 },
-                stripColumnAffordances: stripCells.map {
+                usageRowAffordances: usageRowCells.map {
                     ($0.toolTip, $0.accessibilityHelp())
                 },
-                stripColumnCaptions: stripCaptions.map { label in
-                    guard let label else { return (nil, false, false) }
-                    let painted = label.window != nil && !label.isHiddenOrHasHiddenAncestor
-                    return (label.stringValue, painted,
-                            label.fittingSize.width > label.frame.width + 0.5)
+                usageCaptions: usageCaptions.map { label in
+                    (label.stringValue,
+                     label.window != nil && !label.isHiddenOrHasHiddenAncestor,
+                     label.fittingSize.width > label.frame.width + 0.5)
                 },
-                stripTrackFills: stripTracks.map { entry in
-                    let bed = entry.track.frame.width
+                usageTrackFills: usageTracks.map { entry in
+                    let bed = entry.bed.frame.width
                     return (entry.fill.layer?.backgroundColor.map { NSColor(cgColor: $0) } ?? nil,
-                            bed > 0 ? entry.fill.frame.width / bed : 0)
+                            bed > 0 ? entry.fill.frame.width / bed : 0,
+                            bed)
                 },
+                usageStatusColors: usageStatusLabels.map { $0.label.textColor },
                 noteTexts: noteLabels.map(\.stringValue),
                 noteRenderedLineCounts: noteLabels.map(Self.renderedLineCount(of:)),
                 metricTexts: metricLabels.map(\.stringValue),
@@ -1833,6 +2050,26 @@ enum HelmDaylightPriority {
     /// Just under 500. High enough to beat a stack's own defaults, low enough
     /// that the window's own size always wins.
     static let contentTie = NSLayoutConstraint.Priority(499)
+
+    /// One above `.defaultLow`, for a **content hugging** priority that only
+    /// needs to break a tie between sibling columns.
+    ///
+    /// **Why not `contentTie`, which is the obvious choice** - and this cost
+    /// a real round of measurement in
+    /// `fm/grand-line-claude-usage-card-redesign`. A content hugging
+    /// priority is a width *ceiling*, and a card's body is tied to the card
+    /// by a required equality, so a label's "never wider than my text"
+    /// travels straight up to the card's own width. At `.required` a span-2
+    /// Claude card asked for 526pt resolved to **227pt**. At `contentTie` it
+    /// resolved to **265pt** - better and still wrong, because the width
+    /// tying the card to its column is *itself* at 499, and AGENTS.md gotcha
+    /// (13) already records what two constraints at 499 do: they tie, and
+    /// Auto Layout breaks the tie on its own.
+    ///
+    /// 251 cannot tie with anything this migration declares, and it is still
+    /// above every stack's own 250 default - which is all a hug between
+    /// columns ever needed to beat.
+    static let columnHug = NSLayoutConstraint.Priority(251)
 }
 
 // MARK: - Gauges (§6.8)
