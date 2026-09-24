@@ -25,11 +25,14 @@ enum GmailSettingsViewSelfTest {
         let savedCalendar = AppSettings.shared.googleCalendarEnabled
         let savedStore = GoogleAccountStore.shared
         let savedOverride = GoogleOAuthClientStore.shared.override
+        let savedHealthTransport = GoogleCalendarHealthCheck.shared.transport
         defer {
             ThemeManager.shared.setTheme(savedTheme)
             AppSettings.shared.googleCalendarEnabled = savedCalendar
             GoogleAccountStore.shared = savedStore
             GoogleOAuthClientStore.shared.override = savedOverride
+            GoogleCalendarHealthCheck.shared.transport = savedHealthTransport
+            GoogleCalendarHealthCheck.shared.debugReset()
         }
 
         var failures: [String] = []
@@ -46,6 +49,11 @@ enum GmailSettingsViewSelfTest {
         checkTheRevealedHalfCommitsToo(check)
         checkBothRegistersPaintLegibleText(check)
         checkNothingHereCapsTheWindow(check)
+        checkTheHealthLineIsSilentUntilChecked(check)
+        checkASuccessfulReadSaysSo(check)
+        checkAnAPIDisabledReadShowsGooglesOwnErrorAndItsLink(check)
+        checkTestConnectionReachesTheRealCheck(check)
+        checkTheHealthLineIsLegibleInBothRegisters(check)
 
         if failures.isEmpty {
             print("[GmailSettingsViewSelfTest] all checks passed")
@@ -509,6 +517,239 @@ enum GmailSettingsViewSelfTest {
                     check(ratio >= 4.5,
                           "\(row.slot.rawValue)'s status text is \(String(format: "%.2f", ratio)):1 "
                           + "against \(theme.id)'s card surface - the floor is 4.5")
+                }
+            }
+        }
+    }
+
+
+    // MARK: 7 - the connection-health line
+    //
+    // `fm/grandline-google-calendar-connection-health`. The captain connected
+    // an account, this page said "calendar readable", and every read failed -
+    // with Google's most fixable error, which only appeared days later in the
+    // daily review card's fine print on another page. These five cases are
+    // about the real rendered row: that the verdict is there, that it is
+    // Google's own words rather than a summary, and that the fix-it link is a
+    // control a captain can actually press.
+
+    private static let apiDisabledMessage = GoogleAccountsSelfTest.apiDisabledMessage
+    private static let fixURLText = GoogleAccountsSelfTest.fixURLText
+
+    /// A row that has never been checked shows nothing, rather than a
+    /// permanent "unknown" line under every account.
+    private static func checkTheHealthLineIsSilentUntilChecked(_ check: (Bool, String) -> Void) {
+        GoogleOAuthClientStore.shared.override = .some(
+            GoogleOAuthConfiguration(clientID: clientID, clientSecret: nil))
+        GoogleCalendarHealthCheck.shared.transport = RefusingGoogleCalendarTransport()
+        withMountedSettings { settings, _, store in
+            GoogleCalendarHealthCheck.shared.debugReset()
+            try? store.save(record(email: "work@example.com"), for: .work)
+            settings.debugRefreshGmail()
+            guard let row = settings.debugGmailRows.first(where: { $0.slot == .work }) else {
+                check(false, "the work row should exist"); return
+            }
+            check(!row.debugHealthIsVisible,
+                  "an unchecked account shows no health line, got \"\(row.debugHealthText)\"")
+            // The affordance to ask is there even before there is an answer -
+            // that is the whole difference from the state the captain was in.
+            check(row.debugTestButtonIsVisible,
+                  "but a connected account always offers Test connection")
+
+            // And a *disconnected* row offers neither: there is nothing to
+            // test and nothing a verdict could be about.
+            guard let idle = settings.debugGmailRows.first(where: { $0.slot == .personal }) else {
+                check(false, "the personal row should exist"); return
+            }
+            check(!idle.debugTestButtonIsVisible,
+                  "a row with no account offers no connection to test")
+        }
+    }
+
+    private static func checkASuccessfulReadSaysSo(_ check: (Bool, String) -> Void) {
+        GoogleOAuthClientStore.shared.override = .some(
+            GoogleOAuthConfiguration(clientID: clientID, clientSecret: nil))
+        GoogleCalendarHealthCheck.shared.transport = RefusingGoogleCalendarTransport()
+        withMountedSettings { settings, _, store in
+            GoogleCalendarHealthCheck.shared.debugReset()
+            try? store.save(record(email: "work@example.com"), for: .work)
+            GoogleCalendarHealthCheck.shared.debugSet(.healthy(eventCount: 4), for: .work)
+            settings.debugRefreshGmail()
+            settings.view.layoutSubtreeIfNeeded()
+            guard let row = settings.debugGmailRows.first(where: { $0.slot == .work }) else {
+                check(false, "the work row should exist"); return
+            }
+            check(row.debugHealthIsVisible, "a checked account shows its verdict")
+            let text = row.debugHealthText
+            check(text.contains("read worked"),
+                  "a success says the read worked, got \"\(text)\"")
+            check(text.contains("4 events"),
+                  "and how much came back, got \"\(text)\"")
+            check(!row.debugFixButtonIsVisible,
+                  "a success offers no fix-it button - there is nothing to fix")
+            // The verdict is laid out, not merely stored: a health line with
+            // no height on screen is the same gap in a different place.
+            check(row.frame.height > 0, "and the row has real laid-out height")
+        }
+    }
+
+    /// The captain's exact failure, rendered.
+    private static func checkAnAPIDisabledReadShowsGooglesOwnErrorAndItsLink(
+        _ check: (Bool, String) -> Void) {
+        GoogleOAuthClientStore.shared.override = .some(
+            GoogleOAuthConfiguration(clientID: clientID, clientSecret: nil))
+        GoogleCalendarHealthCheck.shared.transport = RefusingGoogleCalendarTransport()
+        withMountedSettings { settings, _, store in
+            GoogleCalendarHealthCheck.shared.debugReset()
+            try? store.save(record(email: "work@example.com"), for: .work)
+            GoogleCalendarHealthCheck.shared.debugSet(
+                .failed(message: apiDisabledMessage, fixURL: URL(string: fixURLText)), for: .work)
+            settings.debugRefreshGmail()
+            settings.view.layoutSubtreeIfNeeded()
+            guard let row = settings.debugGmailRows.first(where: { $0.slot == .work }) else {
+                check(false, "the work row should exist"); return
+            }
+            check(row.debugHealthIsVisible, "a failed read is shown on the row itself")
+            let text = row.debugHealthText
+            // The claim the whole task is about: the *real* sentence, whole.
+            check(text.contains(apiDisabledMessage),
+                  "Google's own message must be rendered in full, not summarised - got "
+                  + "\"\(text)\"")
+            check(text.contains(fixURLText),
+                  "including the URL, so it is readable and copyable as text too")
+            check(row.debugFixButtonIsVisible, "and the fix-it page is offered as a button")
+            check(row.debugFixButtonTooltip == fixURLText,
+                  "whose tooltip names where it goes, got "
+                  + "\(row.debugFixButtonTooltip ?? "nil")")
+
+            // The button must be *wired by the page*, not only by this suite -
+            // gotcha (20)'s lesson, and the reason the handler is asserted
+            // present before it is swapped for a recorder.
+            check(row.onOpenFixURL != nil,
+                  "SettingsController must wire the fix-it handler, or the button is decoration")
+            var opened: URL?
+            row.onOpenFixURL = { opened = $0 }
+            row.debugPressFix()
+            check(opened?.absoluteString == fixURLText,
+                  "pressing it hands back Google's own URL, got \(opened?.absoluteString ?? "nil")")
+
+            // A failure with no URL must not grow a button to nowhere.
+            GoogleCalendarHealthCheck.shared.debugSet(
+                .failed(message: "Request had invalid authentication credentials.", fixURL: nil),
+                for: .work)
+            settings.debugRefreshGmail()
+            check(!row.debugFixButtonIsVisible,
+                  "a message with no link offers no button")
+            check(row.debugHealthText.contains("invalid authentication credentials"),
+                  "but still says exactly what Google said")
+
+            // And the line *above* must stop claiming the calendar is
+            // readable. A green "calendar readable" over a red "read failed"
+            // is the captain's original complaint moved one line up.
+            GoogleCalendarHealthCheck.shared.debugSet(
+                .failed(message: apiDisabledMessage, fixURL: URL(string: fixURLText)), for: .work)
+            settings.debugRefreshGmail()
+            check(!row.debugStatusText.contains("calendar readable"),
+                  "a failed read must retract the \"calendar readable\" claim, got "
+                  + "\"\(row.debugStatusText)\"")
+            check(row.debugStatusText.contains("scope granted"),
+                  "and say the part that is still true instead, got "
+                  + "\"\(row.debugStatusText)\"")
+            let theme = ThemeManager.shared.theme
+            let good = HelmContrast.legibleTintedText(
+                tintHex: HelmTint.good.hex(in: theme),
+                over: HelmTheme.nsColor(theme.chromeBackgroundHex), theme: theme)
+            // Compared element-wise: `HelmContrast.ratio(_:_:) < 1.01` is a
+            // *luminance* comparison and would call two different hues equal
+            // (AGENTS.md).
+            check(HelmContrast.components(row.debugStatusColor ?? .black)
+                  != HelmContrast.components(good),
+                  "and must not still be painted in the success green")
+
+            // The healthy case is the control: the green claim survives when
+            // the read really did work, or this check proves nothing.
+            GoogleCalendarHealthCheck.shared.debugSet(.healthy(eventCount: 1), for: .work)
+            settings.debugRefreshGmail()
+            check(row.debugStatusText.contains("calendar readable"),
+                  "a working account still reads as readable, got "
+                  + "\"\(row.debugStatusText)\"")
+            check(HelmContrast.components(row.debugStatusColor ?? .black)
+                  == HelmContrast.components(good),
+                  "in the success green")
+        }
+    }
+
+    /// The Test button reaches the real check, through the real control.
+    ///
+    /// A hook that called the controller's method would pass with the button
+    /// unwired, which is how two rows in this app shipped dead (gotcha (20)).
+    private static func checkTestConnectionReachesTheRealCheck(_ check: (Bool, String) -> Void) {
+        GoogleOAuthClientStore.shared.override = .some(
+            GoogleOAuthConfiguration(clientID: clientID, clientSecret: nil))
+        let transport = GoogleAccountsSelfTest.StubCalendarTransport()
+        transport.payload = GoogleAccountsSelfTest.apiDisabledPayload
+        GoogleCalendarHealthCheck.shared.transport = transport
+        withMountedSettings { settings, _, store in
+            GoogleCalendarHealthCheck.shared.debugReset()
+            try? store.save(record(email: "work@example.com"), for: .work)
+            settings.debugRefreshGmail()
+            guard let row = settings.debugGmailRows.first(where: { $0.slot == .work }) else {
+                check(false, "the work row should exist"); return
+            }
+            let before = transport.calls.count
+            row.debugPressTest()
+            GoogleAccountsSelfTest.pump { transport.calls.count > before }
+            check(transport.calls.count == before + 1,
+                  "pressing Test connection issues one real read, got "
+                  + "\(transport.calls.count - before)")
+            // Not `debugHealthIsVisible`: the `.checking` state is visible
+            // too, so waiting on visibility would read the in-flight line and
+            // pass or fail on a race.
+            GoogleAccountsSelfTest.pump { row.debugHealth != .checking }
+            check(row.debugHealthText.contains(apiDisabledMessage),
+                  "and the row repaints with what Google actually said, got "
+                  + "\"\(row.debugHealthText)\"")
+        }
+    }
+
+    /// Both registers, both verdicts. A `HelmTint` hue is safe as a fill and
+    /// is not automatically safe as text, and a failure the captain cannot
+    /// read is the defect this line exists to remove.
+    private static func checkTheHealthLineIsLegibleInBothRegisters(
+        _ check: (Bool, String) -> Void) {
+        GoogleOAuthClientStore.shared.override = .some(
+            GoogleOAuthConfiguration(clientID: clientID, clientSecret: nil))
+        GoogleCalendarHealthCheck.shared.transport = RefusingGoogleCalendarTransport()
+        withMountedSettings { settings, _, store in
+            GoogleCalendarHealthCheck.shared.debugReset()
+            try? store.save(record(email: "work@example.com"), for: .work)
+            try? store.save(record(email: "me@example.com"), for: .personal)
+            let daylight = HelmTheme.allThemes.first { $0.isDaylight } ?? ThemeManager.shared.theme
+            let legacy = HelmTheme.allThemes.first { !$0.isDaylight } ?? ThemeManager.shared.theme
+            let verdicts: [GoogleCalendarHealth] = [
+                .healthy(eventCount: 2),
+                .failed(message: apiDisabledMessage, fixURL: URL(string: fixURLText)),
+            ]
+            for theme in [daylight, legacy] {
+                ThemeManager.shared.setTheme(theme)
+                let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
+                for verdict in verdicts {
+                    for slot in GoogleAccountSlot.allCases {
+                        GoogleCalendarHealthCheck.shared.debugSet(verdict, for: slot)
+                    }
+                    settings.debugRefreshGmail()
+                    settings.view.layoutSubtreeIfNeeded()
+                    for row in settings.debugGmailRows {
+                        guard let painted = row.debugHealthColor else {
+                            check(false, "\(row.slot.rawValue) has no painted health colour")
+                            continue
+                        }
+                        let ratio = HelmContrast.ratio(painted, surface)
+                        check(ratio >= 4.5,
+                              "\(row.slot.rawValue)'s health line is "
+                              + "\(String(format: "%.2f", ratio)):1 against \(theme.id)'s card "
+                              + "surface for \(verdict) - the floor is 4.5")
+                    }
                 }
             }
         }

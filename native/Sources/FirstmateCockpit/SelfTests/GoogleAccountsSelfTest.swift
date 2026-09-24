@@ -44,6 +44,10 @@ enum GoogleAccountsSelfTest {
         checkTheTwoSourceMerge(check)
         checkReadOnlyByScope(check)
         checkStatusLines(check)
+        checkTheAPIFailureEnvelope(check)
+        checkTheHealthVerdict(check)
+        checkTheHealthCheckEndToEnd(check)
+        checkTheDailyReviewCardIsUnchanged(check)
 
         if failures.isEmpty {
             print("[GoogleAccountsSelfTest] all checks passed")
@@ -652,6 +656,236 @@ enum GoogleAccountsSelfTest {
         check(configuration.looksWellFormed, "the fixture id should itself be well formed")
         check(!GoogleOAuthConfiguration(clientID: "", clientSecret: nil).looksWellFormed,
               "and an empty one should not")
+    }
+
+
+    // MARK: 13 - connection health (fm/grandline-google-calendar-connection-health)
+
+    /// Google's real body for the captain's own failure.
+    ///
+    /// Copied from the message the daily review card printed, with the project
+    /// number replaced - the point of the whole task is that *this exact
+    /// sentence* reaches the Settings page intact, so a paraphrased fixture
+    /// would test the wrong thing.
+    static let apiDisabledMessage =
+        "Google Calendar API has not been used in project 123456789 before or it is disabled. "
+        + "Enable it by visiting https://console.developers.google.com/apis/api/"
+        + "calendar-json.googleapis.com/overview?project=123456789 then retry. If you enabled "
+        + "this API recently, wait a few minutes for the action to propagate to our systems "
+        + "and retry."
+
+    static var apiDisabledPayload: Data {
+        let object: [String: Any] = ["error": [
+            "code": 403, "status": "PERMISSION_DENIED", "message": apiDisabledMessage,
+        ]]
+        return (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
+    }
+
+    static let fixURLText = "https://console.developers.google.com/apis/api/"
+        + "calendar-json.googleapis.com/overview?project=123456789"
+
+    static func eventsPayload(count: Int) -> Data {
+        let items: [[String: Any]] = (0..<count).map { index in
+            ["summary": "Meeting \(index)",
+             "start": ["dateTime": "2026-09-24T10:0\(index):00Z"]]
+        }
+        return (try? JSONSerialization.data(withJSONObject: ["items": items])) ?? Data()
+    }
+
+    private static func checkTheAPIFailureEnvelope(_ check: (Bool, String) -> Void) {
+        // The fixture's own discriminating power first: the sentence really
+        // does carry a URL, or every extraction below passes vacuously.
+        check(apiDisabledMessage.contains("https://"),
+              "the fixture must carry a URL, or the extraction checks are vacuous")
+
+        guard let failure = GoogleAPIFailure.from(apiDisabledPayload) else {
+            check(false, "an error envelope should produce a GoogleAPIFailure")
+            return
+        }
+        check(failure.message == apiDisabledMessage,
+              "Google's sentence must survive byte for byte - a paraphrase is what hid it, "
+              + "got \(failure.message)")
+        check(failure.fixURL?.absoluteString == fixURLText,
+              "the fix-it URL should be pulled out whole, got "
+              + "\(failure.fixURL?.absoluteString ?? "nil")")
+
+        check(GoogleAPIFailure.from(eventsPayload(count: 1)) == nil,
+              "a successful body carries no error envelope")
+
+        // A message with no URL still stands on its own, and must not invent
+        // a link to nowhere.
+        let plain = (try? JSONSerialization.data(withJSONObject: [
+            "error": ["message": "Request had invalid authentication credentials."],
+        ])) ?? Data()
+        check(GoogleAPIFailure.from(plain)?.fixURL == nil,
+              "a message with no URL must not produce one")
+        check(GoogleAPIFailure.from(plain)?.message == "Request had invalid authentication credentials.",
+              "and must still carry Google's own words")
+
+        // Trailing sentence punctuation welded onto a URL is a 404 that looks
+        // like this app's fault.
+        check(GoogleAPIFailure.firstURL(in: "see https://example.com/enable.")?.absoluteString
+              == "https://example.com/enable",
+              "a trailing full stop must not become part of the URL")
+        check(GoogleAPIFailure.firstURL(in: "see (https://example.com/enable)")?.absoluteString
+              == "https://example.com/enable",
+              "nor a closing bracket")
+        check(GoogleAPIFailure.firstURL(in: "nothing clickable here") == nil,
+              "and text with no URL yields none")
+    }
+
+    private static func checkTheHealthVerdict(_ check: (Bool, String) -> Void) {
+        let day = Date()
+
+        switch GoogleCalendarHealthCheck.verdict(for: apiDisabledPayload, day: day) {
+        case .failed(let message, let url):
+            check(message == apiDisabledMessage,
+                  "the verdict carries Google's real sentence, got \(message)")
+            check(url?.absoluteString == fixURLText,
+                  "and its fix-it link, got \(url?.absoluteString ?? "nil")")
+        default:
+            check(false, "an API-disabled body must be a failure, not a healthy read")
+        }
+
+        check(GoogleCalendarHealthCheck.verdict(for: eventsPayload(count: 3), day: day)
+              == .healthy(eventCount: 3),
+              "three events is a healthy read of three events")
+        // GL-14 at the happy end: an empty day is a *successful read*, and the
+        // line must say so rather than reading like a gap.
+        check(GoogleCalendarHealthCheck.verdict(for: eventsPayload(count: 0), day: day)
+              == .healthy(eventCount: 0),
+              "an empty day is still a successful read")
+        let empty = GmailAccountRow.healthLine(for: .healthy(eventCount: 0))
+        check(empty.contains("read worked"),
+              "and the line says the read worked before it says there is nothing on, got \(empty)")
+
+        switch GoogleCalendarHealthCheck.verdict(for: Data("not json".utf8), day: day) {
+        case .failed(let message, let url):
+            check(message.contains("not JSON"),
+                  "a non-JSON body falls back to the parser's own reason, got \(message)")
+            check(url == nil, "and offers no link it cannot stand behind")
+        default:
+            check(false, "a non-JSON body must be a failure")
+        }
+
+        let line = GmailAccountRow.healthLine(for: .failed(message: apiDisabledMessage,
+                                                           fixURL: URL(string: fixURLText)))
+        check(line.contains(apiDisabledMessage),
+              "the rendered line quotes Google in full rather than summarising it")
+        check(line.contains(fixURLText),
+              "which includes the URL, so it is readable even with the button off screen")
+    }
+
+    /// The whole check, driven end to end with a stub transport: the shape
+    /// that actually runs when the captain presses Test connection.
+    private static func checkTheHealthCheckEndToEnd(_ check: (Bool, String) -> Void) {
+        let savedStore = GoogleAccountStore.shared
+        let savedTransport = GoogleCalendarHealthCheck.shared.transport
+        let savedSignInTransport = GoogleSignInController.shared.transport
+        defer {
+            GoogleAccountStore.shared = savedStore
+            GoogleCalendarHealthCheck.shared.transport = savedTransport
+            GoogleSignInController.shared.transport = savedSignInTransport
+            GoogleCalendarHealthCheck.shared.debugReset()
+        }
+        let store = InMemoryGoogleAccountStore()
+        GoogleAccountStore.shared = store
+        // A fresh token, so `accessToken` short-circuits and no refresh is
+        // attempted - this case is about the calendar read, not the token.
+        try? store.save(record(), for: .work)
+        let transport = StubCalendarTransport()
+        GoogleCalendarHealthCheck.shared.transport = transport
+        GoogleCalendarHealthCheck.shared.debugReset()
+
+        transport.payload = apiDisabledPayload
+        var states: [GoogleCalendarHealth] = []
+        GoogleCalendarHealthCheck.shared.check(slot: .work) { states.append($0) }
+        pump { states.count >= 2 }
+        check(states.first == .checking,
+              "the row is told it is checking before the request lands, got "
+              + "\(String(describing: states.first))")
+        if case .failed(let message, let url) = states.last {
+            check(message == apiDisabledMessage, "and then Google's real sentence")
+            check(url?.absoluteString == fixURLText, "with its fix-it link")
+        } else {
+            check(false, "the settled state should be a failure, got "
+                  + "\(String(describing: states.last))")
+        }
+        check(GoogleCalendarHealthCheck.shared.result(for: .work) == states.last,
+              "and the verdict is remembered for the row to repaint from")
+        check(transport.calls.count == 1, "exactly one request, got \(transport.calls.count)")
+        check(transport.calls.first?.url.path.hasSuffix("/events") == true,
+              "and it is the same events read the daily review issues, got "
+              + "\(transport.calls.first?.url.path ?? "none")")
+
+        // The other slot is untouched - the two accounts are independent, and
+        // a shared verdict cache is the obvious way to break that.
+        check(GoogleCalendarHealthCheck.shared.result(for: .personal) == .notChecked,
+              "checking one slot must not label the other")
+
+        transport.payload = eventsPayload(count: 2)
+        var healthy: GoogleCalendarHealth?
+        GoogleCalendarHealthCheck.shared.check(slot: .work) { healthy = $0 }
+        pump { healthy == .healthy(eventCount: 2) }
+        check(healthy == .healthy(eventCount: 2),
+              "a re-check replaces the failure with the real result, got "
+              + "\(String(describing: healthy))")
+
+        // Forgetting is what a disconnect does: a verdict about an account
+        // that is gone is a lie about the row it sits under.
+        GoogleCalendarHealthCheck.shared.forget(.work)
+        check(GoogleCalendarHealthCheck.shared.result(for: .work) == .notChecked,
+              "forget drops the verdict")
+
+        // Signed in, no calendar scope: a real refusal that is not a network
+        // failure, and must not be reported as one.
+        try? store.save(record(scopes: [GoogleOAuth.emailScope]), for: .personal)
+        var scoped: GoogleCalendarHealth?
+        GoogleCalendarHealthCheck.shared.check(slot: .personal) { scoped = $0 }
+        pump { scoped != nil }
+        if case .failed(let message, _) = scoped {
+            check(message.contains("never granted calendar access"),
+                  "a missing scope says so rather than blaming the network, got \(message)")
+        } else {
+            check(false, "a scope-less account should fail the check, got "
+                  + "\(String(describing: scoped))")
+        }
+        check(transport.calls.count == 2,
+              "and no request is issued for it - there is nothing to ask, got "
+              + "\(transport.calls.count)")
+    }
+
+    /// The daily review's own reporting, unchanged.
+    ///
+    /// This addition is additive by requirement: the card keeps saying what it
+    /// said. `parse` is the function the card's text comes from, so asserting
+    /// its output on the very payload the new check reads is the direct claim
+    /// - and it is the function `GoogleAPIFailure` was threaded through, so it
+    /// is exactly where a regression would land.
+    private static func checkTheDailyReviewCardIsUnchanged(_ check: (Bool, String) -> Void) {
+        let day = Date()
+        let parsed = GoogleDailyReviewCalendar.parse(apiDisabledPayload, day: day)
+        check(parsed.unavailableReason == apiDisabledMessage,
+              "the card still reports Google's message verbatim and nothing else, got "
+              + "\(parsed.unavailableReason ?? "available")")
+
+        // And the `refresh` path's own sentence around it, which is what the
+        // card actually prints.
+        let source = GoogleDailyReviewCalendar(slot: .work)
+        let savedStore = GoogleAccountStore.shared
+        defer { GoogleAccountStore.shared = savedStore }
+        let store = InMemoryGoogleAccountStore()
+        GoogleAccountStore.shared = store
+        try? store.save(record(), for: .work)
+        let transport = StubCalendarTransport()
+        transport.payload = apiDisabledPayload
+        source.transport = transport
+        var done = false
+        source.refresh(for: day) { _ in done = true }
+        pump { done }
+        let reason = source.events(on: day).unavailableReason ?? ""
+        check(reason == "Work mail\u{2019}s calendar could not be read - \(apiDisabledMessage)",
+              "the card's own sentence is byte-identical to what it was, got \(reason)")
     }
 
     /// A fixed answer, for the merge cases.

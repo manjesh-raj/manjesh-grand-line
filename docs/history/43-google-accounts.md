@@ -155,3 +155,71 @@ The two fixture values are asserted to differ first, so a control showing the wr
 Independence is asserted in both directions, and the store is read at the end.
 Four injections, each confirmed to fail by name: defaulting to revealed fails 21 checks; dropping `plainField` from `editableFields` fails `typing into the revealed half and clicking away must save it`; copying from the incoming half on toggle fails `toggling mid-edit must carry the typed text across`; and reading a stale `stringValue` instead of the editor fails nothing, which is how the `currentEditor()` read came to be dropped as a check that could not fail.
 Full suite before: 199 passed / 0 failed. After: see the PR.
+
+## Connecting an account now says whether the calendar actually reads (`fm/grandline-google-calendar-connection-health`)
+
+The captain connected a Google account under Settings › Google Accounts.
+OAuth succeeded, the row said "calendar readable", and every actual calendar read failed.
+The reason was real, specific and one click away from being fixed: the Google Cloud project behind the client ID had the Calendar API switched off, and Google says so in as many words - "Google Calendar API has not been used in project N before or it is disabled. Enable it by visiting <url> then retry."
+
+That sentence was already being captured.
+`GoogleCalendarSource.parse` has always carried Google's own `error.message` straight through, and `refresh` has always stored it in `lastFailure`.
+The only place it ever surfaced was the daily review card's fine print, on the Overview page, days later - nowhere near the account it was about, and with the URL rendered as inert text.
+
+So the gap was never the error handling.
+It was that nothing checked, and nothing reported, at the point where the captain was actually asking the question.
+
+### What was added
+
+**`GoogleCalendarHealthCheck`**, at the bottom of `GoogleCalendarSource.swift`.
+One shared instance (GL-23), holding one verdict per slot.
+It builds no second request machinery: the URL is `GoogleDailyReviewCalendar.eventsURL`, the transport is the same `GoogleCalendarTransport`, the token comes from the same `GoogleSignInController`, and the body goes through the same `GoogleDailyReviewCalendar.parse`.
+That is deliberate rather than tidy - it is what makes "the check passed" and "the daily review can read this calendar" one claim instead of two.
+
+**`GoogleAPIFailure`**, which keeps Google's error envelope whole - the message *and* the first `https://` URL inside it.
+`parse` was threaded through it, and its `.unavailable` message is byte-identical to what it was, because the daily review card's own reporting had to stay exactly as it is.
+The URL is pulled out of the message text rather than out of the structured `details` array: Google's `Help` detail is not present on every error shape, and the sentence is.
+Trailing sentence punctuation is stripped, because a captain clicking a link with a `.` welded on lands on a 404 that looks like this app's fault.
+
+**A health line on `GmailAccountRow`**, underneath the account.
+It renders Google's sentence verbatim when a read fails - never a summary, since paraphrasing is exactly what kept the message hidden - and offers the fix-it URL as a real `HelmButton`.
+A success says the read worked *and* how much came back, including zero: GL-14 at the happy end, where "no events today" without "the read worked" is the same ambiguity in the other direction.
+An account that has never been checked shows nothing, rather than a permanent "unknown" line the eye learns to skip.
+
+**When it runs**: once right after a successful connect, once on arriving at the page for an account with no verdict yet, and on demand from a "Test connection" button that is always there for a connected account.
+Not on every repaint - `result(for:)` is `.notChecked` only until the first answer lands, so this is one request per account per launch plus whatever the captain asks for.
+
+### The thing the off-screen render caught
+
+The first working version still painted the row's own status line as a green "work@example.com · calendar readable" **directly above** a red "Calendar read failed".
+Every assertion passed; the contradiction was only visible in a real render.
+
+That green claim is the captain's original complaint moved one line up, so it is retracted now: a connected account whose last read failed reads "· calendar scope granted" in the muted register.
+The scope half was the only part that was ever true.
+`GmailAccountRow`'s own header already warned against collapsing "connected" into "usable" - this is the same rule one level further in, where the record says one thing and the network says another.
+
+### What is deliberately unchanged
+
+The daily review card's "not available - see below" reporting.
+It is the review's own statement about the review, and this is additive: a second, earlier, clearer place the same real failure is surfaced.
+`checkTheDailyReviewCardIsUnchanged` asserts both halves - `parse`'s message and the sentence `refresh` wraps it in - byte for byte.
+
+### Verification
+
+`GoogleAccountsSelfTest` (pure, blocking lane) gained four cases: the error envelope and URL extraction, the verdict for each Google reply shape, the whole check driven end to end through a stub transport, and the daily-review-unchanged guard.
+`GmailSettingsViewSelfTest` (window-backed) gained five: the silent unchecked state, a rendered success, the captain's exact API-disabled failure with its link, the Test button reaching the real check through the real control, and contrast in both registers for both verdicts.
+
+The Test and fix-it buttons are driven with `performClick` rather than by calling the handler, and the suite asserts `onOpenFixURL != nil` *before* swapping it for a recorder - gotcha (20)'s lesson, since two rows in this app have shipped dead under green checks that called the helper instead of the control.
+
+Five injections, each confirmed to fail by name:
+
+- paraphrasing the failure message instead of quoting Google - 4 failures.
+- dropping `onOpenFixURL` and `onTest` in `SettingsController` - 3 failures, including "the button is decoration".
+- returning `nil` from the fix-URL extraction - 3 failures.
+- collapsing `parse`'s error branch to a generic string - 3 failures, two of them the daily-review guard.
+- keeping the green "calendar readable" over a failed read - 3 failures.
+
+`main.swift`'s `#if FM_SELFTESTS` block installs `RefusingGoogleCalendarTransport`.
+Without it, any suite that plants a fixture record would issue a live HTTPS request from CI carrying a fabricated bearer token, because mounting a `SettingsController` now builds a page that runs a real read.
+
+Full suite before: 207 passed / 0 failed / 1 skipped. After: see the PR.
