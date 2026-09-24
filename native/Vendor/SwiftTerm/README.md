@@ -116,7 +116,7 @@ and adds the missing symmetric case: when `rowStart > 0`, the region is extended
 upward by one more cell, mirroring the existing downward extension exactly. The two
 pre-existing behaviors (extend down when `rowEnd` isn't the last row; extend fully to
 `y = 0` when it is) are unchanged - covered by
-`native/Sources/FirstmateCockpit/TerminalWrapRedrawSelfTest.swift`
+`native/Sources/GrandLine/TerminalWrapRedrawSelfTest.swift`
 (`FM_RUN_TERMINAL_WRAP_REDRAW_TESTS=1`), which also covers the new upward extension
 and the exact mid-screen wrap shape (`rowStart`/`rowEnd` both strictly interior) from
 the captain's report.

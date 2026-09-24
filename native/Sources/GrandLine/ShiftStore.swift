@@ -1,0 +1,1148 @@
+// Grand Line - native macOS app.
+//
+// Shift's local data layer (cockpit-shift-foundation, phase 1). Backed by
+// batched YAML files under a captain-configurable root - see AGENTS.md's
+// "Shift" section for the full directory layout and which phases still own
+// Git sync / creation / editing / search. This phase's store only needs to:
+// load `tasks/active.yaml` and `follow-ups/follow-ups.yaml` into memory,
+// persist a status change back to `active.yaml`, and move a task into the
+// correct month's `tasks/completed/<YYYY-MM>.yaml` file the moment it's
+// marked completed - not the fuller CRUD a create/edit phase will add.
+//
+// Follows `HostStore.swift`'s established shape (in-memory array backed by a
+// file, `FM_HOSTS_FILE`-style env override, observer list) and
+// `DotfilesData.swift`'s "shell out / read real files, nothing fabricated"
+// rule - just against a directory tree instead of a single JSON file.
+
+import Foundation
+import Yaml
+
+final class ShiftStore {
+
+    private(set) var activeTasks: [ShiftTask] = [] { didSet { noteMutation() } }
+    private(set) var followUps: [ShiftFollowUp] = [] { didSet { noteMutation() } }
+    private(set) var projects: [ShiftProject] = [] { didSet { noteMutation() } }
+    private(set) var settings: ShiftSettings = ShiftSettings() { didSet { noteMutation() } }
+
+    // MARK: M2 - the reload staleness guard
+    //
+    // `reloadAllAsync` parses off-main and applies on main, which opens a
+    // window the synchronous `reloadAll` it replaced never had: a write that
+    // lands between the file read and the apply (a menu-bar quick-add, an
+    // ⌥Space capture, an editor Save racing the `viewWillAppear` reload - and
+    // ⌘N switches to Shift first, arming exactly that reload) was silently
+    // reverted in memory, and the next `persist` wrote the pre-edit arrays
+    // back to disk. On a store that syncs to git, that is real data loss.
+    //
+    // The counter is bumped by the `didSet`s above rather than by each
+    // mutating method, so a method added later cannot forget it. `apply(_:)`
+    // suppresses it - a reload landing is not a mutation to protect against.
+
+    /// Bumped on every in-memory mutation that did not come from a reload.
+    private var mutationGeneration = 0
+    /// True only for the duration of `apply(_:)`.
+    private var isApplyingReload = false
+
+    private func noteMutation() {
+        guard !isApplyingReload else { return }
+        mutationGeneration &+= 1
+    }
+
+    private var changeHandlers: [() -> Void] = []
+    func observe(_ handler: @escaping () -> Void) { changeHandlers.append(handler) }
+
+    // MARK: Failed-load state (GL-01)
+
+    /// Paths whose *last read* found a real YAML parse failure - a file that
+    /// exists and has content this store could not understand.
+    ///
+    /// This is the load-bearing half of GL-01 for Shift. Before it, a single
+    /// hand-edited syntax error in `active.yaml` parsed as `[]`, `reloadAll`
+    /// kept that silently, the next `addTask` wrote a one-task file over
+    /// every real task, and the debounced `ShiftGitSync` committed and pushed
+    /// the wipe to GitHub - git history was the only recovery. While a path
+    /// is in here, this store refuses every write to it *and* suppresses
+    /// `markDirty()` entirely, so nothing local is overwritten and nothing is
+    /// propagated off-machine. Clearing it takes a successful re-read: fix
+    /// the file (the `.corrupt-<ts>` copy is right beside it) and reload.
+    private(set) var loadFailurePaths: Set<String> = []
+
+    /// True while any file this store owns is unreadable - the app should
+    /// treat Shift as read-only until it is resolved.
+    var isInFailedLoadState: Bool { !loadFailurePaths.isEmpty }
+
+    /// Records a `.parseFailed` read: backs the file up once (so a captain
+    /// has a copy even if they then hand-fix the original into something
+    /// else) and marks the path as unwritable.
+    private func noteLoadFailure(_ path: String) {
+        if loadFailurePaths.insert(path).inserted {
+            StoreLoadFailure.backUp(URL(fileURLWithPath: path))
+        }
+    }
+
+    /// Clears a path's failed state after a successful read of it.
+    private func noteLoadOK(_ path: String) {
+        loadFailurePaths.remove(path)
+    }
+
+    /// Reads a list file, recording a parse failure rather than silently
+    /// returning `[]` for it. Every read whose result can later be written
+    /// back to the same file goes through here.
+    private func readListGuarded(path: String, key: String) -> [Yaml] {
+        switch ShiftYaml.readListChecked(path: path, key: key) {
+        case .ok(let items):
+            noteLoadOK(path)
+            return items
+        case .missing:
+            noteLoadOK(path)
+            return []
+        case .parseFailed:
+            noteLoadFailure(path)
+            return []
+        }
+    }
+
+    /// The one write choke point: refuses to write a file this store could
+    /// not read. Returns whether the write actually happened, so a caller
+    /// that needs to know (a mutation that should not then announce success)
+    /// can check.
+    @discardableResult
+    private func writeListGuarded(path: String, key: String, items: [Yaml]) -> Bool {
+        guard !loadFailurePaths.contains(path) else {
+            AppLog.store.error("""
+                Shift: refusing to write \(path, privacy: .public) - its last read failed to \
+                parse (GL-01). Fix or remove the file, then reload.
+                """)
+            return false
+        }
+        do {
+            try ShiftYaml.writeList(path: path, key: key, items: items)
+            PersistenceFailureReporter.reportSuccess()
+            return true
+        } catch {
+            // GL-10: a failed write used to be a bare NSLog nobody would ever
+            // read. It now reaches the Health card and the Notification Center,
+            // because the alternative is a UI that confirms a save which never
+            // landed and data that is simply gone at next launch.
+            PersistenceFailureReporter.report(what: shortName(of: path), path: path, error: error)
+            return false
+        }
+    }
+
+    /// The mapping-file equivalent of `writeListGuarded` - same refuse-if-
+    /// unreadable rule (GL-01), same failure reporting (GL-10). Before this,
+    /// `settings.yaml` was written with a bare `try?` in two places.
+    @discardableResult
+    private func writeMappingGuarded(path: String, doc: Yaml) -> Bool {
+        guard !loadFailurePaths.contains(path) else {
+            AppLog.store.error("""
+                Shift: refusing to write \(path, privacy: .public) - its last read failed to \
+                parse (GL-01). Fix or remove the file, then reload.
+                """)
+            return false
+        }
+        do {
+            try ShiftYaml.writeMapping(path: path, doc: doc)
+            PersistenceFailureReporter.reportSuccess()
+            return true
+        } catch {
+            PersistenceFailureReporter.report(what: shortName(of: path), path: path, error: error)
+            return false
+        }
+    }
+
+    /// "task list", "follow-ups", "settings" - what the captain would call the
+    /// thing that failed to save, rather than an absolute path they have never
+    /// seen. The Notification Center subtext is the reason this exists.
+    private func shortName(of path: String) -> String {
+        let name = (path as NSString).lastPathComponent
+        switch name {
+        case "active.yaml": return "task list"
+        case "follow-ups.yaml": return "follow-ups"
+        case "projects.yaml": return "projects"
+        case "settings.yaml": return "Tasks settings"
+        case "notes.yaml": return "notes"
+        default:
+            return name.hasSuffix(".yaml") && path.contains("/activity/")
+                ? "activity log"
+                : (name.hasSuffix(".yaml") && path.contains("/completed/") ? "completed tasks" : name)
+        }
+    }
+
+    let root: URL
+
+    /// `nil` when `FM_SHIFT_DIR` explicitly overrides `root` (every self-test
+    /// in this file, and any captain who wants a plain local-only folder with
+    /// no git backing at all) - in that case this store never shells out to
+    /// git or touches the network, matching phases 1-3's exact behavior.
+    /// Otherwise (the production default) this is `ShiftGitSync.shared`, and
+    /// every persisted mutation below calls its `markDirty()` after writing -
+    /// see `notify()`.
+    let gitSync: ShiftGitSync?
+
+    init() {
+        if let override = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"], !override.isEmpty {
+            root = URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
+            gitSync = nil
+        } else {
+            let sync = ShiftGitSync.shared
+            sync.start()
+            root = sync.dataRoot
+            gitSync = sync
+        }
+        reloadAll()
+    }
+
+    // MARK: Location
+
+    /// `personal-tasks/` inside a local clone of the captain's `manjesh-
+    /// config` GitHub repo (`ShiftGitSync.shared.dataRoot`), overridable via
+    /// `FM_SHIFT_DIR` - same convention as `HostStore`'s `FM_HOSTS_FILE`, and
+    /// unchanged from phases 1-3's own `FM_SHIFT_DIR` in that setting it still
+    /// points straight at the data root and bypasses everything else,
+    /// including git sync entirely (see `gitSync`'s doc comment above). What
+    /// changed in this phase (cockpit-shift-git-sync) is only the *default*
+    /// when `FM_SHIFT_DIR` is unset: phases 1-3 defaulted to a bare, non-git
+    /// `~/Library/Application Support/GrandLine/shift/` folder; that
+    /// folder's real data (if any) is migrated automatically into the new
+    /// git-backed location the first time `ShiftGitSync` runs - see
+    /// `ShiftGitSync.migrateLegacyDataIfNeeded()`. The local git clone itself
+    /// lives at `ShiftGitSync.resolveDefaultWorkingTree()`, overridable via
+    /// `FM_SHIFT_GIT_CLONE_PATH`; the remote it clones/pulls/pushes is
+    /// `ShiftGitSync.resolveDefaultRemoteURL()`, overridable via
+    /// `FM_SHIFT_REMOTE_URL` (how this phase's own verification pointed a
+    /// whole test instance of the app at a disposable local bare repo instead
+    /// of the captain's real `manjesh-config`).
+    static func resolveRoot() -> URL {
+        if let override = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"], !override.isEmpty {
+            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
+        }
+        return ShiftGitSync.shared.dataRoot
+    }
+
+    private var activeTasksPath: String { root.appendingPathComponent("tasks/active.yaml").path }
+    private func completedPath(forMonth month: String) -> String { root.appendingPathComponent("tasks/completed/\(month).yaml").path }
+    private var followUpsPath: String { root.appendingPathComponent("follow-ups/follow-ups.yaml").path }
+    private var projectsPath: String { root.appendingPathComponent("projects/projects.yaml").path }
+    private var notesPath: String { root.appendingPathComponent("notes/notes.yaml").path }
+    private func activityPath(forMonth month: String) -> String { root.appendingPathComponent("activity/\(month).yaml").path }
+    private var settingsPath: String { root.appendingPathComponent("settings.yaml").path }
+
+    /// One attachment per task (this pass's scope), named by the task's own
+    /// id so re-saving replaces rather than accumulates - never a second
+    /// file for the same id. Always `.png`: every image saved through
+    /// `ShiftImageAttachmentWell.normalizedPNGData` is already re-encoded as
+    /// PNG on the way in, regardless of the source format, so there's never
+    /// an ambiguous extension to track.
+    private var attachmentsDir: URL { root.appendingPathComponent("attachments", isDirectory: true) }
+    private func attachmentURL(forTaskID id: String) -> URL { attachmentsDir.appendingPathComponent("\(id).png") }
+
+    /// GL-P3: this decides which `completed/<YYYY-MM>.yaml` a task belongs to,
+    /// so it runs once per completed task whenever those files are walked.
+    private static let monthKeyFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM"
+        f.calendar = Calendar(identifier: .gregorian)
+        f.timeZone = TimeZone.current
+        return f
+    }()
+
+    private static func monthKey(for date: Date = Date()) -> String {
+        monthKeyFormatter.string(from: date)
+    }
+
+    // MARK: Load
+
+    /// Re-reads every file from disk into memory - the same read path a
+    /// relaunch would take, which is what makes "write, then reload, and
+    /// confirm the change survived" a real persistence check rather than
+    /// trusting the in-memory array a write call already mutated.
+    func reloadAll() {
+        apply(Self.parseAll(root: root))
+    }
+
+    /// P3 (`data/grand-line-e2e-audit/report.md`): the same reload, with the
+    /// **parse** off the main thread.
+    ///
+    /// `ShiftController.viewWillAppear` calls `reloadAll()` on every visit, and
+    /// that is four YAML files parsed synchronously on the main thread before
+    /// the page can draw - measured at 92ms for a steady-state revisit on a
+    /// debug build, which is ~11 dropped frames at 120Hz for a tab switch.
+    /// Reading and parsing is pure (`parseAll` touches no store state and no
+    /// UI); everything that mutates this store - including the first-run
+    /// settings scaffold write - stays on the main thread in `apply`, so this
+    /// is not a threading change to the store itself.
+    ///
+    /// `completion` runs on the main thread, after the results are applied.
+    func reloadAllAsync(completion: @escaping () -> Void) {
+        let root = self.root
+        let generation = mutationGeneration
+        DispatchQueue.global(qos: .userInitiated).async {
+            let parsed = Self.parseAll(root: root)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { completion(); return }
+                // M2: if anything mutated the store while we were parsing, this
+                // snapshot is already stale and applying it would revert the
+                // captain's edit. Two overlapping reloads also land here, and
+                // the queue is concurrent, so they can arrive out of order -
+                // the same check drops the older one.
+                if self.mutationGeneration == generation {
+                    self.apply(parsed)
+                } else {
+                    AppLog.store.debug("Tasks: dropped a stale async reload - the store changed while it was parsing.")
+                }
+                completion()
+            }
+        }
+    }
+
+    /// What a reload read off disk, before any of it has been applied.
+    ///
+    /// A value type on purpose: this is what crosses the queue boundary, and
+    /// it carries no reference to the store. It keeps each file's **outcome**,
+    /// not just its items, because GL-01's failure tracking (which is what
+    /// stops this store writing an empty list over a file it could not read)
+    /// has to distinguish "parsed, empty" from "could not parse" - and that
+    /// bookkeeping mutates store state, so it cannot happen off the main
+    /// thread.
+    struct LoadedState {
+        let activeTasks: Loaded<ShiftTask>
+        let followUps: Loaded<ShiftFollowUp>
+        let projects: Loaded<ShiftProject>
+        let settings: ShiftYaml.MappingRead
+    }
+
+    /// One file's parsed models plus whether reading it succeeded.
+    struct Loaded<T> {
+        let items: [T]
+        let failed: Bool
+    }
+
+    /// Pure: reads and parses, decides nothing, touches no store state. Safe
+    /// on any queue.
+    private static func parseAll(root: URL) -> LoadedState {
+        func read<T>(_ suffix: String, key: String, map: (Yaml) -> T?) -> Loaded<T> {
+            switch ShiftYaml.readListChecked(path: root.appendingPathComponent(suffix).path, key: key) {
+            case .ok(let items): return Loaded(items: items.compactMap(map), failed: false)
+            case .missing: return Loaded(items: [], failed: false)
+            case .parseFailed: return Loaded(items: [], failed: true)
+            }
+        }
+        return LoadedState(
+            activeTasks: read("tasks/active.yaml", key: "tasks", map: ShiftYaml.task(from:)),
+            followUps: read("follow-ups/follow-ups.yaml", key: "follow_ups", map: ShiftYaml.followUp(from:)),
+            projects: read("projects/projects.yaml", key: "projects", map: ShiftYaml.project(from:)),
+            settings: ShiftYaml.readMappingChecked(path: root.appendingPathComponent("settings.yaml").path)
+        )
+    }
+
+    /// Main-thread only: everything with a side effect - the failure tracking
+    /// GL-01 depends on, the first-run scaffold write, and the in-memory state
+    /// itself. Byte-for-byte the decisions `reloadAll` always made.
+    private func apply(_ loaded: LoadedState) {
+        isApplyingReload = true
+        defer { isApplyingReload = false }
+        invalidateCompletedTasksCache()
+        note(loaded.activeTasks.failed, path: activeTasksPath)
+        note(loaded.followUps.failed, path: followUpsPath)
+        note(loaded.projects.failed, path: projectsPath)
+        activeTasks = loaded.activeTasks.items
+        followUps = loaded.followUps.items
+        projects = loaded.projects.items
+        switch loaded.settings {
+        case .ok(let doc):
+            noteLoadOK(settingsPath)
+            settings = ShiftYaml.settings(from: doc)
+        case .missing:
+            // Genuine first run - write the scaffold, as before.
+            noteLoadOK(settingsPath)
+            settings = ShiftSettings()
+            writeMappingGuarded(path: settingsPath, doc: ShiftYaml.toYaml(settings))
+        case .parseFailed:
+            // GL-01: do NOT overwrite a settings file we could not read.
+            noteLoadFailure(settingsPath)
+            settings = ShiftSettings()
+        }
+    }
+
+    private func note(_ failed: Bool, path: String) {
+        if failed { noteLoadFailure(path) } else { noteLoadOK(path) }
+    }
+
+    /// Every completed task across every month file this root currently
+    /// has, for stats/lookups that need to see completed work (not shown in
+    /// the My Tasks list itself, which is active tasks only).
+    func allCompletedTasks() -> [ShiftTask] {
+        if let completedTasksCache { return completedTasksCache }
+        let completedDir = root.appendingPathComponent("tasks/completed", isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: completedDir.path) else {
+            completedTasksCache = []
+            return []
+        }
+        let tasks = files.filter { $0.hasSuffix(".yaml") }.flatMap { file -> [ShiftTask] in
+            ShiftYaml.readList(path: completedDir.appendingPathComponent(file).path, key: "tasks").compactMap(ShiftYaml.task(from:))
+        }
+        completedTasksCache = tasks
+        return tasks
+    }
+
+    /// GL-35: every completed month file, parsed, memoised.
+    ///
+    /// This is read from render paths, not just from stats: the Projects grid
+    /// calls `taskCounts(forProject:)` once per project card and Weekly Review
+    /// calls it repeatedly, so an uncapped, uncached read meant *every month
+    /// file this captain has ever accumulated*, re-parsed once per card, on
+    /// every render - a cost that only ever grows with use.
+    ///
+    /// Invalidated from exactly the three places that can change what is in
+    /// those files (`appendToCompletedMonth`, `removeFromCompletedMonth`,
+    /// `reloadAll`), so an external edit - a hand-edited file, a `git pull` -
+    /// is picked up by the `reloadAll()` every page already calls from
+    /// `viewWillAppear`. Nothing here is allowed to serve a value across a
+    /// write it performed itself.
+    private var completedTasksCache: [ShiftTask]?
+
+    private func invalidateCompletedTasksCache() { completedTasksCache = nil }
+
+    // MARK: Mutations
+
+    /// Toggles a task's completion. Marking it done moves it out of
+    /// `active.yaml` entirely and appends it to `tasks/completed/<YYYY-MM>.yaml`
+    /// for the month it was completed in (not just a status flag flip in
+    /// place - the acceptance bar this phase was built against). Un-marking a
+    /// completed task (toggling it back to `todo`) is the reverse: pull it out
+    /// of whichever month file it's sitting in and put it back in
+    /// `active.yaml`. Every subtask toggle, by contrast, rewrites the task in
+    /// whichever file it currently lives in without moving it.
+    func setTaskCompleted(id: String, completed: Bool, now: Date = Date()) {
+        let iso = ShiftStore.iso8601(now)
+        if completed {
+            guard let idx = activeTasks.firstIndex(where: { $0.id == id }) else { return }
+            var task = activeTasks[idx]
+            task.status = .completed
+            task.completedAt = iso
+            task.updatedAt = iso
+            activeTasks.remove(at: idx)
+            let spawned = Self.nextOccurrence(after: task, now: now)
+            if let spawned { activeTasks.append(spawned) }
+            persistActiveTasks()
+            appendToCompletedMonth(task, month: ShiftStore.monthKey(for: now))
+            logActivity(kind: "task_completed", summary: "Completed \"\(task.title)\"", targetID: task.id, now: now)
+            if let spawned {
+                logActivity(kind: "task_recurrence_advanced",
+                            summary: "Scheduled the next \"\(spawned.title)\"",
+                            targetID: spawned.id, now: now)
+            }
+        } else {
+            guard let (month, task) = findCompletedTask(id: id) else { return }
+            var restored = task
+            restored.status = .todo
+            restored.completedAt = nil
+            restored.updatedAt = iso
+            removeFromCompletedMonth(id: id, month: month)
+            activeTasks.append(restored)
+            persistActiveTasks()
+            logActivity(kind: "task_reopened", summary: "Reopened \"\(restored.title)\"", targetID: restored.id, now: now)
+        }
+        notify()
+    }
+
+    /// The next instance of a recurring task, or `nil` when the task does
+    /// not repeat or its rule has run out (F5).
+    ///
+    /// **Completing an instance is what advances the series.** There is no
+    /// background expansion and no stored series: one instance is live at a
+    /// time, and finishing it writes the next one into `active.yaml`. That is
+    /// what makes a recurring task behave like every other task everywhere
+    /// else in this app - the board, the list, the calendar, the notifier and
+    /// Weekly Review all see an ordinary task with a due date, and none of
+    /// them needed to learn what a rule is.
+    ///
+    /// Three things the new instance deliberately does not carry over:
+    /// `completedAt` (it is not done), the subtasks' done flags (a checklist
+    /// on a repeating task is the checklist for *this* occurrence), and the
+    /// attachment (the file is keyed by task id, so a new id has none - and
+    /// copying the bytes for every occurrence of a daily task is how a
+    /// git-synced tree grows without bound, GL-35).
+    ///
+    /// Reopening a completed recurring task does **not** withdraw the
+    /// instance this spawned. Un-completing is a correction to one
+    /// occurrence, and silently deleting a future task the captain may
+    /// already have edited is the worse of the two surprises.
+    static func nextOccurrence(after task: ShiftTask, now: Date = Date()) -> ShiftTask? {
+        guard let rule = task.recurrence,
+              let anchor = ShiftDateFormatting.dateTime(from: task.dueDate, time: task.dueTime),
+              let next = rule.next(after: anchor, anchor: anchor) else { return nil }
+        let iso = ShiftStore.iso8601(now)
+        let (dateStr, timeStr) = ShiftDateFormatting.components(from: next)
+        var spawned = task
+        spawned.id = UUID().uuidString
+        spawned.status = .todo
+        spawned.completedAt = nil
+        spawned.createdAt = iso
+        spawned.updatedAt = iso
+        spawned.dueDate = dateStr
+        // A task with a date but no time keeps having no time: `components`
+        // always returns both, so the time is dropped back off here rather
+        // than inventing a 00:00 deadline the original never had.
+        spawned.dueTime = task.dueTime == nil ? nil : timeStr
+        spawned.subtasks = task.subtasks.map { ShiftSubtask(id: UUID().uuidString, title: $0.title, done: false) }
+        spawned.hasAttachment = false
+        return spawned
+    }
+
+    /// Toggles one subtask's done state on a task, wherever it currently
+    /// lives - `active.yaml` or the right completed month file. Phase 1 only
+    /// needed the active case; phase 3's project detail (cockpit-shift-
+    /// projects) lists a project's completed tasks alongside its active
+    /// ones, and the brief's own acceptance bar requires a subtask toggle on
+    /// a completed task to persist to the correct month file too.
+    func setSubtaskDone(taskID: String, subtaskID: String, done: Bool, now: Date = Date()) {
+        if let taskIdx = activeTasks.firstIndex(where: { $0.id == taskID }),
+           let subIdx = activeTasks[taskIdx].subtasks.firstIndex(where: { $0.id == subtaskID }) {
+            activeTasks[taskIdx].subtasks[subIdx].done = done
+            activeTasks[taskIdx].updatedAt = ShiftStore.iso8601(now)
+            persistActiveTasks()
+            notify()
+            return
+        }
+        guard let found = findCompletedTask(id: taskID) else { return }
+        var task = found.task
+        guard let subIdx = task.subtasks.firstIndex(where: { $0.id == subtaskID }) else { return }
+        task.subtasks[subIdx].done = done
+        task.updatedAt = ShiftStore.iso8601(now)
+        appendToCompletedMonth(task, month: found.month)
+        notify()
+    }
+
+    // MARK: Creation / editing (phase 2)
+
+    /// Appends a brand-new task to `active.yaml` and persists immediately.
+    /// The caller is responsible for filling in `id`/`createdAt`/`updatedAt`
+    /// (`ShiftTask.fresh` on the model side does this) - this is purely the
+    /// "append and write" half. `attachment` (grandline-shift-task-image-
+    /// attachments) is applied *before* the task is written, so
+    /// `active.yaml` and the on-disk attachment file/`hasAttachment` flag
+    /// never disagree even momentarily.
+    func addTask(_ task: ShiftTask, attachment: ShiftAttachmentChange = .unchanged) {
+        var task = task
+        applyAttachmentChange(attachment, taskID: task.id, task: &task)
+        activeTasks.append(task)
+        persistActiveTasks()
+        logActivity(kind: "task_created", summary: "Created \"\(task.title)\"", targetID: task.id, now: Date())
+        notify()
+    }
+
+    /// Replaces an existing task in `active.yaml` in place (same array index,
+    /// same file) - a completed task isn't editable through this path since
+    /// it no longer lives in `active.yaml` (see `setTaskCompleted`'s header).
+    ///
+    /// Logs a `task_due_date_changed` activity entry (phase 5) whenever an
+    /// already-set due date is edited to a different value (including
+    /// cleared) - the one signal Weekly Review's "pushed back repeatedly"
+    /// stat has for a task, since phases 1-4 never tracked due-date history
+    /// as a field on `ShiftTask` itself. A task getting its *first* due date
+    /// isn't a "push back," so this only fires when `previous.dueDate` was
+    /// already non-nil.
+    func updateTask(_ task: ShiftTask, attachment: ShiftAttachmentChange = .unchanged, now: Date = Date()) {
+        guard let idx = activeTasks.firstIndex(where: { $0.id == task.id }) else { return }
+        let previous = activeTasks[idx]
+        var updated = task
+        updated.updatedAt = ShiftStore.iso8601(now)
+        applyAttachmentChange(attachment, taskID: updated.id, task: &updated)
+        activeTasks[idx] = updated
+        persistActiveTasks()
+        if let oldDue = previous.dueDate, oldDue != updated.dueDate {
+            logActivity(
+                kind: "task_due_date_changed", summary: "Pushed back due date for \"\(updated.title)\"",
+                targetID: updated.id, now: now
+            )
+        }
+        notify()
+    }
+
+    /// Appends a brand-new follow-up to `follow-ups.yaml` and persists
+    /// immediately.
+    func addFollowUp(_ followUp: ShiftFollowUp) {
+        followUps.append(followUp)
+        persistFollowUps()
+        logActivity(kind: "follow_up_created", summary: "Created follow-up \"\(followUp.title)\"", targetID: followUp.id, now: Date())
+        notify()
+    }
+
+    /// Replaces an existing follow-up in place.
+    func updateFollowUp(_ followUp: ShiftFollowUp) {
+        guard let idx = followUps.firstIndex(where: { $0.id == followUp.id }) else { return }
+        followUps[idx] = followUp
+        persistFollowUps()
+        notify()
+    }
+
+    /// Marks a follow-up done/pending - stays in `follow-ups.yaml` either way
+    /// (unlike a task, there's no month-split "completed" file for
+    /// follow-ups in this phase's file layout), but a `done` follow-up drops
+    /// out of the "active follow-ups" view (`ShiftController` already
+    /// filters by `status == .pending`) and gets an activity log entry, which
+    /// is what "moves it out of the active list, into activity" means here.
+    func setFollowUpStatus(id: String, done: Bool, now: Date = Date()) {
+        guard let idx = followUps.firstIndex(where: { $0.id == id }) else { return }
+        followUps[idx].status = done ? .done : .pending
+        persistFollowUps()
+        logActivity(
+            kind: done ? "follow_up_completed" : "follow_up_reopened",
+            summary: "\(done ? "Completed" : "Reopened") follow-up \"\(followUps[idx].title)\"",
+            targetID: followUps[idx].id, now: now
+        )
+        notify()
+    }
+
+    /// Recomputes and persists `follow_up_at`/`follow_up_time` from a new
+    /// target `Date` - the one place Snooze writes back, whether the preset
+    /// was a relative offset (30 min / 1 hour) or an absolute pick (Tomorrow /
+    /// Next week / Custom).
+    func snoozeFollowUp(id: String, to date: Date, now: Date = Date()) {
+        guard let idx = followUps.firstIndex(where: { $0.id == id }) else { return }
+        let (dateStr, timeStr) = ShiftDateFormatting.components(from: date)
+        followUps[idx].followUpAt = dateStr
+        followUps[idx].followUpTime = timeStr
+        followUps[idx].status = .pending
+        persistFollowUps()
+        logActivity(
+            kind: "follow_up_snoozed", summary: "Snoozed follow-up \"\(followUps[idx].title)\"",
+            targetID: followUps[idx].id, now: now
+        )
+        notify()
+    }
+
+    private func persistFollowUps() {
+        writeListGuarded(path: followUpsPath, key: "follow_ups", items: followUps.map(ShiftYaml.toYaml))
+    }
+
+    // MARK: Deletion (fm/grandline-tasks-kanban-devops-split)
+
+    /// Removes a task permanently - from `active.yaml` or from whichever
+    /// `tasks/completed/<YYYY-MM>.yaml` it was filed into, plus its
+    /// attachment file if it had one.
+    ///
+    /// **The captain asked for this because there was no way back from a
+    /// mistyped task.** Until now `ShiftStore` could create, edit and
+    /// complete a task but never remove one, which
+    /// `ShiftController.renderProjectsSection` even had a comment about
+    /// ("not possible in this phase - there's no delete action yet").
+    ///
+    /// Three things worth knowing about the shape:
+    ///
+    ///   - **It searches both homes.** A completed task no longer lives in
+    ///     `active.yaml` (see `setTaskCompleted`), so a delete that only
+    ///     swept the active list would silently do nothing for exactly the
+    ///     tasks a captain is most likely to be tidying up.
+    ///   - **A follow-up pointing at the deleted task has its pointer
+    ///     cleared, never deleted with it.** `ShiftFollowUp.relatedTaskID` is
+    ///     a reference, not ownership - cascading would throw away a record
+    ///     the captain never asked to lose, while leaving the id would dangle
+    ///     against a task that no longer exists. Clearing it is the only
+    ///     option that loses nothing.
+    ///   - **The attachment file goes with it.** `removeAttachmentFile` is a
+    ///     no-op when there is none, so this needs no `hasAttachment` guard;
+    ///     leaving the PNG behind would orphan it in the git-synced tree with
+    ///     nothing left to reference it.
+    ///
+    /// Returns whether anything was actually removed, so a caller driving
+    /// this from a stale row id can tell "deleted" from "already gone".
+    @discardableResult
+    func deleteTask(id: String, now: Date = Date()) -> Bool {
+        let removed: ShiftTask
+        if let idx = activeTasks.firstIndex(where: { $0.id == id }) {
+            removed = activeTasks[idx]
+            activeTasks.remove(at: idx)
+            persistActiveTasks()
+        } else if let found = findCompletedTask(id: id) {
+            removed = found.task
+            removeFromCompletedMonth(id: id, month: found.month)
+        } else {
+            return false
+        }
+
+        removeAttachmentFile(taskID: id)
+        clearRelatedTaskPointers(to: id)
+        logActivity(kind: "task_deleted", summary: "Deleted \"\(removed.title)\"", targetID: id, now: now)
+        notify()
+        return true
+    }
+
+    /// Removes a follow-up permanently from `follow-ups.yaml`.
+    ///
+    /// Added alongside `deleteTask` rather than deferred: a follow-up has no
+    /// month-split completed file and no attachment, so this is the whole of
+    /// it, and leaving the follow-up list as the one row type in this page
+    /// with no way to remove a mistyped entry would have been an odd place to
+    /// stop.
+    ///
+    /// **`deleteProject` is deliberately NOT here.** Tasks reference a
+    /// project by `projectID`, so removing one either orphans every task that
+    /// pointed at it or deletes them too - that is a product decision about
+    /// the captain's own data, not a symmetry to fill in while nobody is
+    /// looking.
+    @discardableResult
+    func deleteFollowUp(id: String, now: Date = Date()) -> Bool {
+        guard let idx = followUps.firstIndex(where: { $0.id == id }) else { return false }
+        let removed = followUps[idx]
+        followUps.remove(at: idx)
+        persistFollowUps()
+        logActivity(kind: "follow_up_deleted", summary: "Deleted follow-up \"\(removed.title)\"", targetID: id, now: now)
+        notify()
+        return true
+    }
+
+    /// Clears `relatedTaskID` on every follow-up that pointed at a task that
+    /// has just been deleted - see `deleteTask`'s own header for why the
+    /// pointer is cleared rather than the follow-up removed. Writes only if
+    /// something actually pointed there, so an ordinary delete costs no extra
+    /// file write.
+    private func clearRelatedTaskPointers(to taskID: String) {
+        var changed = false
+        for idx in followUps.indices where followUps[idx].relatedTaskID == taskID {
+            followUps[idx].relatedTaskID = nil
+            changed = true
+        }
+        if changed { persistFollowUps() }
+    }
+
+    // MARK: Projects (phase 3)
+
+    /// Appends a brand-new project to `projects/projects.yaml` and persists
+    /// immediately (cockpit-fix-shift-new-project) - the counterpart to
+    /// `addTask`/`addFollowUp` above that phase 3 never added when it shipped
+    /// `updateProject` (edit-only, no creation path).
+    func addProject(_ project: ShiftProject) {
+        projects.append(project)
+        persistProjects()
+        logActivity(kind: "project_created", summary: "Created project \"\(project.name)\"", targetID: project.id, now: Date())
+        notify()
+    }
+
+    /// Persists a project's edited fields (status, name, description, dates)
+    /// back to `projects/projects.yaml` in full - there is no partial-field
+    /// write, callers pass the whole struct with their edit applied.
+    func updateProject(_ project: ShiftProject) {
+        guard let idx = projects.firstIndex(where: { $0.id == project.id }) else { return }
+        projects[idx] = project
+        persistProjects()
+        notify()
+    }
+
+    /// `(completed, total)` task counts for one project, counting both
+    /// active and completed tasks - what a project card's "X of Y tasks
+    /// completed" line and progress bar need.
+    func taskCounts(forProject projectID: String) -> (completed: Int, total: Int) {
+        let activeCount = activeTasks.filter { $0.projectID == projectID }.count
+        let completedCount = allCompletedTasks().filter { $0.projectID == projectID }.count
+        return (completedCount, activeCount + completedCount)
+    }
+
+    /// Every task belonging to a project, active and completed alike - what
+    /// project detail's task list shows (never the flat My Tasks list, which
+    /// stays active-only and never renders subtasks - see ShiftModels.swift).
+    func allTasks(forProject projectID: String) -> [ShiftTask] {
+        activeTasks.filter { $0.projectID == projectID } + allCompletedTasks().filter { $0.projectID == projectID }
+    }
+
+    private func findCompletedTask(id: String) -> (month: String, task: ShiftTask)? {
+        let completedDir = root.appendingPathComponent("tasks/completed", isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: completedDir.path) else { return nil }
+        for file in files where file.hasSuffix(".yaml") {
+            let path = completedDir.appendingPathComponent(file).path
+            let tasks = ShiftYaml.readList(path: path, key: "tasks").compactMap(ShiftYaml.task(from:))
+            if let task = tasks.first(where: { $0.id == id }) {
+                return (String(file.dropLast(".yaml".count)), task)
+            }
+        }
+        return nil
+    }
+
+    private func appendToCompletedMonth(_ task: ShiftTask, month: String) {
+        invalidateCompletedTasksCache()
+        let path = completedPath(forMonth: month)
+        var tasks = readListGuarded(path: path, key: "tasks").compactMap(ShiftYaml.task(from:))
+        tasks.removeAll { $0.id == task.id }
+        tasks.append(task)
+        writeListGuarded(path: path, key: "tasks", items: tasks.map(ShiftYaml.toYaml))
+    }
+
+    private func removeFromCompletedMonth(id: String, month: String) {
+        invalidateCompletedTasksCache()
+        let path = completedPath(forMonth: month)
+        var tasks = readListGuarded(path: path, key: "tasks").compactMap(ShiftYaml.task(from:))
+        tasks.removeAll { $0.id == id }
+        writeListGuarded(path: path, key: "tasks", items: tasks.map(ShiftYaml.toYaml))
+    }
+
+    private func logActivity(kind: String, summary: String, targetID: String? = nil,
+                             durationSeconds: Int? = nil, now: Date) {
+        let path = activityPath(forMonth: ShiftStore.monthKey(for: now))
+        var entries = readListGuarded(path: path, key: "activity").compactMap(ShiftYaml.activity(from:))
+        entries.append(ShiftActivityEntry(id: UUID().uuidString, timestamp: ShiftStore.iso8601(now), kind: kind, summary: summary, targetID: targetID, durationSeconds: durationSeconds))
+        writeListGuarded(path: path, key: "activity", items: entries.map(ShiftYaml.toYaml))
+    }
+
+    // MARK: Focus sessions (F7)
+
+    /// Records a finished focus session against the task it was bound to.
+    ///
+    /// Deliberately the *existing* activity log rather than a store of its
+    /// own: a focus session is a thing that happened to a task, which is
+    /// exactly what `activity/<YYYY-MM>.yaml` already is, and Overview's
+    /// captain's log picks it up for free. The duration rides
+    /// `ShiftActivityEntry.durationSeconds`, never the summary string - see
+    /// that field for why.
+    ///
+    /// Takes the title rather than looking it up so a session survives its
+    /// task being completed or deleted mid-run: the log records what the
+    /// captain was working on, which stays true either way.
+    func logFocusSession(taskID: String, taskTitle: String, seconds: Int, now: Date = Date()) {
+        logActivity(kind: FocusActivityLog.kind,
+                    summary: FocusActivityLog.summary(seconds: seconds, taskTitle: taskTitle),
+                    targetID: taskID,
+                    durationSeconds: seconds,
+                    now: now)
+        notify()
+    }
+
+    /// Focused seconds per day, for the `days` days ending on `reference`'s
+    /// own day - oldest first, one entry per day including the empty ones.
+    ///
+    /// The empty days matter: they are what makes the Weekly Review chart a
+    /// week rather than a list of the days that happened to have sessions,
+    /// and a gap drawn as an absent bar is GL-14's distinction between "no
+    /// focus time" and "no data" collapsing in the wrong direction.
+    ///
+    /// Day boundaries are `Calendar.current`'s, matching every other date
+    /// computation on this store.
+    func focusSecondsByDay(days: Int = 7, reference: Date = Date()) -> [(day: Date, seconds: Int)] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: reference)
+        guard days > 0 else { return [] }
+
+        // A week never spans more than two month files, but the lookback is
+        // asked for in months and `days` is a parameter - so derive it
+        // rather than assuming.
+        let monthsBack = max(1, days / 28 + 1)
+        var totals: [Date: Int] = [:]
+        for entry in recentActivityEntries(monthsBack: monthsBack, reference: reference)
+        where entry.kind == FocusActivityLog.kind {
+            guard let seconds = entry.durationSeconds, seconds > 0,
+                  let at = ShiftStore.iso8601Date(entry.timestamp) else { continue }
+            totals[cal.startOfDay(for: at), default: 0] += seconds
+        }
+
+        return (0..<days).reversed().compactMap { offset in
+            guard let day = cal.date(byAdding: .day, value: -offset, to: today) else { return nil }
+            return (day: day, seconds: totals[day] ?? 0)
+        }
+    }
+
+    /// Focused seconds logged on `reference`'s own day.
+    func focusSecondsToday(reference: Date = Date()) -> Int {
+        focusSecondsByDay(days: 1, reference: reference).first?.seconds ?? 0
+    }
+
+    /// How many distinct tasks were focused on `reference`'s own day - the
+    /// "on 3 tasks" half of the Weekly Review tile's caption.
+    func focusTaskCountToday(reference: Date = Date()) -> Int {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: reference)
+        var ids: Set<String> = []
+        for entry in recentActivityEntries(monthsBack: 1, reference: reference)
+        where entry.kind == FocusActivityLog.kind {
+            guard let targetID = entry.targetID,
+                  let at = ShiftStore.iso8601Date(entry.timestamp),
+                  cal.startOfDay(for: at) == today else { continue }
+            ids.insert(targetID)
+        }
+        return ids.count
+    }
+
+    private func persistActiveTasks() {
+        writeListGuarded(path: activeTasksPath, key: "tasks", items: activeTasks.map(ShiftYaml.toYaml))
+    }
+
+    private func persistProjects() {
+        writeListGuarded(path: projectsPath, key: "projects", items: projects.map(ShiftYaml.toYaml))
+    }
+
+    // MARK: Attachments (grandline-shift-task-image-attachments)
+
+    /// Reads the raw bytes of a task's attached image, if any - `nil` when
+    /// the task has none, or (a defensive mismatch that should never happen
+    /// in practice, but costs nothing to guard) when `hasAttachment` says
+    /// `true` but the file is missing. Callers (the task editor sheet, for
+    /// showing a real thumbnail on open) are expected to already know
+    /// `hasAttachment` is `true` before calling this - this method itself
+    /// never touches `activeTasks`.
+    func attachmentData(forTaskID id: String) -> Data? {
+        try? Data(contentsOf: attachmentURL(forTaskID: id))
+    }
+
+    /// Writes (or overwrites) a task's attachment file and flips
+    /// `hasAttachment` on `task` - `task` is mutated in place by the caller
+    /// (`addTask`/`updateTask`), never persisted here directly, so the YAML
+    /// write and the binary file write land as one logical unit before
+    /// `notify()` schedules the debounced commit+push. `data` is expected to
+    /// already be normalized (downscaled, PNG-encoded) - see
+    /// `ShiftImageAttachmentWell.normalizedPNGData`; this method just writes
+    /// whatever bytes it's given.
+    private func writeAttachment(_ data: Data, taskID: String) {
+        let url = attachmentURL(forTaskID: taskID)
+        do {
+            try AtomicWrite.data(data, to: url)
+            PersistenceFailureReporter.reportSuccess()
+        } catch {
+            // GL-10: silently losing an attachment while keeping
+            // `hasAttachment == true` on the task leaves the model and the disk
+            // disagreeing - the row shows a paperclip for a file that is not
+            // there.
+            PersistenceFailureReporter.report(what: "task attachment", path: url.path, error: error)
+        }
+    }
+
+    /// Deletes a task's attachment file, if any - a no-op if there isn't
+    /// one. Never fails the caller: a missing file here just means there was
+    /// nothing to remove.
+    private func removeAttachmentFile(taskID: String) {
+        try? FileManager.default.removeItem(at: attachmentURL(forTaskID: taskID))
+    }
+
+    /// Applies a captain's attachment decision (from the task editor sheet)
+    /// to both the on-disk file and `task.hasAttachment`, called by
+    /// `addTask`/`updateTask` before either persists the task record - so
+    /// the two never disagree, even for the brief window between writing the
+    /// image file and writing `active.yaml`.
+    private func applyAttachmentChange(_ change: ShiftAttachmentChange, taskID: String, task: inout ShiftTask) {
+        switch change {
+        case .unchanged:
+            break
+        case .set(let data):
+            writeAttachment(data, taskID: taskID)
+            task.hasAttachment = true
+        case .removed:
+            removeAttachmentFile(taskID: taskID)
+            task.hasAttachment = false
+        }
+    }
+
+    /// Every mutation above already wrote its YAML file synchronously before
+    /// calling this - `markDirty()` only ever schedules the debounced
+    /// git commit/push that happens afterward, on a background queue. Never
+    /// called when `gitSync` is `nil` (an explicit `FM_SHIFT_DIR` override),
+    /// so a self-test or a plain local-only setup never shells out to git.
+    private func notify() {
+        changeHandlers.forEach { $0() }
+        // GL-01: never propagate a write that happened while some file this
+        // store owns is unreadable - that is the path by which a local wipe
+        // became a pushed wipe.
+        guard !isInFailedLoadState else {
+            AppLog.store.error("Tasks: skipping git sync - \(self.loadFailurePaths.count) file(s) failed to parse (GL-01).")
+            return
+        }
+        gitSync?.markDirty()
+    }
+
+    static func iso8601(_ date: Date) -> String {
+        isoFormatter.string(from: date)
+    }
+
+    private static func iso8601Date(_ s: String) -> Date? {
+        isoFormatter.date(from: s)
+    }
+
+    /// The public half of `iso8601Date`, for a caller that needs to reason
+    /// about a task's own `createdAt`/`completedAt` in real dates rather than
+    /// by comparing the strings - the board's Done column, which only shows
+    /// what was finished recently. Deliberately the same formatter that wrote
+    /// them, so a round trip cannot drift.
+    static func date(fromISO8601 s: String) -> Date? { iso8601Date(s) }
+
+    // GL-P3: built once. `DateFormatter`/`ISO8601DateFormatter` construction
+    // is measurably expensive and none of these carry per-call state - the
+    // same treatment `FleetLogFeed`/`HealthCardView` already give theirs.
+    private static let isoFormatter = ISO8601DateFormatter()
+
+    private static let monthDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("MMMd")
+        return f
+    }()
+
+    private static let isoDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    // MARK: Weekly review (phase 5, cockpit-shift-power-features)
+
+    /// Every activity entry from the current month plus `monthsBack` prior
+    /// months' `activity/<YYYY-MM>.yaml` files - a bounded lookback (default
+    /// 2 months) rather than scanning every month file that has ever
+    /// existed, since "pushed back repeatedly" only needs a recent window to
+    /// be useful.
+    /// F6 (fleet history / captain's log): the same bounded activity read
+    /// Weekly Review already does, exposed so Overview's Log tab can render
+    /// the task half of its feed from Shift's own activity YAML rather than a
+    /// second copy of it written into a separate event file. Read-only, on
+    /// demand - see `FleetLogFeed`'s header for why the copy was rejected.
+    func recentActivity(monthsBack: Int = 2, reference: Date = Date()) -> [ShiftActivityEntry] {
+        recentActivityEntries(monthsBack: monthsBack, reference: reference)
+    }
+
+    private func recentActivityEntries(monthsBack: Int, reference: Date) -> [ShiftActivityEntry] {
+        let cal = Calendar(identifier: .gregorian)
+        var entries: [ShiftActivityEntry] = []
+        for offset in 0...monthsBack {
+            guard let month = cal.date(byAdding: .month, value: -offset, to: reference) else { continue }
+            let path = activityPath(forMonth: ShiftStore.monthKey(for: month))
+            entries.append(contentsOf: ShiftYaml.readList(path: path, key: "activity").compactMap(ShiftYaml.activity(from:)))
+        }
+        return entries
+    }
+
+    /// Computes Weekly Review's three headline numbers, entirely from data
+    /// phases 1-4 already persist - never a new tracked field on `ShiftTask`/
+    /// `ShiftFollowUp` themselves (the brief's explicit instruction). The
+    /// week is `reference`'s own `Calendar.current` week (`.weekOfYear`),
+    /// Monday-first or Sunday-first per the system calendar, matching how
+    /// every other date computation in this app already defers to
+    /// `Calendar.current` rather than hardcoding a week start.
+    ///
+    /// - "completed this week": tasks whose `completedAt` falls in the week,
+    ///   plus follow-ups with a `follow_up_completed` activity entry in the
+    ///   week (a follow-up has no completion timestamp field of its own).
+    /// - "pushed back 2+ times": groups `follow_up_snoozed` (by follow-up)
+    ///   and `task_due_date_changed` (by task) activity entries - within the
+    ///   lookback window, not just this week, since a captain re-prioritizing
+    ///   something is a signal worth surfacing even if the pushes happened
+    ///   over several weeks - by `targetID`, keeping any id with 2+
+    ///   occurrences whose task/follow-up still exists.
+    /// - "coming up next week": active tasks due, and pending follow-ups
+    ///   due, in the 7 days immediately after this week ends.
+    func weeklySummary(reference: Date = Date()) -> ShiftWeeklySummary {
+        let cal = Calendar.current
+        guard let weekInterval = cal.dateInterval(of: .weekOfYear, for: reference) else {
+            return ShiftWeeklySummary(weekLabel: "This week", completedCount: 0, pushedBack: [], upcomingCount: 0)
+        }
+        let weekStart = weekInterval.start
+        let weekEnd = weekInterval.end // exclusive
+
+        let completedTasksThisWeek = allCompletedTasks().filter { task in
+            guard let completedAt = task.completedAt, let date = ShiftStore.iso8601Date(completedAt) else { return false }
+            return date >= weekStart && date < weekEnd
+        }.count
+
+        let recent = recentActivityEntries(monthsBack: 2, reference: reference)
+
+        let completedFollowUpsThisWeek = recent.filter { entry in
+            guard entry.kind == "follow_up_completed", let date = ShiftStore.iso8601Date(entry.timestamp) else { return false }
+            return date >= weekStart && date < weekEnd
+        }.count
+
+        var pushCounts: [String: (kind: String, count: Int)] = [:]
+        for entry in recent where entry.kind == "follow_up_snoozed" || entry.kind == "task_due_date_changed" {
+            guard let targetID = entry.targetID else { continue }
+            pushCounts[targetID, default: (entry.kind, 0)].count += 1
+        }
+        let allCompleted = allCompletedTasks()
+        var pushedBack: [ShiftPushedBackItem] = pushCounts.compactMap { id, info in
+            guard info.count >= 2 else { return nil }
+            let title: String?
+            let projectID: String?
+            if info.kind == "task_due_date_changed" {
+                let task = activeTasks.first(where: { $0.id == id }) ?? allCompleted.first(where: { $0.id == id })
+                title = task?.title
+                projectID = task?.projectID
+            } else {
+                let fu = followUps.first(where: { $0.id == id })
+                title = fu?.title
+                projectID = fu?.projectID
+            }
+            guard let title else { return nil }
+            let projectName = projectID.flatMap { pid in projects.first(where: { $0.id == pid })?.name }
+            return ShiftPushedBackItem(id: id, title: title, count: info.count, projectName: projectName)
+        }
+        pushedBack.sort { $0.count > $1.count }
+
+        let nextWeekEnd = cal.date(byAdding: .day, value: 7, to: weekEnd) ?? weekEnd
+        let upcomingTasks = activeTasks.filter { task in
+            guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
+            return due >= weekEnd && due < nextWeekEnd
+        }.count
+        let upcomingFollowUps = followUps.filter { $0.status == .pending }.filter { fu in
+            guard let due = fu.followUpAt.flatMap(ShiftDateFormatting.date(from:)) else { return false }
+            return due >= weekEnd && due < nextWeekEnd
+        }.count
+
+        let df = Self.monthDayFormatter
+        let weekEndInclusive = cal.date(byAdding: .day, value: -1, to: weekEnd) ?? weekEnd
+        let weekLabel = "Week of \(df.string(from: weekStart)) \u{2013} \(df.string(from: weekEndInclusive))"
+
+        return ShiftWeeklySummary(
+            weekLabel: weekLabel,
+            completedCount: completedTasksThisWeek + completedFollowUpsThisWeek,
+            pushedBack: pushedBack,
+            upcomingCount: upcomingTasks + upcomingFollowUps
+        )
+    }
+
+    // MARK: Seed data (first-run convenience only - never overwrites an
+    // existing file)
+
+    /// Writes a small starter set of files the very first time Shift's root
+    /// doesn't exist yet, so a fresh captain profile lands on a page with
+    /// real (if modest) content instead of a totally blank one. Does nothing
+    /// if `tasks/active.yaml` already exists - never clobbers real data.
+    func seedIfEmpty(now: Date = Date()) {
+        guard !FileManager.default.fileExists(atPath: activeTasksPath) else { return }
+        let iso = ShiftStore.iso8601(now)
+        let today = Self.isoDayFormatter.string(from: now)
+
+        let project = ShiftProject(
+            id: UUID().uuidString, name: "Shift", description: "Building the Shift feature itself.",
+            status: .inProgress, startDate: today, dueDate: nil, createdAt: iso
+        )
+        projects = [project]
+        persistProjects()
+
+        activeTasks = [
+            ShiftTask(
+                id: UUID().uuidString, title: "Wire up the Shift release flow",
+                description: "Foundation phase: rail destination + local YAML store.",
+                status: .inProgress, priority: .high, dueDate: today, dueTime: nil,
+                projectID: project.id, tags: ["shift"], createdAt: iso, updatedAt: iso, completedAt: nil,
+                notes: nil,
+                subtasks: [
+                    ShiftSubtask(id: UUID().uuidString, title: "Update version creation", done: true),
+                    ShiftSubtask(id: UUID().uuidString, title: "Fix release flow", done: false),
+                ],
+                hasAttachment: false
+            ),
+            ShiftTask(
+                id: UUID().uuidString, title: "Review captain-approved mockup",
+                description: "", status: .todo, priority: .normal, dueDate: today, dueTime: nil,
+                projectID: nil, tags: [], createdAt: iso, updatedAt: iso, completedAt: nil, notes: nil, subtasks: [],
+                hasAttachment: false
+            ),
+        ]
+        persistActiveTasks()
+
+        followUps = [
+            ShiftFollowUp(
+                id: UUID().uuidString, title: "Check back on the Projects page plan",
+                status: .pending, priority: .normal, followUpAt: today, followUpTime: nil, relatedTaskID: nil,
+                projectID: project.id, notes: nil
+            ),
+        ]
+        writeListGuarded(path: followUpsPath, key: "follow_ups", items: followUps.map(ShiftYaml.toYaml))
+
+        settings = ShiftSettings()
+        writeMappingGuarded(path: settingsPath, doc: ShiftYaml.toYaml(settings))
+    }
+}

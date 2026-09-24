@@ -1,4 +1,4 @@
-# Manjesh Grand Line - the native app
+# Grand Line - the native app
 
 A Swift + AppKit + SwiftTerm macOS cockpit for observing and lightly driving a
 [firstmate](https://github.com/kunchenguid/firstmate) fleet. It is the **only**
@@ -23,9 +23,9 @@ want it:
 
 ## ⚠️ Never launch a built copy from a worktree
 
-Every build of this app - a `swift run` binary, `.build/debug/FirstmateCockpit`,
-and the packaged `dist/Manjesh Grand Line.app` - shares one bundle identity
-(`com.firstmate.cockpit.native`). There is **no OS-level process isolation
+Every build of this app - a `swift run` binary, `.build/debug/GrandLine`,
+and the packaged `dist/Grand Line.app` - shares one bundle identity
+(`com.manjesh.grandline.native`). There is **no OS-level process isolation
 between them**, so a copy launched from a worktree contends with the captain's
 own running instance over the same JSON stores and the same git working tree.
 
@@ -63,7 +63,7 @@ swift build
 ```
 
 First build is ~90s because it compiles the vendored dependencies from source.
-The product is a `Mach-O arm64` executable at `.build/debug/FirstmateCockpit`.
+The product is a `Mach-O arm64` executable at `.build/debug/GrandLine`.
 
 There are **no remote SPM dependencies** and no `Package.resolved`: everything
 is vendored under `Vendor/`, so the build needs no network.
@@ -96,7 +96,7 @@ behind its own `FM_RUN_*_TESTS=1` variable and each handled **before**
 the real app. The runner discovers its list from `main.swift`, so a new suite
 joins automatically.
 
-**Always test `.build/debug/FirstmateCockpit`.** The suites are compiled into
+**Always test `.build/debug/GrandLine`.** The suites are compiled into
 debug builds only (`FM_SELFTESTS`, GL-27); a release binary runs zero suites and
 exits 0, which looks exactly like a clean run.
 
@@ -108,7 +108,7 @@ the end, so a runtime regression is one line to read.
 ```bash
 git status --porcelain          # must be empty: agents can share a worktree
 pgrep -fl run-all-tests        # never two passes at once
-defaults read FirstmateCockpit fm.themeID   # a known value (dusk)
+defaults read GrandLine fm.themeID   # a known value (dusk)
 ```
 
 `../AGENTS.md` has the reasoning for each, plus the rule for deciding whether a
@@ -124,7 +124,7 @@ cd native
 ```
 
 `swift build -c release`, assembled into a real bundle at
-`../dist/Manjesh Grand Line.app` (bundle ID `com.firstmate.cockpit.native`) and
+`../dist/Grand Line.app` (bundle ID `com.manjesh.grandline.native`) and
 installed over `/Applications`. The version comes from `git describe` (GL-18), so
 a release is cut by tagging - never by editing a constant. Releases are
 unsigned; see the repo-root README.
@@ -171,8 +171,15 @@ work lands.
 ### Local signing setup (one-time, per machine)
 
 The script codesigns with a local self-signed identity named exactly
-**"Firstmate Cockpit Local Dev"** when one exists, and warns and continues
+**"Grand Line Local Dev"** when one exists, and warns and continues
 unsigned when it does not.
+
+That identity used to be called "Firstmate Cockpit Local Dev", and the script
+still accepts the old name when only that certificate exists - otherwise the
+rename would have quietly dropped every existing machine to an unsigned build,
+which is the one failure this whole section is about. Create the new
+certificate with the commands below and delete the old one; the note the script
+prints goes away when you do.
 
 This is not tidiness. Saved SSH keys live in the macOS Keychain, and a
 Keychain item's default ACL trusts only the code identity that created it - so
@@ -182,29 +189,29 @@ trust stable.
 
 ```bash
 # 1. A self-signed cert with the codeSigning extended key usage.
-openssl req -x509 -newkey rsa:2048 -keyout /tmp/fmcockpit.key -out /tmp/fmcockpit.crt \
-  -days 3650 -nodes -subj "/CN=Firstmate Cockpit Local Dev" \
+openssl req -x509 -newkey rsa:2048 -keyout /tmp/grandline.key -out /tmp/grandline.crt \
+  -days 3650 -nodes -subj "/CN=Grand Line Local Dev" \
   -addext "extendedKeyUsage=critical,codeSigning"
 
 # 2. As a .p12. `-legacy` is required - OpenSSL 3.x's default PKCS12
 #    encryption is not readable by macOS's importer without it.
-openssl pkcs12 -export -legacy -inkey /tmp/fmcockpit.key -in /tmp/fmcockpit.crt \
-  -out /tmp/fmcockpit.p12 -passout pass:temporary
+openssl pkcs12 -export -legacy -inkey /tmp/grandline.key -in /tmp/grandline.crt \
+  -out /tmp/grandline.p12 -passout pass:temporary
 
 # 3. Import, trusted for codesign specifically.
-security import /tmp/fmcockpit.p12 -k ~/Library/Keychains/login.keychain-db \
+security import /tmp/grandline.p12 -k ~/Library/Keychains/login.keychain-db \
   -P temporary -T /usr/bin/codesign
 
 # 4. Trust it. Note `-r trustRoot`, not `-r trustAsRoot` - the latter fails
 #    with a parameter error on this cert shape.
 security add-trusted-cert -d -r trustRoot -p codeSign \
-  -k ~/Library/Keychains/login.keychain-db /tmp/fmcockpit.crt
+  -k ~/Library/Keychains/login.keychain-db /tmp/grandline.crt
 
-rm -f /tmp/fmcockpit.key /tmp/fmcockpit.crt /tmp/fmcockpit.p12
+rm -f /tmp/grandline.key /tmp/grandline.crt /tmp/grandline.p12
 ```
 
 Verify with
-`security find-identity -v -p codesigning | grep "Firstmate Cockpit Local Dev"`.
+`security find-identity -v -p codesigning | grep "Grand Line Local Dev"`.
 
 ---
 

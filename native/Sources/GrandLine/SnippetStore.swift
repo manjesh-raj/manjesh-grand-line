@@ -1,0 +1,109 @@
+// Grand Line - native macOS app.
+//
+// Snippet persistence. Mirrors `HostStore`/`SSHKeyStore` exactly: an in-memory
+// `[Snippet]` backed by a JSON file, CRUD that persists on every mutation,
+// not thread-safe by design (main-thread/UI only). Nothing here is secret, so
+// - unlike the key store - there is no Keychain half to keep in sync.
+
+import Foundation
+
+final class SnippetStore {
+
+    private(set) var snippets: [Snippet] = []
+
+    /// Set when `load()` backed up an undecodable `snippets.json` (GL-01).
+    private(set) var loadFailureBackupPath: String?
+
+    /// Fired after any mutation so the snippets list can reload.
+    var onChange: (() -> Void)?
+
+    /// F12: a second reader. `onChange` is a single closure the Hosts page
+    /// owns, and the expander needs the same signal to rebuild its trigger
+    /// table - so rather than turning one page's property into a list nobody
+    /// else uses, this is the additive registration `HostStore.observe`
+    /// already established for exactly this situation. No unregister, same as
+    /// there: the registrants live as long as the app does.
+    private var observers: [() -> Void] = []
+
+    func observe(_ handler: @escaping () -> Void) {
+        observers.append(handler)
+    }
+
+    private let fileURL: URL
+
+    init() {
+        fileURL = SnippetStore.storeURL()
+        load()
+    }
+
+    // MARK: Location
+
+    /// `~/Library/Application Support/GrandLine/snippets.json`,
+    /// overridable via `FM_SNIPPETS_FILE` (handy for tests / a scratch set).
+    private static func storeURL() -> URL {
+        if let override = ProcessInfo.processInfo.environment["FM_SNIPPETS_FILE"], !override.isEmpty {
+            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
+        }
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        return base.appendingPathComponent(AppPaths.applicationSupportFolderName, isDirectory: true)
+            .appendingPathComponent("snippets.json")
+    }
+
+    // MARK: CRUD
+
+    func add(_ snippet: Snippet) {
+        snippets.append(snippet)
+        persist()
+    }
+
+    /// Replace the snippet with the same id in place (keeps ordering).
+    func update(_ snippet: Snippet) {
+        guard let idx = snippets.firstIndex(where: { $0.id == snippet.id }) else {
+            add(snippet)
+            return
+        }
+        snippets[idx] = snippet
+        persist()
+    }
+
+    func delete(id: UUID) {
+        snippets.removeAll { $0.id == id }
+        persist()
+    }
+
+    func snippet(id: UUID) -> Snippet? {
+        snippets.first { $0.id == id }
+    }
+
+    // MARK: Disk
+
+    /// GL-01: back an undecodable `snippets.json` up before the next
+    /// `persist()` overwrites it - see `StoreLoadFailure`'s header.
+    private func load() {
+        var backup: String?
+        snippets = StoreLoadFailure.decodeJSON(
+            [Snippet].self, at: fileURL, label: "snippets.json", didBackUp: &backup
+        ) ?? []
+        loadFailureBackupPath = backup
+    }
+
+    private func persist() {
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(snippets)
+            // M3: 0600/0700 rather than the default 0644/0755. This file holds
+            // captain-authored shell text, which in practice carries
+            // hostnames, usernames and pasted tokens even though no field is
+            // declared secret.
+            // See `SensitiveFile` for the (narrow, honestly stated) threat
+            // model, and note the ordering it relies on.
+            try AtomicWrite.data(data, to: fileURL, sensitive: true)
+        } catch {
+            PersistenceFailureReporter.report(what: "snippets", path: fileURL.path, error: error)
+        }
+        onChange?()
+        for observer in observers { observer() }
+    }
+}

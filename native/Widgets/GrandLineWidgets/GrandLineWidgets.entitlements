@@ -26,7 +26,7 @@
          do. -->
     <key>com.apple.security.application-groups</key>
     <array>
-        <string>group.com.firstmate.cockpit.native</string>
+        <string>group.com.manjesh.grandline.native</string>
     </array>
 </dict>
 </plist>

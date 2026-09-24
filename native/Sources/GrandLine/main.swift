@@ -1,0 +1,4072 @@
+// Grand Line - native macOS app (Phase 2 entry point).
+//
+// One AppKit window whose content is `AppShellController` - the nav-redesign
+// task's icon rail + topbar + swappable body (Console/Home, Overview,
+// Review, Settings). This file owns only the window, the main menu, and app
+// lifecycle - all terminal behaviour lives in `ConsoleController` and its
+// helpers. It builds ON Phase 1: the Shell tab is the P1 terminal unchanged, and
+// the load-bearing Edit > Paste wiring (which drives screenshot-paste into
+// Claude) is preserved here for both tabs.
+
+import AppKit
+import SwiftTerm
+
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    var window: NSWindow!
+    /// Fills the menu-bar strip macOS reserves above a full-screen window, so
+    /// the app's ground - not a black band - runs to the top of the display.
+    /// See `FullScreenMenuBarFill.swift`'s header for the measurement.
+    private var fullScreenMenuBarFill: FullScreenMenuBarFill?
+    // Phase 1: saved SSH hosts + the panel that lists and connects them. The
+    // panel hands a `ssh` argv to the console, which opens it as a new tab.
+    let hostStore = HostStore()
+    // Phase 2: the saved-keys Keychain. The console resolves a host's chosen
+    // key through it at connect time; the Keys window (below) is where the
+    // captain generates/imports/browses them.
+    let keyStore = SSHKeyStore()
+    // Phase 3: the saved-command library (B2/B5). The console resolves a
+    // host's startup snippet through it at connect time, and the Snippets
+    // window's "Run" sends a snippet straight to the active tab.
+    let snippetStore = SnippetStore()
+    // Phase 5 (cockpit-shift-power-features): one `ShiftStore` shared by the
+    // main window's Shift page, the menu bar item, the search palette, and
+    // quick capture - all read/write the same tasks/follow-ups, never
+    // separate store instances that could drift out of sync with each other.
+    let shiftStore = ShiftStore()
+    lazy var console = ConsoleController(keyStore: keyStore, snippetStore: snippetStore)
+    // Phase 5 of the full-app UI audit merged the Hosts destination and the
+    // two floating SSH Keys / Snippets windows into one destination with
+    // three segmented tabs, so this is now the only controller for all three
+    // stores' browsing/editing surfaces.
+    lazy var hostsPanel = HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore)
+    lazy var settingsController = SettingsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
+    lazy var shiftMenuBar = ShiftMenuBarController(store: shiftStore)
+    // `fm/straw-hat-menubar-quick-chat-popover`: the crew's own status item,
+    // mirroring `shiftMenuBar`'s shape. `onAsk`/`onOpenFullChat` are wired
+    // below, after `appShell` exists - the forward-don't-own convention
+    // every out-of-window surface in this app follows.
+    lazy var strawHatMenuBar = StrawHatMenuBarController()
+    /// F16: Poneglyph's own status item - the third instance of the same
+    /// shape, wired below like the other two and owning no store (see
+    /// `PoneglyphMenuBarController`'s header).
+    lazy var poneglyphMenuBar = PoneglyphMenuBarController()
+    /// F22: compact mode - the fourth status item, and the one that *merges*
+    /// the three above rather than joining them. `CompactMode.swift`'s header
+    /// is the whole design; `CompactModePopover.swift` is the popover the
+    /// reviewed mockup draws.
+    ///
+    /// Two objects rather than one because the content is what a suite wants
+    /// to drive (four tabs, a capture line) and the controller is what owns
+    /// the `NSStatusItem` - the same split all three of its siblings make.
+    lazy var compactModePopover = CompactModePopoverController()
+    lazy var compactMode = CompactModeController(content: compactModePopover)
+    // F5 (`fm/grandline-feature-f5-command-palette-expansion`): the `⌘K`
+    // command palette, now the app's one search/verb surface - it absorbed
+    // Shift's own separate ⌘⇧P palette (`ShiftSearchController`, deleted), so
+    // there is no second search UI to keep in sync.
+    //
+    // Its providers are registered in `buildUnifiedSearchIndex()` below, each
+    // holding the *shared* store its domain lives in (never a second cached
+    // copy - GL-23's own lesson, which is why F5 depends on that fix) and the
+    // real action its rows dispatch to.
+    //
+    // The one exception is `DocsRunbookStore`, which this palette keeps its
+    // own instance of (not `appShell`'s private one inside `DocsController`):
+    // it re-reads the same git-synced folder fresh on every call, so a second
+    // instance costs nothing and caches nothing that could drift - the same
+    // reasoning `UpdatesController`/`BootstrapController` already use for
+    // their own independent copies of one underlying check (see AGENTS.md).
+    let docsRunbookStore = DocsRunbookStore()
+    lazy var unifiedSearch = UnifiedSearchController(index: buildUnifiedSearchIndex())
+
+    /// UX1's all-destinations map. Lazy, like the search palette beside it -
+    /// a captain who never presses ⌘⇧D never builds twenty-six tiles.
+    lazy var allDestinations: AllDestinationsOverlayController = {
+        let overlay = AllDestinationsOverlayController()
+        overlay.onSelect = { [weak self] destination in self?.appShell.show(destination) }
+        overlay.onTogglePin = { [weak self] destination in
+            self?.appShell.toggleQuickAccessPin(destination)
+        }
+        overlay.isPinned = { [weak self] destination in
+            self?.appShell.isQuickAccessPinned(destination) ?? false
+        }
+        return overlay
+    }()
+
+    /// The File menu's one item, held so `menuNeedsUpdate` can re-title it -
+    /// UX4. See its construction in `buildMenu` for why the title is part of
+    /// the contract rather than decoration.
+    var contextualNewItem: NSMenuItem?
+    /// F2: the ⌥Space router. Built with the shell's own filer, which is
+    /// where every one of the five writes lives (see
+    /// `AppShellController.makeCaptureFiler`) - this panel owns no store.
+    lazy var shiftQuickCapture: ShiftQuickCaptureController = {
+        let capture = ShiftQuickCaptureController(filer: appShell.makeCaptureFiler())
+        return capture
+    }()
+    lazy var shiftNotifications = ShiftNotificationScheduler(store: shiftStore)
+    /// F23: publishes the widget snapshot and drains what a tapped widget
+    /// button queued. Holds no store of its own - the `ShiftStore` above and
+    /// `appShell`'s one `StickyBoardStore` (GL-23), which is why it is
+    /// `lazy`: `appShell` has to exist first.
+    lazy var widgetPublisher = WidgetSnapshotPublisher(
+        shiftStore: shiftStore,
+        stickyStore: appShell.stickyBoardStore
+    )
+    /// F2's capture chord. Configurable since
+    /// `fm/grandline-capture-global-hotkey-configurable`, so the live
+    /// instance is seeded from the stored value rather than from the class's
+    /// own default - the same shape `dictationHotkey` below already uses.
+    lazy var shiftHotkey = ShiftGlobalHotkey(shortcut: AppSettings.shared.quickCaptureShortcut) { [weak self] in
+        self?.shiftQuickCapture.present()
+    }
+
+    /// The Shift menu's Capture item, held so the recorded chord can be
+    /// re-applied to it without rebuilding the whole menu.
+    private weak var quickCaptureMenuItem: NSMenuItem?
+
+    /// Print the capture chord on the menu item, or clear it.
+    ///
+    /// A menu key equivalent can only express a *regular key plus modifiers*.
+    /// A modifier-only chord (the recorder accepts one - Right ⌥ on its own,
+    /// say) has no menu representation at all, so the item keeps its title and
+    /// loses its chord rather than advertising something wrong. The global and
+    /// local monitors still carry it; only the printed accelerator goes.
+    ///
+    /// AGENTS.md's "no key equivalent may be declared twice in
+    /// `NSApp.mainMenu`" rule applies to whatever the captain records, and
+    /// nothing here can pre-empt that - `NavigationCoherenceSelfTest` fails
+    /// the run on a duplicate among the *shipped* items, and a recorded chord
+    /// that collides with one of them is the captain's own choice, made
+    /// visible by the menu drawing it.
+    func applyQuickCaptureMenuChord(_ chord: KeyChord) {
+        guard let item = quickCaptureMenuItem else { return }
+        guard !chord.isModifierOnly, let character = KeyChord.menuKeyEquivalent(for: chord.keyCode) else {
+            item.keyEquivalent = ""
+            item.keyEquivalentModifierMask = []
+            return
+        }
+        item.keyEquivalent = character
+        item.keyEquivalentModifierMask = chord.modifiers
+    }
+    /// Audit §2 item 7: ⌘T/⌘D/⌘W/⌘R/⇧⌘R/⌘1-9 for Console and Tools tabs,
+    /// restored after the Tab menu's removal took them. A local monitor
+    /// rather than menu items - see `TabKeyboardShortcuts`'s header for why
+    /// a menu is not an option here. Owned alongside the app's other two
+    /// monitor-backed shortcuts.
+    lazy var tabShortcuts = TabKeyboardShortcuts(
+        target: { [weak self] in self?.appShell.activeTabShortcutTarget() },
+        mainWindow: { [weak self] in self?.window }
+    )
+    // fm/grandline-dictation-mvp (phase 1): one `DictationEngine` for the
+    // app's whole lifetime, driven by `DictationHotkey`'s hold/release
+    // callbacks - mirrors `shiftHotkey`/`shiftQuickCapture`'s own shape.
+    let dictationEngine = DictationEngine()
+    // Phase 2 (fm/grandline-dictation-phase2): transcription history +
+    // personal vocabulary, shared by the Dictation page and the engine
+    // (vocabulary bias, history recording) - same "one store, every reader/
+    // writer shares it" convention as `shiftStore`.
+    let dictationStore = DictationStore()
+    // GL-23: one command library for the whole app. The Tasks page's DevOps
+    // Commands tab and the Log Analyzer's "from your library" matching both
+    // read and write it; two caching instances diverged in-session and
+    // last-writer-wins on `recent.yaml`. Same one-store convention as
+    // `shiftStore` and `dictationStore` above.
+    let commandLibraryStore = CommandLibraryStore()
+    // F11: the schedules the Automation page's Schedules card manages and
+    // `ScheduleRunner` reads. Same one-store convention as `shiftStore`,
+    // `dictationStore` and `commandLibraryStore` above - the runner and the
+    // card must see the same list, and two instances would be two writers to
+    // the same JSON file.
+    let scheduleStore = ScheduleStore()
+    // fm/grandline-dictation-visual-feedback-hud: the floating on-screen HUD
+    // - see DictationHUD.swift's header. Owned here (not by `AppShellController`)
+    // since it must appear regardless of whether Grand Line's own window is
+    // visible/frontmost.
+    let dictationHUD = DictationHUDController()
+    // GL-09: dictation is gated on the lock here rather than inside
+    // `DictationEngine`, because the gate belongs where the *trigger* is - a
+    // hotkey that fires while locked should do nothing at all, not start an
+    // engine that then declines. `onUp` is deliberately NOT gated: a recording
+    // that was legitimately started before the lock engaged still has to be
+    // stopped, or the microphone stays open.
+    lazy var dictationHotkey = DictationHotkey(
+        shortcut: AppSettings.shared.dictationShortcut,
+        onDown: { [weak self] in
+            guard AppLockGate.shared.allows(.dictation) else {
+                AppLog.lifecycle.info("dictation hotkey refused - app is locked (GL-09)")
+                return
+            }
+            self?.dictationEngine.startRecording()
+        },
+        onUp: { [weak self] in self?.dictationEngine.stopRecording() }
+    )
+    // F12 (`fm/grandline-feature-f12-snippet-expander`): the system-wide
+    // `;abbrev` expander. One instance for the app's whole lifetime, over the
+    // same `snippetStore` the Hosts page edits - same shape as
+    // `dictationHotkey`/`shiftHotkey` above, and deliberately the same one
+    // Accessibility grant as both. Its monitors are installed only while the
+    // captain has turned the feature on; see `SnippetExpander.refresh()`.
+    lazy var snippetExpander = SnippetExpander(store: snippetStore)
+    // fm/grandline-app-lock: the app-level password lock's timing state
+    // machine - see AppLock.swift's header for the idle/hard-logout math.
+    let appLock = AppLockController()
+    // F4: the `UNUserNotificationCenterDelegate` behind every notification
+    // action button (Merge / Open PR / Open task / Snooze 1h / Show in app).
+    // Owned here rather than by `AppShellController` for the same reason
+    // `dictationHUD` is: it has to work when the app was launched *by* the tap,
+    // before any window exists. See NotificationActions.swift's header.
+    let notificationRouter = NotificationActionRouter()
+    // Fix 1: `makeHostConsole` builds a fresh, host-scoped console (its own
+    // ssh tab(s) only, no Firstmate host's own Shell tab) for
+    // `AppShellController.connectHost` - captured as
+    // local constants (not `self`) so this closure, which `appShell` holds
+    // onto for its whole lifetime, can't form a retain cycle with `self`.
+    lazy var appShell: AppShellController = {
+        let keyStore = self.keyStore
+        let snippetStore = self.snippetStore
+        return AppShellController(
+            hostsPanel: hostsPanel, console: console, settings: settingsController,
+            hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: shiftStore,
+            dictationStore: dictationStore, commandLibraryStore: commandLibraryStore,
+            scheduleStore: scheduleStore,
+            makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false) }
+        )
+    }()
+    var hostEditorWindow: NSWindow?
+    /// Fix 1: last-seen saved-host ids, so `hostStore.observe` below can
+    /// detect a delete (a host id present last time but missing now) and
+    /// tear down that host's dedicated page rather than leaving it stranded.
+    private var knownHostIDs: Set<UUID> = []
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // F2: read the saved session BEFORE anything else, because launch
+        // itself navigates. `AppShellController.loadView` ends with a real
+        // `show(...)` (GL-31's landing decision), which reaches
+        // `updateRecentDestinations` - and once `onSessionStateChanged` is
+        // wired further down, that path *writes*. Reading here rather than at
+        // the point of use removes the ordering dependency entirely: moving
+        // the wiring earlier, which is an easy and invisible mistake, can no
+        // longer clobber the state with "wherever launch happened to land"
+        // before it has been restored.
+        let savedSession = AppSettings.shared.sessionRestoreState
+
+        // Connect action from the panel: a saved host (has an id) reaches its
+        // own dedicated page (Fix 1) - the same one its rail icon opens, via
+        // `connectToHost` below; an ad-hoc quick-connect (no saved identity to
+        // pin a page to) still opens as a plain tab in the shared Firstmate
+        // console, same as before Fix 1.
+        hostsPanel.onConnect = { [weak self] hostID, label, args, accentHex, keyID, startupSnippetID in
+            guard let self else { return }
+            if let hostID, let host = self.hostStore.host(id: hostID) {
+                self.connectToHost(host)
+            } else {
+                self.console.openSSH(label: label, args: args, accentHex: accentHex, keyID: keyID, startupSnippetID: startupSnippetID)
+                self.appShell.show(.console)
+            }
+        }
+        // The pinned "Firstmate" entry (Fix 4) - the same Shell tab
+        // the console has always opened at startup, now also reachable from
+        // the Hosts list. Unaffected by Fix 1: it's the one destination that
+        // deliberately stays on the shared `console`, never a dedicated page.
+        hostsPanel.onConnectPinned = { [weak self] in
+            guard let self else { return }
+            self.console.openFirstmateHost()
+            self.appShell.show(.console)
+        }
+        // The Hosts page's own quick-actions panel names ⌘K; this is what
+        // makes the button do what its label says. Forwarded rather than
+        // reached for - that page has never known what an `AppDelegate` is.
+        hostsPanel.onOpenCommandPalette = { [weak self] in self?.showUnifiedSearch() }
+        // The Hosts sidebar's TOOLS rows and its user row. Every one opens
+        // something that really exists - see `HostsController.onOpenActivity`
+        // for why a nav row with nothing behind it is absent here rather than
+        // drawn inert.
+        hostsPanel.onOpenActivity = { [weak self] in self?.appShell.openFleetLog() }
+        hostsPanel.onOpenCommands = { [weak self] in self?.appShell.show(.commandLibrary) }
+        hostsPanel.onOpenSettings = { [weak self] in self?.appShell.show(.settings) }
+        hostsPanel.onLogout = { [weak self] in self?.appShell.requestLogout() }
+        // Nav-redesign task, item 3: Add/Edit Host is a dedicated full-page
+        // window, not a sheet on this ~240pt-wide panel.
+        appShell.onPresentHostEditor = { [weak self] host in
+            self?.presentHostEditor(for: host)
+        }
+        // F9 (v1) - multi-host command execution. Here rather than in
+        // `AppShellController` because this is the one object holding the host
+        // store, and `connectToHost`'s own argv resolution
+        // (`Host.sshArguments(allHosts:)`) needs the full host list to resolve
+        // a jump chain.
+        appShell.onSendCommandToHosts = { [weak self] command, values, generated in
+            self?.presentMultiHostSend(command: command, values: values, generatedText: generated)
+        }
+        // Fix 3 (fixes4) pinned a rail icon per saved host here. Daylight
+        // Phase 2 removed the rail (§5.1), and the canvas's Hosts module plus
+        // the Hosts page's own Connect are the two ways in now - both of which
+        // already reach the same `connectToHost` path this did.
+        knownHostIDs = Set(hostStore.hosts.map { $0.id })
+        // Finding 4 (cockpit-audit-core): a corrupted hosts.json comes up as
+        // an empty list with no other signal - surface that once here rather
+        // than letting the captain mistake it for "nothing saved yet".
+        if let backupPath = hostStore.loadFailureBackupPath {
+            appShell.showToast("Couldn't read saved hosts - backed up the old file to \((backupPath as NSString).lastPathComponent)")
+        }
+        // GL-01: the same treatment for the three stores that used to fail
+        // *silently*. Backing the file up is the durability half; saying so is
+        // what makes it recoverable - a captain who is never told will not go
+        // looking for a `.corrupt-` file. Staged over a second apart so two
+        // simultaneous failures do not overwrite each other's toast.
+        //
+        // Keys first and most emphatically: losing key metadata orphans the
+        // Keychain blobs those entries pointed at, and nothing else can clean
+        // them up afterwards.
+        var storeFailureNotices: [String] = []
+        if let backupPath = keyStore.loadFailureBackupPath {
+            storeFailureNotices.append("Couldn't read saved SSH keys - backed up to \((backupPath as NSString).lastPathComponent). "
+                + "Keychain entries for those keys are still there.")
+        }
+        if let backupPath = snippetStore.loadFailureBackupPath {
+            storeFailureNotices.append("Couldn't read saved snippets - backed up to \((backupPath as NSString).lastPathComponent)")
+        }
+        for backupPath in dictationStore.loadFailureBackupPaths {
+            storeFailureNotices.append("Couldn't read a dictation file - backed up to \((backupPath as NSString).lastPathComponent)")
+        }
+        // F11: same treatment for schedules. Worth saying out loud rather than
+        // silently starting with none, because an unreadable file means every
+        // scheduled run stops happening with nothing else anywhere reporting
+        // it - the schedules simply are not there to be due.
+        if let backupPath = scheduleStore.loadFailureBackupPath {
+            storeFailureNotices.append("Couldn't read saved schedules - backed up to \((backupPath as NSString).lastPathComponent). "
+                + "Nothing is scheduled until they are set up again.")
+        }
+        for (index, notice) in storeFailureNotices.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5 + Double(index) * 4) { [weak self] in
+                self?.appShell.showToast(notice)
+            }
+        }
+        // Finding 4.3: a Recents `.host` row whose session has since ended
+        // reconnects instead of doing nothing. Forward-don't-own - the shell
+        // has no `HostStore`, so it asks here, and this routes through the
+        // same `connectToHost` every other reconnect in the app uses. Returns
+        // false only when the host is no longer saved at all, which is what
+        // tells the shell to drop the row.
+        appShell.onReconnectHost = { [weak self] hostID in
+            guard let self, let host = self.hostStore.hosts.first(where: { $0.id == hostID }) else { return false }
+            self.connectToHost(host)
+            return true
+        }
+        hostStore.observe { [weak self] in
+            guard let self else { return }
+            let currentIDs = Set(self.hostStore.hosts.map { $0.id })
+            // Fix 1: a host id that was known last time but isn't anymore was
+            // deleted - tear down its dedicated page so the rail (which just
+            // lost that host's icon) can't leave it stranded.
+            for removedID in self.knownHostIDs.subtracting(currentIDs) {
+                self.appShell.removeHostConsole(id: removedID)
+                // Finding 4.3: a deleted host's page is the one Recents row
+                // that is genuinely unreachable - it can neither switch to a
+                // live session nor reconnect - so it stops being listed here
+                // rather than waiting to be clicked and found dead. A host
+                // page merely *closed* is untouched: that one reconnects.
+                self.appShell.forgetRecentHost(id: removedID)
+            }
+            self.knownHostIDs = currentIDs
+        }
+        // The Snippets tab's "Run" (Phase 3, B2) sends straight to the
+        // console's active tab.
+        appShell.onRunSnippet = { [weak self] snippet in
+            self?.console.runSnippetInActiveTab(snippet)
+        }
+        // Settings > Terminal's font-size stepper (Fix 3) talks straight to
+        // the live console; Appearance goes through `ThemeManager` directly
+        // since every theme-aware view already observes it.
+        settingsController.onFontSizeStep = { [weak self] delta in
+            self?.console.stepFontSize(by: delta)
+        }
+        // Settings > Security points at the vault rather than drawing the
+        // vault's own controls: they live sealed inside the encrypted file,
+        // and AGENTS.md is explicit that anything reaching the vault from
+        // outside the vault page goes through the vault's own unlock.
+        settingsController.onNavigate = { [weak self] destination in
+            self?.appShell.show(destination)
+        }
+
+        // `fm/grandline-settings-page-redesign`: Settings > Appearance's
+        // "Follow system appearance". Started unconditionally - the observer
+        // costs nothing while the setting is off, and registering it here is
+        // what makes switching it on take effect without a relaunch. It also
+        // applies the system's current mode immediately, which is what puts a
+        // captain who follows the system on the right half of their pair
+        // after an overnight switch.
+        SystemAppearanceFollower.shared.start()
+
+        // Settings > Terminal's "Bell & notifications" toggle (Fix 3): this
+        // only ever gates whether a macOS banner is ALSO posted for a
+        // needs-decision/blocked task - see `FleetNotifier.setEnabled`'s own
+        // comment. `FleetNotifier.shared.start()` below always runs
+        // regardless, since the in-app Notification Center
+        // (`fm/grandline-notification-center`) must stay current whether or
+        // not the captain wants OS banners too.
+        FleetNotifier.shared.setEnabled(AppSettings.shared.notifyOnNeedsDecision)
+        FleetNotifier.shared.onNavigateToOverview = { [weak self] in self?.appShell.show(.overview) }
+        // E3: the shared "has the captain actually been away for a while?"
+        // answer the gated pollers below consult. Registered before any of
+        // them start.
+        AppActivityState.shared.start()
+        FleetNotifier.shared.start()
+
+        // F4: notification action buttons. Every closure here points at the
+        // code path the in-app UI already uses - `AppShellController`'s own
+        // navigation and `ShiftStore.snoozeFollowUp` - so a notification action
+        // and a click inside the app cannot diverge. The merge path needs no
+        // wiring: the router defaults to `FleetDataSource.mergePR`, the exact
+        // function Review's own Merge button calls.
+        //
+        // Registered here (not later) because the delegate must be set before
+        // `applicationDidFinishLaunching` returns, or an action tap that
+        // cold-launched the app is dropped by the system.
+        notificationRouter.onShow = { [weak self] destination in self?.appShell.show(destination) }
+        notificationRouter.onOpenShiftTask = { [weak self] id in self?.appShell.openShiftTask(id: id) }
+        notificationRouter.onOpenShiftFollowUp = { [weak self] id in self?.appShell.openShiftFollowUp(id: id) }
+        notificationRouter.onSnoozeFollowUp = { [weak self] id, date in
+            self?.shiftStore.snoozeFollowUp(id: id, to: date)
+        }
+        notificationRouter.register()
+
+        // fm/grandline-notification-center: the slow background poll for the
+        // four signals that otherwise only ever recompute on a page visit
+        // (tool updates, GitHub Sync drift, Vault attention, Bootstrap
+        // setup drift) - see `BackgroundSignalsPoller.swift`'s header for
+        // the cadence tradeoff.
+        BackgroundSignalsPoller.shared.onNavigateToUpdates = { [weak self] in self?.appShell.show(.updates) }
+        BackgroundSignalsPoller.shared.onNavigateToGitHubSync = { [weak self] in self?.appShell.show(.githubSync) }
+        // The per-tool / per-repo halves of the two above, for the
+        // notification popover's expanded child rows.
+        BackgroundSignalsPoller.shared.onUpdateTool = { [weak self] id in
+            self?.appShell.updateToolFromNotification(id)
+        }
+        BackgroundSignalsPoller.shared.onSyncFork = { [weak self] id in
+            self?.appShell.syncForkFromNotification(id)
+        }
+        BackgroundSignalsPoller.shared.onNavigateToVault = { [weak self] in self?.appShell.show(.vault) }
+        BackgroundSignalsPoller.shared.onNavigateToBootstrap = { [weak self] in self?.appShell.show(.bootstrap) }
+        BackgroundSignalsPoller.shared.start()
+
+        // fm/grandline-herdr-selection-color-sync: keep herdr's own
+        // `[theme.custom].selection_bg` (~/.config/herdr/config.toml) in
+        // sync with the active Helm theme's accent, so a Shift+drag on a
+        // `.shell` tab with drag-forwarding on - which forwards the gesture
+        // to herdr and shows herdr's *own* selection rendering - reads in
+        // the same colour as everything Grand Line draws itself. No
+        // closures to wire: unlike the pollers above, this reacts to
+        // `ThemeManager` directly and needs nothing from `AppShellController`.
+        HerdrThemeSync.shared.start()
+
+        // F11 follow-up: seed the "daily-github-sync" schedule once - a daily
+        // 11:10 AM fast-forward of every personal fork, exactly what Setup >
+        // GitHub Sync's "Sync All" button already does (`ScheduleActions.
+        // forkSync()`). See `ScheduleSeeding.swift`'s header for why this is
+        // safe to call on every launch (idempotent, guarded by a persisted
+        // one-time flag) rather than only the first.
+        ScheduleSeeding.seedDailyGitHubSyncIfNeeded(
+            store: scheduleStore,
+            alreadySeeded: { AppSettings.shared.didSeedDailyGitHubSyncSchedule },
+            markSeeded: { AppSettings.shared.didSeedDailyGitHubSyncSchedule = true }
+        )
+
+        // F11: the schedule runner. Distinct from the poller above in the one
+        // way that matters - the poller answers "is anything wrong right now"
+        // on a cadence nobody chose, while this runs the specific actions the
+        // captain asked for at the times they asked for. Both are timers; only
+        // this one has a captain-authored schedule behind it.
+        // fm/grandline-schedules-sidebar-move: the Schedules card lives on
+        // its own rail destination now, not `.automation`.
+        //
+        // grandline-schedule-daily-updates: seeds the captain-requested
+        // "daily-updates" schedule exactly once, ever, on a fresh
+        // schedules.json - see `ScheduleStore.seedDailyUpdatesScheduleIfNeeded`'s
+        // own doc comment for why this call site (real app launch only, never
+        // `ScheduleStore.init()`) is what keeps it out of every self-test that
+        // constructs a bare `ScheduleStore()`. Must run before `.start(...)`
+        // below, so the freshly-seeded schedule is in `store.schedules` by the
+        // time the runner's first tick can see it.
+        scheduleStore.seedDailyUpdatesScheduleIfNeeded()
+        ScheduleRunner.shared.onNavigateToSchedules = { [weak self] in self?.appShell.show(.schedules) }
+        ScheduleRunner.shared.start(store: scheduleStore,
+                                    hostStore: hostStore,
+                                    keyStore: keyStore,
+                                    snippetStore: snippetStore,
+                                    dictationStore: dictationStore)
+
+        // Phase 5 (cockpit-shift-power-features): menu bar popover + global
+        // quick capture + due-item notifications, all reading/writing the one
+        // shared `shiftStore` above - never a second instance. (Its fourth
+        // member, the ⌘⇧P search palette, was absorbed into ⌘K by F5.)
+        //
+        // F5: `⌘K` opens the one palette app-wide - the topbar Search pill
+        // (wired below), the Edit menu's `⌘K` item, and nothing else. Every
+        // row's action was wired into its provider in
+        // `buildUnifiedSearchIndex()`; there is no per-result callback here
+        // any more, and no second palette (⌘⇧P is gone with
+        // `ShiftSearchController`).
+        //
+        // The bar's Search pill's click, forwarded through `AppShellController.
+        // onSearchTapped` (see that property's own doc comment) - not
+        // `appShell.bar.onSearchTapped` directly, since `loadView()` (run
+        // later, once `window.contentViewController = appShell` is assigned
+        // below) wires that control to call back through this property, and
+        // would silently clobber a direct assignment made before that point.
+        appShell.onSearchTapped = { [weak self] in self?.unifiedSearch.present() }
+        // ⌘K's own "All Destinations…" verb, forwarded the same way the
+        // Search pill's click is - and for the same reason the line above
+        // gives: `loadView()` has not run yet, so this has to be the shell's
+        // property rather than anything reached through `appShell.bar`.
+        //
+        // **This assignment was missing, and that made the verb dead.** The
+        // property existed and `UnifiedSearchProviders` called it, but nothing
+        // in the app ever set it, so ⌘K → "All Destinations…" silently did
+        // nothing - the same defect, in a second entry point, that
+        // `fm/grandline-remove-dead-all-destinations-overflow` removed from
+        // the bar's overflow menu. The overlay itself was never broken; only
+        // the routes into it were, and ⌘⇧D/Go went through `showAllDestinations`
+        // directly and so always worked.
+        appShell.onShowAllDestinations = { [weak self] in self?.showAllDestinations() }
+        // F2: the toast names where it went, because the router has five
+        // answers now and "Task captured" would be wrong for four of them.
+        shiftQuickCapture.onCaptured = { [weak self] destination in
+            self?.appShell.showToast("Captured to \(destination.railDestination.title)")
+        }
+        // The global hotkey's system-wide (other-app-frontmost) case needs
+        // Accessibility permission - see `ShiftGlobalHotkey`'s header for
+        // exactly why. Requesting it here (once, at launch) surfaces the
+        // real macOS prompt the first time this app ever runs rather than
+        // silently failing later.
+        // F3: arm the clipboard-history capture loop. Once, here - see
+        // `ClipboardHistoryController.startCapturing()` for why not at init.
+        appShell.startClipboardHistoryCapture()
+        shiftHotkey.requestPermissionIfNeeded()
+        shiftHotkey.start()
+        // The prompt above opens System Settings, so a captain granting
+        // Accessibility for the first time grants it *after* the global
+        // monitor was installed - and macOS never arms an already-registered
+        // global monitor retroactively. Coming back to this app is the first
+        // moment we can notice, and the check costs one `AXIsProcessTrusted()`
+        // read. See `ShiftGlobalHotkey.reassertIfTrustChanged()`.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.shiftHotkey.reassertIfTrustChanged()
+        }
+        tabShortcuts.start()
+        // fm/grandline-notification-center: feeds the same due-detection
+        // `poll()` already computes for the OS banner into the in-app
+        // Notification Center too, rather than only firing a one-shot
+        // banner with no record afterward.
+        shiftNotifications.onDueCountsChanged = { [weak self] taskCount, followUpCount, overdueCount in
+            NotificationSources.setShiftDue(taskCount: taskCount, followUpCount: followUpCount,
+                                            overdueCount: overdueCount) {
+                self?.appShell.showShiftDestination()
+            }
+        }
+        shiftNotifications.start()
+
+        // fm/grandline-dictation-mvp: unlike `shiftHotkey` above, Dictation
+        // deliberately does NOT request Accessibility trust eagerly at
+        // launch - the task brief asks each Dictation permission to be
+        // requested "the first time it's genuinely needed," which for
+        // Accessibility is the Dictation page's own status action (or, if
+        // Shift's own eager request above already granted it, this monitor
+        // just starts working with no further prompt needed - it's the same
+        // one process-wide Accessibility trust grant). The hotkey's
+        // local+global monitors are still registered now regardless -
+        // registering them is free and has nothing to do with whether the
+        // grant exists yet.
+        dictationEngine.onStatusChanged = { [weak self] status, isCeilingTimeout in
+            self?.appShell.setDictationEngineStatus(status)
+            self?.dictationHUD.handle(status, isCeilingTimeout: isCeilingTimeout)
+        }
+        // Phase 2: bias recognition toward the captain's personal vocabulary,
+        // and record every successful (real, pasted) transcript into
+        // history - both read/write the one shared `dictationStore` above.
+        dictationEngine.vocabularyProvider = { [weak self] in self?.dictationStore.vocabulary ?? [] }
+        // Phase 3: read the "Clean up my sentences" toggle fresh at the
+        // moment each dictation finishes - see `AppSettings.dictationCleanupEnabled`'s
+        // own doc comment for why this defaults to off.
+        dictationEngine.cleanupEnabledProvider = { AppSettings.shared.dictationCleanupEnabled }
+        // fm/grandline-dictation-whisper-engine: read the "Use local Whisper
+        // engine" toggle fresh at the start of every recording - see
+        // `AppSettings.dictationLocalWhisperEnabled`'s own doc comment for
+        // why this defaults to off.
+        dictationEngine.localWhisperEnabledProvider = { AppSettings.shared.dictationLocalWhisperEnabled }
+        dictationEngine.onTranscript = { [weak self] text, duration in
+            self?.dictationStore.recordHistory(text: text, durationSeconds: duration, date: Date())
+        }
+        // Phase 2: the Dictation page's shortcut recorder edits
+        // `AppSettings.dictationShortcut` itself and reports the change here
+        // so the *live* hotkey instance actually picks it up - a plain
+        // settings write with no restart would leave the old monitor
+        // installed (see `DictationHotkey.updateShortcut`'s own header).
+        appShell.onKeyChordChanged = { [weak self] shortcut in
+            self?.dictationHotkey.updateShortcut(shortcut)
+        }
+        // Settings > Terminal Shortcuts writes `AppSettings.terminalShortcuts`
+        // itself and reports the change here so the *live* monitor picks it
+        // up on the very next keystroke - the same reason Dictation's
+        // recorder reports rather than relying on a settings read per event.
+        appShell.onTerminalShortcutsChanged = { [weak self] shortcuts in
+            self?.tabShortcuts.updateTerminalShortcuts(shortcuts)
+        }
+        // Settings > Capture's recorder, forwarded the same way and for the
+        // same reason. The Shift menu's own Capture item is re-keyed here too:
+        // it is the no-Accessibility fallback for this exact chord, and a menu
+        // still advertising ⌥Space after the captain recorded ⌃⌘C would be a
+        // page stating a shortcut the app no longer listens for.
+        appShell.onQuickCaptureShortcutChanged = { [weak self] chord in
+            self?.shiftHotkey.updateShortcut(chord)
+            self?.applyQuickCaptureMenuChord(chord)
+        }
+        // E2: turning the toggle off releases any engine that is still
+        // resident, so the captain's "off" takes effect now rather than at the
+        // next idle expiry.
+        appShell.onDictationLocalWhisperChanged = { [weak self] enabled in
+            guard !enabled else { return }
+            self?.dictationEngine.releaseWhisperEngine(reason: "local Whisper turned off")
+        }
+        dictationHotkey.start()
+
+        // F12. Three wirings, all of them "ask the one place that knows":
+        // whether a terminal is on screen (the `.consoleOnly` scope's whole
+        // question), the store's own change signal, and the page's card.
+        snippetExpander.isConsoleFocusedProvider = { [weak self] in
+            self?.appShell.isTerminalDestinationShowing ?? false
+        }
+        snippetStore.observe { [weak self] in self?.snippetExpander.rebuildTable() }
+        hostsPanel.snippetExpansionState = { [weak self] in
+            guard let self else { return (enabled: false, trusted: false, triggerCount: 0) }
+            return (enabled: AppSettings.shared.snippetExpansionEnabled,
+                    trusted: self.snippetExpander.isAccessibilityTrusted,
+                    triggerCount: self.snippetExpander.armedTriggerCount)
+        }
+        hostsPanel.onSnippetExpansionToggled = { [weak self] enabled in
+            AppSettings.shared.snippetExpansionEnabled = enabled
+            // The settings write alone would leave the monitors exactly as
+            // they were - the same trap `DictationHotkey.updateShortcut`'s own
+            // header records for the shortcut recorder.
+            self?.snippetExpander.refresh()
+            // Turning it on is the first moment this feature genuinely needs
+            // the permission, which is when this app asks for it (Dictation's
+            // own rule). It is the same single grant, so this is a silent
+            // no-op for a captain who already granted it for ⌥Space.
+            if enabled { self?.snippetExpander.requestPermissionIfNeeded() }
+        }
+        hostsPanel.onRequestAccessibilityTrust = { [weak self] in
+            self?.snippetExpander.requestPermissionIfNeeded()
+        }
+        // Off by default, so on a fresh install this installs nothing at all.
+        snippetExpander.refresh()
+
+        // `shiftMenuBar` is `lazy` - force it into existence now so its
+        // `NSStatusItem` actually appears at launch rather than only the
+        // first time something else happens to reference the property.
+        _ = shiftMenuBar
+
+        // `fm/straw-hat-menubar-quick-chat-popover`: same reason, same
+        // pattern. `onAsk` forwards into `AppShellController.
+        // askCrewFromMenuBar`, which is `StrawHatController.send(_:completion:)`
+        // - the crew page's own real runner and transcript, never a second
+        // conversation. `onOpenFullChat` is the popover's persistent
+        // "Open Straw Hat Pirates" affordance.
+        strawHatMenuBar.onAsk = { [weak self] text, completion in
+            self?.appShell.askCrewFromMenuBar(text, completion: completion)
+        }
+        strawHatMenuBar.onOpenFullChat = { [weak self] in self?.appShell.show(.strawHat) }
+        _ = strawHatMenuBar
+
+        // F16: same pattern, same reason for forcing the `lazy` property.
+        // Every closure forwards into `AppShellController`, which forwards
+        // into the one `CredentialVaultController` and its one store.
+        poneglyphMenuBar.codesProvider = { [weak self] in self?.appShell.poneglyphQuickCodes ?? [] }
+        poneglyphMenuBar.vaultIsUnlocked = { [weak self] in self?.appShell.poneglyphIsUnlocked ?? false }
+        poneglyphMenuBar.onCopy = { [weak self] id in self?.appShell.copyPoneglyphCodeFromMenuBar(id: id) }
+        poneglyphMenuBar.onOpenVault = { [weak self] in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.window.makeKeyAndOrderFront(nil)
+            self?.appShell.show(.poneglyph)
+        }
+        _ = poneglyphMenuBar
+
+        // F22. Same forward-don't-own pattern as the three above, and the
+        // same reason for forcing the `lazy` properties - except that this
+        // one starts *hidden* and `compactMode.refresh()` (further down, once
+        // the window exists) is what decides whether it appears.
+        wireCompactMode()
+
+        buildMenu()
+
+        // fm/grandline-app-lock: wire the lock state machine to the shell's
+        // overlay and to the menu-disable safety net below. The actual
+        // `.launch` lock happens further down, *after* `window.contentViewController
+        // = appShell` below has forced `AppShellController.loadView()` to run
+        // at least once - `showLock` sets `lockScreen.view.isHidden = false`,
+        // but `loadView()` itself unconditionally sets that same property to
+        // `true` right after embedding the view (its default hidden state);
+        // locking before `loadView()` has ever run meant that default-hidden
+        // assignment executed *after* `showLock`'s and silently re-hid the
+        // overlay - confirmed live (a real launch dump showed
+        // `overlayHidden=true` immediately after `showLock` had already run
+        // and correctly disabled the menu). Locking after the window/
+        // contentViewController assignment below closes that race.
+        appLock.onLock = { [weak self] reason in self?.appShell.showLock(reason: reason) }
+        appShell.onUnlocked = { [weak self] in self?.appLock.recordUnlock() }
+        appShell.onLogoutRequested = { [weak self] in self?.appLock.lock(reason: .manualLogout) }
+        appShell.onLockStateChanged = { [weak self] locked in self?.setContentMenusEnabled(!locked) }
+        appLock.start()
+
+        // The window opens filling the screen's usable area, not a hardcoded
+        // 1220x720 box.
+        //
+        // This is **half** of the captain's "the window doesn't cover the
+        // laptop screen" report (`01-live-window-not-fullscreen.png`): a fixed
+        // content rect plus `center()` meant the window simply never asked for
+        // more than 1220x720. The other half was a real Auto Layout constraint
+        // that capped the window at 1410pt wide no matter what was asked for,
+        // including in genuine full screen - see the priority note on
+        // `ToolRowLayout.build`'s name-column constraint
+        // (`HelmUIComponents.swift`). Both had to go; either one alone still
+        // left black bars.
+        //
+        // `visibleFrame` (not `frame`) so the menu bar and the Dock are
+        // excluded, and it is applied as the *window* frame (title bar
+        // included) so nothing is pushed off the top of the screen.
+        //
+        // **A1 of the UI modernization audit** (`data/grandline-ui-
+        // modernization-audit/report.md` §3A) adds `.fullSizeContentView`
+        // here: the content view then covers the whole window and the
+        // floating bar becomes the top edge, reclaiming the stock titlebar's
+        // height (measured: 32pt, not the report's estimated ~28). The rest
+        // of that treatment - the transparent, titleless titlebar and the
+        // traffic lights re-centred onto the bar - is `WindowChromeFusion`;
+        // see its header for every measured number and for why the lights
+        // have to be repositioned from a `layout()` hook.
+        window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1220, height: 720),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        // Still set, and still worth setting, even though `titleVisibility`
+        // hides it: the Window menu, Mission Control and the window's own
+        // proxy menu all read it.
+        window.title = Self.windowTitle(context: appShell.currentContextTitle)
+        WindowChromeFusion.apply(to: window)
+        fullScreenMenuBarFill = FullScreenMenuBarFill(window: window)
+        // **`contentViewController` first, then the frame.** Assigning a
+        // content view controller makes AppKit re-derive the window's frame
+        // from that content's Auto Layout fitting size (AGENTS.md's
+        // host-editor gotcha (3), in its milder form) - so setting the frame
+        // *before* this line is silently undone. Measured with a real window:
+        // set to 1512x950 and then given a content view controller, it came
+        // back 960x652, i.e. exactly `contentMinSize` plus the title bar.
+        // Review #3 §7: every navigation renames the window, so Mission
+        // Control and the Window menu say which page this is. Registered
+        // before `contentViewController`, which is what first lays the shell
+        // out - a `show(_:)` during that pass then already finds a handler.
+        appShell.onCurrentDestinationChanged = { [weak window] context in
+            window?.title = Self.windowTitle(context: context)
+        }
+        window.contentViewController = appShell
+        window.contentMinSize = Self.minContentSize
+        window.setFrame(Self.defaultWindowFrame(), display: false)
+        // `setFrameAutosaveName` after the frame is set: with no saved frame
+        // yet (first launch on this machine) AppKit keeps what we just asked
+        // for, and from then on the captain's own resize/zoom is what is
+        // restored - so this sets a sane default without overriding a
+        // deliberate later choice.
+        window.setFrameAutosaveName(Self.windowAutosaveName)
+        // Theme-audit task: the window's own chrome (title bar) has no view
+        // to force `.appearance` on, so without this it always follows the
+        // OS's actual light/dark setting rather than the active Helm theme.
+        window.followHelmTheme()
+        // K3: install the theme crossfade now that there is a window to
+        // snapshot. Deliberately here rather than in `AppShellController`,
+        // which several window-backed self-tests mount and then re-theme -
+        // see `ThemeTransition.swift`'s header.
+        ThemeManager.shared.transitionCoordinator = ThemeTransitionCoordinator(window: window)
+
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        // F22: only now, with a real window to hide. `refresh()` is what puts
+        // the status item in the menu bar, hides the three it merges, sets the
+        // activation policy and - if the captain left the mode on last
+        // session - orders this window straight back out. Deliberately after
+        // `makeKeyAndOrderFront` rather than instead of it: the window is
+        // built, laid out and session-restored exactly as it always was, so
+        // leaving compact mode later is instant and `AppShellController`'s own
+        // launch-time width tie (gotcha (14)) still runs against a real,
+        // visible window.
+        compactMode.refresh()
+
+        // `loadView()` has now run at least once (triggered by the
+        // `contentViewController` assignment above) - lock now so the very
+        // first frame the captain sees is the lock screen, not the console.
+        appLock.lock(reason: .launch)
+
+        // F23: the widgets. `start()` registers the store/lock observers,
+        // publishes once and applies anything a widget button queued while
+        // the app was not running.
+        //
+        // **Deliberately after the window and after `.launch`'s lock**, for
+        // two reasons rather than one. It reads `appShell.stickyBoardStore`,
+        // and forcing that `lazy` property earlier would move
+        // `AppShellController`'s construction ahead of the carefully-ordered
+        // window/`contentViewController`/lock sequence above - which the
+        // comment on `appLock.onLock` explains has already been got wrong
+        // once. And publishing *after* the launch lock means the first
+        // snapshot this process ever writes is the locked one, so a relaunch
+        // cannot flash yesterday's tasks onto the desktop before the password
+        // has been typed (GL-09).
+        //
+        // Cheap by construction - one small JSON write against
+        // already-loaded in-memory arrays, no subprocess and no file read
+        // (GL-12).
+        widgetPublisher.start()
+
+        // F2: keep the saved session current on every navigation, so a crash
+        // or a force-quit loses at most whatever changed since the last one.
+        appShell.onSessionStateChanged = { [weak self] in self?.saveSessionState() }
+
+        // F2 (audit §2 item 1). After `loadView` (which is what makes GL-31's
+        // own first-run landing decision) and behind the lock screen, so
+        // nothing restored is visible before the captain has unlocked.
+        restoreSessionIfNeeded(savedSession)
+        presentWelcomeIfNeeded()
+    }
+
+    /// Review #3's UX13: the first-run welcome sheet.
+    ///
+    /// **Registered behind the lock, not shown over it.** `appLock.lock` runs
+    /// a few lines above, and a sheet presented now would sit on top of the
+    /// lock screen - so a second user would meet a cheerful three-step tour
+    /// layered over the password prompt the finding is complaining about.
+    /// Instead this waits for the first unlock, which is the first moment the
+    /// captain is actually in the app.
+    ///
+    /// `AppLockGate.observe` fires immediately at registration with the
+    /// current state (the same convention `ThemeManager.observe` follows), so
+    /// an app that is somehow already unlocked is handled by the same path
+    /// rather than by a second one.
+    private func presentWelcomeIfNeeded() {
+        guard !AppSettings.shared.hasSeenWelcome else { return }
+        var presented = false
+        AppLockGate.shared.observe { [weak self] locked in
+            guard let self, !locked, !presented,
+                  !AppSettings.shared.hasSeenWelcome else { return }
+            presented = true
+            let welcome = WelcomeSheetController()
+            self.appShell.presentAsSheet(welcome)
+        }
+    }
+
+    // MARK: F2 - session restoration
+
+    /// Reopens where the captain was. See `SessionRestore.swift` for exactly
+    /// what is and is not restored.
+    ///
+    /// **GL-31 wins.** A machine with no firstmate home resolved lands on
+    /// Bootstrap, and a saved destination must not drag it away from the page
+    /// that fixes the cause - that landing is the whole point of GL-31's
+    /// exception. Tabs are still restored in that case; only the destination
+    /// defers.
+    private func restoreSessionIfNeeded(_ saved: SessionRestoreState?) {
+        guard let state = saved, !state.isEmpty else { return }
+
+        appShell.restoreTabs(from: state)
+
+        // Every host that had a page, reconnected with `navigate: false` - so
+        // each page exists but stays hidden, and (per `ConsoleController.
+        // addTab`'s `hasAppeared` guard) forks no `ssh` until the captain
+        // actually opens it. The one that was *showing* is connected last,
+        // with navigation, so it is the page that comes up.
+        // `uniquingKeysWith`, never `uniqueKeysWithValues`: the latter traps
+        // on a duplicate key, and this runs on the launch path against a file
+        // that can be hand-edited. `HostStore` should never produce two hosts
+        // with one id, but a crash at launch is a far worse answer to that
+        // than quietly keeping the first.
+        let byID = Dictionary(hostStore.hosts.map { ($0.id.uuidString, $0) }, uniquingKeysWith: { first, _ in first })
+        let plan = SessionRestorePlan.hosts(from: state, knownHostIDs: Set(byID.keys))
+        for id in plan.background {
+            guard let host = byID[id] else { continue }
+            appShell.connectHost(host, args: host.sshArguments(allHosts: hostStore.hosts), navigate: false)
+        }
+
+        guard FirstmateHome.homeOk() else {
+            AppLog.lifecycle.info("session restore: tabs restored, destination left to GL-31's Bootstrap landing")
+            return
+        }
+
+        if let showing = plan.showing, let host = byID[showing] {
+            connectToHost(host)
+        } else {
+            appShell.restoreDestination(from: state)
+        }
+    }
+
+    /// Records where the captain is, for the next launch.
+    ///
+    /// Called on quit and on every navigation - the second is what makes this
+    /// survive a crash or a force-quit, and it is cheap: a handful of tabs
+    /// encoded to JSON, written only when the result actually differs from
+    /// what is already stored (`UserDefaults` would otherwise take a write on
+    /// every single navigation, most of which change nothing).
+    func saveSessionState() {
+        guard appShell.isViewLoaded else { return }
+        let state = appShell.captureSessionState()
+        guard state != AppSettings.shared.sessionRestoreState else { return }
+        AppSettings.shared.sessionRestoreState = state
+    }
+
+    /// The main window's saved-frame key. Once the captain resizes or zooms
+    /// the window, AppKit restores that instead of the default below.
+    static let windowAutosaveName = "GrandLineMainWindow"
+
+    /// Never smaller than this. Deliberately below any real Mac's usable
+    /// height so it can never fight `defaultWindowFrame` - it only stops the
+    /// captain dragging the window down to a size where the destinations
+    /// stop being readable.
+    static let minContentSize = NSSize(width: 960, height: 620)
+
+    /// The window's title, from the running bundle rather than a literal.
+    ///
+    /// The end-to-end review's INFO finding: this was hardcoded
+    /// `"Grand Line"`, so the sanctioned probe app
+    /// (`Scripts/build-probe-app.sh`, its own bundle id and 17 scratch store
+    /// overrides) put the *real* app's name in its own title bar - and a probe
+    /// screenshot was then indistinguishable from a screenshot of the
+    /// captain's live instance. That is a genuine review hazard rather than a
+    /// cosmetic one: this app has no process isolation between builds sharing
+    /// a bundle identity, so "which instance is this?" is exactly the question
+    /// a screenshot has to answer. The probe's plist already says "Grand Line
+    /// Probe", so reading the bundle makes it say so with no per-build flag.
+    ///
+    /// The fallback chain matters because a plain `swift build` binary has no
+    /// `Info.plist` at all (the dev flow this repo documents), which is why
+    /// the literal survives as the last resort rather than leaving a dev
+    /// window titled "GrandLine" or blank.
+    static func windowTitle() -> String {
+        let info = Bundle.main.infoDictionary
+        for key in ["CFBundleDisplayName", "CFBundleName"] {
+            if let name = info?[key] as? String,
+               !name.trimmingCharacters(in: .whitespaces).isEmpty {
+                return name
+            }
+        }
+        return "Grand Line"
+    }
+
+    /// The app name plus whatever page is on screen.
+    ///
+    /// **Review #3 §7.** The title was the bundle name alone, so Mission
+    /// Control, the Window menu and the proxy menu showed one indistinguishable
+    /// entry whatever the captain was looking at - which is the one place a
+    /// Mac app is expected to say where it is. Every other native Mac app puts
+    /// the document or the context there, and this app has twenty-seven of
+    /// them plus a page per saved host.
+    ///
+    /// The separator is a plain hyphen rather than an em dash, matching the
+    /// rest of this app's copy.
+    ///
+    /// A `nil` or blank context answers the bare app name, which is what the
+    /// window is titled for the instant between being created and the shell's
+    /// first navigation - never "Grand Line - ".
+    static func windowTitle(context: String?) -> String {
+        let name = windowTitle()
+        guard let context = context?.trimmingCharacters(in: .whitespaces), !context.isEmpty else {
+            return name
+        }
+        return "\(name) - \(context)"
+    }
+
+    /// The screen's usable area - menu bar and Dock excluded. This is the
+    /// *window* frame (title bar included), so the title bar stays on screen.
+    /// Falls back to the old fixed size only when there is no screen at all
+    /// to measure (a headless / self-test launch).
+    static func defaultWindowFrame() -> NSRect {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+            return NSRect(x: 0, y: 0, width: 1220, height: 720)
+        }
+        return screen.visibleFrame
+    }
+
+    /// F2: a natural, low-frequency checkpoint that also catches tab changes
+    /// (opened, closed, renamed) made since the last navigation - `saveSession
+    /// State` is a no-op when nothing actually changed, so switching apps
+    /// costs one JSON encode and no write.
+    func applicationDidResignActive(_ notification: Notification) {
+        saveSessionState()
+    }
+
+    // MARK: F22 - compact mode
+
+    /// Everything compact mode is wired to, in one place.
+    ///
+    /// Every closure here forwards into a store `AppDelegate` already owns or
+    /// into `AppShellController` - nothing new is constructed and nothing is
+    /// cached twice (GL-23). `CompactModePopoverController` holds no store of
+    /// its own precisely so this method is the whole of its access to the
+    /// app's data, which makes "what can the menu bar see and write?" a
+    /// question with one answer to read.
+    private func wireCompactMode() {
+        let popover = compactModePopover
+
+        // Today. Derived by `CompactModeDigest` from the *shared* `ShiftStore`
+        // - the same instance the Tasks page, the palette, ⌥Space and the
+        // Tasks status item all write through.
+        popover.todayProvider = { [weak self] in
+            guard let self else { return .empty }
+            return CompactModeDigest.today(tasks: self.shiftStore.activeTasks,
+                                           followUps: self.shiftStore.followUps,
+                                           focusSecondsToday: self.shiftStore.focusSecondsToday())
+        }
+        popover.onSetTaskCompleted = { [weak self] id, completed in
+            // GL-09: the popover cannot be open while locked, but this is the
+            // write, and a write is the thing that must not happen. The same
+            // belt-and-braces `ShiftMenuBarController.createQuickTask` keeps.
+            guard AppLockGate.shared.allows(.compactModePopover) else { return }
+            self?.shiftStore.setTaskCompleted(id: id, completed: completed)
+        }
+        popover.onOpenTasks = { [weak self] in self?.revealInFullWindow(.shift) }
+
+        // Notes - the third popover, reading the one `StickyBoardStore` the
+        // Sticky Board destination owns.
+        popover.notesProvider = { [weak self] in
+            guard let self else { return [] }
+            return CompactModeDigest.notes(self.appShell.stickyBoardStore.activeNotes)
+        }
+        popover.onRevealNote = { [weak self] id in
+            guard let self else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            self.window?.makeKeyAndOrderFront(nil)
+            self.appShell.openStickyNote(id: id)
+        }
+        popover.onOpenStickyBoard = { [weak self] in self?.revealInFullWindow(.stickyBoard) }
+
+        // Vault - the same three forwards `poneglyphMenuBar` uses above, into
+        // the one `CredentialVaultController` and its one store.
+        popover.vaultCodesProvider = { [weak self] in self?.appShell.poneglyphQuickCodes ?? [] }
+        popover.vaultUnlockedProvider = { [weak self] in self?.appShell.poneglyphIsUnlocked ?? false }
+        popover.vaultPane.onCopy = { [weak self] id in self?.appShell.copyPoneglyphCodeFromMenuBar(id: id) }
+        popover.vaultPane.onOpenVault = { [weak self] in self?.revealInFullWindow(.poneglyph) }
+
+        // Crew - the crew page's own real runner and transcript, never a
+        // second conversation. Identical to `strawHatMenuBar`'s own wiring.
+        popover.crewPane.onAsk = { [weak self] text, completion in
+            self?.appShell.askCrewFromMenuBar(text, completion: completion)
+        }
+        popover.crewPane.onOpenFullChat = { [weak self] in self?.revealInFullWindow(.strawHat) }
+
+        // The footer capture line goes through the same filer ⌥Space does, so
+        // a task captured from the menu bar and one captured from the overlay
+        // are one code path with one set of refusals (F2).
+        popover.captureFiler = appShell.makeCaptureFiler()
+
+        compactMode.overdueCountProvider = { [weak self] in
+            guard let self else { return 0 }
+            return CompactModeDigest.today(tasks: self.shiftStore.activeTasks,
+                                           followUps: self.shiftStore.followUps,
+                                           focusSecondsToday: 0).overdueCount
+        }
+        compactMode.onOpenFullWindow = { [weak self] in self?.leaveCompactMode() }
+        compactMode.onOpenSettings = { [weak self] in
+            // The gear opens the window on Settings but does **not** leave
+            // the mode: the captain is going there to change the mode's own
+            // switches, and turning it off on their behalf first would be the
+            // app deciding the answer.
+            self?.revealInFullWindow(.settings)
+        }
+        compactMode.onHideMainWindow = { [weak self] in
+            // `orderOut`, not `close`: the window and its whole mounted shell
+            // survive, so leaving the mode is instant and every destination
+            // keeps its state. `applicationShouldTerminateAfterLastWindowClosed`
+            // is what stops this from quitting the app.
+            self?.window?.orderOut(nil)
+        }
+        compactMode.perFeatureStatusItemVisibility = { [weak self] visible in
+            guard let self else { return }
+            self.shiftMenuBar.setStatusItemVisible(visible)
+            self.strawHatMenuBar.setStatusItemVisible(visible)
+            self.poneglyphMenuBar.setStatusItemVisible(visible)
+        }
+
+        // Settings' three toggles. One callback for all three - see
+        // `SettingsController.compactModeToggled`.
+        settingsController.onCompactModeSettingsChanged = { [weak self] in
+            self?.compactMode.refresh()
+        }
+
+        // A task completed, added or deleted anywhere in the app moves this
+        // badge. GL-24's shape: the observer re-derives one count and
+        // repaints - `refreshBadge()` rather than `refresh()`, so ticking a
+        // checkbox does not re-apply the activation policy and re-decide
+        // three status items' visibility.
+        shiftStore.observe { [weak self] in self?.compactMode.refreshBadge() }
+
+        _ = compactMode
+    }
+
+    /// Raise the window on one destination without changing the mode.
+    private func revealInFullWindow(_ destination: RailDestination) {
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+        appShell.show(destination)
+    }
+
+    /// The popover's "Open full window", and the one clean way out of the
+    /// mode.
+    ///
+    /// Order matters: `exitCompactMode()` writes the setting and runs
+    /// `refresh()`, which puts the activation policy back to `.regular` -
+    /// and a `.accessory` app cannot activate or show a regular window, so
+    /// raising it first would silently do nothing.
+    private func leaveCompactMode() {
+        compactMode.exitCompactMode()
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// F22: `false` while compact mode is on, and only then.
+    ///
+    /// The whole mode rests on this one answer. Compact mode's way of having
+    /// no window is to *close* the main one, and with the stock `true` that
+    /// would quit the app the instant the mode was switched on. The decision
+    /// lives in `CompactModePolicy.terminatesAfterLastWindowClosed` rather
+    /// than inline here, so it is asserted in CI's blocking lane rather than
+    /// only by whatever happens to exercise this delegate callback.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        CompactModePolicy.current().terminatesAfterLastWindowClosed
+    }
+
+    /// Tear down every console's own materialized SSH keys and SRE Lead
+    /// sessions on quit - the shared Firstmate console and (Fix 1) every
+    /// host's own dedicated console.
+    func applicationWillTerminate(_ notification: Notification) {
+        console.shutdown()
+        appShell.shutdownAllHostConsoles()
+        // Findings 3.3/4.6: the Sticky Board's text/title writes are debounced
+        // now, so quitting is one of the three points anything still queued
+        // has to reach disk (the other two are leaving the destination and a
+        // field giving up focus). Without this, ⌘Q within
+        // `StickyBoardStore.persistDebounce` of the last keystroke would lose
+        // it.
+        saveSessionState()
+        appShell.shutdownStickyBoard()
+        // F9: the same class again, one page over. The Scratchpad pad's write
+        // is debounced at 500ms, so ⌘Q straight after typing would otherwise
+        // lose the last line of a pad whose whole promise is that it is still
+        // there next launch.
+        appShell.shutdownScratchpads()
+        // Audit 2 §6.8 / §2.8: the same class one destination over, and the
+        // call site `CodePreviewController.shutdown()`'s own doc comment had
+        // promised since it shipped while having none. Without it, ⌘Q inside
+        // the page's 500ms edit debounce loses those keystrokes and the final
+        // commit+push never runs.
+        appShell.shutdownCodePreview()
+        // `fm/implement-grand-line-secrets-vault-poneg-ad`: the credential
+        // vault's git backup is debounced the same way, so ⌘Q within that
+        // window would leave a just-added credential committed locally but not
+        // pushed - i.e. absent from the next machine, which is the one property
+        // this feature exists to guarantee.
+        appShell.shutdownCredentialVault()
+        // F4: the reading list's commit+push is debounced at 3s like the
+        // Sticky Board's, so ⌘Q within that window would leave a link saved
+        // locally but never pushed - i.e. absent from the next machine, which
+        // is the whole reason the list is git-synced.
+        appShell.shutdownReadingList()
+        // Straw Hat Pirates phase 1: nothing to flush (no on-disk history yet
+        // by explicit scope) - this stops an in-flight `claude -p` child from
+        // outliving the app by up to its 300s bound.
+        appShell.shutdownStrawHatCrew()
+        shiftHotkey.stop()
+        tabShortcuts.stop()
+        shiftNotifications.stop()
+        BackgroundSignalsPoller.shared.stop()
+        ScheduleRunner.shared.stop()
+        dictationHotkey.stop()
+        snippetExpander.stop()
+        appLock.stop()
+    }
+
+    // MARK: App-level password lock (fm/grandline-app-lock)
+
+    /// The lock overlay is opaque and topmost, so mouse clicks on rail/body
+    /// content underneath it are already blocked by ordinary AppKit hit-
+    /// testing - but most of this app's menu items have a concrete `target`
+    /// (not `nil`, routed through the first-responder chain), so a keyboard
+    /// shortcut like ⌘⌃N (New Host) would otherwise still reach its
+    /// destination's action even while that destination is hidden behind the
+    /// overlay. This
+    /// is the one choke point that closes that gap: every submenu except
+    /// Edit (Cut/Copy/Paste/Select All/Find are all `nil`-target, responder-
+    /// chain-routed items - while locked, the only thing that can ever be
+    /// first responder is the lock screen's own password field, so leaving
+    /// these enabled is what lets a captain paste a password from a manager
+    /// via ⌘V rather than breaking that) gets disabled while locked, minus
+    /// the App menu's Hide/Quit (still allowed, same as any other macOS app).
+    private func setContentMenusEnabled(_ enabled: Bool) {
+        guard let mainMenu = NSApp.mainMenu else { return }
+        let appName = ProcessInfo.processInfo.processName
+        for topLevelItem in mainMenu.items {
+            guard let submenu = topLevelItem.submenu, submenu.title != "Edit" else { continue }
+            for item in submenu.items {
+                // GL-17 added Hide Others/Show All next to Hide; they are the
+                // same class of item (system-level app visibility, disclosing
+                // and writing nothing of this app's data), so they stay enabled
+                // while locked for the same reason Hide and Quit do.
+                if item.title == "Hide \(appName)" || item.title == "Quit \(appName)"
+                    || item.title == "Hide Others" || item.title == "Show All" { continue }
+                item.isEnabled = enabled
+            }
+        }
+    }
+
+    // MARK: Host connect (Fix 1: dedicated per-host pages)
+
+    /// The one place a saved host is actually connected to - reached from
+    /// both the Hosts sidebar's own "Connect" and a pinned rail icon click,
+    /// so there's exactly one behavior for "connect to this saved host"
+    /// regardless of entry point. `AppShellController.connectHost` owns the
+    /// "open the first time, just focus after that" logic
+    /// (`ConsoleController.connectSSHIfNeeded`); this method's only job is
+    /// resolving the host's full `ssh` argv, which needs `hostStore.hosts`
+    /// for jump-chain resolution (`Host.sshArguments(allHosts:)`).
+    private func connectToHost(_ host: Host) {
+        appShell.connectHost(host, args: host.sshArguments(allHosts: hostStore.hosts))
+    }
+
+    // MARK: Multi-host command execution (F9, v1)
+
+    /// Opens the "Send to…" picker, then - for the hosts the captain ticked -
+    /// runs the app's one risk gate once per host and delivers the command to
+    /// that host's own dedicated page.
+    ///
+    /// **v1 only, deliberately.** One real tab per host, no aggregation: the
+    /// review's own F9 entry puts the combined result view behind Block View
+    /// Stage 1 ("blocks give clean per-command output capture"), which is
+    /// itself blocked on Stage 0 surviving real use. See
+    /// `MultiHostSend.swift`'s header.
+    private func presentMultiHostSend(command: DevOpsCommand, values: [String: String], generatedText: String) {
+        let picker = MultiHostSendPickerController(
+            command: command,
+            generatedText: generatedText,
+            hosts: hostStore.hosts,
+            isConnected: { [weak self] host in self?.appShell.isHostConnected(host) ?? false }
+        )
+        picker.onSend = { [weak self] hosts in
+            guard let self else { return }
+            let executor = MultiHostSendExecutor(
+                // The app's one gate (`CommandRiskConfirmation`, the same
+                // definition the page's own Copy/Send buttons and the ⌘K
+                // palette call), invoked once per host with that host named -
+                // never one blanket confirmation covering the selection.
+                confirm: { command, text, _, context, proceed in
+                    CommandRiskConfirmation.confirm(
+                        command: command, generatedText: text, actionVerb: "send to the terminal",
+                        context: context, proceed: proceed)
+                },
+                deliver: { [weak self] host, text in
+                    guard let self else { return }
+                    self.appShell.sendCommandToHost(
+                        host, args: host.sshArguments(allHosts: self.hostStore.hosts), text: text)
+                }
+            )
+            // `nil` means the command is not sendable at all (an unfilled
+            // `{{token}}`) - the button refuses before the picker even opens,
+            // so this is the second check of the same rule, not the first.
+            guard let outcome = executor.send(command: command, values: values, to: hosts) else {
+                self.appShell.showToast("Fill in this command's parameters before sending it.")
+                return
+            }
+            if !outcome.sent.isEmpty {
+                self.commandLibraryStore.recordUsage(command.id)
+                // Land on the first host that actually received it, so the
+                // captain sees a real result rather than whichever page was
+                // connected last.
+                if let first = hosts.first(where: { outcome.sent.contains($0.id) }) {
+                    self.appShell.revealHost(first, args: first.sshArguments(allHosts: self.hostStore.hosts))
+                }
+            }
+            self.appShell.showToast(MultiHostSend.resultMessage(outcome))
+        }
+        appShell.presentAsSheet(picker)
+    }
+
+    // MARK: Host editor window (nav-redesign task, item 3)
+
+    /// Open (or bring forward) the Add/Edit Host form as its own window -
+    /// the same visual weight as Settings, not a sheet cramped into the
+    /// narrow Hosts panel. `HostEditorController`'s fields and its inline
+    /// "+ New Key…" flow (which still opens as a sheet on top of *this*
+    /// window) are unchanged from PR #14.
+    func presentHostEditor(for host: Host?) {
+        let existingLabels = Set(hostStore.hosts.filter { $0.id != host?.id }.map { $0.label } + ["Firstmate"])
+        let editor = HostEditorController(host: host, keyStore: keyStore, snippets: snippetStore.snippets, existingLabels: existingLabels)
+        editor.onSave = { [weak self] saved in
+            guard let self else { return }
+            if self.hostStore.host(id: saved.id) != nil {
+                self.hostStore.update(saved)
+            } else {
+                self.hostStore.add(saved)
+            }
+            self.appShell.showToast("\u{201C}\(saved.label)\u{201D} saved")
+        }
+        // GL-06: the host editor window's Delete button was unconfirmed too,
+        // and deleting a host also tears down that host's live console page
+        // (see `HostStore.observe` in `applicationDidFinishLaunching`). Same
+        // copy as the Hosts list's own row-level confirmation, via the one
+        // shared prompt. Deferred a runloop turn because `deleteHost()` closes
+        // the editor window right after this returns.
+        editor.onDelete = { [weak self] id in
+            DispatchQueue.main.async {
+                guard let self, let host = self.hostStore.host(id: id) else { return }
+                guard DestructiveConfirm.confirm(
+                    message: "Delete \u{201C}\(host.label)\u{201D}?",
+                    detail: "This removes the saved host and closes its console page. "
+                          + "It does not affect any running session."
+                ) else { return }
+                self.hostStore.delete(id: id)
+            }
+        }
+
+        // Reuse one window across repeated Add/Edit calls (matching the Keys/
+        // Snippets windows below) rather than piling up a new one on every
+        // "+" click - only `contentViewController` needs to change since a
+        // fresh `HostEditorController` is built above for whichever host is
+        // being edited this time.
+        let win: NSWindow
+        if let existing = hostEditorWindow {
+            win = existing
+        } else {
+            win = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 640, height: 780),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            win.isReleasedWhenClosed = false
+            // cockpit-native-host-form-fixes, Fix 1: without this, opening
+            // Add/Edit Host while the main `AppShellController` window is
+            // full screen makes macOS treat this second regular window as a
+            // tile to dock into that same full-screen Space (its default
+            // behavior for a second standard window), stretching the
+            // centered form back out to full width - the exact regression
+            // the centered-form fix (PR #20) was meant to close, just gated
+            // behind full-screen mode. `.fullScreenAuxiliary` tells AppKit
+            // this window is allowed to float over a full-screen Space
+            // instead of tiling into it; `.moveToActiveSpace` matters
+            // because this window is cached and reused (`hostEditorWindow`)
+            // for the app's whole lifetime, so a later reopen always
+            // surfaces on whichever Space (full-screen or not) is active at
+            // that moment, not the Space it happened to be in last time.
+            // `.floating` keeps it visually above the full-screen window's
+            // own content - Space membership alone doesn't guarantee that.
+            win.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
+            win.level = .floating
+            // F2(a): A1's window fusion, applied to the one other real window
+            // this app opens. Before this, the Host editor wore a stock
+            // titlebar with the teal domain ribbon starting *underneath* it -
+            // two stacked strips of chrome, which is precisely the shape A1
+            // removed from the main window. `WindowChromeFusion.apply` makes
+            // the titlebar transparent and titleless while keeping
+            // close/minimise/zoom, so the ribbon runs edge to edge along the
+            // very top and the lights sit over it.
+            //
+            // The lights stay where AppKit puts them: this window has no
+            // floating bar to hand them to, so the natural top-leading cluster
+            // is right, and the sheet reserves room below it rather than the
+            // cluster moving (`reservesWindowChromeInset`).
+            WindowChromeFusion.apply(to: win)
+            win.followHelmTheme()
+            hostEditorWindow = win
+            // GL-09: a `.floating` window stays above the lock overlay - which
+            // is a subview of the *main* window, not a screen-level shield - so
+            // a Host Editor open at lock time remained fully usable, editing and
+            // saving real host records. Registered once, when the window is
+            // created; the gate orders it out on every lock.
+            AppLockGate.shared.registerSecondaryWindow { [weak self] in self?.hostEditorWindow }
+        }
+        // Still set, though `titleVisibility` is `.hidden` under F2(a)'s
+        // fusion: the Window menu, Mission Control and the proxy menu all read
+        // it, and the sheet's own heading is what the captain actually sees.
+        win.title = host == nil ? "New Host" : "Edit Host"
+        win.contentViewController = editor
+        // Set here rather than in the controller so the two halves of F2(a) -
+        // fusing the window and reserving room for the lights it now shows
+        // over the content - sit in one function and cannot drift apart.
+        (editor.view as? HelmFormSheet)?.reservesWindowChromeInset = true
+        // Fix 2 (third round): the form's content column caps at 520pt and
+        // centers (`HostEditorController.maxContentWidth`), so 568pt
+        // (520 + 24pt margin each side) is the narrowest width that shows the
+        // whole column without horizontal clipping - AppKit enforces that as
+        // a live floor via the content view controller's fitting size (verified
+        // with a live probe: dragging the window narrower than 568 settles
+        // back to 568 on the next layout pass, same as any AppKit dialog
+        // window whose content can't shrink further). 580 leaves a hair of
+        // margin above that floor; 640 is the default so the centering is
+        // visibly obvious - not flush with the window edges - without the
+        // captain having to widen it by hand. Height has no such floor (the
+        // form scrolls vertically), so 620 stays the height floor unchanged.
+        win.contentMinSize = NSSize(width: 580, height: 620)
+        win.setContentSize(NSSize(width: 640, height: 780))
+        win.center()
+        win.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: Shift power features (phase 5)
+
+    @objc func showShiftQuickCapture() {
+        shiftQuickCapture.present()
+    }
+
+    // MARK: Command palette (phase 4 "Knowledge and speed"; expanded by F5)
+
+    /// The Go menu's "All Destinations…" (⌘⇧D) and ⌘K's verb of the same
+    /// name - UX1.
+    ///
+    /// The bar's quick-access overflow menu used to carry a third row into
+    /// here. It is gone: it was wired to a closure nothing ever assigned, so
+    /// it did nothing at all, and the captain asked for it removed rather than
+    /// repaired - see `docs/history/03-navigation-and-chrome.md`.
+    @objc func showAllDestinations() {
+        allDestinations.toggle()
+    }
+
+    /// Help → "Keyboard Shortcuts…" (⌘⇧/) - UX3.
+    ///
+    /// Built fresh on every open, deliberately: the sheet is a snapshot of
+    /// `NSApp.mainMenu` plus two configurable stores, and both can change
+    /// while the app runs (the Settings recorder rewrites the terminal
+    /// chords). A cached sheet would print yesterday's bindings.
+    @objc func showKeyboardShortcuts() {
+        let sections = KeyboardShortcutCatalog.all(mainMenu: NSApp.mainMenu, settings: .shared)
+        appShell.presentAsSheet(KeyboardShortcutsSheetController(sections: sections))
+    }
+
+    /// Help → "Manual Checks" - UX3's second Help item.
+    ///
+    /// `native/MANUAL-CHECKS.md` is the repo's own list of what cannot be
+    /// asserted by a suite and has to be looked at by a human (P3 of this same
+    /// review is about it going stale). Opening it in the captain's editor is
+    /// the honest implementation - the file lives in the checkout, this app
+    /// does not vendor a copy of it, and a copy is exactly what would rot.
+    @objc func showManualChecks() {
+        // `#filePath` is this file's own compile-time path
+        // (`…/native/Sources/GrandLine/main.swift`), which resolves the
+        // checkout the running binary was built from - true for a `swift
+        // build` binary and for the packaged `.app`, both of which this repo
+        // builds from the captain's own working tree. The same trick
+        // `SelfTestSources.appSourceDirectory()` uses, and it is checked
+        // against the file actually being there rather than assumed.
+        let manualChecks = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()    // …/Sources/GrandLine
+            .deletingLastPathComponent()    // …/Sources
+            .deletingLastPathComponent()    // …/native
+            .appendingPathComponent("MANUAL-CHECKS.md")
+        guard FileManager.default.fileExists(atPath: manualChecks.path) else {
+            // GL-30: a transient "that is not here" is a toast, not an alert.
+            Toast.show(in: appShell.view,
+                       message: "MANUAL-CHECKS.md is not in this build\u{2019}s checkout.")
+            return
+        }
+        NSWorkspace.shared.open(manualChecks)
+    }
+
+    @objc func showUnifiedSearch() {
+        unifiedSearch.present()
+    }
+
+    /// F5 (`fm/grandline-feature-f5-command-palette-expansion`): registers
+    /// every domain the palette searches.
+    ///
+    /// This is the one place the palette's rows get their actions, and every
+    /// one of them is a call into the method that already backs that action's
+    /// own UI - the review's own instruction ("action items dispatch through
+    /// existing `AppShellController` methods"). Nothing here re-implements a
+    /// connect, a send, an open or a navigation.
+    ///
+    /// Provider order is irrelevant to display (the palette groups and orders
+    /// by `UnifiedSearchKind.groupOrder`); it is listed here in that same
+    /// order purely so this reads like the palette looks.
+    private func buildUnifiedSearchIndex() -> UnifiedSearchIndex {
+        let index = UnifiedSearchIndex()
+
+        // `fm/grandline-session-switcher`, item 4: live sessions first, and
+        // they *switch* rather than reconnect. Registered before the Hosts
+        // provider only for readability - the palette's own ordering comes
+        // from `UnifiedSearchKind.groupOrder`, not from registration order.
+        index.register(UnifiedSearchSessionProvider(
+            registry: appShell.sessions,
+            store: hostStore,
+            onSwitch: { [weak self] hostID in self?.appShell.switchToSession(hostID: hostID) }
+        ))
+
+        // Hosts -> the one place a saved host is connected to, shared with
+        // the Hosts list's own Connect and the rail's per-host icons. A host
+        // that is already live is left to the group above rather than listed
+        // twice with two different verbs.
+        index.register(UnifiedSearchHostProvider(
+            store: hostStore,
+            onConnect: { [weak self] host in self?.connectToHost(host) },
+            isLive: { [weak self] hostID in self?.appShell.sessions.isLive(hostID) ?? false }
+        ))
+
+        // Saved commands -> the Command Library's own Send-to-terminal path,
+        // behind the Command Library's own risk gate. `CommandRiskConfirmation`
+        // is the single shared definition of that alert (extracted from
+        // `CommandLibraryPageView` by F5 for exactly this), so a destructive
+        // command reached from the palette shows the identical confirmation it
+        // shows on the page - the review's "destructive commands keep their
+        // confirmation gates".
+        //
+        // A command that still needs a parameter is never sent; it opens on
+        // the real form instead. See `UnifiedSearchCommandProvider`'s header.
+        index.register(UnifiedSearchCommandProvider(
+            store: commandLibraryStore,
+            onSend: { [weak self] command, generated in
+                guard let self else { return }
+                CommandRiskConfirmation.confirm(command: command, generatedText: generated,
+                                                actionVerb: "send to the terminal") {
+                    self.commandLibraryStore.recordUsage(command.id)
+                    self.appShell.sendCommandToConsole(generated)
+                    self.appShell.showToast("Sent to terminal")
+                }
+            },
+            onOpen: { [weak self] id in self?.appShell.openCommandLibraryCommand(id: id) }
+        ))
+
+        // Tasks / follow-ups / projects - what ⌘⇧P used to search, on the same
+        // shared `shiftStore`, opening the same editor sheets a row click does.
+        index.register(UnifiedSearchShiftProvider(
+            store: shiftStore,
+            onOpenTask: { [weak self] id in self?.appShell.openShiftTask(id: id) },
+            onOpenFollowUp: { [weak self] id in self?.appShell.openShiftFollowUp(id: id) },
+            onOpenProject: { [weak self] id in self?.appShell.openShiftProject(id: id) }
+        ))
+
+        // Runbooks + postmortems - the pre-F5 palette, unchanged behaviour.
+        // `fm/grandline-docs-split-runbooks-postmortems` renamed the two
+        // `AppShellController` methods below (they used to be
+        // `openDocsRunbook`/`openDocsPostmortem`) once Runbooks/Postmortems
+        // stopped being Docs tabs and became their own destinations.
+        index.register(UnifiedSearchDocsProvider(
+            store: docsRunbookStore,
+            onOpenRunbook: { [weak self] id in self?.appShell.openRunbook(id: id) },
+            onOpenPostmortem: { [weak self] id in self?.appShell.openPostmortem(id: id) }
+        ))
+
+        // F1's notebook. Reads the **live** store instance the page and the
+        // canvas card share (GL-23), for the same reason the two below do.
+        // F4's reading list. Reads the **live** store instance the page, the
+        // canvas card and ⌥Space's filer share (GL-23).
+        index.register(UnifiedSearchReadingListProvider(
+            store: appShell.readingListStore,
+            onOpen: { [weak self] id in self?.appShell.openReadingListLink(id: id) }
+        ))
+
+        index.register(UnifiedSearchNotebookProvider(
+            store: appShell.notebookStore,
+            onOpen: { [weak self] id in self?.appShell.openNotebookPage(id: id) }
+        ))
+
+        // The two newest stores (audit §6.5b / §6.6b). Both read the *live*
+        // instance the page itself uses - `StickyBoardStore` caches and
+        // writes, so a second one would serve stale rows and become a second
+        // writer to one file (GL-23).
+        index.register(UnifiedSearchStickyNoteProvider(
+            store: appShell.stickyBoardStore,
+            onOpen: { [weak self] id in self?.appShell.openStickyNote(id: id) }
+        ))
+        index.register(UnifiedSearchSnippetProvider(
+            store: appShell.codePreviewStore,
+            onOpen: { [weak self] name in self?.appShell.openCodeSnippet(named: name) }
+        ))
+
+        // App actions + destinations - every entry an existing menu action.
+        index.register(UnifiedSearchActionProvider.standard(shell: appShell))
+
+        return index
+    }
+
+    // MARK: Menu
+
+    /// The main menu. Two load-bearing groups:
+    ///  - Edit > Paste (⌘V) targets the first responder via `NSText.paste(_:)`,
+    ///    which resolves to the focused terminal's `paste(_:)` - the screenshot-
+    ///    paste-into-Claude flow. A plain `swift run` executable has no Paste
+    ///    action otherwise (the old WKWebView got one for free from the browser).
+    ///  - Edit > Find targets the responder chain, resolving to
+    ///    `ConsoleController` (the window's content view controller), so ⌘F
+    ///    works from the keyboard.
+    ///
+    /// There is no Tab, View, Window, or Help top-level menu
+    /// (`fm/grandline-console-tabs-restore-tabmenu-fix`) - see the long
+    /// comment at the end of this method for what that costs and what still
+    /// works. ⌘T / ⌘D / ⇧⌘R / ⌘W / ⌘R / ⌘1…⌘9 / zoom / theme no longer have
+    /// any keyboard shortcut; every one of their underlying actions is still
+    /// reachable from the tab strip, the console toolbar, or Settings.
+    // MARK: - NSMenuDelegate
+
+    /// Re-title the File menu's one item every time that menu opens - UX4.
+    ///
+    /// `menuNeedsUpdate` rather than `validateMenuItem`: the latter is asked
+    /// whether an item is *enabled*, and this item is always enabled; what
+    /// changes is what it says. AppKit calls this immediately before the menu
+    /// is drawn, and also before resolving a key equivalent against it, so the
+    /// title a captain reads and the action ⌘N performs are derived from the
+    /// same read of `contextualNewAction`.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu.title == "File", let contextualNewItem else { return }
+        contextualNewItem.title = appShell.contextualNewAction.menuTitle
+    }
+
+    /// Build the app's menu bar, and (by default) install it.
+    ///
+    /// `installing: false` builds the identical tree and installs nothing -
+    /// it touches neither `NSApp` nor `appShell`. That exists for
+    /// `NavigationCoherenceSelfTest`, which asserts UX3/UX4's menu shape: a
+    /// headless process has no `NSApp` (it is an implicitly-unwrapped
+    /// `NSApplication!` and is nil until something calls
+    /// `NSApplication.shared`), so a suite that reads `NSApp.mainMenu` back
+    /// crashes rather than failing. Building the real tree and handing it over
+    /// is what lets that suite stay **pure logic** - in CI's *blocking* lane -
+    /// while still asserting the menu bar this method actually produces, not a
+    /// reconstruction of it.
+    ///
+    /// Every menu item's `target` is the only thing that differs, and only
+    /// because a target is an object rather than a shape: with `installing:
+    /// false` there is no shell to point at, and every assertion that suite
+    /// makes is about titles, chords and structure.
+    @discardableResult
+    func buildMenu(installing: Bool = true) -> NSMenu {
+        let mainMenu = NSMenu()
+        // `appShell` is lazy and builds the app's real controllers, so a
+        // non-installing build must not touch it.
+        let menuTarget: AnyObject? = installing ? appShell : nil
+
+        // App menu
+        let appMenuItem = NSMenuItem()
+        mainMenu.addItem(appMenuItem)
+        let appMenu = NSMenu()
+        appMenuItem.submenu = appMenu
+        let appName = ProcessInfo.processInfo.processName
+        appMenu.addItem(withTitle: "About \(appName)", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(NSMenuItem.separator())
+        // Nav-redesign task, item 5: Settings is a rail destination in the
+        // main window now, not a separate window.
+        appMenu.addItem(withTitle: "Settings…", symbol: "gearshape", action: #selector(AppShellController.selectSettings), keyEquivalent: ",")
+            .target = menuTarget
+        appMenu.addItem(NSMenuItem.separator())
+        // GL-17: Services, plus the standard Hide Others / Show All trio a Mac
+        // user expects to find here. `NSApp.servicesMenu` is what makes the
+        // system populate the submenu; without the assignment it stays empty.
+        let servicesItem = appMenu.addItem(withTitle: "Services", action: nil, keyEquivalent: "")
+        let servicesMenu = NSMenu(title: "Services")
+        servicesItem.submenu = servicesMenu
+        if installing { NSApp.servicesMenu = servicesMenu }
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "Hide \(appName)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = appMenu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "Quit \(appName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+
+        // File menu - one item, and the reason it exists: UX4's contextual ⌘N.
+        //
+        // ⌘N used to create a *task* from all twenty-six destinations, even on
+        // Hosts (where a new host was ⌘⌃N) and on the six pages that own a
+        // creatable thing of their own and had no shortcut for it at all. This
+        // item routes to whatever the showing page owns
+        // (`ContextualNewAction`), and `menuNeedsUpdate` re-titles it on every
+        // open so it *says* "New Sticky Note…" on the Sticky Board rather than
+        // doing one thing while reading another.
+        //
+        // **Exactly one item in this menu bar may carry ⌘N**, which is this
+        // one. The Tasks menu's own "New Task…" keeps its title and its place
+        // and loses its key equivalent - H3's comment in the Hosts menu below
+        // records what happens otherwise: AppKit resolves a chord to the first
+        // *enabled* match in menu order, this app implements no
+        // `validateMenuItem`, so a second ⌘N simply makes one of the two dead.
+        // Creating a task is still ⌘N from every page that owns nothing
+        // creatable, which is the fallback `ContextualNewAction` documents.
+        let fileMenuItem = NSMenuItem()
+        mainMenu.addItem(fileMenuItem)
+        let fileMenu = NSMenu(title: "File")
+        fileMenuItem.submenu = fileMenu
+        fileMenu.delegate = self
+        contextualNewItem = NSMenuItem(title: ContextualNewAction.task.menuTitle,
+                                       action: #selector(AppShellController.newContextualItem),
+                                       keyEquivalent: "n").withSymbol("plus.circle")
+        contextualNewItem?.target = menuTarget
+        if let contextualNewItem { fileMenu.addItem(contextualNewItem) }
+        // F11's ⌘R. Checked free against this file's own chords before it was
+        // taken - nothing else in `NSApp.mainMenu` claims "r" with any
+        // modifier mask - which is the check `NavigationCoherenceSelfTest`
+        // enforces for every chord here (AGENTS.md: a duplicate key equivalent
+        // silently makes one of the two items permanently dead).
+        //
+        // It sits in the File menu beside the contextual ⌘N rather than in a
+        // menu of its own: it is the page's own verb, the same way ⌘N is, and
+        // this app's convention is that a page action reachable from a chord
+        // gets a real menu item so the chord is discoverable.
+        let runSnippetItem = NSMenuItem(title: "Run Snippet",
+                                        action: #selector(AppShellController.runCodeSnippetFromMenu),
+                                        keyEquivalent: "r").withSymbol("play.fill")
+        runSnippetItem.target = menuTarget
+        fileMenu.addItem(runSnippetItem)
+        // F15's capture, beside F11's Run Snippet and for the same reason: a
+        // page verb reachable from a chord gets a real menu item, so the chord
+        // is discoverable and lands in the Help menu's generated shortcut
+        // sheet for free (`KeyboardShortcutCatalog` walks this tree).
+        //
+        // **Not the mockup's ⌘⇧5.** That chord belongs to macOS's own
+        // Screenshot app system-wide, so an app menu item declaring it would
+        // never fire - the system consumes the event before any app sees it,
+        // which is a dead menu item of exactly the kind AGENTS.md's duplicate-
+        // chord rule exists to prevent, just with the system rather than a
+        // sibling item as the winner. ⌘⇧S was checked free against this file's
+        // own chords (⌘⌃S is Show Hosts; nothing claims ⇧⌘S), which is what
+        // `NavigationCoherenceSelfTest` enforces.
+        let captureRegionItem = NSMenuItem(title: "Capture Screen Region\u{2026}",
+                                           action: #selector(AppShellController.captureScreenRegionFromMenu),
+                                           keyEquivalent: "s").withSymbol("camera.viewfinder")
+        captureRegionItem.keyEquivalentModifierMask = [.command, .shift]
+        captureRegionItem.target = menuTarget
+        fileMenu.addItem(captureRegionItem)
+        // No chord: the board's own header button is the discoverable copy
+        // action, and every free ⌘⇧ letter that reads as "copy" is taken
+        // (⌘⇧C is the Log Analyzer's Copy Analysis). Same "menu item only, no
+        // keyEquivalent" convention as Quick Connect and Find in Terminal.
+        let copyBoardItem = NSMenuItem(title: "Copy Board as Image",
+                                       action: #selector(AppShellController.copyWhiteboardImageFromMenu),
+                                       keyEquivalent: "").withSymbol("doc.on.doc")
+        copyBoardItem.target = menuTarget
+        fileMenu.addItem(copyBoardItem)
+
+        // Edit menu - Cut/Copy/Paste/Select All + Find.
+        let editMenuItem = NSMenuItem()
+        mainMenu.addItem(editMenuItem)
+        let editMenu = NSMenu(title: "Edit")
+        editMenuItem.submenu = editMenu
+        editMenu.addItem(withTitle: "Cut", symbol: "scissors", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", symbol: "doc.on.doc", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", symbol: "doc.on.clipboard", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        // F3: ⌘⇧V. Checked free against this file's own menu before it was
+        // taken - the Edit menu's Paste is ⌘V and nothing claimed ⇧⌘V - which
+        // is the check `NavigationCoherenceSelfTest` now enforces for every
+        // chord here (AGENTS.md: a duplicate key equivalent silently makes one
+        // of the two items permanently dead).
+        let clipboardHistoryItem = NSMenuItem(title: "Clipboard History\u{2026}",
+                                              action: #selector(AppShellController.toggleClipboardHistory),
+                                              keyEquivalent: "v").withSymbol("doc.on.clipboard")
+        clipboardHistoryItem.keyEquivalentModifierMask = [.command, .shift]
+        clipboardHistoryItem.target = menuTarget
+        editMenu.addItem(clipboardHistoryItem)
+        editMenu.addItem(withTitle: "Select All", symbol: "selection.pin.in.out", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(withTitle: "Find…", symbol: "magnifyingglass", action: #selector(ConsoleController.showFind), keyEquivalent: "f")
+        // Phase 4 ("Knowledge and speed") reassigned ⌘K from "Find in
+        // Terminal" (Fix 4's original mapping) to the real unified search
+        // palette below - plain find-in-terminal stays reachable with no
+        // shortcut here (same "menu item only, no keyEquivalent" convention
+        // as "Quick Connect" below) since the console toolbar's own
+        // magnifying-glass icon already triggers the identical action
+        // independently of any menu shortcut, and ⌘F ("Find…" above) covers
+        // the common case too.
+        let findInTerminalItem = NSMenuItem(title: "Find in Terminal", action: #selector(AppShellController.activateConsoleFind), keyEquivalent: "").withSymbol("text.magnifyingglass")
+        findInTerminalItem.target = menuTarget
+        editMenu.addItem(findInTerminalItem)
+        // ⌘K opens the app's one command palette, matching the topbar Search
+        // pill's own ⌘K badge. F5 expanded what it searches from Runbooks +
+        // Postmortems to hosts, saved commands, tasks/follow-ups/projects,
+        // runbooks, postmortems and app actions/destinations - and absorbed
+        // Shift's own ⌘⇧P palette. See `UnifiedSearch.swift`'s header (and
+        // `UnifiedSearchProviders.swift`'s) for the design, including why
+        // terminal history is still not included.
+        let unifiedSearchItem = NSMenuItem(title: "Search…", action: #selector(AppDelegate.showUnifiedSearch), keyEquivalent: "k").withSymbol("sparkle.magnifyingglass")
+        unifiedSearchItem.target = self
+        editMenu.addItem(unifiedSearchItem)
+
+        // Hosts menu - the Phase 1 connection manager. New Host targets the
+        // panel directly (so it works regardless of focus - the editor now
+        // opens as its own window, so this doesn't need the Hosts
+        // destination on screen); Show Hosts and Quick Connect route through
+        // the shell so the Hosts destination is showing first. The panel's
+        // own Connect opens an ssh tab in the console and switches to it
+        // (Fix 2: Hosts and Console are decoupled destinations now).
+        let hostsMenuItem = NSMenuItem()
+        mainMenu.addItem(hostsMenuItem)
+        let hostsMenu = NSMenu(title: "Hosts")
+        hostsMenuItem.submenu = hostsMenu
+        // H3: this used to be a plain ⌘N, which is also what the Tasks menu's
+        // "New Task…" declares. AppKit resolves a key equivalent to the first
+        // *enabled* match in menu order and neither item is ever disabled (this
+        // app implements no `validateMenuItem` at all), so the Hosts menu -
+        // added first - swallowed ⌘N and the Tasks item's displayed shortcut
+        // could never fire. ⌘N stays with New Task, which is the far more
+        // frequent action and the one AGENTS.md documents; New Host takes ⌘⌃N,
+        // matching this menu's own "Show Hosts" (⌘⌃S).
+        let newHostItem = NSMenuItem(title: "New Host…", action: #selector(AppShellController.newHostFromMenu), keyEquivalent: "n").withSymbol("plus.circle")
+        newHostItem.keyEquivalentModifierMask = [.command, .control]
+        newHostItem.target = menuTarget
+        hostsMenu.addItem(newHostItem)
+        // No keyboard shortcut (⌘K now belongs to Find in Terminal above) -
+        // reachable via this menu item or by clicking the Hosts rail icon.
+        let quickConnectItem = NSMenuItem(title: "Quick Connect", action: #selector(AppShellController.revealHostsQuickConnect), keyEquivalent: "").withSymbol("bolt.horizontal.circle")
+        quickConnectItem.target = menuTarget
+        hostsMenu.addItem(quickConnectItem)
+        hostsMenu.addItem(NSMenuItem.separator())
+        let showHostsItem = NSMenuItem(title: "Show Hosts", action: #selector(AppShellController.selectHosts), keyEquivalent: "s").withSymbol("server.rack")
+        showHostsItem.keyEquivalentModifierMask = [.command, .control]
+        showHostsItem.target = menuTarget
+        hostsMenu.addItem(showHostsItem)
+
+        // UX3: SSH Keys and Snippets used to be two *top-level* menus of two
+        // items each, for two tabs of this same Hosts destination - while
+        // Straw Hat, Poneglyph, Sticky Board, Code Preview, Whiteboard,
+        // Schedules, Kubernetes and Review had no menu at all. That is the
+        // finding's "two-item top-level menus for tabs of the Hosts page (the
+        // notch-budget finding)" exactly, and folding them here is what buys
+        // the notch room the Window/Go/Help menus below need.
+        //
+        // **Every shortcut is unchanged** (⌘⇧N, ⌘⇧K, ⌘⌥N, ⌘⌥P), and so is
+        // every title and every action - AppKit resolves a key equivalent
+        // against the whole `mainMenu` tree regardless of which submenu an
+        // item sits in, so moving an item cannot break its chord. What changes
+        // is only where a captain *reads* them, and reading "New SSH Key…"
+        // under Hosts is where it belonged: the Keys tab is a tab of the
+        // Hosts page.
+        hostsMenu.addItem(NSMenuItem.separator())
+        let newKeyItem = NSMenuItem(title: "New SSH Key\u{2026}", action: #selector(AppShellController.newKeyFromMenu), keyEquivalent: "n").withSymbol("key")
+        newKeyItem.keyEquivalentModifierMask = [.command, .shift]
+        newKeyItem.target = menuTarget
+        hostsMenu.addItem(newKeyItem)
+        let manageKeysItem = NSMenuItem(title: "Manage SSH Keys\u{2026}", action: #selector(AppShellController.selectKeys), keyEquivalent: "k").withSymbol("key.horizontal")
+        manageKeysItem.keyEquivalentModifierMask = [.command, .shift]
+        manageKeysItem.target = menuTarget
+        hostsMenu.addItem(manageKeysItem)
+        let newSnippetItem = NSMenuItem(title: "New Snippet\u{2026}", action: #selector(AppShellController.newSnippetFromMenu), keyEquivalent: "n").withSymbol("plus.rectangle.on.rectangle")
+        newSnippetItem.keyEquivalentModifierMask = [.command, .option]
+        newSnippetItem.target = menuTarget
+        hostsMenu.addItem(newSnippetItem)
+        let manageSnippetsItem = NSMenuItem(title: "Manage Snippets\u{2026}", action: #selector(AppShellController.selectSnippets), keyEquivalent: "p").withSymbol("rectangle.stack")
+        manageSnippetsItem.keyEquivalentModifierMask = [.command, .option]
+        manageSnippetsItem.target = menuTarget
+        hostsMenu.addItem(manageSnippetsItem)
+
+        // Session switching (`fm/grandline-session-switcher`, item 3). These
+        // live in the Hosts menu rather than a new top-level one: a session
+        // *is* a host, and this app's menu bar already overruns the
+        // notched-display budget (AGENTS.md's menu-bar section), so a 12th
+        // top-level menu would push the gap wider for no gain.
+        //
+        // **⌘⌃1…9, not ⌘1…9, and that is forced rather than preferred.** The
+        // mockup shows ⌘1/⌘2 on the pills, but ⌘1-⌘9 was already spoken for
+        // *twice* in this app at the time this shipped: the Tab menu's
+        // "Select Tab N" (nil-target, so it only resolved while a
+        // Console/Tools tab held first responder) and the View menu's five
+        // space shortcuts (explicit target, always enabled). Both of those
+        // menus are gone now (`fm/grandline-console-tabs-restore-tabmenu-
+        // fix`), which frees ⌘1-⌘9 again, but this stays on ⌘⌃1…9 regardless -
+        // an already-shipped shortcut isn't this fix's to change.
+        // A session's whole point is being reachable from anywhere, i.e.
+        // precisely where the always-enabled space item wins, so ⌘1 could
+        // never have reached a session. ⌘⌃ is the modifier this menu already
+        // uses for its own two items (⌘⌃N, ⌘⌃S) and its number space is free.
+        //
+        // ⌘] / ⌘[ were verified unused anywhere in this menu bar.
+        hostsMenu.addItem(NSMenuItem.separator())
+        let nextSessionItem = NSMenuItem(title: "Next Session",
+                                        action: #selector(AppShellController.nextSession),
+                                        keyEquivalent: "]")
+        nextSessionItem.withSymbol("chevron.forward.circle")
+        nextSessionItem.target = menuTarget
+        hostsMenu.addItem(nextSessionItem)
+        let previousSessionItem = NSMenuItem(title: "Previous Session",
+                                            action: #selector(AppShellController.previousSession),
+                                            keyEquivalent: "[")
+        previousSessionItem.withSymbol("chevron.backward.circle")
+        previousSessionItem.target = menuTarget
+        hostsMenu.addItem(previousSessionItem)
+        for n in 1...9 {
+            let item = NSMenuItem(title: "Session \(n)",
+                                  action: #selector(AppShellController.selectSessionByShortcut(_:)),
+                                  keyEquivalent: "\(n)")
+            item.keyEquivalentModifierMask = [.command, .control]
+            item.tag = n
+            item.target = menuTarget
+            hostsMenu.addItem(item)
+        }
+
+        // Shift menu (cockpit-shift-create-edit, phase 2) - task/follow-up
+        // creation. Both items target the app shell directly (like the Hosts
+        // menu's "New Host…" above), so they work regardless of which
+        // destination is currently showing - the shell switches to `.shift`
+        // itself before presenting the sheet.
+        let shiftMenuItem = NSMenuItem()
+        mainMenu.addItem(shiftMenuItem)
+        let shiftMenu = NSMenu(title: "Tasks")
+        shiftMenuItem.submenu = shiftMenu
+        // UX4: no key equivalent any more - the File menu's contextual item is
+        // the app's one ⌘N, and it still creates a task from every page that
+        // owns nothing else creatable (which is most of them). See that item's
+        // own comment for why a second ⌘N here would make one of the two dead
+        // rather than giving the captain a choice. The item itself stays: it
+        // is how "New Task…" is *discovered*, which is the whole point of a
+        // menu bar, and it works from anywhere regardless of the showing page.
+        let newTaskItem = NSMenuItem(title: "New Task…", action: #selector(AppShellController.newShiftTaskFromMenu), keyEquivalent: "").withSymbol("plus.circle")
+        newTaskItem.target = menuTarget
+        shiftMenu.addItem(newTaskItem)
+        let newFollowUpItem = NSMenuItem(title: "New Follow-up…", action: #selector(AppShellController.newShiftFollowUpFromMenu), keyEquivalent: "f").withSymbol("bell.badge")
+        newFollowUpItem.keyEquivalentModifierMask = [.command, .shift]
+        newFollowUpItem.target = menuTarget
+        shiftMenu.addItem(newFollowUpItem)
+        // cockpit-fix-shift-new-project: no keyEquivalent - this menu follows
+        // "Weekly Review"'s own no-shortcut precedent rather than force a
+        // collision. (It could take ⌘⇧P now that F5 freed it, but a shortcut
+        // the captain never had is not this task's to invent.)
+        let newProjectItem = NSMenuItem(title: "New Project…", action: #selector(AppShellController.newShiftProjectFromMenu), keyEquivalent: "").withSymbol("folder.badge.plus")
+        newProjectItem.target = menuTarget
+        shiftMenu.addItem(newProjectItem)
+        shiftMenu.addItem(NSMenuItem.separator())
+        // F5 (`fm/grandline-feature-f5-command-palette-expansion`) removed
+        // this menu's own "Search Tasks… ⌘⇧P" item: ⌘K now searches tasks,
+        // follow-ups and projects alongside hosts, commands, runbooks and app
+        // actions, so a second search item pointing at a second palette was
+        // exactly the duplication the review asked to collapse. Tasks are
+        // still fully searchable - from the Edit menu's "Search… ⌘K" or the
+        // topbar Search pill. ⌘⇧P is now unbound.
+        let weeklyReviewItem = NSMenuItem(title: "Weekly Review", action: #selector(AppShellController.showShiftWeeklyReview), keyEquivalent: "").withSymbol("calendar")
+        weeklyReviewItem.target = menuTarget
+        shiftMenu.addItem(weeklyReviewItem)
+        // In-app fallback for quick capture's global ⌥Space hotkey (see
+        // `ShiftGlobalHotkey`'s header) - works with no Accessibility
+        // permission at all as long as this app is frontmost, so it's a
+        // meaningful discoverability aid even before that permission is
+        // granted.
+        let quickCaptureItem = NSMenuItem(title: "Capture\u{2026}", action: #selector(AppDelegate.showShiftQuickCapture), keyEquivalent: "").withSymbol("square.and.pencil")
+        quickCaptureItem.target = self
+        self.quickCaptureMenuItem = quickCaptureItem
+        applyQuickCaptureMenuChord(AppSettings.shared.quickCaptureShortcut)
+        shiftMenu.addItem(quickCaptureItem)
+
+        // Log Analyzer menu (`fm/grandline-log-analyzer-build`, spec §24).
+        //
+        // **Shortcut collisions were checked against this file, not assumed.**
+        // ⌘⇧L / ⌘⇧C / ⌘⇧T / ⌘⇧I were all genuinely free. ⌘⇧R was NOT - the
+        // Tab menu's "Rename Tab…" claimed it back when the Tab menu was a
+        // top-level entry - so spec §24's "⌘⇧R Create RCA" is bound to
+        // **⌘⇧A** instead (A for "after-action review"), which is free;
+        // taking ⌘⇧R would have silently broken an already-shipped shortcut.
+        // The Tab menu is gone from the menu bar now
+        // (`fm/grandline-console-tabs-restore-tabmenu-fix`), which frees
+        // ⇧⌘R again - Log Analyzer stays on ⌘⇧A regardless, since changing
+        // an already-shipped shortcut isn't this fix's job. ⌘↵ (Analyze) is
+        // not a menu item at all:
+        // it is `analyzeButton`'s own `keyEquivalent`, so it only fires while
+        // the page is on screen rather than analyzing from any destination.
+        // Esc is handled by `LogAnalyzerController.cancelOperation`, the
+        // responder-chain path, for the same reason.
+        let logAnalyzerMenuItem = NSMenuItem()
+        mainMenu.addItem(logAnalyzerMenuItem)
+        let logAnalyzerMenu = NSMenu(title: "Log Analyzer")
+        logAnalyzerMenuItem.submenu = logAnalyzerMenu
+
+        let openAnalyzerItem = NSMenuItem(title: "Open Log Analyzer",
+                                          action: #selector(AppShellController.showLogAnalyzer), keyEquivalent: "l")
+        openAnalyzerItem.withSymbol("doc.text.magnifyingglass")
+        openAnalyzerItem.keyEquivalentModifierMask = [.command, .shift]
+        logAnalyzerMenu.addItem(openAnalyzerItem)
+
+        let analyzeClipboardItem = NSMenuItem(title: "Analyze Clipboard",
+                                              action: #selector(AppShellController.analyzeClipboardInLogAnalyzer),
+                                              keyEquivalent: "")
+        analyzeClipboardItem.withSymbol("clipboard")
+        logAnalyzerMenu.addItem(analyzeClipboardItem)
+        logAnalyzerMenu.addItem(NSMenuItem.separator())
+
+        let copyAnalysisItem = NSMenuItem(title: "Copy Analysis",
+                                          action: #selector(AppShellController.logAnalyzerCopyAnalysis), keyEquivalent: "c")
+        copyAnalysisItem.withSymbol("doc.on.doc")
+        copyAnalysisItem.keyEquivalentModifierMask = [.command, .shift]
+        logAnalyzerMenu.addItem(copyAnalysisItem)
+
+        let sendToTerminalItem = NSMenuItem(title: "Send Top Command to Terminal",
+                                            action: #selector(AppShellController.logAnalyzerSendToTerminal), keyEquivalent: "t")
+        sendToTerminalItem.withSymbol("terminal")
+        sendToTerminalItem.keyEquivalentModifierMask = [.command, .shift]
+        logAnalyzerMenu.addItem(sendToTerminalItem)
+
+        let investigateItem = NSMenuItem(title: "Investigate Further",
+                                         action: #selector(AppShellController.logAnalyzerInvestigateFurther), keyEquivalent: "i")
+        investigateItem.withSymbol("magnifyingglass.circle")
+        investigateItem.keyEquivalentModifierMask = [.command, .shift]
+        logAnalyzerMenu.addItem(investigateItem)
+
+        let createRCAItem = NSMenuItem(title: "Create RCA",
+                                       action: #selector(AppShellController.logAnalyzerCreateRCA), keyEquivalent: "a")
+        createRCAItem.withSymbol("doc.badge.plus")
+        createRCAItem.keyEquivalentModifierMask = [.command, .shift]
+        logAnalyzerMenu.addItem(createRCAItem)
+
+        for item in logAnalyzerMenu.items { item.target = menuTarget }
+
+        // Go menu - UX3's "a 'Go' menu listing every destination with its
+        // shortcut", and UX4's "give ⌘1-⌘5 to the spaces (the original
+        // Daylight spec)". Six of them since
+        // `fm/grandline-overview-page-daily-review` added the Overview pill,
+        // so the range is ⌘1-⌘6 and Home sits at ⌘2 (it keeps ⌘0 above).
+        //
+        // ⌘1-⌘9 have been genuinely free since the Tab menu's removal (see
+        // the Hosts menu's own session-switcher comment, which records that
+        // and why the session switcher stayed on ⌘⌃1-9 regardless). The
+        // spaces take ⌘1 upward in declaration order, which is what
+        // `DaylightSpace.shortcutIndex` reports - the loop below reads it
+        // rather than a hand-written list, so a sixth pill needed no edit
+        // here.
+        //
+        // The destination list below is generated from
+        // `AllDestinationsOverlayController.groups()` - the same grouping the
+        // ⌘⇧D map draws - rather than a hand-written second list, so a new
+        // `RailDestination` appears in both surfaces with no edit here.
+        let goMenuItem = NSMenuItem()
+        mainMenu.addItem(goMenuItem)
+        let goMenu = NSMenu(title: "Go")
+        goMenuItem.submenu = goMenu
+        let homeItem = NSMenuItem(title: "Home", action: #selector(AppShellController.showHomeCanvas), keyEquivalent: "0").withSymbol("sailboat.fill")
+        homeItem.target = menuTarget
+        goMenu.addItem(homeItem)
+        goMenu.addItem(NSMenuItem.separator())
+        for space in DaylightSpace.allCases {
+            let item = NSMenuItem(title: space.title,
+                                  action: #selector(AppShellController.selectSpaceByShortcut(_:)),
+                                  keyEquivalent: "\(space.shortcutIndex)")
+            item.withSymbol(space.heroSymbol)
+            item.tag = space.shortcutIndex
+            item.target = menuTarget
+            goMenu.addItem(item)
+        }
+        goMenu.addItem(NSMenuItem.separator())
+        let allDestinationsItem = NSMenuItem(title: "All Destinations\u{2026}",
+                                             action: #selector(AppDelegate.showAllDestinations),
+                                             keyEquivalent: "d").withSymbol("square.grid.3x3")
+        // ⌘⇧D, not the finding's suggested ⌘⇧A: ⌘⇧A is already "Create RCA"
+        // in the Log Analyzer menu below, and that menu's own comment is
+        // explicit that it took ⌘⇧A *because* ⇧⌘R was occupied at the time,
+        // and equally explicit that an already-shipped shortcut is not a later
+        // task's to change. ⌘⇧D was verified unbound anywhere in this method.
+        allDestinationsItem.keyEquivalentModifierMask = [.command, .shift]
+        allDestinationsItem.target = self
+        goMenu.addItem(allDestinationsItem)
+        for group in AllDestinationsOverlayController.groups() {
+            goMenu.addItem(NSMenuItem.separator())
+            // A disabled header row, the standard Mac way to caption a run of
+            // items inside one menu - the alternative (a submenu per space)
+            // would put every destination two levels deep, which is the
+            // opposite of what a "show me everything" menu is for.
+            let header = NSMenuItem(title: group.title, action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            goMenu.addItem(header)
+            for destination in group.destinations {
+                let item = NSMenuItem(title: destination.title,
+                                      action: #selector(AppShellController.selectDestinationFromMenu(_:)),
+                                      keyEquivalent: "")
+                item.withSymbol(destination.symbol)
+                item.representedObject = destination.rawValue
+                item.target = menuTarget
+                item.indentationLevel = 1
+                goMenu.addItem(item)
+            }
+        }
+
+        // Window menu - UX3's "⌘M minimise is dead, no Zoom/Bring All to
+        // Front".
+        //
+        // Assigning `NSApp.windowsMenu` is what makes AppKit keep the window
+        // list at the bottom of it up to date and what gives the standard
+        // items their system behaviour; the three items themselves are the
+        // stock selectors, so none of this is behaviour this app implements.
+        let windowMenuItem = NSMenuItem()
+        mainMenu.addItem(windowMenuItem)
+        let windowMenu = NSMenu(title: "Window")
+        windowMenuItem.submenu = windowMenu
+        windowMenu.addItem(withTitle: "Minimize", symbol: "minus", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Zoom", symbol: "arrow.up.left.and.arrow.down.right", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windowMenu.addItem(NSMenuItem.separator())
+        windowMenu.addItem(withTitle: "Bring All to Front", symbol: "square.stack", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        if installing { NSApp.windowsMenu = windowMenu }
+
+        // Help menu - UX3's "add Help -> 'Keyboard Shortcuts…' (generated from
+        // the same tables the Settings recorder reads) and 'Manual checks'".
+        //
+        // The sheet is generated by walking this very menu tree (plus the two
+        // configurable families Settings owns) - see
+        // `KeyboardShortcutCatalog`'s header for why a walk rather than a
+        // second table.
+        let helpMenuItem = NSMenuItem()
+        mainMenu.addItem(helpMenuItem)
+        let helpMenu = NSMenu(title: "Help")
+        helpMenuItem.submenu = helpMenu
+        let shortcutsItem = NSMenuItem(title: "Keyboard Shortcuts\u{2026}",
+                                       action: #selector(AppDelegate.showKeyboardShortcuts),
+                                       keyEquivalent: "/").withSymbol("keyboard")
+        shortcutsItem.keyEquivalentModifierMask = [.command, .shift]
+        shortcutsItem.target = self
+        helpMenu.addItem(shortcutsItem)
+        let manualChecksItem = NSMenuItem(title: "Manual Checks",
+                                          action: #selector(AppDelegate.showManualChecks),
+                                          keyEquivalent: "").withSymbol("checklist")
+        manualChecksItem.target = self
+        helpMenu.addItem(manualChecksItem)
+        if installing { NSApp.helpMenu = helpMenu }
+
+        // No Tab or View top-level menu.
+        //
+        // View/Window/Help were standard-system-provided menus that never
+        // fit this app: the View menu's `⌘1`-`⌘5` space shortcuts and
+        // light/dark toggle duplicated `DaylightBarController`'s own
+        // pills/button, its zoom items duplicated the Console toolbar's zoom
+        // buttons and Settings' font-size presets; Window's minimize/zoom
+        // are native title-bar chrome independent of any menu; Help pointed
+        // at two repo docs with no other entry point. Their removal drops
+        // the now-dead `openRepoDoc`/`openSetupGuide`/`openReadme` helpers
+        // (their only callers) and `AppShellController`'s
+        // `selectSpaceByShortcut(_:)`/`toggleTheme()` menu-item wrappers
+        // (`selectSpace(_:)` itself is still very much alive - it's what
+        // `DaylightBarController`'s own space pills call; only the
+        // `NSMenuItem`-shaped `⌘1`-`⌘5` wrapper around it is gone. Same for
+        // `ThemeManager.shared.toggle()`, still called directly by
+        // `DaylightBarController`'s own theme-toggle button).
+        //
+        // The Tab menu (new / duplicate / rename / close / reconnect / jump
+        // to tab N) is a separate, later removal
+        // (`fm/grandline-console-tabs-restore-tabmenu-fix`) - the captain's
+        // own original intent, distinct from the View/Window/Help cleanup
+        // above: every capability it offered has a non-keyboard equivalent
+        // already built into the tab strip (`TabChipView`) - the "+" button
+        // for New, a chip's own double-click for Rename, and its right-click
+        // menu for Rename/Duplicate/Close/**Reconnect** (the last one added
+        // alongside this removal specifically so "reconnect a dead tab"
+        // stays reachable with no menu backing it - see
+        // `TabChipView.onReconnect`) - and jumping to a specific tab is
+        // simply clicking its chip, which was always the primary way to do
+        // it. What does NOT survive, because AppKit's standard key-equivalent
+        // handling only walks items that are genuinely part of
+        // `NSApp.mainMenu`'s tree (hiding a top-level item via `isHidden`
+        // excludes its whole submenu from that walk exactly like removing it
+        // outright does - there is no "present in the tree but invisible in
+        // the bar" middle ground) is every one of the Tab menu's keyboard
+        // shortcuts: ⌘T (new tab), ⌘D (duplicate), ⇧⌘R (rename), ⌘W (close),
+        // ⌘R (reconnect), and ⌘1-⌘9 (jump to tab N). This is the same,
+        // captain-accepted trade-off as ⌘M silently doing nothing once the
+        // Window menu above went - the shortcuts are gone, the underlying
+        // action is one click away either way. This is also shared with
+        // `ToolsController`'s own, separate multi-instance tab strip, which
+        // reused these exact selector names precisely so one Tab menu could
+        // drive whichever controller had focus (see `ToolsController`'s own
+        // `newShellTab`/`duplicateCurrentTab`/`renameCurrentTab`/
+        // `closeCurrentTab`) - Tools' own "+" button and its tab chips'
+        // double-click/right-click are completely unaffected, since neither
+        // ever routed through this menu to begin with.
+
+        if installing { NSApp.mainMenu = mainMenu }
+        return mainMenu
+    }
+}
+
+// MARK: - Self-test dispatch (GL-27: debug builds only)
+//
+// Every `FM_RUN_*_TESTS` block below is compiled out of the release binary,
+// along with the suites themselves (see any file in `SelfTests/`). The flags
+// stay greppable in this file either way, which is what
+// `Scripts/run-all-tests.sh` discovers the suite list from - and that script
+// builds and runs the debug binary, where they exist.
+//
+// This whole block sits before `SingleInstanceGuard.acquire()` and before
+// `AppDelegate()` is constructed: every branch `exit()`s, so a headless suite
+// never contends for the instance lock and never touches the real stores.
+#if FM_SELFTESTS
+
+// F6: redirect the captain's log to a scratch directory for the whole of a
+// self-test process, unless the caller already pointed it somewhere.
+//
+// Not a precaution - a real defect this caught. `FleetLogStore.shared` is
+// appended to by `ShiftGitSync.resolveConflicts` and `LogAnalyzerStore.save`,
+// which `ShiftConflictSelfTest` and `LogAnalyzerSelfTest` both drive against
+// their own scratch stores. Those suites correctly override every store they
+// know about (`FM_SHIFT_DIR`, `FM_LOG_ANALYZER_DIR`, ...), but the fleet log
+// is reached indirectly, through a singleton neither of them constructs - so
+// a plain `./Scripts/run-all-tests.sh` wrote three fabricated events into the
+// captain's real `events.jsonl`. Doing it here rather than in those two
+// suites covers every present and future suite that reaches an append path,
+// including a single suite run by hand, which is the case a per-suite fix
+// would keep missing. Same reasoning as `CommandLibraryStore` honouring
+// `FM_SHIFT_DIR` (see AGENTS.md's DevOps Commands section).
+//
+// Pr1 extends the same treatment to the schedule stores, for exactly the
+// reason the paragraph above gives. Several suites construct a bare
+// `ScheduleStore()` purely to satisfy an initializer's parameter list
+// (`AppShellBodyWidthSelfTest`, `AppShellDrillHeaderTitleSelfTest`,
+// `DaylightHardeningSelfTest`, `DaylightModuleSelfTest`,
+// `DestinationMountingSelfTest`) and their `withScratchEnv` blocks omit
+// `FM_SCHEDULES_FILE`, so each of those *reads* the captain's real
+// `schedules.json` during a plain test run - and `ScheduleRunHistoryStore.shared`
+// (PR #289) is a second indirectly-reachable singleton with no redirect at
+// all. No suite drives a schedule write today, which is the only reason
+// nothing has been corrupted yet; AGENTS.md's own post-incident rule says to
+// close that here rather than wait for the suite that does.
+if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_RUN_") }) {
+    let scratchRoot = FileManager.default.temporaryDirectory
+        .appendingPathComponent("selftest-process-\(ProcessInfo.processInfo.processIdentifier)",
+                                isDirectory: true)
+    // P4 (full review #3): the sibling of every redirect below, for the one
+    // piece of shared state that is NOT a file path.
+    //
+    // ~44 suites change `fm.themeID`/`fm.fontSize` in this process's shared
+    // `UserDefaults` domain and restore them in a `defer` - which covers every
+    // normal exit and none of the abnormal ones. A SIGSEGV in a probe left the
+    // domain on `catppuccin-latte` and the next unrelated run failed the
+    // documented pair of suites on a clean tree. A signal handler cannot fix
+    // that (`UserDefaults` is not async-signal-safe, and SIGKILL is not
+    // catchable at all), so this records the starting values to a sidecar
+    // before the first suite runs and recovers from one left by an interrupted
+    // run. See `SelfTestDefaultsGuard`'s own header.
+    SelfTestDefaultsGuard.arm()
+
+    // `fm/grandline-overview-layout-fix-gmail-settings`: the Google accounts.
+    //
+    // Not a file - a **Keychain** item - and it is exactly the shape this
+    // block exists for: `GoogleAccountStore.shared` is reachable from a bare
+    // production path (`SettingsController` builds its Gmail card on
+    // `loadView`, so every suite that mounts an `AppShellController` reaches
+    // it), and a suite that wrote there would create real Keychain items
+    // holding fabricated OAuth tokens on the captain's own machine, under the
+    // app's real service name. There is no `FM_*` path to redirect, so the
+    // store itself is swapped for the in-memory one.
+    //
+    // The client store is overridden to "no client configured", which is the
+    // shipped state anyway - a suite must never read the captain's real
+    // client id, and must certainly never be able to start a real sign-in.
+    GoogleAccountStore.shared = InMemoryGoogleAccountStore()
+    GoogleOAuthClientStore.shared.override = .some(nil)
+    // `fm/grandline-google-calendar-connection-health`: the same backstop, one
+    // layer out. Settings \u{203A} Google Accounts now runs a **real** Calendar
+    // read for a connected slot, so a suite that plants a fixture record would
+    // otherwise issue a live HTTPS request from CI carrying a fabricated
+    // bearer token. A suite that wants a reply swaps this for its own stub.
+    GoogleCalendarHealthCheck.shared.transport = RefusingGoogleCalendarTransport()
+
+    if (ProcessInfo.processInfo.environment["FM_FLEET_LOG_DIR"] ?? "").isEmpty {
+        setenv("FM_FLEET_LOG_DIR", scratchRoot.appendingPathComponent("fleet-log", isDirectory: true).path, 1)
+    }
+    if (ProcessInfo.processInfo.environment["FM_SCHEDULES_FILE"] ?? "").isEmpty {
+        setenv("FM_SCHEDULES_FILE", scratchRoot.appendingPathComponent("schedules.json").path, 1)
+    }
+    if (ProcessInfo.processInfo.environment["FM_SCHEDULE_HISTORY_DIR"] ?? "").isEmpty {
+        setenv("FM_SCHEDULE_HISTORY_DIR", scratchRoot.appendingPathComponent("schedule-history", isDirectory: true).path, 1)
+    }
+    // `fm/grandline-sticky-board`: the same lesson, caught live during this
+    // task's own verification rather than in a later follow-up. Any suite -
+    // including this feature's own `StickyBoardViewSelfTest` - that
+    // constructs a real `StickyBoardController()`/`StickyBoardStore()` via
+    // their production `init()` (no explicit `FM_STICKY_BOARD_DIR`/
+    // `FM_SHIFT_DIR` override of its own) would otherwise reach
+    // `StickyBoardGitSync.shared`, which shares `ShiftGitSync.shared`'s real
+    // production working tree - a real local clone of the captain's actual
+    // `manjesh-config` on this machine. Running `FM_RUN_STICKY_BOARD_VIEW_TESTS`
+    // once, unprotected, left a stray untracked `GrandLineDocs/sticky-board/`
+    // folder sitting in that real clone (never committed or pushed, since the
+    // 3s debounce never fires before a headless suite process exits - but a
+    // real hazard regardless, and the exact class of bug this whole block
+    // exists to close for every present and future suite at once).
+    // F3: the clipboard history is a sealed file plus a Keychain item, and
+    // both need redirecting for the same reason every store above does - a
+    // suite must neither read nor overwrite the captain's real history, and
+    // must certainly not create a real Keychain item on his machine.
+    // `FM_CLIPBOARD_HISTORY_EPHEMERAL` is what `ClipboardHistoryKey.load`
+    // honours to use a per-process random key instead of the Keychain.
+    if (ProcessInfo.processInfo.environment["FM_CLIPBOARD_HISTORY_FILE"] ?? "").isEmpty {
+        setenv("FM_CLIPBOARD_HISTORY_FILE", scratchRoot.appendingPathComponent("clipboard-history.sealed").path, 1)
+    }
+    if (ProcessInfo.processInfo.environment["FM_CLIPBOARD_HISTORY_EPHEMERAL"] ?? "").isEmpty {
+        setenv("FM_CLIPBOARD_HISTORY_EPHEMERAL", "1", 1)
+    }
+    if (ProcessInfo.processInfo.environment["FM_STICKY_BOARD_DIR"] ?? "").isEmpty {
+        setenv("FM_STICKY_BOARD_DIR", scratchRoot.appendingPathComponent("sticky-board", isDirectory: true).path, 1)
+    }
+    // `fm/grandline-monaco-code-preview`: `CodePreviewStore()` is another store
+    // reachable from a bare, no-argument production constructor, so it gets an
+    // entry here for the reason the Sticky Board note above spells out - not
+    // because a suite is known to reach it today. Every harness that mounts an
+    // `AppShellController` (which builds one) already sets `FM_SHIFT_DIR`,
+    // which this store honours, and both of its own suites use the explicit
+    // `CodePreviewStore(root:)` seam. This closes the case those two do not:
+    // a future suite constructing `CodePreviewController(store: CodePreviewStore())`
+    // with no override of its own.
+    if (ProcessInfo.processInfo.environment["FM_CODE_PREVIEW_DIR"] ?? "").isEmpty {
+        setenv("FM_CODE_PREVIEW_DIR", scratchRoot.appendingPathComponent("code-snippets", isDirectory: true).path, 1)
+    }
+    // Review #3's UX12: `StrawHatTranscriptStore()` is a new store reachable
+    // from a bare production constructor - `StrawHatController` builds one -
+    // so it needs an entry here **before its first suite**, which is the rule
+    // this block exists to enforce. Without it, any suite that mounts an
+    // `AppShellController` (which mounts that controller) would write the
+    // crew's conversations into `ShiftGitSync.shared`'s real working tree: a
+    // live clone of the captain's own private `manjesh-config`.
+    if (ProcessInfo.processInfo.environment["FM_STRAW_HAT_DIR"] ?? "").isEmpty {
+        setenv("FM_STRAW_HAT_DIR", scratchRoot.appendingPathComponent("straw-hat", isDirectory: true).path, 1)
+    }
+    // The credential vault (`fm/implement-grand-line-secrets-vault-poneg-ad`),
+    // for exactly the reason the Sticky Board note above spells out and with
+    // more at stake than any other entry in this block: `CredentialVaultStore()`
+    // is reachable from a bare, no-argument production constructor, and with no
+    // override it resolves to `CredentialVaultGitSync.shared` - which shares
+    // `ShiftGitSync.shared`'s real working tree, a live clone of the captain's
+    // actual private `manjesh-config`. A suite that constructed one unprotected
+    // would write an encrypted vault file into that clone and mark it dirty for
+    // commit. The store honours `FM_SHIFT_DIR` as well (see its `init`), so
+    // this is the belt to that brace, and the one that covers a suite setting
+    // neither.
+    if (ProcessInfo.processInfo.environment["FM_CREDENTIAL_VAULT_DIR"] ?? "").isEmpty {
+        setenv("FM_CREDENTIAL_VAULT_DIR", scratchRoot.appendingPathComponent("grand-line-vault", isDirectory: true).path, 1)
+    }
+    // The SECOND full-app audit's §7.1: `DocsRunbookStore` is the one store in
+    // the `GrandLineDocs/` family that honoured only its own narrow override
+    // and NOT `FM_SHIFT_DIR`, so the entry below - which the block's own
+    // comment (and AGENTS.md) claimed covered it - genuinely did not. Two
+    // windowed suites reached the real clone machinery on every *local* run
+    // because of it; CI was safe only because `ci.yml`'s env block happens to
+    // set this variable directly. `DocsRunbookStore.init()` has the fallback
+    // now, so this line is the belt to that brace: it also covers a suite that
+    // sets neither, and it keeps the override explicit at the one place a
+    // reader looks for the full list.
+    if (ProcessInfo.processInfo.environment["FM_DOCS_RUNBOOKS_DIR"] ?? "").isEmpty {
+        setenv("FM_DOCS_RUNBOOKS_DIR", scratchRoot.appendingPathComponent("runbooks", isDirectory: true).path, 1)
+    }
+    // The Playbook's own local copy. Not a git-sync store - `DocsStore` only
+    // resolves a folder under Application Support and `DocsSyncSource` fetches
+    // on demand - so the exposure is a stray directory (and, if a suite ever
+    // drove a sync, a real network fetch) in the captain's real profile rather
+    // than a write into their repo. Same shape, same cost, no reason to leave
+    // it as the one member of the family without an entry.
+    if (ProcessInfo.processInfo.environment["FM_DOCS_DIR"] ?? "").isEmpty {
+        setenv("FM_DOCS_DIR", scratchRoot.appendingPathComponent("docs", isDirectory: true).path, 1)
+    }
+    // The second audit's §7.3, the long-standing gap this block's own rule
+    // ("every store reachable from a bare production constructor") always
+    // implied but never covered. ~10 windowed suites construct a bare
+    // `SSHKeyStore()`/`SnippetStore()` purely to satisfy `ConsoleController`'s
+    // parameter list (`ConsoleTabLifecycleSelfTest`, `SRELeadPerTabSelfTest`,
+    // `TabKeyboardShortcutsSelfTest`, BlockViewRestart, ConsoleClaudeUsage,
+    // IncidentResume, KubeContextBridge, KubernetesDestination,
+    // NotificationCenterSRELead, TabForwardDragsToggle), so locally each of
+    // them *reads* the captain's real `keys.json`/`snippets.json` at
+    // construction. Read-only in practice today - GL-01's load-failure path
+    // makes a backup copy rather than overwriting - but the whole point of
+    // this block is that the *next* suite to reach one of these is the one
+    // that writes. `FM_HOSTS_FILE` and `FM_DICTATION_DIR` are the same class
+    // and get the same treatment rather than waiting for their own incident.
+    if (ProcessInfo.processInfo.environment["FM_KEYS_FILE"] ?? "").isEmpty {
+        setenv("FM_KEYS_FILE", scratchRoot.appendingPathComponent("keys.json").path, 1)
+    }
+    if (ProcessInfo.processInfo.environment["FM_SNIPPETS_FILE"] ?? "").isEmpty {
+        setenv("FM_SNIPPETS_FILE", scratchRoot.appendingPathComponent("snippets.json").path, 1)
+    }
+    if (ProcessInfo.processInfo.environment["FM_HOSTS_FILE"] ?? "").isEmpty {
+        setenv("FM_HOSTS_FILE", scratchRoot.appendingPathComponent("hosts.json").path, 1)
+    }
+    if (ProcessInfo.processInfo.environment["FM_DICTATION_DIR"] ?? "").isEmpty {
+        setenv("FM_DICTATION_DIR", scratchRoot.appendingPathComponent("dictation", isDirectory: true).path, 1)
+    }
+    // Full review #3's S3 moved this out of `UserDefaults` into a real file,
+    // which puts it squarely in the class above: reachable from a bare
+    // `AppSettings.shared.sessionRestoreState` read, and now something a
+    // suite can *write*.
+    if (ProcessInfo.processInfo.environment["FM_SESSION_RESTORE_FILE"] ?? "").isEmpty {
+        setenv("FM_SESSION_RESTORE_FILE", scratchRoot.appendingPathComponent("session-restore.json").path, 1)
+    }
+    // F1's notebook (`fm/grandline-feature-f1-notebook`), for exactly the
+    // reason the Docs-runbooks entry above spells out: `NotebookStore()` is
+    // reachable from a bare, no-argument production constructor, and with no
+    // override it resolves to `NotebookGitSync.shared` - which shares
+    // `ShiftGitSync.shared`'s real working tree, a live clone of the captain's
+    // actual private `manjesh-config`. Any suite that mounts an
+    // `AppShellController` constructs one. The store honours `FM_SHIFT_DIR`
+    // too (see its `init`), so this is the belt to that brace.
+    if (ProcessInfo.processInfo.environment["FM_NOTEBOOK_DIR"] ?? "").isEmpty {
+        setenv("FM_NOTEBOOK_DIR", scratchRoot.appendingPathComponent("notebook", isDirectory: true).path, 1)
+    }
+    // F4's reading list (`fm/grandline-feature-f4-reading-list`), for exactly
+    // the reason the entry above spells out: `ReadingListStore()` is reachable
+    // from a bare, no-argument production constructor, and with no override it
+    // resolves to `ReadingListGitSync.shared` - which shares
+    // `ShiftGitSync.shared`'s real working tree, a live clone of the captain's
+    // actual private `manjesh-config`. Any suite that mounts an
+    // `AppShellController` constructs one. The store honours `FM_SHIFT_DIR`
+    // too (see its `init`), so this is the belt to that brace.
+    if (ProcessInfo.processInfo.environment["FM_READING_LIST_DIR"] ?? "").isEmpty {
+        setenv("FM_READING_LIST_DIR", scratchRoot.appendingPathComponent("reading-list", isDirectory: true).path, 1)
+    }
+    // F9's scratchpad (`fm/grandline-feature-f9-scratchpad-calculator`).
+    // `ScratchpadStore()` is reachable from a bare, no-argument production
+    // constructor - every Scratchpad tab builds one - so a suite that opens
+    // that tab would otherwise read and rewrite the captain's own pads.
+    if (ProcessInfo.processInfo.environment["FM_SCRATCHPAD_FILE"] ?? "").isEmpty {
+        setenv("FM_SCRATCHPAD_FILE", scratchRoot.appendingPathComponent("scratchpad.json").path, 1)
+    }
+    // F23's widget snapshot (`fm/grandline-feature-f23-widgets`). The one
+    // store in this app whose default location is **outside** the captain's
+    // profile in the usual sense - it is the App Group container the widget
+    // extension reads - and `WidgetSnapshotPublisher` is reachable from
+    // `AppDelegate` at launch, so any suite that builds one would otherwise
+    // publish fabricated tasks into the real shared container and reload the
+    // captain's real widgets with them.
+    if (ProcessInfo.processInfo.environment["FM_WIDGET_DIR"] ?? "").isEmpty {
+        setenv("FM_WIDGET_DIR", scratchRoot.appendingPathComponent("widgets", isDirectory: true).path, 1)
+    }
+    // The full-app audit's §7.2, and the entry that generalises every one
+    // above: `FM_SHIFT_DIR` is the *root* override the whole
+    // `GrandLineDocs/` family resolves through.
+    //
+    // `ShiftStore`, `IncidentStore`, `DocsRunbookStore` (only since the second
+    // audit's §7.1 - it was the outlier that ignored this variable entirely),
+    // `CommandLibraryStore`, `LogAnalyzerStore`, `StickyBoardStore` and
+    // `CodePreviewStore` all have a
+    // no-argument production `init()` that, with no override set, resolves to
+    // `ShiftGitSync.shared`'s working tree - a real local clone of the
+    // captain's actual private `manjesh-config` repo. Every suite that
+    // constructs one today sets either its own narrow override or this one, so
+    // nothing is reaching that clone right now; this closes the case where the
+    // *next* one does not, which is precisely how the two incidents the
+    // comments above recount both happened. A per-suite fix keeps missing it
+    // because the store is usually reached indirectly - through a controller,
+    // or a singleton nobody constructs on purpose.
+    //
+    // Setting it also switches `ShiftStore` to its non-git-backed mode
+    // (`gitSync == nil`), so a suite that writes cannot queue a commit against
+    // the real remote either. Deliberately last, so a suite that sets one of
+    // the narrower overrides above still wins for its own store.
+    if (ProcessInfo.processInfo.environment["FM_SHIFT_DIR"] ?? "").isEmpty {
+        setenv("FM_SHIFT_DIR", scratchRoot.appendingPathComponent("tasks", isDirectory: true).path, 1)
+    }
+}
+
+// `fm/cockpit-sre-lead-shared-terminal`: `swift build && FM_RUN_SRE_LEAD_BRIDGE_TESTS=1
+// .build/debug/GrandLine` runs `SRELeadBridge`'s self-tests and exits,
+// never opening a window - this project builds with Command Line Tools only
+// (no Xcode), which has no `XCTest.framework` and, in practice, no working
+// `swift test` story for a `swift-testing`-based test target either (see
+// `SRELeadBridgeSelfTest.swift`'s header for what was actually tried and why
+// it didn't work), so this is the plain, dependency-free stand-in - the same
+// "env-var-gated verification, run and read the result" convention this
+// codebase already uses for AppKit UI probes (see AGENTS.md's "Verifying
+// native UI bugs without a real screenshot"), just kept permanently instead
+// of reverted after one use.
+if ProcessInfo.processInfo.environment["FM_RUN_SRE_LEAD_BRIDGE_TESTS"] == "1" {
+    exit(SRELeadBridgeSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-sre-lead-per-tab`: same convention, for the real
+// `ConsoleController` per-tab SRE Lead integration (independent phases, no
+// chat cross-talk, tab-switch rebinding, the 5-tab cap, per-tab teardown on
+// close) - see `SRELeadPerTabSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_SRE_LEAD_PER_TAB_TESTS"] == "1" {
+    exit(SRELeadPerTabSelfTest.run() ? 0 : 1)
+}
+
+// Straw Hat Pirates phase 1 (`fm/implement-straw-hat-pirates-phase1-luffy-fb98`):
+// the pure-logic half - the persona's own safety clauses, `--resume`
+// threading proven from the argv a fake `claude` recorded, the stale-session
+// recap recovery, and the `.strawHatChat` lock gate. Runs in CI; the
+// window-backed half is `FM_RUN_STRAW_HAT_VIEW_TESTS`.
+if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_TESTS"] == "1" {
+    exit(StrawHatSelfTest.run() ? 0 : 1)
+}
+
+// The same feature's rendering half: the real `FleetController` Crew tab,
+// the real `StrawHatChatView`, and a real turn round trip against a fake
+// `claude`. Mounts a real `NSWindow`, so it is in `run-all-tests.sh`'s
+// `NEEDS_SESSION` list - see `StrawHatViewSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_VIEW_TESTS"] == "1" {
+    exit(StrawHatViewSelfTest.run() ? 0 : 1)
+}
+
+// Straw Hat Pirates phase 2.5
+// (`fm/implement-straw-hat-pirates-phase25-mcp-fb52`): the crew's read-only
+// MCP tools - the pinned `--allowedTools`, the MCP config's real contents,
+// M2.5b's health file bridge, and the cross-language case that runs the real
+// `luffy_stores_mcp.py` over stdio against real Swift-written stores. Builds
+// no window, so it runs in CI alongside `FM_RUN_STRAW_HAT_TESTS`. The Python
+// half is `native/Scripts/test_luffy_stores_mcp.py`.
+if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_MCP_TESTS"] == "1" {
+    exit(StrawHatMCPSelfTest.run() ? 0 : 1)
+}
+
+// Straw Hat Pirates phase 3 (M3.2): the two navigation handoffs' resolution,
+// against a real `AppShellController` - which host a hint resolves to,
+// whether a handoff ever *connects* one (it must not), and the Whiteboard's
+// own composer being opened prefilled. Mounts a real shell, so it is in
+// `run-all-tests.sh`'s `NEEDS_SESSION` list - see
+// `StrawHatHandoffSelfTest.swift`'s header for why the shell-level half is
+// its own suite rather than more cases in the view one.
+if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_HANDOFF_TESTS"] == "1" {
+    exit(StrawHatHandoffSelfTest.run() ? 0 : 1)
+}
+
+// `fm/straw-hat-menubar-quick-chat-popover`: the crew's menu-bar quick-chat
+// popover and the static crew roster reference sheet - two more real,
+// window-mounted views, so this joins `run-all-tests.sh`'s `NEEDS_SESSION`
+// list beside its Straw Hat Pirates siblings. See
+// `StrawHatMenuBarSelfTest.swift`'s header for why it never drives the
+// popover's real click-to-open path.
+if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_MENUBAR_TESTS"] == "1" {
+    exit(StrawHatMenuBarSelfTest.run() ? 0 : 1)
+}
+
+// `fm/cockpit-sre-lead-reply-formatting`: same convention, for
+// `SRELeadMarkdown.parse`'s block/callout parsing - see
+// `SRELeadMarkdownSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_SRE_LEAD_MARKDOWN_TESTS"] == "1" {
+    exit(SRELeadMarkdownSelfTest.run() ? 0 : 1)
+}
+
+// fm/cockpit-local-state-portable: same convention, for the export/import/
+// diff/apply path - see `BackupSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_BACKUP_TESTS"] == "1" {
+    exit(BackupSelfTest.run() ? 0 : 1)
+}
+
+// fm/cockpit-tools-page-diff: same convention, for `DiffEngine`'s line/word
+// LCS diffing - see `DiffEngineSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_DIFF_ENGINE_TESTS"] == "1" {
+    exit(DiffEngineSelfTest.run() ? 0 : 1)
+}
+
+// cockpit-tools-page-specialist: same convention, for the cron next-run
+// explainer, the resource-unit converter, and the certificate inspector -
+// see each self-test file's own header.
+if ProcessInfo.processInfo.environment["FM_RUN_CRON_EXPLAINER_TESTS"] == "1" {
+    exit(CronExplainerSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_RESOURCE_UNITS_TESTS"] == "1" {
+    exit(ResourceUnitsSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_WRAP_REDRAW_TESTS"] == "1" {
+    exit(TerminalWrapRedrawSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_VENDORED_PATCHES_TESTS"] == "1" {
+    exit(VendoredPatchesSelfTest.run() ? 0 : 1)
+}
+// The rename to "Grand Line": the Keychain copy, the Application Support
+// folder move, and the standing guard that no source has drifted back to a
+// pre-rename name. Pure logic - a file-system round trip, a scratch-service
+// Keychain round trip and a source grep - so it guards CI's blocking lane.
+if ProcessInfo.processInfo.environment["FM_RUN_LEGACY_RENAME_MIGRATION_TESTS"] == "1" {
+    exit(LegacyRenameMigrationSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_CERT_INSPECTOR_TESTS"] == "1" {
+    exit(CertInspectorSelfTest.run() ? 0 : 1)
+}
+
+// fm/cockpit-tools-yaml-order-perf-fix: same convention, for YamlBeautify's
+// key-order fidelity - see YamlBeautifySelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_YAML_BEAUTIFY_TESTS"] == "1" {
+    exit(YamlBeautifySelfTest.run() ? 0 : 1)
+}
+
+// cockpit-shift-foundation: same convention, for ShiftStore's completion/
+// reopen file-move logic and YAML scalar fidelity - see
+// ShiftStoreSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_STORE_TESTS"] == "1" {
+    exit(ShiftStoreSelfTest.run() ? 0 : 1)
+}
+
+// fm/grandline-tasks-kanban-devops-split: the Kanban board's pure logic - the
+// column/status table (including a cancelled task having no column at all)
+// and the process-stable per-project colour hash. The board's *view* half
+// needs a real window and lives in ShiftBoardViewSelfTest.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_BOARD_TESTS"] == "1" {
+    exit(ShiftBoardSelfTest.run() ? 0 : 1)
+}
+
+// F23 of full review #3 §8 (`fm/grandline-feature-f23-widgets`): the widget
+// pipeline's pure logic - the snapshot's projection from real store types,
+// its round trip through the shared container, the digest both widgets draw
+// from, GL-14's unavailable/locked states, and the reverse channel a tapped
+// widget button writes into. No window and no WidgetKit, so this guards CI's
+// *blocking* lane; the extension's own rendering half cannot be asserted from
+// here at all (see `native/Widgets/README.md`).
+if ProcessInfo.processInfo.environment["FM_RUN_WIDGET_SNAPSHOT_TESTS"] == "1" {
+    exit(WidgetSnapshotSelfTest.run() ? 0 : 1)
+}
+
+// The same board's view half: a real ShiftController mounted in a real
+// window, a real press-and-drag on a card, and a real drop onto a column.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_BOARD_VIEW_TESTS"] == "1" {
+    exit(ShiftBoardViewSelfTest.run() ? 0 : 1)
+}
+
+// F5 (full review #3 §8): the RRULE-lite recurrence rule - parsing, the
+// occurrence generator, the "completing an instance writes the next one"
+// advance, and the per-task reminder offset's own comparison. Pure logic, so
+// it runs in CI's blocking lane; the calendar's render is its window-backed
+// sibling below.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_RECURRENCE_TESTS"] == "1" {
+    exit(ShiftRecurrenceSelfTest.run() ? 0 : 1)
+}
+
+// The same feature's view half: the real Tasks page in a real window, the
+// Calendar pill genuinely clicked, and the month grid's own laid-out cells.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_CALENDAR_VIEW_TESTS"] == "1" {
+    exit(ShiftCalendarViewSelfTest.run() ? 0 : 1)
+}
+
+// F7 (full review #3 §8): the focus timer's state machine, its two duration
+// formats, the activity-log write and the per-day aggregation Weekly
+// Review's tile reads. Pure logic, so it runs in CI's blocking lane; the
+// chip, the ring and the chart are its window-backed sibling below.
+if ProcessInfo.processInfo.environment["FM_RUN_FOCUS_TIMER_TESTS"] == "1" {
+    exit(FocusTimerSelfTest.run() ? 0 : 1)
+}
+
+// The same feature's render: the real bar with the real chip on it, the
+// popover's ring, and Weekly Review's seven-day chart.
+if ProcessInfo.processInfo.environment["FM_RUN_FOCUS_TIMER_VIEW_TESTS"] == "1" {
+    exit(FocusTimerViewSelfTest.run() ? 0 : 1)
+}
+
+// fm/grand-line-tasks-page-redesign: the Tasks page's own nav column, the
+// slice it filters by, its stat tiles, its one page-level primary action, and
+// a board column sized so a card is never sliced.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_TASKS_PAGE_TESTS"] == "1" {
+    exit(ShiftTasksPageSelfTest.run() ? 0 : 1)
+}
+
+// fm/grandline-devops-command-library: same convention, for the DevOps
+// Command Library's parameter detection/substitution/search/favorites - see
+// CommandLibraryStoreSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_COMMAND_LIBRARY_TESTS"] == "1" {
+    exit(CommandLibraryStoreSelfTest.run() ? 0 : 1)
+}
+
+// cockpit-shift-create-edit: same convention, for `ShiftDateParser`'s
+// natural-language date/time detection - see `ShiftDateParserSelfTest.swift`'s
+// header.
+// Review #3's UX1-UX4: the all-destinations map's completeness, the
+// quick-access row's cap/order/persistence, the menu bar's shape (Go, Window
+// and Help present; Keys and Snippets folded under Hosts) and the contextual
+// ⌘N routing table - see `NavigationCoherenceSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_NAVIGATION_COHERENCE_TESTS"] == "1" {
+    exit(NavigationCoherenceSelfTest.run() ? 0 : 1)
+}
+
+// Review #3's UX14: GL-30's routing rule, and that `Feedback.report`'s real
+// side effects agree with it - see `FeedbackRoutingSelfTest.swift`.
+if ProcessInfo.processInfo.environment["FM_RUN_FEEDBACK_ROUTING_TESTS"] == "1" {
+    exit(FeedbackRoutingSelfTest.run() ? 0 : 1)
+}
+
+// Review #3's UX12: the crew's conversations surviving a quit, and nothing
+// reaching that file unredacted - see `StrawHatTranscriptSelfTest.swift`.
+if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_TRANSCRIPT_TESTS"] == "1" {
+    exit(StrawHatTranscriptSelfTest.run() ? 0 : 1)
+}
+
+// Review #3's UX7: the "Push to → Tomorrow / Next week" date arithmetic -
+// see `ShiftDuePushSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_DUE_PUSH_TESTS"] == "1" {
+    exit(ShiftDuePushSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_DATE_PARSER_TESTS"] == "1" {
+    exit(ShiftDateParserSelfTest.run() ? 0 : 1)
+}
+
+// cockpit-shift-git-sync: same convention, for `ShiftGitSync`'s clone/commit/
+// push/pull/debounce/status logic against a real disposable local bare repo -
+// see ShiftGitSyncSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_GIT_SYNC_TESTS"] == "1" {
+    exit(ShiftGitSyncSelfTest.run() ? 0 : 1)
+}
+
+// cockpit-shift-power-features: same convention, for `ShiftStore.weeklySummary`'s
+// completed/pushed-back/upcoming counting - see
+// ShiftWeeklySummarySelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_WEEKLY_SUMMARY_TESTS"] == "1" {
+    exit(ShiftWeeklySummarySelfTest.run() ? 0 : 1)
+}
+
+// cockpit-shift-conflict-handling: same convention, for the record-level
+// 3-way merge and conflict-resolution flow layered on top of
+// `ShiftGitSync.pullNow`'s `.diverged` case - see
+// ShiftConflictSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_CONFLICT_TESTS"] == "1" {
+    exit(ShiftConflictSelfTest.run() ? 0 : 1)
+}
+
+// grandline-shift-task-image-attachments: same convention, for the image
+// downscale/PNG-encode logic every attach path (file picker, drag-drop,
+// clipboard paste) funnels through - see
+// ShiftImageAttachmentWellSelfTest.swift's header. The store-level round
+// trip (hasAttachment persistence, file write/read/remove) is covered by
+// ShiftStoreSelfTest.swift; the real-remote push is covered by
+// ShiftGitSyncSelfTest.swift - both extended in place rather than
+// duplicated here.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_ATTACHMENT_WELL_TESTS"] == "1" {
+    exit(ShiftImageAttachmentWellSelfTest.run() ? 0 : 1)
+}
+
+// `fm/cockpit-block-view-stage0`: same convention, for the OSC 133 parser,
+// the real-view-hierarchy render path, the reconnect-bookkeeping
+// unification, and volume - see each file's own header for what class of
+// prior production break it targets and why the other three couldn't have
+// caught it.
+if ProcessInfo.processInfo.environment["FM_RUN_BLOCK_VIEW_TESTS"] == "1" {
+    exit(TerminalBlockTrackerSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_BLOCK_VIEW_HIERARCHY_TESTS"] == "1" {
+    exit(BlockViewHierarchySelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_BLOCK_VIEW_RESTART_TESTS"] == "1" {
+    exit(BlockViewRestartIntegrationSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_BLOCK_VIEW_VOLUME_TESTS"] == "1" {
+    exit(BlockViewVolumeSelfTest.run() ? 0 : 1)
+}
+
+// `fm/cockpit-fix-host-decode-regression`: same convention, for `Host`'s
+// custom decode fallback (a new `CodingKeys` entry with a Swift-side default,
+// like `blockViewOptIn`, must not break decoding of pre-existing `hosts.json`
+// files) - see HostStoreSelfTest.swift's header.
+// `fm/grandline-review-phase1-stabilize` (GL-01/GL-21): store durability -
+// a decode failure must preserve the file, and a failed directory read must
+// not look like an empty library. Runs entirely against scratch paths via the
+// stores' own `FM_*` overrides.
+if ProcessInfo.processInfo.environment["FM_RUN_STORE_DURABILITY_TESTS"] == "1" {
+    exit(StoreDurabilitySelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-review-phase2-harden` (GL-02/GL-15): the shared subprocess
+// runner, including the stderr-flood child the review asked for by name plus
+// an in-process reproduction of the pre-fix drain order still deadlocking on
+// that same child - see SubprocessSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SUBPROCESS_TESTS"] == "1" {
+    exit(SubprocessSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-review-phase2-harden` (GL-26): the one `claude -p` runner the
+// five drifted copies collapsed into - see ClaudeOneShotSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_CLAUDE_ONE_SHOT_TESTS"] == "1" {
+    exit(ClaudeOneShotSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-audit3-perf-security-fixes` (full review #3, S2): the
+// unlocked vault reconciles with a file a git pull changed underneath it, and
+// reveal/copy no longer rewrite-and-commit the whole file - see
+// CredentialVaultConcurrentWriteSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_VAULT_CONCURRENT_WRITE_TESTS"] == "1" {
+    exit(CredentialVaultConcurrentWriteSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-audit3-perf-security-fixes` (full review #3, S1): every
+// `claude -p` run is fail-closed on the built-in tool set via `--tools`, so
+// the captain's global `permissions.allow` cannot widen a read-only persona -
+// see ClaudeOneShotToolPolicySelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_CLAUDE_TOOL_POLICY_TESTS"] == "1" {
+    exit(ClaudeOneShotToolPolicySelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-review-phase2-harden` (GL-10/GL-11/GL-30): throwing
+// persistence writes funnelled through PersistenceFailureReporter, and the
+// ServiceHealth registry behind the Health card - see Phase2HardeningSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_PHASE2_HARDENING_TESTS"] == "1" {
+    exit(Phase2HardeningSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-review-phase1-stabilize` (GL-05/GL-08): the single-instance
+// lock and the `ssh` argv option-terminator contract.
+if ProcessInfo.processInfo.environment["FM_RUN_PHASE1_HARDENING_TESTS"] == "1" {
+    exit(Phase1HardeningSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_HOST_STORE_TESTS"] == "1" {
+    exit(HostStoreSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-vault-tab`: same convention, for `VaultSource`'s pure logic
+// (shell-token safety, the two command-string builders, `av doctor --json`
+// parsing) - see VaultDataSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_VAULT_DATA_TESTS"] == "1" {
+    exit(VaultDataSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-vault-recipe-export-diverged-fix`: real disposable local
+// bare-repo coverage for `VaultRecipeGit.export`'s ahead/behind/diverged
+// classification - see VaultRecipeGitSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_VAULT_RECIPE_GIT_TESTS"] == "1" {
+    exit(VaultRecipeGitSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-live-gap-rootcause-scout`: real-view-hierarchy regression
+// coverage for the captain-reported black/blank right-side window gap -
+// asserts `AppShellController.bodyContainer`'s width tracks the window's
+// real, current content width across a series of resizes, and self-heals
+// if that tie is ever silently broken - see AppShellBodyWidthSelfTest.swift's
+// header.
+// `fm/grandline-overview-layout-fix-gmail-settings`: the Google sign-in flow -
+// PKCE, the authorization request, the redirect, the token exchange, the
+// record merge, the calendar read and the two-source merge. Pure logic with
+// both the browser and the network stubbed, so it guards the blocking CI
+// lane. See GoogleAccountsSelfTest.swift's header.
+// The Gmail settings category, rendered in a real window - two independent
+// slots, four states, both registers. See GmailSettingsViewSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_GMAIL_SETTINGS_VIEW_TESTS"] == "1" {
+    exit(GmailSettingsViewSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_GOOGLE_ACCOUNTS_TESTS"] == "1" {
+    exit(GoogleAccountsSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"] == "1" {
+    exit(AppShellBodyWidthSelfTest.run() ? 0 : 1)
+}
+
+// Bootstrap's own single-line, data-derived labels (a firstmate home path, a
+// dotfiles repo path, a git remote URL) sat at `NSTextField`'s default 750
+// horizontal compression resistance - above `NSLayoutPriorityWindowSizeStayPut`
+// - so the longest of those strings became a hard floor on the whole window's
+// width. See BootstrapWindowShrinkSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_BOOTSTRAP_WINDOW_SHRINK_TESTS"] == "1" {
+    exit(BootstrapWindowShrinkSelfTest.run() ? 0 : 1)
+}
+
+// A drill page header's title can render truncated to a few characters
+// after switching away from a destination whose action cluster (or a narrow
+// window) genuinely squeezed the row at some earlier point in the session -
+// see AppShellDrillHeaderTitleSelfTest.swift's header for the root cause
+// (an NSStackView's cross-axis width getting permanently stuck once squeezed).
+if ProcessInfo.processInfo.environment["FM_RUN_DRILL_HEADER_TITLE_TESTS"] == "1" {
+    exit(AppShellDrillHeaderTitleSelfTest.run() ? 0 : 1)
+}
+
+// Daylight Phase 2: the shell that replaced the icon rail and the top bar -
+// module anatomy, span-2 grid math, the locked space table, the canvas's
+// no-store rule, and the bar's window-safety. See
+// DaylightModuleSelfTest.swift's header.
+// The UI modernization audit's A1/A2/A3: the window's titlebar fused into
+// the floating bar, the drill header merged into that bar's leading area,
+// and the shared scroll-edge treatment. Window-backed - every case is a
+// question about a real window's chrome, a real laid-out bar or a real
+// scroll offset. See WindowChromeFusionSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_WINDOW_CHROME_FUSION_TESTS"] == "1" {
+    exit(WindowChromeFusionSelfTest.run() ? 0 : 1)
+}
+
+// The other half of that fusion, which A1 deferred to AppKit and AppKit does
+// not do: the 33pt menu-bar strip macOS reserves above a full-screen window,
+// which renders as the captain-reported solid black band. Window-backed - it
+// mounts a real window and builds the real panel. See
+// FullScreenMenuBarFillSelfTest.swift's header for what it can and cannot
+// assert.
+if ProcessInfo.processInfo.environment["FM_RUN_FULL_SCREEN_MENU_BAR_FILL_TESTS"] == "1" {
+    exit(FullScreenMenuBarFillSelfTest.run() ? 0 : 1)
+}
+
+// The UI modernization audit's B1-B5: the bar's material, its icon row, the
+// launch-time focus ring, the navigation transition, and the three bar
+// dropdowns becoming borderless panels. Window-backed - the focus ring, the
+// panel anchoring and the transition are all questions about a real window.
+// See BarNavigationModernizationSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_BAR_NAV_MODERNIZATION_TESTS"] == "1" {
+    exit(BarNavigationModernizationSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-topbar-icon-tiles`: the same row's shortcuts as coloured
+// tiles - the per-destination hue, its legibility in all 26 palettes, the
+// three states, the controls deliberately left plain, and the guard that the
+// row's footprint did not move. Pure logic: layer colours and frames off a
+// hand-laid-out bar, no window.
+if ProcessInfo.processInfo.environment["FM_RUN_BAR_ICON_TILE_TESTS"] == "1" {
+    exit(DaylightBarIconTileSelfTest.run() ? 0 : 1)
+}
+
+// The same audit's C, D and E - the canvas and its cards, row/list density,
+// and the reusable controls. Window-backed: hover, press, focus and a real
+// scroll offset all need a real window.
+// See CanvasListsControlsSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_CANVAS_LISTS_CONTROLS_TESTS"] == "1" {
+    exit(CanvasListsControlsSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grand-line-hosts-page-redesign`: the redesigned Hosts page's two-column
+// layout, and that every panel beside the list is fed by a real store rather
+// than the reference mockup's demo data. Window-backed (it mounts the real
+// controller), so it sits in `run-all-tests.sh`'s NEEDS_SESSION list.
+if ProcessInfo.processInfo.environment["FM_RUN_HOSTS_REDESIGN_TESTS"] == "1" {
+    exit(HostsRedesignSelfTest.run() ? 0 : 1)
+}
+
+// Review #3's bug list (`data/grandline-full-review-3/report.md` §1/§1b), for
+// the findings with no existing suite of their own. Window-backed - most of
+// them are geometry, and geometry with no window is geometry nobody measured -
+// so it sits in `run-all-tests.sh`'s `NEEDS_SESSION` list.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT3_UI_FIXES_TESTS"] == "1" {
+    exit(Audit3UIFixesSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT3_BUG_FIXES_TESTS"] == "1" {
+    exit(Audit3BugFixesSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
+    exit(DaylightModuleSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-engineering-cards-stale-counts`: a hub summary card must
+// reflect a change the captain made through its own detail page. Window-backed
+// (it mounts a real shell and drives the real pages), so it sits in
+// `run-all-tests.sh`'s NEEDS_SESSION list.
+if ProcessInfo.processInfo.environment["FM_RUN_SUMMARY_FRESHNESS_TESTS"] == "1" {
+    exit(SummaryFreshnessSelfTest.run() ? 0 : 1)
+}
+
+// The lock screen's Daylight Harbour restyle - the last pre-Daylight surface
+// (fm/grandline-home-login-redesign-plan). Window-backed: focus, rendering and
+// the off-screen render probe all need a real window, so it sits in
+// run-all-tests.sh's NEEDS_SESSION list. See LockScreenSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_LOCK_SCREEN_TESTS"] == "1" {
+    exit(LockScreenSelfTest.run() ? 0 : 1)
+}
+
+// The full-app audit's §7.1: a source guard cross-checking every window-backed
+// suite in `SelfTests/` against `Scripts/run-all-tests.sh`'s `NEEDS_SESSION`
+// list, which CI's `--ci` / `--session-only` split depends on being accurate.
+if ProcessInfo.processInfo.environment["FM_RUN_E2E_TESTING_POLICY_TESTS"] == "1" {
+    exit(E2ETestingPolicySelfTest.run() ? 0 : 1)
+}
+
+// Proof that a self-test's own window never reaches the captain's display -
+// the measured half of `OffScreenProbeWindow.swift`, whose predecessor
+// convention was documented as invisible and was not.
+if ProcessInfo.processInfo.environment["FM_RUN_OFF_SCREEN_PROBE_TESTS"] == "1" {
+    exit(OffScreenProbeSelfTest.run() ? 0 : 1)
+}
+
+// The full-app audit's §7: regression coverage for the Docs Playbook's
+// WKWebView subresource-cache fix (`fm/grandline-docs-webview-cache-fix`),
+// which shipped with none.
+if ProcessInfo.processInfo.environment["FM_RUN_DOCS_PLAYBOOK_RELOAD_TESTS"] == "1" {
+    exit(DocsPlaybookReloadSelfTest.run() ? 0 : 1)
+}
+
+// The full-app audit's §7: the general Console tab-lifecycle suite - create,
+// duplicate, rename, close, reconnect and the numbered-name convention, none
+// of which had permanent coverage despite being the app's most-patched area.
+if ProcessInfo.processInfo.environment["FM_RUN_CONSOLE_TAB_LIFECYCLE_TESTS"] == "1" {
+    exit(ConsoleTabLifecycleSelfTest.run() ? 0 : 1)
+}
+
+// The full-app audit's §7: first coverage for the Setup/Bootstrap data layer,
+// via the `UpdatesDataTestSeam`/`DotfilesDataTestSeam` transport seams.
+if ProcessInfo.processInfo.environment["FM_RUN_SETUP_DATA_LAYER_TESTS"] == "1" {
+    exit(SetupDataLayerSelfTest.run() ? 0 : 1)
+}
+
+// The Security card's Disable action: the removal the shipped command really
+// performs, run against scratch files, plus the status split that decides
+// which enabled state may offer that button at all.
+if ProcessInfo.processInfo.environment["FM_RUN_SUDO_TOUCHID_DISABLE_TESTS"] == "1" {
+    exit(SudoTouchIDDisableSelfTest.run() ? 0 : 1)
+}
+
+// Daylight Phase 6 (the last phase): the accessibility sweep and the Reduce
+// Motion audit. Dusk's own colour derivation is measured by
+// FM_RUN_CONTRAST_TESTS, where the palette maths already lives. See
+// DaylightHardeningSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_HARDENING_TESTS"] == "1" {
+    exit(DaylightHardeningSelfTest.run() ? 0 : 1)
+}
+
+// Daylight Phase 4: one suite per slice of the per-destination restyle.
+// Slice 1 also covers the shared drill-page components (§6.4-6.14). See each
+// DaylightDrillPage*SelfTest.swift's own header.
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE5_TESTS"] == "1" {
+    exit(DaylightDrillPageSlice5SelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE4_TESTS"] == "1" {
+    exit(DaylightDrillPageSlice4SelfTest.run() ? 0 : 1)
+}
+// `fm/grand-line-schedules-page-redesign`: the redesigned Schedules page's own
+// honesty claims - see SchedulesRedesignSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SCHEDULES_REDESIGN_TESTS"] == "1" {
+    exit(SchedulesRedesignSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE3_TESTS"] == "1" {
+    exit(DaylightDrillPageSlice3SelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS"] == "1" {
+    exit(DaylightDrillPageSlice2SelfTest.run() ? 0 : 1)
+}
+// Daylight Phase 4 slice 6: the last two destinations in §7's table, Tools and
+// Settings. See DaylightDrillPageSlice6SelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS"] == "1" {
+    exit(DaylightDrillPageSlice6SelfTest.run() ? 0 : 1)
+}
+// Daylight Phase 5: the chrome that is not a destination page - editor sheets,
+// the ⌘K palette, the notification panel, toasts and empty states. See
+// DaylightChromeSelfTest.swift's header.
+// The UI modernization audit's §3F - inputs and forms (F1/F2/F3). See
+// FormsModernizationSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_FORMS_MODERNIZATION_TESTS"] == "1" {
+    exit(FormsModernizationSelfTest.run() ? 0 : 1)
+}
+// The UI modernization audit's §3G - toasts, notifications and progress
+// (G1/G2/G4). See FeedbackModernizationSelfTest.swift's header.
+// The UI modernization audit's §3G G3 - the 30-site confirm migration. See
+// ConfirmMigrationSelfTest.swift's header.
+// The UI modernization audit's §3H - overlays (H1-H4). See
+// OverlaysModernizationSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_OVERLAYS_MODERNIZATION_TESTS"] == "1" {
+    exit(OverlaysModernizationSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_ICONS_TYPOGRAPHY_TESTS"] == "1" {
+    exit(IconsTypographySelfTest.run() ? 0 : 1)
+}
+// The UI modernization audit's §3K/§3L/§3M - Dusk as the daily theme, the
+// theme crossfade, the motion spec's last gap, and the two web-island
+// seam-hiders. K2's own contrast measurements live in
+// `HelmContrastSelfTest.checkTerminalCard`. See
+// ThemeMotionWebIslandsSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_THEME_MOTION_WEB_ISLANDS_TESTS"] == "1" {
+    exit(ThemeMotionWebIslandsSelfTest.run() ? 0 : 1)
+}
+// The six families the captain picked off the theme-suggestions board
+// (`fm/grandline-new-themes-nord-dracula-etc`). Two suites, split the way
+// AGENTS.md's "Writing a self-test" requires: the family pairing and the
+// palette shape assert nothing that needs a window and therefore guard CI's
+// blocking lane, while the real painted render of a real page under each new
+// palette is window-backed and lives in `NEEDS_SESSION`. Their *contrast* is
+// `HelmContrastSelfTest`'s, which sweeps `HelmTheme.allThemes` and needed no
+// edit at all.
+if ProcessInfo.processInfo.environment["FM_RUN_THEME_FAMILY_TESTS"] == "1" {
+    exit(ThemeFamilySelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_THEME_FAMILY_VIEW_TESTS"] == "1" {
+    exit(ThemeFamilyRenderSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_CONFIRM_MIGRATION_TESTS"] == "1" {
+    exit(ConfirmMigrationSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_FEEDBACK_MODERNIZATION_TESTS"] == "1" {
+    exit(FeedbackModernizationSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_CHROME_TESTS"] == "1" {
+    exit(DaylightChromeSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_TESTS"] == "1" {
+    exit(DaylightDrillPageSelfTest.run() ? 0 : 1)
+}
+
+// GL-37: the destination table and lazy-mount-with-permanent-retention -
+// only the eager slots exist at launch, a first visit builds exactly one,
+// and a revisit reuses it. See DestinationMountingSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DESTINATION_MOUNTING_TESTS"] == "1" {
+    exit(DestinationMountingSelfTest.run() ? 0 : 1)
+}
+
+// fm/grandline-app-lock: same convention, for `AppLockController`'s idle/
+// hard-logout timing math against a fake clock/idle-time provider - see
+// AppLockSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_APP_LOCK_TESTS"] == "1" {
+    exit(AppLockControllerSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-log-analyzer-build`: same convention, for the Log Analyzer's
+// whole pure-logic layer - redaction (including byte-level greps of a built
+// AI prompt and a saved investigation for planted secrets), source detection,
+// severity/grouping, timeline, correlation, AI reply parsing, Command Library
+// matching, artifact rendering, comparison, storage, and the terminal-capture
+// scope rule - see LogAnalyzerSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_LOG_ANALYZER_TESTS"] == "1" {
+    exit(LogAnalyzerSelfTest.run() ? 0 : 1)
+}
+
+// P2-P6 (`data/grand-line-e2e-audit/report.md`): the performance findings that
+// are testable as behaviour - see AuditPerfFixesSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_PERF_FIXES_TESTS"] == "1" {
+    exit(AuditPerfFixesSelfTest.run() ? 0 : 1)
+}
+
+// `data/grand-line-appkit-expert-audit/report.md`: the AppKit-expert audit's
+// smaller findings, one case per finding id - see AppKitAuditSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_APPKIT_AUDIT_TESTS"] == "1" {
+    exit(AppKitAuditSelfTest.run() ? 0 : 1)
+}
+
+// Section 3 of `data/grandline-full-app-audit/report.md`: the standing
+// per-session energy costs - see AuditEnergyFixesSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_ENERGY_FIXES_TESTS"] == "1" {
+    exit(AuditEnergyFixesSelfTest.run() ? 0 : 1)
+}
+
+// B3-B9 (`data/grand-line-e2e-audit/report.md`): the Section 2 UI bugs, one
+// case per finding id - see AuditUIFixesSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_UI_FIXES_TESTS"] == "1" {
+    exit(AuditUIFixesSelfTest.run() ? 0 : 1)
+}
+
+// The UI-section findings from `data/grandline-full-app-audit/report.md`
+// (`fm/grandline-audit-ui-fixes`), one case per finding - see
+// FullAppAuditUISelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_FULL_APP_AUDIT_UI_TESTS"] == "1" {
+    exit(FullAppAuditUISelfTest.run() ? 0 : 1)
+}
+
+// Section 5 of `data/grandline-full-app-audit/report.md`: the security
+// findings, one case per finding id - see AuditSecurityFixesSelfTest.swift's
+// header. Pure logic, so it runs in CI; §5.1's window-backed half is the
+// separate suite below.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_SECURITY_FIXES_TESTS"] == "1" {
+    exit(AuditSecurityFixesSelfTest.run() ? 0 : 1)
+}
+
+// §5.1's behavioural half: builds the two real palettes and reads their
+// registration back off the lock gate - see AuditSecurityLockSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_SECURITY_LOCK_TESTS"] == "1" {
+    exit(AuditSecurityLockSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT2_SECURITY_FIXES_TESTS"] == "1" {
+    exit(Audit2SecurityFixesSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT2_FEATURE_ENHANCEMENTS_TESTS"] == "1" {
+    exit(Audit2FeatureEnhancementsSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_LOCK_GATE_COVERAGE_TESTS"] == "1" {
+    exit(LockGateCoverageSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT2_SECURITY_LOCK_TESTS"] == "1" {
+    exit(Audit2SecurityLockSelfTest.run() ? 0 : 1)
+}
+
+// B1 (`data/grand-line-e2e-audit/report.md`): same convention, for the Vault
+// page's (Automic Vault's hardening panel) failed/pending read states - see
+// VaultLoadingStateSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_VAULT_LOADING_STATE_TESTS"] == "1" {
+    exit(VaultLoadingStateSelfTest.run() ? 0 : 1)
+}
+
+// E3 (`data/grand-line-e2e-audit/report.md`): same convention, for the
+// backgrounded poll tier - see AppActivityStateSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_APP_ACTIVITY_STATE_TESTS"] == "1" {
+    exit(AppActivityStateSelfTest.run() ? 0 : 1)
+}
+
+// E1 (`data/grand-line-e2e-audit/report.md`): same convention, for the
+// terminal display gating that closed the app's dominant battery drain - see
+// TerminalDisplayGatingSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_DISPLAY_GATING_TESTS"] == "1" {
+    exit(TerminalDisplayGatingSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grand-line-shell-selection-investigate-fix`: same convention, for the
+// Shell tab's own text selection measured from real rendered pixels - see
+// TerminalSelectionRenderSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_SELECTION_RENDER_TESTS"] == "1" {
+    exit(TerminalSelectionRenderSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-dictation-mvp`: same convention, for `DictationHotkey`'s
+// hold/release detection over synthetic `.flagsChanged` events - see
+// DictationHotkeySelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DICTATION_HOTKEY_TESTS"] == "1" {
+    exit(DictationHotkeySelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-capture-global-hotkey-configurable`: the same convention for
+// `ShiftGlobalHotkey` - its matching predicate over synthetic events, and the
+// structural "which monitors did `start()` actually install" checks the class
+// shipped without. See ShiftGlobalHotkeySelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_QUICK_CAPTURE_HOTKEY_TESTS"] == "1" {
+    exit(ShiftGlobalHotkeySelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-dictation-phase2`: same convention, for `DictationStore`'s
+// history/vocabulary persistence and `KeyChord`'s encode/decode +
+// display-string logic - see DictationDataSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DICTATION_DATA_TESTS"] == "1" {
+    exit(DictationDataSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-dictation-phase3`: same convention, for `DictationCleanup`'s
+// `claude -p` invocation/parsing/fallback logic - see
+// DictationCleanupSelfTest.swift's header.
+// Phase 3's own structural guards - the release-binary exclusion (GL-27), the
+// text floor (GL-32), the growth caps (GL-35) and the undo slot (GL-33). See
+// `SelfTests/Phase3PolishSelfTest.swift`.
+if ProcessInfo.processInfo.environment["FM_RUN_PHASE3_POLISH_TESTS"] == "1" {
+    exit(Phase3PolishSelfTest.run() ? 0 : 1)
+}
+
+// GL-16 (Phase 3): what the accessibility sweep guarantees - roles, labels,
+// press actions, keyboard activation, focus rings and Reduce Motion, asserted
+// in the shared components. See `AccessibilitySelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_ACCESSIBILITY_TESTS"] == "1" {
+    exit(AccessibilitySelfTest.run() ? 0 : 1)
+}
+
+// GL-29 (Phase 3): `BackgroundSignalsPoller`'s pass latch (GL-03's own fix) and
+// `ServiceHealthRegistry`'s verdicts. See `BackgroundSignalsSelfTest.swift`.
+if ProcessInfo.processInfo.environment["FM_RUN_BACKGROUND_SIGNALS_TESTS"] == "1" {
+    exit(BackgroundSignalsSelfTest.run() ? 0 : 1)
+}
+
+// GL-29 (Phase 3): the SSH credential path - `SSHKeyGenerator`,
+// `SSHKeyMaterializer`, and the Keychain contract. See
+// `CredentialPathSelfTest.swift`'s header for what it does and does not touch.
+if ProcessInfo.processInfo.environment["FM_RUN_CREDENTIAL_PATH_TESTS"] == "1" {
+    exit(CredentialPathSelfTest.run() ? 0 : 1)
+}
+
+// GL-29 (Phase 3): `FleetDataSource`/`OpenPRsSource` - the pair behind Overview
+// and Review, including the merge action's argv. See
+// `FleetDataSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_FLEET_DATA_TESTS"] == "1" {
+    exit(FleetDataSelfTest.run() ? 0 : 1)
+}
+
+// F4: notification action routing - which action maps to which real function
+// call, and whether the merge gate genuinely blocks a non-green PR. See
+// `NotificationActionsSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_ACTIONS_TESTS"] == "1" {
+    exit(NotificationActionsSelfTest.run() ? 0 : 1)
+}
+
+// GL-29 (Phase 3): `DictationEngine`'s finish/race/timeout state machine -
+// three real shipped bugs, previously verified only by reverted probes. See
+// `DictationEngineSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_DICTATION_ENGINE_TESTS"] == "1" {
+    exit(DictationEngineSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_DICTATION_CLEANUP_TESTS"] == "1" {
+    exit(DictationCleanupSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-dictation-whisper-engine`: same convention, for the vendored
+// whisper.cpp wrapper's model validation, audio resampling, and (when a real
+// model path is provided) real load/transcribe - see
+// WhisperEngineSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_WHISPER_ENGINE_TESTS"] == "1" {
+    exit(WhisperEngineSelfTest.run() ? 0 : 1)
+}
+
+// Child-process-only entry point `testMetalFallbackDoesNotCrash()` spawns
+// with `FM_WHISPER_METAL_RESOURCES_OVERRIDE` pointed at an empty directory -
+// see that test's own doc comment for why this needs a genuinely separate
+// process rather than an in-process assertion.
+if ProcessInfo.processInfo.environment["FM_RUN_WHISPER_METAL_FALLBACK_ONLY_TEST"] == "1" {
+    exit(WhisperEngineSelfTest.runRealModelOnly() ? 0 : 1)
+}
+
+// `fm/grandline-docs-knowledge-foundation`: same convention, for
+// `DocsRunbookStore`'s CRUD/title-slug logic and `DocsKnowledgeSearch`'s
+// scoped search, plus (against a real disposable local bare repo, never
+// `manjesh-config`) `ShiftGitSync`'s repo-layout migration - see
+// DocsRunbookDataSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DOCS_RUNBOOK_TESTS"] == "1" {
+    exit(DocsRunbookDataSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-sre-lead-postmortem`: same convention, for
+// `SRELeadPostmortem.generate`'s `claude -p` invocation/parsing/fallback
+// logic - see SRELeadPostmortemSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SRE_LEAD_POSTMORTEM_TESTS"] == "1" {
+    exit(SRELeadPostmortemSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-console-command-composer`: same convention, for
+// `ConsoleCommandComposer.generate`'s `claude -p` invocation/parsing/fallback
+// logic - see ConsoleCommandComposerSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_CONSOLE_COMMAND_COMPOSER_TESTS"] == "1" {
+    exit(ConsoleCommandComposerSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grand-line-whiteboard-excalidraw`: the Whiteboard destination. Two
+// suites, split by what they need - `WhiteboardSelfTest` is pure logic (asset
+// resolution, the page's offline CSP, the AI prompt and parse, the destination
+// tables) and runs in CI; `WhiteboardViewSelfTest` mounts a real `WKWebView`
+// in a real window, loads the real vendored Excalidraw bundle and measures the
+// hidden-view gating, so it is window-backed and lives in
+// `run-all-tests.sh`'s NEEDS_SESSION list.
+if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_TESTS"] == "1" {
+    exit(WhiteboardSelfTest.run() ? 0 : 1)
+}
+// `fm/grand-line-whiteboard-component-icons-overhaul`: the component artwork
+// and the two caption bugs it fixed. Pure logic, so it runs in CI - the live
+// half is in the window-backed view suite.
+if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_ICONS_TESTS"] == "1" {
+    exit(WhiteboardIconsSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_VIEW_TESTS"] == "1" {
+    exit(WhiteboardViewSelfTest.run() ? 0 : 1)
+}
+// `fm/grandline-devops-space-and-diagram-tool`: the deterministic
+// text-to-diagram layer beside the AI one. Pure logic and **CI-runnable** -
+// unlike its AI sibling, which needs a fake `claude` on disk, the whole point
+// of this layer is that no such thing is involved.
+// F15 of full review #3 §8 (`fm/grandline-feature-f15-screenshot-annotate`):
+// screenshot capture -> Whiteboard -> annotate -> copy. Two suites, split the
+// same way the Whiteboard's own pair is - `ScreenCaptureAnnotateSelfTest` is
+// pure logic (the capture decision, the pasteboard intake, the encode and the
+// placement maths) and runs in CI; `WhiteboardCaptureViewSelfTest` drives a
+// real Excalidraw canvas and pixel-samples the flattened export, so it needs a
+// session.
+if ProcessInfo.processInfo.environment["FM_RUN_SCREEN_CAPTURE_ANNOTATE_TESTS"] == "1" {
+    exit(ScreenCaptureAnnotateSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_CAPTURE_VIEW_TESTS"] == "1" {
+    exit(WhiteboardCaptureViewSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_DSL_TESTS"] == "1" {
+    exit(WhiteboardDSLSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-quota-percent-fix`: same convention, for `QuotaSource.parse`
+// against `quota-axi`'s real `percentRemaining`-keyed output - see
+// QuotaDataSelfTest.swift's header.
+// `fm/grandline-monaco-code-preview`: the Code Preview destination. Two
+// suites, split the same way the Whiteboard's are and for the same reason -
+// `CodePreviewSelfTest` is pure logic (asset resolution, the page's offline
+// CSP, the language table, paste-time detection, the store's disk round trip,
+// the syntax palette's measured contrast) and runs in CI; `CodePreviewViewSelfTest`
+// mounts a real `WKWebView`, loads the real vendored Monaco bundle and reads
+// Monaco's own tokenizer output back, so it is window-backed and lives in
+// `run-all-tests.sh`'s NEEDS_SESSION list.
+if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_TESTS"] == "1" {
+    exit(CodePreviewSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_VIEW_TESTS"] == "1" {
+    exit(CodePreviewViewSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-feature-f11-code-preview-run-format` (F11 of full review #3
+// §8): Run and Format in Code Preview. Split the same way again, and the split
+// matters more here than usual - `CodeRunnerSelfTest` is the suite that asserts
+// the `sandbox-exec` profile's denials, the wall clock and the pruned
+// environment, and those are exactly the checks that must guard the *blocking*
+// CI lane. It needs no window: a real subprocess round trip does not (it is
+// skipped out loud on a machine with no `python3`), and every
+// machine-dependent decision above it runs against an injected
+// `CodeToolProbing`. `CodeRunnerViewSelfTest` mounts the real Code Preview
+// page in a real window to drive the real Run/Format buttons and read the real
+// output pane back, so that half is window-backed.
+if ProcessInfo.processInfo.environment["FM_RUN_CODE_RUNNER_TESTS"] == "1" {
+    exit(CodeRunnerSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_CODE_RUNNER_VIEW_TESTS"] == "1" {
+    exit(CodeRunnerViewSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-feature-f1-notebook` (F1 of full review #3 §8).
+// `NotebookSelfTest` is pure logic - the markdown parser, the wiki-link
+// scanner, the resolver's tie-break order, the backlink index, the daily-note
+// naming, the store's disk round trip and its path-escape refusal - and runs
+// in CI's blocking lane. `NotebookViewSelfTest` mounts the real destination in
+// a real window (and the real vendored Monaco bundle), so it is window-backed
+// and lives in `run-all-tests.sh`'s NEEDS_SESSION list. The split is AGENTS.md's
+// own rule: the test is what the suite asserts, never what it imports.
+// `fm/grandline-feature-f2-f3-capture-clipboard` (F2 of full review #3 §8).
+// `CaptureRouterSelfTest` is pure logic - the chord map, the shared draft
+// parse, the derived store names, the crew classifier's prompt and reply
+// parsing, and the concealed-pasteboard refusal - and runs in CI's blocking
+// lane. `CaptureRouterViewSelfTest` mounts the real ⌥Space panel and drives
+// real key equivalents and real tile clicks, so it is window-backed and lives
+// in `run-all-tests.sh`'s NEEDS_SESSION list. The split is AGENTS.md's own
+// rule: the test is what the suite asserts, never what it imports.
+// `fm/grandline-feature-f2-f3-capture-clipboard` (F3 of full review #3 §8).
+// `ClipboardHistorySelfTest` is pure logic - the capture rule, the Poneglyph
+// exclusion proved in both directions, the rolling eviction and what a pin
+// does to it, the sealed round trip, GL-01's unreadable-file state and the
+// shared `changeCount` watch - and runs in CI's blocking lane.
+// `ClipboardHistoryViewSelfTest` builds the real ⌘⇧V panel, so it is
+// window-backed and lives in `run-all-tests.sh`'s NEEDS_SESSION list.
+if ProcessInfo.processInfo.environment["FM_RUN_CLIPBOARD_HISTORY_TESTS"] == "1" {
+    exit(ClipboardHistorySelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_CLIPBOARD_HISTORY_VIEW_TESTS"] == "1" {
+    exit(ClipboardHistoryViewSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_CAPTURE_ROUTER_TESTS"] == "1" {
+    exit(CaptureRouterSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_CAPTURE_ROUTER_VIEW_TESTS"] == "1" {
+    exit(CaptureRouterViewSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-feature-f4-reading-list` (F4 of full review #3 §8).
+// `ReadingListSelfTest` is pure logic - URL detection and normalisation, tag
+// folding, the read-state and filter rules, the AI prompt and reply parse, the
+// store's disk round trip, its GL-01 refusal and its forward-compatible decode
+// - and runs in CI's blocking lane. `ReadingListViewSelfTest` mounts the real
+// destination in a real window and reads painted colours back out of a render,
+// so it is window-backed and lives in `run-all-tests.sh`'s NEEDS_SESSION list.
+// The split is AGENTS.md's own rule: the test is what the suite asserts, never
+// what it imports.
+if ProcessInfo.processInfo.environment["FM_RUN_READING_LIST_TESTS"] == "1" {
+    exit(ReadingListSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_READING_LIST_VIEW_TESTS"] == "1" {
+    exit(ReadingListViewSelfTest.run() ? 0 : 1)
+}
+
+// F9's scratchpad calculator (`fm/grandline-feature-f9-scratchpad-calculator`).
+// Two suites, split the way AGENTS.md's "Writing a self-test" requires: the
+// engine (lexer, parser, units, currency, dates, formatting) asserts nothing
+// that needs a window and therefore guards CI's blocking lane, while the pad's
+// own two-column view is measured in a real `NSWindow` and lives in
+// `NEEDS_SESSION`.
+if ProcessInfo.processInfo.environment["FM_RUN_SCRATCHPAD_TESTS"] == "1" {
+    exit(ScratchpadEngineSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_SCRATCHPAD_VIEW_TESTS"] == "1" {
+    exit(ScratchpadPadViewSelfTest.run() ? 0 : 1)
+}
+
+// F12's snippet expander (`fm/grandline-feature-f12-snippet-expander`). Two
+// suites, split the way AGENTS.md's "Writing a self-test" requires: the
+// trigger grammar, the lookup, the placeholders and the scope/exclusion policy
+// assert nothing that needs a window and therefore guard CI's blocking lane,
+// while the Snippets page's own card, rows and editor sheet are measured in a
+// real `NSWindow` and live in `NEEDS_SESSION`.
+if ProcessInfo.processInfo.environment["FM_RUN_SNIPPET_EXPANSION_TESTS"] == "1" {
+    exit(SnippetExpansionSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_SNIPPET_EXPANDER_VIEW_TESTS"] == "1" {
+    exit(SnippetExpanderViewSelfTest.run() ? 0 : 1)
+}
+
+// F22's menu-bar (compact) mode. Two suites, split the way AGENTS.md's
+// "Writing a self-test" requires: the mode's policy, its hotkey chord, its
+// tab table and the whole Today/Notes derivation assert nothing that needs a
+// window and therefore guard CI's blocking lane, while the popover's chrome,
+// its pane swapping and its rendered colours are measured in a real
+// `NSWindow` and live in `NEEDS_SESSION`.
+if ProcessInfo.processInfo.environment["FM_RUN_COMPACT_MODE_TESTS"] == "1" {
+    exit(CompactModeSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_COMPACT_MODE_VIEW_TESTS"] == "1" {
+    exit(CompactModeViewSelfTest.run() ? 0 : 1)
+}
+
+// F24: the five new `.glbackup` sections - the file archive, the per-file
+// diff, the merge-not-overwrite apply and the sealed vault's round trip. Pure
+// logic; deliberately NOT in `NEEDS_SESSION`.
+if ProcessInfo.processInfo.environment["FM_RUN_BACKUP_STORES_TESTS"] == "1" {
+    exit(BackupStoreSectionsSelfTest.run() ? 0 : 1)
+}
+// F21: the five App Intent actions and, above all, Copy Credential's
+// auth-gating. Pure logic - the vault unlock and the biometric challenge are
+// both injected, so nothing here needs a fingerprint.
+if ProcessInfo.processInfo.environment["FM_RUN_APP_INTENT_ACTIONS_TESTS"] == "1" {
+    exit(AppIntentActionsSelfTest.run() ? 0 : 1)
+}
+// F21/F24's UI halves: the two new Settings cards, mounted in a real window.
+if ProcessInfo.processInfo.environment["FM_RUN_INTENTS_BACKUP_VIEW_TESTS"] == "1" {
+    exit(IntentsBackupSettingsViewSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_NOTEBOOK_TESTS"] == "1" {
+    exit(NotebookSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_NOTEBOOK_VIEW_TESTS"] == "1" {
+    exit(NotebookViewSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_QUOTA_DATA_TESTS"] == "1" {
+    exit(QuotaDataSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-claude-status-card-implement`: window-backed - it builds a
+// real `HelmModuleCard` in a real probe window and reads back rendered
+// geometry plus a real rasterised pixel. Listed in `NEEDS_SESSION` in
+// `Scripts/run-all-tests.sh` accordingly.
+if ProcessInfo.processInfo.environment["FM_RUN_CLAUDE_STATUS_CARD_TESTS"] == "1" {
+    exit(ClaudeStatusCardSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-notification-center`: pure store logic (add/clear/dismiss/
+// dedup/badge count) - see GrandLineNotificationCenterSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_TESTS"] == "1" {
+    exit(GrandLineNotificationCenterSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-notification-center-redesign`: window-backed - it mounts the
+// real "Waiting for you" panel in a real `OffScreenProbe` window and reads
+// back rendered geometry, real hover state and a real rasterised pixel.
+// Listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh` accordingly.
+// `fm/grandline-notification-rows-not-interactive`: window-backed, and it has
+// to be - it dispatches real `NSEvent`s through the real `HelmBarPanel` window
+// the bell opens, which is the only place gesture arbitration between the
+// row's recognizer and its nested buttons is observable. Listed in
+// `NEEDS_SESSION` in `Scripts/run-all-tests.sh` accordingly.
+if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_ROW_INTERACTION_TESTS"] == "1" {
+    exit(NotificationRowInteractionSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_REDESIGN_TESTS"] == "1" {
+    exit(NotificationCenterRedesignSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-notification-ambient-expand-fix`: pure logic - it drives the
+// poller's own ambient pass and reads the published entry back, with no window
+// anywhere. Deliberately *not* in `NEEDS_SESSION`: whether a row has children
+// at all is what this guards, and it belongs in the blocking lane.
+if ProcessInfo.processInfo.environment["FM_RUN_AMBIENT_SIGNAL_CHILDREN_TESTS"] == "1" {
+    exit(AmbientSignalChildrenSelfTest.run() ? 0 : 1)
+}
+
+// The trickiest of the nine signals - SRE Lead replying on a tab you're not
+// looking at - driven against a real `ConsoleController`, same convention as
+// `SRELeadPerTabSelfTest.swift`. See NotificationCenterSRELeadSelfTest.swift's
+// header.
+if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_SRE_LEAD_TESTS"] == "1" {
+    exit(NotificationCenterSRELeadSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-design-audit-phase0`: WCAG contrast floors for the shared
+// pill, icon tiles and `HelmTheme.mutedInk`, across every real palette - see
+// HelmContrastSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_CONTRAST_TESTS"] == "1" {
+    exit(HelmContrastSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-review-page-stuck-loading-fix`: the Review page's loading ->
+// loaded state transition (drives `render(_:)` directly via
+// `ReviewController`'s own "Probe / self-test surface", no real network
+// fetch) - see ReviewControllerLoadingStateSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_REVIEW_LOADING_STATE_TESTS"] == "1" {
+    exit(ReviewControllerLoadingStateSelfTest.run() ? 0 : 1)
+}
+
+// The UI modernization audit's one functional finding: "ready to merge" was
+// answered by three different questions in one frame. Mounts the real Review
+// and Overview surfaces and reads the numbers off the rendered views, plus a
+// source guard against the next surface bringing its own filter - see
+// ReadyToMergeCountSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_READY_TO_MERGE_TESTS"] == "1" {
+    exit(ReadyToMergeCountSelfTest.run() ? 0 : 1)
+}
+
+// The volume measurement that proves the fix above - a demand-driven
+// `NSTableView` renders hundreds of PR rows without the plain-`NSStackView`
+// blowup #221 shipped. See ReviewPRListVolumeSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_REVIEW_PR_LIST_VOLUME_TESTS"] == "1" {
+    exit(ReviewPRListVolumeSelfTest.run() ? 0 : 1)
+}
+
+// The row-width/button-visibility contract that regressed a second time when
+// #227 ported this row into a reused NSTableView cell view without carrying
+// forward the "reused row, toggling button visibility" fix
+// `HostsListRecordView` already established. See
+// ReviewPRRowButtonLayoutSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_REVIEW_PR_ROW_BUTTON_LAYOUT_TESTS"] == "1" {
+    exit(ReviewPRRowButtonLayoutSelfTest.run() ? 0 : 1)
+}
+
+// F11: the scheduler's due / missed-while-asleep / catch-up decision, the
+// store's anchoring rules, and the notify-on gate. See
+// ScheduleRunnerSelfTest.swift's header for why the missed-run case is the one
+// worth pinning: every symptom of getting it wrong is a run that did not
+// happen, which looks exactly like a quiet night.
+if ProcessInfo.processInfo.environment["FM_RUN_SCHEDULE_RUNNER_TESTS"] == "1" {
+    exit(ScheduleRunnerSelfTest.run() ? 0 : 1)
+}
+
+// F11 follow-up: the one-time seed of the "daily-github-sync" schedule -
+// seeds once using the pre-existing `.forkSync` action, never resurrects
+// itself after the captain edits or deletes it, and introduces no new
+// schedulable action. See `ScheduleSeeding.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_SCHEDULE_SEEDING_TESTS"] == "1" {
+    exit(ScheduleSeedingSelfTest.run() ? 0 : 1)
+}
+
+// Run History status clarity + "View Log": the plain succeeded/failed/
+// needs-attention chip, the run's own output persisting through
+// `ScheduleRunHistoryEntry.log` (with truncation and old-format tolerance),
+// and the Run History sheet's "View Log" button/`ScheduleRunLogController`
+// pair. Window-backed - mounts real `ScheduleHistoryController`/
+// `ScheduleRunLogController` instances. See
+// ScheduleRunHistoryStatusAndLogSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SCHEDULE_RUN_HISTORY_STATUS_LOG_TESTS"] == "1" {
+    exit(ScheduleRunHistoryStatusAndLogSelfTest.run() ? 0 : 1)
+}
+
+// F12 (`fm/grandline-feature-f12-morning-briefing`): the morning briefing's
+// local composer (what data goes in, and the unknown-is-not-zero rule) plus
+// its degradation path, driven through the real `ClaudeOneShot` against a
+// disposable fake `claude`. See MorningBriefingSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_MORNING_BRIEFING_TESTS"] == "1" {
+    exit(MorningBriefingSelfTest.run() ? 0 : 1)
+}
+
+// F20 (`fm/grandline-feature-f20-daily-review-briefing`): the daily review's
+// composer - what each of its six sources contributes, and the stated-gap
+// rule that is the whole point of the feature (a section that could not be
+// read says so rather than showing a zero). Also the source guard that keeps
+// the EventKit path read-only. `DailyReviewViewSelfTest` mounts the real
+// Overview page in a real window and measures the card's three columns, so it
+// is window-backed and lives in `run-all-tests.sh`'s NEEDS_SESSION list - the
+// split is AGENTS.md's own rule: the test is what the suite asserts, never
+// what it imports.
+if ProcessInfo.processInfo.environment["FM_RUN_DAILY_REVIEW_TESTS"] == "1" {
+    exit(DailyReviewSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_DAILY_REVIEW_VIEW_TESTS"] == "1" {
+    exit(DailyReviewViewSelfTest.run() ? 0 : 1)
+}
+
+// F9 (v1, multi-host command execution): the host-selection logic - tag
+// matching, the never-preselected invariant, the risk gate firing once per
+// host, and the unfilled-parameter refusal applied across a whole selection.
+// See MultiHostSendSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_MULTI_HOST_SEND_TESTS"] == "1" {
+    exit(MultiHostSendSelfTest.run() ? 0 : 1)
+}
+
+// F6 (fleet history / captain's log): the event store's append/retention/
+// kind-filter contract, the day grouping, the one-line title sanitiser, and
+// the merge with Shift's own activity YAML. See FleetLogSelfTest.swift's
+// header for why the retention cap in particular is worth pinning - it is the
+// one property no amount of using the app would ever surface.
+// F7 (`fm/grandline-feature-f7-answer-crew-from-cockpit`): the reply-routing
+// logic behind Overview's Reply affordance - the decision-key fold, the
+// exactly-one `--resolve-key` rule, the argv, and `fm-send.sh`'s three-way
+// exit-status contract. See `FleetActionsSelfTest.swift`'s header for what is
+// faked (the script itself) and what is genuinely exercised.
+if ProcessInfo.processInfo.environment["FM_RUN_FLEET_ACTIONS_TESTS"] == "1" {
+    exit(FleetActionsSelfTest.run() ? 0 : 1)
+}
+
+// F7's rendering half - a real off-screen `FleetController`, real Reply
+// clicks. Window-backed, so `Scripts/run-all-tests.sh` lists it in
+// NEEDS_SESSION alongside its peers.
+if ProcessInfo.processInfo.environment["FM_RUN_FLEET_REPLY_LAYOUT_TESTS"] == "1" {
+    exit(FleetReplyLayoutSelfTest.run() ? 0 : 1)
+}
+
+// Phase 0 of the Daylight UI migration: the click-answering focus ring (D1),
+// themed text selection (D4), the shared search well, and Health's pill/font/
+// title fixes (D3/D5/D6) - see InputSurfaceSelfTest.swift's header. Window-
+// backed (focus is meaningless without a window), so `run-all-tests.sh` lists
+// it in NEEDS_SESSION.
+if ProcessInfo.processInfo.environment["FM_RUN_INPUT_SURFACE_TESTS"] == "1" {
+    exit(InputSurfaceSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_FLEET_LOG_TESTS"] == "1" {
+    exit(FleetLogSelfTest.run() ? 0 : 1)
+}
+
+// F8 (incident mode): the incident record's create/append/end round trip on
+// real disk, the one-active-incident-per-host rule, the redaction boundary
+// (grepped in the real bytes), the aggregate the postmortem generator is fed,
+// and the F6 log wiring. See IncidentStoreSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_TESTS"] == "1" {
+    exit(IncidentStoreSelfTest.run() ? 0 : 1)
+}
+
+// Audit §6.2's relaunch-continuity half. Window-backed (it mounts a real
+// `ConsoleController`), so it belongs in `run-all-tests.sh`'s NEEDS_SESSION
+// list rather than beside the pure-logic store suite above.
+if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_RESUME_TESTS"] == "1" {
+    exit(IncidentResumeSelfTest.run() ? 0 : 1)
+}
+
+// GL-32's row-height half (audit §6.1). Pure measurement - no window - so it
+// runs in CI alongside the other arithmetic suites.
+if ProcessInfo.processInfo.environment["FM_RUN_TEXT_SCALE_ROW_HEIGHT_TESTS"] == "1" {
+    exit(TextScaleRowHeightSelfTest.run() ? 0 : 1)
+}
+
+// Audit §6.10's P3 leftovers. Pure logic - runs in CI.
+if ProcessInfo.processInfo.environment["FM_RUN_P3_LEFTOVERS_TESTS"] == "1" {
+    exit(Phase4P3LeftoversSelfTest.run() ? 0 : 1)
+}
+
+// F5's command-palette providers: every domain's matching, the grouping the
+// mockup shows, the "never send a half-substituted command" rule, and the
+// source guards that keep the destructive-command gate a single definition the
+// palette cannot bypass. See UnifiedSearchSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_UNIFIED_SEARCH_TESTS"] == "1" {
+    exit(UnifiedSearchSelfTest.run() ? 0 : 1)
+}
+
+// The palette's own layout - the chip staying a chip under `.fill`, the panel
+// being as tall as a grouped list, and the title truncating rather than
+// running under the chip. Window-backed, so the runner skips it in a headless
+// CI container; its provider/matching sibling above stays CI-enforced. See
+// UnifiedSearchLayoutSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_UNIFIED_SEARCH_LAYOUT_TESTS"] == "1" {
+    exit(UnifiedSearchLayoutSelfTest.run() ? 0 : 1)
+}
+
+// A real, captain-reported theming bug on Setup > Updates: the "Refresh"
+// pill rendered washed-out on a fresh light-mode load and only rendered
+// correctly after a dark -> light round trip. See
+// UpdatesRefreshButtonThemeSelfTest.swift's header for the root cause.
+// The two captain-requested Setup > GitHub Sync changes: the page's leading
+// subtitle is gone, and the page carries the same shared `HelmRefreshPill`
+// Setup > Updates does. Its sharpest check is a source guard that the Refresh
+// action can never reach this page's mutating `sync` path - see
+// GitHubSyncRefreshSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_GITHUB_SYNC_REFRESH_TESTS"] == "1" {
+    exit(GitHubSyncRefreshSelfTest.run() ? 0 : 1)
+}
+
+// A real, captain-reported bug on Setup > Updates: most tool rows rendered
+// an empty gap where the "Check" button should be, revealing it only on
+// hover, while other rows in the same list showed it at rest - see
+// UpdatesActionVisibilitySelfTest.swift's header for the root cause.
+if ProcessInfo.processInfo.environment["FM_RUN_UPDATES_ACTION_VISIBILITY_TESTS"] == "1" {
+    exit(UpdatesActionVisibilitySelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_UPDATES_REFRESH_BUTTON_THEME_TESTS"] == "1" {
+    exit(UpdatesRefreshButtonThemeSelfTest.run() ? 0 : 1)
+}
+
+// A real, captain-reported bug on Setup > GitHub Sync and Setup > Updates:
+// rows reporting the identical status ("In Sync", "Update Available")
+// rendered with two different status-pill treatments at once, because the
+// pill was painted only on a *status* change while a theme change left it
+// alone - see StatusPillThemeSelfTest.swift's header for the root cause.
+if ProcessInfo.processInfo.environment["FM_RUN_STATUS_PILL_THEME_TESTS"] == "1" {
+    exit(StatusPillThemeSelfTest.run() ? 0 : 1)
+}
+
+// A real, captain-reported bug on the top nav's space pills
+// (`DaylightBarController`): clicking a pill and leaving the cursor in
+// place left its label blended into a stale, pre-click background, in both
+// light and dark mode - see TopNavPillPressedStateSelfTest.swift's header
+// for the root cause (a missing `HoverHighlightView.hoverColor` repaint
+// while already hovering).
+if ProcessInfo.processInfo.environment["FM_RUN_TOPNAV_PILL_PRESSED_STATE_TESTS"] == "1" {
+    exit(TopNavPillPressedStateSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-session-switcher`: the persistent live-session strip, the
+// Hosts list's per-row live state, the ⌘K palette's pinned "Active sessions"
+// group and the ⌘⌃1…9 / ⌘] / ⌘[ shortcut arithmetic. Window-backed (it mounts
+// a real `AppShellController`), so it sits in `run-all-tests.sh`'s
+// `NEEDS_SESSION` list.
+// The pure-logic half of the full-app audit's "Bugs" section (§4), fixed in
+// `fm/grandline-audit-bug-fixes`: IncidentStore's GL-21 read-failure class, the
+// two JSONL stores' trim paths deleting lines they could not decode, the
+// `SSHKey`/`Snippet` synthesized-`Decodable` landmine, and CodePreviewStore's
+// swallowed delete. No views, so it runs in CI.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_BUG_FIXES_TESTS"] == "1" {
+    exit(AuditBugFixesSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_SESSION_SWITCHER_TESTS"] == "1" {
+    exit(SessionSwitcherSelfTest.run() ? 0 : 1)
+}
+
+// A real, captain-reported structural bug: Settings' whole page LAYOUT (card
+// columns, and the Appearance grid's own swatch density) changed depending
+// on which of the 14 themes was selected, not just its colours - see
+// SettingsThemeLayoutParitySelfTest.swift's header for the root cause
+// (`rebuildCardLayout()`'s two-column decision was gated on `theme.
+// isDaylight` as well as on width).
+if ProcessInfo.processInfo.environment["FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TESTS"] == "1" {
+    exit(SettingsThemeLayoutParitySelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-settings-page-sidebar-redesign`: Settings is a sidebar-
+// navigated master/detail page now. The risk that suite exists for is silent
+// loss of reach - a setting that still works and has no row that reveals it
+// - so it asserts the category partition, a real row press swapping the
+// pane, and a representative control per category writing through.
+if ProcessInfo.processInfo.environment["FM_RUN_SETTINGS_SIDEBAR_TESTS"] == "1" {
+    exit(SettingsSidebarNavigationSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-settings-page-redesign`: the page was rebuilt to the
+// captain's own HTML reference, and this covers the five behaviours that
+// rebuild introduced - sidebar search, back/forward history, the theme grid's
+// filter and selection, dependent-row dimming, and the OAuth fields' reveal.
+// See SettingsRedesignSelfTest.swift's header for why each one can break
+// silently.
+if ProcessInfo.processInfo.environment["FM_RUN_SETTINGS_REDESIGN_TESTS"] == "1" {
+    exit(SettingsRedesignSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-settings-page-redesign`: "Follow system appearance" and its
+// light/dark pair. Pure logic, so it guards the blocking CI job - see that
+// file's header for why the fallbacks are the part worth guarding.
+if ProcessInfo.processInfo.environment["FM_RUN_SYSTEM_APPEARANCE_TESTS"] == "1" {
+    exit(SystemAppearanceFollowerSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grand-line-console-claude-usage-button`: the "Claude usage" toolbar
+// button restored beside Compose - its availability must mirror Compose's
+// own byte-for-byte across tab-selection transitions, on both the shared
+// Firstmate console and a dedicated host page. See
+// ConsoleClaudeUsageSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS"] == "1" {
+    exit(ConsoleClaudeUsageSelfTest.run() ? 0 : 1)
+}
+
+// A scout investigation (`data/grand-line-energy-regression-scout/report.md`,
+// section 2) traced "clicking through several pages in one session feels
+// disproportionately expensive" to Updates/Bootstrap/Automation each
+// independently re-running the same 13-item `DependencyCatalog` sweep on
+// first mount. `DependencyCheckCache` is the shared, TTL'd cache they now all
+// read from - see `DependencyCheckCacheSelfTest.swift`'s header for what this
+// proves (caching, coalescing concurrent callers, and forceRefresh always
+// bypassing both).
+if ProcessInfo.processInfo.environment["FM_RUN_DEPENDENCY_CHECK_CACHE_TESTS"] == "1" {
+    exit(DependencyCheckCacheSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-terminal-selection-sidebar-bleed`: the "Forward Drags to This
+// Tab's Program" per-tab toggle's tab-lifecycle wiring (chip closures,
+// duplicate propagation, a fresh tab never inheriting a sibling's state) -
+// the mouse-routing formula itself is proven from real pixels by
+// TerminalSelectionRenderSelfTest's case 7. See TabForwardDragsToggleSelfTest.swift's
+// header.
+if ProcessInfo.processInfo.environment["FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS"] == "1" {
+    exit(TabForwardDragsToggleSelfTest.run() ? 0 : 1)
+}
+
+// F2, session restoration (audit §2 item 1) - the persisted state's shape and
+// backward compatibility, the pure host-restore plan, and the load-bearing
+// safety property that a restored host page does NOT connect until it is
+// opened. See SessionRestoreSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SESSION_RESTORE_TESTS"] == "1" {
+    exit(SessionRestoreSelfTest.run() ? 0 : 1)
+}
+
+// Command Library Phase 3's AI actions (audit §2 item 4's approved slice) -
+// the prompts, the Improve reply parse (the one thing that can write over a
+// saved command), the real `claude -p` round trip through a disposable fake,
+// and the popover's own save gating. See CommandLibraryAISelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_COMMAND_LIBRARY_AI_TESTS"] == "1" {
+    exit(CommandLibraryAISelfTest.run() ? 0 : 1)
+}
+
+// Audit §2 item 7: the Console/Tools tab keyboard shortcuts restored after the
+// Tab menu's removal - the pure matching table (including the near-misses it
+// must NOT claim, notably the session switcher's own ⌘⌃1-9) plus the monitor's
+// real gating, driven through real NSEvents against a real ConsoleController.
+// See TerminalShortcutsSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_SHORTCUTS_TESTS"] == "1" {
+    exit(TerminalShortcutsSelfTest.run() ? 0 : 1)
+}
+
+// See TabKeyboardShortcutsSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_TAB_KEYBOARD_SHORTCUTS_TESTS"] == "1" {
+    exit(TabKeyboardShortcutsSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-k8s-context-badge`: the context/namespace safety badge's
+// parsing (`KubeContextParser`) and marker-injection mechanism
+// (`KubeContextBridge`) - busy/single-flight/cross-bridge-collision guards,
+// timeout, discard-on-typing, and the busy-vs-success retry cadence. See
+// KubeContextBridgeSelfTest.swift's header for what this covers versus the
+// Python allowlist widening's own tests in `test_sre_kubectl_mcp.py`.
+if ProcessInfo.processInfo.environment["FM_RUN_KUBE_CONTEXT_BRIDGE_TESTS"] == "1" {
+    exit(KubeContextBridgeSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-k8s-cluster-tail`: the shared `KubeBridge` plumbing both the
+// Cluster browser and the Log Tail consume - its serialized queue, both
+// terminal guards, the queue deadline, and the backoff/give-up the task brief
+// names explicitly - plus `KubeResourceParser`'s column parsing and
+// `KubeLogMerger`'s ordering/dedupe. Pure logic, so it runs in CI; the
+// window-backed half is `FM_RUN_KUBERNETES_DESTINATION_TESTS`.
+if ProcessInfo.processInfo.environment["FM_RUN_KUBE_BRIDGE_TESTS"] == "1" {
+    exit(KubeBridgeSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-k8s-cluster-tail`: the real `.kubernetes` destination mounted
+// in a real window - the scope strip's honest empty state, feed-tab adoption,
+// a full Cluster sweep landing real parsed rows, the describe drawer, a real
+// Log Tail poll producing merged coloured lines, the Shape-C deep link, and
+// the give-up state's own UI. Window-backed, so it sits in
+// `run-all-tests.sh`'s NEEDS_SESSION list.
+if ProcessInfo.processInfo.environment["FM_RUN_KUBERNETES_DESTINATION_TESTS"] == "1" {
+    exit(KubernetesDestinationSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-herdr-selection-color-sync`: `HerdrConfigPatcher`'s surgical
+// TOML edit (in place, insert into an existing table, create a fresh table,
+// every abort condition) plus `HerdrThemeSync`'s real-disk read/patch/write
+// pipeline against a scratch file. See HerdrThemeSyncSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_HERDR_THEME_SYNC_TESTS"] == "1" {
+    exit(HerdrThemeSyncSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-sticky-board`: the Sticky Board's own persistence/parsing
+// layer - color contrast, the YAML round trip, the GL-01 refuse-to-overwrite
+// guard, the `FM_SHIFT_DIR` fallback, and a real commit+push against a
+// disposable local bare repo landing notes under the new
+// `GrandLineDocs/sticky-board/` folder. See StickyBoardSelfTest.swift's
+// header.
+if ProcessInfo.processInfo.environment["FM_RUN_STICKY_BOARD_TESTS"] == "1" {
+    exit(StickyBoardSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-sticky-board`: the window-backed half - the real destination
+// in a real window, a theme sweep proving the board/chrome (never the
+// notes) tracks the active theme, real synthesized drag mechanics, and a
+// real Toast Undo button click. See StickyBoardViewSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_STICKY_BOARD_VIEW_TESTS"] == "1" {
+    exit(StickyBoardViewSelfTest.run() ? 0 : 1)
+}
+
+// The credential vault's storage layer - PBKDF2/AES-GCM/HKDF round trips and
+// their negative cases, the store's CRUD and audit log, a byte-level grep of
+// the real file proving nothing readable (titles included) reaches disk, the
+// wrong-password and escalating-throttle branches, GL-01's refuse-to-overwrite
+// guard, older-payload decoding, a master-password re-key, the clipboard's
+// changeCount guard, and a real push to a disposable local bare repo read back
+// out of a fresh clone. See CredentialVaultSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_CREDENTIAL_VAULT_TESTS"] == "1" {
+    exit(CredentialVaultSelfTest.run() ? 0 : 1)
+}
+
+// F16/F17 (`fm/grandline-feature-f16-f17-poneglyph-totp-recovery`): the
+// Poneglyph additions' pure-logic half - RFC 6238 against the RFC's own eight
+// published test vectors across SHA1/SHA256/SHA512, base32's RFC 4648 vectors
+// and its refusals, `otpauth://` parsing, the password generator's alphabets
+// and entropy arithmetic, the recovery key's wrap/unwrap round trip through a
+// real store on a scratch directory (including the wrong-key and
+// re-key-invalidates-the-kit cases), and the three CSV importers against real
+// export headers. See PoneglyphTOTPRecoverySelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_PONEGLYPH_TOTP_TESTS"] == "1" {
+    exit(PoneglyphTOTPRecoverySelfTest.run() ? 0 : 1)
+}
+
+// The credential vault's window-backed half: the real destination in a real
+// window, driving the real Reveal and Copy buttons on a real list row - and
+// asserting both directions of the captain's split (Copy must not reveal,
+// Reveal must not copy). Plus the gate's three states, GL-01's
+// no-create-over-an-unreadable-vault rule, search/category filtering,
+// auto-lock, the editor round trip, and a theme sweep. See
+// CredentialVaultViewSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS"] == "1" {
+    exit(CredentialVaultViewSelfTest.run() ? 0 : 1)
+}
+
+// F16/F17's window-backed half: the countdown ring on a real list row driven
+// by a fabricated instant through the app's one TOTP clock, the Add sheet's
+// kind switch / generator / Two-factor field, the Recovery & import sheet end
+// to end (print a key, then import a CSV into a real vault and grep the file
+// for the imported values), the printed card asserted by pixel, and the
+// menu-bar popover including both states it must refuse to show. See
+// PoneglyphTOTPRecoveryViewSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_PONEGLYPH_TOTP_VIEW_TESTS"] == "1" {
+    exit(PoneglyphTOTPRecoveryViewSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-recents-navigation`: the "Recents" dropdown on the top bar -
+// `RecentDestinations`'s own dedup/reorder/cap logic (pure Swift), a real
+// `AppShellController`'s `show(_:)`/`switchToSession` navigation recording
+// the destination being left (never the one being entered), the popover's
+// real rows and click-to-navigate, and the bar button's own placement (after
+// the space pills, before the search pill - the captain's explicit
+// correction) and theming across a real light and dark theme. See
+// RecentDestinationsSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_RECENT_DESTINATIONS_TESTS"] == "1" {
+    exit(RecentDestinationsSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grand-line-herdr-restart-button`: the Console toolbar's "Herdr" restart
+// button - `HerdrStatusParser`/`HerdrSnapshotParser` against literal (and
+// live-captured) JSON fixtures, `HerdrRestartSource`'s
+// checkStatus/fetchSnapshotSummary/stopServer driven against a real,
+// disposable fake `herdr` script, and `HerdrRestartButtonStatus`'s own
+// title/tint/tooltip/isActionable mapping. Pure logic, no window, so it runs
+// in CI. See HerdrRestartSelfTest.swift's header for why the real,
+// currently-running shared herdr server is never touched by this suite.
+if ProcessInfo.processInfo.environment["FM_RUN_HERDR_RESTART_TESTS"] == "1" {
+    exit(HerdrRestartSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grand-line-herdr-restart-button`: the window-backed half - a real
+// `ConsoleController` mounted in a real `NSWindow`, proving the button's real
+// presence/absence per console kind and the real background-check/click/
+// restart pipeline against a fake `herdr` script. Window-backed, so it sits
+// in `run-all-tests.sh`'s NEEDS_SESSION list, like its
+// `FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS` sibling. See
+// HerdrRestartButtonSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_HERDR_RESTART_BUTTON_TESTS"] == "1" {
+    exit(HerdrRestartButtonSelfTest.run() ? 0 : 1)
+}
+
+#endif
+
+// The rename to "Grand Line" (docs/history/45-rename-to-grand-line.md).
+//
+// This sits after every `FM_RUN_*_TESTS` block - each of which `exit()`s, so a
+// headless suite never runs it against the captain's real Keychain or real
+// data folder - and *before* `SingleInstanceGuard.acquire()`, which is the
+// first line in the process that touches
+// `~/Library/Application Support/<folder>` at all.
+//
+// Both halves are idempotent, so this is a no-op on every launch after the
+// first. See `LegacyNameMigration`'s header for why the folder is moved and
+// the Keychain items are copied, and for the one thing it cannot do: the
+// captain's Accessibility and Automation grants are keyed to the bundle
+// identifier, which changed, and re-granting them is a manual System Settings
+// step by design.
+LegacyNameMigration.runAtLaunch()
+
+// GL-05: refuse to be a second instance. This sits *after* every
+// `FM_RUN_*_TESTS` block above (each of which `exit()`s, so a headless
+// self-test never contends for the lock and never blocks a real running
+// instance) and *before* `AppDelegate()` is constructed - which is the line
+// that builds `HostStore`/`SSHKeyStore`/`SnippetStore`/`DictationStore`/
+// `ShiftStore` and therefore the first thing that touches the shared files
+// two instances corrupt. See `SingleInstanceGuard`'s header for what each of
+// the three layers (Info.plist, NSRunningApplication, flock) actually covers.
+switch SingleInstanceGuard.acquire() {
+case .acquired:
+    break
+case .alreadyRunning(let pid):
+    let who = pid.map { " (pid \($0))" } ?? ""
+    AppLog.lifecycle.error("""
+        Grand Line is already running\(who, privacy: .public) - activating it and exiting. \
+        Two instances share one set of JSON stores and one Shift git working tree; the second one \
+        silently overwrites the first's saves. See GL-05.
+        """)
+    exit(0)
+}
+
+let app = NSApplication.shared
+// Regular activation policy so a `swift run`-launched executable gets a real
+// Dock icon, menu bar, and key window instead of a background agent.
+app.setActivationPolicy(.regular)
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()

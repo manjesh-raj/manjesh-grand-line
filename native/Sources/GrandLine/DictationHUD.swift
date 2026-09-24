@@ -1,0 +1,517 @@
+// Grand Line - native macOS app.
+//
+// fm/grandline-dictation-visual-feedback-hud: a captain-reported real
+// usability gap - Dictation gave NO visual feedback anywhere except its own
+// rail page (`DictationController.swift`'s Status card). Since the whole
+// point of Dictation is dictating into whatever app currently has focus
+// (never Grand Line's own window), there was no way to tell whether holding
+// the shortcut actually started listening, was still transcribing, or
+// failed, short of specifically navigating to the Dictation page first -
+// which defeats the point. This file adds a small floating HUD, matching the
+// reference UX of OpenSuperWhisper/Apple's own built-in dictation (a
+// transient on-screen indicator), without copying either verbatim.
+//
+// Reuses the exact status-broadcast plumbing that already exists rather than
+// inventing a second one: `DictationEngine.onStatusChanged` (wired in
+// `main.swift`) already fires on every real transition the engine drives
+// (recording, transcribing, cleaningUp, didNotCatchThat, and the final
+// `DictationPermissions.currentStatus()` recompute after a successful
+// paste/permission check) - `main.swift` now fans that single callback out
+// to both `AppShellController.setDictationEngineStatus` (the existing
+// Dictation-page status card) and `DictationHUDController.handle(_:)` (this
+// file), rather than the HUD reading a second, parallel status source.
+//
+// `wasActive` is the one piece of state this controller needs beyond
+// `DictationStatus` itself: the *same* underlying status value
+// (`.ready`/`.needsMicrophone`/etc.) is reported both when a dictation
+// completes successfully (`DictationEngine.deliver` re-reads
+// `DictationPermissions.currentStatus()` after pasting) and whenever the
+// Dictation page's own manual permission-request buttons succeed/fail - the
+// engine has no distinct "success" status of its own (see
+// `DictationStatus.swift`'s doc comment: there are exactly the four states
+// the task brief describes, plus `.recording`). Gating on "did this
+// controller actually see a real `.recording` state first, with no
+// completion in between" is what tells the two apart without adding a fifth
+// engine-level status: a permission-button click on the Dictation page never
+// reports `.recording`/`.transcribing` first, so `wasActive` stays `false`
+// and the HUD correctly never appears for it.
+//
+// Window shape: a plain, borderless `NSPanel` with `.nonactivatingPanel` in
+// its style mask, `level = .floating`, and `ignoresMouseEvents = true` - the
+// task brief's own suggested shape for "must not steal keyboard focus from
+// whatever app the captain is actually typing into." A `.nonactivatingPanel`
+// can be ordered front via `orderFrontRegardless()` without the owning app
+// (Grand Line) ever becoming active and without the panel ever becoming the
+// key window, so the app being dictated into keeps its own key
+// window/first-responder status throughout - verified live, see this file's
+// PR description for how.
+//
+// Position is a fixed, unobtrusive location (bottom-center of the screen
+// currently under the mouse, falling back to `NSScreen.main`) - cursor-
+// position tracking (Apple's own dictation HUD tracks the actual text caret
+// via Accessibility) is explicitly out of scope for this pass, per the task
+// brief.
+//
+// Deliberately NOT theme-aware (unlike almost everything else in this app -
+// see `ThemeManager.swift`'s own checklist): this HUD floats over arbitrary
+// other apps' windows, not over Grand Line's own chrome, so a fixed
+// "system HUD" look reads correctly against any background regardless of
+// which Helm theme Grand Line itself is currently using - there is no
+// "background" of this app's own for it to blend with.
+//
+// ## Review #3 §7: a flat dark fill is not what makes a HUD read as one
+//
+// The premise above is still right; the *execution* stopped working when
+// Dusk became the app's default theme. The pill was a flat
+// `NSColor(calibratedWhite: 0.08, alpha: 0.92)` layer fill, which is within
+// a few percent of Dusk's own card and page surfaces - so a HUD whose whole
+// job is to say "this is the system talking, not the app" rendered in the
+// app's own tones and read as one more Grand Line card that happened to be
+// floating.
+//
+// What actually separates macOS's own volume/brightness HUD from an app's
+// chrome is not its darkness, it is that it is **translucent over whatever
+// is genuinely behind it**: an `NSVisualEffectView` with the `.hudWindow`
+// material and `.behindWindow` blending, so the desktop, the browser or the
+// editor underneath shows through, live, and moves when they do. No flat
+// fill can imitate that, because the thing that makes it read as an overlay
+// is precisely that it is not a solid colour. So `ensurePanel` builds the
+// pill as that view instead, pinned to `.vibrantDark` so the material's own
+// light/dark choice is this HUD's and not the OS appearance setting's.
+//
+// **This is the one legitimate `.behindWindow` case in this app**, and it is
+// the exact inverse of AGENTS.md gotcha (8): that trap is a full-size
+// destination or window root using `.behindWindow` and compositing against
+// the *desktop* when it meant to blend with its own window. Here the desktop
+// (and whatever app is over it) is genuinely what is behind this borderless,
+// clear-backgrounded panel, and compositing against it is the whole point.
+import AppKit
+
+enum DictationHUDVisualState: Equatable {
+    case listening
+    case transcribing
+    case cleaningUp
+    case success
+    case failure(String)
+
+    var symbol: String {
+        switch self {
+        case .listening: return "waveform"
+        case .transcribing: return "ellipsis.circle.fill"
+        case .cleaningUp: return "sparkles"
+        case .success: return "checkmark.circle.fill"
+        case .failure: return "questionmark.circle.fill"
+        }
+    }
+
+    var text: String {
+        switch self {
+        case .listening: return "Listening…"
+        case .transcribing: return "Transcribing…"
+        case .cleaningUp: return "Cleaning up…"
+        case .success: return "Pasted"
+        case .failure(let message): return message
+        }
+    }
+
+    var tintHex: String {
+        switch self {
+        case .listening, .transcribing, .cleaningUp: return "#5AC8FA"
+        case .success: return "#34C759"
+        case .failure: return "#FF9F0A"
+        }
+    }
+
+    /// `nil` means "stays on screen until the next state change" (listening/
+    /// transcribing/cleaningUp are all in-progress states with no fixed
+    /// duration - they end when the engine reports the next real
+    /// transition, not on a timer).
+    var autoHideDelay: TimeInterval? {
+        switch self {
+        case .listening, .transcribing, .cleaningUp: return nil
+        case .success: return 1.1
+        case .failure: return 1.8
+        }
+    }
+}
+
+final class DictationHUDController {
+    private var panel: NSPanel?
+    private var iconView: NSImageView!
+    private var titleLabel: NSTextField!
+    private var pill: NSView!
+
+    private var hideWorkItem: DispatchWorkItem?
+
+    /// What the HUD is currently showing, so a live Reduce Motion change can
+    /// re-decide the pulse without a state change of its own.
+    private var currentState: DictationHUDVisualState?
+    private var reduceMotionObserver: NSObjectProtocol?
+
+    init() {
+        reduceMotionObserver = NotificationCenter.default.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.applyPulseAnimation()
+        }
+    }
+
+    deinit {
+        if let reduceMotionObserver {
+            NotificationCenter.default.removeObserver(reduceMotionObserver)
+        }
+    }
+
+    /// Set the moment a real `.recording` status is seen, cleared the moment
+    /// a terminal status (success or `.didNotCatchThat`) is handled - see
+    /// this file's header for why this is what distinguishes "a dictation
+    /// just finished" from "a permission button was just clicked."
+    private var wasActive = false
+
+    /// The one entry point - fed every `DictationStatus` the engine reports,
+    /// exactly like `AppShellController.setDictationEngineStatus` already is.
+    ///
+    /// `isCeilingTimeout` (fm/grandline-dictation-long-utterance-status-race)
+    /// is `true` only for the one `.didNotCatchThat` the engine's hard-ceiling
+    /// watchdog forces when it gives up waiting - see
+    /// `DictationEngine.report(_:isCeilingTimeout:)`'s doc comment. The real
+    /// pipeline keeps running in the background regardless of that forced
+    /// display and will report the true outcome once it completes, so
+    /// `wasActive` is deliberately left `true` in that one case instead of
+    /// being cleared like a genuine terminal status would - live-reproduced
+    /// (real mic, real long utterance, local Whisper engine, Metal disabled
+    /// to force slower-than-usual transcription) that clearing it here
+    /// silently discarded the later, real, successful completion: the HUD
+    /// showed "Didn't catch that" and then nothing, even though the
+    /// transcript was pasted and recorded to history moments later. Any
+    /// later status - success or a genuine failure - still correctly
+    /// supersedes this tentative display and clears `wasActive` for real,
+    /// exactly like today. The one accepted trade-off: if this specific
+    /// dictation attempt truly never completes (not just slow - genuinely
+    /// hung), `wasActive` stays `true` until the next `.recording`, so an
+    /// unrelated permission-button click on the Dictation page in that
+    /// narrow window could show one spurious "Pasted" flash - judged a far
+    /// smaller cosmetic risk than the bug this fixes, and a case the
+    /// existing hard ceiling already treats as "give up and show something,"
+    /// not "recover cleanly."
+    func handle(_ status: DictationStatus, isCeilingTimeout: Bool = false) {
+        switch status {
+        case .recording:
+            wasActive = true
+            present(.listening)
+        case .transcribing:
+            guard wasActive else { return }
+            present(.transcribing)
+        case .cleaningUp:
+            guard wasActive else { return }
+            present(.cleaningUp)
+        case .didNotCatchThat:
+            guard wasActive else { return }
+            if !isCeilingTimeout {
+                wasActive = false
+            }
+            present(.failure("Didn't catch that"))
+        case .systemDictationDisabled:
+            guard wasActive else { return }
+            wasActive = false
+            present(.failure("System Dictation is off"))
+        case .ready, .needsMicrophone, .needsSpeechRecognition, .needsAccessibility:
+            guard wasActive else { return }
+            wasActive = false
+            present(.success)
+        }
+    }
+
+    private func present(_ state: DictationHUDVisualState) {
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
+
+        let panel = ensurePanel()
+        iconView.image = NSImage(systemSymbolName: state.symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .semibold))
+        iconView.contentTintColor = HelmTheme.nsColor(state.tintHex)
+        titleLabel.stringValue = state.text
+        let isNewState = currentState?.text != state.text
+        currentState = state
+        applyPulseAnimation()
+
+        // A2: this panel is borderless, `ignoresMouseEvents`, and deliberately
+        // never key - so nothing about it reaches VoiceOver on its own, and a
+        // captain using one got no "Listening…" / "Pasted" / "Didn't catch
+        // that" at all while a sighted captain got all three. An announcement
+        // is the right shape precisely *because* the panel must not take key
+        // status; it needs no focus and steals none.
+        //
+        // Only on a genuine state change, so a re-presented identical state
+        // (which happens while a long transcription is still running) does not
+        // repeat itself in the captain's ear.
+        if isNewState {
+            NSAccessibility.post(element: NSApp as Any,
+                                 notification: .announcementRequested,
+                                 userInfo: [.announcement: state.text,
+                                            .priority: NSAccessibilityPriorityLevel.high.rawValue])
+        }
+
+        positionPanel(panel)
+        let wasVisible = panel.isVisible
+        panel.alphaValue = wasVisible ? panel.alphaValue : 0
+        panel.orderFrontRegardless()
+        // H3: "a spring pop-in". Only on a genuine appearance - a state change
+        // on an already-visible HUD swaps its words, and re-popping it every
+        // time would turn a two-second overlay into a jittery one.
+        if !wasVisible, !HelmMotion.isReduced, let content = panel.contentView {
+            content.wantsLayer = true
+            content.layer?.transform = CATransform3DMakeScale(Self.popInScale, Self.popInScale, 1)
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = HelmMotion.springDuration
+                ctx.timingFunction = HelmMotion.spring()
+                ctx.allowsImplicitAnimation = true
+                content.layer?.transform = CATransform3DIdentity
+                panel.animator().alphaValue = 1
+            }
+        } else {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.12
+                panel.animator().alphaValue = 1
+            }
+        }
+
+        if let delay = state.autoHideDelay {
+            let workItem = DispatchWorkItem { [weak self] in self?.dismiss() }
+            hideWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        }
+    }
+
+    private func dismiss() {
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
+        currentState = nil
+        stopPulsing()
+        guard let panel, panel.isVisible else { return }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.2
+            panel.animator().alphaValue = 0
+        }, completionHandler: { [weak panel] in
+            panel?.orderOut(nil)
+        })
+    }
+
+    // MARK: Window construction
+
+    private func ensurePanel() -> NSPanel {
+        if let panel { return panel }
+
+        let width: CGFloat = 220
+        let height: CGFloat = 44
+        let newPanel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        newPanel.isOpaque = false
+        newPanel.backgroundColor = .clear
+        newPanel.hasShadow = true
+        newPanel.level = .floating
+        newPanel.ignoresMouseEvents = true
+        newPanel.hidesOnDeactivate = false
+        newPanel.isReleasedWhenClosed = false
+        newPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        newPanel.alphaValue = 0
+
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        content.wantsLayer = true
+
+        // Review #3 §7 - see this file's header. A real system HUD material
+        // rather than a flat dark fill, so the HUD is translucent over
+        // whatever app the captain is dictating into instead of matching
+        // Dusk's own surfaces.
+        let pillView = NSVisualEffectView()
+        pillView.material = .hudWindow
+        pillView.blendingMode = .behindWindow
+        // `.active` rather than `.followsWindowActiveState`: this panel is a
+        // `.nonactivatingPanel` that must never become key, so the
+        // window-state default would leave the material permanently inactive
+        // (i.e. a flat fill again, which is the defect).
+        pillView.state = .active
+        // The material picks light or dark from the effective appearance, and
+        // this HUD's identity is fixed - a captain on an OS set to Light must
+        // still get the dark system-HUD look, exactly as Apple's own does.
+        pillView.appearance = NSAppearance(named: .vibrantDark)
+        pillView.wantsLayer = true
+        pillView.layer?.cornerRadius = height / 2
+        // Without this the material draws square corners behind the rounded
+        // border, which reads as a rectangle with a ring painted on it.
+        pillView.layer?.masksToBounds = true
+        // Kept, and brighter than before: the hairline is what gives the
+        // capsule an edge against a light document underneath, where the
+        // material alone is nearly the same value as the page.
+        pillView.layer?.borderWidth = 1
+        pillView.layer?.borderColor = NSColor(calibratedWhite: 1, alpha: 0.22).cgColor
+        pillView.translatesAutoresizingMaskIntoConstraints = false
+        self.pill = pillView
+
+        let icon = NSImageView()
+        icon.wantsLayer = true
+        icon.symbolConfiguration = .init(pointSize: 15, weight: .semibold)
+        icon.contentTintColor = .white
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        self.iconView = icon
+
+        let label = NSTextField(labelWithString: "")
+        label.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        label.textColor = .white
+        label.translatesAutoresizingMaskIntoConstraints = false
+        self.titleLabel = label
+
+        let stack = NSStackView(views: [icon, label])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        pillView.addSubview(stack)
+        content.addSubview(pillView)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: pillView.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: pillView.trailingAnchor, constant: -16),
+            stack.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
+            pillView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            pillView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            pillView.topAnchor.constraint(equalTo: content.topAnchor),
+            pillView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
+
+        newPanel.contentView = content
+        self.panel = newPanel
+        return newPanel
+    }
+
+    /// Bottom-center of whichever screen currently has the mouse cursor
+    /// (falling back to `NSScreen.main`) - a captain dictating on a
+    /// secondary display should see the HUD there, not only on the main one.
+    /// Fixed position, not cursor-tracked (out of scope for this pass, see
+    /// this file's header).
+    private func positionPanel(_ panel: NSPanel) {
+        let mouseLocation = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouseLocation) } ?? NSScreen.main
+        guard let screen else { return }
+        let frame = screen.visibleFrame
+        let size = panel.frame.size
+        let x = frame.midX - size.width / 2
+        let y = frame.minY + 56
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    // MARK: Pulsing (listening state only)
+
+    static let popInScale: CGFloat = 0.88
+    private static let pulseAnimationKey = "dictationHUD.pulse"
+    private var variableTimer: Timer?
+    private var variableFrames: [NSImage] = []
+    private var variableIndex = 0
+
+    /// GL-16: this pulse was the one looping animation in the app the earlier
+    /// Reduce Motion pass missed (the lock screen's boat/wave and the rail
+    /// mark's bob were both covered), and it is the most intrusive of the
+    /// three - it appears unprompted, over whatever app the captain is
+    /// dictating into. The icon still changes and the text still says
+    /// "Listening…", so nothing is lost by holding it still.
+    ///
+    /// Driven from one place (rather than gated inside `startPulsing`) so the
+    /// live `accessibilityDisplayOptionsDidChangeNotification` observer and a
+    /// state change both reach the same decision - the same shape
+    /// `IconRailController.applyMarkAnimation` uses.
+    private func applyPulseAnimation() {
+        stopPulsing()
+        guard currentState == .listening,
+              !HelmMotion.isReduced else { return }
+        startPulsing()
+    }
+
+    private func startPulsing() {
+        // H3: "adopt SF Symbol variable-color animation for the waveform".
+        //
+        // `NSImageView.addSymbolEffect(.variableColor)` is macOS 14 and this
+        // package targets 13 (`Package.swift`), so this is the same *effect*
+        // built from the API that does exist there:
+        // `NSImage(systemSymbolName:variableValue:)`. `waveform` is a
+        // variable-value symbol, so stepping that value lights its bars in
+        // sequence - which is precisely what `.variableColor` animates.
+        //
+        // Stepped by a timer rather than by Core Animation because the frames
+        // are *different images*, not a property CA can interpolate. It is
+        // bounded: it only runs while the captain is physically holding the
+        // dictation key, and `stopPulsing` is reached from every exit.
+        if let frames = Self.waveformFrames(tintedLike: currentState), frames.count > 1 {
+            variableFrames = frames
+            variableIndex = 0
+            let timer = Timer.scheduledTimer(withTimeInterval: Self.variableFrameInterval,
+                                             repeats: true) { [weak self] _ in
+                self?.stepVariableFrame()
+            }
+            timer.tolerance = Self.variableFrameInterval / 4
+            RunLoop.main.add(timer, forMode: .common)
+            variableTimer = timer
+            return
+        }
+        // Fallback: a symbol with no variable-value rendering keeps the
+        // opacity pulse this shipped with. `NSImage(systemSymbolName:...)`
+        // returns nil silently, so this branch is reachable and must not
+        // leave the HUD looking static.
+        let animation = CABasicAnimation(keyPath: "opacity")
+        animation.fromValue = 1.0
+        animation.toValue = 0.35
+        animation.duration = 0.55
+        animation.autoreverses = true
+        animation.repeatCount = .infinity
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        iconView.layer?.add(animation, forKey: Self.pulseAnimationKey)
+    }
+
+    /// How fast the waveform's bars travel. Slow enough to read as a level
+    /// meter rather than a flicker, and cheap enough that it is a handful of
+    /// wake-ups over the couple of seconds a dictation actually lasts.
+    private static let variableFrameInterval: TimeInterval = 0.14
+
+    private static func waveformFrames(tintedLike state: DictationHUDVisualState?) -> [NSImage]? {
+        guard let symbol = state?.symbol else { return nil }
+        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        let steps: [Double] = [0, 0.25, 0.5, 0.75, 1.0, 0.75, 0.5, 0.25]
+        let frames = steps.compactMap {
+            NSImage(systemSymbolName: symbol, variableValue: $0, accessibilityDescription: nil)?
+                .withSymbolConfiguration(config)
+        }
+        return frames.count == steps.count ? frames : nil
+    }
+
+    private func stepVariableFrame() {
+        guard !variableFrames.isEmpty else { return }
+        variableIndex = (variableIndex + 1) % variableFrames.count
+        iconView.image = variableFrames[variableIndex]
+    }
+
+    private func stopPulsing() {
+        variableTimer?.invalidate()
+        variableTimer = nil
+        variableFrames = []
+        iconView.layer?.removeAnimation(forKey: Self.pulseAnimationKey)
+        iconView.layer?.opacity = 1
+    }
+
+    #if FM_SELFTESTS
+    /// Whether the waveform is animating, either way it can.
+    var debugIsAnimatingIcon: Bool {
+        variableTimer != nil || iconView.layer?.animation(forKey: Self.pulseAnimationKey) != nil
+    }
+    var debugUsesVariableColor: Bool { variableTimer != nil }
+
+    /// Review #3 §7: the pill, so a test can assert it is a real system-HUD
+    /// material rather than a flat fill in the app's own tones. Building the
+    /// panel is what creates it, so a caller must have driven a state first.
+    var debugPill: NSView? { pill }
+    #endif
+}

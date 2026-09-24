@@ -1,4 +1,4 @@
-// Manjesh Grand Line - the WidgetKit extension.
+// Grand Line - the WidgetKit extension.
 //
 // The tick. macOS 14's interactive widgets are the whole reason F23 is worth
 // a signing workstream - the reviewed mockup's own closing note says so: "a
@@ -34,7 +34,7 @@ import WidgetKit
 struct CompleteTaskIntent: AppIntent {
 
     static var title: LocalizedStringResource = "Complete task"
-    static var description = IntentDescription("Marks a Manjesh Grand Line task as done.")
+    static var description = IntentDescription("Marks a Grand Line task as done.")
 
     /// Widgets only: this intent is meaningless outside the widget that owns
     /// the row, and should never appear as a standalone Shortcuts action with

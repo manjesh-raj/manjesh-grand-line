@@ -1,0 +1,532 @@
+// Grand Line - native macOS app.
+//
+// `RailDestination` - the app's fixed body destinations.
+//
+// Split out of `IconRailController.swift` (a P3 item in the production
+// review's own batch, section 21) once GL-37 gave this enum a second real
+// consumer: `DestinationRegistry.swift` maps every case here onto a body
+// view, and `AppShellController` switches on nothing else. It was declared in
+// the rail's own file for historical reasons - the rail was the only thing
+// that used it - and 108 lines of enum plus its accumulated doc comment
+// sitting above a 1,900-line view controller made both harder to find.
+//
+// Nothing about the enum changed in that move. **Daylight Phase 2 did change
+// one thing about it**: the case order used to be load-bearing (the rail
+// iterated `allCases` to lay itself out top to bottom), and with the rail
+// gone nothing iterates it for layout any more. See the enum's own doc
+// comment below.
+
+import AppKit
+
+/// The rail's eleven destinations. Switching order (captain correction,
+/// theme-audit task): Overview, Console, Hosts, then Review, then Settings -
+/// overriding fixes4 Fix 2's Console/Hosts-first ordering. Note that this is
+/// the *switching* order only - Settings' *visual* position in the rail is
+/// moved to after the dynamic per-host icon block (see `loadView`), directly
+/// above the avatar. `.updates` (cockpit-native-updates-page) follows the
+/// same rule: it is a real `RailDestination` for switching purposes, but its
+/// *visual* position is pinned directly above Settings (so above the avatar,
+/// below the per-host icon block) regardless of case order here. `.bootstrap`
+/// (cockpit-bootstrap-scaffold) follows the identical convention, pinned
+/// between `.updates` and `.settings`.
+/// `.docs` (cockpit-docs-viewer) follows the identical convention too, pinned
+/// directly *above* `.updates` - so the bottom-anchored group reads Docs,
+/// Updates, Bootstrap, Settings, avatar.
+/// `.tools` (cockpit-tools-page-core) follows the identical convention too,
+/// pinned directly *above* `.docs` - so the bottom-anchored group reads
+/// Tools, Docs, Updates, Bootstrap, Settings, avatar.
+/// `.vault` (fm/grandline-vault-tab) follows the identical convention too,
+/// pinned directly *above* `.docs` and below `.tools` - so the bottom-
+/// anchored group reads Tools, Vault, Docs, Updates, Bootstrap, Settings,
+/// avatar.
+/// `.dictation` (fm/grandline-dictation-mvp, phase 1) follows the identical
+/// convention too, pinned directly *above* `.docs` and below `.vault` - so
+/// the bottom-anchored group reads Tools, Vault, Dictation, Docs, Setup
+/// (-> Updates, Bootstrap, Automation flyout), avatar.
+/// `fm/grandline-rail-setup-group` merged `.updates`/`.bootstrap`'s two
+/// standalone rail rows into one "Setup" entry, directly above `.docs`, that
+/// opens a small flyout `NSPopover` listing Updates and Bootstrap - so the
+/// bottom-anchored group visually reads Tools, Vault, Docs, Setup
+/// (-> Updates, Bootstrap flyout), avatar. Both cases remain real
+/// `RailDestination`s for switching purposes - only their rail position/
+/// visibility changed; see `IconRailController.buildSetupButton()`/
+/// `showSetupFlyout()`. `.automation` (fm/grandline-automation-pipeline)
+/// follows the identical convention: a third real `RailDestination` with no
+/// rail row of its own, reachable only as the Setup flyout's third entry,
+/// below Updates and Bootstrap. `.githubSync` (fm/grandline-setup-github-sync)
+/// follows the identical convention too: a fourth real `RailDestination` with
+/// no rail row of its own, reachable only as the Setup flyout's fourth entry,
+/// below Automation.
+/// `.schedules` (fm/grandline-schedules-sidebar-move) is the opposite of all
+/// of the above: F11's Schedules card used to live nested inside `.automation`
+/// (still behind the Setup flyout), and the captain's own correction was that
+/// it should NOT be a flyout/sub-page destination - it gets its own rail
+/// icon, directly visible, alongside Tools/Vault/Dictation/Docs. It stays a
+/// utility (`isDailyUse == false`, see that property's own doc comment for
+/// the criterion: it runs itself and reports to Health rather than being
+/// something a captain checks in on daily), pinned directly *above* `.docs`
+/// and below `.dictation` - so the bottom-anchored group now reads Tools,
+/// Vault, Dictation, Schedules, Docs, Setup
+/// (-> Updates, Bootstrap, Automation, GitHub Sync flyout), avatar.
+/// `.automation`'s own "Run Automation" pipeline stepper is unaffected and
+/// stays exactly where it was.
+/// `.health` (fm/grandline-health-sidebar-move) is the same move applied to
+/// F1/GL-11's Health card: it used to be the last card on the Settings page,
+/// scrolled to past Connection/Appearance/Terminal/Security/Backup. It is a
+/// utility (`isDailyUse == false` - it reports on background services rather
+/// than being something a captain checks in on daily), pinned directly
+/// *above* "Setup" and below `.docs` - the same "it's the thing you check
+/// when something feels stale, so it goes last" placement its old Settings-
+/// card comment used to explain - so the bottom-anchored group now reads
+/// Tools, Vault, Dictation, Schedules, Docs, Health, Setup (-> Updates,
+/// Bootstrap, Automation, GitHub Sync flyout), avatar. Settings' own
+/// Connection/Appearance/Terminal/Security/Backup cards are unaffected and
+/// stay exactly where they were.
+/// `fm/grandline-avatar-menu-and-setup-guide` removed `.settings`'s own
+/// standalone rail row entirely - it is still a real `RailDestination` for
+/// switching purposes (`AppShellController.show(.settings)` is unchanged),
+/// but its only entry point now is a "Settings" row inside the avatar
+/// popover, alongside "Logout" (see `AvatarLogoutPopoverController`). This
+/// continues the same crowding-reduction direction as the Setup group
+/// consolidation above - one less item in the bottom-anchored utility group.
+/// `.shift` (cockpit-shift-foundation) is different from all of the above:
+/// it's a daily-use destination, not a utility, so it is NOT part of the
+/// bottom-anchored group - it lives in `navStack` alongside the other fixed
+/// destinations. `fm/cockpit-shift-rail-position` moved it from right after
+/// `.overview` to right after `.hosts` (captain correction), so `navStack`
+/// reads Overview, Console, Hosts, Shift, Review - `loadView`'s `navStack`
+/// loop gets this for free just from case order (case order drives
+/// `navStack`'s iteration order, same as every other `navStack` member).
+/// `.whiteboard` (`fm/grand-line-whiteboard-excalidraw`) is a utility in the
+/// same sense as `.tools` (`isDailyUse == false`): a surface a captain opens
+/// when they need it, not one they check in on. It sits in the Stores space
+/// alongside Docs, Tools, Vault and Dictation - a whiteboard is a thinking
+/// surface, which is the same shelf as the reference material it gets used
+/// next to.
+/// `.codePreview` (`fm/grandline-monaco-code-preview`) is a utility on the
+/// same criterion as `.whiteboard`: a surface a captain opens when they have
+/// something to look at, not one they check in on. It sits in the Stores
+/// space beside Docs, Tools, Vault, Dictation and the Whiteboard - a place to
+/// read a snippet properly is the same shelf as the reference material it
+/// gets read next to.
+/// `.runbooks`/`.postmortems` (`fm/grandline-docs-split-runbooks-postmortems`)
+/// are the Runbooks and Postmortems tabs `DocsController` used to hold,
+/// promoted into their own top-level destinations in the Stores space
+/// (`DaylightSpace.stores`) alongside `.docs`, `.vault` and `.tools` -
+/// `.docs` itself is now the Playbook viewer only. Both are utilities
+/// (`isDailyUse == false`), matching their Stores siblings.
+/// `.strawHat` (`fm/polish-straw-hat-overview-card-and-voice-c8d3`) is the
+/// Straw Hat Pirates crew chat. Phases 1-3 shipped it as a third tab inside
+/// `FleetController` (Overview's own page), per the captain's phase-1
+/// placement call - "This will be inside overview section" - and this task is
+/// his own correction after using it: he expected it to be **its own card on
+/// Overview, like the Console card**, not nested inside Fleet's detail page
+/// beside that page's unrelated Overview/Log tabs. Fleet's card is Grand
+/// Line's dispatched-crewmate task status; the Straw Hat crew is an AI persona
+/// chat. Two different "crews" had been tangled into one page by an accident
+/// of naming, which is exactly what he reacted to.
+///
+/// **Adding this case does not add a nav entry, because there is no nav rail
+/// to add one to.** The task brief asked for "its own detail page, not a new
+/// `RailDestination`" - but Daylight Phase 2 deleted `IconRailController`, and
+/// `DaylightModule.opens` is typed `RailDestination`, so "a card opens its own
+/// page" *is* implemented by a case here (see this file's own Phase 2 note,
+/// and `HomeCanvasController.makeCard`). What a case actually buys is the
+/// registry slot, the drill header, a stable identity for F2's session
+/// restore, and a ⌘K entry. What would put it in the app's top-level
+/// navigation is a `DaylightBarIconButton` quick-access icon, which this task
+/// deliberately does **not** add - those are added one at a time by explicit
+/// captain request. It is a utility (`isDailyUse == false`, inert since Phase
+/// 2 either way) with no space of its own: like `.briefing`/`.fleet`, its
+/// module appears on Overview and nowhere else.
+/// `.stickyBoard` (`fm/grandline-sticky-board`) is a freeform corkboard of
+/// draggable, colored sticky notes for quick thoughts - the captain's own
+/// request. It sits in the Stores space alongside Docs/Tools/Vault/
+/// Dictation/Whiteboard (a quick-notes surface belongs on the same shelf as
+/// the reference material and thinking surfaces it gets used next to), and
+/// is a utility (`isDailyUse == false`) for the same reason those siblings
+/// are: a surface a captain opens when a thought needs somewhere to go, not
+/// one they check in on daily.
+/// `.commandLibrary` (`fm/grandline-tasks-kanban-devops-split`) is the
+/// "DevOps Commands" library, promoted out of `ShiftController`'s own
+/// three-way tab switcher into its own top-level destination - the captain's
+/// own correction after using it: a searchable library of saved shell
+/// commands is a separate feature from his task board, and burying it as a
+/// third tab inside Tasks made it reachable only by first going somewhere
+/// unrelated. Exactly the same promotion `.runbooks`/`.postmortems` got out
+/// of Docs' tabs, and it reuses the already-built `CommandLibraryPageView`
+/// rather than rebuilding anything - see `CommandLibraryController`. It sits
+/// in the **Command** space alongside Console, Tasks and the Merge queue:
+/// that promotion first filed it under Stores on the reading that a library of
+/// saved commands is reference material, and the captain corrected it after
+/// using the page (`fm/grandline-devops-space-and-diagram-tool`) - a saved
+/// shell command is something he *runs*, so it belongs beside the Console he
+/// runs it in, not on the shelf beside the docs. It is still a utility
+/// (`isDailyUse == false`), which is a property of how often it is opened
+/// rather than of which space it sits in.
+///
+/// `.notebook` (`fm/grandline-feature-f1-notebook`) is F1 of full review
+/// #3 §8 - the captain's own first pick out of that section's twenty-four
+/// recommendations. Markdown pages in a tree, a Monaco source editor, a live
+/// preview, `[[wiki-links]]` and backlinks, all in `GrandLineDocs/notebook/`
+/// on the same git sync Runbooks and Postmortems already use. It sits in the
+/// Stores space beside Docs, Runbooks, Postmortems, Tools, the Whiteboard and
+/// the Sticky Board, because a notebook is the general form of the two
+/// markdown destinations already on that shelf - the report's own "fit" note
+/// says exactly that. It is a utility (`isDailyUse == false`) on the same
+/// criterion as those siblings: a surface a captain opens when they have
+/// something to write down, not one they check in on.
+///
+/// `.readingList` (`fm/grandline-feature-f4-reading-list`) is F4 of full
+/// review #3 §8 - a link inbox. A pasted or dropped URL becomes a card with
+/// the title, favicon and summary `LinkPresentation` reads locally, plus tags,
+/// a read flag and an opt-in one-paragraph summary from `ClaudeOneShot`. It
+/// sits in the Stores space for the report's own stated reason ("adds a Stores
+/// card"): it is a place things are kept and come back to, which is what that
+/// shelf is. A utility (`isDailyUse == false`) on the same criterion as its
+/// siblings there - a surface opened when there is something to file or
+/// something to read, not one checked in on.
+///
+/// `isDailyUse` (fm/grandline-sidebar-labeled-nav) marks the 6
+/// `navStack` members (Overview, Console, Hosts, Shift, Review, Log
+/// Analyzer - the last added by `fm/grandline-log-analyzer-build`) as the set
+/// that lives in the top `navStack` block rather than the bottom-anchored
+/// utility group - `navStack`'s loop and the bottom-anchored `loadView` block
+/// both filter on this directly. It no longer selects a *different visual
+/// style*: `fm/grandline-sidebar-nav-polish` gave every row (daily-use,
+/// utility, and per-host) the same labeled icon-over-text treatment after
+/// live captain feedback that icon-only utility rows looked inconsistent
+/// once the rest of the rail had labels - see `labeledRailButton(for:)`.
+/// **Daylight Phase 2 note.** The icon rail this enum is named after no
+/// longer exists as a visible surface - `DaylightBarController`'s floating
+/// bar plus `HomeCanvasController`'s module grid replaced it (migration
+/// §5.1). The enum itself survives unchanged and un-renamed, deliberately:
+/// §5.1's own "survives" list names it as the routing enum, every menu item,
+/// keyboard shortcut and deep-link closure in the app switches on it, and
+/// `DestinationRegistry` keys its table off it. Renaming it would be a
+/// large, purely cosmetic diff across ~20 files.
+///
+/// Two consequences of the rail's removal that matter when editing this file:
+///   - **Case order is no longer load-bearing.** It used to be the rail's
+///     top-to-bottom order (`allCases` drove `navStack`'s loop). Nothing
+///     iterates `allCases` for layout any more; the canvas's own order is
+///     `DaylightModule.canvasOrder`. The long history below is kept because
+///     it records real captain decisions about grouping, not because
+///     reordering these cases still moves anything on screen.
+///   - `isDailyUse` and `flyoutTint` have no remaining consumer in the shell.
+///     They are left in place rather than deleted so the rail's own
+///     decision history stays greppable; if a future phase wants a rail-like
+///     surface back, they are what it should read.
+/// `String`-backed so a destination has a stable identity that can be written
+/// to disk (F2's session restoration persists which one was showing). The raw
+/// values are the case names, derived by the compiler - nothing hand-written
+/// to drift, and renaming a case is a deliberate act that invalidates a saved
+/// state rather than silently restoring the wrong page (an unknown raw value
+/// simply fails to decode and the launch lands where it always did).
+enum RailDestination: String, CaseIterable {
+    /// Daylight Phase 2: the home canvas (`HomeCanvasController`) - the hub
+    /// every module card and every drill page's back button returns to. It is
+    /// a real destination in every sense (a registered slot, an eager mount,
+    /// reachable through `show(_:)`), so nothing about routing needed a
+    /// second concept.
+    case homeCanvas
+    /// `fm/grandline-overview-page-daily-review`: F20's daily review, as a
+    /// page of its own. Titled "Overview", opened by the leftmost space pill
+    /// (`DaylightSpace.dailyOverview`).
+    ///
+    /// **Not `overview`** - that case is the Fleet dashboard and has been
+    /// since the Daylight rename. See `DaylightSpace.dailyOverview` for the
+    /// naming history this deliberately avoids repeating.
+    case dailyOverview
+    case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, notebook, readingList, runbooks, postmortems, updates, bootstrap, automation, githubSync, poneglyph, settings
+
+    var symbol: String {
+        switch self {
+        // §4's tile table: the canvas is the app itself, so it takes the
+        // app's own mark.
+        case .homeCanvas: return "sailboat.fill"
+        // The same glyph the card's own header carries (`DailyReviewCard`'s
+        // `setHeader(symbol: "sun.max"...)`), so the pill, the drill header
+        // and the card agree. Verified to resolve by
+        // `DaylightModuleSelfTest.checkSymbolsResolve`'s space sweep -
+        // `NSImage(systemSymbolName:)` returns nil silently.
+        case .dailyOverview: return "sun.max"
+        case .overview: return "square.grid.2x2"
+        // Only the *fallback*, for a `StrawHatFlag` payload that stops
+        // decoding - both tiles that render this destination take the Jolly
+        // Roger itself. A group of people rather than one, and distinct from
+        // `.overview`'s grid and `.shift`'s checkmark.
+        case .strawHat: return "person.3.fill"
+        // fm/grandline-rail-followup-fixes: the captain asked for the menu
+        // bar's Shift/Tasks status item to use the same "sailboat" glyph as
+        // the app's own logo mark, since that standalone item has no nearby
+        // app branding to associate it back to this app (see
+        // `ShiftMenuBarController.init`). The rail's own `.shift` row
+        // deliberately keeps `checkmark.circle` rather than also switching
+        // to `sailboat` - the rail already shows the real sailboat logo mark
+        // directly above this row (`IconRailController.loadView`'s `mark`),
+        // so a second sailboat a few rows down would read as a duplicate
+        // icon rather than a clearer one.
+        case .shift: return "checkmark.circle"
+        case .hosts: return "server.rack"
+        case .console: return "terminal"
+        case .review: return "arrow.triangle.branch"
+        // `fm/grandline-log-analyzer-build`: a magnifier over lines - the
+        // "read this output" idea, distinct from `.review`'s branch glyph
+        // and from Console's bare terminal.
+        case .logAnalyzer: return "text.magnifyingglass"
+        // The Kubernetes logo is literally a ship's helm, which would suit
+        // this app's nautical identity - but `steeringwheel` is already
+        // Updates'. `cube.transparent` is the next-closest read for "a
+        // cluster of things you can see into", and is unclaimed here.
+        case .kubernetes: return "cube.transparent"
+        case .tools: return "wrench.and.screwdriver"
+        // `fm/grand-line-whiteboard-excalidraw`: a hand-drawn scribble - the
+        // one glyph in this family that reads as "sketch on a surface" rather
+        // than as a document or a tool, which is what an infinite hand-drawn
+        // canvas is. Verified to resolve (`NSImage(systemSymbolName:)` returns
+        // nil silently, and this app has shipped an invisible icon that way).
+        case .whiteboard: return "scribble.variable"
+        // `fm/grandline-sticky-board`: a note glyph reads as "a quick thought
+        // written down", distinct from `.docs`' closed book (reference
+        // material) and `.whiteboard`'s scribble (a drawing surface).
+        case .stickyBoard: return "note.text"
+        // `fm/grandline-monaco-code-preview`: the angle-brackets glyph - the
+        // one symbol in this family that reads as "source code" rather than
+        // as a document (`.docs`), a terminal (`.console`) or a tool. Verified
+        // to resolve (`NSImage(systemSymbolName:)` returns nil silently, and
+        // this app has shipped an invisible icon that way).
+        case .codePreview: return "chevron.left.forwardslash.chevron.right"
+        // `fm/grandline-tasks-kanban-devops-split`: a shelf of books - the
+        // one glyph in this family that reads as "a library you look things
+        // up in" rather than as a single document (`.docs`' closed book), a
+        // terminal (`.console`) or a tool. Deliberately not a terminal glyph:
+        // this destination is where commands are *kept*, not where they run.
+        // Verified to resolve - `NSImage(systemSymbolName:)` returns nil
+        // silently, and this app has shipped an invisible icon that way.
+        case .commandLibrary: return "books.vertical"
+        case .vault: return "lock.shield"
+        case .dictation: return "waveform"
+        // `fm/grandline-schedules-sidebar-move`: a calendar - matches
+        // `SchedulesCardView`'s own header icon, so the rail row and the
+        // card it opens onto agree.
+        case .schedules: return "calendar"
+        // `fm/grandline-health-sidebar-move`: matches `HealthCardView`'s own
+        // header icon, so the rail row and the card it opens onto agree.
+        case .health: return "waveform.path.ecg"
+        case .docs: return "book.closed"
+        // `fm/grandline-feature-f1-notebook`: an open book with a pen over it
+        // - the one glyph in this family that reads as "somewhere you write"
+        // rather than as reference material you read (`.docs`' closed book),
+        // a procedure (`.runbooks`' list) or a loose thought
+        // (`.stickyBoard`'s note). Verified to resolve -
+        // `NSImage(systemSymbolName:)` returns nil silently, and this app has
+        // shipped an invisible icon that way.
+        case .notebook: return "book.and.wrench"
+        // `fm/grandline-feature-f4-reading-list`: a bookmark, which is what a
+        // link inbox is - distinct from `.docs`' closed book (reference you
+        // read), `.notebook`'s book-and-pen (somewhere you write) and
+        // `.stickyBoard`'s note (a loose thought). Verified to resolve:
+        // `NSImage(systemSymbolName:)` returns nil silently, and this app has
+        // shipped an invisible icon that way.
+        case .readingList: return "bookmark.fill"
+        // `fm/grandline-docs-split-runbooks-postmortems`: reused verbatim
+        // from the icons this exact file's own Runbooks/Postmortems empty
+        // states already carried before the split, so the destination and
+        // the empty state a captain saw there agree.
+        case .runbooks: return "list.bullet.rectangle"
+        case .postmortems: return "doc.text.magnifyingglass"
+        case .updates: return "steeringwheel"
+        case .bootstrap: return "hammer"
+        case .automation: return "bolt.fill"
+        case .githubSync: return "arrow.2.squarepath"
+        // `fm/implement-grand-line-secrets-vault-poneg-ad`: a Poneglyph is a
+        // stone slab carrying hidden inscriptions - fitting for the captain's
+        // personal credential vault, which is what this destination shows
+        // after `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` reclaimed
+        // "Vault" for Automic Vault's hardening panel (see `VaultController`'s
+        // header for the full history). `doc.text.image` is the closest read
+        // for "an inscribed tablet of secrets" in this family and is
+        // unclaimed here. Verified to resolve - `NSImage(systemSymbolName:)`
+        // returns nil silently, and this app has shipped an invisible icon
+        // that way before.
+        case .poneglyph: return "doc.text.image"
+        case .settings: return "gearshape"
+        }
+    }
+
+    /// A raster artwork override for the shell's drill header tile
+    /// (`AppShellController.applyDrillHeader` -> `HelmDrillHeader.configure`),
+    /// in place of `symbol`'s SF Symbol. Also the floating bar's own
+    /// quick-access shortcut icon (`DaylightDestinationButton.init`), which
+    /// reads this same property so the bar shortcut and the drill header can
+    /// never drift apart.
+    ///
+    /// `fm/straw-hat-header-icon-and-luffy-followup-5282`: the previous
+    /// polish pass (`fm/polish-straw-hat-overview-card-and-voice-c8d3`) wired
+    /// the Jolly Roger into the Overview canvas's own module card
+    /// (`HomeCanvasController.fillStrawHat`'s `content.artwork =
+    /// StrawHatFlag.image`), which flows into
+    /// `HelmGradientTile.configure(artwork:symbol:hue:)` there - but the
+    /// drill header the card's own click opens onto is a **separate**
+    /// `HelmGradientTile` instance the shell owns, fed only through
+    /// `symbol`/`domainHue`, so it fell back to `symbol`'s generic
+    /// `person.3.fill` placeholder.
+    ///
+    /// `fm/grandline-card-shortcut-icons` extended this to four more
+    /// destinations, per the captain's own custom images
+    /// (`native/Scripts/build-card-shortcut-icons.py`): `.poneglyph`, `.shift`,
+    /// `.codePreview` and `.stickyBoard` each get their own artwork now,
+    /// matching `content.artwork` set in `HomeCanvasController`'s own
+    /// `fillPoneglyph`/`fillTasks`/`fillCodePreview`/`fillStickyBoard` - the
+    /// card and the shortcut/drill header always agree because both read from
+    /// the captain's same source image.
+    ///
+    /// `fm/grandline-rail-icons-batch2` extended this to fifteen more
+    /// destinations (`native/Scripts/build-rail-icons-batch2.py`): `.console`,
+    /// `.health`, `.schedules`, `.hosts`, `.logAnalyzer`, `.kubernetes`,
+    /// `.docs`, `.runbooks`, `.postmortems`, `.tools`, `.whiteboard`,
+    /// `.updates`, `.automation`, `.githubSync` and `.settings` each get their
+    /// own artwork too, matching `content.artwork` set in
+    /// `HomeCanvasController`'s own `fillConsole`/`fillHealth`/
+    /// `fillSchedules`/`fillHosts`/`fillLogAnalyzer`/`fillKubernetes`/
+    /// `fillDocs`/`fillRunbooks`/`fillPostmortems`/`fillTools`/
+    /// `fillWhiteboard`/`fillUpdates`/`fillAutomation`/`fillGitHubSync`/
+    /// `fillSettings` where each of those has a home-canvas card.
+    ///
+    /// `nil` for every other case, exhaustively enumerated per this file's own
+    /// house style (see `flyoutTint`) so a future artwork-carrying destination
+    /// has to be added here deliberately.
+    var drillHeaderArtwork: NSImage? {
+        switch self {
+        case .strawHat: return StrawHatFlag.image
+        case .poneglyph: return PoneglyphIcon.image
+        case .shift: return TasksIcon.image
+        case .codePreview: return CodePreviewIcon.image
+        case .stickyBoard: return StickyNotesIcon.image
+        case .console: return ConsoleIcon.image
+        case .health: return HealthIcon.image
+        case .schedules: return SchedulesIcon.image
+        case .hosts: return HostsIcon.image
+        case .logAnalyzer: return LogAnalyzerIcon.image
+        case .kubernetes: return KubernetesIcon.image
+        case .docs: return DocsAppIcon.image
+        case .runbooks: return RunbooksIcon.image
+        case .postmortems: return PostmortemsIcon.image
+        case .tools: return ToolsAppIcon.image
+        case .whiteboard: return WhiteboardAppIcon.image
+        case .updates: return UpdatesIcon.image
+        case .automation: return AutomationIcon.image
+        case .githubSync: return GithubSyncIcon.image
+        case .settings: return SettingsAppIcon.image
+        case .homeCanvas, .dailyOverview, .overview, .review, .vault, .dictation, .bootstrap, .commandLibrary, .notebook,
+             .readingList:
+            return nil
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .homeCanvas: return "Home"
+        // The app's one user-facing "Overview", and the only other place the
+        // word is allowed to appear as a literal - see
+        // `NavigationCoherenceSelfTest.checkOverviewNamesExactlyOneThing`.
+        case .dailyOverview: return "Overview"
+        case .overview: return "Fleet"
+        case .strawHat: return "Straw Hat Pirates"
+        case .shift: return "Tasks"
+        case .hosts: return "Hosts"
+        case .console: return "Console"
+        case .review: return "Review"
+        case .logAnalyzer: return "Log Analyzer"
+        case .kubernetes: return "Kubernetes"
+        case .tools: return "Tools"
+        case .whiteboard: return "Whiteboard"
+        case .stickyBoard: return "Sticky Board"
+        case .codePreview: return "Code Preview"
+        case .commandLibrary: return "DevOps Commands"
+        case .vault: return "Vault"
+        case .dictation: return "Dictation"
+        case .schedules: return "Schedules"
+        case .health: return "Health"
+        case .docs: return "Docs"
+        case .notebook: return "Notebook"
+        case .readingList: return "Reading List"
+        case .runbooks: return "Runbooks"
+        case .postmortems: return "Postmortems"
+        case .updates: return "Updates"
+        case .bootstrap: return "Bootstrap"
+        case .automation: return "Automation"
+        case .githubSync: return "GitHub Sync"
+        case .poneglyph: return "Poneglyph"
+        case .settings: return "Settings"
+        }
+    }
+
+    /// The hue this destination's icon carries wherever it is drawn as an
+    /// `IconTileView` rather than a bare rail glyph - today that is the Setup
+    /// flyout's four rows (`SetupFlyoutViewController`).
+    ///
+    /// `fm/grandline-sre-lead-and-setup-icons`: every one of those rows used
+    /// to pass a hardcoded `.accent`, so all four rendered the identical
+    /// teal tile and the flyout read as one undifferentiated block - measured
+    /// in a real render, all four glyphs sampled the same `rgb(165,218,229)`.
+    /// The captain's own proposed mockup assigns each row a distinct hue, and
+    /// sampling that mockup's pixels resolves each one to a `HelmTint` this
+    /// app already has: blue `.info` for Updates, amber `.warn` for
+    /// Bootstrap, the theme accent for Automation, magenta `.violet` for
+    /// GitHub Sync. Semantic tints, not literals, so all 12 palettes resolve
+    /// their own hues.
+    ///
+    /// Every other destination keeps `.accent` - the rail's own rows are
+    /// plain tinted glyphs with no tile behind them, and this property is
+    /// only consulted where a tile is actually drawn.
+    ///
+    /// **Measured caveat, recorded rather than hidden:** `.accent` for
+    /// Automation resolves to the *same hue as a neighbouring row* in 3 of
+    /// the 12 palettes, because those palettes genuinely define their accent
+    /// as that hue - `tokyo-night-dark`/`-light` set `accentHex` to their own
+    /// blue (`ansiHex[4]`, so Updates and Automation match) and
+    /// `rose-pine-main` sets it to its own magenta (`ansiHex[5]`, so
+    /// Automation and GitHub Sync match). Swapping Automation to `.good`
+    /// removes every collision (measured: zero in all 12), but `.good` is
+    /// green in `helm-dark` where the captain's own reference mockup shows
+    /// the accent cyan - and the brief names those screenshots as ground
+    /// truth. Exact fidelity in the reference palette was chosen over
+    /// collision-freedom in three others; this is still a strict improvement
+    /// everywhere, since before this all four rows shared one hue in all 12.
+    /// Revisit by adding a genuinely distinct semantic `HelmTint` case, not
+    /// by hardcoding a literal here.
+    var flyoutTint: HelmTint {
+        switch self {
+        case .updates: return .info
+        case .bootstrap: return .warn
+        case .automation: return .accent
+        case .githubSync: return .violet
+        // A Setup sub-page like the four above it. `.good` is unclaimed in this
+        // group and is the one remaining tint that collides with none of them.
+        case .poneglyph: return .good
+        case .homeCanvas, .dailyOverview, .overview, .strawHat, .console, .hosts, .shift, .review, .logAnalyzer, .kubernetes,
+             .tools, .whiteboard, .stickyBoard, .codePreview, .commandLibrary, .vault, .dictation, .schedules, .health, .docs, .notebook, .readingList, .runbooks, .postmortems, .settings: return .accent
+        }
+    }
+
+    var isDailyUse: Bool {
+        switch self {
+        // Read every morning, which is what this property means.
+        case .homeCanvas, .dailyOverview, .overview, .console, .hosts, .shift, .review, .logAnalyzer: return true
+        // A utility (`isDailyUse == false`) on the same criterion as
+        // Log Analyzer's siblings: cluster state is looked at when something
+        // is wrong, not checked every morning. Its own space is Operations
+        // (`DaylightModule.kubernetes`), beside Log Analyzer, per the scout
+        // report's own placement note.
+        case .kubernetes,
+             // A surface the captain opens when they have something to ask,
+             // on the same criterion as its Stores-space siblings. Inert
+             // since Phase 2 removed the rail - see this enum's own note.
+             .strawHat,
+             .tools, .whiteboard, .codePreview, .stickyBoard, .commandLibrary, .vault, .dictation, .schedules, .health, .docs, .notebook, .readingList, .runbooks, .postmortems,
+             .updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings: return false
+        }
+    }
+}

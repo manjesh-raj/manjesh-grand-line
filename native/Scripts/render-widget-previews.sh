@@ -34,7 +34,7 @@ xcrun swiftc \
   -warnings-as-errors \
   -O \
   -o "$BIN" \
-  Sources/FirstmateCockpit/WidgetSharedContract.swift \
+  Sources/GrandLine/WidgetSharedContract.swift \
   Widgets/GrandLineWidgets/WidgetPalette.swift \
   Widgets/GrandLineWidgets/WidgetChrome.swift \
   Widgets/GrandLineWidgets/CompleteTaskIntent.swift \

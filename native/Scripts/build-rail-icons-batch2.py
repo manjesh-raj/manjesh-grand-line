@@ -89,7 +89,7 @@ except ImportError:  # pragma: no cover - a clear message beats a traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(HERE, "assets", "grandline-rail-icons-batch2")
-SOURCES_DIR = os.path.normpath(os.path.join(HERE, "..", "Sources", "FirstmateCockpit"))
+SOURCES_DIR = os.path.normpath(os.path.join(HERE, "..", "Sources", "GrandLine"))
 
 SIDE = 128
 # One base64 line per this many characters - a single 40KB line is unreadable
@@ -245,7 +245,7 @@ def swift_source(spec, payload):
     encoded = base64.b64encode(payload).decode("ascii")
     chunks = [encoded[i:i + CHUNK] for i in range(0, len(encoded), CHUNK)]
     lines = [
-        "// Manjesh Grand Line - native macOS app.",
+        "// Grand Line - native macOS app.",
         "//",
         "// GENERATED FILE - do not hand-edit. Produced by",
         "// `native/Scripts/build-rail-icons-batch2.py` from the captain's own",

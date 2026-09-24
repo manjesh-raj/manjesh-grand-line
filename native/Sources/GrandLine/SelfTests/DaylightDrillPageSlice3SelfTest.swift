@@ -1,0 +1,741 @@
+// Grand Line - native macOS app.
+//
+// Daylight **Phase 4, slice 3**'s own suite: the destinations §7 puts next -
+// the four Engineering setup pages and Schedules.
+//
+// **They were one destination with four tabs when this suite was written.**
+// `fm/grandline-separate-setup-destinations` un-merged them at the captain's
+// own instruction, so every case below that used to drive
+// `SetupContainerController.select(tab:)` now drives the four real pages
+// directly. What each case protects is unchanged; only how it reaches a page
+// is.
+//
+// What each case is actually protecting, and why it is worth a test rather
+// than a read-through:
+//
+//   1. **Every one of these pages really reached the drill header** (§6.4),
+//      and each line is genuinely its own. The seam is a protocol
+//      conformance, and a missing one is invisible - the header just renders
+//      the static per-area line, which looks like a design choice. The four
+//      setup pages are the case worth pinning hardest: they count entirely
+//      different things, so a subtitle that belonged to a sibling page would
+//      still read plausibly on whichever one happened to be showing when it
+//      was written.
+//   2. **A page that has not finished its first check says so.** This is
+//      Phase 3's honesty rule applied to a header line: "0 need attention" on
+//      a page whose sweep has not run yet is a confident claim it has not
+//      earned, and the failure is silent (a real, plausible-looking number).
+//   3. **Schedules' add action is the card's own button instance, hoisted** -
+//      not a copy built for the header, and no longer in the card header. A
+//      second "+ New Schedule" a few rows apart is exactly the duplication
+//      §6.4's cluster exists to remove.
+//   4. **§6.5's Daylight row recipe, measured** - one radius / one fill / one
+//      border / one hover per theme across `ToolRowLayout`'s real rows, and
+//      the load-bearing half: a signal row carries its state as a **wash of
+//      the semantic hue** with a *neutral* border, while every non-Daylight
+//      palette keeps the tinted border and no wash. Both halves matter: the
+//      first is the restyle, the second is the "the other twelve render
+//      byte-identically" rule this whole migration turns on.
+//   5. **§7's amber primary Update.** Its fill has to be Setup's own domain
+//      hue run through §2.4's correction (a raw amber under a white label
+//      measures 3.85), and it has to be `accentHex` again off Daylight -
+//      `HelmButton.domainHue` changes a `.primary` on all thirteen palettes,
+//      so a hue set unconditionally would restyle twelve of them.
+//   6. **§7's mono time column really is a column** - one constant x down the
+//      list, mono font - and **a never-run schedule gets no tick.** There is
+//      no run history in `AutomationSchedule`, so the interesting failure is a
+//      *fabricated* glyph, exactly as for Health's ticks in slice 2.
+//   7. **No new window-width floor.** Every constraint this slice added sits
+//      inside `bodyContainer`, and AGENTS.md gotcha (13) is this codebase's
+//      most expensive recurring bug. `AppShellBodyWidthSelfTest` is the broad
+//      sweep; this is the local one for the two pages just touched.
+//
+// **Nothing here calls `viewWillAppear` on one of the four setup pages.** All
+// four start their real `brew`/`npm`/`git`/`gh` sweeps from that callback, so
+// a suite that mounted them through `contentViewController` (which fires
+// appearance callbacks) would shell out against the captain's real machine.
+// Mounting a page's *view* builds its `loadView` - which touches no
+// subprocess - and nothing more.
+//
+// Run with:
+//   swift build && FM_RUN_DAYLIGHT_DRILL_SLICE3_TESTS=1 .build/debug/GrandLine; echo $?
+
+// GL-27: compiled into debug builds only. Do not remove this guard -
+// `Phase3PolishSelfTest` asserts every file in this directory carries it.
+#if FM_SELFTESTS
+
+import AppKit
+
+enum DaylightDrillPageSlice3SelfTest {
+
+    static func run() -> Bool {
+        var allOK = true
+        for check in [checkSetupPagesEachOwnTheirDrillHeader,
+                      checkSchedulesDrillHeader,
+                      checkRowRecipeAndSignalWash,
+                      checkUpdateButtonIsAmberPrimary,
+                      checkTimeColumnAndTicks,
+                      checkAutomationRefreshAffordance,
+                      checkNoWindowWidthFloor] {
+            var ok = true
+            check(&ok)
+            allOK = allOK && ok
+        }
+        print(allOK ? "DaylightDrillPageSlice3SelfTest: all checks passed"
+                    : "DaylightDrillPageSlice3SelfTest: FAILED")
+        return allOK
+    }
+
+    // MARK: Fixtures
+
+    private static var daylight: HelmTheme {
+        HelmTheme.allThemes.first { $0.isDaylight } ?? HelmTheme.allThemes[0]
+    }
+
+    /// Any non-Daylight palette, for the "the other twelve are untouched" half.
+    private static var otherTheme: HelmTheme {
+        HelmTheme.allThemes.first { !$0.isDaylight } ?? HelmTheme.allThemes[0]
+    }
+
+    private static func scratchDir() -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("daylight-slice3-\(ProcessInfo.processInfo.processIdentifier)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Scratch store files, so nothing here can reach the captain's real data
+    /// (the convention every store-backed suite in this repo follows).
+    private static func scratchStores() -> (HostStore, SSHKeyStore, SnippetStore, DictationStore, ScheduleStore) {
+        let dir = scratchDir()
+        setenv("FM_HOSTS_FILE", dir.appendingPathComponent("hosts.json").path, 1)
+        setenv("FM_KEYS_FILE", dir.appendingPathComponent("keys.json").path, 1)
+        setenv("FM_SNIPPETS_FILE", dir.appendingPathComponent("snippets.json").path, 1)
+        setenv("FM_DICTATION_DIR", dir.appendingPathComponent("dictation").path, 1)
+        setenv("FM_SCHEDULES_FILE", dir.appendingPathComponent("schedules.json").path, 1)
+        return (HostStore(), SSHKeyStore(), SnippetStore(), DictationStore(), ScheduleStore())
+    }
+
+    /// The four Engineering setup pages, each its own destination since
+    /// `fm/grandline-separate-setup-destinations` - built together here only
+    /// because they share one set of scratch stores.
+    private static func makeSetupPages() -> [(RailDestination, NSViewController)] {
+        let (hostStore, keyStore, snippetStore, dictationStore, _) = scratchStores()
+        return [
+            (.updates, UpdatesController()),
+            (.bootstrap, BootstrapController(hostStore: hostStore, keyStore: keyStore,
+                                             snippetStore: snippetStore, dictationStore: dictationStore)),
+            (.automation, AutomationController(hostStore: hostStore, keyStore: keyStore,
+                                               snippetStore: snippetStore, dictationStore: dictationStore)),
+            (.githubSync, GitHubSyncController()),
+        ]
+    }
+
+    /// Mounts a controller's **view** in a window - never as
+    /// `contentViewController`, which would fire the appearance callbacks that
+    /// start the setup pages' real check sweeps (see the file header).
+    private static func mount(_ controller: NSViewController, width: CGFloat = 1200) -> NSWindow {
+        let window = OffScreenProbe.window(width: width, height: 820)
+        window.contentView = controller.view
+        controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 820)
+        controller.view.layoutSubtreeIfNeeded()
+        return window
+    }
+
+    private static func fmt(_ v: CGFloat) -> String { String(format: "%.1f", Double(v)) }
+
+    /// Component-wise, deliberately **not** `HelmContrast.ratio(a, b) < 1.01`:
+    /// that compares relative *luminance*, so two entirely different hues of
+    /// similar brightness pass it (slice 2's own recorded lesson).
+    private static func sameColor(_ a: NSColor?, _ b: NSColor) -> Bool {
+        guard let a else { return false }
+        let x = HelmContrast.components(a)
+        let y = HelmContrast.components(b)
+        return abs(x.0 - y.0) < 0.004 && abs(x.1 - y.1) < 0.004 && abs(x.2 - y.2) < 0.004
+    }
+
+    /// A layer's border colour as an `NSColor`, or nil.
+    private static func borderColor(of view: NSView) -> NSColor? {
+        view.layer?.borderColor.map { NSColor(cgColor: $0) } ?? nil
+    }
+
+    private static func labels(in view: NSView, containing needle: String) -> [NSTextField] {
+        var found: [NSTextField] = []
+        if let label = view as? NSTextField, label.stringValue.contains(needle) { found.append(label) }
+        for sub in view.subviews { found += labels(in: sub, containing: needle) }
+        return found
+    }
+
+    private static func buttons(in view: NSView) -> [NSButton] {
+        var found: [NSButton] = []
+        if let button = view as? NSButton { found.append(button) }
+        for sub in view.subviews { found += buttons(in: sub) }
+        return found
+    }
+
+    // MARK: Automation's manual re-check (fm/grand-line-automation-page-refresh-cleanup)
+
+    /// The captain asked for two things on this page: the standing subtitle
+    /// gone, and a Refresh matching the Updates page's own so the setup
+    /// checks can be re-run without leaving and re-entering.
+    ///
+    /// Both are invisible in a diff *and* in a render once wrong:
+    ///
+    ///   - A reinstated subtitle looks like ordinary explanatory copy.
+    ///   - A Refresh wired to nothing renders perfectly and does nothing -
+    ///     this codebase's most-repeated failure mode for a hoisted control.
+    ///   - A Refresh built as a fresh view per read would be a *copy* rather
+    ///     than the instance `refreshTapped` enables and disables, so the
+    ///     button on screen would never grey out while its sweeps are out.
+    ///     `DaylightDrillPageSlice4SelfTest` pins the same property for
+    ///     Vault's own Refresh, for the same reason.
+    ///   - A Refresh that ALSO sits in the page body is the duplication
+    ///     §6.4's cluster exists to remove.
+    ///
+    /// **The click itself is deliberately not driven here**, for this file's
+    /// own header reason: `refreshTapped` runs the real 13-item
+    /// `DependencyCheckCache` sweep with `forceRefresh: true` plus a real
+    /// `git fetch`, so firing it would shell out against the machine running
+    /// the suite. That half was verified live against a real mounted shell
+    /// (the click disabled the button, both sweeps completed, the dotfiles
+    /// path and the "N of 13 tracked tools not installed" line both moved, and
+    /// a second click worked - i.e. no stuck in-flight flag). What is pinned
+    /// here is everything a cheap, deterministic check genuinely can pin.
+    private static func checkAutomationRefreshAffordance(_ ok: inout Bool) {
+        print("\n-- Automation: subtitle gone, Refresh hoisted and wired --")
+
+        guard let entry = makeSetupPages().first(where: { $0.0 == .automation }),
+              let page = entry.1 as? AutomationController else {
+            print("  FAIL could not build AutomationController")
+            ok = false
+            return
+        }
+        let window = mount(page)
+        _ = window
+
+        let stale = labels(in: page.view, containing: "Runs every setup step below in order")
+        if !stale.isEmpty {
+            print("  FAIL the removed subtitle is back (\(stale.count) label(s))")
+            ok = false
+        } else {
+            print("  OK   standing subtitle is gone from the page body")
+        }
+
+        let actions = page.drillHeaderActions
+        guard actions.count == 1, let refresh = actions.first as? NSButton else {
+            print("  FAIL expected exactly one header action, got \(actions.count)")
+            ok = false
+            return
+        }
+        if refresh.title != "Refresh" {
+            print("  FAIL header action is titled \"\(refresh.title)\", want \"Refresh\"")
+            ok = false
+        }
+        if !(refresh is HelmButton) {
+            print("  FAIL Refresh is a \(type(of: refresh)) - it must be the app's shared HelmButton")
+            ok = false
+        }
+
+        // Wired, without firing it: a nil target/action, or a selector the
+        // target does not implement, is exactly "renders fine, does nothing".
+        guard let action = refresh.action else {
+            print("  FAIL Refresh has no action - it would render perfectly and do nothing")
+            ok = false
+            return
+        }
+        if refresh.target !== page {
+            print("  FAIL Refresh's target is not the page")
+            ok = false
+        }
+        if !page.responds(to: action) {
+            print("  FAIL page does not respond to \(NSStringFromSelector(action))")
+            ok = false
+        }
+
+        // The same instance every read - `refreshTapped` disables *this* one.
+        if page.drillHeaderActions.first !== refresh {
+            print("  FAIL drillHeaderActions rebuilds its button per read")
+            ok = false
+        }
+
+        // Hoisted, not duplicated.
+        if buttons(in: page.view).contains(where: { $0 === refresh }) {
+            print("  FAIL Refresh is in the page body as well as the header")
+            ok = false
+        }
+
+        // "Run Automation" stays on the page, beside the line it writes into.
+        if !buttons(in: page.view).contains(where: { $0.title.contains("Run Automation") }) {
+            print("  FAIL \"Run Automation\" left the page body")
+            ok = false
+        }
+
+        print("  OK   header action: \(type(of: refresh)) \"\(refresh.title)\" -> \(NSStringFromSelector(action)), enabled=\(refresh.isEnabled)")
+    }
+
+    // MARK: 1 + 2 - each setup page owns its own drill header (§6.4)
+
+    /// **Rewritten, not retired, by `fm/grandline-separate-setup-destinations`.**
+    /// This was `checkSetupDrillHeaderIsPerTab`: it drove
+    /// `SetupContainerController.select(tab:)` and asserted the shared
+    /// container's subtitle followed the active tab, prefixed with that tab's
+    /// own name. The four pages are four destinations now - each with its own
+    /// title in the drill header above the line - so that prefix would be the
+    /// duplicate-title defect §6.4 exists to remove, and the thing worth
+    /// pinning is that each page conforms *itself* and supplies its own
+    /// honest, distinct line.
+    private static func checkSetupPagesEachOwnTheirDrillHeader(_ ok: inout Bool) {
+        print("\n-- §6.4: each Engineering setup page carries its own live header line --")
+
+        var seen: [RailDestination: String] = [:]
+        for (dest, controller) in makeSetupPages() {
+            _ = mount(controller)
+
+            // The seam. A page that stopped conforming would silently fall
+            // back to the static per-area line, which reads like a choice.
+            guard let page = controller as? DaylightDrillActions else {
+                print("  FAIL \(dest.title) does not conform to DaylightDrillActions")
+                ok = false
+                continue
+            }
+            guard let line = page.drillHeaderSubtitle, !line.isEmpty else {
+                print("  FAIL \(dest.title): no subtitle at all")
+                ok = false
+                continue
+            }
+            // The page's own name belongs to the drill header's *title*, one
+            // line up. Repeating it here is the duplicate-title defect §6.4
+            // exists to remove - and it is exactly what the shared container
+            // used to do ("Updates - 13 tools - ..."), because it had no title
+            // of its own to say it in.
+            if line.hasPrefix(dest.title) {
+                print("  FAIL \(dest.title): subtitle repeats the page's own title (\"\(line)\")")
+                ok = false
+            }
+            seen[dest] = line
+            print("  \(dest.title.padding(toLength: 12, withPad: " ", startingAt: 0)) -> \(line)")
+
+            // §6.4's cluster is deliberately empty on three of the four - see
+            // each page's own `drillHeaderActions` doc comment. Automation is
+            // the exception: `fm/grand-line-automation-page-refresh-cleanup`
+            // gave it the app's shared page-level Refresh, which duplicates no
+            // control that lives elsewhere on that page (the original "empty"
+            // reasoning was only ever about hoisting "Run Automation").
+            // Reported either way so a later change that fills one does so on
+            // purpose rather than by accident.
+            if !page.drillHeaderActions.isEmpty {
+                print("  note \(dest.title) carries \(page.drillHeaderActions.count) header action(s) - keep the property's doc comment current")
+            }
+
+            // The tab strip that produced the captain's "everything is lumped
+            // up" is genuinely gone: a page that kept one would render a pill
+            // naming each of its three siblings.
+            //
+            // Deliberately *not* "does this page contain a `HelmSegmentedTabs`"
+            // - Updates owns a real one of its own (its All / Needs attention
+            // filter), so a structural check would fail on a control that has
+            // nothing to do with the merge. The leftover *label* is the honest
+            // symptom, and the shape `DestinationMountingSelfTest`'s own split
+            // cases already use.
+            let labels = Set(textFieldValues(in: controller.view))
+            for sibling in makeSetupPages().map(\.0) where sibling != dest {
+                if labels.contains(sibling.title) {
+                    print("  FAIL \(dest.title) still renders a \"\(sibling.title)\" tab pill")
+                    ok = false
+                }
+            }
+        }
+
+        guard seen.count == 4 else {
+            print("  FAIL only \(seen.count) of 4 pages produced a line")
+            ok = false
+            return
+        }
+
+        // The lines have to actually *differ*. Four identical ones would pass
+        // every "has a subtitle" check while telling the captain nothing.
+        if Set(seen.values).count < seen.count {
+            print("  FAIL two pages render the identical subtitle: \(Array(seen.values))")
+            ok = false
+        }
+
+        // Phase 3's honesty rule: a page whose first sweep has not run reports
+        // that, not a zero. Neither Updates nor GitHub Sync has been visited
+        // here (no `viewWillAppear`), so both are genuinely un-swept.
+        for (dest, line) in seen where dest == .updates || dest == .githubSync {
+            if !line.contains("not checked yet") && !line.contains("checking") {
+                print("  FAIL \(dest.title) claims a real verdict before its first check: \"\(line)\"")
+                ok = false
+            }
+        }
+
+        if ok { print("  OK - four pages, four distinct honest lines, no sibling tab pills") }
+    }
+
+    private static func textFieldValues(in view: NSView) -> [String] {
+        var result: [String] = []
+        if let field = view as? NSTextField, !field.stringValue.isEmpty { result.append(field.stringValue) }
+        for sub in view.subviews { result += textFieldValues(in: sub) }
+        return result
+    }
+
+    // MARK: 3 - Schedules' hoisted add action (§6.4)
+
+    private static func checkSchedulesDrillHeader(_ ok: inout Bool) {
+        print("\n-- §6.4: Schedules' header line and its hoisted add action --")
+        let (_, _, _, _, store) = scratchStores()
+        let controller = SchedulesController(scheduleStore: store)
+        _ = mount(controller)
+
+        guard let page = controller as DaylightDrillActions? else {
+            print("  FAIL SchedulesController does not conform to DaylightDrillActions")
+            ok = false
+            return
+        }
+
+        guard let empty = page.drillHeaderSubtitle, empty.contains("No schedules") else {
+            print("  FAIL empty store should say so, got \"\(page.drillHeaderSubtitle ?? "nil")\"")
+            ok = false
+            return
+        }
+        print("  empty  -> \(empty)")
+
+        store.add(AutomationSchedule(action: .driftCheck, cadence: .daily(hour: 2, minute: 0)))
+        store.add(AutomationSchedule(action: .forkSync, cadence: .weekly(weekday: 2, hour: 22, minute: 30),
+                                     isEnabled: false))
+        controller.viewWillAppear()
+        guard let two = page.drillHeaderSubtitle, two.contains("2 schedules"), two.contains("paused") else {
+            print("  FAIL two schedules (one paused) not reflected: \"\(page.drillHeaderSubtitle ?? "nil")\"")
+            ok = false
+            return
+        }
+        print("  loaded -> \(two)")
+
+        // The header's action has to be the card's *own* button, not a copy.
+        //
+        // `fm/grand-line-schedules-page-redesign` **widened this from "exactly
+        // one action" deliberately.** The `count == 1` was incidental - it
+        // recorded that the add button was the only page-level action this page
+        // had at the time, not a rule that it must stay alone. That redesign
+        // added a page-level Refresh, which is the shape every sibling page
+        // already carries (`checkAutomationRefreshAffordance` directly above
+        // pins the same affordance for Automation) and which earns its place
+        // here because half of what a row says is relative ("in 13h", "6h ago")
+        // and goes stale on a page left open. **The two properties that
+        // actually mattered are unchanged and still asserted**: each action is
+        // the owning view's *own* instance with its own target/action, and
+        // neither also renders in the page body - which is the duplication
+        // §6.4's cluster exists to remove.
+        let headerButtons = page.drillHeaderActions.compactMap { $0 as? NSButton }
+        guard headerButtons.count == page.drillHeaderActions.count else {
+            print("  FAIL every header action should be a button, got \(page.drillHeaderActions)")
+            ok = false
+            return
+        }
+        guard let hoisted = headerButtons.first(where: { $0.title == "+ New Schedule" }) else {
+            print("  FAIL no add button in the header cluster: \(headerButtons.map(\.title))")
+            ok = false
+            return
+        }
+        guard let refresh = headerButtons.first(where: { $0.title == "Refresh" }) else {
+            print("  FAIL no Refresh in the header cluster: \(headerButtons.map(\.title))")
+            ok = false
+            return
+        }
+        for button in [hoisted, refresh] where button.target == nil || button.action == nil {
+            print("  FAIL \"\(button.title)\" lost its own target/action")
+            ok = false
+        }
+        // ...and neither may also be in the page body.
+        for title in ["+ New Schedule", "Refresh"] {
+            let inBody = buttons(in: controller.view).filter { $0.title == title }
+            if !inBody.isEmpty {
+                print("  FAIL \"\(title)\" still renders inside the page body (\(inBody.count) copies)")
+                ok = false
+            }
+        }
+        // §6.4's "the old in-page explanatory line disappears".
+        if !labels(in: controller.view, containing: "Pick one of the app's existing actions and a cadence, and it runs").isEmpty {
+            print("  FAIL the page-level subtitle is still rendered")
+            ok = false
+        }
+        if ok { print("  OK - live line, one hoisted card-owned button, nothing duplicated in the body") }
+    }
+
+    // MARK: 4 - §6.5's Daylight row recipe and its signal wash
+
+    private static func checkRowRecipeAndSignalWash(_ ok: inout Bool) {
+        print("\n-- §6.5: ToolRowLayout's Daylight card row, and the signal wash --")
+
+        /// A real row, built and themed exactly as Updates/GitHub Sync build
+        /// and theme theirs.
+        func row(theme: HelmTheme, cardStyle: Bool, attentionHex: String?) -> ToolRowLayout.Views {
+            let views = ToolRowLayout.Views(
+                iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
+                detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
+                pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+                detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
+                logContainer: NSView(), rowContainer: HoverHighlightView())
+            _ = ToolRowLayout.build(views, iconSymbol: "shippingbox", tint: .neutral,
+                                    name: "firstmate", identifier: "probe", cardStyle: cardStyle)
+            ToolRowLayout.applyTheme(views, theme: theme, detailFailed: false,
+                                     cardStyle: cardStyle, attentionHex: attentionHex,
+                                     accentBar: attentionHex != nil)
+            return views
+        }
+
+        // --- Daylight: one radius, `card` fill, full-strength `hair` border.
+        let d = daylight
+        let plainD = row(theme: d, cardStyle: true, attentionHex: nil)
+        let cardFill = HelmTheme.nsColor(d.chromeBackgroundHex)
+        let hair = HelmTheme.nsColor(d.chromeLineHex)
+
+        if plainD.rowContainer.cornerRadius != HelmMetrics.dWell {
+            print("  FAIL Daylight card row radius \(fmt(plainD.rowContainer.cornerRadius)), expected \(fmt(HelmMetrics.dWell))")
+            ok = false
+        }
+        if !sameColor(plainD.rowContainer.normalColor, cardFill) {
+            print("  FAIL Daylight card row is not the `card` fill")
+            ok = false
+        }
+        if !sameColor(plainD.rowContainer.hoverColor, HelmTheme.nsColor(DaylightPalette.rowHover)) {
+            print("  FAIL Daylight card row hover is not `rowHover`")
+            ok = false
+        }
+        if !sameColor(borderColor(of: plainD.rowContainer), hair) {
+            print("  FAIL Daylight card row border is not full-strength `hair`")
+            ok = false
+        }
+
+        // --- The load-bearing half: a signal row washes, and does NOT tint
+        // its border. §7's update row is `warn`.
+        let warn = d.ansiHex[3]
+        let signalD = row(theme: d, cardStyle: true, attentionHex: warn)
+        let expectedWash = HelmContrast.color(
+            HelmContrast.mix(HelmContrast.components(HelmTheme.nsColor(warn)),
+                             HelmContrast.components(cardFill),
+                             Double(ToolRowLayout.signalWashAlpha)))
+        if !sameColor(signalD.rowContainer.normalColor, expectedWash) {
+            print("  FAIL Daylight signal row is not a \(fmt(ToolRowLayout.signalWashAlpha * 100))% wash of its hue")
+            ok = false
+        }
+        if sameColor(signalD.rowContainer.normalColor, cardFill) {
+            print("  FAIL Daylight signal row renders identically to a healthy row")
+            ok = false
+        }
+        if !sameColor(borderColor(of: signalD.rowContainer), hair) {
+            print("  FAIL Daylight signal row tints its border - §6.5 puts the signal in the bar + wash")
+            ok = false
+        }
+        if signalD.accentBar.isHidden {
+            print("  FAIL Daylight signal row shows no 3pt accent bar")
+            ok = false
+        }
+
+        // --- And every other palette is byte-identical to what it always was:
+        // tinted border, no wash, the 10/8 radius pair.
+        let o = otherTheme
+        let plainO = row(theme: o, cardStyle: true, attentionHex: nil)
+        let signalO = row(theme: o, cardStyle: true, attentionHex: o.ansiHex[3])
+        if plainO.rowContainer.cornerRadius != 10 {
+            print("  FAIL \(o.id) card row radius \(fmt(plainO.rowContainer.cornerRadius)), expected 10")
+            ok = false
+        }
+        if !sameColor(signalO.rowContainer.normalColor, HelmTheme.nsColor(o.chromeBackgroundHex)) {
+            print("  FAIL \(o.id) signal row gained a wash - the twelve palettes must be unchanged")
+            ok = false
+        }
+        let signalOBorder = borderColor(of: signalO.rowContainer)
+        if sameColor(signalOBorder, HelmTheme.nsColor(o.chromeLineHex)) {
+            print("  FAIL \(o.id) signal row lost its tinted border")
+            ok = false
+        }
+        // A flat (non-card) row's hover, both ways.
+        let flatD = row(theme: d, cardStyle: false, attentionHex: nil)
+        if !sameColor(flatD.rowContainer.hoverColor, HelmTheme.nsColor(DaylightPalette.rowHover)) {
+            print("  FAIL Daylight flat row hover is not `rowHover`")
+            ok = false
+        }
+        if flatD.rowContainer.cornerRadius != HelmMetrics.dTileSmall {
+            print("  FAIL Daylight flat row radius \(fmt(flatD.rowContainer.cornerRadius))")
+            ok = false
+        }
+        if ok { print("  OK - Daylight: r\(fmt(HelmMetrics.dWell)) / card / hair / rowHover, signal = bar + wash; \(o.id) unchanged") }
+    }
+
+    // MARK: 5 - §7's amber primary Update
+
+    private static func checkUpdateButtonIsAmberPrimary(_ ok: inout Bool) {
+        print("\n-- §7: the update row's Update button is an amber primary --")
+        let hue = RailDestination.updates.domainHue
+        if hue != .amber {
+            print("  FAIL Setup's domain hue is \(hue.rawValue), not amber (§2.2)")
+            ok = false
+        }
+
+        let d = daylight
+        // With the hue set (what a Daylight update row does).
+        let withHue = HelmButton.palette(variant: .primary, tint: nil, theme: d, domainHue: hue)
+        let expected = DaylightPalette.primaryButtonFill(for: hue, theme: d)
+        if !sameColor(withHue.fill, expected) {
+            print("  FAIL Daylight primary fill is not §2.4's corrected amber")
+            ok = false
+        }
+        if HelmContrast.ratio(withHue.label, withHue.fill) < HelmContrast.textTarget {
+            print("  FAIL Daylight amber primary label measures \(String(format: "%.2f", HelmContrast.ratio(withHue.label, withHue.fill))):1")
+            ok = false
+        }
+        // The raw §2.2 amber is what the correction exists for - if the two
+        // ever match, the correction has been dropped.
+        if sameColor(expected, hue.baseColor(in: d)) {
+            print("  FAIL the corrected amber equals the raw §2.2 amber - §2.4's correction is gone")
+            ok = false
+        }
+
+        // And off Daylight, a hue-less primary is still the palette accent -
+        // which is what the row passes there, so twelve palettes are unchanged.
+        let o = otherTheme
+        let noHue = HelmButton.palette(variant: .primary, tint: nil, theme: o, domainHue: nil)
+        if !sameColor(noHue.fill, HelmTheme.nsColor(o.accentHex)) {
+            print("  FAIL \(o.id) primary is not `accentHex`")
+            ok = false
+        }
+        let withHueOff = HelmButton.palette(variant: .primary, tint: nil, theme: o, domainHue: hue)
+        if sameColor(withHueOff.fill, noHue.fill) {
+            print("  FAIL setting a hue is a no-op on \(o.id) - then nothing proves the row must not set it there")
+            ok = false
+        }
+        // The mechanism above is per-theme by construction, so the remaining
+        // failure is a *call site* that sets the hue unconditionally - which
+        // would restyle a `.primary` on all twelve other palettes while every
+        // assertion above still passed. A source guard is the only thing that
+        // can see that, since `applyThemeToRow` is private and the wrong
+        // behaviour renders as a plausible button either way.
+        if let dir = SelfTestSources.appSourceDirectory(),
+           let text = try? String(contentsOf: dir.appendingPathComponent("UpdatesController.swift"),
+                                  encoding: .utf8) {
+            let hueLines = text.split(separator: "\n", omittingEmptySubsequences: false)
+                .filter { $0.contains("updateButton.domainHue") }
+            if hueLines.isEmpty {
+                print("  FAIL UpdatesController no longer sets the update button's domain hue at all")
+                ok = false
+            } else if let bad = hueLines.first(where: { !$0.contains("theme.isDaylight") }) {
+                print("  FAIL the update button's hue is set unconditionally: \(bad.trimmingCharacters(in: .whitespaces))")
+                ok = false
+            }
+        } else {
+            print("  skip source guard - could not locate the app's source directory")
+        }
+        if ok { print("  OK - corrected amber under Daylight, accentHex elsewhere, and the hue genuinely matters") }
+    }
+
+    // MARK: 6 - §7's mono time column and an honest run history
+
+    private static func checkTimeColumnAndTicks(_ ok: inout Bool) {
+        print("\n-- §7: Schedules' mono time column, and no fabricated run history --")
+        let (_, _, _, _, store) = scratchStores()
+
+        // Three cadences whose clock strings differ in width ("2:00 AM" vs
+        // "10:30 PM"), which is exactly what a non-column would misalign.
+        let never = AutomationSchedule(action: .driftCheck, cadence: .daily(hour: 2, minute: 0))
+        let clean = AutomationSchedule(action: .toolUpdateCheck,
+                                       cadence: .daily(hour: 22, minute: 30),
+                                       lastRun: ScheduleRunRecord(verdict: .clean, summary: "No drift", at: Date()))
+        let failed = AutomationSchedule(action: .forkSync,
+                                        cadence: .weekly(weekday: 3, hour: 11, minute: 5),
+                                        lastRun: ScheduleRunRecord(verdict: .failed, summary: "gh not authenticated", at: Date()))
+        for schedule in [never, clean, failed] { store.add(schedule) }
+
+        let controller = SchedulesController(scheduleStore: store)
+        let window = mount(controller)
+        controller.viewWillAppear()
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        guard let card = controller.debugSchedulesCard else {
+            print("  FAIL no schedules card to read")
+            ok = false
+            return
+        }
+
+        // `fm/grand-line-schedules-page-redesign` **inverted the second half of
+        // this check deliberately**, per this codebase's rule for an assertion
+        // that has become a record of overturned behaviour.
+        //
+        // What it used to assert: one glyph per row (`\u{2713}`/`\u{2022}`/`\u{2715}`)
+        // for the *single* `lastRun` on the schedule, because - in slice 2's own
+        // words - "a schedule has no run history to draw, so this does not
+        // invent one". That is no longer true: `ScheduleRunHistoryStore`
+        // (PR #289) keeps a real 7-day per-run log, and the redesign draws it as
+        // a sparkline in the same trailing slot the glyph occupied.
+        //
+        // The **property being guarded is unchanged, and is the one that
+        // matters**: a schedule with nothing on record draws nothing, rather
+        // than a row of placeholder bars padded out to a target count. These
+        // schedules are constructed directly with a `lastRun` and no history
+        // entries, which is exactly `ScheduleRunSparkline`'s documented
+        // fallback case - one real bar for one real run, and zero for a
+        // schedule that has never run.
+        var xs: [CGFloat] = []
+        for (schedule, expectedBars) in [(never, 0), (clean, 1), (failed, 1)] {
+            guard let cols = card.debugTrailingColumns(for: schedule.id) else {
+                print("  FAIL no time/tick columns for \(schedule.action.title)")
+                ok = false
+                continue
+            }
+            let expectedTime = ScheduleCadence.clockString(hour: schedule.cadence.normalized.hour,
+                                                           minute: schedule.cadence.normalized.minute)
+            if cols.time != expectedTime {
+                print("  FAIL \(schedule.action.title): time column reads \"\(cols.time)\", expected \"\(expectedTime)\"")
+                ok = false
+            }
+            if cols.runBars != expectedBars {
+                print("  FAIL \(schedule.action.title): sparkline drew \(cols.runBars) bar(s), expected \(expectedBars)")
+                ok = false
+            }
+            xs.append(cols.timeFrameInCard.minX)
+            print("  \(expectedTime.padding(toLength: 9, withPad: " ", startingAt: 0)) x=\(fmt(cols.timeFrameInCard.minX)) w=\(fmt(cols.timeFrameInCard.width)) bars=\(cols.runBars)")
+        }
+
+        // A *column*: one constant x, not a label drifting with the title.
+        if let first = xs.first, xs.contains(where: { abs($0 - first) > 0.5 }) {
+            print("  FAIL the time column is not aligned: xs = \(xs.map(fmt))")
+            ok = false
+        }
+        if !SchedulesCardView.timeColumnWidth.isFinite || SchedulesCardView.timeColumnWidth <= 0 {
+            print("  FAIL the time column has no width")
+            ok = false
+        }
+        if ok { print("  OK - one aligned mono column, and a never-run schedule shows no run history") }
+    }
+
+    // MARK: 7 - gotcha (13)
+
+    private static func checkNoWindowWidthFloor(_ ok: inout Bool) {
+        print("\n-- gotcha (13): the restyled pages hold a narrow window --")
+        let (_, _, _, _, store) = scratchStores()
+        store.add(AutomationSchedule(action: .configBackupExport, cadence: .daily(hour: 3, minute: 15)))
+
+        func floor(of controller: NSViewController, label: String, widths: [CGFloat]) {
+            let window = OffScreenProbe.window(width: widths[0], height: 820, styleMask: [.titled, .resizable])
+            // `contentView`, not `contentViewController` - see the file header:
+            // appearance callbacks would start the setup pages' real sweeps.
+            window.contentView = controller.view
+            for width in widths {
+                window.setFrame(NSRect(x: 0, y: 0, width: width, height: 820), display: true)
+                window.contentView?.layoutSubtreeIfNeeded()
+                let got = window.frame.width
+                if got > width + 0.5 {
+                    print("  FAIL \(label) will not shrink to \(fmt(width)) (window came back \(fmt(got)))")
+                    ok = false
+                }
+            }
+        }
+        for (dest, controller) in makeSetupPages() {
+            floor(of: controller, label: dest.title, widths: [1400, 1100, 900])
+        }
+        floor(of: SchedulesController(scheduleStore: store), label: "Schedules", widths: [1400, 1100, 900])
+        if ok { print("  OK - all four setup pages and Schedules hold 900pt") }
+    }
+}
+
+#endif

@@ -1,0 +1,613 @@
+// Grand Line - native macOS app.
+//
+// Phase 3 of "Knowledge and speed" (`fm/grandline-console-command-composer`):
+// the "✨ Compose" popover a plain `.shell` tab's toolbar opens. Mirrors
+// `ShiftMenuBarController`'s popover shape (`ShiftMenuBar.swift`) - a small
+// `NSPopover` + a plain `NSViewController` content - but (unlike
+// `ShiftMenuBarController`'s popover, which only ever shows plain
+// system-label-colored text) this content has its own `HelmTheme`-derived
+// colors, so it needs the real live-theme treatment described below rather
+// than AppKit's own default vibrant background.
+//
+// `fm/grandline-composer-cleanup-and-polish` gave the content view its own
+// visual treatment, since the original build was a bare label/field/button
+// with no styling matching the rest of this app: a tinted `IconTileView`
+// (`HelmUIComponents.swift`, `.violet` - the same "AI feature" treatment
+// Dictation's "Clean up my sentences" card already established, see
+// `DictationController.buildCleanupSection`) next to the title, a real
+// monospace code-block presentation for the generated command (mirroring
+// the Tools page's own `ToolInstance.codeEditor` - a bordered, corner-radius
+// `NSScrollView`/`NSTextView` in the active `HelmTheme`'s colors, not a
+// plain `NSTextField`), Copy/Run buttons following this app's established
+// small pill-button convention (the same one Vault's "Run injected…"/"Copy
+// Name" row buttons use - all of them `HelmButton` since the design system's
+// phase 2), and a
+// `⌘⏎` shortcut hint next to the intent field.
+//
+// `fm/grandline-composer-theme-and-width` fixed two real captain-reported
+// bugs in that polish pass: (1) the popover rendered as plain, unthemed dark
+// gray regardless of the app's actual active Helm theme - the "read once at
+// construction, no live observer" comment above was simply wrong for a
+// popover that can stay open across a theme change, and worse, this view had
+// no explicit background fill at all, so it fell back to `NSPopover`'s own
+// system vibrancy (following the OS's light/dark setting, not this app's
+// in-app theme) - the same root cause `ThemeManager.swift`'s own checklist
+// warns about and the same class of bug `grandline-unified-search-fixes`
+// fixed concurrently for the `⌘K` palette. Fixed the same way every other
+// themed window in this app is: a live `ThemeManager.shared.observe`
+// registration (owned by `ConsoleComposerController`, which is itself an
+// app-lifetime property of `ConsoleController` - unobserved from
+// `ConsoleController.shutdown()`, mirroring that controller's own theme
+// token), a plain `wantsLayer`-backed root view with an explicit
+// `HelmTheme`-derived `backgroundColor` fill (never `NSVisualEffectView`,
+// per this file's AppKit gotcha #8), and `popover.appearance` forced to the
+// theme's own light/dark mode so any leftover system-semantic color resolves
+// against the in-app theme, not the OS's. (2) The popover was a fixed 380pt
+// wide regardless of the generated command's length, because `root`'s width
+// was never tied to a constraint at all - only its initial `loadView` frame
+// size, which nothing ever changed. `rootWidthConstraint` now grows to fit
+// the longest line of the generated command (measured against the code
+// block's own font), capped at `maxWidth` so it can never run off-screen,
+// floored at `minWidth` so a short command (or the empty/intent-only state)
+// doesn't leave an oversized empty box - `updateWidth`'s resulting fitting
+// size is handed to the popover explicitly (`onSizeChanged`), the same
+// "compute and set the frame explicitly" style `ShiftSearchController.
+// resizeToFit()` already uses, rather than relying on `NSPopover`'s
+// occasionally-inconsistent automatic Auto-Layout-driven resize.
+//
+// `fm/grandline-shift-side-by-side-composer-height` gave the intent field
+// real multi-line height (captain: "increase the vertical view... so the
+// user can see the text more and have a better visibility") - the field was
+// a single-line `NSTextField` that scrolled its own content sideways as you
+// typed. `intentTextView`/`intentScroll` (a bordered, corner-radius
+// `NSScrollView`/`NSTextView` pair, mirroring the code block's own
+// `codeScroll`/`codeTextView` styling below rather than inventing a new
+// look) replace it - `NSTextView` has no built-in placeholder API the way
+// `NSTextField`'s cell does, so `intentPlaceholderLabel` is a plain muted
+// label overlaid at the text container's own inset, toggled by
+// `NSTextViewDelegate.textDidChange(_:)`. `⌘⏎` still fires Generate: that
+// shortcut was already handled by `generateButton`'s own `keyEquivalent`,
+// which `NSWindow`'s `performKeyEquivalent:` traversal reaches before an
+// event ever gets to whichever view is first responder - unaffected by
+// swapping the field for a text view. A plain Return now inserts a newline
+// (the field's own former submit-on-Return action only ever existed because
+// a single-line field has no better use for Return) rather than submitting,
+// which is the expected behavior for a field that's now genuinely
+// multi-line.
+//
+// Nothing here ever runs a generated command automatically - see
+// `ConsoleCommandComposer.swift`'s header and this task's PR description for
+// the full design-constraint reasoning (SRE Lead's own approval-gated
+// posture, the captain's explicit "look before you run" expectation). The
+// generated command is only ever shown for review; `onRunInTerminal` is the
+// one explicit action that sends anything to a real terminal, wired by
+// `ConsoleController` to `currentTab?.terminal.send(txt:)` - the same call a
+// Snippet's own "Run" action already uses.
+//
+// `fm/grandline-composer-input-styling` fixed a real captain-reported bug:
+// the intent field read as plain, undifferentiated text with no visible
+// field boundary, since `intentTextView.drawsBackground` was `false` and
+// `intentScroll` never had a background fill of its own - only a barely-
+// visible 1pt/50%-alpha border. Fixed by giving both `intentTextView` and
+// `codeTextView` a real, shared "sunken field" fill
+// (now `HelmField.fill(_:)`, Phase 6 of the UI audit) and bumping the
+// border alpha (`Self.fieldBorderAlpha`, 0.5 -> 0.7) on both scroll views -
+// see that method's own doc comment for why it blends `chromeInkHex` into
+// `chromeBackgroundHex` rather than reusing `backgroundHex` directly (the
+// two are numerically identical in 3 of 12 `HelmTheme.allThemes`, which
+// would have silently reproduced the same invisible-field bug in exactly
+// those themes).
+
+import AppKit
+
+final class ConsoleComposerController: NSObject, NSPopoverDelegate {
+    private let popover = NSPopover()
+    private let content = ConsoleComposerViewController()
+    private var themeObservation: ThemeObservation?
+
+    /// Set by `ConsoleController` to `currentTab?.terminal.send(txt:)`.
+    var onRunInTerminal: ((String) -> Void)?
+
+    override init() {
+        super.init()
+        // Audit 2 §2.7/§6.2: a popover is its own window, layered above the
+        // lock overlay, so anything open when the lock fires would stay
+        // readable and interactive over the lock screen (§5.1(b)'s harm, of
+        // which the incident card was one instance). Weak, because there is
+        // no unregister.
+        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.popover }
+        popover.contentViewController = content
+        popover.behavior = .transient
+        popover.delegate = self
+        content.onRunInTerminal = { [weak self] command in
+            self?.onRunInTerminal?(command)
+            self?.popover.performClose(nil)
+        }
+        content.onSizeChanged = { [weak self] size in
+            self?.popover.contentSize = size
+        }
+        themeObservation = ThemeManager.shared.observe { [weak self] theme in
+            guard let self else { return }
+            self.popover.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+            self.content.applyTheme(theme)
+        }
+    }
+
+    var isShown: Bool { popover.isShown }
+
+    func toggle(relativeTo view: NSView) {
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            content.reset()
+            popover.show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
+            content.focusIntentField()
+        }
+    }
+
+    func close() {
+        guard popover.isShown else { return }
+        popover.performClose(nil)
+    }
+
+    /// Called from `ConsoleController.shutdown()`, mirroring that
+    /// controller's own `themeObservation` teardown - `ConsoleComposerController`
+    /// is a per-console (not strictly app-lifetime) property, and a host
+    /// page's `ConsoleController` can be deallocated mid-session (see
+    /// "Dedicated host pages" in AGENTS.md), so this observer needs the same
+    /// explicit unregistration or it leaks a dead closure into
+    /// `ThemeManager.observers`.
+    func shutdown() {
+        if let themeObservation {
+            ThemeManager.shared.unobserve(themeObservation)
+            self.themeObservation = nil
+        }
+    }
+}
+
+/// The popover's content: a tinted-icon header, an intent field + Generate
+/// (with a `⌘⏎` shortcut hint), a status/error line, and (once generated) the
+/// command in a real code-block view with Copy/Run actions. No history is
+/// kept - this is a one-shot generate-review-run per tab open, per the
+/// task's explicit scope; closing and reopening the popover always starts
+/// fresh (`reset()`).
+private final class ConsoleComposerViewController: NSViewController, NSTextViewDelegate {
+    private var theme = ThemeManager.shared.theme
+
+    /// Popover width grows to fit a long generated command, floored/capped
+    /// so a short command doesn't leave an oversized empty box and a long
+    /// one can never grow off whatever screen it's on.
+    static let minWidth: CGFloat = 380
+    static let maxWidth: CGFloat = 640
+    private var rootWidthConstraint: NSLayoutConstraint!
+
+    /// A few visible lines of wrapped text, per the captain's explicit ask -
+    /// see this file's header for why this replaced a single-line field.
+    static let intentHeight: CGFloat = 72
+
+    /// Border opacity for the intent field and code-block scroll views -
+    /// bumped from the original 0.5 (which, combined with the intent field's
+    /// former `drawsBackground = false`, is why the input box read as
+    /// undifferentiated text - see this file's header) to a more visible
+    /// level so the boundary itself is never the only thing telling these
+    /// controls apart from the popover's own background.
+    static let fieldBorderAlpha: CGFloat = 0.7
+
+    private let iconTile = IconTileView(size: 30, cornerRadius: 8)
+    private let titleLabel = NSTextField(labelWithString: "Compose a command")
+    /// The uppercase caption above the composer card - mirrors the reference
+    /// mockup's "Command intent" label and `SRELeadChatView`'s own composer
+    /// kicker, the shared piece of "related, but not identical" the two
+    /// composers now carry (`fm/grandline-input-composer-redesign`).
+    private let composerKicker = NSTextField(labelWithString: "")
+    /// The card SRE Lead's composer shares (`HelmComposerCard`,
+    /// `HelmUIComponents.swift`) - a rounded, sunken-fill container whose
+    /// border brightens (plus a soft accent glow) while `intentTextView` has
+    /// focus. Replaces the intent field's own separate hand-rolled
+    /// border/radius, which used to sit with no visible relationship to the
+    /// footer row (hint + Generate) directly beneath it.
+    private let composerCard = HelmComposerCard(cornerRadius: HelmMetrics.rRow)
+    private let intentScroll = NSScrollView()
+    private let intentTextView = NSTextView()
+    private let intentPlaceholderLabel = NSTextField(labelWithString: "Describe what you want to run…")
+    private let generateButton = HelmButton(title: "Generate", variant: .primary, target: nil, action: nil)
+    private let shortcutHintLabel = NSTextField(labelWithString: "\u{2318}\u{23ce} to generate")
+    /// A cheap, real addition per the task brief: clicking one of these fills
+    /// the intent field with a generic example phrase (matching the reference
+    /// mockup's own example chips) rather than requiring the captain to think
+    /// of a first prompt from a blank box. These are static, generic example
+    /// *intents* for the natural-language field - not fabricated command
+    /// output, and not tied to any specific host/cluster this app doesn't
+    /// actually know about.
+    private static let exampleIntents = [
+        "List pods in a namespace",
+        "Check disk usage on a host",
+        "Tail the most recent log file",
+    ]
+    private let examplesFlow = ChipFlowView(frame: .zero)
+    private var exampleButtons: [HelmButton] = []
+    private let statusLabel = NSTextField(labelWithString: "")
+
+    private let codeScroll = NSScrollView()
+    private let codeTextView = NSTextView()
+    private let copyButton = HelmButton(title: "Copy", variant: .secondary, target: nil, action: nil)
+    private let runButton = HelmButton(title: "Run in Terminal", variant: .primary, target: nil, action: nil)
+    private let commandStack = NSStackView()
+
+    var onRunInTerminal: ((String) -> Void)?
+    /// Fires whenever the content's own fitting size may have changed (a
+    /// width recompute, or a height change from a status/command-block
+    /// toggle) - `ConsoleComposerController` forwards this straight to
+    /// `popover.contentSize`, the same explicit "compute then set" style
+    /// `ShiftSearchController.resizeToFit()` already uses.
+    var onSizeChanged: ((NSSize) -> Void)?
+    private var generatedCommand: String?
+    private var statusIsError = false
+
+    override func loadView() {
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: Self.minWidth, height: 170))
+        root.wantsLayer = true
+        view = root
+
+        iconTile.configure(symbol: "sparkles", tint: .violet)
+
+        titleLabel.font = .systemFont(ofSize: 13.5, weight: .semibold)
+        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let titleRow = NSStackView(views: [iconTile, titleLabel])
+        titleRow.orientation = .horizontal
+        titleRow.alignment = .centerY
+        titleRow.spacing = 10
+        titleRow.translatesAutoresizingMaskIntoConstraints = false
+
+        composerKicker.translatesAutoresizingMaskIntoConstraints = false
+        composerKicker.attributedStringValue = NSAttributedString(
+            string: "Command intent".uppercased(),
+            attributes: [.font: HelmType.kicker(), .kern: HelmType.kickerKern]
+        )
+
+        buildIntentField()
+
+        generateButton.target = self
+        generateButton.action = #selector(generateClicked)
+        generateButton.controlSize = .small
+        // `⌘⏎` fires Generate regardless of first responder - `NSWindow`'s
+        // `performKeyEquivalent:` traversal reaches this button before a
+        // command-modified key event ever reaches whichever view is first
+        // responder, so this works the same whether the intent field is
+        // focused or not. A plain Return inside the (now multi-line) intent
+        // field just inserts a newline, per this file's header.
+        generateButton.keyEquivalent = "\r"
+        generateButton.keyEquivalentModifierMask = [.command]
+
+        shortcutHintLabel.font = .systemFont(ofSize: 10)
+        shortcutHintLabel.textColor = HelmTheme.mutedInk(theme)
+        shortcutHintLabel.translatesAutoresizingMaskIntoConstraints = false
+        shortcutHintLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+
+        let footerSpacer = NSView()
+        footerSpacer.translatesAutoresizingMaskIntoConstraints = false
+        footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        generateButton.setContentHuggingPriority(.required, for: .horizontal)
+        generateButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        // The reference mockup's "hint on the left, Generate on the right"
+        // footer - `justify-content: space-between`'s AppKit equivalent is a
+        // flexible spacer between the two fixed-width ends (gotcha #10: a
+        // plain `.gravityAreas` row would not stretch anything to fill the
+        // gap on its own).
+        let footerRow = NSStackView(views: [shortcutHintLabel, footerSpacer, generateButton])
+        footerRow.orientation = .horizontal
+        footerRow.alignment = .centerY
+        footerRow.distribution = .fill
+        footerRow.spacing = 8
+        footerRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let cardStack = NSStackView(views: [intentScroll, footerRow])
+        cardStack.orientation = .vertical
+        cardStack.alignment = .leading
+        cardStack.spacing = HelmMetrics.s2
+        cardStack.translatesAutoresizingMaskIntoConstraints = false
+        composerCard.contentContainer.addSubview(cardStack)
+        composerCard.translatesAutoresizingMaskIntoConstraints = false
+
+        // A cheap, real addition per the task brief: a row of example intents
+        // that fill the field when clicked, matching the reference mockup's
+        // own example chips - see `Self.exampleIntents`'s doc comment for why
+        // these are static/generic rather than fetched from anywhere.
+        exampleButtons = Self.exampleIntents.map { intent in
+            let button = HelmButton(title: intent, variant: .secondary, size: .small)
+            button.target = self
+            button.action = #selector(exampleClicked(_:))
+            return button
+        }
+        examplesFlow.translatesAutoresizingMaskIntoConstraints = false
+        examplesFlow.setChips(exampleButtons)
+
+        statusLabel.font = .systemFont(ofSize: 11)
+        statusLabel.textColor = HelmTheme.mutedInk(theme)
+        statusLabel.lineBreakMode = .byWordWrapping
+        statusLabel.maximumNumberOfLines = 3
+        statusLabel.isHidden = true
+
+        buildCodeBlock()
+
+        copyButton.target = self
+        copyButton.action = #selector(copyClicked)
+        copyButton.controlSize = .small
+
+        runButton.target = self
+        runButton.action = #selector(runClicked)
+        runButton.controlSize = .small
+        runButton.keyEquivalent = "\r"
+
+        let actionRow = NSStackView(views: [copyButton, runButton])
+        actionRow.orientation = .horizontal
+        actionRow.spacing = 6
+
+        commandStack.orientation = .vertical
+        commandStack.alignment = .leading
+        commandStack.spacing = 8
+        commandStack.translatesAutoresizingMaskIntoConstraints = false
+        commandStack.addArrangedSubview(codeScroll)
+        commandStack.addArrangedSubview(actionRow)
+        commandStack.isHidden = true
+
+        let stack = NSStackView(views: [titleRow, composerKicker, composerCard, examplesFlow, statusLabel, commandStack])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.setCustomSpacing(HelmMetrics.s1, after: composerKicker)
+        stack.setCustomSpacing(HelmMetrics.s2, after: composerCard)
+        root.addSubview(stack)
+
+        rootWidthConstraint = root.widthAnchor.constraint(equalToConstant: Self.minWidth)
+
+        NSLayoutConstraint.activate([
+            rootWidthConstraint,
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -12),
+            titleRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            composerKicker.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            composerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            examplesFlow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            statusLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            commandStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            codeScroll.widthAnchor.constraint(equalTo: commandStack.widthAnchor),
+            codeScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 64),
+
+            cardStack.leadingAnchor.constraint(equalTo: composerCard.contentContainer.leadingAnchor, constant: HelmMetrics.s2),
+            cardStack.trailingAnchor.constraint(equalTo: composerCard.contentContainer.trailingAnchor, constant: -HelmMetrics.s2),
+            cardStack.topAnchor.constraint(equalTo: composerCard.contentContainer.topAnchor, constant: HelmMetrics.s2),
+            cardStack.bottomAnchor.constraint(equalTo: composerCard.contentContainer.bottomAnchor, constant: -HelmMetrics.s2),
+            footerRow.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
+            intentScroll.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
+            intentScroll.heightAnchor.constraint(equalToConstant: Self.intentHeight),
+            intentPlaceholderLabel.leadingAnchor.constraint(equalTo: intentScroll.leadingAnchor, constant: 4),
+            intentPlaceholderLabel.topAnchor.constraint(equalTo: intentScroll.topAnchor, constant: 6),
+            intentPlaceholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: intentScroll.trailingAnchor, constant: -4),
+        ])
+
+        applyTheme(theme)
+    }
+
+    /// The intent text view, now living inside `composerCard` rather than
+    /// carrying its own separate border/radius - mirrors `buildCodeBlock()`'s
+    /// own monospace styling below in spirit, but transparent rather than
+    /// separately filled, so the field and the footer row beneath it read as
+    /// one card surface (`fm/grandline-input-composer-redesign`), not two
+    /// stacked boxes. See this file's header for why the placeholder is a
+    /// manually-overlaid label rather than a built-in API (`NSTextView` has
+    /// none).
+    private func buildIntentField() {
+        intentTextView.isRichText = false
+        intentTextView.isEditable = true
+        intentTextView.isSelectable = true
+        intentTextView.font = .systemFont(ofSize: 12)
+        intentTextView.textContainerInset = NSSize(width: 4, height: 6)
+        intentTextView.isVerticallyResizable = true
+        intentTextView.isHorizontallyResizable = false
+        intentTextView.autoresizingMask = [.width]
+        intentTextView.textContainer?.widthTracksTextView = true
+        // Transparent, not its own fill: `composerCard.contentContainer`'s
+        // layer now paints the one shared sunken surface both the text view
+        // and the footer row sit on. (The original "give this its own fill"
+        // fix for the field being invisible against the popover's own
+        // background - see git history - is superseded by the card itself
+        // always being visibly bordered/filled regardless of what's inside
+        // it.)
+        intentTextView.drawsBackground = false
+        intentTextView.delegate = self
+        // Phase 0's D1 fix: the card lights from this view's first-responder
+        // state, not from `textDidBeginEditing` (which fires on the first
+        // keystroke, so a click used to look like it had missed).
+        composerCard.senseFocus(on: intentTextView)
+
+        intentScroll.documentView = intentTextView
+        intentScroll.hasVerticalScroller = true
+        intentScroll.borderType = .noBorder
+        intentScroll.drawsBackground = false
+        intentScroll.translatesAutoresizingMaskIntoConstraints = false
+
+        intentPlaceholderLabel.font = intentTextView.font
+        intentPlaceholderLabel.isEditable = false
+        intentPlaceholderLabel.isBordered = false
+        intentPlaceholderLabel.isSelectable = false
+        intentPlaceholderLabel.drawsBackground = false
+        intentPlaceholderLabel.lineBreakMode = .byWordWrapping
+        intentPlaceholderLabel.maximumNumberOfLines = 1
+        intentPlaceholderLabel.translatesAutoresizingMaskIntoConstraints = false
+        intentScroll.addSubview(intentPlaceholderLabel)
+    }
+
+    func textDidChange(_ notification: Notification) {
+        updateIntentPlaceholderVisibility()
+    }
+
+    private func updateIntentPlaceholderVisibility() {
+        intentPlaceholderLabel.isHidden = !intentTextView.string.isEmpty
+    }
+
+    /// One of `Self.exampleIntents`, clicked - fills and focuses the field,
+    /// matching the reference mockup's own click-to-fill example chips.
+    /// Deliberately does not auto-generate: the field is filled for the
+    /// captain to review/edit, exactly like typing it in by hand would be.
+    @objc private func exampleClicked(_ sender: HelmButton) {
+        guard let index = exampleButtons.firstIndex(where: { $0 === sender }) else { return }
+        intentTextView.string = Self.exampleIntents[index]
+        updateIntentPlaceholderVisibility()
+        view.window?.makeFirstResponder(intentTextView)
+    }
+
+    /// Mirrors `ToolInstance.codeEditor`'s own monospace/bordered/rounded
+    /// code-block styling (Tools page's YAML/JSON output) rather than a
+    /// plain `NSTextField`, so a generated command reads the same way any
+    /// other code output in this app does.
+    private func buildCodeBlock() {
+        codeTextView.isEditable = false
+        codeTextView.isSelectable = true
+        codeTextView.isRichText = false
+        codeTextView.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        codeTextView.textContainerInset = NSSize(width: 8, height: 8)
+        codeTextView.isVerticallyResizable = true
+        codeTextView.isHorizontallyResizable = false
+        codeTextView.autoresizingMask = [.width]
+        codeTextView.textContainer?.widthTracksTextView = true
+        codeTextView.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        codeTextView.backgroundColor = HelmField.fill(theme)
+
+        codeScroll.documentView = codeTextView
+        codeScroll.hasVerticalScroller = true
+        codeScroll.borderType = .noBorder
+        codeScroll.wantsLayer = true
+        codeScroll.layer?.cornerRadius = 8
+        codeScroll.layer?.borderWidth = 1
+        codeScroll.drawsBackground = false
+        codeScroll.layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(Self.fieldBorderAlpha).cgColor
+        codeScroll.translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    func reset() {
+        intentTextView.string = ""
+        updateIntentPlaceholderVisibility()
+        generatedCommand = nil
+        codeTextView.string = ""
+        commandStack.isHidden = true
+        statusLabel.isHidden = true
+        generateButton.isEnabled = true
+        intentTextView.isEditable = true
+        statusIsError = false
+        updateWidth(for: nil)
+    }
+
+    /// Re-themes every colored element in the popover - registered against
+    /// a live `ThemeManager.shared.observe` by `ConsoleComposerController`
+    /// (see this file's header), not just applied once at construction.
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let muted = HelmTheme.mutedInk(theme)
+        let line = HelmTheme.nsColor(theme.chromeLineHex)
+        let fieldFill = HelmField.fill(theme)
+
+        view.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        iconTile.applyTheme(theme)
+        titleLabel.textColor = ink
+        composerKicker.textColor = muted
+        composerCard.applyTheme(theme)
+        shortcutHintLabel.textColor = muted
+        statusLabel.textColor = statusIsError ? .systemRed : muted
+        HelmSelection.apply(to: intentTextView, theme: theme)
+        HelmSelection.apply(to: codeTextView, theme: theme)
+        codeTextView.textColor = ink
+        codeTextView.backgroundColor = fieldFill
+        codeScroll.layer?.borderColor = line.withAlphaComponent(Self.fieldBorderAlpha).cgColor
+        intentTextView.textColor = ink
+        intentTextView.insertionPointColor = ink
+        intentPlaceholderLabel.textColor = muted
+        // `HelmButton` (the example chips) themes itself.
+    }
+
+    /// Measures the generated command's longest line against the code
+    /// block's own font and clamps the result to `[minWidth, maxWidth]` -
+    /// `nil` (no command yet, or a fresh/reset popover) always floors to
+    /// `minWidth` so a short/empty state never leaves an oversized box.
+    private func computeWidth(for command: String?) -> CGFloat {
+        guard let command, !command.isEmpty else { return Self.minWidth }
+        let font = codeTextView.font ?? .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        let longestLine = command.components(separatedBy: "\n").max(by: { $0.count < $1.count }) ?? command
+        let textWidth = (longestLine as NSString).size(withAttributes: [.font: font]).width
+        // Stack leading/trailing insets (14pt each side) + the code block's
+        // own text-container inset (8pt each side) + a little breathing room
+        // for the vertical scroller.
+        let chrome: CGFloat = (14 * 2) + (8 * 2) + 24
+        return min(max(textWidth + chrome, Self.minWidth), Self.maxWidth)
+    }
+
+    private func updateWidth(for command: String?) {
+        rootWidthConstraint.constant = computeWidth(for: command)
+        view.layoutSubtreeIfNeeded()
+        onSizeChanged?(view.fittingSize)
+    }
+
+    func focusIntentField() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.view.window?.makeFirstResponder(self.intentTextView)
+        }
+    }
+
+    @objc private func generateClicked() {
+        let intent = intentTextView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !intent.isEmpty else { return }
+        generatedCommand = nil
+        commandStack.isHidden = true
+        statusIsError = false
+        statusLabel.isHidden = false
+        statusLabel.textColor = HelmTheme.mutedInk(theme)
+        statusLabel.stringValue = "Generating…"
+        generateButton.isEnabled = false
+        intentTextView.isEditable = false
+        updateWidth(for: nil)
+
+        ConsoleCommandComposer.generate(intent: intent) { [weak self] result in
+            guard let self else { return }
+            self.generateButton.isEnabled = true
+            self.intentTextView.isEditable = true
+            switch result {
+            case .success(let command):
+                self.statusLabel.isHidden = true
+                self.generatedCommand = command
+                self.codeTextView.string = command
+                self.commandStack.isHidden = false
+                self.updateWidth(for: command)
+            case .failure(let error):
+                self.statusIsError = true
+                self.statusLabel.isHidden = false
+                self.statusLabel.textColor = .systemRed
+                self.statusLabel.stringValue = error.message
+                self.generatedCommand = nil
+                self.commandStack.isHidden = true
+                self.updateWidth(for: nil)
+            }
+        }
+    }
+
+    @objc private func copyClicked() {
+        guard let command = generatedCommand else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(command, forType: .string)
+    }
+
+    /// The only path that ever sends the generated command anywhere - never
+    /// called automatically, only from this explicit button click (or its
+    /// ⏎ key equivalent while it has focus).
+    @objc private func runClicked() {
+        guard let command = generatedCommand else { return }
+        onRunInTerminal?(command)
+    }
+}

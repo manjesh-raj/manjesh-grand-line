@@ -1,4 +1,4 @@
-// Manjesh Grand Line - the WidgetKit extension.
+// Grand Line - the WidgetKit extension.
 //
 // The Sticky-note widget, small and medium. The reviewed mockup's own middle
 // panel ("Sticky · small"): a note on real paper, with the kicker, the

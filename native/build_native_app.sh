@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Build Manjesh Grand Line.app: a plain macOS app-bundle wrapper around the
+# Build Grand Line.app: a plain macOS app-bundle wrapper around the
 # native Swift cockpit (native/, SwiftTerm-based). No notarization, but the
 # bundle is codesigned with a stable local identity when one is available -
 # see "Local signing" below and native/README.md's "Local signing setup" section.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP_NAME="Manjesh Grand Line.app"
+APP_NAME="Grand Line.app"
 DIST_DIR="../dist"
 APP_DIR="$DIST_DIR/$APP_NAME"
-EXECUTABLE_NAME="FirstmateCockpit"
-BUNDLE_ID="com.firstmate.cockpit.native"
+EXECUTABLE_NAME="GrandLine"
+BUNDLE_ID="com.manjesh.grandline.native"
 # GL-18: derive the version from git rather than hardcoding it. `git describe`
 # gives `v0.2.0` on a tagged commit and `v0.2.0-7-g1a2b3c4` seven commits later,
 # which is exactly what a dev build should say. Falls back to a short SHA (or
@@ -34,12 +34,27 @@ fi
 VERSION="$SHORT_VERSION"
 BUILD_VERSION="${GIT_DESCRIBE#v}"
 ICON_SRC="../assets/icon.icns"
-SIGNING_IDENTITY="Firstmate Cockpit Local Dev"
+SIGNING_IDENTITY="Grand Line Local Dev"
+# The rename to "Grand Line" renamed this identity too, and a captain who has
+# not yet created the new certificate would otherwise silently drop to an
+# unsigned build - which gets a fresh ad-hoc code identity on every rebuild and
+# loses Keychain ACL trust for the saved SSH keys, the exact failure the rename
+# is careful to avoid everywhere else. So the old name is still accepted when
+# only it exists. Creating the new cert and deleting the old one is the clean
+# end state; native/README.md's "Local signing setup" has the commands.
+LEGACY_SIGNING_IDENTITY="Firstmate Cockpit Local Dev"
+if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGNING_IDENTITY"; then
+  if security find-identity -v -p codesigning 2>/dev/null | grep -q "$LEGACY_SIGNING_IDENTITY"; then
+    echo "Note: signing with the pre-rename identity \"$LEGACY_SIGNING_IDENTITY\"."
+    echo "      See native/README.md's \"Local signing setup\" to create \"$SIGNING_IDENTITY\"."
+    SIGNING_IDENTITY="$LEGACY_SIGNING_IDENTITY"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # F21 (App Intents / Shortcuts).
 #
-# The five `AppIntent` types in Sources/FirstmateCockpit/GrandLineAppIntents.swift
+# The five `AppIntent` types in Sources/GrandLine/GrandLineAppIntents.swift
 # compile into the binary with a plain `swift build`, but Shortcuts, Siri and
 # Spotlight do not find them that way: they are discovered from a
 # `Metadata.appintents` bundle inside Contents/Resources, produced by Xcode's
@@ -234,9 +249,9 @@ CANON
 # than failing the package, since everything else about the app is fine
 # without it.
 if [ -n "$APPINTENTS_PROCESSOR" ] && [ -x "$APPINTENTS_PROCESSOR" ]; then
-  CONST_VALUES="$(find .build -path "*release/FirstmateCockpit.build/FirstmateCockpit.swiftconstvalues" -print -quit)"
+  CONST_VALUES="$(find .build -path "*release/GrandLine.build/GrandLine.swiftconstvalues" -print -quit)"
   if [ -n "$CONST_VALUES" ]; then
-    find "$PWD/Sources/FirstmateCockpit" -name '*.swift' > "$APPINTENTS_WORK/sources.txt"
+    find "$PWD/Sources/GrandLine" -name '*.swift' > "$APPINTENTS_WORK/sources.txt"
     printf '%s\n' "$PWD/$CONST_VALUES" > "$APPINTENTS_WORK/constvals.txt"
     if "$APPINTENTS_PROCESSOR" \
         --output "$APP_DIR/Contents/Resources" \
@@ -268,9 +283,9 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Manjesh Grand Line</string>
+    <string>Grand Line</string>
     <key>CFBundleDisplayName</key>
-    <string>Manjesh Grand Line</string>
+    <string>Grand Line</string>
     <key>CFBundleIdentifier</key>
     <string>$BUNDLE_ID</string>
     <key>CFBundleExecutable</key>

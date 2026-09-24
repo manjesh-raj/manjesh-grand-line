@@ -1,10 +1,10 @@
-// Manjesh Grand Line - the WidgetKit extension.
+// Grand Line - the WidgetKit extension.
 //
 // The app's Daylight/Dusk tokens, in the one form a widget can use.
 //
 // ## Why the values are duplicated here, and what stops them drifting
 //
-// The extension is a separate Mach-O that cannot link `FirstmateCockpit`:
+// The extension is a separate Mach-O that cannot link `GrandLine`:
 // `HelmDaylight.swift` reaches `AppKit`, `ThemeManager` and `HelmContrast`
 // within a few lines, and pulling that in would mean pulling in the whole app.
 // So the two tables are literal hex strings in two binaries, which is exactly

@@ -1,7 +1,7 @@
 // swift-tools-version:5.9
 import PackageDescription
 
-// Manjesh Grand Line - native macOS app.
+// Grand Line - native macOS app.
 //
 // Phase 2: a tabbed console surface hosting two SwiftTerm terminals - a real
 // login shell and a live mirror of the first mate's tmux session - with Helm
@@ -14,7 +14,7 @@ import PackageDescription
 //
 // Built with `swift build` (Command Line Tools only - no Xcode / xcodebuild).
 let package = Package(
-    name: "FirstmateCockpit",
+    name: "GrandLine",
     platforms: [
         // SwiftTerm's AppKit views and the clipboard APIs used here need a recent macOS.
         .macOS(.v13)
@@ -116,7 +116,7 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "FirstmateCockpit",
+            name: "GrandLine",
             dependencies: ["SwiftTerm", "Yaml", "CWhisper"],
             swiftSettings: [
                 // GL-27: the 51 self-test suites (~10,500 lines, plus their

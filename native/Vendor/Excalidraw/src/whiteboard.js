@@ -1,4 +1,4 @@
-// Manjesh Grand Line - the Whiteboard destination's web side.
+// Grand Line - the Whiteboard destination's web side.
 //
 // Hand-written entry point for the bundle `native/Scripts/build-excalidraw-web.sh`
 // produces (see ../README.md). It mounts the real `@excalidraw/excalidraw`

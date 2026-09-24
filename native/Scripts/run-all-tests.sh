@@ -36,7 +36,7 @@
 # defines `FM_SELFTESTS` for the debug configuration, so `swift build` has every
 # suite and `swift build -c release` - what `native/build_native_app.sh`
 # assembles the shipped `.app` from - has none of them. That is why this script
-# builds and runs `.build/debug/FirstmateCockpit` and must keep doing so; a
+# builds and runs `.build/debug/GrandLine` and must keep doing so; a
 # release binary silently runs zero suites and exits 0, which would look exactly
 # like a clean run.
 #
@@ -84,8 +84,8 @@ for arg in "$@"; do
   esac
 done
 
-BIN=".build/debug/FirstmateCockpit"
-MAIN="Sources/FirstmateCockpit/main.swift"
+BIN=".build/debug/GrandLine"
+MAIN="Sources/GrandLine/main.swift"
 
 # Per-suite wall-clock bound, in seconds.
 #

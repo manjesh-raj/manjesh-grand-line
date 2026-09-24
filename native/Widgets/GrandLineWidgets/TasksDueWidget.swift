@@ -1,4 +1,4 @@
-// Manjesh Grand Line - the WidgetKit extension.
+// Grand Line - the WidgetKit extension.
 //
 // The Tasks-due widget, small and medium. The reviewed mockup's own two left
 // panels (`data/grandline-future-features-mockups-artifact/report.md` names

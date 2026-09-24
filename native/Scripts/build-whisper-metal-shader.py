@@ -31,7 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 METAL_DIR = ROOT / "Vendor/whisper.cpp/Sources/CWhisper/ggml-src/ggml-metal"
 COMMON_H = ROOT / "Vendor/whisper.cpp/Sources/CWhisper/ggml-src/ggml-common.h"
-OUT_SWIFT = ROOT / "Sources/FirstmateCockpit/WhisperMetalShaderSource.swift"
+OUT_SWIFT = ROOT / "Sources/GrandLine/WhisperMetalShaderSource.swift"
 
 PREAMBLE_PATTERN = re.compile(
     r'#if defined\(GGML_METAL_EMBED_LIBRARY\)\n'
@@ -77,7 +77,7 @@ def render_swift(merged_source: str) -> str:
 
     swift_source = f'''import Foundation
 
-// Manjesh Grand Line - native macOS app.
+// Grand Line - native macOS app.
 //
 // GENERATED FILE - do not hand-edit. Produced by
 // `native/Scripts/build-whisper-metal-shader.py` from the vendored

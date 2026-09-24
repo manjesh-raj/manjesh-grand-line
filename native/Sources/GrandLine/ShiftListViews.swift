@@ -1,0 +1,724 @@
+// Grand Line - native macOS app.
+//
+// Table-view-based list rendering for Shift's task and follow-up lists
+// (cockpit-shift-foundation). Both classes follow `DiffResultView.swift`'s
+// established shape verbatim: a single-column, view-based `NSTableView`
+// (never a plain `NSStackView` of one permanent row per item), because a
+// growing task/follow-up list is exactly the shape that blew up into a
+// 13-second layout pass there once it hit a few hundred rows - see
+// `DiffResultView.swift`'s header for the full measured writeup. An
+// `NSTableView` only builds row views for what's actually visible, so this
+// stays fast regardless of how many months of tasks accumulate.
+//
+// `fm/grandline-shift-task-row-cards` restyled both row views as bordered
+// cards, translating the Notification Center's own card treatment onto this
+// list - the captain liked that look and asked for it here too. As of
+// `fm/grandline-design-system-phase3` that treatment is no longer copied at
+// all: both rows below are thin adapters over the shared `HelmAccentRow`
+// (`HelmDesignSystem.swift`), which is that same recipe promoted out of the
+// Notification Center so five surfaces stopped re-implementing it. Same
+// visual language (a colored left accent bar, a small round icon badge, a
+// bold uppercase kicker label, body text, a trailing chip reusing
+// `ToolRowLayout.pill`), still a plain `NSView` row inside the same
+// `NSTableView` above, not a second rendering mechanism. Task rows: accent
+// bar/badge tint is the task's priority, or `.critical` when the task is
+// overdue (a stronger signal than priority alone); the badge is a real
+// interactive checkbox-alike (`ShiftTaskCheckBadge`), styled as an icon tile
+// but still a genuine `NSButton` so click-to-toggle is unchanged; kicker is
+// the task's project name (or a generic fallback); the chip is the
+// priority pill. Follow-up rows: accent/badge tint is done/pending status
+// (a `.good`/`.warn` split, orthogonal to priority so it doesn't just repeat
+// the chip); kicker is the status text; the chip is the priority pill -
+// double-click/right-click/Snooze are all unchanged, since only the badge's
+// *icon* changed, never its lack of a click target (follow-ups never had an
+// inline toggle - Done/Reopen/Snooze stay context-menu/double-click only).
+// Both rows grew taller to fit three lines of text plus card padding -
+// `heightOfRow` below was updated to match; `ShiftController`'s shared
+// `taskFollowUpPanelBodyHeight` (the fixed scroll clip both panels share)
+// was deliberately left alone, since a card list showing ~3-4 rows before
+// scrolling reads fine at that height, matching the Notification Center's
+// own panel.
+
+import AppKit
+
+// MARK: - Task list
+
+final class ShiftTaskListView: NSObject {
+    let tableView = HelmTableView()
+
+    private var theme: HelmTheme = ThemeManager.shared.theme
+    private var tasks: [ShiftTask] = []
+    private var projectsByID: [String: ShiftProject] = [:]
+    var onToggleCompleted: ((ShiftTask) -> Void)?
+    /// Double-clicking a row (anywhere but the checkbox) opens the Edit Task
+    /// sheet, pre-filled - phase 2's "clicking an existing task" behavior.
+    var onOpen: ((ShiftTask) -> Void)?
+    /// `fm/grandline-tasks-kanban-devops-split`: the list's half of the new
+    /// delete action - the board's cards carry the same item in their own
+    /// menu, and both end up at `ShiftController.confirmDeleteTask`.
+    var onDelete: ((ShiftTask) -> Void)?
+
+    // MARK: F7 - the focus timer
+
+    /// Start a focus session on this task, for `minutes`. Forwarded, never
+    /// applied here: this view has no timer, exactly as it has no store.
+    var onStartFocus: ((ShiftTask, Int) -> Void)?
+    /// Finish the session running on this task.
+    var onStopFocus: ((ShiftTask) -> Void)?
+    /// Which task is being focused right now, or `nil`.
+    ///
+    /// Held rather than asked for per row because a row view is reused by
+    /// the table and re-`configure`d constantly - a closure back into the
+    /// timer would be called once per visible row on every tick.
+    private var focusedTaskID: String?
+
+    /// Point the list at the running session (or at nothing) and repaint.
+    ///
+    /// A no-op when the id has not changed, because this is called from a
+    /// once-a-second timer tick: a `reloadData` per second would fight the
+    /// captain's own scrolling and re-run every row's layout for a chip
+    /// that is not on this page.
+    func setFocusedTask(id: String?) {
+        guard id != focusedTaskID else { return }
+        focusedTaskID = id
+        tableView.reloadData()
+    }
+
+    private static let columnID = NSUserInterfaceItemIdentifier("shiftTaskCol")
+    private static let rowViewID = NSUserInterfaceItemIdentifier("shiftTaskRow")
+    private static let emptyViewID = NSUserInterfaceItemIdentifier("shiftTaskEmpty")
+
+    override init() {
+        super.init()
+        let column = NSTableColumn(identifier: Self.columnID)
+        column.resizingMask = .autoresizingMask
+        tableView.addTableColumn(column)
+        tableView.headerView = nil
+        tableView.backgroundColor = .clear
+        tableView.selectionHighlightStyle = .none
+        tableView.gridStyleMask = []
+        tableView.intercellSpacing = NSSize(width: 0, height: 4)
+        tableView.autoresizingMask = [.width]
+        tableView.rowHeight = Self.rowHeight
+        tableView.dataSource = self
+        tableView.delegate = self
+        tableView.target = self
+        tableView.doubleAction = #selector(rowDoubleClicked)
+        tableView.menu = rowMenu()
+    }
+
+    /// The same shape `ShiftFollowUpListView` already uses below: one menu
+    /// built once, its items acting on whichever row was right-clicked
+    /// (`clickedTask`), with `menuNeedsUpdate` doing the per-row work.
+    private func rowMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Open\u{2026}", action: #selector(openClicked), keyEquivalent: "").withSymbol("arrow.up.forward.square"))
+        menu.addItem(.separator())
+        // UX7's reschedule gesture. A submenu rather than two flat items so
+        // the two dates read as one choice, which is what they are - and so a
+        // third horizon (F5's own "next Monday") can join without the menu
+        // growing a third top-level row.
+        let push = NSMenuItem(title: "Push to", action: nil, keyEquivalent: "").withSymbol("calendar.badge.clock")
+        let pushMenu = NSMenu()
+        for option in ShiftDuePush.allCases {
+            let item = NSMenuItem(title: option.menuTitle, action: #selector(pushClicked(_:)), keyEquivalent: "")
+            item.representedObject = option.rawValue
+            item.target = self
+            pushMenu.addItem(item)
+        }
+        push.submenu = pushMenu
+        menu.addItem(push)
+        menu.addItem(.separator())
+        // F7. A submenu for the same reason "Push to" is one: the durations
+        // are one choice, and the row's own button already carries the
+        // default so this is the "not 25 minutes" path.
+        let focus = NSMenuItem(title: "Focus for", action: nil, keyEquivalent: "").withSymbol("timer")
+        let focusMenu = NSMenu()
+        for minutes in FocusTimerEngine.durationChoices {
+            let item = NSMenuItem(title: "\(minutes) minutes", action: #selector(focusClicked(_:)), keyEquivalent: "")
+            item.representedObject = minutes
+            item.target = self
+            focusMenu.addItem(item)
+        }
+        focus.submenu = focusMenu
+        menu.addItem(focus)
+        menu.addItem(NSMenuItem(title: "Stop Focus", action: #selector(stopFocusClicked), keyEquivalent: "").withSymbol("stop.circle"))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Delete Task\u{2026}", action: #selector(deleteClicked), keyEquivalent: "").withSymbol("trash"))
+        for item in menu.items { item.target = self }
+        menu.delegate = self
+        return menu
+    }
+
+    private var clickedTask: ShiftTask? {
+        let row = tableView.clickedRow
+        guard row >= 0, row < tasks.count else { return nil }
+        return tasks[row]
+    }
+
+    /// UX7. Forwarded, never applied here: this view has no store, exactly as
+    /// it has no idea what deleting a task means (`onDelete`).
+    var onPushDue: ((ShiftTask, ShiftDuePush) -> Void)?
+
+    @objc private func pushClicked(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let option = ShiftDuePush(rawValue: raw),
+              let task = clickedTask else { return }
+        onPushDue?(task, option)
+    }
+
+    @objc private func focusClicked(_ sender: NSMenuItem) {
+        guard let minutes = sender.representedObject as? Int, let task = clickedTask else { return }
+        onStartFocus?(task, minutes)
+    }
+
+    @objc private func stopFocusClicked() { if let task = clickedTask { onStopFocus?(task) } }
+
+    @objc private func openClicked() { if let task = clickedTask { onOpen?(task) } }
+    @objc private func deleteClicked() { if let task = clickedTask { onDelete?(task) } }
+
+    /// Three text lines (kicker/title/meta) plus card padding - see the file
+    /// header for the card redesign this replaced a flat 44pt row with.
+    ///
+    /// Measured, not guessed: a fully-populated `HelmAccentRow` reports a
+    /// 75pt fitting height, and the row view insets it by 1pt top and bottom.
+    /// At the previous 74 the meta line's descenders clipped - visible in a
+    /// real render once the shared component brought the row onto the app's
+    /// one type scale (`HelmType.rowTitle`/`caption`, a touch larger than
+    /// this list's own former 13/10.5 pair).
+    /// Measured at chrome text scale 1.0; `scaledRowHeight` grows it with
+    /// the captain's own text-size setting (GL-32, audit §6.1).
+    static let baseRowHeight: CGFloat = 78
+    static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
+
+    @objc private func rowDoubleClicked() {
+        let row = tableView.clickedRow
+        guard row >= 0, row < tasks.count else { return }
+        onOpen?(tasks[row])
+    }
+
+    func setTasks(_ tasks: [ShiftTask], projects: [ShiftProject]) {
+        self.tasks = tasks
+        self.projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
+        tableView.reloadData()
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        // GL-32 (audit §6.1): a chrome-text-scale change arrives as an
+        // app-wide theme re-fire, so re-deriving the row height here is what
+        // makes a fixed-height list actually grow with the setting instead of
+        // clipping its descenders at "Larger".
+        tableView.rowHeight = Self.rowHeight
+        tableView.reloadData()
+    }
+}
+
+extension ShiftTaskListView: NSMenuDelegate {
+    /// An empty list still renders one row - the `HelmEmptyState` placeholder
+    /// - and a right-click on that must not offer to open or delete a task
+    /// that is not there.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let hasTask = clickedTask != nil
+        for item in menu.items where !item.isSeparatorItem { item.isEnabled = hasTask }
+        // F7: "Stop Focus" is only ever true of the one row that is being
+        // focused, and an enabled item that silently does nothing is worse
+        // than a disabled one.
+        if let stop = menu.items.first(where: { $0.title == "Stop Focus" }) {
+            stop.isEnabled = hasTask && clickedTask?.id == focusedTaskID
+        }
+    }
+}
+
+extension ShiftTaskListView: NSTableViewDataSource, NSTableViewDelegate {
+    func numberOfRows(in tableView: NSTableView) -> Int { max(tasks.count, 1) }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        tasks.isEmpty ? 120 : Self.rowHeight
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard !tasks.isEmpty else {
+            let empty = (tableView.makeView(withIdentifier: Self.emptyViewID, owner: nil) as? HelmEmptyState)
+                ?? { let v = HelmEmptyState(symbol: "checklist", body: "Nothing on your plate. Enjoy it."); v.identifier = Self.emptyViewID; return v }()
+            empty.applyTheme(theme)
+            return empty
+        }
+        let rowView = (tableView.makeView(withIdentifier: Self.rowViewID, owner: nil) as? ShiftTaskRowView)
+            ?? { let v = ShiftTaskRowView(); v.identifier = Self.rowViewID; return v }()
+        let task = tasks[row]
+        rowView.configure(task: task, project: task.projectID.flatMap { projectsByID[$0] }, theme: theme,
+                          isFocused: task.id == focusedTaskID,
+                          onToggle: { [weak self] in self?.onToggleCompleted?(task) },
+                          onFocus: { [weak self] in
+                              guard let self else { return }
+                              if task.id == self.focusedTaskID {
+                                  self.onStopFocus?(task)
+                              } else {
+                                  self.onStartFocus?(task, FocusTimerEngine.defaultMinutes)
+                              }
+                          })
+        // D1: a short list keeps its actions visible, because a captain who
+        // has never hovered a row cannot tell it has any. The same floor
+        // `HelmAccentRow` states for itself.
+        rowView.setActionReveal(tasks.count <= HelmAccentRow.alwaysRevealRowCount ? .always : .onAim)
+        return rowView
+    }
+}
+
+/// A real, clickable checkbox styled as a small round tinted tile (the
+/// notification card's own "icon in a badge" idiom, `IconTileView`'s circular
+/// cousin) rather than a bare system checkbox floating on its own - still a
+/// genuine `NSButton` with a real target/action, so click-to-toggle-complete
+/// is byte-for-byte the same behavior as before this restyle, only the
+/// drawing changed.
+// Not `private` - reused by `ShiftProjectDetailView.swift`'s own task/subtask
+// checklist rows (`fm/grandline-shift-project-detail-theming`) rather than a
+// second tinted-circle checkbox being hand-rolled there.
+final class ShiftTaskCheckBadge: NSButton {
+    static let size: CGFloat = 26
+
+    private let diameter: CGFloat
+
+    init(size: CGFloat = ShiftTaskCheckBadge.size) {
+        diameter = size
+        super.init(frame: .zero)
+        title = ""
+        isBordered = false
+        imagePosition = .imageOnly
+        setButtonType(.momentaryChange)
+        wantsLayer = true
+        layer?.cornerRadius = diameter / 2
+        layer?.borderWidth = 1.5
+        translatesAutoresizingMaskIntoConstraints = false
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        setAccessibilityRole(.checkBox)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: diameter),
+            heightAnchor.constraint(equalToConstant: diameter),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// `tint` drives both the outline (unchecked) and the fill (checked) -
+    /// the same single accent color that also drives this row's own accent
+    /// bar, mirroring `HelmAccentRow`'s badge/accent-bar pairing.
+    func setChecked(_ checked: Bool, tint: NSColor) {
+        image = checked
+            ? NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Completed")?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: diameter * 0.42, weight: .bold))
+            : nil
+        contentTintColor = .white
+        layer?.backgroundColor = checked ? tint.cgColor : NSColor.clear.cgColor
+        layer?.borderColor = tint.cgColor
+        setAccessibilityValue(checked)
+        toolTip = checked ? "Mark incomplete" : "Mark complete"
+    }
+}
+
+/// One task row: a thin adapter over the app's shared `HelmAccentRow`
+/// (`HelmDesignSystem.swift`, audit §6.3 component 2). Everything visual -
+/// accent bar, badge, kicker, body, meta, chip, card - now comes from that
+/// one component, which is `NotificationRowView`'s recipe promoted; what is
+/// left here is the part that is genuinely about a Shift task: which tint a
+/// priority (or an overdue due date) maps to, what the kicker and meta lines
+/// say, and the completion checkbox in the badge's place.
+///
+/// The checkbox is a real `ShiftTaskCheckBadge` passed as the row's
+/// `leadingControl`, so click-to-toggle-complete is byte-for-byte the
+/// behaviour it has always had, and the table's own double-click-to-open is
+/// untouched.
+private final class ShiftTaskRowView: NSView {
+    private let checkBadge = ShiftTaskCheckBadge()
+    /// F7's "Start 25 min" / "Stop", in the row's own trailing accessory
+    /// slot - the slot `HelmAccentRow` already owns for exactly this, and
+    /// which D1 fades in on hover so fifty rows are not fifty visible
+    /// buttons.
+    private let focusButton = HelmButton(title: "Start 25 min", variant: .quiet, size: .small,
+                                         symbol: "timer")
+    private let row: HelmAccentRow
+    private var onToggle: (() -> Void)?
+    private var onFocus: (() -> Void)?
+
+    init() {
+        focusButton.setContentHuggingPriority(.required, for: .horizontal)
+        focusButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        row = HelmAccentRow(leadingControl: checkBadge, trailingAccessory: focusButton)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        checkBadge.target = self
+        checkBadge.action = #selector(checkboxClicked)
+        focusButton.target = self
+        focusButton.action = #selector(focusClicked)
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func setActionReveal(_ reveal: HelmAccentRow.ActionReveal) { row.actionReveal = reveal }
+
+    func configure(task: ShiftTask, project: ShiftProject?, theme: HelmTheme,
+                   isFocused: Bool,
+                   onToggle: @escaping () -> Void,
+                   onFocus: @escaping () -> Void) {
+        self.onToggle = onToggle
+        self.onFocus = onFocus
+
+        let isOverdue: Bool = {
+            guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
+            return due < Calendar.current.startOfDay(for: Date())
+        }()
+        let (priorityText, priorityTint): (String, HelmTint) = {
+            switch task.priority {
+            case .high: return ("High", .critical)
+            case .normal: return ("Normal", .info)
+            case .low: return ("Low", .neutral)
+            }
+        }()
+        // Overdue is a stronger, more urgent signal than priority alone - it
+        // wins the accent bar/badge tint when both are present, while the
+        // chip keeps reporting priority.
+        let tint: HelmTint = isOverdue ? .critical : priorityTint
+
+        var bits: [String] = []
+        if let due = task.dueDate { bits.append(ShiftDateFormatting.friendly(due)) }
+        if !task.subtasks.isEmpty {
+            let done = task.subtasks.filter(\.done).count
+            bits.append("\(done)/\(task.subtasks.count) subtasks")
+        }
+
+        row.configure(HelmAccentRow.Content(
+            tint: tint,
+            kicker: project?.name ?? "Task",
+            title: task.title,
+            meta: bits.joined(separator: " \u{00B7} "),
+            // A rendered thumbnail would blow out this row's fixed height the
+            // way `fm/grandline-shift-panel-height-scroll-fix` already fixed
+            // once; the real image only ever shows in the editor sheet.
+            titleAccessorySymbol: task.hasAttachment ? "paperclip" : nil,
+            chipText: priorityText,
+            chipTint: priorityTint
+        ), theme: theme)
+
+        checkBadge.setChecked(task.status == .completed,
+                              tint: HelmTheme.nsColor(tint.hex(in: theme)))
+
+        // F7. The button is the one control on this row that changes its
+        // *meaning* rather than its state, so it says which it is - the
+        // mockup draws the focused row's action as "Stop" and every other
+        // row's as "Start 25 min".
+        focusButton.title = isFocused ? "Stop" : "Start \(FocusTimerEngine.defaultMinutes) min"
+        focusButton.tint = isFocused ? .accent : nil
+        focusButton.toolTip = isFocused
+            ? "Finish the focus session on this task"
+            : "Start a \(FocusTimerEngine.defaultMinutes) minute focus session on this task"
+        // A completed task has nothing left to focus on, and a timer bound
+        // to one would log time against work that is already done.
+        focusButton.isHidden = task.status == .completed
+    }
+
+    @objc private func checkboxClicked() { onToggle?() }
+
+    @objc private func focusClicked() { onFocus?() }
+}
+
+// MARK: - Follow-up list
+
+/// The Snooze preset options (phase 2 acceptance criteria). `.custom` opens a
+/// small date/time picker sheet - `ShiftController` owns presenting it, since
+/// this list view has no window context of its own.
+enum ShiftSnoozeOption {
+    case minutes30, hour1, tomorrow, nextWeek, custom
+}
+
+final class ShiftFollowUpListView: NSObject {
+    let tableView = HelmTableView()
+
+    private var theme: HelmTheme = ThemeManager.shared.theme
+    private var items: [ShiftFollowUp] = []
+
+    /// Edit (double-click, or the context menu's Edit item).
+    var onEdit: ((ShiftFollowUp) -> Void)?
+    /// See `ShiftTaskListView.onDelete` - the same action, for the record
+    /// type that sits beside it.
+    var onDelete: ((ShiftFollowUp) -> Void)?
+    /// Done (toggles pending <-> done).
+    var onToggleDone: ((ShiftFollowUp) -> Void)?
+    /// Snooze - the concrete recompute/persist happens in `ShiftController`,
+    /// which knows "now" and how to present the Custom picker.
+    var onSnooze: ((ShiftFollowUp, ShiftSnoozeOption) -> Void)?
+
+    private static let columnID = NSUserInterfaceItemIdentifier("shiftFollowUpCol")
+    private static let rowViewID = NSUserInterfaceItemIdentifier("shiftFollowUpRow")
+    private static let emptyViewID = NSUserInterfaceItemIdentifier("shiftFollowUpEmpty")
+
+    override init() {
+        super.init()
+        let column = NSTableColumn(identifier: Self.columnID)
+        column.resizingMask = .autoresizingMask
+        tableView.addTableColumn(column)
+        tableView.headerView = nil
+        tableView.backgroundColor = .clear
+        tableView.selectionHighlightStyle = .none
+        tableView.gridStyleMask = []
+        tableView.intercellSpacing = NSSize(width: 0, height: 4)
+        tableView.autoresizingMask = [.width]
+        tableView.rowHeight = Self.rowHeight
+        tableView.dataSource = self
+        tableView.delegate = self
+        tableView.target = self
+        tableView.doubleAction = #selector(rowDoubleClicked)
+        tableView.menu = rowMenu()
+    }
+
+    /// Matches `ShiftTaskListView.rowHeight` - both lists share the same card
+    /// treatment, so their rows are the same height for a consistent
+    /// side-by-side look (`fm/grandline-shift-side-by-side-composer-height`).
+    static var rowHeight: CGFloat { ShiftTaskListView.rowHeight }
+
+    func setItems(_ items: [ShiftFollowUp]) {
+        self.items = items
+        tableView.reloadData()
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        // GL-32 (audit §6.1): a chrome-text-scale change arrives as an
+        // app-wide theme re-fire, so re-deriving the row height here is what
+        // makes a fixed-height list actually grow with the setting instead of
+        // clipping its descenders at "Larger".
+        tableView.rowHeight = Self.rowHeight
+        tableView.reloadData()
+    }
+
+    @objc private func rowDoubleClicked() {
+        let row = tableView.clickedRow
+        guard row >= 0, row < items.count else { return }
+        onEdit?(items[row])
+    }
+
+    private var clickedItem: ShiftFollowUp? {
+        let row = tableView.clickedRow
+        guard row >= 0, row < items.count else { return nil }
+        return items[row]
+    }
+
+    private func rowMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Mark Done", action: #selector(doneClicked), keyEquivalent: "").withSymbol("checkmark.circle"))
+        menu.addItem(NSMenuItem(title: "Reopen", action: #selector(reopenClicked), keyEquivalent: "").withSymbol("arrow.uturn.backward"))
+        menu.addItem(.separator())
+        let snooze = NSMenuItem(title: "Snooze", action: nil, keyEquivalent: "").withSymbol("clock")
+        let snoozeMenu = NSMenu()
+        snoozeMenu.addItem(NSMenuItem(title: "30 Minutes", action: #selector(snooze30), keyEquivalent: "").withSymbol("clock"))
+        snoozeMenu.addItem(NSMenuItem(title: "1 Hour", action: #selector(snoozeHour), keyEquivalent: "").withSymbol("clock"))
+        snoozeMenu.addItem(NSMenuItem(title: "Tomorrow", action: #selector(snoozeTomorrow), keyEquivalent: "").withSymbol("sun.max"))
+        snoozeMenu.addItem(NSMenuItem(title: "Next Week", action: #selector(snoozeNextWeek), keyEquivalent: "").withSymbol("calendar"))
+        snoozeMenu.addItem(.separator())
+        snoozeMenu.addItem(NSMenuItem(title: "Custom\u{2026}", action: #selector(snoozeCustom), keyEquivalent: "").withSymbol("slider.horizontal.3"))
+        for item in snoozeMenu.items { item.target = self }
+        snooze.submenu = snoozeMenu
+        menu.addItem(snooze)
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Edit\u{2026}", action: #selector(editClicked), keyEquivalent: "").withSymbol("pencil"))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Delete Follow-up\u{2026}", action: #selector(deleteClicked), keyEquivalent: "").withSymbol("trash"))
+        for item in menu.items { item.target = self }
+        menu.delegate = self
+        return menu
+    }
+
+    @objc private func doneClicked() { if let item = clickedItem { onToggleDone?(item) } }
+    @objc private func reopenClicked() { if let item = clickedItem { onToggleDone?(item) } }
+    @objc private func editClicked() { if let item = clickedItem { onEdit?(item) } }
+    @objc private func snooze30() { if let item = clickedItem { onSnooze?(item, .minutes30) } }
+    @objc private func snoozeHour() { if let item = clickedItem { onSnooze?(item, .hour1) } }
+    @objc private func snoozeTomorrow() { if let item = clickedItem { onSnooze?(item, .tomorrow) } }
+    @objc private func snoozeNextWeek() { if let item = clickedItem { onSnooze?(item, .nextWeek) } }
+    @objc private func snoozeCustom() { if let item = clickedItem { onSnooze?(item, .custom) } }
+    @objc private func deleteClicked() { if let item = clickedItem { onDelete?(item) } }
+}
+
+extension ShiftFollowUpListView: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let isDone = clickedItem?.status == .done
+        for item in menu.items {
+            switch item.action {
+            case #selector(doneClicked): item.isHidden = isDone
+            case #selector(reopenClicked): item.isHidden = !isDone
+            default: break
+            }
+        }
+    }
+}
+
+extension ShiftFollowUpListView: NSTableViewDataSource, NSTableViewDelegate {
+    func numberOfRows(in tableView: NSTableView) -> Int { max(items.count, 1) }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        items.isEmpty ? 110 : Self.rowHeight
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard !items.isEmpty else {
+            let empty = (tableView.makeView(withIdentifier: Self.emptyViewID, owner: nil) as? HelmEmptyState)
+                ?? { let v = HelmEmptyState(symbol: "bell", body: "No follow-ups pending."); v.identifier = Self.emptyViewID; return v }()
+            empty.applyTheme(theme)
+            return empty
+        }
+        let rowView = (tableView.makeView(withIdentifier: Self.rowViewID, owner: nil) as? ShiftFollowUpRowView)
+            ?? { let v = ShiftFollowUpRowView(); v.identifier = Self.rowViewID; return v }()
+        rowView.configure(item: items[row], theme: theme)
+        return rowView
+    }
+}
+
+/// One follow-up row, the same thin adapter over `HelmAccentRow` as
+/// `ShiftTaskRowView` above - but the two orthogonal signals swap roles.
+/// Follow-ups have no inline toggle (Done/Reopen/Snooze stay context-menu /
+/// double-click only, unchanged), so the accent bar and badge here read
+/// done/pending status - a stronger "does this still need me" glance than
+/// priority alone - while priority moves into the trailing chip.
+private final class ShiftFollowUpRowView: NSView {
+    private let row = HelmAccentRow()
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func configure(item: ShiftFollowUp, theme: HelmTheme) {
+        let isDone = item.status == .done
+        let (priorityText, priorityTint): (String, HelmTint) = {
+            switch item.priority {
+            case .high: return ("High", .critical)
+            case .normal: return ("Normal", .info)
+            case .low: return ("Low", .neutral)
+            }
+        }()
+        var bits: [String] = []
+        if let at = item.followUpAt { bits.append(ShiftDateFormatting.friendly(at, time: item.followUpTime)) }
+
+        row.configure(HelmAccentRow.Content(
+            tint: isDone ? .good : .warn,
+            kicker: isDone ? "Done" : "Pending",
+            title: item.title,
+            meta: bits.joined(separator: " \u{00B7} "),
+            badgeSymbol: isDone ? "checkmark" : "bell.fill",
+            chipText: priorityText,
+            chipTint: priorityTint
+        ), theme: theme)
+    }
+}
+
+// MARK: - Shared date formatting
+
+enum ShiftDateFormatting {
+    private static let iso: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.calendar = Calendar(identifier: .gregorian)
+        return f
+    }()
+
+    private static let hhmm: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        f.calendar = Calendar(identifier: .gregorian)
+        return f
+    }()
+
+    private static let friendlyTime: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("jm")
+        return f
+    }()
+
+    static func date(from yyyyMMdd: String) -> Date? { iso.date(from: yyyyMMdd) }
+
+    /// "Today" / "Tomorrow" / "Aug 12" - never a raw ISO string in the UI.
+    static func friendly(_ yyyyMMdd: String) -> String {
+        guard let date = date(from: yyyyMMdd) else { return yyyyMMdd }
+        let cal = Calendar.current
+        if cal.isDateInToday(date) { return "Today" }
+        if cal.isDateInTomorrow(date) { return "Tomorrow" }
+        if cal.isDateInYesterday(date) { return "Yesterday" }
+        return monthDayFormatter.string(from: date)
+    }
+
+    // GL-P3: built once. `DateFormatter` construction is measurably
+    // expensive and this carries no per-call state - the same treatment
+    // `FleetLogFeed`/`HealthCardView` already give theirs.
+    private static let monthDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("MMMd")
+        return f
+    }()
+
+    /// "16 Sep" - the month-day part alone, with no relative "Today"/
+    /// "Tomorrow" substitution.
+    ///
+    /// Exposed for F22's compact popover (`CompactModeDigest`), which decides
+    /// relative wording against an *injected* clock and so cannot use
+    /// `friendly(_:)`: that one resolves "Today" against `Calendar.current`
+    /// and the real `Date()`, which a suite pinning a fabricated instant
+    /// would read as a second, disagreeing clock. Sharing this formatter
+    /// rather than building a fourth one is GL-P3's own rule for this file.
+    static func monthDay(_ date: Date) -> String { monthDayFormatter.string(from: date) }
+
+    /// "Today at 3:00 PM" / "Aug 12" (no time shown when `hhmm` is nil).
+    static func friendly(_ yyyyMMdd: String, time hhmmStr: String?) -> String {
+        let dayPart = friendly(yyyyMMdd)
+        guard let hhmmStr, let t = hhmm.date(from: hhmmStr) else { return dayPart }
+        return "\(dayPart) at \(friendlyTime.string(from: t))"
+    }
+
+    /// Just the clock part of an `"HH:MM"` string, in the captain's own
+    /// locale ("3:00 PM" / "15:00") - what a calendar chip prefixes a task
+    /// title with. Shares `friendly(_:time:)`'s own formatter rather than
+    /// building a second one (GL-P3: `DateFormatter` construction is
+    /// measurably expensive, and a grid builds one chip per task per day).
+    static func clock(_ hhmmStr: String) -> String {
+        guard let t = hhmm.date(from: hhmmStr) else { return hhmmStr }
+        return friendlyTime.string(from: t)
+    }
+
+    /// Combines a `"YYYY-MM-DD"` date string with an optional `"HH:MM"` time
+    /// string into one `Date` - the shared "read the two persisted scalar
+    /// fields back into a real moment in time" used by both sorting (task due
+    /// dates) and Snooze's relative-offset math (follow-up date + time).
+    /// Falls back to local midnight when `timeStr` is nil/unparseable.
+    static func dateTime(from yyyyMMdd: String?, time timeStr: String?) -> Date? {
+        guard let yyyyMMdd, let base = date(from: yyyyMMdd) else { return nil }
+        guard let timeStr, let t = hhmm.date(from: timeStr) else { return base }
+        var comps = Calendar.current.dateComponents([.year, .month, .day], from: base)
+        let timeComps = Calendar.current.dateComponents([.hour, .minute], from: t)
+        comps.hour = timeComps.hour
+        comps.minute = timeComps.minute
+        return Calendar.current.date(from: comps)
+    }
+
+    /// Splits a real `Date` back into the `("YYYY-MM-DD", "HH:MM")` pair the
+    /// YAML layer persists - the inverse of `dateTime(from:time:)`, used by
+    /// Snooze to write its recomputed moment back to the two scalar fields.
+    static func components(from date: Date) -> (dateStr: String, timeStr: String) {
+        (iso.string(from: date), hhmm.string(from: date))
+    }
+}

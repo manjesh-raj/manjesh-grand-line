@@ -1,0 +1,765 @@
+// Grand Line - native macOS app.
+//
+// Fix 3 (theme-audit task): the real Review destination, replacing the
+// "coming soon" `PlaceholderViewController`. Same data source as Overview's
+// "Ready to merge" section (`OpenPRsSource.fetch()` + `FleetDataSource.
+// mergedPRs`, the native port of `backend/openprs.py`) - that call already
+// returns the complete, de-duplicated union of every open PR discovered
+// across the captain's project clones and every PR a tracked task points
+// at, so nothing here narrows it further. Rows are grouped by forge
+// (github/bitbucket), matching the web cockpit's Review view
+// (`backend/static/index.html`), each with title, repo, PR number, checks
+// state, and the same Review/Merge actions Overview's list already wires up.
+//
+// fm/grandline-review-page-redesign: brought this page up to the same design
+// language `FleetController`/`VaultController`/every other card-bearing
+// destination already uses, closing the gap a captain-supplied Lavish
+// prototype flagged (this page was still a flat list of plain pill-and-
+// button rows with no page header, no stats and no colour-by-status
+// styling). Every piece below maps to an existing Helm* primitive:
+//   - a `HelmType.pageTitle(.serif)` hero + a live subtitle + a quiet
+//     `HelmButton` refresh, mirroring `FleetController.buildHeader` exactly
+//     (the hero title carries real information - "Ready to merge" - rather
+//     than restating the destination's own name, which is the distinction
+//     `HelmType.pageTitle`'s own doc comment draws and the reason Phase 7
+//     removed this page's *old* literal "Review" title in the first place).
+//   - a `statsRow` of three `HelmStatTile`s (open / ready-to-merge / checks
+//     running), the same "tint only when the number is itself a signal" rule
+//     `FleetController.rebuildStats` already follows.
+//   - each PR row is now a `HelmAccentRow` (status pill + Review/Merge in
+//     the row's own trailing area - see `fm/grandline-review-row-status-
+//     pill-move` below - instead of a hand-rolled tinted pill row),
+//     colour-and-chip-mapped from the PR's own `checks` state - the same
+//     real field this page already read, just finally driving the row's
+//     colour instead of only a muted "no checks" label everywhere.
+//   - each forge's `HelmCard` header gained a plain, neutral count badge
+//     (the prototype's `.count` span) instead of baking the number into the
+//     title string, plus a subtitle naming the account/org the PRs in that
+//     section belong to (the prototype's "manjesh-raj" under "GitHub"),
+//     derived from a real PR's own already-fetched URL rather than a
+//     hardcoded name.
+// No new data source, no invented colours/fonts/spacing - everything below
+// is `HelmTheme`/`HelmMetrics`/`HelmType` tokens already in this codebase.
+//
+// fm/grandline-review-page-stuck-loading-fix: each forge's PR list moved
+// from a plain `NSStackView` of permanent `HelmAccentRow` cards to
+// `ReviewPRListView` (`ReviewPRListView.swift`) - a demand-driven
+// `NSTableView`. #221's `HelmAccentRow` rows are a deeper nested-stack
+// construction than the flat row they replaced, and a plain `NSStackView`
+// lays out every arranged subview at once regardless of how many are
+// actually on screen - the exact "hundreds of rows in an NSStackView blow up
+// catastrophically" pathology this codebase has already hit (and fixed the
+// same way) at least three times (`DiffResultView.swift`, `BlockView.swift`,
+// the Tools-page resize handler). At the captain's real open-PR count - a
+// scale #221's own synthetic-data verification never exercised - the
+// `view.layoutSubtreeIfNeeded()` call at the end of `render()` could take so
+// long that the main thread never got back around to repainting, so the
+// screen stayed on the last frame it drew (the loading skeleton) - "stuck
+// forever on Loading" - even though `render()` had already flipped every
+// `isHidden` flag needed to show the real page. See `ReviewPRListView.swift`
+// for the full root-cause writeup and the fix.
+
+import AppKit
+
+final class ReviewController: NSViewController, DaylightDrillActions {
+
+    private let scroll = NSScrollView()
+    private let contentStack = NSStackView()
+
+    /// The hero title. "Ready to merge" is real information (which PRs need
+    /// Daylight §6.4: "the old in-page hero titles and the old top-bar title
+    /// both disappear - the drill header IS the destination name". This page's
+    /// hero ("Ready to merge", a serif line Phase 7 had already trimmed once
+    /// from a literal "Review") is gone with it; its live count survives as
+    /// the drill header's own subtitle, which is exactly what §6.4 specifies a
+    /// subtitle is for.
+    /// Seeded rather than left blank: `render` does not fill it in until the
+    /// background PR fetch returns - so an empty string here left the header
+    /// row with nothing under the hero for the first second or two.
+    private let subtitleLabel = NSTextField(labelWithString: "Open pull requests across your projects")
+    /// A filled accent pill, matching Setup > Updates' own "Refresh"
+    /// (`FleetController`, `VaultController`, `HomeCanvasController`,
+    /// `KubernetesController` follow the same recipe) rather than a
+    /// page-local muted `.quiet` look.
+    private let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")
+    /// Kept so `loadView` can pin it to the content column's full width -
+    /// without that the row shrinks to its content and Refresh stops being
+    /// at the page's trailing edge.
+    private var headerRow: NSStackView!
+
+    /// Three `HelmStatTile`s: open PRs (accent), ready to merge (good), and
+    /// checks running (warn) - the same three numbers the per-row chips
+    /// below already carry, just totalled. Rebuilt on every render like
+    /// `FleetController.rebuildStats`.
+    private let statsRow = NSStackView()
+    private var statTiles: [HelmStatTile] = []
+
+    private let githubHeader = NSTextField(labelWithString: "")
+    private let githubSubtitle = NSTextField(wrappingLabelWithString: "")
+    private let githubCountLabel = NSTextField(labelWithString: "0")
+    private var githubList: ReviewPRListView!
+    private let bitbucketHeader = NSTextField(labelWithString: "")
+    private let bitbucketSubtitle = NSTextField(wrappingLabelWithString: "")
+    private let bitbucketCountLabel = NSTextField(labelWithString: "0")
+    private var bitbucketList: ReviewPRListView!
+    private let otherHeader = NSTextField(labelWithString: "")
+    private let otherSubtitle = NSTextField(wrappingLabelWithString: "")
+    private let otherCountLabel = NSTextField(labelWithString: "0")
+    private var otherList: ReviewPRListView!
+    /// The "Other" section (forge-less, task-tracked PRs the forge scan
+    /// hasn't matched yet) only renders when non-empty - unlike GitHub/
+    /// Bitbucket, which always show (matching `FleetController`'s "In
+    /// flight"/"Ready to merge" sections, always visible with their own
+    /// empty-state card), this bucket has no meaning for a shop that only
+    /// uses supported forges and would otherwise be permanent visual noise.
+    private var otherSection = NSView()
+
+    /// Shown in place of the three forge sections above until the first
+    /// `render(...)` lands - see the loading-state note on `buildLoadingState`.
+    private let loadingContainer = NSView()
+    /// D3: a layout-shaped placeholder, not a spinner. See `HelmSkeleton.swift`.
+    private let loadingSkeleton = HelmSkeletonList()
+    private let loadingLabel = NSTextField(labelWithString: "Loading open PRs\u{2026}")
+    private var githubSectionView: NSView!
+    /// Every `HelmCard` on this page, re-themed together. Replaces this
+    /// file's own copy of the card theming loop (audit §3.2).
+    private var cards: [HelmCard] = []
+    private var bitbucketSectionView: NSView!
+    private var hasLoadedOnce = false
+
+    /// Each forge card's neutral "N" badge - the prototype's `.count` span
+    /// (mono, muted, a faint ink wash) - and the label it wraps, paired so
+    /// `applyTheme` can re-colour both without a second lookup.
+    private var countBadges: [(container: NSView, label: NSTextField)] = []
+
+    private var theme: HelmTheme = ThemeManager.shared.theme
+    private var isLoading = false
+    /// The PR set behind what is currently on screen - see `render`.
+    private var lastRenderedPRs: [MergedPR] = []
+    /// The last fetch's degraded-state explanation, or `nil` for a clean
+    /// fetch. Read by `drillHeaderSubtitle`, so a header on a machine that
+    /// could not reach a forge says so instead of reporting a confident zero
+    /// (GL-14).
+    private var lastFetchFailure: String?
+
+    /// Set by `AppShellController`: "my live numbers changed, re-read my
+    /// subtitle". See `DaylightDrillActions.drillHeaderSubtitle`.
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    /// fm/grandline-sidebar-badges: fires every time `render` recomputes the
+    /// list this page shows. `AppShellController` forwards it to
+    /// `NotificationSources.setPRReady`. It used to also drive the rail's own
+    /// badge, which Daylight Phase 2 removed along with the rail.
+    ///
+    /// It carries the *ready-to-merge* count, not the open count, and that is
+    /// the fix rather than a rename: the notification it feeds is titled
+    /// "N PRs ready to merge" and is an `.actionNeeded` entry that "clears
+    /// when merged", so a captain with fifty open red PRs was being told all
+    /// fifty were waiting to be merged. It reads
+    /// `FleetDataSource.readyToMergeCount` now, like every other surface
+    /// saying those words.
+    var onReadyToMergeCountChanged: ((Int) -> Void)?
+
+    /// F4: the same `mergedPRs` list this page just rendered, forwarded so a
+    /// "PR is green and ready to merge" OS banner (with a real Merge button)
+    /// can be posted for it - see `FleetNotifier.reconcilePRs`. Deliberately
+    /// the whole list rather than a pre-filtered one: the filter is
+    /// `FleetDataSource.canMerge`, and that gate belongs in exactly one place.
+    /// Wired in `AppShellController`, alongside the callback above,
+    /// so this rides Review's existing refresh triggers and adds no poll.
+    var onPRsChanged: (([MergedPR]) -> Void)?
+
+    override func loadView() {
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 940, height: 720))
+        root.wantsLayer = true
+        view = root
+
+        // `FlippedView` (not a plain `NSView`), matching `SettingsController`'s
+        // established Fix 4 pattern and now `FleetController`'s: a non-flipped
+        // document view puts y=0 at its *bottom*, so before data arrives -
+        // while content is still shorter than the viewport, since every
+        // forge stack starts with zero arranged subviews - AppKit rests it
+        // against the bottom of the clip view, leaving a blank gap the size
+        // of the shortfall sitting above it, with the header pushed down
+        // into (or past) that gap. Once rows are added and the content
+        // grows, it snaps back up - exactly the "empty area above the
+        // header for several seconds" bug. A flipped document view pins
+        // y=0 to the top always, so the header never moves.
+        let content = FlippedView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+
+        let header = buildHeader()
+        buildStatsRow()
+        let loadingSection = buildLoadingState()
+
+        githubList = ReviewPRListView(emptyTitle: "No open PRs here", emptyBody: "This forge has nothing waiting on you right now.",
+                                      actionTarget: self, reviewAction: #selector(reviewPR(_:)), mergeAction: #selector(mergePR(_:)),
+                                      checksVisuals: checksVisuals)
+        bitbucketList = ReviewPRListView(emptyTitle: "No open PRs here", emptyBody: "This forge has nothing waiting on you right now.",
+                                         actionTarget: self, reviewAction: #selector(reviewPR(_:)), mergeAction: #selector(mergePR(_:)),
+                                         checksVisuals: checksVisuals)
+        otherList = ReviewPRListView(emptyTitle: "No open PRs here", emptyBody: "This forge has nothing waiting on you right now.",
+                                     actionTarget: self, reviewAction: #selector(reviewPR(_:)), mergeAction: #selector(mergePR(_:)),
+                                     checksVisuals: checksVisuals)
+
+        let githubSection = buildSection(header: githubHeader, subtitle: githubSubtitle, countLabel: githubCountLabel,
+                                         iconSymbol: "chevron.left.forwardslash.chevron.right",
+                                         title: "GitHub", list: githubList)
+        let bitbucketSection = buildSection(header: bitbucketHeader, subtitle: bitbucketSubtitle, countLabel: bitbucketCountLabel,
+                                            iconSymbol: "water.waves", title: "Bitbucket", list: bitbucketList)
+        otherSection = buildSection(header: otherHeader, subtitle: otherSubtitle, countLabel: otherCountLabel,
+                                    iconSymbol: "arrow.triangle.branch", title: "Other", list: otherList)
+        githubSectionView = githubSection
+        bitbucketSectionView = bitbucketSection
+
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 20
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(header)
+        contentStack.addArrangedSubview(loadingSection)
+        contentStack.addArrangedSubview(statsRow)
+        contentStack.addArrangedSubview(githubSection)
+        contentStack.addArrangedSubview(bitbucketSection)
+        contentStack.addArrangedSubview(otherSection)
+
+        // The stats row and three forge sections stay hidden behind the
+        // loading skeleton until the first successful `render(...)` - see
+        // `buildLoadingState`.
+        statsRow.isHidden = true
+        githubSection.isHidden = true
+        bitbucketSection.isHidden = true
+        otherSection.isHidden = true
+
+        content.addSubview(contentStack)
+        NSLayoutConstraint.activate([
+            contentStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
+            contentStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
+            contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
+            contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -28),
+            headerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            loadingSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            statsRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            githubSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            bitbucketSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            otherSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+        ])
+
+        scroll.documentView = content
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: root.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+        ])
+
+        ThemeManager.shared.observe { [weak self, weak root] theme in
+            self?.theme = theme
+            root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+            self?.applyTheme()
+        }
+    }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        // cockpit-native-fixes5: force the pending Auto Layout pass before
+        // touching scroll position - see FleetController.viewWillAppear's
+        // matching comment for why this matters specifically on the very
+        // first appearance (isHidden was true, so this view was never laid
+        // out until right now, in the same tick as this call).
+        view.layoutSubtreeIfNeeded()
+        scrollToTop()
+        refresh()
+    }
+
+    /// The document view (`content`, a `FlippedView`) puts y=0 at its top,
+    /// but a freshly laid-out `NSScrollView` can still leave the clip view's
+    /// bounds wherever the last layout pass settled - so force it back
+    /// explicitly on every appearance rather than trusting the default.
+    /// Mirrors `SettingsController.scrollToTop`.
+    private func scrollToTop() {
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
+    // MARK: Building the static chrome
+
+    /// What is left of this page's own header once §6.4's drill header owns
+    /// the title and the actions: nothing but the live count line, which the
+    /// drill header shows as its subtitle and this keeps for the one case the
+    /// header cannot express - a degraded fetch's own explanation, which is a
+    /// sentence rather than a count.
+    ///
+    /// `headerRow` stays a real (if now single-view) row so `loadView`'s
+    /// width tie and `render`'s `subtitleLabel` writes both keep working
+    /// untouched - a restyle that rewrote the render path would be a
+    /// behaviour change, and §7 is explicit that Review's fetch/degraded-state
+    /// logic is unchanged.
+    private func buildHeader() -> NSView {
+        subtitleLabel.font = HelmType.body()
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        subtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        refreshButton.target = self
+        refreshButton.action = #selector(refreshTapped)
+        refreshButton.toolTip = "Refresh open PRs"
+        refreshButton.setContentHuggingPriority(.required, for: .horizontal)
+        refreshButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        refreshButton.translatesAutoresizingMaskIntoConstraints = false
+
+        let row = NSStackView(views: [subtitleLabel])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.distribution = .fill
+        row.spacing = HelmMetrics.s3
+        row.translatesAutoresizingMaskIntoConstraints = false
+        headerRow = row
+        return row
+    }
+
+    private func buildStatsRow() {
+        statsRow.orientation = .horizontal
+        statsRow.distribution = .fillEqually
+        statsRow.spacing = 10
+        statsRow.translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    /// A skeleton that occupies the content area under the header from the
+    /// very first frame - the GitHub/Bitbucket/Other sections stay hidden
+    /// (and animation-free) until the first `render(...)` lands, so there is
+    /// never an interval where the page shows nothing but a collapsed,
+    /// empty-looking stack of cards while `refresh()`'s background fetch
+    /// (real `gh`/Bitbucket network calls) is in flight.
+    private func buildLoadingState() -> NSView {
+        // D3: the page arrives in the shape of the list that is coming,
+        // rather than as a grey system spinner over a sentence. The rows
+        // land in the same geometry the skeleton occupied, so nothing jumps.
+        loadingLabel.font = HelmType.caption()
+        loadingLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [loadingLabel, loadingSkeleton])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = HelmMetrics.s3
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        loadingContainer.wantsLayer = true
+        loadingContainer.layer?.cornerRadius = 10
+        loadingContainer.translatesAutoresizingMaskIntoConstraints = false
+        loadingContainer.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: loadingContainer.leadingAnchor, constant: HelmMetrics.s3),
+            stack.trailingAnchor.constraint(equalTo: loadingContainer.trailingAnchor, constant: -HelmMetrics.s3),
+            stack.topAnchor.constraint(equalTo: loadingContainer.topAnchor, constant: HelmMetrics.s4),
+            stack.bottomAnchor.constraint(equalTo: loadingContainer.bottomAnchor, constant: -HelmMetrics.s4),
+        ])
+        return loadingContainer
+    }
+
+    /// One `HelmStatTile` - the app's shared stat tile. Mirrors
+    /// `FleetController.statTile` exactly: the tile themes itself, this only
+    /// tracks the live instance so a theme change can reach it.
+    private func statTile(icon: String, value: String, label: String, tint: HelmTint? = nil) -> NSView {
+        let tile = HelmStatTile(symbol: icon, value: value, caption: label, tint: tint)
+        statTiles.append(tile)
+        return tile
+    }
+
+    /// One `HelmCard` per section - the shared container from
+    /// `HelmDesignSystem.swift`. The caller keeps its own title/subtitle
+    /// labels, since neither's text is fixed at build time: the title never
+    /// changes per render now that the live count moved into its own neutral
+    /// badge (the prototype's `.count` span) rather than being baked into the
+    /// title string, and the subtitle (the prototype's account/org name
+    /// under "GitHub") is only known once the first PR in that forge has
+    /// actually loaded - see `render`'s `subtitle(for:)` call.
+    private func buildSection(header: NSTextField, subtitle: NSTextField, countLabel: NSTextField, iconSymbol: String, title: String, list: ReviewPRListView) -> HelmCard {
+        header.stringValue = title
+        subtitle.stringValue = ""
+        subtitle.isHidden = true
+
+        countLabel.font = HelmType.metric(11, weight: .medium)
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let badge = NSView()
+        badge.wantsLayer = true
+        badge.layer?.cornerRadius = 5
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.addSubview(countLabel)
+        NSLayoutConstraint.activate([
+            countLabel.leadingAnchor.constraint(equalTo: badge.leadingAnchor, constant: 6),
+            countLabel.trailingAnchor.constraint(equalTo: badge.trailingAnchor, constant: -6),
+            countLabel.topAnchor.constraint(equalTo: badge.topAnchor, constant: 1),
+            countLabel.bottomAnchor.constraint(equalTo: badge.bottomAnchor, constant: -1),
+        ])
+        countBadges.append((container: badge, label: countLabel))
+
+        let card = HelmCard()
+        card.setHeader(symbol: iconSymbol, titleLabel: header, subtitleLabel: subtitle, actions: [badge])
+        card.setBody(list, insets: HelmCard.contentInsets)
+        cards.append(card)
+        return card
+    }
+
+    // MARK: Drill header (Daylight §6.4)
+
+    /// This page's own primary action, hoisted into the shell's drill header.
+    /// Still the same `HelmButton` instance `refresh()` enables and disables -
+    /// the header positions it, it does not own it.
+    var drillHeaderActions: [NSView] { [refreshButton] }
+
+    /// §6.4's live subtitle. Derived from the same list the page has already
+    /// rendered (`lastRenderedPRs`) and the one shared definition of
+    /// readiness (`FleetDataSource.readyToMergeCount`).
+    ///
+    /// This comment used to claim the header, the stat tiles and the Merge
+    /// buttons "can never disagree" - and they did, in a single audit
+    /// screenshot, because only two of the three routed through that gate
+    /// while the tile counted bare `checks == "green"` on its own. Sharing a
+    /// *function* is what makes the claim true; sharing an intention did not.
+    ///
+    /// GL-14's rule rides along: a failed fetch reports its own explanation
+    /// rather than a confident "0 open".
+    var drillHeaderSubtitle: String? {
+        if let failure = lastFetchFailure { return failure }
+        guard hasLoadedOnce else { return "Checking your projects\u{2026}" }
+        let ready = FleetDataSource.readyToMergeCount(lastRenderedPRs)
+        let open = lastRenderedPRs.count
+        guard open > 0 else { return "No open pull requests right now" }
+        return "\(open) open \u{00B7} \(ready) ready to merge"
+    }
+
+    // MARK: Refresh
+
+    /// The captain's own Refresh click always runs a real sweep - never
+    /// answered from `FleetTaskCache`'s coalescing window (3.5).
+    @objc private func refreshTapped() { refresh(forceRefresh: true) }
+
+    /// fm/grandline-sidebar-badges: lets `AppShellController` trigger this
+    /// page's own existing refresh at app launch, so the rail's Review badge
+    /// has a real count before the captain ever visits this destination -
+    /// not a new poll loop, just an earlier call to the one that already
+    /// exists (also fired again by every `viewWillAppear` visit and the
+    /// manual refresh button, unchanged).
+    func refreshIfNeeded() { refresh() }
+
+    /// `forceRefresh` bypasses `FleetTaskCache`'s coalescing window (3.5) -
+    /// the captain's own Refresh click always runs a real sweep, an automatic
+    /// page-visit refresh is exactly what the window is for.
+    private func refresh(forceRefresh: Bool = false) {
+        guard !isLoading else { return }
+        isLoading = true
+        refreshButton.isEnabled = false
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let tasks = FleetDataSource.parseTasks(forceRefresh: forceRefresh)
+            let fetched = OpenPRsSource.fetchDetailed()
+            let merged = FleetDataSource.mergedPRs(openPRs: fetched.prs, tasks: tasks)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isLoading = false
+                self.refreshButton.isEnabled = true
+                self.render(merged, fetchFailure: fetched.failureSummary)
+            }
+        }
+    }
+
+    // MARK: Rendering
+
+    /// `fetchFailure` (GL-14) is a short reason string when the forge scan
+    /// behind `prs` did not fully succeed. It is the difference between "no
+    /// open pull requests" (a real all-clear) and "couldn't check" - the worst
+    /// possible ambiguity on a page whose only job is telling the captain
+    /// whether something needs them. A partial failure still renders whatever
+    /// did come back; it just stops claiming the rest is clear.
+    private func render(_ prs: [MergedPR], fetchFailure: String? = nil) {
+        if !hasLoadedOnce {
+            hasLoadedOnce = true
+            loadingContainer.isHidden = true
+            statsRow.isHidden = false
+            githubSectionView.isHidden = false
+            bitbucketSectionView.isHidden = false
+        }
+
+        onReadyToMergeCountChanged?(FleetDataSource.readyToMergeCount(prs))
+        onPRsChanged?(prs)
+        // F6: kept so `mergePR` can name the PR it merged (number, title,
+        // repo) in the captain's log. The merge button's own identifier
+        // carries only the task id and the URL - deliberately, since that is
+        // the argv contract (GL-38) - so the display fields have to come from
+        // the list this page already rendered.
+        lastRenderedPRs = prs
+        lastFetchFailure = fetchFailure
+        // §6.4: the header's subtitle is live, and the shell owns the header -
+        // so the page asks for a re-read rather than writing into it.
+        onDrillSubtitleChanged?()
+
+        let sorted = prs.sorted { ($0.repo, $0.number ?? 0) < ($1.repo, $1.number ?? 0) }
+        let github = sorted.filter { $0.forge == "github" }
+        let bitbucket = sorted.filter { $0.forge == "bitbucket" }
+        let other = sorted.filter { $0.forge != "github" && $0.forge != "bitbucket" }
+
+        if let fetchFailure {
+            subtitleLabel.stringValue = prs.isEmpty
+                ? fetchFailure
+                : "\(prs.count) open pull request\(prs.count == 1 ? "" : "s") found - \(fetchFailure)"
+        } else if prs.isEmpty {
+            subtitleLabel.stringValue = "No open pull requests right now"
+        } else {
+            let forgesRepresented = [github, bitbucket, other].filter { !$0.isEmpty }.count
+            subtitleLabel.stringValue = "\(prs.count) open pull request\(prs.count == 1 ? "" : "s") "
+                + "across \(forgesRepresented) forge\(forgesRepresented == 1 ? "" : "s")"
+        }
+
+        rebuildStats(prs)
+
+        githubList.setPRs(github, theme: theme, unavailable: fetchFailure)
+        githubCountLabel.stringValue = fetchFailure != nil && github.isEmpty ? "?" : "\(github.count)"
+        applyAccountSubtitle(githubSubtitle, prs: github)
+        bitbucketList.setPRs(bitbucket, theme: theme, unavailable: fetchFailure)
+        bitbucketCountLabel.stringValue = fetchFailure != nil && bitbucket.isEmpty ? "?" : "\(bitbucket.count)"
+        applyAccountSubtitle(bitbucketSubtitle, prs: bitbucket)
+        otherSection.isHidden = other.isEmpty
+        if !other.isEmpty {
+            otherList.setPRs(other, theme: theme)
+            otherCountLabel.stringValue = "\(other.count)"
+            applyAccountSubtitle(otherSubtitle, prs: other)
+        }
+
+        applyTheme()
+
+        // cockpit-native-fixes5: the loading skeleton's content is much
+        // shorter than the real data, so the first successful render() here
+        // can grow the document's height substantially while the view is
+        // already visible - re-pin the scroll position defensively, matching
+        // FleetController.render's identical fix.
+        view.layoutSubtreeIfNeeded()
+        scrollToTop()
+    }
+
+    /// The three headline numbers: open PRs (accent - every PR here is one
+    /// the captain has waiting on them), ready to merge (good - checks have
+    /// passed) and checks running (warn) - the same `checks` state each row's
+    /// own chip already reads, just totalled. A tint only ever means "this
+    /// number is itself a signal" (`FleetController.rebuildStats`'s rule):
+    /// the open-PR count and the two status counts qualify, so all three are
+    /// tinted here, unlike a page mixing signal and plain counts.
+    private func rebuildStats(_ prs: [MergedPR]) {
+        for v in statsRow.arrangedSubviews {
+            statsRow.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        statTiles.removeAll()
+
+        // One definition of "ready to merge", shared with this page's own
+        // drill subtitle a few inches above it and with every Overview
+        // surface - see `FleetDataSource.readyToMerge`. This tile used to
+        // count bare `checks == "green"`, which is why the audit caught it
+        // reading 34 beside a subtitle reading 0 in the same screenshot.
+        let ready = FleetDataSource.readyToMergeCount(prs)
+        let running = prs.filter { $0.checks == "pending" }.count
+
+        statsRow.addArrangedSubview(statTile(icon: "arrow.triangle.branch", value: "\(prs.count)", label: "open PRs", tint: .accent))
+        statsRow.addArrangedSubview(statTile(icon: "checkmark.circle", value: "\(ready)", label: "ready to merge", tint: .good))
+        statsRow.addArrangedSubview(statTile(icon: "clock", value: "\(running)", label: "checks running", tint: .warn))
+    }
+
+    /// The prototype's forge-card subtitle (`manjesh-raj` under "GitHub") -
+    /// the account/org the PRs in that section actually belong to, derived
+    /// from a real PR's own already-fetched `url` rather than a hardcoded
+    /// name. Hidden (not left blank) when the section is empty or no PR's
+    /// URL parses, matching this page's existing "hide, don't show empty
+    /// chrome" convention for the "Other" section above.
+    private func applyAccountSubtitle(_ label: NSTextField, prs: [MergedPR]) {
+        guard let account = prs.compactMap({ accountName(from: $0.url) }).first else {
+            label.isHidden = true
+            label.stringValue = ""
+            return
+        }
+        label.stringValue = account
+        label.isHidden = false
+    }
+
+    /// Pulls the account/org/workspace segment out of a PR's own URL -
+    /// `github.com/<account>/<repo>/pull/<n>` or
+    /// `bitbucket.org/<account>/<repo>/pull-requests/<n>` both put it as the
+    /// first path component right after the host.
+    private func accountName(from urlString: String) -> String? {
+        guard let url = URL(string: urlString) else { return nil }
+        let parts = url.pathComponents.filter { $0 != "/" }
+        return parts.first
+    }
+
+    /// Maps a PR to the row's tint and chip text.
+    ///
+    /// **The chip reads "Ready to merge" only for a PR that genuinely is**,
+    /// i.e. one `FleetDataSource.readyToMerge` counts - green checks *and* a
+    /// tracked task, which is the same `canMerge` gate the Merge button and
+    /// `bin/fm-pr-merge.sh` itself use.
+    ///
+    /// Review #3's B2. #392 unified every *count* on this page onto that one
+    /// definition and left the row chip on the old bare `checks == "green"`
+    /// test, so the exact defect that fix was written to kill was still on
+    /// screen one row down: 29 rows each wearing a green "Ready to merge" chip
+    /// under a subtitle reading "38 open \u{00B7} 0 ready to merge" and a stat tile
+    /// reading 0. All three numbers were right; the *chip* was answering a
+    /// different question under the same words.
+    ///
+    /// Green-but-untracked keeps the green tint - its checks really did pass,
+    /// and that is worth seeing - but says "Checks green", which is the true
+    /// and strictly weaker claim. It is also the honest one for this app:
+    /// with no task id there is no working merge path from here at all (GL-38),
+    /// which is why that row carries no Merge button either.
+    private func checksVisuals(_ pr: MergedPR) -> (tint: HelmTint, chipLabel: String) {
+        switch pr.checks {
+        case "green":
+            return (.good, FleetDataSource.canMerge(pr) ? "Ready to merge" : "Checks green")
+        case "red": return (.critical, "Checks failing")
+        case "pending": return (.warn, "Checks running")
+        default: return (.neutral, "No checks")
+        }
+    }
+
+    // MARK: Actions (identical to `FleetController.reviewPR`/`mergePR`)
+
+    @objc private func reviewPR(_ sender: NSButton) {
+        guard let raw = sender.identifier?.rawValue, let url = URL(string: raw) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func mergePR(_ sender: NSButton) {
+        guard let raw = sender.identifier?.rawValue else { return }
+        let parts = raw.components(separatedBy: "\u{0}")
+        guard parts.count == 2 else { return }
+        // GL-38: `parts[0]` is the task id, and it has been sitting in this
+        // identifier since the row was written - it just never reached
+        // `mergePR`, so `bin/fm-pr-merge.sh` rejected every invocation on its
+        // own argument count. `ReviewPRListView` only builds this button for a
+        // PR that has one (see `FleetDataSource.canMerge`), so an empty task id
+        // here means the identifier's shape changed and the merge must not run.
+        let taskID = parts[0]
+        let prURL = parts[1]
+        guard !taskID.isEmpty else {
+            AppLog.ui.error("merge button carried no task id - refusing to run fm-pr-merge.sh")
+            return
+        }
+
+        // G3: themed. Return still merges, as it did here.
+        guard HelmConfirm.confirm(
+            title: "Merge this PR?",
+            body: prURL,
+            confirmTitle: "Merge",
+            symbol: "arrow.triangle.merge",
+            hue: RailDestination.review.domainHue) else { return }
+
+        sender.isEnabled = false
+        sender.title = "Merging\u{2026}"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = FleetDataSource.mergePR(taskID: taskID, url: prURL)
+            DispatchQueue.main.async {
+                if result.ok {
+                    // F6: append to the captain's log from the one code path
+                    // that already knows a merge really happened - never from
+                    // a poller noticing the PR disappeared later.
+                    self?.recordMergeInFleetLog(url: prURL)
+                    self?.refresh()
+                } else {
+                    sender.isEnabled = true
+                    sender.title = "Merge"
+                    HelmConfirm.problem(title: "Merge failed", body: result.message)
+                }
+            }
+        }
+    }
+
+    /// F6: one `.merge` event, phrased by `FleetLogSources` from the PR row
+    /// this page already rendered. A PR that is somehow no longer in that
+    /// list still gets an event - the merge genuinely happened, and losing
+    /// the title is a better outcome than losing the record.
+    private func recordMergeInFleetLog(url: String) {
+        let pr = lastRenderedPRs.first { $0.url == url }
+        FleetLogStore.shared.append(FleetLogSources.merged(
+            prNumber: pr?.number, prTitle: pr?.title ?? "", repo: pr?.repo ?? "", url: url))
+    }
+
+    // MARK: Theme
+
+    private func applyTheme() {
+        view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+        for card in cards { card.applyTheme(theme) }
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        let line = HelmTheme.nsColor(theme.chromeLineHex)
+        let muted = HelmTheme.mutedInk(theme)
+
+        subtitleLabel.textColor = muted
+        // `refreshButton` is a `HelmButton` and themes itself - never set
+        // `contentTintColor` on one, `restyle()` owns that property.
+
+        loadingContainer.layer?.backgroundColor = surface.cgColor
+        loadingContainer.layer?.borderWidth = 1
+        loadingContainer.layer?.borderColor = line.withAlphaComponent(0.4).cgColor
+        loadingLabel.textColor = muted
+        loadingSkeleton.applyTheme(theme)
+
+        for tile in statTiles { tile.applyTheme(theme) }
+        githubList?.applyTheme(theme)
+        bitbucketList?.applyTheme(theme)
+        otherList?.applyTheme(theme)
+        for (container, label) in countBadges {
+            container.layer?.backgroundColor = ink.withAlphaComponent(0.08).cgColor
+            label.textColor = muted
+        }
+    }
+
+    // MARK: Probe / self-test surface
+    //
+    // `fm/grandline-review-page-stuck-loading-fix`: real, live handles for a
+    // self-test to drive the exact loading -> loaded state transition
+    // `render(_:)` performs - without needing a real `gh`/Bitbucket network
+    // fetch (`refresh()`'s job, deliberately untouched here) and without
+    // launching the app itself. See `ReviewControllerLoadingStateSelfTest.swift`.
+
+    /// Calls the real `render(_:)` with caller-supplied data, bypassing
+    /// `refresh()`'s background fetch entirely.
+    func debugRender(_ prs: [MergedPR]) { render(prs) }
+
+    /// GL-14: drive the fetch-failed rendering path without a real network
+    /// failure. See `ReviewControllerLoadingStateSelfTest`.
+    func debugRender(_ prs: [MergedPR], fetchFailure: String?) { render(prs, fetchFailure: fetchFailure) }
+
+    var debugSubtitle: String { subtitleLabel.stringValue }
+
+    var debugHasLoadedOnce: Bool { hasLoadedOnce }
+    var debugIsLoadingSkeletonVisible: Bool { !loadingContainer.isHidden }
+    var debugAreForgeSectionsVisible: Bool { !githubSectionView.isHidden && !bitbucketSectionView.isHidden }
+    var debugGithubRowCount: Int { githubList.debugRowCount }
+    // GL-27: new probes carry the guard from the start (see
+    // `ShiftController`'s matching note).
+    #if FM_SELFTESTS
+    /// Daylight Phase 4 slice 1: the real button state of a rendered GitHub
+    /// row, so `DaylightDrillPageSelfTest` can re-assert §7's "gated exactly
+    /// as today" merge gate through the page rather than by rebuilding a list
+    /// of its own (`ReviewPRRowButtonLayoutSelfTest` does the latter, for the
+    /// geometry half).
+    func debugGitHubRowButtonState(at row: Int) -> (reviewFrame: NSRect, mergeFrame: NSRect, mergeHidden: Bool)? {
+        githubList.debugRowButtonState(at: row)
+    }
+
+    /// The chip text a rendered GitHub row is showing - review #3's B2. The
+    /// defect was a row's own wording disagreeing with the counts above it, so
+    /// this reads the painted label rather than re-deriving it.
+    func debugGitHubRowChipText(at row: Int) -> String? { githubList.debugRowChipText(at: row) }
+
+    /// Every stat tile as rendered, so a suite can read what the captain sees
+    /// rather than what `rebuildStats` intended. This page's own drill
+    /// subtitle and its "ready to merge" tile once disagreed in one
+    /// screenshot; only reading both off the rendered views catches that.
+    var debugStatTiles: [(value: String, caption: String)] { statTiles.map { $0.debugMetric } }
+    #endif
+    var debugBitbucketRowCount: Int { bitbucketList.debugRowCount }
+}

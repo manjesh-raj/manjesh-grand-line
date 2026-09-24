@@ -27,12 +27,27 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 EXT_NAME="GrandLineWidgets"
-APP_BUNDLE_ID="com.firstmate.cockpit.native"
+APP_BUNDLE_ID="com.manjesh.grandline.native"
 EXT_BUNDLE_ID="$APP_BUNDLE_ID.widgets"
 SRC_DIR="Widgets/$EXT_NAME"
 OUT_DIR=".build/widgets"
 APPEX="$OUT_DIR/$EXT_NAME.appex"
-SIGNING_IDENTITY="Firstmate Cockpit Local Dev"
+SIGNING_IDENTITY="Grand Line Local Dev"
+# The rename to "Grand Line" renamed this identity too, and a captain who has
+# not yet created the new certificate would otherwise silently drop to an
+# unsigned build - which gets a fresh ad-hoc code identity on every rebuild and
+# loses Keychain ACL trust for the saved SSH keys, the exact failure the rename
+# is careful to avoid everywhere else. So the old name is still accepted when
+# only it exists. Creating the new cert and deleting the old one is the clean
+# end state; native/README.md's "Local signing setup" has the commands.
+LEGACY_SIGNING_IDENTITY="Firstmate Cockpit Local Dev"
+if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGNING_IDENTITY"; then
+  if security find-identity -v -p codesigning 2>/dev/null | grep -q "$LEGACY_SIGNING_IDENTITY"; then
+    echo "Note: signing with the pre-rename identity \"$LEGACY_SIGNING_IDENTITY\"."
+    echo "      See native/README.md's \"Local signing setup\" to create \"$SIGNING_IDENTITY\"."
+    SIGNING_IDENTITY="$LEGACY_SIGNING_IDENTITY"
+  fi
+fi
 # Interactive widgets are macOS 14 (Button(intent:) inside a widget). The host
 # app stays on 13.0 - only this bundle needs 14.
 DEPLOYMENT_TARGET="14.0"
@@ -49,7 +64,7 @@ done
 
 # The shared app/extension contract. One file, deliberately - see its header.
 SHARED_SOURCES=(
-  "Sources/FirstmateCockpit/WidgetSharedContract.swift"
+  "Sources/GrandLine/WidgetSharedContract.swift"
 )
 EXT_SOURCES=(
   "$SRC_DIR/WidgetPalette.swift"
@@ -159,7 +174,7 @@ fi
 echo "✓ Built: $(cd "$OUT_DIR" && pwd)/$EXT_NAME.appex"
 
 if [ "$EMBED" -eq 1 ]; then
-  APP_DIR="../dist/Manjesh Grand Line.app"
+  APP_DIR="../dist/Grand Line.app"
   if [ ! -d "$APP_DIR" ]; then
     echo "⚠️  $APP_DIR does not exist - run build_native_app.sh first. Nothing embedded."
     exit 0

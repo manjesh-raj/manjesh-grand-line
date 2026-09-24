@@ -76,7 +76,7 @@ defines them directly as string literals matching the pinned tag/commit above in
 
 The `large-v3-turbo` ggml model (quantized `q5_0`, ~547MB) is never bundled into the app or this
 vendor directory - `WhisperModel.swift` downloads it on demand into
-`~/Library/Application Support/FirstmateCockpit/whisper/`, from the same host/path convention
+`~/Library/Application Support/GrandLine/whisper/`, from the same host/path convention
 upstream's own `models/download-ggml-model.sh` uses
 (`https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin` - live-
 verified to resolve to a real ~547MB file before wiring this up, not guessed). Upstream publishes
@@ -117,13 +117,13 @@ build:
    re-synced from upstream.
 2. **That merged source is embedded in the compiled Swift binary itself, not shipped as an SPM
    resource.** The script base64-encodes it into a generated file,
-   `Sources/FirstmateCockpit/WhisperMetalShaderSource.swift` (same convention `CaptainIcon.swift`
+   `Sources/GrandLine/WhisperMetalShaderSource.swift` (same convention `CaptainIcon.swift`
    established for its embedded PNG - see that bullet in the top-level `CLAUDE.md` for the full
    "why not an SPM resource bundle" reasoning, which applies identically here: `build_native_app.sh`
    never copies any SwiftPM-generated `*.bundle` directory into the assembled `.app`, so a resource
    bundle would work in `swift run` and silently break in the packaged app). At runtime,
    `WhisperMetalRuntime.swift` decodes this text, writes it to a real file under
-   `~/Library/Application Support/FirstmateCockpit/whisper/` (the same directory
+   `~/Library/Application Support/GrandLine/whisper/` (the same directory
    `WhisperModelManager` already resolves), and points whisper.cpp's own
    `GGML_METAL_PATH_RESOURCES` environment variable there - a real, documented upstream mechanism
    for exactly this "no bundle" situation, checked by `ggml_metal_library_init`
@@ -181,7 +181,7 @@ for the process's lifetime.
 All of the following were run against a real downloaded `ggml-large-v3-turbo-q5_0.bin` and
 whisper.cpp's own real `samples/jfk.wav` fixture, via
 `FM_RUN_WHISPER_ENGINE_TESTS=1 FM_WHISPER_TEST_MODEL_PATH=... FM_WHISPER_TEST_AUDIO_PATH=...
-.build/debug/FirstmateCockpit` (`WhisperEngineSelfTest.swift`'s real-model self-test), on real
+.build/debug/GrandLine` (`WhisperEngineSelfTest.swift`'s real-model self-test), on real
 Apple Silicon hardware (Apple M5 Pro):
 
 - **Metal enabled, isolated run**: `transcribe()` itself took **0.48s** for the ~11s clip (a cold

@@ -126,7 +126,7 @@ Three access rules that are not obvious:
    would be the exact surprise F12's opt-in exists to avoid.
 2. **An unbundled build refuses to ask.** TCC kills a process that requests
    calendar access with no usage description in its `Info.plist`, and
-   `.build/debug/FirstmateCockpit` - every self-test and every `swift build`
+   `.build/debug/GrandLine` - every self-test and every `swift build`
    dev run - has no `Info.plist` at all. `canPrompt` checks for the key; with
    it missing, `requestAccess` logs and returns instead of prompting, and the
    card does not offer the button.
