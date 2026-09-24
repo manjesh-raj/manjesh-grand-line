@@ -79,6 +79,35 @@
 // succeeded is touched again. See `migrateKeychainIfNeeded`'s own header for
 // the full reasoning, and `data(service:account:)` for the real `OSStatus`
 // each failure now carries rather than one fixed string for every reason.
+//
+// **PR #471 and #472 both fixed a real bug in the *outcome*, and both left
+// launch itself gated on the Keychain pass ever finishing at all.** A captain
+// with several legacy accounts saw `defaults read … fm.keychainMigratedFromFirstmateCockpit`
+// report the key **absent**, not `false`, on every attempt, and the unified
+// log showed zero `AppLog.keychain` lines for either half - meaning
+// `runAtLaunch()` never once reached the point where it would log or persist
+// anything. `migrateKeychainIfNeeded` is one synchronous call across every
+// service/account (a chain of blocking `SecItemCopyMatching` calls, one real
+// system dialog per legacy account, with nothing on screen yet to say so),
+// called from `main.swift` **before `app.run()`** - so it had to run to
+// completion, in one unbroken sitting, before the window could ever appear.
+// A captain who could not click through every single dialog before doing
+// anything else (there being no way to know how many existed, or that this
+// was even happening rather than the app simply not launching) never
+// finished the call, so nothing was ever saved - not even for prompts already
+// answered - and the next launch restarted the identical chain from zero.
+// Two things had to both be true to fix it, and this file's second finding
+// only did the second: the *persistence* had to be per-item rather than
+// per-pass (which the two gates above already give it), and the *call* had to
+// stop being on the launch path at all, because a per-item write inside a
+// call that itself never returns is still worthless. `runAtLaunch()` now only
+// does the folder move and the (Keychain-free) defaults copy - both are one
+// cheap file/dictionary operation with no system prompt of their own, so
+// neither can block. `AppDelegate.applicationDidFinishLaunching` dispatches
+// the Keychain half separately, on a background queue, after the window is
+// already up (GL-25: a Keychain read that can prompt runs off the main
+// thread) - see `runKeychainMigrationInBackground` and
+// `docs/history/45-rename-to-grand-line.md`'s third entry.
 
 import Foundation
 import Security
@@ -268,11 +297,18 @@ enum LegacyNameMigration {
     /// *different* outstanding failure - see `migrateKeychainIfNeeded`'s
     /// header for why that combination is what turned "always allow" into a
     /// per-launch loop.
+    /// Fired once for each item this pass just confirmed done - copied, or
+    /// already present under the new service name - so a caller can persist
+    /// it immediately rather than waiting for the whole (interruptible) pass
+    /// to return. See `migrateKeychainIfNeeded`'s header.
+    typealias ItemSucceeded = (String) -> Void
+
     @discardableResult
     static func migrateKeychainService(
         from legacyService: String,
         to service: String,
-        skipping: Set<String> = []
+        skipping: Set<String> = [],
+        onItemSucceeded: ItemSucceeded = { _ in }
     ) -> KeychainOutcome {
         var outcome = KeychainOutcome()
 
@@ -304,6 +340,7 @@ enum LegacyNameMigration {
             if contains(service: service, account: account) {
                 outcome.alreadyPresent += 1
                 outcome.succeededKeys.insert(key)
+                onItemSucceeded(key)
                 continue
             }
             let (blob, readStatus) = data(service: legacyService, account: account)
@@ -325,6 +362,7 @@ enum LegacyNameMigration {
             if addStatus == errSecSuccess {
                 outcome.copied.append(key)
                 outcome.succeededKeys.insert(key)
+                onItemSucceeded(key)
             } else {
                 outcome.failures.append("\(key): \(describe(addStatus))")
             }
@@ -334,11 +372,15 @@ enum LegacyNameMigration {
 
     /// Every service in `keychainServices`, in one call.
     @discardableResult
-    static func migrateKeychain(services: [String] = keychainServices, skipping: Set<String> = []) -> KeychainOutcome {
+    static func migrateKeychain(
+        services: [String] = keychainServices,
+        skipping: Set<String> = [],
+        onItemSucceeded: ItemSucceeded = { _ in }
+    ) -> KeychainOutcome {
         var combined = KeychainOutcome()
         for service in services {
             guard let legacy = legacyName(for: service) else { continue }
-            let one = migrateKeychainService(from: legacy, to: service, skipping: skipping)
+            let one = migrateKeychainService(from: legacy, to: service, skipping: skipping, onItemSucceeded: onItemSucceeded)
             combined.copied.append(contentsOf: one.copied)
             combined.alreadyPresent += one.alreadyPresent
             combined.failures.append(contentsOf: one.failures)
@@ -391,18 +433,32 @@ enum LegacyNameMigration {
     /// launch retries only the items still outstanding - the items that
     /// already succeeded are in `keychainMigratedItemsKey` and are skipped
     /// before they are ever queried again.
+    ///
+    /// **Every success is written to `defaults` as it happens, not only after
+    /// `migrate` returns.** The whole point of tracking per-item success is
+    /// worthless if the write is still batched to the end of a call that can
+    /// itself be interrupted before it ever gets there - which is exactly what
+    /// was happening on the captain's own machine (this file's third finding,
+    /// see the header above): a chain of blocking, one-dialog-per-account
+    /// Keychain reads that had to finish in one sitting before anything was
+    /// kept, even for prompts already answered. So `onItemSucceeded` below
+    /// calls `defaults.set` immediately, item by item, while `migrate` is
+    /// still running - a captain who answers three of seven prompts and then
+    /// stops (by choice, by getting interrupted, or because the process is
+    /// killed) keeps those three permanently, and a later attempt is only ever
+    /// asked about the remaining four.
     @discardableResult
     static func migrateKeychainIfNeeded(
         into defaults: UserDefaults = .standard,
         services: [String] = keychainServices,
-        migrate: ([String], Set<String>) -> KeychainOutcome = migrateKeychain
+        migrate: ([String], Set<String>, @escaping ItemSucceeded) -> KeychainOutcome = migrateKeychain
     ) -> KeychainMigrationOutcome {
         if defaults.bool(forKey: keychainMigrationCompleteKey) { return .alreadyDone }
-        let alreadyMigrated = Set(defaults.stringArray(forKey: keychainMigratedItemsKey) ?? [])
-        let outcome = migrate(services, alreadyMigrated)
-        let merged = alreadyMigrated.union(outcome.succeededKeys)
-        if merged.count != alreadyMigrated.count {
-            defaults.set(Array(merged), forKey: keychainMigratedItemsKey)
+        var persisted = Set(defaults.stringArray(forKey: keychainMigratedItemsKey) ?? [])
+        let alreadyMigrated = persisted
+        let outcome = migrate(services, alreadyMigrated) { key in
+            guard persisted.insert(key).inserted else { return }
+            defaults.set(Array(persisted), forKey: keychainMigratedItemsKey)
         }
         if outcome.failures.isEmpty {
             defaults.set(true, forKey: keychainMigrationCompleteKey)
@@ -445,7 +501,9 @@ enum LegacyNameMigration {
 
     // MARK: - The launch-path entry point
 
-    /// Both halves, logged.
+    /// The folder move and the defaults copy, logged. **Never the Keychain
+    /// half** - see `runKeychainMigrationInBackground` for why that is a
+    /// separate entry point rather than a third case here.
     ///
     /// Called from `main.swift` after the self-test dispatch block and before
     /// `SingleInstanceGuard.acquire()`, which is the first thing in the process
@@ -454,6 +512,11 @@ enum LegacyNameMigration {
     /// launch - a captain whose folder could not be moved gets an app with
     /// empty stores and their data still sitting where it was, which is
     /// recoverable; a captain who cannot launch has nothing.
+    ///
+    /// Both of these are a single, fast, synchronous file or dictionary
+    /// operation with no system prompt of their own, so neither can block
+    /// launch the way the Keychain half could - that is what makes it safe to
+    /// leave them here, on the main thread, before the window exists.
     static func runAtLaunch(base: URL = AppPaths.applicationSupportBase()) {
         switch migrateApplicationSupportFolder(base: base) {
         case .nothingToMigrate:
@@ -481,7 +544,32 @@ enum LegacyNameMigration {
         case .copied(let keys):
             AppLog.store.notice("Rename: carried \(keys, privacy: .public) preference(s) over from the old domain \(legacyDefaultsDomain(), privacy: .public).")
         }
+    }
 
+    /// The Keychain half, logged - deliberately **not** part of `runAtLaunch()`
+    /// and deliberately not called before the window exists.
+    ///
+    /// `migrateKeychainIfNeeded` is a chain of blocking `SecItemCopyMatching`
+    /// calls, one real system dialog per legacy account this app has not yet
+    /// been granted, and there is no way for the caller to know in advance how
+    /// many accounts exist or how long the chain runs. Calling it on the
+    /// launch path - as `runAtLaunch()` used to - means the whole process
+    /// cannot reach `app.run()` until every dialog is answered in one sitting,
+    /// with no window on screen to say so. This file's third finding
+    /// (`docs/history/45-rename-to-grand-line.md`) is exactly that: a captain
+    /// who could not click through every prompt in one sitting never got a
+    /// window at all, on any attempt, because nothing was ever kept even for
+    /// prompts already answered.
+    ///
+    /// `AppDelegate.applicationDidFinishLaunching` calls this instead, on a
+    /// background queue, after the window is already up and the captain can
+    /// already use the app (GL-25: a Keychain read that can prompt runs off
+    /// the main thread). Each item is persisted to `UserDefaults` as it
+    /// succeeds (`migrateKeychainIfNeeded`'s own header), so a pass that is
+    /// interrupted - by the captain quitting, by the app being killed, or
+    /// simply by never being looked at again - keeps whatever it already
+    /// finished and only asks about the rest next time.
+    static func runKeychainMigrationInBackground() {
         switch migrateKeychainIfNeeded() {
         case .alreadyDone:
             break

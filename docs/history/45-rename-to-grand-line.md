@@ -215,3 +215,50 @@ What changes is that this is now the *only* item asking, with a real status code
 - `./Scripts/run-all-tests.sh` in full, before this round's changes and after: same pass count, no regressions (see the PR for the exact run).
 - `native/build_native_app.sh` run in full (release build): the `line 280: DailyReviewCalendar.swift: command not found` line is gone, `Info.plist` byte-inspected as unaffected (the fix only removed a pair of backticks from an XML comment, no other change), and the signing-identity fallback still correctly reports "signing with the pre-rename identity" on this machine, which has only the old certificate - confirming that fallback (documented above) is untouched by this round.
 - The vendored `whisper.cpp` `-Wambiguous-macro` noise (8 warnings, `ggml-quants.c` / `arch/arm/quants.c`, `static_assert` colliding with the macOS 26.5 SDK's own definition) is suppressed via `.unsafeFlags(["-Wno-ambiguous-macro"])` scoped to the `CWhisper` target's `cSettings` only - a clean `swift build` from scratch now reports **zero** warnings, confirming no other real warning was hiding behind the vendor noise.
+
+## Follow-up round 3: the real blocker was launch itself, not the outcome
+
+`fm/grandline-unblock-launch-skip-keychain-migration`.
+
+The captain rebuilt with round 2's fix (#472, merged) in place and still could not launch the app at all - not "the dialog keeps coming back," but no window ever appeared, on any attempt.
+
+### Live evidence, gathered before touching any code
+
+Two facts, both checked directly on the captain's machine rather than assumed:
+
+- `defaults read com.manjesh.grandline.native fm.keychainMigratedFromFirstmateCockpit` and `...fm.keychainMigratedItems` both reported the key **absent**, not `false` - the gate had never once latched, on any attempt, including the per-item half round 2 added.
+- The real unified log (`log show --predicate "subsystem == 'com.manjesh.grandline.native'"`) showed **zero** `AppLog.keychain` lines for either of the captain's last two real launches - no success notice, no failure line, nothing. Only the unrelated Application Support folder migration notice fired.
+
+The only way both are simultaneously true is that `LegacyNameMigration.runAtLaunch()` never finished running - it started, and something stopped it before it ever reached the point where it would log or persist anything at all.
+
+### The root cause: rounds 1 and 2 fixed the *outcome*, not the *call*
+
+`runAtLaunch()` is called from `main.swift` on the main thread, before `SingleInstanceGuard.acquire()`, before `app.run()`, before any window exists.
+`migrateKeychainIfNeeded()` is one synchronous call across every service and every account - a chain of blocking `SecItemCopyMatching` reads, each of which can show a real system "wants to access your confidential information" dialog, one per legacy account, with no progress indicator and nothing on screen yet to say any of this is happening.
+
+Round 2's per-item persistence (`keychainMigratedItemsKey`) was real and correct as far as it went, but it was only ever written **after `migrate()` returned** - and the whole point of a per-item ledger is defeated if the call that is supposed to fill it in never gets there.
+A captain with more than one saved SSH key faced a chain of dialogs that had to be clicked through in one unbroken sitting before the process could reach `app.run()` at all.
+If he could not or did not do that - and there was no way to know in advance how many dialogs existed, or that this was even happening rather than the app simply failing to launch - the call never returned, so **nothing was ever saved, not even for prompts already answered**, and the very next launch restarted the identical chain from zero.
+That is why "clicking Always Allow roughly ten times" (round 1's report) did not help: it was likely nowhere near enough for however many accounts actually exist, and none of it was being kept regardless of how many he answered.
+
+### The fix: take the Keychain half off the launch path entirely, and make its persistence genuinely per-item
+
+Two changes, addressing the two halves of the same gap:
+
+1. **`runAtLaunch()` no longer calls the Keychain migration at all.** It now does only the Application Support folder move and the (Keychain-free) defaults copy - both a single fast file or dictionary operation with no system prompt of their own, so neither can block. `LegacyNameMigration.runKeychainMigrationInBackground()` is a new, separate entry point for the Keychain half, and `AppDelegate.applicationDidFinishLaunching` dispatches it onto a background queue (`DispatchQueue.global(qos: .utility).asyncAfter`), after the window is already up and the captain can already use the app - the same GL-25 shape ("a Keychain read that can prompt runs off the main thread") this app already follows for Touch ID reads.
+2. **`migrateKeychainIfNeeded` now persists each item's success as that item succeeds**, not only after the whole batched call returns. `migrateKeychainService`/`migrateKeychain` take an `onItemSucceeded` callback, fired the moment an account is copied or found already-present; `migrateKeychainIfNeeded` writes the growing set to `UserDefaults` from inside that callback, synchronously, before the next item is even attempted. A captain who answers three of seven prompts and then stops - by choice, by getting interrupted, or because the app is quit or killed - keeps those three permanently, and a later attempt is only ever asked about the remaining four.
+
+Neither change alone would have been enough: moving the call off the launch path without fixing the persistence timing would still lose partial progress to a captain quitting mid-pass; fixing the persistence timing without moving the call off the launch path would still gate the captain's very first window on however many dialogs exist.
+
+### Verification
+
+- `swift build`, warning-clean, throughout.
+- `LegacyRenameMigrationSelfTest` (`FM_RUN_LEGACY_RENAME_MIGRATION_TESTS`), including two new checks:
+  - `checkKeychainMigrationPersistsPerItemDuringThePass` - a fake multi-item pass asserts, **from inside its own still-running call**, that an earlier item's success is already on `UserDefaults` before the pass reaches a later, permanently-failing item; then a simulated next attempt against the same defaults proves only the never-reached item is queried again.
+  - `checkLaunchPathNeverCallsTheKeychainMigration` - a source guard (the only kind of check that can see this: there is no behavioural difference between "never called" and "called and found nothing to do" against a real Keychain) that isolates `runAtLaunch()`'s own function body by brace-depth and asserts it contains neither `migrateKeychainIfNeeded` nor `migrateKeychain(`, and that `main.swift` reaches `runKeychainMigrationInBackground()` only through an async `DispatchQueue` dispatch, never directly.
+- **Both new checks confirmed to catch the exact regressions they exist for**, each via injection and restore:
+  - Reverting `migrateKeychainIfNeeded` to batch its `UserDefaults` write until after `migrate()` returns (the round 1/2 shape) made `checkKeychainMigrationPersistsPerItemDuringThePass` fail by name (`"item A's success is persisted mid-pass, not only after the whole call returns"`); restoring the fix made it pass again.
+  - Reintroducing a direct `migrateKeychainIfNeeded()` call inside `runAtLaunch()`'s own body made `checkLaunchPathNeverCallsTheKeychainMigration` fail by name (`"runAtLaunch's own body never calls the Keychain migration..."`); restoring the fix made it pass again.
+- `git diff` confirmed byte-identical to the pre-injection state after each restore.
+- `./Scripts/run-all-tests.sh` in full, before and after this round's changes: same pass count, no regressions.
+- The concrete captain scenario - several pre-existing legacy Keychain accounts, none yet granted - was reproduced with disposable, clearly-labeled scratch accounts seeded under the app's own real legacy service name and purged again immediately after; **not** run through an actual launched build of this app, deliberately: doing so would enumerate every account under that same real service, including any of the captain's own genuine saved keys, and this agent has no way to click through a resulting system dialog or to distinguish a real grant prompt for the captain's own data from a disposable scratch one. The proof that launch itself can no longer be gated on the Keychain is the source guard above (the call is no longer reachable from the launch path, full stop, regardless of how many accounts exist or how many would fail) together with the fault-injected self-tests; the captain's own next relaunch, with a real window appearing immediately, is the live confirmation.

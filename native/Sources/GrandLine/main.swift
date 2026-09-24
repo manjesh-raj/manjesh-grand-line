@@ -840,6 +840,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // nothing restored is visible before the captain has unlocked.
         restoreSessionIfNeeded(savedSession)
         presentWelcomeIfNeeded()
+
+        // The rename's Keychain migration (docs/history/45-rename-to-grand-line.md's
+        // third entry). Deliberately not on the launch path any more: it is a
+        // chain of blocking Keychain reads that can each show a real system
+        // dialog, and running it before the window existed is what left a
+        // captain with several legacy accounts unable to launch at all -
+        // `LegacyNameMigration.runKeychainMigrationInBackground`'s own header
+        // has the full story. Dispatched here, off the main thread (GL-25),
+        // now that the window is up and the captain can already use the app;
+        // the short delay just keeps it off the very first frame's own layout
+        // and session-restore work above.
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+            LegacyNameMigration.runKeychainMigrationInBackground()
+        }
     }
 
     /// Review #3's UX13: the first-run welcome sheet.

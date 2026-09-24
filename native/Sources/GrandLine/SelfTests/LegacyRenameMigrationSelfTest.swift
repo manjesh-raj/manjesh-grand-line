@@ -43,6 +43,8 @@ enum LegacyRenameMigrationSelfTest {
         checkKeychainMigrationGateSkipsOnceComplete(&ok)
         checkKeychainMigrationGateRetriesAFailure(&ok)
         checkKeychainMigrationGatePerItemSurvivesOtherFailures(&ok)
+        checkKeychainMigrationPersistsPerItemDuringThePass(&ok)
+        checkLaunchPathNeverCallsTheKeychainMigration(&ok)
         checkDefaultsAreCarriedOver(&ok)
 
         if ok { print("[LegacyRenameMigrationSelfTest] all checks passed") }
@@ -258,8 +260,8 @@ enum LegacyRenameMigrationSelfTest {
             }
             defer { defaults.removePersistentDomain(forName: domain) }
 
-            let migrate: ([String], Set<String>) -> LegacyNameMigration.KeychainOutcome = { _, skipping in
-                LegacyNameMigration.migrateKeychainService(from: legacyService, to: service, skipping: skipping)
+            let migrate: ([String], Set<String>, @escaping LegacyNameMigration.ItemSucceeded) -> LegacyNameMigration.KeychainOutcome = { _, skipping, onItemSucceeded in
+                LegacyNameMigration.migrateKeychainService(from: legacyService, to: service, skipping: skipping, onItemSucceeded: onItemSucceeded)
             }
 
             let first = LegacyNameMigration.migrateKeychainIfNeeded(
@@ -302,8 +304,9 @@ enum LegacyRenameMigrationSelfTest {
         var nextOutcome = LegacyNameMigration.KeychainOutcome(
             copied: [], alreadyPresent: 0,
             failures: ["legacy/denied-account: the item carried no data"])
-        let migrate: ([String], Set<String>) -> LegacyNameMigration.KeychainOutcome = { _, _ in
+        let migrate: ([String], Set<String>, @escaping LegacyNameMigration.ItemSucceeded) -> LegacyNameMigration.KeychainOutcome = { _, _, onItemSucceeded in
             calls += 1
+            for key in nextOutcome.succeededKeys { onItemSucceeded(key) }
             return nextOutcome
         }
 
@@ -318,7 +321,7 @@ enum LegacyRenameMigrationSelfTest {
 
         // The captain allows it (or the item resolves on its own) - the very
         // next launch should both run one more time and then latch.
-        nextOutcome = LegacyNameMigration.KeychainOutcome(copied: ["x/y"], alreadyPresent: 0, failures: [])
+        nextOutcome = LegacyNameMigration.KeychainOutcome(copied: ["x/y"], alreadyPresent: 0, failures: [], succeededKeys: ["x/y"])
         _ = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, migrate: migrate)
         check(calls == 3, "the third launch ran and this time succeeded", &ok)
         check(defaults.bool(forKey: LegacyNameMigration.keychainMigrationCompleteKey),
@@ -352,12 +355,13 @@ enum LegacyRenameMigrationSelfTest {
         let keyB = "service-b/account-b"
         var queriedA = 0
         var queriedB = 0
-        let migrate: ([String], Set<String>) -> LegacyNameMigration.KeychainOutcome = { _, skipping in
+        let migrate: ([String], Set<String>, @escaping LegacyNameMigration.ItemSucceeded) -> LegacyNameMigration.KeychainOutcome = { _, skipping, onItemSucceeded in
             var combined = LegacyNameMigration.KeychainOutcome()
             if !skipping.contains(keyA) {
                 queriedA += 1
                 combined.copied.append(keyA)
                 combined.succeededKeys.insert(keyA)
+                onItemSucceeded(keyA)
             }
             if !skipping.contains(keyB) {
                 queriedB += 1
@@ -389,13 +393,14 @@ enum LegacyRenameMigrationSelfTest {
 
         // A third launch, with B finally succeeding: the whole-pass flag
         // latches, and both items' successes remain recorded.
-        let migrateBSucceeds: ([String], Set<String>) -> LegacyNameMigration.KeychainOutcome = { _, skipping in
+        let migrateBSucceeds: ([String], Set<String>, @escaping LegacyNameMigration.ItemSucceeded) -> LegacyNameMigration.KeychainOutcome = { _, skipping, onItemSucceeded in
             var combined = LegacyNameMigration.KeychainOutcome()
             if !skipping.contains(keyA) { queriedA += 1 }
             if !skipping.contains(keyB) {
                 queriedB += 1
                 combined.copied.append(keyB)
                 combined.succeededKeys.insert(keyB)
+                onItemSucceeded(keyB)
             }
             return combined
         }
@@ -411,6 +416,130 @@ enum LegacyRenameMigrationSelfTest {
 
         let fourth = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, services: [], migrate: migrateBSucceeds)
         check(fourth == .alreadyDone, "and every later launch now skips the Keychain entirely", &ok)
+    }
+
+    /// The bug this file's third finding exists to catch: PR #471/#472 both
+    /// tracked per-item success correctly in the *outcome*, but only wrote
+    /// that outcome to `UserDefaults` after the whole synchronous pass
+    /// returned - which is worthless when the pass itself never returns (a
+    /// captain who cannot click through every prompt in one sitting, or a
+    /// process that is simply killed mid-chain). This proves the write for
+    /// one item lands *while the pass is still running* on another, not only
+    /// once the whole call completes - by asserting it from inside the fake
+    /// pass itself, mid-call - and that a fresh attempt afterwards only asks
+    /// about the item that never got that far.
+    private static func checkKeychainMigrationPersistsPerItemDuringThePass(_ ok: inout Bool) {
+        let run = UUID().uuidString
+        let domain = "com.manjesh.grandline.selftest.rename.gate.midpass.\(run)"
+        guard let defaults = UserDefaults(suiteName: domain) else {
+            fail("could not open the scratch defaults suite", &ok)
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: domain) }
+
+        let keyA = "service-a/account-a"
+        let keyB = "service-b/account-b"
+        var sawAPersistedWhileBWasStillPending = false
+        let migrate: ([String], Set<String>, @escaping LegacyNameMigration.ItemSucceeded) -> LegacyNameMigration.KeychainOutcome = { _, _, onItemSucceeded in
+            var combined = LegacyNameMigration.KeychainOutcome()
+            combined.copied.append(keyA)
+            combined.succeededKeys.insert(keyA)
+            onItemSucceeded(keyA)
+
+            // The check itself: A's success must already be on disk right
+            // here, before this closure - the stand-in for the whole
+            // synchronous Keychain pass - ever returns. A process killed at
+            // exactly this point (which is the captain's own reported shape:
+            // a chain of dialogs interrupted partway through) must not lose
+            // A's already-answered prompt.
+            let persistedSoFar = Set(defaults.stringArray(forKey: LegacyNameMigration.keychainMigratedItemsKey) ?? [])
+            sawAPersistedWhileBWasStillPending = persistedSoFar.contains(keyA)
+
+            combined.failures.append("\(keyB): simulated - the pass is interrupted before reaching this")
+            return combined
+        }
+
+        _ = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, migrate: migrate)
+        check(sawAPersistedWhileBWasStillPending,
+              "item A's success is persisted mid-pass, not only after the whole call returns", &ok)
+
+        // A later attempt against the same defaults - standing in for the
+        // next launch after the interruption - must only be asked about the
+        // item that was never reached, never the one already kept.
+        var queriedOnRelaunch: Set<String> = []
+        let relaunchMigrate: ([String], Set<String>, @escaping LegacyNameMigration.ItemSucceeded) -> LegacyNameMigration.KeychainOutcome = { _, skipping, _ in
+            for key in [keyA, keyB] where !skipping.contains(key) {
+                queriedOnRelaunch.insert(key)
+            }
+            return LegacyNameMigration.KeychainOutcome()
+        }
+        _ = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, migrate: relaunchMigrate)
+        check(queriedOnRelaunch == [keyB],
+              "a later attempt only asks about the genuinely outstanding item (got \(queriedOnRelaunch))", &ok)
+    }
+
+    /// This file's third finding: `runAtLaunch()` must never touch the
+    /// Keychain migration at all, because that call is what used to gate the
+    /// captain's entire launch on a chain of system dialogs with no window on
+    /// screen. A source guard is the only check that can see this - there is
+    /// no behavioural difference to assert against a real Keychain that would
+    /// tell "never called" apart from "called and happened to find nothing to
+    /// do", and the whole point is the call must not be *reachable* from the
+    /// launch path at all, not merely that it is a no-op in this run.
+    private static func checkLaunchPathNeverCallsTheKeychainMigration(_ ok: inout Bool) {
+        guard let files = SelfTestSources.appSourceFiles() else {
+            fail("could not resolve the app's source directory - this guard checked nothing", &ok)
+            return
+        }
+        guard let migrationFile = files.first(where: { $0.lastPathComponent == "LegacyNameMigration.swift" }),
+              let text = try? String(contentsOf: migrationFile, encoding: .utf8) else {
+            fail("could not read LegacyNameMigration.swift", &ok)
+            return
+        }
+        guard let signature = text.range(of: "static func runAtLaunch("),
+              let braceOpen = text.range(of: "{", range: signature.upperBound..<text.endIndex) else {
+            fail("could not locate runAtLaunch's own signature", &ok)
+            return
+        }
+        // Walk forward by brace depth to runAtLaunch's own closing brace,
+        // rather than guessing a line count - its body contains nested
+        // braces (every switch case).
+        var depth = 0
+        var index = braceOpen.lowerBound
+        var bodyEnd = text.endIndex
+        while index < text.endIndex {
+            let ch = text[index]
+            if ch == "{" { depth += 1 }
+            if ch == "}" {
+                depth -= 1
+                if depth == 0 { bodyEnd = text.index(after: index); break }
+            }
+            index = text.index(after: index)
+        }
+        let body = String(text[braceOpen.lowerBound..<bodyEnd])
+        // Discriminating power: the body has to actually be the real
+        // function, or "found nothing" would trivially satisfy the check
+        // below too.
+        check(body.contains("migrateApplicationSupportFolder") && body.contains("migrateDefaults"),
+              "the guard is reading runAtLaunch's real body, not an empty or wrong match", &ok)
+        check(!body.contains("migrateKeychainIfNeeded") && !body.contains("migrateKeychain("),
+              "runAtLaunch's own body never calls the Keychain migration - the launch path must never touch it", &ok)
+
+        guard let mainFile = files.first(where: { $0.lastPathComponent == "main.swift" }),
+              let mainText = try? String(contentsOf: mainFile, encoding: .utf8) else {
+            fail("could not read main.swift", &ok)
+            return
+        }
+        check(mainText.contains("LegacyNameMigration.runAtLaunch()"),
+              "main.swift still runs the folder/defaults half synchronously at launch", &ok)
+        guard let dispatchSite = mainText.range(of: "runKeychainMigrationInBackground()") else {
+            fail("main.swift no longer calls the Keychain migration from anywhere", &ok)
+            return
+        }
+        let precedingStart = mainText.index(dispatchSite.lowerBound, offsetBy: -400, limitedBy: mainText.startIndex) ?? mainText.startIndex
+        let preceding = mainText[precedingStart..<dispatchSite.lowerBound]
+        check(preceding.contains("DispatchQueue") && preceding.contains("async"),
+              "the Keychain half is reached only through an async dispatch, never called directly on the launch path", &ok)
     }
 
     // MARK: - The preference domain
