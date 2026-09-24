@@ -251,6 +251,18 @@ enum CompactModeSelfTest {
         check(CompactModeHotkey.matches(match),
               "\u{2303}\u{2325}G is the chord the popover's own footer advertises, so it has to be "
                   + "the chord the monitor matches")
+        // An ambient flag must not decide whether the chord works - the
+        // shared defect `fm/grandline-capture-global-hotkey-configurable`
+        // found in `ShiftGlobalHotkey` and fixed in both. Without it, a
+        // captain with Caps Lock latched on loses the shortcut and nothing
+        // says why.
+        if let withCapsLock = event(keyCode: CompactModeHotkey.gKeyCode,
+                                    flags: [.control, .option, .capsLock]) {
+            check(CompactModeHotkey.matches(withCapsLock),
+                  "Caps Lock being on must not stop \u{2303}\u{2325}G matching")
+        } else {
+            check(false, "could not synthesise \u{2303}\u{2325}G with Caps Lock - this check would silently pass")
+        }
         // Each near-miss is its own case: a predicate that accepted any of
         // these would steal a chord the captain uses elsewhere.
         let misses: [(String, NSEvent?)] = [

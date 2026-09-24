@@ -457,6 +457,15 @@ final class AppShellController: NSViewController {
         set { settings.onTerminalShortcutsChanged = newValue }
     }
 
+    /// Fired whenever Settings > Capture's recorder captures a new chord.
+    /// Forwarded to the app delegate, which owns the live `ShiftGlobalHotkey`
+    /// and the Shift menu's Capture item - the same forward-don't-own
+    /// convention the two above already follow.
+    var onQuickCaptureShortcutChanged: ((KeyChord) -> Void)? {
+        get { settings.onQuickCaptureShortcutChanged }
+        set { settings.onQuickCaptureShortcutChanged = newValue }
+    }
+
     /// E2: the Dictation page's local-Whisper toggle, forwarded the same way -
     /// switching it off must be able to release a resident engine (and with it
     /// the ggml Metal residency thread), not just stop future dictations from

@@ -113,7 +113,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         shiftStore: shiftStore,
         stickyStore: appShell.stickyBoardStore
     )
-    lazy var shiftHotkey = ShiftGlobalHotkey { [weak self] in self?.shiftQuickCapture.present() }
+    /// F2's capture chord. Configurable since
+    /// `fm/grandline-capture-global-hotkey-configurable`, so the live
+    /// instance is seeded from the stored value rather than from the class's
+    /// own default - the same shape `dictationHotkey` below already uses.
+    lazy var shiftHotkey = ShiftGlobalHotkey(shortcut: AppSettings.shared.quickCaptureShortcut) { [weak self] in
+        self?.shiftQuickCapture.present()
+    }
+
+    /// The Shift menu's Capture item, held so the recorded chord can be
+    /// re-applied to it without rebuilding the whole menu.
+    private weak var quickCaptureMenuItem: NSMenuItem?
+
+    /// Print the capture chord on the menu item, or clear it.
+    ///
+    /// A menu key equivalent can only express a *regular key plus modifiers*.
+    /// A modifier-only chord (the recorder accepts one - Right ⌥ on its own,
+    /// say) has no menu representation at all, so the item keeps its title and
+    /// loses its chord rather than advertising something wrong. The global and
+    /// local monitors still carry it; only the printed accelerator goes.
+    ///
+    /// AGENTS.md's "no key equivalent may be declared twice in
+    /// `NSApp.mainMenu`" rule applies to whatever the captain records, and
+    /// nothing here can pre-empt that - `NavigationCoherenceSelfTest` fails
+    /// the run on a duplicate among the *shipped* items, and a recorded chord
+    /// that collides with one of them is the captain's own choice, made
+    /// visible by the menu drawing it.
+    func applyQuickCaptureMenuChord(_ chord: KeyChord) {
+        guard let item = quickCaptureMenuItem else { return }
+        guard !chord.isModifierOnly, let character = KeyChord.menuKeyEquivalent(for: chord.keyCode) else {
+            item.keyEquivalent = ""
+            item.keyEquivalentModifierMask = []
+            return
+        }
+        item.keyEquivalent = character
+        item.keyEquivalentModifierMask = chord.modifiers
+    }
     /// Audit §2 item 7: ⌘T/⌘D/⌘W/⌘R/⇧⌘R/⌘1-9 for Console and Tools tabs,
     /// restored after the Tab menu's removal took them. A local monitor
     /// rather than menu items - see `TabKeyboardShortcuts`'s header for why
@@ -510,6 +545,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appShell.startClipboardHistoryCapture()
         shiftHotkey.requestPermissionIfNeeded()
         shiftHotkey.start()
+        // The prompt above opens System Settings, so a captain granting
+        // Accessibility for the first time grants it *after* the global
+        // monitor was installed - and macOS never arms an already-registered
+        // global monitor retroactively. Coming back to this app is the first
+        // moment we can notice, and the check costs one `AXIsProcessTrusted()`
+        // read. See `ShiftGlobalHotkey.reassertIfTrustChanged()`.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.shiftHotkey.reassertIfTrustChanged()
+        }
         tabShortcuts.start()
         // fm/grandline-notification-center: feeds the same due-detection
         // `poll()` already computes for the OS banner into the in-app
@@ -568,6 +614,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // recorder reports rather than relying on a settings read per event.
         appShell.onTerminalShortcutsChanged = { [weak self] shortcuts in
             self?.tabShortcuts.updateTerminalShortcuts(shortcuts)
+        }
+        // Settings > Capture's recorder, forwarded the same way and for the
+        // same reason. The Shift menu's own Capture item is re-keyed here too:
+        // it is the no-Accessibility fallback for this exact chord, and a menu
+        // still advertising ⌥Space after the captain recorded ⌃⌘C would be a
+        // page stating a shortcut the app no longer listens for.
+        appShell.onQuickCaptureShortcutChanged = { [weak self] chord in
+            self?.shiftHotkey.updateShortcut(chord)
+            self?.applyQuickCaptureMenuChord(chord)
         }
         // E2: turning the toggle off releases any engine that is still
         // resident, so the captain's "off" takes effect now rather than at the
@@ -1898,9 +1953,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // permission at all as long as this app is frontmost, so it's a
         // meaningful discoverability aid even before that permission is
         // granted.
-        let quickCaptureItem = NSMenuItem(title: "Capture\u{2026}", action: #selector(AppDelegate.showShiftQuickCapture), keyEquivalent: " ").withSymbol("square.and.pencil")
-        quickCaptureItem.keyEquivalentModifierMask = [.option]
+        let quickCaptureItem = NSMenuItem(title: "Capture\u{2026}", action: #selector(AppDelegate.showShiftQuickCapture), keyEquivalent: "").withSymbol("square.and.pencil")
         quickCaptureItem.target = self
+        self.quickCaptureMenuItem = quickCaptureItem
+        applyQuickCaptureMenuChord(AppSettings.shared.quickCaptureShortcut)
         shiftMenu.addItem(quickCaptureItem)
 
         // Log Analyzer menu (`fm/grandline-log-analyzer-build`, spec §24).
@@ -3127,6 +3183,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_SELECTION_RENDER_TESTS"]
 // DictationHotkeySelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_DICTATION_HOTKEY_TESTS"] == "1" {
     exit(DictationHotkeySelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-capture-global-hotkey-configurable`: the same convention for
+// `ShiftGlobalHotkey` - its matching predicate over synthetic events, and the
+// structural "which monitors did `start()` actually install" checks the class
+// shipped without. See ShiftGlobalHotkeySelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_QUICK_CAPTURE_HOTKEY_TESTS"] == "1" {
+    exit(ShiftGlobalHotkeySelfTest.run() ? 0 : 1)
 }
 
 // `fm/grandline-dictation-phase2`: same convention, for `DictationStore`'s

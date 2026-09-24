@@ -1,7 +1,10 @@
 // Manjesh Grand Line - native macOS app.
 //
-// The app's one recorded-keystroke value, and the one thing both features
-// that let a captain choose their own shortcut store.
+// The app's one recorded-keystroke value, and the one thing every feature
+// that lets a captain choose their own shortcut stores. Three of them now:
+// Dictation's hold-to-record trigger, the Console's nine tab/split bindings,
+// and (since `fm/grandline-capture-global-hotkey-configurable`) universal
+// capture's own chord.
 //
 // It began as `DictationShortcut`, declared inside `DictationHotkey.swift` -
 // a general value wearing one feature's name. `fm/grand-line-terminal-
@@ -33,8 +36,8 @@ import AppKit
 
 /// A recorded shortcut - either a single held modifier key, or a regular key
 /// plus zero or more modifiers. `Codable` so it round-trips through
-/// `AppSettings.dictationShortcut` and `AppSettings.terminalShortcuts` as
-/// JSON `Data`.
+/// `AppSettings.dictationShortcut`, `AppSettings.terminalShortcuts` and
+/// `AppSettings.quickCaptureShortcut` as JSON `Data`.
 ///
 /// Only the four standard modifiers (⌘⌥⌃⇧) are ever tracked, deliberately
 /// excluding Caps Lock/Fn from `relevantModifierMask` - Caps Lock's flag
@@ -58,11 +61,24 @@ struct KeyChord: Codable, Equatable {
         isModifierOnly: true
     )
 
+    /// Universal capture's shortcut out of the box - ⌥Space, the chord this
+    /// panel has always used (`fm/grandline-capture-global-hotkey-
+    /// configurable` made it recordable rather than fixed).
+    ///
+    /// `49` is `kVK_Space`, the same "a Carbon keycode literal without
+    /// linking Carbon" note `ShiftGlobalHotkey` already carried for it.
+    /// Regular-key shape, not modifier-only: Space is a real key.
+    static let quickCaptureDefault = KeyChord(
+        keyCode: 49,
+        modifierFlagsRaw: NSEvent.ModifierFlags.option.rawValue,
+        isModifierOnly: false
+    )
+
     /// `kVK_RightOption`/`kVK_RightCommand`/... - Carbon's `HIToolbox`
     /// virtual keycodes for the standard modifier keys, both sides where
     /// macOS distinguishes them. No Carbon dependency needed for these
-    /// literal values, same reasoning `ShiftGlobalHotkey.spaceKeyCode`'s
-    /// header already documents.
+    /// literal values, same reasoning `quickCaptureDefault`'s own keycode
+    /// note above carries.
     private static let modifierKeyNames: [UInt16: String] = [
         54: "Right ⌘", 55: "Left ⌘",
         56: "Left ⇧", 60: "Right ⇧",
@@ -87,6 +103,39 @@ struct KeyChord: Codable, Equatable {
         // next/previous-tab uses.
         123: "\u{2190}", 124: "\u{2192}", 125: "\u{2193}", 126: "\u{2191}",
         33: "[", 30: "]", 27: "-", 24: "=", 47: ".", 43: ",", 39: "'", 41: ";", 42: "\\", 44: "/", 50: "`",
+    ]
+
+    /// The character an `NSMenuItem.keyEquivalent` needs for a given keycode,
+    /// or `nil` where a menu cannot express that key.
+    ///
+    /// Menu key equivalents are *characters*, not keycodes, so a chord the
+    /// monitors match by keycode has to be translated before a menu item can
+    /// print it. Deliberately a small explicit table over the same keys
+    /// `regularKeyNames` covers rather than a layout round-trip through
+    /// `UCKeyTranslate`: the chords a captain records are matched by keycode
+    /// whatever their layout, and a menu that prints the wrong glyph for an
+    /// exotic key is worse than one that prints none. `nil` means "the
+    /// monitors still carry this chord, the menu just cannot draw it" - the
+    /// caller clears the accelerator rather than guessing.
+    static func menuKeyEquivalent(for keyCode: UInt16) -> String? {
+        if let special = menuSpecialKeys[keyCode] { return special }
+        guard let name = regularKeyNames[keyCode], name.count == 1 else { return nil }
+        return name.lowercased()
+    }
+
+    /// The keys whose menu character is not simply their lowercased display
+    /// name. Space is the one that matters here - universal capture's default
+    /// chord is ⌥Space, and its display name is the word "Space".
+    private static let menuSpecialKeys: [UInt16: String] = [
+        49: " ",
+        36: "\r",
+        48: "\t",
+        51: "\u{8}",
+        53: "\u{1B}",
+        123: String(UnicodeScalar(NSLeftArrowFunctionKey)!),
+        124: String(UnicodeScalar(NSRightArrowFunctionKey)!),
+        125: String(UnicodeScalar(NSDownArrowFunctionKey)!),
+        126: String(UnicodeScalar(NSUpArrowFunctionKey)!),
     ]
 
     /// Whether this chord carries at least one of ⌘⌥⌃⇧.

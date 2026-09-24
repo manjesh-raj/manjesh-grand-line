@@ -3,6 +3,15 @@
 // ⌥Space: the universal capture panel (F2 of full review #3 §8), and the
 // global hotkey that opens it.
 //
+// **The chord is the captain's since `fm/grandline-capture-global-hotkey-
+// configurable`** - ⌥Space is the default rather than the definition, stored
+// in `AppSettings.quickCaptureShortcut` and recorded on Settings > Capture.
+// Everything below still says ⌥Space because that is what it ships as and
+// what every other page prints; read it as "the capture chord". That task
+// also fixed the reason it fired only while this app was frontmost - see
+// `ShiftGlobalHotkey`'s own header, at the bottom of this file, for the
+// diagnosis and for what was measured versus inferred.
+//
 // **What this was, and what F2 changed.** The panel shipped in phase 5 of
 // `cockpit-shift-power-features` as a one-destination capture: a field, a hint
 // line, Return, and a Shift task. The report's F2 finding is that the panel,
@@ -775,33 +784,116 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
     #endif
 }
 
-/// Registers the system-wide "⌥Space" quick-capture shortcut. Two monitors
-/// are needed to cover both cases the brief calls out: a **local** monitor
-/// (`NSEvent.addLocalMonitorForEvents`) fires while this app is frontmost but
-/// some other window has focus, no permission required; a **global** monitor
-/// (`NSEvent.addGlobalMonitorForEvents`) fires while a *different* app is
-/// frontmost - the actual "from anywhere" case the brief asks for - but per
+/// Registers the captain's configurable quick-capture shortcut (⌥Space out of
+/// the box). Two monitors are needed to cover both cases the brief calls out:
+/// a **local** monitor (`NSEvent.addLocalMonitorForEvents`) fires while this
+/// app is frontmost but some other window has focus, no permission required;
+/// a **global** monitor (`NSEvent.addGlobalMonitorForEvents`) fires while a
+/// *different* app is frontmost - the actual "from anywhere" case - but per
 /// Apple's own documentation that only delivers keyDown/keyUp/flagsChanged
 /// events once the process is a trusted Accessibility client
-/// (`AXIsProcessTrusted`), which is exactly the "one-time macOS permission"
-/// the reviewed mockup's own capture overlay text already calls out.
-/// `requestPermissionIfNeeded()` triggers the real system prompt via
-/// `AXIsProcessTrustedWithOptions`; until granted, the global monitor is
-/// registered but macOS simply never calls it - no crash, no error, just
-/// silence, which is why `isAccessibilityTrusted` exists for callers (and
-/// this phase's own verification) to check honestly rather than assuming the
-/// hotkey works everywhere just because `start()` didn't throw.
+/// (`AXIsProcessTrusted`). `requestPermissionIfNeeded()` triggers the real
+/// system prompt via `AXIsProcessTrustedWithOptions`; until granted, the
+/// global monitor is registered but macOS simply never calls it - no crash,
+/// no error, just silence, which is why `isAccessibilityTrusted` exists for
+/// callers to check honestly rather than assuming the hotkey works everywhere
+/// just because `start()` didn't throw.
+///
+/// ## What `fm/grandline-capture-global-hotkey-configurable` changed, and why
+///
+/// The captain reported that ⌥Space opened the panel only while Grand Line
+/// itself was frontmost. Three candidate causes were checked live against his
+/// own running instance before any code was touched, and two were eliminated:
+/// Accessibility trust **is** granted (`AXIsProcessTrusted()` read `true`
+/// through a read-only `lldb` attach, the same technique
+/// `fm/grandline-live-gap-rootcause-scout` established), and nothing else on
+/// the machine claims ⌥Space (no `com.apple.symbolichotkeys` entry binds
+/// keycode 49 with the Option flag alone, no launcher app is installed, and
+/// Secure Event Input was off). That left the third: this class's own
+/// matching predicate, which was the one hotkey in the app that never adopted
+/// `KeyChord.relevantModifierMask`.
+///
+/// The old predicate was
+/// `event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.option]`.
+/// `.deviceIndependentFlagsMask` is `0xFFFF0000` - it carries Caps Lock, Fn,
+/// the numeric-pad flag and the help flag alongside ⌘⌥⌃⇧ - so **any** ambient
+/// flag riding along on the event makes that exact equality false and the
+/// chord silently stops matching. `KeyChord`'s own header already writes down
+/// why that mask is the wrong one ("Caps Lock's flag reflects a toggle
+/// *state*, not a momentary press, so a captain who happens to have Caps Lock
+/// on would silently break matching"), and `DictationHotkey` - the one global
+/// hotkey in this app that demonstrably does fire from any app - has always
+/// masked with `KeyChord.relevantModifierMask` instead. Matching here now
+/// goes through `KeyChord` too, so there is one definition of "does this
+/// event mean this chord" rather than three.
+///
+/// **Why "works when frontmost" was not evidence that the monitors were
+/// fine.** The Shift menu carries a ⌥Space key equivalent of its own
+/// (`main.swift`'s `quickCaptureItem`, kept deliberately as the
+/// no-Accessibility fallback), so the frontmost case has two independent
+/// implementations. A predicate defect that kills both monitors still leaves
+/// the panel opening from the menu bar, which is exactly the shape the
+/// captain described. Any future "the hotkey half-works" report should
+/// establish which of the two paths fired before concluding anything about
+/// the other.
+///
+/// **What was not verified.** Nobody reproduced a real global ⌥Space
+/// keystroke being delivered to (or withheld from) this process. That needs a
+/// live keypress while a different app is frontmost, and this repo's agent
+/// shell has no Accessibility permission of its own (AGENTS.md's "Verifying
+/// native UI bugs" section) - the only way to get one would have been to
+/// inject an event source into the captain's own running app, which is beyond
+/// the read-only attach the convention sanctions. The predicate defect above
+/// is proven from the code and from `KeyChord`'s own documented rule; that it
+/// is the *whole* of what the captain saw is inference, and is recorded as
+/// such in `docs/history/33-capture-and-clipboard.md`.
+///
+/// ## Two event shapes, one class
+///
+/// Now that the chord is recordable it can be either shape, so this follows
+/// `DictationHotkey`'s established handling rather than inventing a second
+/// one: a **modifier-only** chord fires `.flagsChanged` and a **regular key +
+/// modifiers** chord fires `.keyDown`, and `start()` installs only the pair
+/// the current shortcut actually needs. `updateShortcut(_:)` tears the old
+/// pair down and installs the new one, so switching shapes can never leave a
+/// stale monitor listening for a chord nobody can press any more.
+///
+/// A capture trigger is a *press*, not a hold, so only the down edge matters -
+/// there is no `onUp` here and no `isHeld` latch. A modifier-only chord is
+/// still accepted (the recorder is left at `.any`), and fires once on the
+/// flag appearing; `isHeld` exists purely so releasing it does not fire a
+/// second time.
 final class ShiftGlobalHotkey {
-    private var localMonitor: Any?
-    private var globalMonitor: Any?
+    // Internal (not `private`) for the same reason `DictationHotkey`'s are:
+    // `ShiftGlobalHotkeySelfTest` asserts that `start()`/`updateShortcut(_:)`
+    // install a real monitor object for the mechanism the current shortcut
+    // needs, and tear down the other mechanism's. Driving `matches(_:)`
+    // alone proves the predicate and says nothing about whether anything is
+    // listening - which is precisely the gap this class shipped with.
+    var localFlagsMonitor: Any?
+    var globalFlagsMonitor: Any?
+    var localKeyMonitor: Any?
+    var globalKeyMonitor: Any?
     private let handler: () -> Void
+    /// Only meaningful for a modifier-only chord: a bare modifier's
+    /// `.flagsChanged` fires on both the press and the release, and a capture
+    /// trigger must open one panel, not two.
+    private var isHeld = false
+    private(set) var shortcut: KeyChord
 
-    /// `kVK_Space` (Carbon's `HIToolbox` keycode, still the standard
-    /// reference even without linking Carbon - this app has no Carbon
-    /// dependency and doesn't need one just for one literal keycode).
-    private static let spaceKeyCode: UInt16 = 49
+    /// Whether the process was a trusted Accessibility client at the moment
+    /// the current monitors were installed.
+    ///
+    /// macOS arms a global monitor from the trust the process has *when the
+    /// monitor is registered*; granting trust afterwards does not reach back
+    /// and arm one that is already installed. This records what was true at
+    /// install time so `reassertIfTrustChanged()` can notice the transition,
+    /// and so the Settings page can say "granted, but this monitor predates
+    /// the grant" rather than only "granted".
+    private(set) var installedWhileTrusted = false
 
-    init(handler: @escaping () -> Void) {
+    init(shortcut: KeyChord = .quickCaptureDefault, handler: @escaping () -> Void) {
+        self.shortcut = shortcut
         self.handler = handler
     }
 
@@ -816,28 +908,115 @@ final class ShiftGlobalHotkey {
         return AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
     }
 
+    /// Idempotent: every call tears the previous pair down first, so a second
+    /// `start()` cannot leak a monitor the way the pre-`fm/grandline-capture-
+    /// global-hotkey-configurable` version could.
     func start() {
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if Self.matches(event) {
-                self?.handler()
-                return nil
+        stopMonitors()
+        isHeld = false
+        installedWhileTrusted = isAccessibilityTrusted
+        if shortcut.isModifierOnly {
+            localFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+                self?.handleFlagsEvent(event)
+                return event
             }
-            return event
+            globalFlagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+                self?.handleFlagsEvent(event)
+            }
+        } else {
+            localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self else { return event }
+                // Swallowing the event is what stops ⌥Space also reaching the
+                // focused field as a non-breaking space while this app is
+                // frontmost.
+                if self.matches(event) {
+                    self.fire()
+                    return nil
+                }
+                return event
+            }
+            globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, self.matches(event) else { return }
+                self.fire()
+            }
         }
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if Self.matches(event) { self?.handler() }
-        }
+        AppLog.lifecycle.info(
+            "quick capture hotkey installed: \(self.shortcut.displayString, privacy: .public), accessibility trusted: \(self.installedWhileTrusted, privacy: .public)")
     }
 
     func stop() {
-        if let localMonitor { NSEvent.removeMonitor(localMonitor) }
-        if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
-        localMonitor = nil
-        globalMonitor = nil
+        stopMonitors()
+        isHeld = false
     }
 
-    private static func matches(_ event: NSEvent) -> Bool {
-        guard event.keyCode == spaceKeyCode else { return false }
-        return event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.option]
+    private func stopMonitors() {
+        for monitor in [localFlagsMonitor, globalFlagsMonitor, localKeyMonitor, globalKeyMonitor] {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+        localFlagsMonitor = nil
+        globalFlagsMonitor = nil
+        localKeyMonitor = nil
+        globalKeyMonitor = nil
+    }
+
+    /// Swaps in a newly recorded shortcut and restarts monitoring under
+    /// whichever mechanism that combo needs - the same contract (and the same
+    /// reason) `DictationHotkey.updateShortcut(_:)` documents: a plain
+    /// property set would leave the old monitor type installed and deaf to
+    /// the new chord's real event shape.
+    func updateShortcut(_ newShortcut: KeyChord) {
+        shortcut = newShortcut
+        start()
+    }
+
+    /// Reinstalls the monitors if Accessibility trust has been granted since
+    /// they were installed.
+    ///
+    /// Launch requests the permission and installs the monitors in the same
+    /// breath, so a captain who grants it in the System Settings pane that
+    /// prompt opens is granting it *after* the global monitor already exists -
+    /// and macOS does not arm an already-registered global monitor
+    /// retroactively. Before this, the only cure was relaunching the app, and
+    /// nothing said so. Cheap enough to call on every app activation: it is
+    /// one `AXIsProcessTrusted()` read and returns immediately unless the
+    /// answer actually changed.
+    @discardableResult
+    func reassertIfTrustChanged() -> Bool {
+        guard !installedWhileTrusted, isAccessibilityTrusted else { return false }
+        AppLog.lifecycle.info("quick capture hotkey: accessibility granted since install - reinstalling monitors")
+        start()
+        return true
+    }
+
+    /// Internal (not `private`) so the suite can drive the real predicate
+    /// rather than a second copy of it.
+    ///
+    /// Masking with `KeyChord.relevantModifierMask` (⌘⌥⌃⇧ only) rather than
+    /// `.deviceIndependentFlagsMask` is the fix described in this class's
+    /// header: an ambient Caps Lock or Fn flag must not decide whether the
+    /// captain's shortcut works. Exact equality on what is left matches
+    /// `DictationHotkey.handleKeyEvent`'s rule for a regular-key chord - a
+    /// deliberate combo means that combo, not that combo plus anything.
+    func matches(_ event: NSEvent) -> Bool {
+        guard !shortcut.isModifierOnly, event.keyCode == shortcut.keyCode else { return false }
+        return event.modifierFlags.intersection(KeyChord.relevantModifierMask) == shortcut.modifiers
+    }
+
+    /// Internal for the same reason - a modifier-only chord's `.flagsChanged`
+    /// path, which fires on the press edge only.
+    func handleFlagsEvent(_ event: NSEvent) {
+        guard shortcut.isModifierOnly, event.keyCode == shortcut.keyCode else { return }
+        let current = event.modifierFlags.intersection(KeyChord.relevantModifierMask)
+        let isPressed = !shortcut.modifiers.isEmpty && current.contains(shortcut.modifiers)
+        if isPressed && !isHeld {
+            isHeld = true
+            fire()
+        } else if !isPressed {
+            isHeld = false
+        }
+    }
+
+    private func fire() {
+        handler()
     }
 }
