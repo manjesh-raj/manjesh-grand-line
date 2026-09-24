@@ -152,3 +152,66 @@ Nothing about his prior "Always Allow" clicks is undone by this fix - if those g
 - `LegacyRenameMigrationSelfTest` (`FM_RUN_LEGACY_RENAME_MIGRATION_TESTS`), including the two new gate checks, confirmed to fail by name against an injected revert and pass again restored.
 - `./Scripts/run-all-tests.sh --ci` and `--session-only`, full suite, before and after: same pass count, no regressions.
 - **Not verified**: no real GUI Keychain dialog was driven end to end - this agent's shell has no interactive session to click through, and the fix is provable at the query level (whether `kSecReturnData` is even issued) without needing the dialog itself to fire. The captain's next relaunch is the live confirmation that the dialog stops recurring.
+
+## Follow-up round 2: the same loop, still happening, for a different reason
+
+`fm/grandline-keychain-migration-loop-round2`.
+
+The captain rebuilt with the fix above in (`build_native_app.sh` reported `0.1.0-235-g42a1cbf`, at or after the merge), reinstalled, and hit the exact same dialog - naming the legacy service `com.firstmate.cockpit.sshkey` - repeatedly.
+His words: "even after I give correct password and select always allow it keeps happening."
+This is a real second root cause, not a restatement of the first one.
+
+### What round 1 actually shipped, read again
+
+The trade-off section above says it plainly, and it is the bug: `keychainMigrationCompleteKey` is set only when a pass finishes with **zero failures across every item in every one of the five services**.
+The fix's own verification section even names the cost out loud - "a redundant re-read of already-migrated items... accepted as the cost of not needing a second, separate per-item completion ledger" - and called it acceptable because the working assumption was a one-off captain misclick, not an item that fails in the same way forever.
+
+A captain with even one legacy item that can never succeed - which `com.firstmate.cockpit.sshkey` turns out to be, see below - never gets a clean pass.
+`outcome.failures` is never empty, so the flag never latches, so `runAtLaunch()` calls `migrateKeychainService` again on every single launch, which (before this round's fix) unconditionally issued the `kSecReturnData` read for **every** account under **every** legacy service before checking whether the new service already had it.
+That includes accounts that had already succeeded and had "Always Allow" already granted for them.
+So the captain's repeated grants were not being ignored by macOS - each one really did work, for that one account, on that one launch.
+The dialog kept coming back because the *next* launch re-asked regardless, for that account and every other one, because the pass-wide flag had no way to remember that some items were already done.
+
+### Why `com.firstmate.cockpit.sshkey` specifically never clears
+
+Two things line up to make this service, and not the other four, the one the captain actually sees:
+
+1. It is almost certainly the only one of the five services that has any items in it at all for a captain who has not used the clipboard history, the credential vault or a connected Google account - so it is the only service with anything to prompt about in the first place.
+2. `native/README.md`'s own "Local signing setup" section already documents the mechanism: a Keychain item's default ACL trusts only the code identity that created it, and an item saved under a build that predates today's stable "Grand Line Local Dev" / "Firstmate Cockpit Local Dev" signing identity - including any build from before that identity existed at all - can carry an ACL trust reference this app's current signing identity was never added to correctly, or that macOS cannot resolve to a match it is willing to honor via a plain "Always Allow" grant on the read.
+
+`migrateKeychainService`'s read failure was previously flattened to a single fixed string, `"the item carried no data"`, regardless of the real reason - so this could not have been distinguished from a captain's outright "Don't Allow" by reading the log.
+That is fixed in this round: `data(service:account:)` now returns the real `OSStatus` alongside the blob, and a failed read's message is `describe(status)` (the same `SecCopyErrorMessageString` helper the write path already used) rather than the old fixed string, unless the status genuinely is `errSecSuccess` with an empty payload.
+
+**Not verified**: this agent has no access to the captain's real Keychain or his real legacy items, and no interactive session to drive the actual macOS confidential-data dialog end to end (same limitation round 1 named).
+The ACL/signing-identity explanation above is the strongest candidate this investigation could build from the codebase's own documented mechanism (`native/README.md`) and the process-of-elimination shape of the captain's report, not a live-captured `OSStatus` from his machine.
+What this round *can* and does guarantee, independent of which exact reason his read fails for: once this fix ships, his next few launches will surface the real status code in `AppLog.keychain`'s error line (previously always the same fixed string), and whatever the reason turns out to be, it will no longer force every other already-granted item to be re-asked about on every subsequent launch.
+
+### The fix: per-item gating, not just a fixed status string
+
+Point 3 of this round's brief asks the question round 1's trade-off note ducked: is "any single failure blocks the whole gate forever" the right shape at all?
+It is not, once a failure can be permanent rather than a one-off misclick - the captain is now being asked to grant the same five services' worth of prompts on every single launch, indefinitely, which is materially worse than the isolated-misclick case round 1's design comment anticipated.
+
+`LegacyNameMigration` now tracks **which specific `service/account` items have already succeeded**, in a new `fm.keychainMigratedItems` array, alongside the existing whole-pass `fm.keychainMigratedFromFirstmateCockpit` flag:
+
+- `migrateKeychainIfNeeded` reads that persisted set and passes it into `migrate` as a `skipping` parameter.
+- `migrateKeychainService` checks `skipping` for each enumerated account **before** doing anything else - before the existence check on the new service, and before reading the legacy secret - so an item already known to have succeeded is never touched again, not enumerated past, not read, not prompted for.
+- Every item that succeeds this pass (copied, or found already present) is folded into the persisted set regardless of whether the *pass as a whole* finished clean, so a permanently-failing item can never again hold the other services - or this service's other accounts - hostage.
+- The whole-pass flag is kept as a fast path: once every item across every service has succeeded, the very next pass finds nothing outstanding, reports zero failures, and the flag latches - skipping the Keychain (no enumeration, no query at all) on every launch after that.
+
+The reordering inside `migrateKeychainService` is a second, independent half of the same fix: checking `contains(service:account:)` (a plain existence query, no `kSecReturnData`, never prompts) **before** reading the legacy secret means an item that is already present under the new service name is never read from the legacy one at all, on any pass, with or without the persisted skip set warmed up.
+The original code read the legacy secret first and checked `contains` second, discarding the read result - which is harmless for a query that never prompts, but is exactly backwards for one that can.
+
+What this round's fix does **not** claim to do: make the one persistently-failing item stop asking.
+If `com.firstmate.cockpit.sshkey`'s specific account genuinely cannot be granted (a stale ACL trust reference, per the signing-identity mechanism above), it will keep being retried, and keep being able to prompt, on every launch - that is the deliberate, load-bearing half of round 1's design that this round does not touch (an item denied or unreadable must stay retryable rather than being silently abandoned).
+What changes is that this is now the *only* item asking, with a real status code in the log explaining why, rather than that one item dragging four other services' worth of already-granted items back into the barrage every single time.
+
+### Verification
+
+- `swift build`, clean, both before this round's Package.swift/build-script changes and after.
+- `LegacyRenameMigrationSelfTest` (`FM_RUN_LEGACY_RENAME_MIGRATION_TESTS`), including the new `checkKeychainMigrationGatePerItemSurvivesOtherFailures` check, against a real (scratch-service-named) Keychain.
+- **Confirmed to catch the exact round-2 regression**: the per-item skip set was neutered to always be empty (`let alreadyMigrated: Set<String> = []`), simulating the pre-this-round single-flag gate exactly.
+  `checkKeychainMigrationGatePerItemSurvivesOtherFailures` failed by name - `"A is never re-queried once it has succeeded (got 2 call(s))"` and the equivalent third-launch check - proving the new test discriminates the two shapes.
+  Restoring the fix made the suite pass again, byte-identical file confirmed via `diff` against the pre-injection copy.
+- `./Scripts/run-all-tests.sh` in full, before this round's changes and after: same pass count, no regressions (see the PR for the exact run).
+- `native/build_native_app.sh` run in full (release build): the `line 280: DailyReviewCalendar.swift: command not found` line is gone, `Info.plist` byte-inspected as unaffected (the fix only removed a pair of backticks from an XML comment, no other change), and the signing-identity fallback still correctly reports "signing with the pre-rename identity" on this machine, which has only the old certificate - confirming that fallback (documented above) is untouched by this round.
+- The vendored `whisper.cpp` `-Wambiguous-macro` noise (8 warnings, `ggml-quants.c` / `arch/arm/quants.c`, `static_assert` colliding with the macOS 26.5 SDK's own definition) is suppressed via `.unsafeFlags(["-Wno-ambiguous-macro"])` scoped to the `CWhisper` target's `cSettings` only - a clean `swift build` from scratch now reports **zero** warnings, confirming no other real warning was hiding behind the vendor noise.

@@ -53,18 +53,32 @@
 // a query for confidential data the requesting app has not been granted
 // before is exactly what makes macOS show the "wants to access your
 // confidential information" dialog - one dialog per item, not per launch.
-// Before this gate existed, `runAtLaunch()` re-issued that same barrage of
+// Before any gate existed, `runAtLaunch()` re-issued that same barrage of
 // per-item reads on *every single launch*, forever, regardless of whether the
-// item had already been copied across - which is what turned one captain's
-// relaunch into another ten-dialog barrage instead of zero. `migrateKeychainIfNeeded`
-// is the fix: once a pass finishes with no failures, it sets a persisted flag
-// and every later launch skips the Keychain entirely - no query, no dialog.
-// A pass that fails partway (a captain who genuinely clicks Deny, or a
-// transient `SecItemAdd` error) does *not* set the flag, so a later launch
-// retries - the item stays copyable rather than being silently abandoned, at
-// the cost of repeating the read for whatever is still outstanding until it
-// clears. See `docs/history/45-rename-to-grand-line.md` for the measurement
-// behind this.
+// item had already been copied across.
+//
+// **The first version of this gate (PR #471) was a single flag for the whole
+// pass, and that shape itself reproduced the loop it was meant to fix** - see
+// `docs/history/45-rename-to-grand-line.md`'s second entry for the
+// measurement. One item that can never succeed (its legacy ACL trusts a build
+// identity this app no longer has, which is the practical case for a captain
+// who saved an SSH key under a build that predates the "Grand Line Local Dev"
+// / "Firstmate Cockpit Local Dev" signing identity - see native/README.md's
+// "Local signing setup") kept `outcome.failures` non-empty forever, so the
+// whole-pass flag never latched, so *every* item in *every* service - not
+// just the failing one - was re-read, and therefore re-prompted for, on every
+// single launch, including items the captain had already granted "Always
+// Allow" on. `migrateKeychainIfNeeded` now tracks **which specific items have
+// already succeeded** (`keychainMigratedItemsKey`) as well as the whole-pass
+// flag (`keychainMigrationCompleteKey`): a succeeded item is skipped before it
+// is ever queried again regardless of what else in the pass is still failing,
+// so one permanently-failing legacy item can no longer hold the other four
+// services - or this service's other accounts - hostage. The item that
+// genuinely cannot succeed keeps being retried each launch (it stays
+// copyable, per the original design intent below), but nothing that already
+// succeeded is touched again. See `migrateKeychainIfNeeded`'s own header for
+// the full reasoning, and `data(service:account:)` for the real `OSStatus`
+// each failure now carries rather than one fixed string for every reason.
 
 import Foundation
 import Security
@@ -213,21 +227,53 @@ enum LegacyNameMigration {
         var copied: [String] = []
         /// Items whose account already existed under the new service name.
         var alreadyPresent: Int = 0
-        /// One line per failure, already human-readable.
+        /// One line per failure, already human-readable - and now carries the
+        /// real `OSStatus` text rather than a fixed "carried no data" string,
+        /// so a captain-reported loop can be root-caused from the log instead
+        /// of guessed at. See `data(service:account:)`.
         var failures: [String] = []
+        /// `<service>/<account>` for every item this pass confirmed done -
+        /// copied just now, or already present under the new service name.
+        /// `migrateKeychainIfNeeded` persists this set so a *different* item
+        /// failing on a later launch never re-touches (and never re-prompts
+        /// for) an item that already succeeded. See that function's header.
+        var succeededKeys: Set<String> = []
 
         var didSomething: Bool { !copied.isEmpty }
     }
 
     /// Copy every generic password under `legacyService` to `service`,
-    /// skipping any account that is already there.
+    /// skipping any account already there and any account in `skipping`.
     ///
     /// Every item this app writes is a plain `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`
     /// generic password with no `SecAccessControl` ACL (see `KeychainKeyStore`'s
     /// header for why this build cannot hold one), which is what makes a read
-    /// here possible without a Touch ID prompt of its own.
+    /// here possible without a Touch ID prompt of its own - **for an item this
+    /// build itself created.** A legacy item can still carry the ACL its own
+    /// *original* creator left it with (an even older, differently-signed
+    /// build, per native/README.md's "Local signing setup"), and reading a
+    /// generic password's `kSecReturnData` is exactly the query that surfaces
+    /// as the "wants to access your confidential information" dialog when the
+    /// requesting app is not already trusted - so this one query, and only
+    /// this one, can prompt.
+    ///
+    /// **`contains` is checked before that read, not after.** An item already
+    /// copied to `service` never needs its legacy secret again, so checking
+    /// existence first (a plain existence query, no `kSecReturnData`, never
+    /// prompts) means an already-migrated item is never re-read - not on this
+    /// pass, and not because a caller happened to pass it in `skipping`. The
+    /// original code read the legacy secret unconditionally and checked
+    /// `contains` second, which re-triggered the confidential-data prompt for
+    /// an already-successful item on every later pass that still had a
+    /// *different* outstanding failure - see `migrateKeychainIfNeeded`'s
+    /// header for why that combination is what turned "always allow" into a
+    /// per-launch loop.
     @discardableResult
-    static func migrateKeychainService(from legacyService: String, to service: String) -> KeychainOutcome {
+    static func migrateKeychainService(
+        from legacyService: String,
+        to service: String,
+        skipping: Set<String> = []
+    ) -> KeychainOutcome {
         var outcome = KeychainOutcome()
 
         // Attributes first, data second, deliberately: macOS rejects
@@ -235,7 +281,8 @@ enum LegacyNameMigration {
         // (`errSecParam`, "One or more parameters passed to a function were
         // not valid"), which reads as a broken query rather than as an
         // unsupported combination. So this enumerates the accounts, then reads
-        // each one's blob by its own single-item query.
+        // each one's blob by its own single-item query. Enumerating carries no
+        // `kSecReturnData` either, so it never prompts on its own.
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: legacyService,
@@ -252,26 +299,34 @@ enum LegacyNameMigration {
 
         for item in items {
             guard let account = item[kSecAttrAccount as String] as? String else { continue }
-            guard let data = data(service: legacyService, account: account) else {
-                outcome.failures.append("\(legacyService)/\(account): the item carried no data")
-                continue
-            }
+            let key = "\(service)/\(account)"
+            if skipping.contains(key) { continue }
             if contains(service: service, account: account) {
                 outcome.alreadyPresent += 1
+                outcome.succeededKeys.insert(key)
+                continue
+            }
+            let (blob, readStatus) = data(service: legacyService, account: account)
+            guard let blob else {
+                let reason = readStatus == errSecSuccess
+                    ? "the item carried no data"
+                    : describe(readStatus)
+                outcome.failures.append("\(legacyService)/\(account): \(reason)")
                 continue
             }
             let add: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
                 kSecAttrAccount as String: account,
-                kSecValueData as String: data,
+                kSecValueData as String: blob,
                 kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             ]
             let addStatus = SecItemAdd(add as CFDictionary, nil)
             if addStatus == errSecSuccess {
-                outcome.copied.append("\(service)/\(account)")
+                outcome.copied.append(key)
+                outcome.succeededKeys.insert(key)
             } else {
-                outcome.failures.append("\(service)/\(account): \(describe(addStatus))")
+                outcome.failures.append("\(key): \(describe(addStatus))")
             }
         }
         return outcome
@@ -279,22 +334,29 @@ enum LegacyNameMigration {
 
     /// Every service in `keychainServices`, in one call.
     @discardableResult
-    static func migrateKeychain(services: [String] = keychainServices) -> KeychainOutcome {
+    static func migrateKeychain(services: [String] = keychainServices, skipping: Set<String> = []) -> KeychainOutcome {
         var combined = KeychainOutcome()
         for service in services {
             guard let legacy = legacyName(for: service) else { continue }
-            let one = migrateKeychainService(from: legacy, to: service)
+            let one = migrateKeychainService(from: legacy, to: service, skipping: skipping)
             combined.copied.append(contentsOf: one.copied)
             combined.alreadyPresent += one.alreadyPresent
             combined.failures.append(contentsOf: one.failures)
+            combined.succeededKeys.formUnion(one.succeededKeys)
         }
         return combined
     }
 
-    /// Set once a Keychain migration pass finishes with **no** failures -
-    /// deliberately not after every pass, unlike `defaultsMigratedKey`. See
-    /// the header comment above for why the two need different shapes.
+    /// Set once a Keychain migration pass finishes with **no** failures at
+    /// all - a fast path that skips the Keychain entirely (no enumeration,
+    /// no read) once every item across every service is accounted for.
     static let keychainMigrationCompleteKey = "fm.keychainMigratedFromFirstmateCockpit"
+
+    /// `<service>/<account>` for every item a past pass already copied or
+    /// found already-present - the per-item half of the gate. See
+    /// `migrateKeychainIfNeeded`'s header for why this exists alongside
+    /// `keychainMigrationCompleteKey` rather than instead of it.
+    static let keychainMigratedItemsKey = "fm.keychainMigratedItems"
 
     enum KeychainMigrationOutcome: Equatable {
         /// The flag was already set - nothing was queried, and nothing was
@@ -305,27 +367,57 @@ enum LegacyNameMigration {
 
     /// The gated entry point `runAtLaunch()` calls. `migrate` is a seam for
     /// the self-test suite - production always passes `migrateKeychain`.
+    ///
+    /// **Two gates, not one, and they answer different questions.**
+    /// `keychainMigrationCompleteKey` is "is there anything left to even look
+    /// at" - true once a pass reports zero failures, and it is what lets a
+    /// fully-migrated captain skip the Keychain on every later launch with no
+    /// query at all. `keychainMigratedItemsKey` is "which *specific* items
+    /// have already succeeded" - persisted so that a *different* item
+    /// failing (say, a legacy `com.firstmate.cockpit.sshkey` account whose
+    /// ACL trusts a build identity that no longer matches, per
+    /// native/README.md's "Local signing setup") never holds the other four
+    /// services, or this service's other accounts, hostage. Before this
+    /// existed, one permanently-failing item meant `keychainMigrationCompleteKey`
+    /// could never latch, so `migrateKeychainService` re-read - and
+    /// re-prompted for - *every* item in *every* service on *every* launch,
+    /// including ones the captain had already granted "Always Allow" on. That
+    /// is the shape of the captain's report: granting the prompt did not stop
+    /// it recurring, because the very next launch re-asked regardless.
+    ///
+    /// A pass that fails partway (a captain who genuinely clicks Deny, an
+    /// item whose legacy ACL cannot be satisfied at all, or a transient
+    /// `SecItemAdd` error) does *not* set the whole-pass flag, so a later
+    /// launch retries only the items still outstanding - the items that
+    /// already succeeded are in `keychainMigratedItemsKey` and are skipped
+    /// before they are ever queried again.
     @discardableResult
     static func migrateKeychainIfNeeded(
         into defaults: UserDefaults = .standard,
         services: [String] = keychainServices,
-        migrate: ([String]) -> KeychainOutcome = migrateKeychain
+        migrate: ([String], Set<String>) -> KeychainOutcome = migrateKeychain
     ) -> KeychainMigrationOutcome {
         if defaults.bool(forKey: keychainMigrationCompleteKey) { return .alreadyDone }
-        let outcome = migrate(services)
-        // Only a clean pass earns the flag - a captain who denies one prompt,
-        // or a transient SecItemAdd failure, must be retried later rather
-        // than silently abandoned. See `data(service:account:)`, whose own
-        // `nil` return (a denied or otherwise unreadable read) already
-        // surfaces as a `failures` entry here.
+        let alreadyMigrated = Set(defaults.stringArray(forKey: keychainMigratedItemsKey) ?? [])
+        let outcome = migrate(services, alreadyMigrated)
+        let merged = alreadyMigrated.union(outcome.succeededKeys)
+        if merged.count != alreadyMigrated.count {
+            defaults.set(Array(merged), forKey: keychainMigratedItemsKey)
+        }
         if outcome.failures.isEmpty {
             defaults.set(true, forKey: keychainMigrationCompleteKey)
         }
         return .ran(outcome)
     }
 
-    /// One item's blob, or `nil` when it is missing or unreadable.
-    private static func data(service: String, account: String) -> Data? {
+    /// One item's blob and the real `OSStatus` the read produced - `nil` data
+    /// with `errSecSuccess` means the item existed but carried no payload;
+    /// any other status is the actual reason macOS refused it (a captain
+    /// denial is `errSecUserCanceled` / `errSecAuthFailed`; a read attempted
+    /// somewhere that cannot show UI is `errSecInteractionNotAllowed`), and
+    /// `migrateKeychainService` now surfaces that text in `failures` instead
+    /// of a single fixed string for every reason.
+    private static func data(service: String, account: String) -> (Data?, OSStatus) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -333,8 +425,9 @@ enum LegacyNameMigration {
             kSecReturnData as String: true,
         ]
         var raw: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &raw) == errSecSuccess else { return nil }
-        return raw as? Data
+        let status = SecItemCopyMatching(query as CFDictionary, &raw)
+        guard status == errSecSuccess else { return (nil, status) }
+        return (raw as? Data, status)
     }
 
     static func contains(service: String, account: String) -> Bool {
@@ -405,7 +498,9 @@ enum LegacyNameMigration {
             if !keychain.failures.isEmpty {
                 AppLog.keychain.notice("""
                     Rename: the Keychain migration pass had \(keychain.failures.count, privacy: .public) \
-                    failure(s), so it is not marked complete - a later launch will retry.
+                    failure(s), so the pass is not marked complete - a later launch will retry only \
+                    those specific item(s). Items that already succeeded are remembered and are not \
+                    re-queried or re-prompted for.
                     """)
             }
         }

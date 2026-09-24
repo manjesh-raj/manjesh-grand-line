@@ -97,6 +97,15 @@ let package = Package(
                 .headerSearchPath("ggml-src/ggml-cpu"),
                 .headerSearchPath("ggml-src/ggml-metal"),
                 .headerSearchPath("whisper-src"),
+                // ggml-impl.h redefines `static_assert` in a way that
+                // collides with the macOS 26.5 SDK's own definition, which
+                // the SDK's headers (pulled in transitively by
+                // <Foundation.h>/<Metal.h>) always provide. Vendored code -
+                // scoped to this target only, so a real warning in the app's
+                // own sources stays visible. See AGENTS.md's "The two CI
+                // lanes" / GL-07 (build fails on any warning in this app's
+                // own sources).
+                .unsafeFlags(["-Wno-ambiguous-macro"]),
             ],
             cxxSettings: [
                 .define("GGML_USE_CPU"),
