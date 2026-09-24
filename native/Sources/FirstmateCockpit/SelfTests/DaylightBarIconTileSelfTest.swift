@@ -4,7 +4,13 @@
 // a coloured tile at rest instead of a monochrome glyph - the treatment #458
 // gave Settings' nav rows, asked for here by the captain.
 //
-// Four things are worth asserting, and they are different in kind:
+// `fm/grandline-topbar-icon-tiles-round2` then fixed two things the captain
+// found in the shipped row, and both left a case here: three controls that
+// had no tile at all (Recents, the theme toggle, the bell), and three tiles
+// the captain could not tell apart. The second turned out not to be a
+// colour-choice problem - see `checkEveryPaletteKeepsTheHuesApart`.
+//
+// Six things are worth asserting, and they are different in kind:
 //
 //   - **The colour is the destination's own.** Not "a colour appeared" but
 //     "this button's fill is the one `HelmContrast.tintedSurface` produces
@@ -12,20 +18,26 @@
 //     the row is colourful would pass with every tile the same hue, which is
 //     precisely the defect the fix exists to end.
 //   - **It is legible in all 26 palettes.** The glyph sits on a wash of its
-//     own hue, which is the exact recipe `HelmContrast` exists to police, and
-//     the resolution differs between the Daylight family and the other 24
-//     (`DaylightBarIconButton.tileHex(for:in:)`). A single-theme check proves
-//     nothing about the split.
+//     own hue, which is the exact recipe `HelmContrast` exists to police.
+//     A single-theme check proves nothing about the other 25.
+//   - **No two of those colours collapse into one, in any palette.** This is
+//     round 2's real finding and the reason that case sweeps a matrix rather
+//     than naming three destinations: the hues were always distinct, and the
+//     *resolution* is what collapsed them.
 //   - **The row's footprint did not move.** This is the sizing-consistency
 //     guard. The bar's height and the 34pt square are load-bearing, and the
 //     honest way to prove a colour change did not disturb them is to assert
 //     the numbers as literals rather than to re-derive them from the code
 //     under test.
-//   - **Which buttons are exempt, on purpose.** The theme toggle, Recents,
-//     the clipboard history and the overflow button-as-ellipsis carry no
-//     destination, so there is no honest hue for them - they keep the plain
-//     square. That is a decision, so it gets a check; without one, a future
-//     refactor that tiled everything would look like an improvement.
+//   - **The bar's own controls wear their own tiles.** Recents, the theme
+//     toggle and the bell are not destinations, but round 2 gave all three
+//     real tiles on the captain's instruction - slate for the two that are
+//     app chrome, amber for the one that is asking for something. Asserting
+//     *which* tile, not merely that one appeared.
+//   - **The one button that is still exempt, on purpose.** The overflow
+//     control drawing its generic ellipsis opens a menu rather than a
+//     surface, so it has no identity to paint; it takes a real tile in its
+//     other identity, and one case asserts both halves.
 //
 // Run with:
 //   swift build && FM_RUN_BAR_ICON_TILE_TESTS=1 \
@@ -67,7 +79,9 @@ enum DaylightBarIconTileSelfTest {
             ("the tile is legible in all 26 palettes, in all three states", checkEveryPaletteTilesLegibly),
             ("hover and active deepen the tile the captain is looking at", checkStatesDeepenTheSameTile),
             ("the terminal shortcut wears Settings' own Terminal tint", checkTerminalShortcutMatchesSettings),
-            ("a control with no destination keeps the plain square", checkNonDestinationControlsAreExempt),
+            ("the bar's own controls wear their own tiles", checkTheBarsOwnControlsAreTiled),
+            ("no two domain hues collapse onto one tile in any palette", checkEveryPaletteKeepsTheHuesApart),
+            ("Docs, Hosts and Schedules are tellable apart everywhere", checkTheCaptainsThreeAreTellableApart),
             ("the single-overflow shortcut is tiled, the ellipsis is not", checkOverflowButtonFollowsItsIdentity),
             ("the row's height and footprint are unchanged", checkRowFootprintIsUnchanged),
         ]
@@ -332,44 +346,239 @@ enum DaylightBarIconTileSelfTest {
         return nil
     }
 
-    // MARK: The exempt controls
+    // MARK: The bar's own controls
 
-    private static func checkNonDestinationControlsAreExempt() -> String? {
-        guard let theme = theme("dusk") else {
-            return "no `dusk` theme - has the palette been renamed?"
-        }
-        let bar = makeLaidOutBar(theme: theme)
-
-        let chrome = theme.isDaylight
-            ? HelmTheme.nsColor(theme.daylightTokens.inset)
-            : HelmTheme.nsColor(theme.chromeBackgroundHex)
-        let muted = HelmTheme.mutedInk(theme).withAlphaComponent(DaylightBarIconButton.restingGlyphAlpha)
-
-        // Everything in the bar's own square list that is not a destination
-        // shortcut. Derived by subtraction rather than named, so a control
-        // added to the bar later is covered without editing this case.
-        //
-        // The overflow button is subtracted too, and it is the one exclusion
-        // that is not a simplification: it is a shortcut in one of its two
-        // identities and a menu opener in the other, so it belongs to
-        // `checkOverflowButtonFollowsItsIdentity`, which asserts both. Leaving
-        // it here would have this case fail on a correctly tiled button.
-        var exclude = Set(bar.debugDestinationButtons().map { ObjectIdentifier($0) })
-        exclude.insert(ObjectIdentifier(bar.debugQuickAccessOverflowButton()))
-        let exempt = bar.debugIconSquares().filter { !exclude.contains(ObjectIdentifier($0)) }
-        guard exempt.count >= 2 else {
-            return "found \(exempt.count) non-destination squares on the bar - expected at least the theme "
-                + "toggle and Recents"
-        }
-        for button in exempt {
-            let name = button.accessibilityLabel() ?? "icon"
-            guard let fill = layerFill(button), sameColor(fill, chrome) else {
-                return "\(name) is tiled (\(layerFill(button).map(describe) ?? "nil")) - it opens no destination, "
-                    + "so there is no hue that honestly identifies it; expected the chrome square \(describe(chrome))"
+    /// `fm/grandline-topbar-icon-tiles-round2`: Recents, the theme toggle and
+    /// the notification bell carry real tiles now.
+    ///
+    /// The captain reported all three as "no coloured tile at all" after #460,
+    /// and they were: #460 tiled the destination shortcuts and left every
+    /// other square on the plain chrome rendering. Each of the three is
+    /// asserted to paint the wash of its own declared hue - `chromeTileHue`
+    /// for the two that are app chrome, `bellTileHue` for the one that is
+    /// asking for something - rather than merely "not the chrome square",
+    /// because "a colour appeared" is the assertion that would pass with all
+    /// three the same and with any of them accidentally wearing a
+    /// destination's identity.
+    ///
+    /// The bell is checked hardest of the three, and that is deliberate: it is
+    /// a `NotificationBellButton` rather than a `DaylightBarIconButton`, so it
+    /// shares none of the tile code and is the one control that can silently
+    /// fall back out of the treatment. Its badge ring has to follow the tile
+    /// too - the ring exists to separate a red disc from what is under it, so
+    /// a ring left painting the old chrome surface reads as a hairline around
+    /// the badge.
+    private static func checkTheBarsOwnControlsAreTiled() -> String? {
+        // Both sides of the palette families, and the captain's own theme.
+        for id in ["daylight", "dusk", "ayu-dark", "catppuccin-latte"] {
+            guard let theme = theme(id) else {
+                return "no `\(id)` theme - has the palette been renamed?"
             }
-            guard let glyph = button.debugGlyphColor, sameColor(glyph, muted) else {
-                return "\(name)'s resting glyph is \(button.debugGlyphColor.map(describe) ?? "nil"), expected the "
-                    + "muted ink \(describe(muted)) it has always had"
+            let bar = makeLaidOutBar(theme: theme)
+            let chrome = theme.isDaylight
+                ? HelmTheme.nsColor(theme.daylightTokens.inset)
+                : HelmTheme.nsColor(theme.chromeBackgroundHex)
+
+            let chromeWash = wash(DaylightBarIconButton.chromeTileHue, theme)
+            let bellWash = wash(DaylightBarIconButton.bellTileHue, theme)
+
+            // Discriminating power first: if the tile a control is supposed to
+            // wear were already the chrome square, every assertion below would
+            // pass vacuously on a control nobody had fixed.
+            guard !sameColor(chromeWash.fill, chrome), !sameColor(bellWash.fill, chrome) else {
+                return "\(theme.id): the chrome-control wash \(describe(chromeWash.fill)) or the bell's "
+                    + "\(describe(bellWash.fill)) is indistinguishable from the plain square "
+                    + "\(describe(chrome)) - this case could not fail"
+            }
+
+            for button in bar.debugIconSquares() where button is RecentDestinationsButton
+                                                    || button is DaylightThemeToggleButton {
+                let name = button.accessibilityLabel() ?? "icon"
+                guard let fill = layerFill(button), sameColor(fill, chromeWash.fill) else {
+                    return "\(theme.id)/\(name) paints \(layerFill(button).map(describe) ?? "nil"), expected the "
+                        + "\(DaylightBarIconButton.chromeTileHue.rawValue) wash \(describe(chromeWash.fill)) every "
+                        + "bar-owned control wears"
+                }
+                guard let glyph = button.debugGlyphColor, sameColor(glyph, chromeWash.foreground) else {
+                    return "\(theme.id)/\(name)'s glyph is \(button.debugGlyphColor.map(describe) ?? "nil"), "
+                        + "expected the contrast-corrected \(describe(chromeWash.foreground)) that wash pairs with"
+                }
+            }
+            // Both really were found - a `where` clause that matched nothing
+            // would leave the loop above asserting nothing at all.
+            let owned = bar.debugIconSquares().filter {
+                $0 is RecentDestinationsButton || $0 is DaylightThemeToggleButton
+            }
+            guard owned.count == 2 else {
+                return "\(theme.id): found \(owned.count) bar-owned squares, expected Recents and the theme toggle"
+            }
+
+            let bell = bar.notificationCenter.debugBell
+            guard let bellFill = bell.debugTileFill, sameColor(bellFill, bellWash.fill) else {
+                return "\(theme.id): the bell paints \(bell.debugTileFill.map(describe) ?? "nil"), expected the "
+                    + "\(DaylightBarIconButton.bellTileHue.rawValue) wash \(describe(bellWash.fill))"
+            }
+            guard let bellGlyph = bell.debugGlyphColor, sameColor(bellGlyph, bellWash.foreground) else {
+                return "\(theme.id): the bell's glyph is \(bell.debugGlyphColor.map(describe) ?? "nil"), expected "
+                    + "\(describe(bellWash.foreground))"
+            }
+            guard let ring = bell.debugBadgeRingColor, sameColor(ring, bellWash.fill) else {
+                return "\(theme.id): the badge's ring is \(bell.debugBadgeRingColor.map(describe) ?? "nil") - it has "
+                    + "to be the tile it sits on \(describe(bellWash.fill)), or a red disc merges into the glyph"
+            }
+            guard let bellBorder = layerBorderColor(bell.debugTileBorder) else {
+                return "\(theme.id): the bell's tile has no ring at all"
+            }
+            guard abs(bellBorder.alphaComponent - DaylightBarIconButton.restingTileBorderAlpha) < 0.01 else {
+                return String(format: "%@: the bell's ring reads %.2f where every other resting tile reads %.2f",
+                              theme.id, bellBorder.alphaComponent,
+                              DaylightBarIconButton.restingTileBorderAlpha)
+            }
+
+            // And the three do not all wear one colour - "they got tiles" is
+            // not the same claim as "the tiles mean something".
+            guard !sameColor(chromeWash.fill, bellWash.fill) else {
+                return "\(theme.id): the bell wears the same tile as Recents and the theme toggle "
+                    + "\(describe(bellWash.fill)) - the bell is the one control that is asking for something"
+            }
+        }
+        return nil
+    }
+
+    // MARK: The captain's complaint
+
+    /// The separation floor two washed tiles must clear to be *seen* as two
+    /// colours, in the weighted-RGB distance below.
+    ///
+    /// 0.045 is picked off the measurement rather than out of the air, and it
+    /// has to clear both ways. The resolution this branch replaced put the
+    /// closest pair at **0.0000** on eight of the 26 palettes and under 0.035
+    /// on fourteen; the one it installed puts the worst pair over the whole
+    /// matrix at 0.0568. So the floor sits above every failure and below the
+    /// tightest pass, with about 26% of headroom on the passing side.
+    private static let separationFloor: CGFloat = 0.045
+
+    /// `fm/grandline-topbar-icon-tiles-round2`'s actual bug, generalised.
+    ///
+    /// The captain reported three tiles in one warm tan; the cause was not
+    /// three unlucky hue choices but the *resolution*. Routing §2.2's seven
+    /// identity hues through `HelmDomainHue.fallbackTint` hands them to seven
+    /// `HelmTint` slots, and a palette is free to spend one colour on two
+    /// slots - Ayu publishes a single amber and uses it as both `accent` and
+    /// its ANSI yellow, so teal (Hosts) and amber (Poneglyph, Sticky Board)
+    /// came out as *the same tile*.
+    ///
+    /// So this asserts the property rather than the three symptoms: over every
+    /// palette, no two of the tile colours this bar can draw land within
+    /// `separationFloor` of each other. Console's borrowed `HelmTint.neutral`
+    /// is swept alongside the seven, because a hue colliding with *it* is the
+    /// same defect.
+    ///
+    /// **It is proven able to fail without reverting anything**: the same
+    /// sweep is run a second time against the replaced resolution, and this
+    /// case fails if that one does *not* produce a collision. A floor that
+    /// nothing can breach is the one failure mode a sweep like this has.
+    private static func checkEveryPaletteKeepsTheHuesApart() -> String? {
+        var sources: [(String, (HelmTheme) -> String)] = HelmDomainHue.allCases.map { hue in
+            (hue.rawValue, { DaylightBarIconButton.tileHex(for: hue, in: $0) })
+        }
+        for tint in RailDestination.allCases.compactMap(DaylightBarIconButton.tileTintOverride)
+        where !sources.contains(where: { $0.0 == "override:\(tint)" }) {
+            sources.append(("override:\(tint)", { tint.hex(in: $0) }))
+        }
+
+        var measured = 0
+        var worst = (distance: CGFloat.greatestFiniteMagnitude, where: "")
+        for theme in HelmTheme.allThemes {
+            for i in 0..<sources.count {
+                for j in (i + 1)..<sources.count {
+                    let a = washed(sources[i].1(theme), theme)
+                    let b = washed(sources[j].1(theme), theme)
+                    let d = separation(a, b)
+                    measured += 1
+                    if d < worst.distance {
+                        worst = (d, "\(theme.id) \(sources[i].0)/\(sources[j].0)")
+                    }
+                    guard d >= separationFloor else {
+                        return String(format: "%@: %@ and %@ both render %@ / %@ - a distance of %.4f, under the "
+                                      + "%.3f floor. Two destinations in one colour is the whole complaint.",
+                                      theme.id, sources[i].0, sources[j].0, describe(a), describe(b),
+                                      d, separationFloor)
+                    }
+                }
+            }
+        }
+
+        let expectedPairs = HelmTheme.allThemes.count * sources.count * (sources.count - 1) / 2
+        guard measured == expectedPairs, HelmTheme.allThemes.count >= 26,
+              sources.count > HelmDomainHue.allCases.count else {
+            return "swept \(measured) of \(expectedPairs) pairs over \(HelmTheme.allThemes.count) palettes and "
+                + "\(sources.count) tile sources - the matrix shrank, so this case stopped proving what it claims"
+        }
+
+        // The discriminating half. Re-run the sweep through the resolution
+        // this branch replaced; if *that* no longer collides anywhere, the
+        // floor has drifted high enough to be meaningless and this case is
+        // no longer catching the bug it was written for.
+        var collisions = 0
+        for theme in HelmTheme.allThemes {
+            let hues = HelmDomainHue.allCases
+            for i in 0..<hues.count {
+                for j in (i + 1)..<hues.count {
+                    let priorHex: (HelmDomainHue) -> String = {
+                        theme.isDaylight ? $0.identityHex(in: theme) : $0.fallbackTint.hex(in: theme)
+                    }
+                    let d = separation(washed(priorHex(hues[i]), theme), washed(priorHex(hues[j]), theme))
+                    if d < separationFloor { collisions += 1 }
+                }
+            }
+        }
+        guard collisions > 0 else {
+            return String(format: "the replaced `fallbackTint` resolution produces no collision at the %.3f floor "
+                          + "any more - this case can no longer fail, so it is not guarding the fix "
+                          + "(worst live pair: %.4f at %@)", separationFloor, worst.distance, worst.where)
+        }
+        return nil
+    }
+
+    /// The captain's own three, by name.
+    ///
+    /// `checkEveryPaletteKeepsTheHuesApart` already covers these as part of
+    /// the matrix, and this is still worth its own case: it is the report that
+    /// was filed, it fails with the reported wording rather than with a pair
+    /// of hue names, and it pins down that the fix for these three was to keep
+    /// each destination's **own** `domainHue` (Docs blue, Hosts teal,
+    /// Schedules violet - §2.2's table, unchanged) rather than to invent three
+    /// new colours for the bar.
+    private static func checkTheCaptainsThreeAreTellableApart() -> String? {
+        let three: [RailDestination] = [.docs, .hosts, .schedules]
+        // The hues really are the §2.2 ones, so "they differ" is a claim about
+        // the app's own identity table rather than about a bar-local invention.
+        let expected: [RailDestination: HelmDomainHue] = [.docs: .blue, .hosts: .teal, .schedules: .violet]
+        for destination in three {
+            guard destination.domainHue == expected[destination] else {
+                return "\(destination.title)'s domain hue is \(destination.domainHue), expected "
+                    + "\(expected[destination].map { "\($0)" } ?? "?") - the bar draws §2.2's table, so a change "
+                    + "there is a change here"
+            }
+            guard DaylightBarIconButton.tileTintOverride(for: destination) == nil else {
+                return "\(destination.title) has a tile override - these three are supposed to take their own hue"
+            }
+        }
+
+        for theme in HelmTheme.allThemes {
+            for i in 0..<three.count {
+                for j in (i + 1)..<three.count {
+                    let a = washed(DaylightBarIconButton.tileHex(for: three[i], in: theme), theme)
+                    let b = washed(DaylightBarIconButton.tileHex(for: three[j], in: theme), theme)
+                    let d = separation(a, b)
+                    guard d >= separationFloor else {
+                        return String(format: "%@: %@ renders %@ and %@ renders %@ - %.4f apart, under the %.3f "
+                                      + "floor. The captain reported exactly this: \"hard to tell apart at a "
+                                      + "glance\".", theme.id, three[i].title, describe(a), three[j].title,
+                                      describe(b), d, separationFloor)
+                    }
+                }
             }
         }
         return nil
@@ -518,6 +727,45 @@ enum DaylightBarIconTileSelfTest {
     private static func layerFill(_ button: DaylightBarIconButton) -> NSColor? {
         button.debugIconBackground.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }
     }
+
+    /// The resting tile a hue produces in a theme - the one recipe every tile
+    /// on this bar draws, so a case never rebuilds it by hand.
+    private static func wash(_ hue: HelmDomainHue,
+                             _ theme: HelmTheme) -> (fill: NSColor, foreground: NSColor) {
+        let resolved = HelmContrast.tintedSurface(tintHex: DaylightBarIconButton.tileHex(for: hue, in: theme),
+                                                  theme: theme,
+                                                  target: HelmContrast.nonTextTarget,
+                                                  washSteps: HelmContrast.tileWashSteps)
+        return (resolved.fill, resolved.foreground)
+    }
+
+    private static func washed(_ hex: String, _ theme: HelmTheme) -> NSColor {
+        HelmContrast.tintedSurface(tintHex: hex,
+                                   theme: theme,
+                                   target: HelmContrast.nonTextTarget,
+                                   washSteps: HelmContrast.tileWashSteps).fill
+    }
+
+    /// How far apart two tiles look, weighted-RGB.
+    ///
+    /// Deliberately **not** `HelmContrast.ratio`, which compares relative
+    /// luminance and would score two different hues of equal brightness as
+    /// identical - which is the exact defect being measured, so a luminance
+    /// check here would be blind to it by construction (AGENTS.md records this
+    /// trap; this codebase has walked into it twice). The 2/4/3 weights are
+    /// the standard Rec. 601-ish approximation to how much each channel moves
+    /// perceived colour, which is enough to separate hue *families* - and hue
+    /// families are what the complaint was about.
+    ///
+    /// Components come from `HelmContrast.components`, the same accessor
+    /// `sameColor` uses, so the two agree about what a colour is.
+    private static func separation(_ a: NSColor, _ b: NSColor) -> CGFloat {
+        let x = HelmContrast.components(a), y = HelmContrast.components(b)
+        let dr = x.0 - y.0, dg = x.1 - y.1, db = x.2 - y.2
+        return sqrt(2 * dr * dr + 4 * dg * dg + 3 * db * db)
+    }
+
+    private static func layerBorderColor(_ color: NSColor?) -> NSColor? { color }
 
     private static func layerBorder(_ button: DaylightBarIconButton) -> NSColor? {
         button.debugIconBackground.layer?.borderColor.flatMap { NSColor(cgColor: $0) }

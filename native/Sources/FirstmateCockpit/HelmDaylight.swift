@@ -514,11 +514,47 @@ enum HelmDomainHue: String, CaseIterable {
         }
     }
 
+    /// This hue's §2.2 `h1` verbatim, **unconditioned by the active palette**
+    /// - the seven-colour categorical set, taken as a set.
+    ///
+    /// `identityHex(in:)` and `fallbackTint` both answer "what does this hue
+    /// become in *this* theme's own vocabulary", and both are right for a
+    /// surface that carries one hue at a time. This answers a different
+    /// question, and it is the question a surface drawing **all seven at
+    /// once** has to ask: are they still seven distinguishable colours?
+    ///
+    /// Routing them through `fallbackTint` is not, and
+    /// `fm/grandline-topbar-icon-tiles-round2` measured how badly. The map is
+    /// 1:1 onto seven `HelmTint` slots, but a *palette* is under no obligation
+    /// to make those seven slots seven colours: Ayu publishes one amber and
+    /// uses it as both `accent` and its ANSI yellow, Tokyo Night's `accent`
+    /// *is* its ANSI blue. Swept over all 26 palettes as a washed tile, the
+    /// closest pair of domain hues came out **literally identical** (distance
+    /// 0.0000) on eight palettes and under the 0.035 separation floor on
+    /// fourteen - blue/teal on Dracula, One and both Tokyo Nights, teal/amber
+    /// on both Ayus, teal/green on Rose Pine Dawn. The same sweep against
+    /// these raw values has a worst pair of 0.0568 and nothing under the
+    /// floor. `DaylightBarIconTileSelfTest.checkEveryPaletteKeepsTheHuesApart`
+    /// is that sweep, kept.
+    ///
+    /// **The objection `identityHex` records does not apply to a set.** That
+    /// property falls back to neutral off Daylight because one rose accent bar
+    /// among grey siblings reads as an alarm - a hue becomes a signal by being
+    /// *the coloured thing*. Where every member of the set carries a tile,
+    /// nothing is the coloured one and the row reads as a categorical palette
+    /// instead; that is the same reasoning `DaylightBarIconButton.tileHex`
+    /// already recorded, and the same test `HelmDomainHue.fallbackTint`'s own
+    /// "safe there and not on a bar" note applies.
+    ///
+    /// Not a general replacement for either of the other two. A surface
+    /// drawing one hue should still ask the palette.
+    var categoricalHex: String { daylightPair.h1 }
+
     #if FM_SELFTESTS
     /// This hue's §2.2 `h1` verbatim, independent of the active theme - so a
     /// self-test can measure the *raw* table value against a surface without
     /// having to construct the Daylight theme just to resolve it.
-    var daylightH1ForTests: String { daylightPair.h1 }
+    var daylightH1ForTests: String { categoricalHex }
     #endif
 
     /// The `HelmTint` slot this hue borrows on a non-Daylight palette.

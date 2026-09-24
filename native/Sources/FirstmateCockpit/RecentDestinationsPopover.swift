@@ -31,9 +31,15 @@ import AppKit
 /// (`DaylightBarIconButton`).
 final class RecentDestinationsButton: DaylightBarIconButton {
     init() {
+        // `DaylightBarIconButton.chromeTileHue`: Recents opens a panel, not a
+        // page - a way back to a place rather than a place. Slate is §2.2's
+        // claims-nothing hue, so the tile reads as the app's own control
+        // rather than as a twelfth destination. That property's comment
+        // carries the full reasoning and the measurement behind it.
         super.init(symbol: "clock.arrow.circlepath",
                    tooltip: "Recently Visited",
-                   accessibilityLabel: "Recently Visited")
+                   accessibilityLabel: "Recently Visited",
+                   hue: DaylightBarIconButton.chromeTileHue)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }

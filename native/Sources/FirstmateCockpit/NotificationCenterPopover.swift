@@ -232,21 +232,55 @@ final class NotificationBellButton: NSButton {
         badgeContainer.setAccessibilityElement(false)
     }
 
-    func applyTheme(ink: NSColor, line: NSColor, surface: NSColor) {
-        iconImageView.contentTintColor = ink.withAlphaComponent(DaylightBarIconButton.restingGlyphAlpha)
-        iconBackground.layer?.backgroundColor = surface.cgColor
+    /// `fm/grandline-topbar-icon-tiles-round2`: the bell wears a real tile now
+    /// too, in `DaylightBarIconButton.bellTileHue` - see that property for why
+    /// amber and not red.
+    ///
+    /// It takes the whole theme rather than three pre-resolved colours because
+    /// the tile recipe is `HelmContrast.tintedSurface`, which needs the
+    /// palette to correct the fill and the glyph against each other - the same
+    /// reason `DaylightBarIconButton.applyTheme` takes one. Passing an already
+    /// -flattened ink/line/surface triple is exactly what kept this control on
+    /// the plain chrome square while every shortcut beside it moved on.
+    ///
+    /// The bell has no hover or active state of its own (no tracking area,
+    /// and it is never "the destination showing"), so it draws the resting
+    /// ladder only - deliberately the one state, not a third ladder invented
+    /// here.
+    func applyTheme(_ theme: HelmTheme) {
+        let resolved = HelmContrast.tintedSurface(
+            tintHex: DaylightBarIconButton.tileHex(for: DaylightBarIconButton.bellTileHue, in: theme),
+            theme: theme,
+            target: HelmContrast.nonTextTarget,
+            washSteps: HelmContrast.tileWashSteps)
+        // The glyph is `tintedSurface`'s own contrast-corrected partner for
+        // this fill, at full strength - not the muted ink the plain square
+        // used. A wash already corrected to the 3:1 non-text floor has no
+        // headroom left to spend on an alpha.
+        iconImageView.contentTintColor = resolved.foreground
+        iconBackground.layer?.backgroundColor = resolved.fill.cgColor
         iconBackground.layer?.borderWidth = 1
-        iconBackground.layer?.borderColor = line.withAlphaComponent(0.5).cgColor
+        iconBackground.layer?.borderColor = HelmTheme
+            .nsColor(DaylightBarIconButton.tileHex(for: DaylightBarIconButton.bellTileHue, in: theme))
+            .withAlphaComponent(DaylightBarIconButton.restingTileBorderAlpha).cgColor
         // The badge's ring is the tile it sits on, so the badge reads as
-        // floating above the glyph rather than merged into it. Theme-derived
-        // for that reason only - the disc itself stays systemRed on all 14.
-        badgeContainer.layer?.borderColor = surface.cgColor
+        // floating above the glyph rather than merged into it. It follows the
+        // tile's fill for that reason - the disc itself stays systemRed on
+        // every palette.
+        badgeContainer.layer?.borderColor = resolved.fill.cgColor
     }
 
     #if FM_SELFTESTS
     /// B2: the badge's real frame in the button's own coordinates, so a suite
     /// can assert it sits inside the tile rather than beside it.
     var debugBadgeFrame: NSRect { badgeContainer.frame }
+    /// The bell's own tile, for the suite that asserts it is a real tile
+    /// rather than the plain chrome square - read off the layer, so a fill
+    /// that is computed and never painted still fails.
+    var debugTileFill: NSColor? { iconBackground.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
+    var debugTileBorder: NSColor? { iconBackground.layer?.borderColor.flatMap { NSColor(cgColor: $0) } }
+    var debugGlyphColor: NSColor? { iconImageView.contentTintColor }
+    var debugBadgeRingColor: NSColor? { badgeContainer.layer?.borderColor.flatMap { NSColor(cgColor: $0) } }
     var debugBadgeIsHidden: Bool { badgeContainer.isHidden }
     var debugBadgeText: String { badgeLabel.stringValue }
     var debugIconFrame: NSRect { iconBackground.frame }

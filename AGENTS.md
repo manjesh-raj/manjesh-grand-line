@@ -1462,6 +1462,21 @@ noted.
   they resolve identically. It is safe there and not on a bar because every
   member of those sets carries a tile, so no one hue is the coloured thing
   among neutral siblings.
+- **A surface drawing *all seven* `HelmDomainHue`s at once must resolve them
+  through `categoricalHex`, not `fallbackTint`.** The seven-hue to seven-
+  `HelmTint` map is 1:1, but a *palette* is free to spend one colour on two
+  slots - Ayu publishes one amber and uses it as both `accent` and its ANSI
+  yellow, Tokyo Night's `accent` **is** its ANSI blue. Swept as a washed tile
+  over all 26 palettes, the closest pair of domain hues measured **0.0000** on
+  eight of them and under a 0.035 separation floor on fourteen; against the
+  raw §2.2 values the worst pair is 0.0568. That shipped as the top bar's
+  three-tan icon row (`docs/history/03-navigation-and-chrome.md`). The
+  per-palette resolutions stay right for a surface drawing **one** hue among
+  neutral siblings, which is why `UnifiedSearch`'s result tile still splits -
+  `HelmDomainHue.identityHex`'s comment is the dividing line. And measure such
+  a collision as a weighted-RGB **distance**, never `HelmContrast.ratio`:
+  that helper compares relative luminance, so two different hues of equal
+  brightness score identical - exactly the defect being looked for.
 - **An identity colour derived from text must not come from
   `String.hashValue`.** Swift seeds it per *process*, so the same host, tag or
   project gets a different colour on every launch - and the defect is invisible

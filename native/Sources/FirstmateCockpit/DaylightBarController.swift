@@ -1383,8 +1383,7 @@ final class DaylightBarController: NSViewController {
         // that is what lets a shortcut light up in its destination's own hue
         // without this method knowing which hue that is.
         for button in iconSquares { button.applyTheme(theme) }
-        notificationCenter.bell.applyTheme(ink: muted, line: line, surface: theme.isDaylight
-            ? HelmTheme.nsColor(theme.daylightTokens.inset) : surface)
+        notificationCenter.bell.applyTheme(theme)
 
         let avatarPair = (h1: HelmDomainHue.amber.pair(in: theme).h2,
                           h2: HelmDomainHue.rose.pair(in: theme).h2)
@@ -1784,6 +1783,14 @@ class DaylightBarIconButton: NSButton {
     static let hoverTileWashSteps: [CGFloat] = [0.26, 0.22, 0.18, 0.14, 0.11, 0.08]
     static let activeTileWashSteps: [CGFloat] = [0.38, 0.32, 0.26, 0.20, 0.16, 0.12]
 
+    /// The resting tile's ring alpha, over the tile's own hue.
+    ///
+    /// Named rather than inlined because `NotificationBellButton` draws the
+    /// same resting tile from its own file and has no ladder of its own to
+    /// read it from - two literals that had to agree is precisely how the
+    /// bell came to be the odd square out in the first place.
+    static let restingTileBorderAlpha: CGFloat = 0.2
+
     /// The hue a destination shortcut's tile is washed in.
     ///
     /// **The mapping is not new** - `RailDestination.domainHue` is this app's
@@ -1802,27 +1809,95 @@ class DaylightBarIconButton: NSButton {
     /// `tileTintOverride(for:)` gives Console the tint Settings' own Terminal
     /// row carries. That function's comment is the reasoning.
     ///
-    /// **The per-family split matches `UnifiedSearch`'s destination tile
-    /// exactly**, which is the app's other place that draws a `RailDestination`
-    /// as a colour tile: the §2.2 identity hue on the Daylight family, the
-    /// palette's own corresponding `HelmTint` slot on the other 24. That split
-    /// is load-bearing, not a convenience. `identityHex` alone resolves to
-    /// `HelmTint.neutral` off Daylight, and neutral *is* `chromeInkHex` - so
-    /// washing it as a tinted surface produces the near-black chip AGENTS.md
-    /// warns about, eleven times in a row, on 24 of the 26 palettes.
+    /// **The resolution is `HelmDomainHue.categoricalHex` on all 26 palettes,
+    /// and that is `fm/grandline-topbar-icon-tiles-round2`'s fix.** It used to
+    /// be a per-family split - the §2.2 hue on Daylight, the palette's own
+    /// `fallbackTint` slot on the other 24, matching `UnifiedSearch`'s
+    /// destination tile. The split was wrong *for this row* for a reason
+    /// neither surface had measured: the seven-hue map onto seven `HelmTint`
+    /// slots is 1:1, but a palette is under no obligation to make those slots
+    /// seven distinct colours. Ayu publishes one amber and spends it as both
+    /// `accent` and ANSI yellow, so teal and amber resolved to the *same tile*
+    /// - which is what the captain reported, with Hosts (teal), Poneglyph and
+    /// Sticky Board (amber) sitting in one warm tan row on `ayu-dark`.
     ///
-    /// The cost is recorded rather than hidden: `fallbackTint` maps rose onto
-    /// `.critical` and amber onto `.warn`, which is a *semantic* slot, and
-    /// `RecentDestinationsPopover.makeRow` names routing an identity through
-    /// it as a defect. That objection is about an accent **bar** - one red
-    /// edge among grey ones on a benign list reads as an alarm. It does not
-    /// transfer to this row, where every shortcut carries a tile and the set
-    /// therefore reads as a categorical palette: nothing here is the one
-    /// coloured thing among neutral siblings, which is the whole mechanism by
-    /// which a hue comes to be read as a signal.
-    static func tileHex(for hue: HelmDomainHue, in theme: HelmTheme) -> String {
-        theme.isDaylight ? hue.identityHex(in: theme) : hue.fallbackTint.hex(in: theme)
+    /// Swept over every palette, the closest pair of domain hues measured
+    /// **0.0000** on eight of the 26 and under the 0.035 separation floor on
+    /// fourteen. Against `categoricalHex` the worst pair is 0.0568 and nothing
+    /// falls under the floor, with the 3:1 non-text legibility floor still
+    /// held in all three ladder states. `categoricalHex`'s own comment carries
+    /// the reasoning for why a *set* of hues may take the raw table where a
+    /// lone accent bar may not; `DaylightBarIconTileSelfTest`'s
+    /// `checkEveryPaletteKeepsTheHuesApart` is the sweep, kept as a guard.
+    ///
+    /// **`UnifiedSearch` deliberately still splits**, and this is not a drift
+    /// to reconcile later: its palette row draws one destination tile per
+    /// *result*, over a list that is mostly not destinations at all, so a
+    /// result carrying a raw §2.2 hue on a palette with no §2.2 vocabulary
+    /// would be the one coloured thing among neutral siblings - the exact
+    /// objection `HelmDomainHue.identityHex` records. This row draws all seven
+    /// at once and nothing else, so it is a categorical palette and is read as
+    /// one.
+    ///
+    /// The theme is still taken, and ignored on purpose: every call site has
+    /// one in hand, the override overload below genuinely needs it, and a
+    /// future palette-specific correction has a home here rather than a new
+    /// signature to thread.
+    static func tileHex(for hue: HelmDomainHue, in _: HelmTheme) -> String {
+        hue.categoricalHex
     }
+
+    /// The hue the bar's own controls wear, as opposed to the destinations
+    /// they sit among (`fm/grandline-topbar-icon-tiles-round2`).
+    ///
+    /// Recents and the theme toggle open a **panel**, not a page. The captain
+    /// asked for both to stop being bare grey squares, and the colour has to
+    /// carry that distinction rather than just fill the gap: a shortcut's tile
+    /// is a promise that pressing it takes you somewhere, and a control
+    /// painted in some destination's identity hue would make that promise
+    /// falsely - "avoid confusion with an actual destination tile" is the
+    /// captain's own wording.
+    ///
+    /// Slate is §2.2's answer to exactly that. It is the hue the table already
+    /// gives Settings and Tools - the two destinations that are *about the
+    /// app* rather than about the captain's work - and `HelmDomainHue`'s own
+    /// comment calls it the one slot that "claims nothing". Recents is pure
+    /// navigation utility (a way back to a place, not a place), and the theme
+    /// toggle is the app's own appearance, which is Settings' subject. One
+    /// hue for both states a rule the row can be read by: **a coloured tile is
+    /// a place, a slate tile is the app itself**. They sit at opposite ends of
+    /// the shortcut row rather than side by side, so sharing it costs no
+    /// legibility.
+    ///
+    /// Deliberately not the palette's own `accentHex`, which was the tempting
+    /// pick for a control whose whole subject is the active palette: teal's
+    /// `fallbackTint` *is* `.accent`, so the theme toggle would have collided
+    /// with Hosts on half the palettes - the same collision this branch's main
+    /// fix exists to remove.
+    ///
+    /// Distinct from Console's borrowed `HelmTint.neutral`, and that is
+    /// measured rather than assumed - neutral resolves to `chromeInkHex`,
+    /// which is a page-ink grey, while §2.2 slate is a warm `8B8677`. The
+    /// closest the two come on any of the 26 palettes is 0.0568, above the
+    /// 0.035 floor `checkEveryPaletteKeepsTheHuesApart` sweeps for.
+    static let chromeTileHue: HelmDomainHue = .slate
+
+    /// The hue the notification bell wears.
+    ///
+    /// The one bar control that is **not** chrome, because it is the only one
+    /// that is asking for something: the panel behind it is this app's
+    /// "Waiting for you" list. Amber is already this app's attention hue -
+    /// §2.2 gives it to `dailyOverview` ("here is your day") and
+    /// `DaylightModule.briefing` carries it - so a bell in amber says the same
+    /// thing those surfaces say, one control instead of a page.
+    ///
+    /// **Not `.rose`/`.critical`, deliberately.** A bell at rest is not an
+    /// alarm, and this app already has a louder signal for the case that is:
+    /// the badge, fixed white-on-`systemRed` and never theme-tinted, exactly
+    /// so it reads as urgent on every palette (see
+    /// `NotificationBellButton`'s own comment). A permanently red tile would
+    /// spend that signal on an empty list and leave the badge nothing to add.
+    static let bellTileHue: HelmDomainHue = .amber
 
     /// The one destination whose bar tile is **not** a wash of its own
     /// `domainHue`.
@@ -1875,9 +1950,16 @@ class DaylightBarIconButton: NSButton {
     /// and the destination's own shortcut icon when it navigates straight to a
     /// lone overflowing page. See `applyGlyph(symbol:hue:)`.
     private var symbolName: String
-    /// The hue this button takes on hover/active, or `nil` for a control that
-    /// is not a destination shortcut (the theme toggle, Recents) and so has
-    /// no domain of its own - those brighten to plain ink instead.
+    /// The hue this button's tile is washed in, or `nil` for a control that
+    /// carries no identity at all - which, since
+    /// `fm/grandline-topbar-icon-tiles-round2`, is the overflow button while
+    /// it is drawing its generic ellipsis and the clipboard-history button,
+    /// and nothing else. Those keep the plain chrome square; see
+    /// `restyleAsPlainSquare`.
+    ///
+    /// Recents and the theme toggle are **not** in that set any more: they
+    /// are not destinations, but they are not identity-less either, and both
+    /// now carry `chromeTileHue`. That property's comment is the reasoning.
     private var hue: HelmDomainHue?
     /// A tint that replaces `hue` for this button's tile, or `nil` to wash the
     /// domain hue as usual. See `tileTintOverride(for:)` - `hue` is left
@@ -2030,14 +2112,28 @@ class DaylightBarIconButton: NSButton {
         restyleAsTile(hue: hue)
     }
 
-    /// The pre-tile rendering, kept verbatim for a control that is **not** a
-    /// destination shortcut: the theme toggle, Recents, the clipboard history
-    /// and the overflow button while it is drawing its generic ellipsis.
+    /// The pre-tile rendering, kept for a control that carries no identity at
+    /// all: the overflow button while it is drawing its generic ellipsis, and
+    /// the clipboard-history button.
     ///
-    /// None of those has a domain of its own, so there is no honest colour to
-    /// put behind them - see `tileHex(for:in:)`. They stay the quiet chrome
-    /// square they always were, which is also what keeps the coloured tiles
-    /// beside them reading as "these are places you can go".
+    /// **This used to cover Recents and the theme toggle too, and the captain
+    /// asked for that reversed** (`fm/grandline-topbar-icon-tiles-round2`):
+    /// two unexplained grey squares at either end of a row of coloured tiles
+    /// read as unfinished rather than as a category. The paragraph this one
+    /// replaces argued that a plain square is "what keeps the coloured tiles
+    /// beside them reading as places you can go"; the answer is that a
+    /// *slate* tile says the same thing more legibly, because slate is
+    /// already §2.2's claims-nothing hue - see `chromeTileHue`.
+    ///
+    /// What is left here genuinely has no honest colour. The ellipsis opens a
+    /// menu rather than a surface, and `checkOverflowButtonFollowsItsIdentity`
+    /// asserts it stays plain in that identity and takes a real tile in the
+    /// other. The clipboard-history button is left alone for a different and
+    /// duller reason, recorded so it is not mistaken for a decision: it is
+    /// laid out with no width or height constraint at all (unlike every other
+    /// square on the bar), so it resolves to its intrinsic size and does not
+    /// render. Colouring a control nobody can see would be dressing up a
+    /// separate bug.
     private func restyleAsPlainSquare() {
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
@@ -2098,7 +2194,7 @@ class DaylightBarIconButton: NSButton {
             borderAlpha = 0.45
         } else {
             steps = HelmContrast.tileWashSteps
-            borderAlpha = 0.2
+            borderAlpha = Self.restingTileBorderAlpha
         }
         let resolved = HelmContrast.tintedSurface(tintHex: hex,
                                                   theme: theme,
@@ -2126,9 +2222,11 @@ class DaylightBarIconButton: NSButton {
 
 final class DaylightThemeToggleButton: DaylightBarIconButton {
     init() {
+        // `chromeTileHue`: appearance is the app's own chrome, not a place.
         super.init(symbol: "circle.lefthalf.filled",
                    tooltip: "Toggle Light/Dark (⌘⌥T)",
-                   accessibilityLabel: "Toggle Light/Dark")
+                   accessibilityLabel: "Toggle Light/Dark",
+                   hue: DaylightBarIconButton.chromeTileHue)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
