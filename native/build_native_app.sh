@@ -316,7 +316,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Dictation uses Speech Recognition (on-device when available) to turn what you say into text.</string>
     <!-- F20: the daily review reads today's events to show them on Fleet.
-         Read-only - `DailyReviewCalendar.swift` is the only file that imports
+         Read-only - DailyReviewCalendar.swift is the only file that imports
          EventKit and it never saves, removes or commits anything. Both keys
          are present because macOS 14 introduced the full-access spelling and
          an older system still reads the original. -->

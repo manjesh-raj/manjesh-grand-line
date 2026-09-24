@@ -42,6 +42,7 @@ enum LegacyRenameMigrationSelfTest {
         checkKeychainCopyNeverOverwrites(&ok)
         checkKeychainMigrationGateSkipsOnceComplete(&ok)
         checkKeychainMigrationGateRetriesAFailure(&ok)
+        checkKeychainMigrationGatePerItemSurvivesOtherFailures(&ok)
         checkDefaultsAreCarriedOver(&ok)
 
         if ok { print("[LegacyRenameMigrationSelfTest] all checks passed") }
@@ -257,8 +258,8 @@ enum LegacyRenameMigrationSelfTest {
             }
             defer { defaults.removePersistentDomain(forName: domain) }
 
-            let migrate: ([String]) -> LegacyNameMigration.KeychainOutcome = { _ in
-                LegacyNameMigration.migrateKeychainService(from: legacyService, to: service)
+            let migrate: ([String], Set<String>) -> LegacyNameMigration.KeychainOutcome = { _, skipping in
+                LegacyNameMigration.migrateKeychainService(from: legacyService, to: service, skipping: skipping)
             }
 
             let first = LegacyNameMigration.migrateKeychainIfNeeded(
@@ -301,7 +302,7 @@ enum LegacyRenameMigrationSelfTest {
         var nextOutcome = LegacyNameMigration.KeychainOutcome(
             copied: [], alreadyPresent: 0,
             failures: ["legacy/denied-account: the item carried no data"])
-        let migrate: ([String]) -> LegacyNameMigration.KeychainOutcome = { _ in
+        let migrate: ([String], Set<String>) -> LegacyNameMigration.KeychainOutcome = { _, _ in
             calls += 1
             return nextOutcome
         }
@@ -326,6 +327,90 @@ enum LegacyRenameMigrationSelfTest {
         let fourth = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, migrate: migrate)
         check(calls == 3, "and every later launch skips the migration entirely (got \(calls) calls)", &ok)
         check(fourth == .alreadyDone, "reporting exactly that (got \(fourth))", &ok)
+    }
+
+    /// The fix behind this file's second round: PR #471's gate was a single
+    /// flag for the whole pass, and one item that can never succeed (a stale
+    /// legacy ACL, per this file's own header) kept that flag from ever
+    /// latching - so *every* item, including ones the captain had already
+    /// granted "Always Allow" on, was re-read and re-prompted for on every
+    /// later launch. That is the shape of the captain's report: granting the
+    /// prompt did not stop it recurring. This proves the per-item half of the
+    /// gate (`keychainMigratedItemsKey`) fixes it: an item that has already
+    /// succeeded is never queried again, regardless of what else in the pass
+    /// is still failing.
+    private static func checkKeychainMigrationGatePerItemSurvivesOtherFailures(_ ok: inout Bool) {
+        let run = UUID().uuidString
+        let domain = "com.manjesh.grandline.selftest.rename.gate.perkey.\(run)"
+        guard let defaults = UserDefaults(suiteName: domain) else {
+            fail("could not open the scratch defaults suite", &ok)
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: domain) }
+
+        let keyA = "service-a/account-a"
+        let keyB = "service-b/account-b"
+        var queriedA = 0
+        var queriedB = 0
+        let migrate: ([String], Set<String>) -> LegacyNameMigration.KeychainOutcome = { _, skipping in
+            var combined = LegacyNameMigration.KeychainOutcome()
+            if !skipping.contains(keyA) {
+                queriedA += 1
+                combined.copied.append(keyA)
+                combined.succeededKeys.insert(keyA)
+            }
+            if !skipping.contains(keyB) {
+                queriedB += 1
+                combined.failures.append("\(keyB): simulated permanent ACL failure")
+            }
+            return combined
+        }
+
+        let first = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, services: [], migrate: migrate)
+        guard case .ran = first else {
+            fail("the first launch must actually run the migration, not skip it", &ok)
+            return
+        }
+        check(queriedA == 1 && queriedB == 1, "both items are queried on the first pass", &ok)
+        check(!defaults.bool(forKey: LegacyNameMigration.keychainMigrationCompleteKey),
+              "the whole-pass flag does not latch while B keeps failing", &ok)
+        check(Set(defaults.stringArray(forKey: LegacyNameMigration.keychainMigratedItemsKey) ?? []) == [keyA],
+              "A's success is persisted individually even though the pass overall did not complete", &ok)
+
+        // A second launch: A must never be queried again - the bug this test
+        // exists to catch would query it here exactly as it queries B.
+        let second = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, services: [], migrate: migrate)
+        guard case .ran = second else {
+            fail("a pass with an outstanding failure must not report .alreadyDone", &ok)
+            return
+        }
+        check(queriedA == 1, "A is never re-queried once it has succeeded (got \(queriedA) call(s))", &ok)
+        check(queriedB == 2, "B is retried because it is still outstanding (got \(queriedB) call(s))", &ok)
+
+        // A third launch, with B finally succeeding: the whole-pass flag
+        // latches, and both items' successes remain recorded.
+        let migrateBSucceeds: ([String], Set<String>) -> LegacyNameMigration.KeychainOutcome = { _, skipping in
+            var combined = LegacyNameMigration.KeychainOutcome()
+            if !skipping.contains(keyA) { queriedA += 1 }
+            if !skipping.contains(keyB) {
+                queriedB += 1
+                combined.copied.append(keyB)
+                combined.succeededKeys.insert(keyB)
+            }
+            return combined
+        }
+        let third = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, services: [], migrate: migrateBSucceeds)
+        guard case .ran(let outcome3) = third else {
+            fail("the third launch must run - B was still outstanding", &ok)
+            return
+        }
+        check(outcome3.failures.isEmpty, "the third pass has nothing left to fail on", &ok)
+        check(queriedA == 1, "A is still never re-queried on the third launch", &ok)
+        check(defaults.bool(forKey: LegacyNameMigration.keychainMigrationCompleteKey),
+              "the whole-pass flag latches once every item has succeeded", &ok)
+
+        let fourth = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, services: [], migrate: migrateBSucceeds)
+        check(fourth == .alreadyDone, "and every later launch now skips the Keychain entirely", &ok)
     }
 
     // MARK: - The preference domain
