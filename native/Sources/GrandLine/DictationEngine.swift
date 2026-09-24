@@ -35,6 +35,7 @@
 import AVFoundation
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import Speech
 
 /// A single permission's tri-state, mirroring the shape every other
@@ -111,7 +112,7 @@ enum DictationStatus: Equatable {
         case .cleaningUp: return "Rewriting your transcript into a clean sentence…"
         case .didNotCatchThat: return "No speech was recognized that time - hold \(shortcutDisplay) and try again."
         case .systemDictationDisabled: return "macOS's own Dictation setting is off, so Grand Line can't transcribe speech. Turn it on in System Settings > Keyboard > Dictation, then try again."
-        case .copiedOnly: return "Grand Line couldn't paste automatically that time, so the transcript is on your clipboard instead - press \u{2318}V to paste it. If Accessibility already looks granted in System Settings, remove Grand Line from that list and re-add it - a real trust check just came back denied."
+        case .copiedOnly: return "Grand Line couldn't paste automatically that time, so the transcript is on your clipboard instead - press \u{2318}V to paste it. macOS has been asked for the permission that posts the paste; answer Allow and the next dictation will paste on its own. If no prompt appeared, remove Grand Line from System Settings > Privacy & Security > Accessibility and re-add it - a real permission check just came back denied."
         }
     }
 
@@ -927,9 +928,11 @@ final class DictationEngine {
         /// API has none), so this only ever means "trust was true and both
         /// events were constructed" - not a delivery guarantee.
         case posted
-        /// `AXIsProcessTrustedWithOptions`'s live, un-prompted read
-        /// (`isAccessibilityTrustedForPaste`) came back false at the moment
-        /// of paste. Live-confirmed on this task (`AGENTS.md`'s "Verifying
+        /// The live paste gate (`isAccessibilityTrustedForPaste`, which reads
+        /// `CGPreflightPostEventAccess()` and `AXIsProcessTrusted()`) came
+        /// back false at the moment of paste, and the once-per-launch
+        /// `CGRequestPostEventAccess()` recovery did not turn it around in
+        /// time for this dictation. Live-confirmed on this task (`AGENTS.md`'s "Verifying
         /// native UI bugs" convention, via a read-only `lldb -p` attach to
         /// the captain's own running instance): this is a real, reachable
         /// state even while System Settings > Privacy & Security >
@@ -987,9 +990,18 @@ final class DictationEngine {
         // 'subsystem == "com.manjesh.grandline.native" && category ==
         // "dictation"'` can now answer "did the trust check actually pass"
         // after the fact, not just "is it granted in Settings right now."
-        guard isAccessibilityTrustedForPaste() else {
-            AppLog.dictation.notice("paste skipped: AXIsProcessTrusted() read false - transcript left on the pasteboard only")
-            return .skippedNoTrust
+        if !isAccessibilityTrustedForPaste() {
+            AppLog.dictation.notice("paste gate closed on the first read - asking macOS for post-event access before giving up")
+            // The old code returned here, which is the whole of the captain's
+            // report: the app knew it could not paste and did nothing about
+            // it except tell the captain to go repair System Settings by
+            // hand. `requestPostEventAccessIfNotYetAsked()` is the in-app
+            // version of that repair - see its own doc comment.
+            guard requestPostEventAccessIfNotYetAsked() else {
+                AppLog.dictation.notice("paste skipped: no post-event access - transcript left on the pasteboard only")
+                return .skippedNoTrust
+            }
+            AppLog.dictation.notice("post-event access became true on request - continuing with the synthetic \u{2318}V")
         }
         // Virtual keycode 9 = 'v' (kVK_ANSI_V).
         let vKeyCode: CGKeyCode = 9
@@ -1081,16 +1093,127 @@ final class DictationEngine {
     static var accessibilityTrustOverrideForTests: Bool?
     #endif
 
-    /// Split out from `pasteAtCursor` so a test can stub it - posting a
-    /// synthetic keystroke without Accessibility trust would either silently
-    /// no-op or, on some macOS versions, do nothing observable at all, so
-    /// gating it explicitly here keeps the pasteboard write (still useful
-    /// on its own - a captain can always paste manually) separate from the
-    /// synthetic-keystroke half that truly needs the permission.
+    /// Whether this process may post the synthetic ⌘V, decided from the
+    /// two reads rather than the one.
+    ///
+    /// `fm/grand-line-dictation-autopaste-fix`: this used to be
+    /// `AXIsProcessTrusted()` alone, and that is the wrong question for what
+    /// this code actually does. `AXIsProcessTrusted()` answers "may this
+    /// process drive other apps through the Accessibility *API*";
+    /// `CGPreflightPostEventAccess()` answers "may this process *post* events",
+    /// which is the operation below. They are two separate CoreGraphics /
+    /// HIServices entry points reading TCC, and this app has already been
+    /// burnt once by trusting a permission read that did not describe the
+    /// thing being attempted (`AGENTS.md` gotcha (21) - a privacy-pane toggle
+    /// shown ON is not proof a live check reads true). Taking either as
+    /// sufficient is strictly more permissive than the old gate, so it can
+    /// only ever add a paste attempt that used to be refused - it can never
+    /// suppress one that used to happen.
     static func isAccessibilityTrustedForPaste() -> Bool {
         #if FM_SELFTESTS
         if let override = accessibilityTrustOverrideForTests { return override }
         #endif
-        return AXIsProcessTrusted()
+        return pasteGateIsOpen(postEventAccess: CGPreflightPostEventAccess(), axTrusted: AXIsProcessTrusted())
+    }
+
+    /// The gate's rule, split out from the two live system reads so a test can
+    /// assert it without depending on whichever way this machine happens to be
+    /// configured - including the case the fix exists for
+    /// (`postEventAccess: true, axTrusted: false`), which the old AX-only gate
+    /// refused and this one allows.
+    static func pasteGateIsOpen(postEventAccess: Bool, axTrusted: Bool) -> Bool {
+        postEventAccess || axTrusted
+    }
+
+    /// Set once a request has actually been put to the OS this launch, so a
+    /// captain dictating repeatedly against a closed gate is asked once, not
+    /// once per sentence. GL-28: `pasteAtCursor` can run off the main thread
+    /// (`SFSpeechRecognizer`'s `recognitionTask` callback carries no queue
+    /// guarantee), so this latch is read and written under a lock rather than
+    /// bare.
+    private static var hasRequestedPostEventAccessThisLaunch = false
+    private static let postEventAccessLock = NSLock()
+
+    #if FM_SELFTESTS
+    /// How many times `requestPostEventAccessIfNotYetAsked()` reached the real
+    /// `CGRequestPostEventAccess()`. A suite must never pop a system dialog on
+    /// the captain's own machine, so this is what proves it did not.
+    static var postEventAccessRequestCountForTests = 0
+
+    /// The once-per-launch latch is process-global, so the *first* suite case
+    /// to reach a closed gate would otherwise consume it and leave every later
+    /// case unable to tell "short-circuited by the test override" from
+    /// "short-circuited by the latch". Reset it explicitly rather than relying
+    /// on case order.
+    static func debugResetPostEventAccessRequestStateForTests() {
+        hasRequestedPostEventAccessThisLaunch = false
+        postEventAccessRequestCountForTests = 0
+    }
+    #endif
+
+    /// Ask macOS, at most once per launch, for the post-event access the paste
+    /// needs - and report whether the gate is open afterwards.
+    ///
+    /// This is the actual fix for the captain's report. The prior round
+    /// (`fm/grandline-dictation-autopaste-not-firing`,
+    /// `docs/history/16-dictation.md`) established by a live `lldb -p` attach
+    /// that the running process genuinely was not trusted while System
+    /// Settings showed the row toggled on, and concluded that the only
+    /// recovery was for the captain to remove and re-add the row by hand. The
+    /// captain did that and the app still only ever copied - confirmed again
+    /// on this task from the app's own log on the captain's real instance,
+    /// which prints "paste skipped: AXIsProcessTrusted() read false" for every
+    /// dictation.
+    ///
+    /// `CGRequestPostEventAccess()` is the supported in-app version of that
+    /// hand repair: it presents the system's own post-event access prompt and
+    /// registers *the currently running binary's* signature with `tccd`,
+    /// rather than relying on whichever older signature the existing row was
+    /// recorded against. It cannot block on the captain's answer, so the
+    /// dictation that raises the prompt still ends up copy-only and this
+    /// function says `false` for it; the dictation after it takes the
+    /// `alreadyAsked` path, re-reads the gate, and pastes. That is worth
+    /// saying out loud in a PR rather than implying an instant fix.
+    @discardableResult
+    static func requestPostEventAccessIfNotYetAsked() -> Bool {
+        #if FM_SELFTESTS
+        // A forced override means a suite is driving this path deliberately.
+        // Never put a real TCC prompt in front of the captain from a test.
+        if accessibilityTrustOverrideForTests != nil { return false }
+        #endif
+        postEventAccessLock.lock()
+        let alreadyAsked = hasRequestedPostEventAccessThisLaunch
+        hasRequestedPostEventAccessThisLaunch = true
+        postEventAccessLock.unlock()
+
+        guard !alreadyAsked else {
+            // The captain has already been shown the prompt this launch. If
+            // they answered Allow, this read is now true and the paste goes
+            // ahead on this very dictation; if they dismissed it, it is false
+            // and nothing asks again until the next launch.
+            AppLog.dictation.notice("post-event access already requested this launch - not asking again")
+            return isAccessibilityTrustedForPaste()
+        }
+        #if FM_SELFTESTS
+        postEventAccessRequestCountForTests += 1
+        #endif
+        askForPostEventAccessOnMain()
+        // The prompt is asynchronous from this call's point of view, so the
+        // dictation that raised it is still copy-only. Say `false` rather than
+        // pretending otherwise - `.copiedOnly`'s own copy tells the captain
+        // the next one will paste.
+        return false
+    }
+
+    /// `CGRequestPostEventAccess()` presents a system alert, and `pasteAtCursor`
+    /// is not guaranteed to be on the main thread (GL-04/GL-12's own
+    /// reasoning) - so the OS call is hopped, while the once-per-launch
+    /// decision above stays synchronous and therefore assertable.
+    private static func askForPostEventAccessOnMain() {
+        let ask = {
+            let granted = CGRequestPostEventAccess()
+            AppLog.dictation.notice("requested post-event access from macOS - it answered \(granted, privacy: .public)")
+        }
+        if Thread.isMainThread { ask() } else { DispatchQueue.main.async(execute: ask) }
     }
 }
