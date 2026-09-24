@@ -196,11 +196,13 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private let snippetStore: SnippetStore
     private let dictationStore: DictationStore
 
-    init(hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, dictationStore: DictationStore) {
+    init(hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, dictationStore: DictationStore,
+         autoSync: DotfilesAutoSync = .shared) {
         self.hostStore = hostStore
         self.keyStore = keyStore
         self.snippetStore = snippetStore
         self.dictationStore = dictationStore
+        self.autoSync = autoSync
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -264,6 +266,14 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private let clonePathField = NSTextField(string: DotfilesSource.defaultClonePath)
     private let usernameField = HelmTextField()
     private let dotfilesStatusLabel = NSTextField(wrappingLabelWithString: "")
+
+    /// `fm/grandline-bootstrap-dotfiles-autocommit`: the live auto-commit
+    /// service behind this card's own status banner. Injectable so a suite can
+    /// drive a disposable instance instead of the process-wide singleton -
+    /// which, under `FM_SELFTESTS`, is already redirected at a scratch path by
+    /// `main.swift` anyway.
+    private let autoSync: DotfilesAutoSync
+    private var autoSyncStatus: DotfilesAutoSync.Status = .synced
 
     // MARK: Software checklist state (Part C)
 
@@ -405,6 +415,21 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         // summary list goes: the stepper below is strictly richer, and the
         // full-setup card keeps what only it has - the progress track, the
         // live subtitle and the run button.
+        // `fm/grandline-bootstrap-dotfiles-autocommit`: the dotfiles card's
+        // banner is a live sync indicator now, so it follows the service's
+        // real status rather than only the one-shot `git status` the page's
+        // own refresh takes. GL-24's rule applies to the rebuild it triggers:
+        // repaint what is on screen, never rebuild a page nobody is looking
+        // at - the next `refreshDotfiles()` on becoming visible rebuilds it
+        // with the current status anyway.
+        autoSync.observeStatus { [weak self] status in
+            guard let self else { return }
+            self.autoSyncStatus = status
+            guard self.isViewLoaded, !self.view.isHidden else { return }
+            self.rebuildDynamicSections()
+            self.applyTheme()
+        }
+
         buildRefreshControls()
         let fullSetupCard = buildFullSetupCard()
 
@@ -1697,9 +1722,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             rows.append(buildBehindOriginBanner(behind, commits: state.commitsBehindOriginList ?? []))
         }
 
-        if !state.dirtyFiles.isEmpty {
-            rows.append(buildDirtyBanner(state.dirtyFiles))
-        }
+        rows.append(buildAutoSyncBanner(state.dirtyFiles))
 
         rows.append(buildUsernameRow(repoPath: repoPath))
 
@@ -1788,26 +1811,143 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         return banner
     }
 
-    private func buildDirtyBanner(_ files: [String]) -> NSView {
-        let title = NSTextField(labelWithString: "Uncommitted changes")
-        title.font = .systemFont(ofSize: 11.5, weight: .semibold)
-        title.textColor = HelmTheme.nsColor(theme.ansiHex[1])
+    /// Splits `git status --short` lines into the ones auto-commit acts on and
+    /// the ones it deliberately never touches.
+    ///
+    /// `DotfilesSource.repoState` reports the **whole repository's** dirty
+    /// state undifferentiated, and that is still the right thing for it to
+    /// report - `automatic-vault-details-backup/`, `grand-line-vault-backup/`
+    /// and `export-backup/` living in the same clone is exactly why the captain
+    /// wants to see them. What changed is that only one of those two groups is
+    /// now handled for him, so the banner has to say which. See
+    /// `DotfilesAutoSync`'s header, point 3.
+    static func splitDirtyFiles(_ lines: [String]) -> (autoCommitted: [String], flaggedOnly: [String]) {
+        var auto: [String] = []
+        var flagged: [String] = []
+        for line in lines {
+            guard let path = statusLinePath(line) else { flagged.append(line); continue }
+            if path == DotfilesAutoSync.autoCommitSubpath
+                || path.hasPrefix(DotfilesAutoSync.autoCommitSubpath + "/") {
+                auto.append(line)
+            } else {
+                flagged.append(line)
+            }
+        }
+        return (auto, flagged)
+    }
 
-        let body = NSTextField(wrappingLabelWithString: "\(files.count) file(s) uncommitted here: a fresh machine bootstrapping from origin right now would miss them.\n" + files.joined(separator: "\n"))
-        body.font = .monospacedSystemFont(ofSize: 10.5, weight: .regular)
+    /// The path out of one `git status --short` line.
+    ///
+    /// **Not `dropFirst(3)`**, which is what the format's own "XY <path>" shape
+    /// invites and what is wrong here. `SubprocessResult.stdout` is *trimmed*
+    /// (see its doc comment), so the very first line of a status whose status
+    /// field is ` M` - an unstaged modification, the commonest case there is -
+    /// arrives with its leading space already gone and a fixed-offset drop eats
+    /// the first character of the path. Measured: the first entry of a
+    /// four-folder status came back as `randLineDocs/seed.txt`, which then
+    /// classifies as "not under home/" for a file that might well have been.
+    ///
+    /// Splitting on the first whitespace run after the status field is correct
+    /// for every variant of the format: `M path`, ` M path`, `?? path`,
+    /// `MM path`, and `R  old -> new` (where the destination is the name that
+    /// matters). A path containing a space comes back quoted, so the quotes
+    /// come off last.
+    static func statusLinePath(_ line: String) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard let firstSpace = trimmed.firstIndex(of: " ") else { return nil }
+        var path = String(trimmed[trimmed.index(after: firstSpace)...])
+            .trimmingCharacters(in: .whitespaces)
+        if let arrow = path.range(of: " -> ") {
+            path = String(path[arrow.upperBound...]).trimmingCharacters(in: .whitespaces)
+        }
+        path = path.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        return path.isEmpty ? nil : path
+    }
+
+    /// The card's live auto-sync banner - what used to be the flag-only
+    /// "Uncommitted changes" box.
+    ///
+    /// It carries three things the old banner did not: the service's real
+    /// status (the same Synced / Local changes / Syncing / Failed vocabulary
+    /// `ShiftController`'s own sync pill uses), the captain's on/off switch,
+    /// and an explicit split between the paths auto-commit handles and the ones
+    /// it deliberately leaves alone.
+    private func buildAutoSyncBanner(_ files: [String]) -> NSView {
+        let split = Self.splitDirtyFiles(files)
+        let text = autoSyncBannerText(split: split)
+
+        let title = NSTextField(labelWithString: text.headline)
+        title.font = .systemFont(ofSize: 11.5, weight: .semibold)
+        title.textColor = HelmTheme.nsColor(text.hueHex)
+
+        let body = NSTextField(wrappingLabelWithString: text.detail)
+        body.font = .systemFont(ofSize: 10.5, weight: .regular)
         body.textColor = HelmTheme.mutedInk(theme)
         body.preferredMaxLayoutWidth = 500
 
-        let inner = NSStackView(views: [title, body])
+        var innerViews: [NSView] = [title, body]
+
+        if !split.autoCommitted.isEmpty {
+            innerViews.append(fileListLabel(split.autoCommitted))
+        }
+        if !split.flaggedOnly.isEmpty {
+            let note = NSTextField(wrappingLabelWithString:
+                "\(split.flaggedOnly.count) file(s) outside \(DotfilesAutoSync.autoCommitSubpath)/ are flagged only - the backup and export folders in this repo keep their own write semantics and are never auto-committed. Commit these by hand if you want them:")
+            note.font = .systemFont(ofSize: 10.5, weight: .regular)
+            note.textColor = HelmTheme.mutedInk(theme)
+            note.preferredMaxLayoutWidth = 500
+            track(note)
+            innerViews.append(note)
+            innerViews.append(fileListLabel(split.flaggedOnly))
+        }
+
+        let toggleLabel = NSTextField(labelWithString: "Commit and push \(DotfilesAutoSync.autoCommitSubpath)/ changes automatically")
+        toggleLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        track(toggleLabel)
+        let toggle = HelmToggle()
+        toggle.isOn = AppSettings.shared.dotfilesAutoCommitEnabled
+        toggle.setAccessibilityLabel("Commit and push dotfile changes automatically")
+        toggle.onToggle = { [weak self, weak toggle] in
+            guard let toggle else { return }
+            AppSettings.shared.dotfilesAutoCommitEnabled = toggle.isOn
+            self?.autoSync.settingChanged()
+        }
+        let syncNow = HelmButton(title: "Sync now", variant: .secondary, size: .small,
+                                 target: self, action: #selector(syncDotfilesNowClicked))
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        // Gotcha (12): a bare `NSView()` has no intrinsic content size, so a
+        // hugging priority on it decides nothing - a real low-priority
+        // `width == 0` is what keeps this collapsed and lets it take the slack.
+        let zeroWidth = spacer.widthAnchor.constraint(equalToConstant: 0)
+        zeroWidth.priority = .defaultLow
+        zeroWidth.isActive = true
+
+        let controls = NSStackView(views: [toggleLabel, toggle, spacer, syncNow])
+        controls.orientation = .horizontal
+        controls.alignment = .centerY
+        controls.spacing = 8
+        // Gotcha (10): `.gravityAreas` is the default distribution and honours
+        // no priority at all, so this row is `.fill` with everything but the
+        // spacer pinned at `.required`.
+        controls.distribution = .fill
+        for fixed in [toggleLabel, toggle, syncNow] as [NSView] {
+            fixed.setContentHuggingPriority(.required, for: .horizontal)
+            fixed.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        innerViews.append(controls)
+
+        let inner = NSStackView(views: innerViews)
         inner.orientation = .vertical
         inner.alignment = .leading
         inner.spacing = 4
+        inner.setCustomSpacing(10, after: innerViews[innerViews.count - 2])
         inner.translatesAutoresizingMaskIntoConstraints = false
 
         let banner = NSView()
         banner.wantsLayer = true
         banner.layer?.cornerRadius = 9
-        banner.layer?.backgroundColor = HelmTheme.nsColor(theme.ansiHex[1]).withAlphaComponent(0.12).cgColor
+        banner.layer?.backgroundColor = HelmTheme.nsColor(text.hueHex).withAlphaComponent(0.12).cgColor
         banner.translatesAutoresizingMaskIntoConstraints = false
         banner.addSubview(inner)
         NSLayoutConstraint.activate([
@@ -1815,9 +1955,71 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             inner.trailingAnchor.constraint(equalTo: banner.trailingAnchor, constant: -10),
             inner.topAnchor.constraint(equalTo: banner.topAnchor, constant: 8),
             inner.bottomAnchor.constraint(equalTo: banner.bottomAnchor, constant: -8),
+            controls.widthAnchor.constraint(equalTo: inner.widthAnchor),
         ])
         track(title, body)
         return banner
+    }
+
+    private func fileListLabel(_ files: [String]) -> NSTextField {
+        let label = NSTextField(wrappingLabelWithString: files.joined(separator: "\n"))
+        label.font = .monospacedSystemFont(ofSize: 10.5, weight: .regular)
+        label.textColor = HelmTheme.mutedInk(theme)
+        label.preferredMaxLayoutWidth = 500
+        track(label)
+        return label
+    }
+
+    /// The banner's headline, body and hue for one status. A pure function of
+    /// `(autoSyncStatus, split)` so a suite can assert every state's wording
+    /// without mounting a window, which is also what makes GL-14 checkable
+    /// here: no state renders as "nothing to see", and `.diverged`/`.failed`
+    /// both say what the captain has to do next.
+    func autoSyncBannerText(split: (autoCommitted: [String], flaggedOnly: [String]))
+        -> (headline: String, detail: String, hueHex: String) {
+        let pending = split.autoCommitted.count
+        let pendingPhrase = "\(pending) file(s) under \(DotfilesAutoSync.autoCommitSubpath)/"
+        let subpath = DotfilesAutoSync.autoCommitSubpath
+        switch autoSyncStatus {
+        case .off:
+            let detail = pending > 0
+                ? "Auto-commit is off, so \(pendingPhrase) are uncommitted here: a fresh machine bootstrapping from origin right now would miss them."
+                : "Auto-commit is off. Changes under \(subpath)/ will need committing by hand."
+            return ("Auto-commit is off", detail, theme.ansiHex[3])
+        case .noRepo:
+            return ("Auto-commit unavailable",
+                    "No git checkout was found for auto-commit to work against, so nothing under \(subpath)/ is being committed or pushed.",
+                    theme.ansiHex[3])
+        case .synced:
+            return ("Dotfiles auto-sync \u{00B7} Synced",
+                    "Changes under \(subpath)/ are committed and pushed to origin automatically, so a fresh machine bootstrapping from origin gets them.",
+                    theme.ansiHex[2])
+        case .localChanges:
+            return ("Dotfiles auto-sync \u{00B7} Local changes",
+                    "\(pendingPhrase) changed. Waiting for the edits to settle, then committing and pushing.",
+                    theme.ansiHex[3])
+        case .syncing:
+            return ("Dotfiles auto-sync \u{00B7} Syncing\u{2026}",
+                    "Fetching, fast-forwarding and pushing \(pendingPhrase).",
+                    theme.accentHex)
+        case .diverged(let reason):
+            return ("Dotfiles auto-sync \u{00B7} Diverged", reason, theme.ansiHex[1])
+        case .failed(let reason):
+            return ("Dotfiles auto-sync \u{00B7} Failed",
+                    "\(reason)\n\(pendingPhrase) are still uncommitted here.",
+                    theme.ansiHex[1])
+        }
+    }
+
+    /// The banner's "Sync now" - the same synchronous core the watcher's own
+    /// debounce reaches, run off the main thread because it shells out to
+    /// `git fetch`/`git push` (GL-04/GL-12).
+    @objc private func syncDotfilesNowClicked() {
+        let sync = autoSync
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            _ = sync.syncNow()
+            DispatchQueue.main.async { self?.refreshDotfiles() }
+        }
     }
 
     private func buildUsernameRow(repoPath: String) -> NSView {

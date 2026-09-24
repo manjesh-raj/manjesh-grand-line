@@ -461,6 +461,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // `ThemeManager` directly and needs nothing from `AppShellController`.
         HerdrThemeSync.shared.start()
 
+        // `fm/grandline-bootstrap-dotfiles-autocommit`: watch the dotfiles
+        // repo's `home/` tree and commit+push edits to it automatically. Wired
+        // right beside `HerdrThemeSync` on purpose - that class writes
+        // `~/.config/herdr/config.toml`, which is an out-of-store symlink into
+        // exactly that tree, so it is one of the writers this watches for. Like
+        // it, this needs nothing from `AppShellController`.
+        DotfilesAutoSync.shared.start()
+
         // F11 follow-up: seed the "daily-github-sync" schedule once - a daily
         // 11:10 AM fast-forward of every personal fork, exactly what Setup >
         // GitHub Sync's "Sync All" button already does (`ScheduleActions.
@@ -2314,6 +2322,18 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     if (ProcessInfo.processInfo.environment["FM_CLIPBOARD_HISTORY_EPHEMERAL"] ?? "").isEmpty {
         setenv("FM_CLIPBOARD_HISTORY_EPHEMERAL", "1", 1)
     }
+    // `fm/grandline-bootstrap-dotfiles-autocommit`: the highest-stakes entry
+    // in this block, because the store it redirects is not one this app
+    // created. `DotfilesAutoSync.shared` resolves `~/.dotfiles` - the
+    // captain's REAL `manjesh-config` checkout, the one home-manager symlinks
+    // live into his home directory - and its whole job is to `git commit` and
+    // `git push` it. A suite that reached the production singleton without
+    // this line would commit and publish whatever state that checkout happened
+    // to be in. The scratch path below holds no `.git`, so an instance pointed
+    // at it reports `.noRepo` and does nothing at all.
+    if (ProcessInfo.processInfo.environment["FM_DOTFILES_AUTOSYNC_PATH"] ?? "").isEmpty {
+        setenv("FM_DOTFILES_AUTOSYNC_PATH", scratchRoot.appendingPathComponent("dotfiles-autosync", isDirectory: true).path, 1)
+    }
     if (ProcessInfo.processInfo.environment["FM_STICKY_BOARD_DIR"] ?? "").isEmpty {
         setenv("FM_STICKY_BOARD_DIR", scratchRoot.appendingPathComponent("sticky-board", isDirectory: true).path, 1)
     }
@@ -2711,6 +2731,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_DATE_PARSER_TESTS"] == "1" 
 // see ShiftGitSyncSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_GIT_SYNC_TESTS"] == "1" {
     exit(ShiftGitSyncSelfTest.run() ? 0 : 1)
+}
+
+// fm/grandline-bootstrap-dotfiles-autocommit: same convention, for
+// `DotfilesAutoSync`'s detect/debounce/fast-forward/commit/push logic, its
+// refusal to push over a genuinely diverged remote, and its `home/`-only
+// scope - all against a real disposable local repository pair. See
+// DotfilesAutoSyncSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DOTFILES_AUTO_SYNC_TESTS"] == "1" {
+    exit(DotfilesAutoSyncSelfTest.run() ? 0 : 1)
 }
 
 // cockpit-shift-power-features: same convention, for `ShiftStore.weeklySummary`'s

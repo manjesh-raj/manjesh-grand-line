@@ -1657,6 +1657,17 @@ noted.
   a **stated gap, never an empty day** (GL-14) - "not read yet" and "nothing
   on" are different sentences. `docs/history/43-google-accounts.md`.
 
+- **`SubprocessResult.stdout` is trimmed, so never parse a fixed-column tool
+  output by offset.** `git status --short` is `XY <path>`, which invites a
+  `dropFirst(3)` - and the first line of a status whose field is ` M` (an
+  unstaged modification, the commonest case there is) arrives with its leading
+  space already gone, so the drop eats the first character of the path.
+  Measured: `GrandLineDocs/seed.txt` read back as `randLineDocs/seed.txt`, which
+  then classified into the wrong half of a scope split that exists precisely to
+  keep backup folders out of an automatic commit
+  (`BootstrapController.statusLinePath` is the copy to reach for). The same trap
+  waits for any other column-formatted tool this app shells out to; split on the
+  field separator, not on a byte offset.
 - **One subprocess runner and one AI runner**: `Subprocess` (GL-02/03/04/15) and
   `ClaudeOneShot` (GL-26). Do not add a third invocation shape. Interactive and
   PTY work is the terminal's, not theirs.

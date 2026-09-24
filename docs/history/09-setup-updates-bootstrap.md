@@ -506,6 +506,19 @@ Each injection was made by copying the file aside and editing it, never `git sta
 | the wide page's collapse adds a fresh width tie instead of toggling the held pair | the collapse case, on resizes 2, 4 and 6 - the page never returns to two columns |
 | the two columns are tied to one height (what the runner's solver settled on) | the collapse case's B9 check, at 273pt against 134pt of content |
 
+### Every fix was confirmed to catch its regression
+
+Four injections, each made by copying the file aside and editing it (never
+`git stash`, never `git checkout -- <file>` on a branch with no commits), then
+restored and diffed back to byte-identical.
+
+| Injection | Failed |
+|---|---|
+| `FSEventStreamStart` deleted | case 9, by name |
+| `git add`/`git commit` widened from `-- home` to the whole repo | case 3, five checks including "the commit should contain exactly the home/ file" |
+| the divergence guard removed and `push --force` substituted | case 4 (all seven checks) and case 10's source guard |
+| `statusLinePath` reverted to `dropFirst(3)` | case 11, three checks |
+
 ### What was not verified
 
 The live half. This machine's agent shell has neither Screen Recording nor Accessibility permission, so there is no screenshot of the captain's own running instance - the renders behind the layout claims above are `cacheDisplay` captures of a real `NSWindow`, read back as PNGs, which is this repository's documented substitute.
@@ -696,3 +709,213 @@ machine with the window's own top strip demonstrably inside the capture, the
 new shell guard is where to start.
 
 - **The "black band at the top of the Settings page" was never a Settings defect, and two rounds of this page's own history were spent on it.** `fm/grandline-settings-sidebar-differentiation-fix` (#458) and `fm/grandline-settings-alignment-regression-fix` (#461) each reported it fixed; both had actually fixed something else real on this page and left the band alone. It is the 33pt menu-bar strip macOS reserves above *any* full-screen window on the captain's Mac, black because his menu bar auto-hides - reproduced on a stock 40-line AppKit app. The root cause, the control experiment and the fix (`FullScreenMenuBarFill`) are in [`24-window-and-layout.md`](24-window-and-layout.md); the lesson for this page is the method, not the mechanism: **both rounds looked for it in an off-screen synthetic render, which structurally cannot reproduce anything in the title-bar- or menu-bar-adjacent region.** Enumerate the real window list and capture individual windows instead.
+
+## Bootstrap commits and pushes dotfile edits by itself (`fm/grandline-bootstrap-dotfiles-autocommit`)
+
+Bootstrap's "Uncommitted changes" banner had always detected this correctly and
+only ever flagged it.
+The captain hit it repeatedly in one session with herdr theme changes and asked
+for the card to handle it instead of telling him about it.
+
+### Why a herdr theme change dirties a tracked file
+
+`home.nix` declares several dotfiles as
+`home.file.<path>.source = mkOutOfStoreSymlink "${dotfiles}/home/<path>"`.
+That is not a copy.
+`~/.config/herdr/config.toml` *is* `<dotfiles>/home/.config/herdr/config.toml`,
+reached through a symlink chain, so anything that writes it writes the
+`manjesh-config` checkout in place.
+Two things do: herdr's own theme picker, and this app's `HerdrThemeSync`, which
+rewrites `[theme.custom]` on every Helm theme change.
+`DotfilesAutoSync.start()` is wired in `main.swift` immediately beside
+`HerdrThemeSync.start()` for that reason - one of the writers it watches for is
+the line above it.
+
+### The shape is the fifth copy of one, not a new one
+
+`ShiftGitSync`, `DocsRunbookGitSync`, `StickyBoardGitSync` and
+`CredentialVaultGitSync` already do debounced-commit-and-push against a clone of
+`manjesh-config`.
+`DotfilesAutoSync` follows `CredentialVaultGitSync` closely: the same status
+enum shape, the same `observeStatus` contract, the same GL-28 lock over the
+status, the same `ConfigRepoPrivacy` gate before any push, the same
+`Subprocess.git` runner, the same bounded git calls.
+
+Three things are genuinely different, and each is why it is a separate class
+rather than another subpath on `ShiftGitSync`.
+
+- **The working tree is the captain's own checkout.**
+  Every sibling syncs `~/Library/Application Support/GrandLine/shift-repo`, a
+  clone this app created.
+  This one operates on `~/.dotfiles`, which `bootstrap.sh` created and which
+  home-manager symlinks live into the home directory.
+  So it never clones, never resets, never checks out a branch, never
+  force-pushes, and does nothing at all when there is no checkout there.
+  It gets its own serial queue because it is a *different* repository - the
+  shared-queue rule exists to stop two queues racing on one `.git/index.lock`,
+  which does not apply across two working trees.
+- **Nothing in this app calls `markDirty()`.**
+  Every sibling is told about a write by the store that just performed it.
+  These writes come from outside the app, so the trigger is a real recursive
+  FSEvents watch on `<repo>/home`.
+  `DispatchSource.makeFileSystemObjectSource` - the shape `SRELeadBridge` uses -
+  watches one directory and does not recurse, and the file that started this is
+  three levels down, so that shape genuinely did not fit.
+- **The scope is a hard boundary.**
+  See the next section.
+
+### The scope boundary, and why it is a property of the command
+
+`manjesh-config` also holds `automatic-vault-details-backup/`,
+`grand-line-vault-backup/`, `export-backup/` and `GrandLineDocs/`.
+Several of those are written by the sibling sync classes above, and a couple are
+backup targets that can legitimately be half-written at any instant.
+Sweeping one of those into an automatic commit is the failure this must not
+have.
+
+Every git write is therefore pathspec-limited to `home`, **including the commit
+itself**: `git commit -m ... -- home` builds the commit from those paths alone
+and ignores anything else that happens to be staged.
+That makes the boundary a property of the command rather than of the caller's
+discipline - a future edit that forgets to scope a `git add` still cannot
+publish a backup folder, because the commit would not pick it up.
+
+`DotfilesSource.repoState` still reports the whole repository's dirty state
+undifferentiated, which is right - the captain wants to see those folders.
+What changed is that only one of the two groups is handled for him, so
+`BootstrapController.splitDirtyFiles` splits the banner's file list in two and
+says which is which.
+
+### Divergence is refused, never resolved
+
+`syncNow()` fetches first, then asks the same two ancestor questions
+`ShiftGitSync.pullNow` asks.
+
+1. Neither ref an ancestor of the other - real divergence. Stop. Nothing is
+   committed, nothing is pushed, the captain's uncommitted edit is left exactly
+   where it was, and the banner says to resolve it by hand.
+2. Strictly behind - fast-forward with `merge --ff-only` before committing.
+   Git refuses that outright when an incoming change would overwrite the very
+   file that is locally modified, which is the real-conflict case, and that
+   refusal is reported rather than forced past.
+3. Otherwise commit `home/` and push.
+
+There is no force-push path in the file, and case 10 of the suite is a source
+guard that fails the run if `--force`, `--force-with-lease`, `reset`, `checkout`,
+`clean`, `rebase` or `clone` ever appears as a git verb in it.
+This mirrors `syncFork`/`syncManual`'s own "refuse rather than overwrite real
+diverged work" rule in `GitHubSyncData.swift`.
+
+### The captain's own commits are not published for him
+
+A bare "is HEAD ahead of origin" test would also be true of his own unpushed
+work in that repository, and pushing that on his behalf is not what he asked
+for.
+`ownUnpushedCommitCount()` therefore counts only commits carrying
+`DotfilesAutoSync.commitMessagePrefix`.
+That is what makes the message prefix load-bearing rather than cosmetic, and it
+is also how a push that failed while offline recovers on the next pass - the
+in-memory "we have something to push" flag every sibling keeps does not survive
+a relaunch, so this reads it back out of git instead.
+
+### The debounce
+
+A theme picker rewrites its config file more than once per selection, and
+browsing a theme list rewrites it once per arrow key.
+The timer is restarted on every event, so the commit only runs once the tree has
+been quiet for `debounceInterval` (5s in production).
+Case 2 of the suite fires three writes 80ms apart against a 0.6s debounce and
+asserts exactly one commit results - and asserts first that nothing is committed
+while the writes are still arriving, so a broken debounce fails rather than
+passing vacuously.
+
+### GL-13, and the one place this deliberately does not follow it
+
+`ShiftGitSync`'s pull timer pauses while the app has been backgrounded.
+The 10-minute safety-net pass here does not, and the reason is that the edits it
+exists to catch are made *in another application* - herdr's theme picker, an
+editor.
+"The captain is not looking at Grand Line" is precisely when this feature has
+work to do, so gating it would make the common case the broken one.
+The cost is one local `git status` every ten minutes, which reaches the network
+only when it finds something to sync.
+
+### What the suite proves
+
+`FM_RUN_DOTFILES_AUTO_SYNC_TESTS`, pure logic, so it guards the blocking CI job.
+Every case runs against a real disposable local repository pair - a bare remote
+plus one or two working clones - never the captain's own checkout.
+
+1. A live dotfile edit is committed and pushed, and the remote holds the new
+   content.
+2. Three rapid edits collapse into one commit.
+3. A dirty file in every one of `DotfilesAutoSync.neverAutoCommitted` stays
+   uncommitted while the `home/` edit is published. The fixture asserts those
+   folders really were dirty first, so the check cannot pass vacuously.
+4. A genuinely diverged remote is refused: the local branch does not move, the
+   remote stays exactly where the other machine left it, the captain's
+   uncommitted edit survives, no push is attempted at all, and no git invocation
+   carries a force flag.
+5. A clean fast-forward is applied and then pushed.
+6. A fast-forward that would clobber a live local edit is refused, and that edit
+   is byte-identical afterwards.
+7. The captain's own unpushed commit on a clean tree is not published.
+8. `.off` and `.noRepo` both do nothing and both say so (GL-14).
+9. **The real FSEvents wiring.** A real write three levels down under `home/`
+   reaches a real commit and push with nothing else prompting it. Deleting the
+   watcher is what this case catches; every other case drives `syncNow()` or
+   `fileSystemChanged()` directly and would stay green.
+10. The source guard above.
+11. The banner's scope split parses every `git status --short` shape, including
+    the trimmed first line below.
+
+Git identity is set per-repository by the suite's own `makeClone` rather than
+inherited from the machine's global config: production `git commit` carries no
+`-c user.email`, so a runner with no global identity would otherwise fail every
+case for a reason unrelated to the code under test.
+
+### A real bug this turned up: `SubprocessResult.stdout` is trimmed
+
+`BootstrapController.splitDirtyFiles` classifies each `git status --short` line
+by its path, and the format's own "XY <path>" shape invites a `dropFirst(3)`.
+That is wrong here.
+`SubprocessResult.stdout` is trimmed (its own doc comment says so), so the very
+first line of a status whose field is ` M` - an unstaged modification, the
+commonest case there is - arrives with its leading space already gone, and a
+fixed-offset drop eats the first character of the path.
+
+Measured in this task's own first suite run: the first entry of a four-folder
+status came back as `randLineDocs/seed.txt`.
+A `home/` file landing on that line would have been classified as
+"outside `home/`, flagged only" in the banner, which is the one classification
+the whole card exists to get right.
+
+`statusLinePath` splits on the first whitespace run after the status field
+instead, which is correct for `M path`, ` M path`, `?? path`, `MM path` and
+`R  old -> new` (classified by its destination), and strips the quotes git adds
+around a path containing a space.
+Case 11 pins all of those, and the suite's own `dirtyPaths` fixture helper now
+calls the production parser rather than keeping a second `dropFirst(3)` of its
+own - a fixture that mis-parses the same way is how case 3 could have passed on
+a technicality.
+
+### The self-test redirect is the highest-stakes entry in that block
+
+`main.swift`'s `#if FM_SELFTESTS` block now sets `FM_DOTFILES_AUTOSYNC_PATH` to
+a scratch path.
+Every other entry in that block protects a store *this app created*.
+This one protects the captain's real `~/.dotfiles`, and the class's whole job is
+to `git commit` and `git push` it, so a suite that reached the production
+singleton unprotected would publish whatever state that checkout was in.
+The scratch path holds no `.git`, so an instance pointed at it reports
+`.noRepo` and does nothing.
+
+### What was not verified
+
+The live card was not seen rendered on the captain's own display - this agent
+has neither a mounted session for this suite nor a reason to launch a built copy
+from a worktree (AGENTS.md's first standing rule).
+The banner's text is asserted as a pure function of `(status, split)` via
+`BootstrapController.autoSyncBannerText`, and its layout follows gotchas (10)
+and (12) rather than being measured in a render.
+Nothing here ran against the real `manjesh-config`.

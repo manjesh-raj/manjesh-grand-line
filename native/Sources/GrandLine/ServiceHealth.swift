@@ -39,6 +39,11 @@ enum HealthService: String, CaseIterable {
     case backgroundSignals
     case fleetTasks
     case shiftGitSync
+    /// `fm/grandline-bootstrap-dotfiles-autocommit`: the dotfiles `home/` tree's
+    /// own auto-commit. Reports separately from `shiftGitSync` because it is a
+    /// different repository (the captain's own `~/.dotfiles` checkout), so a
+    /// failure here has a different cause and a different fix.
+    case dotfilesAutoSync
     case docsSync
     case shiftDueItems
     case persistence
@@ -53,6 +58,7 @@ enum HealthService: String, CaseIterable {
         case .backgroundSignals: return "Tool & drift signals"
         case .fleetTasks: return "Fleet task watcher"
         case .shiftGitSync: return "Tasks git sync"
+        case .dotfilesAutoSync: return "Dotfiles auto-sync"
         case .docsSync: return "Docs & runbooks sync"
         case .shiftDueItems: return "Due-item reminders"
         case .persistence: return "Saving to disk"
@@ -70,6 +76,8 @@ enum HealthService: String, CaseIterable {
             return "Watches the fleet's task state for decisions and finished work."
         case .shiftGitSync:
             return "Commits and pushes Tasks, runbooks and command library changes."
+        case .dotfilesAutoSync:
+            return "Commits and pushes dotfile edits under the config repo's home/ tree."
         case .docsSync:
             return "Pulls the DevOps Playbook and runbook content."
         case .shiftDueItems:
@@ -86,6 +94,7 @@ enum HealthService: String, CaseIterable {
         case .backgroundSignals: return "antenna.radiowaves.left.and.right"
         case .fleetTasks: return "sailboat"
         case .shiftGitSync: return "arrow.triangle.2.circlepath"
+        case .dotfilesAutoSync: return "gearshape.2"
         case .docsSync: return "book.closed"
         case .shiftDueItems: return "bell"
         case .persistence: return "internaldrive"
