@@ -122,3 +122,33 @@ An unsigned build gets a new ad-hoc code identity on every rebuild, which is how
 - The same suite carries the standing guard that no app source still spells `com.firstmate.cockpit`, "Firstmate Cockpit" or "Manjesh Grand Line" - which is what stops the rename coming undone one file at a time.
 
 **Not verified**: nothing was launched. This app has no OS-level process isolation between builds, and the bundle identity is precisely what this change moves, so a copy launched from a worktree is the one thing that could genuinely disturb the captain's running instance mid-rename. The first real launch - and the System Settings re-grant above - is the captain's own check.
+
+## Follow-up: the Keychain migration re-prompted on every launch
+
+`fm/grandline-keychain-migration-repeat-prompt-loop`.
+
+After rebuilding and relaunching, the captain hit the macOS "wants to access your confidential information stored in Keychain" dialog repeatedly - clicked "Always Allow" roughly ten times, and it kept coming back.
+
+### Triage, before touching any code
+
+`codesign -dvvv` on both the new `Grand Line.app` and the still-installed pre-rename `Manjesh Grand Line.app` showed the same signing authority, "Firstmate Cockpit Local Dev" - the captain has not yet created the "Grand Line Local Dev" certificate this file's own "Local signing setup" section describes, so `build_native_app.sh` is correctly on its documented fallback. Signing-identity churn across rebuilds (the failure mode the fallback exists to avoid, see above) was ruled out: the identity was stable across both builds.
+
+That pointed at `LegacyNameMigration.runAtLaunch()` instead. `migrateApplicationSupportFolder` is naturally idempotent and `migrateDefaults` is gated behind `defaultsMigratedKey` - but `migrateKeychain()` had **no persisted "already attempted" gate at all**. It re-queried every account under all five legacy services on every single launch, and per `migrateKeychainService`'s own header, each account is read through its own single-item `SecItemCopyMatching(..., kSecReturnData: true)` query - a read of confidential data, which is exactly what macOS asks per-item consent for. A captain with several saved SSH keys (a `.key` and often a `.pass` account each) plus the clipboard-history key, the vault key, and two Google OAuth slots is a real multi-item read pass, ten items being an entirely plausible count for one real profile - but a pass that repeats in full on *every* launch, forever, turns one relaunch into another full barrage instead of zero.
+
+### Confirming it, live
+
+The self-test suite's existing `checkKeychainItemIsCopied` already proved a second call to `migrateKeychainService` copies nothing and counts the item as `alreadyPresent` - but that only proves the *outcome* was already correct, not that the *read* was skipped. What actually causes a dialog is the `kSecReturnData` query itself, issued unconditionally before the "already present" check runs. Two new checks in `LegacyRenameMigrationSelfTest` isolate exactly that: `checkKeychainMigrationGateSkipsOnceComplete` seeds a real (scratch-service-named) legacy item, runs the gated entry point once, then seeds a *second* legacy item and runs it again - before the fix, the second run would have swept the new item up too, proving it genuinely re-queried; `checkKeychainMigrationGateRetriesAFailure` does the same for the failure path with an injected `migrate` closure. Both were confirmed to catch the regression by reverting `migrateKeychainIfNeeded`'s early-return gate and re-running: 4 checks failed by name, restoring the gate made them pass again, `swift build` warning-clean throughout.
+
+### The fix, and the trade-off named explicitly
+
+`LegacyNameMigration.migrateKeychainIfNeeded()` adds a persisted `fm.keychainMigratedFromFirstmateCockpit` flag - but unlike `defaultsMigratedKey`, it is set **only when a pass finishes with zero failures**. A captain who denies one prompt, or hits a transient `SecItemAdd` error, must not have that item silently abandoned forever because the pass was marked "done" regardless of per-item outcome; not latching the flag means the *next* launch retries the whole pass (including a redundant re-read of already-migrated items, which is accepted as the cost of not needing a second, separate per-item completion ledger) until it genuinely finishes clean. Once it does, every later launch skips the Keychain entirely - no query, no dialog, ever again for that install.
+
+### Getting the captain unblocked
+
+Nothing about his prior "Always Allow" clicks is undone by this fix - if those grants took, the items were already migrated and this only stops the needless re-asking; if a click didn't register (or he stopped clicking through), `migrateKeychainIfNeeded` will retry exactly those items on the very next launch after this ships, using the same fixed number of dialogs (at most once per outstanding item, never again after). **He needs one more relaunch** of the rebuilt app; no manual Keychain cleanup is required.
+
+### Verification
+
+- `LegacyRenameMigrationSelfTest` (`FM_RUN_LEGACY_RENAME_MIGRATION_TESTS`), including the two new gate checks, confirmed to fail by name against an injected revert and pass again restored.
+- `./Scripts/run-all-tests.sh --ci` and `--session-only`, full suite, before and after: same pass count, no regressions.
+- **Not verified**: no real GUI Keychain dialog was driven end to end - this agent's shell has no interactive session to click through, and the fix is provable at the query level (whether `kSecReturnData` is even issued) without needing the dialog itself to fire. The captain's next relaunch is the live confirmation that the dialog stops recurring.
