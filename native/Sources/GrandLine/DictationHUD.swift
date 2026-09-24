@@ -92,6 +92,16 @@ enum DictationHUDVisualState: Equatable {
     case transcribing
     case cleaningUp
     case success
+    /// A dictation finished and the transcript reached the pasteboard, but
+    /// the automatic ⌘V was never posted (see `DictationStatus.copiedOnly`
+    /// and `DictationEngine.PasteOutcome`). Fixed
+    /// `fm/grandline-dictation-autopaste-not-firing`: this state used to be
+    /// folded into `.success` below (the HUD's `handle(_:)` grouped
+    /// `.needsAccessibility` with `.ready`), so a captain who watched only
+    /// the floating HUD saw "Pasted" every single time, including every time
+    /// the paste had just silently failed - the exact misleading-status bug
+    /// reported.
+    case copiedOnly
     case failure(String)
 
     var symbol: String {
@@ -100,6 +110,7 @@ enum DictationHUDVisualState: Equatable {
         case .transcribing: return "ellipsis.circle.fill"
         case .cleaningUp: return "sparkles"
         case .success: return "checkmark.circle.fill"
+        case .copiedOnly: return "doc.on.clipboard.fill"
         case .failure: return "questionmark.circle.fill"
         }
     }
@@ -110,6 +121,7 @@ enum DictationHUDVisualState: Equatable {
         case .transcribing: return "Transcribing…"
         case .cleaningUp: return "Cleaning up…"
         case .success: return "Pasted"
+        case .copiedOnly: return "Copied - press \u{2318}V to paste"
         case .failure(let message): return message
         }
     }
@@ -118,7 +130,7 @@ enum DictationHUDVisualState: Equatable {
         switch self {
         case .listening, .transcribing, .cleaningUp: return "#5AC8FA"
         case .success: return "#34C759"
-        case .failure: return "#FF9F0A"
+        case .copiedOnly, .failure: return "#FF9F0A"
         }
     }
 
@@ -130,6 +142,10 @@ enum DictationHUDVisualState: Equatable {
         switch self {
         case .listening, .transcribing, .cleaningUp: return nil
         case .success: return 1.1
+        // Longer than `.success`'s flash and `.failure`'s - this one asks
+        // the captain to actually do something (press ⌘V) rather than just
+        // announcing an outcome, so it needs enough time to be read.
+        case .copiedOnly: return 2.2
         case .failure: return 1.8
         }
     }
@@ -216,10 +232,21 @@ final class DictationHUDController {
             guard wasActive else { return }
             wasActive = false
             present(.failure("System Dictation is off"))
-        case .ready, .needsMicrophone, .needsSpeechRecognition, .needsAccessibility:
+        case .ready:
             guard wasActive else { return }
             wasActive = false
             present(.success)
+        // `.needsMicrophone`/`.needsSpeechRecognition` are unreachable here in
+        // practice - `.recording` can't be entered without both already
+        // granted - but they're grouped with `.copiedOnly` rather than
+        // `.success` defensively, since neither means "pasted" either.
+        // `.needsAccessibility`/`.copiedOnly` are the real, reachable case
+        // this fixes: the transcript reached the clipboard but the
+        // synthetic ⌘V was never posted (`DictationEngine.PasteOutcome`).
+        case .needsMicrophone, .needsSpeechRecognition, .needsAccessibility, .copiedOnly:
+            guard wasActive else { return }
+            wasActive = false
+            present(.copiedOnly)
         }
     }
 
@@ -513,5 +540,16 @@ final class DictationHUDController {
     /// material rather than a flat fill in the app's own tones. Building the
     /// panel is what creates it, so a caller must have driven a state first.
     var debugPill: NSView? { pill }
+
+    /// `fm/grandline-dictation-autopaste-not-firing`: the actual painted
+    /// title text - the surface a captain watching only this floating HUD
+    /// actually reads. `debugCurrentState`'s own `.text` would assert the
+    /// same string this label was *set from*, which cannot catch a rendering
+    /// bug between `present(_:)` computing the state and the label actually
+    /// showing it; reading `titleLabel.stringValue` back asserts what was
+    /// painted, not what was computed (this file's own AGENTS.md
+    /// convention).
+    var debugTitleText: String? { titleLabel?.stringValue }
+    var debugCurrentState: DictationHUDVisualState? { currentState }
     #endif
 }

@@ -18,15 +18,34 @@
 //      ceiling forced "Didn't catch that" on screen while a long utterance was
 //      still genuinely being transcribed, and the real result that arrived
 //      afterwards had to be able to supersede it.
+//   4. `fm/grandline-dictation-autopaste-not-firing` - `pasteAtCursor` wrote
+//      the pasteboard and then returned `Void`, silently, whenever
+//      `AXIsProcessTrusted()` read false - a live-confirmed real state (a
+//      read-only `lldb -p` attach to the captain's own running instance
+//      during this task, per this file's own "Verifying native UI bugs"
+//      convention, read `AXIsProcessTrusted() == 0` for a process System
+//      Settings' Accessibility pane showed toggled *on* moments earlier).
+//      `deliver(_:duration:)` then reported whatever
+//      `DictationPermissions.currentStatus()` said, which the floating HUD
+//      folded into the same "Pasted" success pill it shows for a real
+//      paste - see `DictationHUD.swift` for that half's own coverage.
 //
 // Run: `FM_RUN_DICTATION_ENGINE_TESTS=1 .build/debug/GrandLine`
 //
-// Nothing here touches a microphone, the speech framework, the network, the
-// pasteboard, or the frontmost app: `DictationEngine.pasteSinkForTests`
-// intercepts delivery (see its doc comment - without it a run would type these
-// fixtures into whatever window happened to be in front), and the state
-// machine is driven through the same `finish`/`stopRecording` the real
-// recognition callbacks call.
+// Nothing here touches a microphone, the speech framework, or the network.
+// Most cases never touch the pasteboard or the frontmost app either:
+// `DictationEngine.pasteSinkForTests` intercepts delivery (see its doc
+// comment - without it a run would type these fixtures into whatever window
+// happened to be in front), and the state machine is driven through the same
+// `finish`/`stopRecording` the real recognition callbacks call. Bug 4's own
+// case is the one exception - it deliberately drives the real
+// `pasteAtCursor`, with `DictationEngine.accessibilityTrustOverrideForTests`
+// forced to `false` for its whole duration so the untrusted branch is what
+// runs *regardless of this machine's real, live Accessibility trust* - the
+// one thing that must never depend on override state is whether a real
+// synthetic keystroke can fire, and forcing the gate closed is what
+// guarantees it can't. Restores the real pasteboard's prior contents
+// afterward, since this is the one case that touches it for real.
 
 // GL-27: compiled into debug builds only.
 //
@@ -42,6 +61,7 @@
 // asserts that every file in this directory carries it.
 #if FM_SELFTESTS
 
+import AppKit
 import Foundation
 
 enum DictationEngineSelfTest {
@@ -61,6 +81,7 @@ enum DictationEngineSelfTest {
             ("noTranscriptAtAllReportsDidNotCatchThat", test_noTranscriptReportsDidNotCatchThat),
             ("systemDictationDisabledIsItsOwnStatus", test_systemDictationDisabledIsDistinct),
             ("hardCeilingScalesWithCapturedAudio", test_hardCeilingScalesWithCapturedAudio),
+            ("pasteSkipsSyntheticKeystrokeWhenUntrustedAndReportsCopiedOnly", test_pasteSkipsSyntheticKeystrokeWhenUntrusted),
             ("doubleFinishDeliversOnce", test_doubleFinishDeliversOnce),
             ("whisperEngineIsNotResidentUntilUsed", test_whisperNotResidentUntilUsed),
             ("whisperEngineIsReleasedAfterIdle", test_whisperReleasedAfterIdle),
@@ -213,6 +234,52 @@ enum DictationEngineSelfTest {
         }
         guard long >= short + 40 else {
             return "ceiling grew by only \(long - short)s for 47s more audio - not enough to cover a real long utterance"
+        }
+        return nil
+    }
+
+    /// Bug 4. `pasteAtCursor` must skip the synthetic ⌘V (never call
+    /// `CGEvent.post`) and report `.copiedOnly` - not `.ready` - the moment
+    /// Accessibility trust reads false, and the pasteboard write must still
+    /// happen regardless (a captain can always paste manually). Reverting
+    /// `pasteAtCursor`'s `guard isAccessibilityTrustedForPaste() else { ... }`
+    /// branch back to a bare `return` (this bug's actual shipped shape) makes
+    /// `deliver` fall through to `report(DictationPermissions.currentStatus())`
+    /// unconditionally, which this case would then catch as a `.copiedOnly`
+    /// mismatch.
+    private static func test_pasteSkipsSyntheticKeystrokeWhenUntrusted() -> String? {
+        // This is the one case in this file that does not use
+        // `pasteSinkForTests` - it drives the real `pasteAtCursor` on purpose,
+        // so `accessibilityTrustOverrideForTests` (not the sink) is what has
+        // to guarantee no real keystroke can fire, on any machine this runs on.
+        DictationEngine.pasteSinkForTests = nil
+        DictationEngine.accessibilityTrustOverrideForTests = false
+        let priorClipboard = NSPasteboard.general.string(forType: .string)
+        defer {
+            DictationEngine.accessibilityTrustOverrideForTests = nil
+            if let priorClipboard {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(priorClipboard, forType: .string)
+            }
+        }
+
+        let fixture = "restart the api deployment (DictationEngineSelfTest fixture)"
+        let outcome = DictationEngine.pasteAtCursor(fixture)
+        guard outcome == .skippedNoTrust else {
+            return "expected .skippedNoTrust with trust forced false, got \(outcome)"
+        }
+        guard NSPasteboard.general.string(forType: .string) == fixture else {
+            return "the pasteboard write must still happen even when the synthetic paste is skipped"
+        }
+
+        let h = Harness()
+        DictationEngine.pasteSinkForTests = nil
+        defer { DictationEngine.pasteSinkForTests = nil }
+        h.engine.debugBeginCaptureForTests()
+        h.engine.debugNoteTranscriptForTests(fixture)
+        h.engine.debugFinishForTests(text: fixture)
+        guard h.lastStatus == .copiedOnly else {
+            return "expected .copiedOnly after an untrusted paste, got \(String(describing: h.lastStatus)) - this is the exact misleading-status bug (status read as success with nothing typed anywhere)"
         }
         return nil
     }

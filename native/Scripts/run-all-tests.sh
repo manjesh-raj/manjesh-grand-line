@@ -290,6 +290,10 @@ NEEDS_SESSION=(
   # §3H: builds a real palette panel, a real lock screen and a real HUD, and
   # reads layer animations off them.
   "FM_RUN_OVERLAYS_MODERNIZATION_TESTS"
+  # fm/grandline-dictation-autopaste-not-firing: the dictation HUD's own
+  # misleading-status regression - asserts the real painted label text on a
+  # real ordered-front panel, which needs a window.
+  "FM_RUN_DICTATION_AUTOPASTE_HUD_TESTS" # session-not-window: DictationHUDController.present builds the real NSPanel internally - mountsAWindow's source-scan marker cannot see a window a controller builds internally, same exemption shape as UnifiedSearchLayoutSelfTest/AuditSecurityLockSelfTest
   # §3K/§3L/§3M: K3's crossfade snapshots a real, ordered-front window's
   # content view, and M2 lays out a real hairline.
   "FM_RUN_THEME_MOTION_WEB_ISLANDS_TESTS"
