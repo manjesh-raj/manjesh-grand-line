@@ -818,7 +818,11 @@ final class HomeCanvasController: NSViewController {
             minItemWidth: Self.minModuleWidth,
             spacing: Self.gridSpacing,
             // PF2: a card is content-sized now, so uniformity is per row.
-            equalHeights: true
+            equalHeights: true,
+            // ...with one exception per `DaylightModule.sizesToOwnContent`:
+            // the Claude usage card renders at its own taller height rather
+            // than dragging the cards beside it up to match it.
+            exemptsHeightTie: { $0.sizesToOwnContent }
         ) { [weak self] module, cardWidth in
             guard let self else { return NSView() }
             return self.makeCard(for: module, cardWidth: cardWidth)

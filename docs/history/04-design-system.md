@@ -345,3 +345,86 @@ Two things that are *not* blockers and are worth knowing:
   the 143 are a single colour; a few (`DaylightBarController`'s, `HelmForm`'s)
   are whole alternate layouts. A slice should be scoped by reading the
   branches, not by counting them.
+
+## One card may leave its row's height tie, and only that card
+
+`fm/grand-line-home-canvas-claude-height-isolate`.
+
+#478 redesigned the Claude usage card as a sectioned usage report, which made
+it taller.
+`HelmResponsiveGrid`'s `equalHeights` then pulled Morning briefing and Fleet up
+to match it, so two cards whose design had not changed rendered the same content
+in a taller box.
+The captain's decision: there is no standard card size here.
+Some cards legitimately need more room than their neighbours, and only the card
+whose design changed should change size.
+
+`DaylightModule.sizesToOwnContent` is the opt-out - `true` for `.claudeStatus`
+and `false` for every other module - threaded into
+`HelmResponsiveGrid.spanningRows` as an `exemptsHeightTie` closure.
+The tie itself is unchanged for every ordinary row, which is the point: the
+`>=` required plus `==` at 499 pair is what stops a shorter neighbour squashing
+a taller card's body, and that behaviour was never the problem.
+
+### What the exemption actually removes, and the two things that surprised
+
+The first attempt simply left the exempt card out of `tieHeights`. That is not
+enough, twice over, and both halves were measured rather than reasoned.
+
+**An untied card is still stretched by the row.**
+Measured on the real home canvas at 1512x950: with Claude left out of the tie,
+Fleet still rendered 171pt in a 171pt row.
+An `NSStackView` stretches an arranged subview whose own height preference is
+weak, and a card's is priority 1 (`HelmModuleCard`'s `bodyHug`).
+So the remaining cards need a reference the exempt card cannot inflate - a
+zero-width `NSLayoutGuide` pinned to the row's top-leading, carrying the same
+`>=`/`==` pair plus a `columnHug` (251) collapse that pulls it down onto the
+tallest *tied* card's own content.
+Without the collapse the guide floats up to the row again.
+
+**An untied card loses the row's anti-squash protection.**
+This is the one worth remembering.
+A row stack resists clipping its content at 750 and hugs it at 250, and it is
+the card's own `== row` tie at 499 that transfers that protection to the card.
+Drop the tie and a card body whose vertical resistance is below 250 - which
+`bodyHug`'s comment already records - gets squashed.
+Measured in the suite fixture: a peek-list card rendered its 86pt body into a
+68pt area, clipped, the exact numbers from `bodyHug`'s own note.
+So the exempt card keeps the tie's required `>=` (the row still grows to it)
+and gains a required floor at its own `fittingSize.height` in place of the 499
+`==` it loses.
+It does not get the `==` back, because that is the half that would drag it to a
+neighbour's height.
+
+The asymmetry that follows is deliberate and stated at the call site.
+A floor is not a ceiling, and the stack stretches an arranged subview at 250, so
+an exempt card that is *shorter* than a tied neighbour is still stretched to the
+row.
+That is the harmless direction (the row is already that tall, so nothing clips),
+and the case the exemption exists for is the opposite one.
+
+### Measured
+
+Real home canvas, 1512x950, before and after, card heights in points:
+
+| card | before | after |
+|---|---|---|
+| Morning briefing | 124 | 124 |
+| Claude usage | 171 | 171 |
+| Fleet | 171 | **124** |
+| Merge queue | 141 | 141 |
+| Health | 141 | 141 |
+
+Nothing clipped at any card: every body's content height equals or is below its
+area. Merge queue and Health share a row with no exemption and are still tied to
+each other at 141, which is Health's own content.
+
+`DaylightModuleSelfTest.checkAnExemptCardSizesToItsOwnContent` is the guard, and
+it was confirmed against three separate injections - removing the exemption from
+`.claudeStatus` (fails by name, and reproduces Fleet at 171 on the real canvas),
+making `spanningRows` ignore `exemptsHeightTie` (fails on the stretched
+neighbour), and dropping the exempt card's own floor (fails on the clipped
+body).
+Its fixture's discriminating-power guard is measured on the two rows that carry
+no exempt card, so it stays a statement about the fixture even when the fix is
+broken.

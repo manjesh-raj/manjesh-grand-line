@@ -4305,11 +4305,31 @@ enum HelmResponsiveGrid {
     ///
     /// 499 is also the band AGENTS.md gotcha (13) reserves for "must beat the
     /// stack defaults, must never touch the window".
-    private static func tieHeights(_ views: [NSView], to row: NSStackView) {
-        guard views.count > 1 else { return }
+    ///
+    /// ## Why `anchor` is a parameter rather than always the row
+    ///
+    /// The row's own height is the natural reference, and it is what every
+    /// caller passes while every card in the row is tied. It stops being
+    /// correct the moment one card is *exempt* (`spanningRows`'
+    /// `exemptsHeightTie`): an `NSStackView` is as tall as its tallest
+    /// arranged subview whether that subview is tied or not, so tying the
+    /// rest to `row.heightAnchor` would stretch them to the exempt card
+    /// anyway - which is exactly the thing the exemption exists to stop.
+    /// `spanningRows` hands in a zero-width `NSLayoutGuide` instead, so the
+    /// tied set settles on *its own* tallest member. The exempt card keeps
+    /// only this function's *first* constraint, and `spanningRows` states its
+    /// own floor in place of the second - see there for why dropping the
+    /// second one on its own squashes the card rather than freeing it.
+    ///
+    /// Callers decide when the tie is worth making: tying a *row* to a single
+    /// card is pointless (the row already is that card's height), but tying a
+    /// single card to a collapsing guide is not - that is what makes one
+    /// untied neighbour of an exempt card size to its own content instead of
+    /// being stretched by the stack.
+    private static func tieHeights(_ views: [NSView], to anchor: NSLayoutDimension) {
         for view in views {
-            row.heightAnchor.constraint(greaterThanOrEqualTo: view.heightAnchor).isActive = true
-            let match = view.heightAnchor.constraint(equalTo: row.heightAnchor)
+            anchor.constraint(greaterThanOrEqualTo: view.heightAnchor).isActive = true
+            let match = view.heightAnchor.constraint(equalTo: anchor)
             match.priority = HelmDaylightPriority.contentTie
             match.isActive = true
         }
@@ -4343,7 +4363,7 @@ enum HelmResponsiveGrid {
             row.distribution = .fillEqually
             row.alignment = .top
             row.translatesAutoresizingMaskIntoConstraints = false
-            if equalHeights { tieHeights(itemViews, to: row) }
+            if equalHeights, itemViews.count > 1 { tieHeights(itemViews, to: row.heightAnchor) }
             return row
         }
     }
@@ -4425,12 +4445,30 @@ enum HelmResponsiveGrid {
     /// row" to keep the grid reading as a grid. A grid of already-uniform
     /// items gains nothing from it and should not pay for the extra
     /// constraints.
+    ///
+    /// `exemptsHeightTie` is the per-item escape hatch from `equalHeights`,
+    /// and it is deliberately per *item* rather than per grid. There is no
+    /// standard card size here: a card whose design genuinely needs more room
+    /// than its neighbours (the home canvas's Claude usage report is the one
+    /// today, via `DaylightModule.sizesToOwnContent`) should render at its own
+    /// height without dragging every card beside it up to match.
+    ///
+    /// Precisely what it changes, because the asymmetry is deliberate: an
+    /// exempt card stops being **the reference its neighbours tie to**, and
+    /// it holds its own height through a floor of its own rather than through
+    /// the tie. The row still grows to it, and the remaining cards tie to each
+    /// other exactly as before, top-aligned as `alignment = .top` already puts
+    /// them. The one case it does not cover is an exempt card *shorter* than a
+    /// tied neighbour, which the stack still stretches to the row - the
+    /// reasoning, and the measurements behind both halves, are at the call
+    /// site below.
     static func spanningRows<Item>(_ items: [Item],
                                    spans: (Item) -> Int,
                                    containerWidth: CGFloat,
                                    minItemWidth: CGFloat,
                                    spacing: CGFloat = spacing,
                                    equalHeights: Bool = false,
+                                   exemptsHeightTie: (Item) -> Bool = { _ in false },
                                    makeItem: (Item, CGFloat) -> NSView) -> [NSStackView] {
         let columnCount = columns(containerWidth: containerWidth,
                                   minItemWidth: minItemWidth,
@@ -4443,6 +4481,7 @@ enum HelmResponsiveGrid {
         return placements.map { row in
             var views: [NSView] = []
             var itemViews: [NSView] = []
+            var exemptViews: [NSView] = []
             var used = 0
             for placement in row {
                 let width = unit * CGFloat(placement.span) + spacing * CGFloat(placement.span - 1)
@@ -4453,7 +4492,11 @@ enum HelmResponsiveGrid {
                 widthConstraint.isActive = true
                 view.setContentHuggingPriority(.required, for: .horizontal)
                 views.append(view)
-                itemViews.append(view)
+                if exemptsHeightTie(items[placement.index]) {
+                    exemptViews.append(view)
+                } else {
+                    itemViews.append(view)
+                }
                 used += placement.span
             }
             // Pad the leftover columns so a short row's cards keep the same
@@ -4483,7 +4526,82 @@ enum HelmResponsiveGrid {
             // carefully the widths inside it were priced at 499.
             stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
             stack.setHuggingPriority(.defaultLow, for: .horizontal)
-            if equalHeights { tieHeights(itemViews, to: stack) }
+            if equalHeights {
+                if exemptViews.isEmpty {
+                    // No exemption in this row: the row's own height is the
+                    // reference, exactly as it has always been.
+                    if itemViews.count > 1 { tieHeights(itemViews, to: stack.heightAnchor) }
+                } else {
+                    // An exempt card gets `tieHeights`' first constraint and
+                    // a replacement for what its second one used to do. It
+                    // does **not** get the 499 `== row` back, which is the
+                    // half that would drag it to a neighbour's height.
+                    //
+                    // The replacement is the part that is not obvious, and it
+                    // cost a round to find. A row stack resists clipping its
+                    // content at 750 and hugs it at 250, and it is the card's
+                    // own `== row` tie at 499 that *transfers* that protection
+                    // to the card - so dropping the tie does not leave the
+                    // card at its natural height, it leaves the card
+                    // unprotected. Measured: a peek-list card rendered its
+                    // 86pt body into a 68pt area, clipped, which is the exact
+                    // squash `HelmModuleCard`'s `bodyHug` comment already
+                    // records for a body whose vertical resistance sits below
+                    // 250. So the floor has to be stated directly instead.
+                    //
+                    // What is still true, stated rather than implied: the
+                    // stack stretches an arranged subview at 250, and a floor
+                    // is not a ceiling - so an exempt card that is *shorter*
+                    // than a tied neighbour is still stretched to the row.
+                    // That is the harmless direction (the row is already that
+                    // tall, so nothing clips), and the case the exemption
+                    // exists for is the opposite one: the tallest card in the
+                    // row.
+                    for view in exemptViews {
+                        // The row still grows to an exempt card - it is in the
+                        // row, and a row shorter than its own content is
+                        // AGENTS.md gotcha (16).
+                        stack.heightAnchor.constraint(greaterThanOrEqualTo: view.heightAnchor)
+                            .isActive = true
+                        // The card's own floor, at its own fitting height -
+                        // which is exactly the number the tie used to hold it
+                        // open at. Required is safe for a *height* here where
+                        // a required width would not be (gotcha (13)): the
+                        // grid lives in a scroll view whose document height is
+                        // free, which is the same reason
+                        // `HelmModuleCard.minimumHeight` is required.
+                        let natural = view.fittingSize.height
+                        if natural > 0 {
+                            view.heightAnchor.constraint(greaterThanOrEqualToConstant: natural)
+                                .isActive = true
+                        }
+                    }
+
+                    if !itemViews.isEmpty {
+                        // The tied cards get a reference the exempt card cannot
+                        // inflate - see `tieHeights`. Zero width, pinned to the
+                        // row's top-leading, so it adds nothing to the layout
+                        // but a height to agree on.
+                        let guide = NSLayoutGuide()
+                        stack.addLayoutGuide(guide)
+                        NSLayoutConstraint.activate([
+                            guide.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+                            guide.topAnchor.constraint(equalTo: stack.topAnchor),
+                            guide.widthAnchor.constraint(equalToConstant: 0),
+                        ])
+                        // Pull the guide down onto the tallest *tied* card's own
+                        // content: `tieHeights`' required `>=` is the only thing
+                        // holding it up, so without this the guide floats and
+                        // the row stretches everything again. 251 is
+                        // `columnHug`'s band - above a stack's 250 defaults,
+                        // below the 499 tie it must not outrank.
+                        let collapse = guide.heightAnchor.constraint(equalToConstant: 0)
+                        collapse.priority = HelmDaylightPriority.columnHug
+                        collapse.isActive = true
+                        tieHeights(itemViews, to: guide.heightAnchor)
+                    }
+                }
+            }
             return stack
         }
     }
