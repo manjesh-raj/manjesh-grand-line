@@ -1148,3 +1148,120 @@ read exactly like a half-working feature:
   "that recognizer has a delegate". The row-body check correctly kept passing,
   which is the discriminating power the other direction needs.
 - The full suite was run before and after.
+
+## The strip becomes a sectioned usage report (`fm/grand-line-claude-usage-card-redesign`)
+
+The captain supplied a new visual design for the Claude card and three
+reference files with it: an interactive HTML mockup, a screenshot of the card
+as it shipped (light), and a screenshot of the mockup in dark.
+The instruction that shaped every trade-off below was explicit - if the new
+card ends up a bit taller than today's, that is fine, and it must not be
+compressed to fit the old height.
+
+### What replaced what
+
+The five-column strip (Session, Week, Fable week, Extra usage, Spend cap side
+by side) is gone.
+In its place: a header carrying the gauge tile, `Claude` / `Team plan`, one
+overall verdict pill, `Updated N ago` and the existing Refresh; a hairline; a
+`Plan limits` section with its own verdict and one row per window; a hairline;
+an `Extra usage` section with the spend, its cap, a percentage, a bar and how
+much is left before the cap.
+
+`HelmModuleCard.Body` gains `.usageReport([HelmModuleUsageSection], compact:)`
+and `Content` gains `headerCaption`.
+`.statusStrip` had exactly one caller, so it was removed rather than left
+behind as a dead body kind carrying five anatomy fields and a
+`HelmModuleStripColumn` type nothing constructed.
+`DaylightModuleSelfTest`'s height sweep was ported to the new body rather than
+left measuring the old one.
+
+### Two decisions that are not in the mockup
+
+**The header verdict now weighs the spend cap.**
+The strip's chip only ever looked at the three resetting windows, so a card
+whose spend was a dollar off its cap could read `Comfortable`.
+That is the state the captain's own target screenshot is in - three
+comfortable windows under a `Near spend cap` pill - and it is the right call,
+because a window refills on a clock and a cap does not.
+The tie-break is the mockup's: the spend wins when it is at least as alarming
+as the worst window.
+The app's own 80/90 `QuotaSeverity` thresholds are kept rather than the
+mockup's 70/90, because those thresholds are shared with the quota popover and
+two surfaces reading the same number must not disagree about whether it is a
+warning.
+
+**A compact card's header is identity and Refresh, nothing else.**
+Measured at a one-column card's 255pt: the tile, a `Near spend cap` pill, the
+freshness caption and the Refresh leave the identity column about 60pt, which
+renders the plan as `Team p...`.
+Two things had to go, and the two that went are the two said twice - both
+section verdicts are painted in full a few points below the pill, and the
+freshness moves to the card's own hover text, which AppKit also serves to
+VoiceOver as the card's accessibility help.
+The plan name is said nowhere else, which is why it is what survives.
+
+The reset caption gained a `Resets` prefix it did not need in the strip.
+There, the compact time sat directly under a column headed `SESSION (5H)`;
+here it sits at the card's right edge with a bar between it and its row's
+title, and a bare `10:30 PM` out there could be anything.
+The mockup's live countdown (`in 2h 14m`) was deliberately **not** taken: a
+counting figure needs one injectable clock on a controller that ticks it, and
+nothing on this canvas ticks - a countdown rendered once at build time and
+then left to go stale would be worse than the instant it replaced.
+
+### The layout trap this cost a round to find
+
+The aligned grid is a real `NSGridView`, per AGENTS.md gotcha (2): three
+content-sized columns and the bar column left unconstrained, so the bar
+absorbs every point of slack and the bars start and end at the same x on every
+row.
+That part worked first time.
+What did not was the content priorities on the labels inside it.
+
+A content **hugging** priority is a width *ceiling*, and `HelmModuleCard` ties
+its body to `bodyContainer` and that to the card's own edges, all required -
+so a label saying "never wider than my text" says it about the whole card.
+Measured: with `.required` hugging on a limit row's caption, a span-2 card
+asked for 526pt resolved to **227pt**, the bars collapsed onto their own 40pt
+floor and the captions truncated.
+Nothing was logged, because nothing was unsatisfiable.
+
+The obvious correction was the second half of the trap.
+Moving the hug to `contentTie` took the card to **265pt** - still wrong,
+because the width tying the card to its column is itself at 499, and
+AGENTS.md's gotcha (13) already records what two constraints at 499 do.
+`HelmDaylightPriority.columnHug` (251) is the fix: above every stack's own 250
+default, which is all a hug between sibling columns ever had to beat, and
+unable to tie with anything this migration declares.
+At 251 the card resolves to its asked-for 526pt with 282pt bars.
+That finding is in AGENTS.md under gotcha (13), because it is a direction that
+section did not previously spell out.
+
+### Verification
+
+`swift build` clean (zero warnings in this app's sources) and the full
+`./Scripts/run-all-tests.sh` run under the documented `dusk` pre-flight:
+**211 passed, 0 failed, 1 documented skip**, `fm.themeID` unchanged
+afterwards.
+
+`ClaudeStatusCardSelfTest` was rewritten onto the new body and grew two cases
+(`checkTheHeaderStatesTheReadingsAge`,
+`checkTheOverallVerdictWeighsTheSpendCap`), for twelve in all.
+**Three injected regressions each reproduced by name**, restored from copies
+taken aside rather than by `git stash`:
+
+- the `.required` hugging above, which failed the compact bar-width check and
+  both caption-truncation checks;
+- a chip blind to the spend cap, which failed five checks in
+  `checkTheOverallVerdictWeighsTheSpendCap`;
+- a missing window rendered as `0%` with a bar, which failed six checks in
+  `checkStatedGaps` by name, including GL-14's own sentence.
+
+The visual check is a real off-screen render rather than a claim: the card was
+rasterised at both widths in both registers through
+`bitmapImageRepForCachingDisplay` (sampled and written in the rep's own colour
+space, per AGENTS.md's probe rules) and the PNGs read back and compared
+against the captain's target screenshot.
+The probe was env-gated, lived in `SelfTests/`, and was deleted before the
+commit.

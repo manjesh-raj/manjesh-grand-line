@@ -1043,6 +1043,27 @@ a page whose content column is **capped** must pin that content to the page by
 a constant and let the column's 499 width stand uncontested, rather than
 chaining the two together. A page whose content is uncapped may keep the chain.
 
+**A content *hugging* priority travels the same chain in the opposite
+direction, and it is a width *ceiling* rather than a floor.** Everything above
+is about a minimum reaching the window; a hug is a label saying "never wider
+than my text", and wherever a required equality ties a container to its
+content, that sentence is said about the container too. Measured
+(`fm/grand-line-claude-usage-card-redesign`): `HelmModuleCard` ties its body
+to `bodyContainer` and that to the card's own edges, all required, so one
+`.required` hugging on a caption label inside a body row resolved a span-2
+card **asked for 526pt to 227pt** - the bars collapsed onto their own minimum
+and every caption truncated, which reads as a broken grid rather than as a
+priority. Nothing was logged, because nothing was unsatisfiable.
+
+**And the obvious correction is the trap's second half**: moving that hug to
+`contentTie` took the card to 265pt, still wrong, because the width tying the
+card to its column is *itself* at 499 - the tie above, in a new place. A hug
+that only needs to break a tie between sibling columns belongs at
+`HelmDaylightPriority.columnHug` (251): above every stack's own 250 default,
+which is all it ever had to beat, and unable to tie with anything this
+migration declares. **Reach for the 251-498 band for a hug, and 499 only for a
+width that is genuinely competing with the window.**
+
 ### (14) A required `==` tie does not self-verify on every resize
 
 **A correctly-declared required `==` width tie can still leave a view stuck at
@@ -1461,7 +1482,7 @@ noted.
 | `HelmCard` + `HelmCard.applyCardSurface` | a hand-rolled rounded background view |
 | `HelmAccentRow` | a hand-rolled alert/record row (accent bar, badge, kicker, body, chip) |
 | `ToolRowLayout` | a hand-rolled dense checklist row (fixed columns, actions, chevron, expandable log) |
-| `HelmModuleCard.Body.statusStrip` | a hand-rolled row of small figures on a canvas card. Equal columns are an explicit tie at `contentTie`, never `.fillEqually` (the hairlines are arranged subviews too) and never a hugging priority (gotcha (10)/(12)) - [`07-fleet-and-notifications.md`](docs/history/07-fleet-and-notifications.md) has the 33pt-vs-239.5pt measurement |
+| `HelmModuleCard.Body.usageReport` | a hand-rolled quota/budget readout on a canvas card. Rows whose bars must line up are an `NSGridView` with the bar column left unconstrained (gotcha (2)), never nested stacks, and every content priority inside sits in the 251-498 band (gotcha (13)) - [`07-fleet-and-notifications.md`](docs/history/07-fleet-and-notifications.md) has the 526pt-to-227pt measurement |
 | `HelmStatTile`, `HelmEmptyState`, `HelmSegmentedTabs`, `HelmPlateCard`, `HelmModuleCard` | four, two, three and two prior copies respectively |
 | `HelmRingGauge` (`configure(value:total:)` for a count, `configure(fraction:text:)` for anything else) | a hand-rolled arc. It is a fixed 66pt with a centre label, so a *chip-sized* ring is legitimately its own small view - F7's is - but a card-sized one is this |
 | `HelmField` / `HelmTextField` / `HelmTextView` / `HelmSearchField` / `HelmChipInput` / `HelmDateField` / `HelmToggle` | a raw `NSTextField()`, `NSSearchField()`, `NSDatePicker` or `NSSwitch` - source-guarded |
