@@ -31,6 +31,19 @@
 // a stated gap, never as an empty day.** "Google Calendar has not been read
 // yet" and "you have nothing on" are different sentences, and a briefing that
 // confuses them is worse than one that has no calendar at all.
+//
+// ## And why the same machinery also answers "does this actually work?"
+//
+// The bottom of this file (`GoogleCalendarHealthCheck`) runs one real read on
+// demand and reports the verdict to Settings \u{203A} Google Accounts. It exists
+// because OAuth succeeding says nothing about whether the calendar can be
+// read: the captain connected an account, the row said "calendar readable",
+// and every read failed with Google's "Calendar API has not been used in
+// project N ... Enable it by visiting <url>" - which only ever surfaced in the
+// daily review card's fine print, days later and on another page. The check is
+// deliberately built out of *this* file's request, token and parse, so
+// "the check passed" and "the daily review can read this calendar" are one
+// claim rather than two.
 
 import Foundation
 
@@ -375,3 +388,219 @@ private let timeFormatter: DateFormatter = {
     f.setLocalizedDateFormatFromTemplate("jm")
     return f
 }()
+
+// MARK: - Connection health (fm/grandline-google-calendar-connection-health)
+
+/// Google's error envelope, kept **whole** - the message *and* the fix-it URL
+/// Google puts inside it.
+///
+/// The captain's own report is why this type exists. OAuth succeeded, the
+/// Settings row said "calendar readable", and every actual read failed with
+/// Google's most fixable error - "Google Calendar API has not been used in
+/// project N before or it is disabled ... Enable it by visiting <url>".
+/// `parse` above already carried that sentence into the daily review's card,
+/// where it surfaced days later in the fine print. Nothing extracted the URL,
+/// so the one click that fixes it was never offered anywhere.
+///
+/// The URL is pulled out of the message text rather than out of the
+/// structured `details` array on purpose: Google's `Help` detail is not
+/// present on every error shape, and the sentence is. When there is no URL the
+/// message still stands on its own, which is the case this must not make
+/// worse.
+struct GoogleAPIFailure: Equatable {
+    /// Google's own sentence, byte for byte. Never paraphrased - the whole
+    /// point is that the captain can read the real cause and act on it.
+    let message: String
+    /// The first `https://` URL inside that sentence, when there is one.
+    let fixURL: URL?
+
+    /// `nil` when the payload carries no `error` object - i.e. the request
+    /// succeeded, whatever else the body says.
+    static func from(_ data: Data) -> GoogleAPIFailure? {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let error = object["error"] as? [String: Any] else { return nil }
+        let message = (error["message"] as? String) ?? "Google refused the request"
+        return GoogleAPIFailure(message: message, fixURL: firstURL(in: message))
+    }
+
+    /// The first `https://` run in `text`, with the trailing punctuation a
+    /// sentence leaves on it stripped.
+    ///
+    /// Google's own wording is "... Enable it by visiting
+    /// https://console.developers.google.com/... then retry.", so the URL is
+    /// followed by a space - but "(<url>)" and "<url>." both occur in other
+    /// Google messages, and a captain clicking a link with a `.` welded on
+    /// lands on a 404 that looks like this app's fault.
+    static func firstURL(in text: String) -> URL? {
+        guard let start = text.range(of: "https://") else { return nil }
+        var candidate = String(text[start.lowerBound...].prefix { !$0.isWhitespace })
+        while let last = candidate.last, ".,;:!?)]\u{201D}\u{2019}\"'".contains(last) {
+            candidate.removeLast()
+        }
+        guard candidate.count > "https://".count else { return nil }
+        return URL(string: candidate)
+    }
+}
+
+/// What one slot's *real* calendar read did, the last time it was tried.
+///
+/// Deliberately four states rather than two, for `GmailAccountRow`'s own
+/// reason: "connected" and "actually works" are different claims (GL-14), and
+/// a successful read that returned nothing is a success rather than a gap.
+enum GoogleCalendarHealth: Equatable {
+    /// Never tried on this launch. The row says nothing at all - a health
+    /// line that reads "unknown" next to every account is noise.
+    case notChecked
+    case checking
+    /// Google answered with a real day. `eventCount` may be zero, and zero is
+    /// a **successful read**, said in those words.
+    case healthy(eventCount: Int)
+    /// Google, or the network, or the token refused - with Google's own
+    /// sentence and, when it offered one, the page that fixes it.
+    case failed(message: String, fixURL: URL?)
+
+    /// So a caller can ask the one question it usually wants without
+    /// destructuring a payload it does not need.
+    var isFailure: Bool {
+        if case .failed = self { return true }
+        return false
+    }
+}
+
+/// Runs one real, lightweight Calendar read and reports what actually
+/// happened - the check Settings › Google Accounts needed and did not have.
+///
+/// **It builds no second request machinery.** The URL is
+/// `GoogleDailyReviewCalendar.eventsURL`, the transport is the same
+/// `GoogleCalendarTransport`, the token comes from the same
+/// `GoogleSignInController`, and the body goes through the same
+/// `GoogleDailyReviewCalendar.parse`. So "the health check passed" and "the
+/// daily review can read this calendar" are the same claim, which is the only
+/// thing that makes the check worth showing.
+///
+/// One shared instance (GL-23): the result is what the Settings row paints,
+/// and a second copy would let the page and the check disagree about the same
+/// account. It caches per slot rather than per day - this is "does the
+/// connection work", not "what is on today".
+final class GoogleCalendarHealthCheck {
+
+    static let shared = GoogleCalendarHealthCheck()
+
+    var transport: GoogleCalendarTransport = URLSessionGoogleCalendarTransport()
+    var signIn: GoogleSignInController = .shared
+    var accounts: GoogleAccountStoring { GoogleAccountStore.shared }
+    var clock: () -> Date = { Date() }
+
+    private var results: [GoogleAccountSlot: GoogleCalendarHealth] = [:]
+
+    private init() {}
+
+    func result(for slot: GoogleAccountSlot) -> GoogleCalendarHealth {
+        results[slot] ?? .notChecked
+    }
+
+    /// Drops a slot's verdict - for a disconnect, where a stale "calendar
+    /// reads fine" under a row that no longer has an account is a lie.
+    func forget(_ slot: GoogleAccountSlot) { results[slot] = nil }
+
+    /// Reads today from Google and records the verdict.
+    ///
+    /// `completion` runs on main, **more than once**: once when the state
+    /// turns `.checking` and once when it settles, so the row can paint the
+    /// in-flight state without the caller owning a second timer. A check
+    /// already in flight for this slot is not started twice.
+    func check(slot: GoogleAccountSlot, on day: Date? = nil,
+               completion: @escaping (GoogleCalendarHealth) -> Void = { _ in }) {
+        if case .checking = result(for: slot) { return }
+        guard let record = accounts.record(for: slot) else {
+            settle(slot, .notChecked, completion)
+            return
+        }
+        guard record.canReadCalendar else {
+            // Not a network failure, and saying "could not reach Google"
+            // here would send the captain to look in the wrong place.
+            settle(slot, .failed(message: "This account is signed in but never granted "
+                                 + "calendar access. Disconnect and sign in again, and tick "
+                                 + "the calendar box on Google\u{2019}s consent screen.",
+                                 fixURL: nil), completion)
+            return
+        }
+        let day = day ?? clock()
+        results[slot] = .checking
+        completion(.checking)
+        signIn.accessToken(for: slot) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .failure(let error):
+                self.settle(slot, .failed(message: error.errorDescription
+                                          ?? "the stored sign-in could not be refreshed",
+                                          fixURL: nil), completion)
+            case .success(let token):
+                self.transport.get(GoogleDailyReviewCalendar.eventsURL(for: day),
+                                   accessToken: token) { response in
+                    DispatchQueue.main.async {
+                        switch response {
+                        case .failure(let error):
+                            self.settle(slot, .failed(message: error.localizedDescription,
+                                                      fixURL: nil), completion)
+                        case .success(let payload):
+                            self.settle(slot, Self.verdict(for: payload, day: day), completion)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The body -> verdict step, pure so a suite can drive every Google reply
+    /// shape with no transport at all.
+    ///
+    /// The **same** `parse` the daily review reads, so the two can never
+    /// disagree - and `GoogleAPIFailure` is consulted only for the URL the
+    /// card has no way to render.
+    static func verdict(for payload: Data, day: Date) -> GoogleCalendarHealth {
+        let failure = GoogleAPIFailure.from(payload)
+        switch GoogleDailyReviewCalendar.parse(payload, day: day) {
+        case .unavailable(let reason):
+            return .failed(message: failure?.message ?? reason, fixURL: failure?.fixURL)
+        case .available(let rows):
+            return .healthy(eventCount: rows.count)
+        }
+    }
+
+    private func settle(_ slot: GoogleAccountSlot, _ health: GoogleCalendarHealth,
+                        _ completion: @escaping (GoogleCalendarHealth) -> Void) {
+        let deliver = {
+            self.results[slot] = health == .notChecked ? nil : health
+            completion(health)
+        }
+        if Thread.isMainThread { deliver() } else { DispatchQueue.main.async(execute: deliver) }
+    }
+
+    #if FM_SELFTESTS
+    func debugSet(_ health: GoogleCalendarHealth, for slot: GoogleAccountSlot) {
+        results[slot] = health == .notChecked ? nil : health
+    }
+    func debugReset() { results.removeAll() }
+    #endif
+}
+
+#if FM_SELFTESTS
+/// The backstop `main.swift` installs for every suite: a transport that
+/// refuses rather than reaching Google.
+///
+/// Mounting a `SettingsController` builds the Google Accounts page, and that
+/// page now runs a real read for a connected slot - so without this, any
+/// suite that plants a fixture record would issue a live HTTPS request from
+/// CI carrying a fabricated bearer token. A suite that wants a reply swaps
+/// this for its own stub.
+final class RefusingGoogleCalendarTransport: GoogleCalendarTransport {
+    func get(_ url: URL, accessToken: String,
+             completion: @escaping (Result<Data, Error>) -> Void) {
+        _ = (url, accessToken)
+        completion(.failure(NSError(domain: "FMSelfTests", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: "the self-test transport refuses to reach Google",
+        ])))
+    }
+}
+#endif

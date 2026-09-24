@@ -2202,6 +2202,12 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     // client id, and must certainly never be able to start a real sign-in.
     GoogleAccountStore.shared = InMemoryGoogleAccountStore()
     GoogleOAuthClientStore.shared.override = .some(nil)
+    // `fm/grandline-google-calendar-connection-health`: the same backstop, one
+    // layer out. Settings \u{203A} Google Accounts now runs a **real** Calendar
+    // read for a connected slot, so a suite that plants a fixture record would
+    // otherwise issue a live HTTPS request from CI carrying a fabricated
+    // bearer token. A suite that wants a reply swaps this for its own stub.
+    GoogleCalendarHealthCheck.shared.transport = RefusingGoogleCalendarTransport()
 
     if (ProcessInfo.processInfo.environment["FM_FLEET_LOG_DIR"] ?? "").isEmpty {
         setenv("FM_FLEET_LOG_DIR", scratchRoot.appendingPathComponent("fleet-log", isDirectory: true).path, 1)

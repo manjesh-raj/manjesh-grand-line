@@ -921,6 +921,9 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         onDrillSubtitleChanged?()
         view.layoutSubtreeIfNeeded()
         scrollToTop()
+        // Arriving on Google Accounts is the moment the captain is asking
+        // "is this working?", so that is when it is answered.
+        if category == .gmail { checkGoogleCalendarsIfNeeded() }
     }
 
     /// Put exactly one page in the detail pane.
@@ -1020,6 +1023,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             hasCheckedSudoTouchIDOnce = true
             checkSudoTouchID()
         }
+        if selectedCategory == .gmail { checkGoogleCalendarsIfNeeded() }
         scrollToTop()
     }
 
@@ -1636,6 +1640,11 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             let row = GmailAccountRow(slot: slot)
             row.onConnect = { [weak self] in self?.connectGoogle(slot) }
             row.onDisconnect = { [weak self] in self?.disconnectGoogle(slot) }
+            row.onTest = { [weak self] in self?.checkGoogleCalendar(slot) }
+            // Opened here rather than inside the row, so the row stays a view
+            // and the one `NSWorkspace.open` this page performs is visible
+            // where the rest of its side effects are.
+            row.onOpenFixURL = { NSWorkspace.shared.open($0) }
             gmailRows[slot] = row
             accountRows.append(row)
         }
@@ -1703,6 +1712,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             row.render(record: GoogleAccountStore.shared.record(for: slot),
                        isConfigured: configuration != nil,
                        isBusy: GoogleSignInController.shared.inFlight.contains(slot),
+                       health: GoogleCalendarHealthCheck.shared.result(for: slot),
                        theme: theme)
         }
         gmailCalendarSwitch.isOn = AppSettings.shared.googleCalendarEnabled
@@ -1770,6 +1780,37 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         onGoogleAccountsChanged?()
     }
 
+    /// Run one **real** calendar read for `slot` and repaint the row with
+    /// whatever actually happened.
+    ///
+    /// The captain's own report is the reason this exists: OAuth succeeded,
+    /// this page said "calendar readable", and the read failed every time
+    /// with Google's "Calendar API has not been used in project N ... Enable
+    /// it by visiting <url>". That sentence was already being captured by
+    /// `GoogleCalendarSource`; the only place it ever surfaced was the daily
+    /// review card's fine print, on the Overview page, days later. This puts
+    /// it next to the account it is about, at the moment the captain is
+    /// looking at that account.
+    private func checkGoogleCalendar(_ slot: GoogleAccountSlot) {
+        GoogleCalendarHealthCheck.shared.check(slot: slot) { [weak self] _ in
+            self?.refreshGmailSection()
+        }
+    }
+
+    /// Check every connected account that has no verdict yet.
+    ///
+    /// Called when the page appears and right after a connect, never on every
+    /// repaint: `result(for:)` is `.notChecked` only until the first answer
+    /// lands, so this costs one request per account per launch rather than
+    /// one per render. "Test connection" is the way to ask again.
+    private func checkGoogleCalendarsIfNeeded() {
+        for slot in GoogleAccountSlot.allCases
+        where GoogleAccountStore.shared.record(for: slot) != nil
+            && GoogleCalendarHealthCheck.shared.result(for: slot) == .notChecked {
+            checkGoogleCalendar(slot)
+        }
+    }
+
     private func connectGoogle(_ slot: GoogleAccountSlot) {
         refreshGmailSection()
         GoogleSignInController.shared.signIn(slot: slot, from: view.window) { [weak self] result in
@@ -1779,6 +1820,11 @@ final class SettingsController: NSViewController, DaylightDrillActions {
                 if record.canReadCalendar {
                     Feedback.report("Connected \(record.email.isEmpty ? slot.title : record.email).",
                                     kind: .done, persistence: .transient, in: self.view)
+                    // The whole point: "connected" is not "working", so the
+                    // read is tried here rather than left for the daily
+                    // review to discover days later.
+                    GoogleCalendarHealthCheck.shared.forget(slot)
+                    self.checkGoogleCalendar(slot)
                 } else {
                     // Signed in, no calendar. A stated gap rather than a
                     // success that quietly does nothing.
@@ -1805,6 +1851,9 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // which is the part that cannot be undone from here, so the button
         // says "Disconnect" rather than "Remove".
         GoogleSignInController.shared.signOut(slot: slot)
+        // A verdict about an account that is gone is a lie about the row it
+        // sits under.
+        GoogleCalendarHealthCheck.shared.forget(slot)
         // The cached day of events belongs to the account that just went
         // away; keeping it would render a disconnected account's calendar.
         DailyReviewCalendarSources.shared.forgetGoogle()
