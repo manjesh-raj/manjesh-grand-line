@@ -21,6 +21,17 @@
 #   ./Scripts/run-all-tests.sh              # build, then run every suite
 #   ./Scripts/run-all-tests.sh --no-build   # skip `swift build`
 #   ./Scripts/run-all-tests.sh --list       # print the discovered suites and exit
+#   ./Scripts/run-all-tests.sh --describe   # ...with what each one is about
+#
+# `--describe` exists because of P11 of the 2026-09-25 review: 31 of the
+# suites are named after the audit or the branch that created them
+# (`AUDIT3_UI_FIXES`, `DAYLIGHT_DRILL_SLICE2`, `SETTINGS_REDESIGN`), which
+# tells a later agent nothing about what they cover - and AGENTS.md now lets a
+# narrow change run only the relevant suites, which you cannot pick from a
+# list of those names. Renaming 31 flags would churn ~180 source comments and
+# the CI lists for a guess at what each one is "really" about; printing the
+# first paragraph of each suite's own header answers the same question from
+# what the author already wrote.
 #   ./Scripts/run-all-tests.sh --ci         # skip suites that need a real login
 #                                           # session (see NEEDS_SESSION below)
 #   ./Scripts/run-all-tests.sh --session-only
@@ -72,6 +83,7 @@ cd "$(dirname "$0")/.."
 
 BUILD=1
 LIST_ONLY=0
+DESCRIBE=0
 CI_MODE=0
 SESSION_ONLY=0
 REQUESTED=()
@@ -80,6 +92,7 @@ for arg in "$@"; do
   case "$arg" in
     --no-build) BUILD=0 ;;
     --list) LIST_ONLY=1 ;;
+    --describe) LIST_ONLY=1; DESCRIBE=1 ;;
     --ci) CI_MODE=1 ;;
     --session-only) SESSION_ONLY=1 ;;
     -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -207,6 +220,11 @@ SKIP_FLAGS=(
 # deliberately a per-entry marker with a stated reason rather than a blanket
 # allowlist, the same shape as `OffScreenProbe-exempt:` above.
 NEEDS_SESSION=(
+  # P11: the tour lab mounts a real AppShellController in a real window and
+  # renders it - through `ReviewTourLab.makeOffScreenShell()`, so the window
+  # is built one file away and the `OffScreenProbe.window(` marker cannot see
+  # it here.
+  "FM_RUN_REVIEW_TOUR_LAB_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
   # Review bug B10: the Dictation status card's wrapping text column. It
   # asserts real resolved frames from a real layout pass at several widths -
   # the defect is a circular `preferredMaxLayoutWidth` derivation, which only
@@ -569,6 +587,16 @@ NEEDS_SESSION=(
 # Re-measure before adding to this list, and prefer fixing where a fix does not
 # mean weakening an assertion that is correct on the captain's machine.
 CI_UNSUPPORTED=(
+  # P11 of the 2026-09-25 review: "five window-backed suites never run in CI;
+  # split the single failing cases out so the rest guard merges". This list is
+  # four now - `FM_RUN_DESTINATION_MOUNTING_TESTS` was here because GL-31 lands
+  # a machine with no resolvable firstmate home on `.bootstrap`, which is true
+  # of every runner, so two of its sixteen cases measured a different launch
+  # destination there than here. The suite pins a scratch firstmate home of its
+  # own now (`pinAFirstmateHome`), which makes the launch destination
+  # deterministic on any machine, and all sixteen cases guard merges again.
+  # Reproduced locally before the fix by unsetting the pin: exactly the two
+  # cases the entry described failed, by name.
   # A wall-clock performance budget. The runner parsed 400 synthetic blocks in
   # 19.3s against an 8s budget calibrated on the captain's Apple silicon.
   # Loosening the budget to whatever a shared runner manages would retire the
@@ -585,11 +613,6 @@ CI_UNSUPPORTED=(
   # page: this one needs a genuinely composited window, not just a window
   # server. Its other 37 cases passed on the runner.
   "FM_RUN_KUBERNETES_DESTINATION_TESTS"
-  # Two cases assume the launch destination is the canvas. GL-31 lands a
-  # machine with no resolvable firstmate home on `.bootstrap` instead, so a
-  # runner mounts a second slot and the "only eager slots at launch"
-  # assertions see it. About `$FM_HOME`, not about mounting.
-  "FM_RUN_DESTINATION_MOUNTING_TESTS"
   # Hung outright on the runner - it produced no output and was killed at the
   # 300s per-suite bound. This is the suite that took the job to GitHub's
   # 6-hour cap before that bound existed. Genuinely unexplained; worth its own
@@ -668,8 +691,32 @@ else
   FLAGS=("${ALL_FLAGS[@]}")
 fi
 
+# The first paragraph of a suite's own header comment - which is where the
+# author already wrote down what it is about. The enum name comes from the
+# `XSelfTest.run()` main.swift dispatches to for this flag, so this cannot
+# drift from the flag the way a second hand-maintained table would.
+describe_suite() {
+  local flag="$1"
+  local enum_name
+  enum_name="$(grep -A3 "\"$flag\"" "$MAIN" | grep -oE '[A-Za-z0-9_]+SelfTest\.run\(\)' | head -1 | sed 's/\.run()//')"
+  if [ -z "$enum_name" ]; then echo "    (no suite type found in $MAIN)"; return; fi
+  local file="Sources/GrandLine/SelfTests/$enum_name.swift"
+  if [ ! -f "$file" ]; then echo "    ($file not found)"; return; fi
+  # Skip the one-line product banner and the blank comment after it, then take
+  # comment lines until the paragraph ends.
+  awk '
+    NR <= 2 { next }
+    /^\/\/$/ { if (started) exit; next }
+    /^\/\// { started = 1; sub(/^\/\/ ?/, ""); print "    " $0; next }
+    { if (started) exit }
+  ' "$file"
+}
+
 if [ "$LIST_ONLY" -eq 1 ]; then
-  printf '%s\n' "${FLAGS[@]}"
+  for flag in "${FLAGS[@]}"; do
+    echo "$flag"
+    if [ "$DESCRIBE" -eq 1 ]; then describe_suite "$flag"; echo ""; fi
+  done
   echo ""
   echo "${#FLAGS[@]} suite(s) discovered in $MAIN."
   exit 0

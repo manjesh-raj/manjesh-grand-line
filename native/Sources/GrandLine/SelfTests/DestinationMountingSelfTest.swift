@@ -50,7 +50,44 @@ enum DestinationMountingSelfTest {
     /// test disagrees with the app when the app changes.
     private static let expectedEagerSlots: Set<DestinationSlotID> = [.console, .overview, .review]
 
+    /// A scratch directory shaped like a resolvable firstmate home, so
+    /// `FirstmateHome.homeOk()` answers the same on every machine.
+    ///
+    /// **P11 (2026-09-25 review): this is what took the whole suite out of
+    /// CI.** GL-31 lands a machine with no resolvable firstmate home on
+    /// `.bootstrap` rather than on the canvas, which is correct behaviour and
+    /// is true of every GitHub runner - so `onlyEagerSlotsAreMountedAtLaunch`
+    /// and its neighbours measured a different launch destination there than
+    /// here, the suite went into `CI_UNSUPPORTED`, and all sixteen of its
+    /// cases stopped guarding merges over a property of the runner's home
+    /// directory.
+    ///
+    /// Pinning the home makes the launch destination deterministic instead.
+    /// `FirstmateHome.root` is a `static let` resolved once per process, so
+    /// this has to happen before anything reads it - which is why it is here,
+    /// at the top of `run()`, and not inside `withScratchEnv`.
+    ///
+    /// `bin/fm-crew-state.sh` is the sentinel `homeOk` looks for; an empty
+    /// file is enough, and nothing in this suite runs it.
+    private static func pinAFirstmateHome() {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grandline-destination-mounting-home-\(ProcessInfo.processInfo.processIdentifier)",
+                                    isDirectory: true)
+        try? FileManager.default.createDirectory(at: home.appendingPathComponent("bin", isDirectory: true),
+                                                 withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: home.appendingPathComponent("bin/fm-crew-state.sh").path,
+                                       contents: Data())
+        setenv("FM_HOME", home.path, 1)
+    }
+
     static func run() -> Bool {
+        pinAFirstmateHome()
+        guard FirstmateHome.homeOk() else {
+            print("FAIL the pinned firstmate home did not resolve - every launch-destination "
+                  + "case below would measure the runner's own home directory instead")
+            print("DestinationMountingSelfTest: FAILED")
+            return false
+        }
         let cases: [(String, () -> String?)] = [
             ("everyRailDestinationResolvesToARegisteredSlot", test_everyDestinationHasASlot),
             ("setupGroupHasFourSeparateSlotsAndFourTitles", test_setupGroupHasFourSeparateSlots),

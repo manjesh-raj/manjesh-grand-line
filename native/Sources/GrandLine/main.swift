@@ -2327,7 +2327,13 @@ if AppPaths.isScratchRedirected() {
 // all. No suite drives a schedule write today, which is the only reason
 // nothing has been corrupted yet; AGENTS.md's own post-incident rule says to
 // close that here rather than wait for the suite that does.
-if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_RUN_") }) {
+// P11: `FM_REVIEW_TOUR` arms this block too. The tour lab mounts a real
+// `AppShellController` with real stores, exactly as a window-backed suite
+// does, so it needs every redirect below for the same reason - and it is not
+// an `FM_RUN_*` flag, deliberately (see `ReviewTourLab.variable`), so it has
+// to be named here rather than caught by the prefix.
+if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_RUN_") })
+    || !(ProcessInfo.processInfo.environment["FM_REVIEW_TOUR"] ?? "").isEmpty {
     let scratchRoot = FileManager.default.temporaryDirectory
         .appendingPathComponent("selftest-process-\(ProcessInfo.processInfo.processIdentifier)",
                                 isDirectory: true)
@@ -2759,6 +2765,18 @@ if ProcessInfo.processInfo.environment["FM_RUN_AGENTS_BUDGET_TESTS"] == "1" {
 // lane.
 if ProcessInfo.processInfo.environment["FM_RUN_DIAGNOSTICS_LOG_TESTS"] == "1" {
     exit(DiagnosticsLogSelfTest.run() ? 0 : 1)
+}
+
+// Review process issue P11: the tour lab's own coverage. Window-backed.
+if ProcessInfo.processInfo.environment["FM_RUN_REVIEW_TOUR_LAB_TESTS"] == "1" {
+    exit(ReviewTourLabSelfTest.run() ? 0 : 1)
+}
+
+// Review process issue P11: the file-driven probe driver. Not a suite - it
+// takes a tour file's path, not `=1` - and deliberately not named `FM_RUN_*`,
+// which `run-all-tests.sh` discovers suites by.
+if let tour = ProcessInfo.processInfo.environment[ReviewTourLab.variable], !tour.isEmpty {
+    exit(ReviewTourLab.runTourFile(at: tour) ? 0 : 1)
 }
 
 // Review bug B5: every Keychain service name carries a per-process prefix in a

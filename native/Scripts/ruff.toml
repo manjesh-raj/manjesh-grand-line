@@ -1,0 +1,45 @@
+# Ruff configuration for this repository's Python.
+#
+# P11 of the 2026-09-25 review: "the 4.4K lines of security-relevant Python
+# have tests but no `ruff`". The two MCP servers here are the most
+# security-relevant code in the repo - `sre_kubectl_mcp.py`'s read-only kubectl
+# allowlist and `luffy_stores_mcp.py`'s write refusal are what stand between a
+# prompt-injected persona and the captain's cluster and stores - and the only
+# thing checking them was their own unittest suites.
+#
+# The rule set is deliberately correctness-first rather than style-first:
+#
+#   E4/E7/E9  import, statement and syntax errors (ruff's own default subset)
+#   F         pyflakes - undefined names, unused imports, broken f-strings
+#   B         bugbear - the "this is probably a bug" set
+#
+# What is NOT selected, with the reason, because a rule set with no stated
+# exclusions is one somebody widens on a whim:
+#
+#   S (bandit)  14 findings, every one expected here: fake passwords in test
+#               fixtures, and deliberate `subprocess` use in generators that
+#               shell out on purpose. Turning it on would mean 14 `noqa`s and
+#               a lint nobody reads.
+#   UP          20 printf-style format strings. A mechanical rewrite of
+#               working generator scripts for no behavioural gain.
+#   EXE001      7 files with a shebang and no execute bit. They are run as
+#               `python3 Scripts/<name>.py` by CI and by every doc in the
+#               repo, so the bit is genuinely unnecessary.
+#
+# Run: `ruff check --config Scripts/ruff.toml Scripts/*.py` from `native/`.
+# CI's `python` job runs exactly that.
+
+# The floor these scripts actually run on, and it is load-bearing rather than
+# documentation: macOS ships Python 3.9 as `python3`, `run-all-tests.sh` runs
+# the two unittest suites with whatever `python3` resolves to, and the
+# generators are invoked the same way. Ruff gates several rules on this - the
+# first draft of this config left it unset, ruff raised `B905` (zip without an
+# explicit `strict=`), and adding `strict=True` made
+# `test_luffy_stores_mcp.py` fail outright on this machine's 3.9. A lint that
+# suggests a fix the runtime rejects is worse than no lint.
+target-version = "py39"
+
+line-length = 120
+
+[lint]
+select = ["E4", "E7", "E9", "F", "B"]

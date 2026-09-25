@@ -511,6 +511,13 @@ enum E2ETestingPolicySelfTest {
             // design, and `OffScreenProbeWindow` is the one file that is
             // *supposed* to name the window constructor.
             guard name != "OffScreenProbeWindow", name != "SelfTestSources" else { continue }
+            // P11's probe driver, not a suite: it is a *tool* that mounts an
+            // off-screen shell on demand, driven by `FM_REVIEW_TOUR` with a
+            // file path rather than by an `FM_RUN_*` flag with `=1` - which is
+            // deliberate, since the runner discovers suites by that prefix.
+            // Its own coverage is `ReviewTourLabSelfTest`, which is dispatched
+            // normally and is in `NEEDS_SESSION`.
+            guard name != "ReviewTourLab" else { continue }
             guard let source = try? String(contentsOf: file, encoding: .utf8) else { continue }
             guard mountsAWindow(source) else { continue }
             windowBacked += 1
@@ -742,10 +749,21 @@ enum E2ETestingPolicySelfTest {
         // own prose explains why `FM_MIRROR_TARGET`/`FM_BACKEND` were dropped,
         // and a guard that reads that explanation as a row would insist the
         // dead variables come back.
+        // Only rows count: this file's own prose explains why
+        // `FM_MIRROR_TARGET`/`FM_BACKEND` were dropped, and a guard that reads
+        // that explanation as a row would insist the dead variables come back.
+        //
+        // And only a row's **first cell**, which is the variable it documents.
+        // The second cell is prose and routinely names others ("falls back to
+        // `FM_SHIFT_DIR`", "not an `FM_RUN_*` name") - reading the whole line
+        // made almost any row document almost anything, and `FM_RUN_` written
+        // in a sentence came back as a variable nothing reads.
         var documented: Set<String> = []
         for line in readme.split(separator: "\n", omittingEmptySubsequences: false)
         where line.hasPrefix("| `FM_") {
-            for match in envNames(in: String(line)) { documented.insert(match) }
+            let cells = line.dropFirst().split(separator: "|", omittingEmptySubsequences: false)
+            guard let first = cells.first else { continue }
+            for match in envNames(in: String(first)) { documented.insert(match) }
         }
 
         let missing = read.subtracting(documented).sorted()

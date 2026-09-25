@@ -20,6 +20,15 @@
 #           ~50 suites that mount real `NSWindow`s and drive real AppKit
 #           layout, accessibility presses, contrast measurement, terminal
 #           rendering and WebKit visibility gating.
+#   widget - P11 of the 2026-09-25 review: `build-widget-extension.sh --check`.
+#           The WidgetKit extension is not a SwiftPM target, so `swift build`
+#           never compiles it - and `WidgetSharedContract.swift` is compiled
+#           into both binaries, so an import added to it breaks the extension
+#           and nothing else.
+#   python  - P11: `ruff` over the ~4.4K lines of security-relevant Python.
+#           Their unittest suites already ran (the `test` job runs them); the
+#           lint is new. `native/Scripts/ruff.toml` carries the rule set and
+#           the reason each large group is left out.
 #   generated - M4 of the end-to-end review: the `--check` mode of the
 #           self-contained generator scripts, so drift in a committed
 #           generated artifact fails a PR instead of waiting for somebody to
@@ -409,12 +418,17 @@ jobs:
       #     job should not make on the captain's behalf. Its `--check` is
       #     in-memory now either way (L1's other half), so a local run leaves
       #     nothing behind.
-      #   build-monaco-web.sh / build-excalidraw-web.sh - a rebuild-and-diff
-      #     needs node + a full npm install of an upstream package whose
-      #     transitive tree is not pinned by this repo, so a "drift" failure
-      #     would as often mean "npm resolved a different patch version today".
-      #     Worth doing as a scheduled job with a pinned lockfile; not worth
-      #     making every PR wait for it, and not worth a flaky red X.
+      #   build-monaco-web.sh / build-excalidraw-web.sh - both gained a
+      #     `--check` and a committed `package-lock.json` in P11, so the
+      #     original objection ("npm resolved a different patch version
+      #     today") no longer holds: `npm ci` installs exactly the lockfile
+      #     and the rebuild is reproducible, measured - two rebuilds of the
+      #     Excalidraw bundle came out byte-identical. What is left is cost:
+      #     a node + npm install of Excalidraw, React and esbuild on every
+      #     pull request, for bundles that change a few times a year. The
+      #     review's own suggestion is a scheduled job, and that is the
+      #     captain's call; `./Scripts/build-{monaco,excalidraw}-web.sh
+      #     --check` is one command either way.
       - name: Card shortcut icons
         run: python3 Scripts/build-card-shortcut-icons.py --check
 
@@ -429,3 +443,64 @@ jobs:
 
       - name: Whisper Metal shader
         run: python3 Scripts/build-whisper-metal-shader.py --check
+
+  widget:
+    name: widget extension compiles
+    runs-on: macos-15   # keep in sync - see the runner-image note above
+    # P11 (2026-09-25 review): "`build-widget-extension.sh --check` is not in
+    # CI even though `WidgetSharedContract.swift` compiles into both
+    # binaries". SwiftPM has no bundle product, so the WidgetKit extension is
+    # compiled by `swiftc` from its own script and `swift build` does not touch
+    # it - which means the one file shared between the app and the extension
+    # was only ever compiled one of the two ways CI checks. Adding an
+    # `AppKit`/`Yaml` import to it breaks the extension and nothing else, and
+    # nothing would have said so until somebody ran the script by hand.
+    #
+    # `--check` compiles and links without assembling or signing the `.appex`,
+    # so it needs no Developer ID - which is the item the extension itself is
+    # blocked on (see native/Widgets/README.md).
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          if ! swift --version 2>&1 | grep -qE "Apple Swift version ${EXPECTED_SWIFT_MAJOR}\."; then
+            echo "::error::expected a Swift ${EXPECTED_SWIFT_MAJOR}.x toolchain; this runner has something else."
+            exit 1
+          fi
+
+      - name: Compile the widget extension
+        run: ./Scripts/build-widget-extension.sh --check
+
+  python:
+    name: python lint and tests
+    runs-on: macos-15   # keep in sync - see the runner-image note above
+    # P11: "the 4.4K lines of security-relevant Python have tests but no
+    # `ruff`". The tests were already run by `run-all-tests.sh` (and so by the
+    # `test` job); the lint is new. `Scripts/ruff.toml` carries the rule set
+    # and, more usefully, the reason each large rule group is left out.
+    #
+    # Minutes, not tens of minutes: no Swift, no app.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Deliberately NOT the version the scripts run under. macOS ships
+          # 3.9 as `python3` and `Scripts/ruff.toml` pins `target-version` to
+          # match, so the rules ruff applies are the ones that suit the real
+          # runtime whatever interpreter runs ruff itself.
+          python-version: '3.12'
+
+      - name: Install ruff
+        # Pinned for the same reason the `generated` job pins Pillow: an
+        # unpinned linter turns a green gate into a coin flip the day it adds
+        # a rule.
+        run: python3 -m pip install --quiet 'ruff==0.16.3'
+
+      - name: Lint
+        run: ruff check --config Scripts/ruff.toml Scripts/*.py
