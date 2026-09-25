@@ -221,7 +221,89 @@ enum WindowChromeFusion {
     /// `point` is in the window's base coordinates - which is what a content
     /// view's own `hitTest(_:)` is handed, since its superview (the theme
     /// frame) shares the window's origin.
+    /// Which events this forwarding is for. **Review bug B3.**
+    ///
+    /// `GrandLine-2026-09-25-131709.ips`: `EXC_BAD_ACCESS`, "Thread stack size
+    /// exceeded due to excessive recursion", with
+    /// `-[NSView(NSTrackingArea) cursorUpdate:]` ->
+    /// `-[NSTitlebarContainerView _nextResponderForEvent:]` ->
+    /// `ChromeFusionRootView.hitTest(_:)` -> `trafficLightHitTest` repeating
+    /// until the stack was gone. The mechanism: this returns a button that
+    /// lives in the **titlebar container**, not in the content view, so when
+    /// AppKit forwards a `cursorUpdate:` up that button's responder chain the
+    /// container hit-tests the content view again, gets the same button back,
+    /// and the two feed each other. The captain runs the app full screen most
+    /// of the time, where `:227` returns nil before any of this - which is
+    /// probably why one probe caught it and three days of real use did not.
+    ///
+    /// **Deliberately a deny-list rather than an allow-list, and the reason is
+    /// what could be verified.** The forwarding only ever existed to make a
+    /// *click* reach a repositioned button, so answering only for a click
+    /// reads like the tighter fix - but it rests on
+    /// `NSApp.currentEvent` being the mouse-down while AppKit hit-tests for
+    /// one, and this repository cannot check that: the suite's own real-click
+    /// case (`test_a1ZoomButtonReallyZooms`) skips, because a headless process
+    /// cannot make a window key, and a suite calling `NSWindow.sendEvent`
+    /// directly never sets `currentEvent` at all. An allow-list that is wrong
+    /// about that trades a rare crash for close/minimise/zoom being dead
+    /// again, which is the captain-reported bug this forwarding was written
+    /// for in the first place.
+    ///
+    /// The cursor and tracking family needs no argument in either direction:
+    /// none of them is a click, none of them ever had any business resolving
+    /// to a traffic-light button, and they are the family the crash came
+    /// from. Everything else keeps today's behaviour exactly, including "no
+    /// current event". `hitTestDepth` is what covers the rest, structurally.
+    static func forwardingApplies(to eventType: NSEvent.EventType?) -> Bool {
+        switch eventType {
+        case .cursorUpdate, .mouseMoved, .mouseEntered, .mouseExited:
+            return false
+        default:
+            return true
+        }
+    }
+
+    /// The type of the event AppKit is currently dispatching, or nil.
+    ///
+    /// `NSApp` is an implicitly-unwrapped `NSApplication!` and is genuinely
+    /// nil in a headless suite, where reading a property on it *crashes*
+    /// rather than failing (AGENTS.md's own rule) - hence the `if let`. The
+    /// override is how a suite drives a specific event type without a running
+    /// application.
+    static func currentEventType() -> NSEvent.EventType? {
+        #if FM_SELFTESTS
+        if let override = debugCurrentEventTypeOverride { return override() }
+        #endif
+        guard let app = NSApp else { return nil }
+        return app.currentEvent?.type
+    }
+
+    #if FM_SELFTESTS
+    /// GL-27: debug builds only. Returns the type `currentEventType()` reports.
+    /// Returning `.some(nil)` models "AppKit is dispatching nothing".
+    static var debugCurrentEventTypeOverride: (() -> NSEvent.EventType?)?
+    #endif
+
+    /// Re-entrancy depth, per the B3 recursion above.
+    ///
+    /// The event-type gate closes the path that was actually captured; this is
+    /// the backstop for any other route from a returned button back into this
+    /// function, because the defect is structural - anything that hit-tests
+    /// the content view while resolving an event *for a view this returns* is
+    /// a cycle, whatever event it happens to be carrying. Main-thread only, by
+    /// the same argument `hitTest` itself is.
+    private static var hitTestDepth = 0
+
     static func trafficLightHitTest(_ point: NSPoint, in window: NSWindow?) -> NSView? {
+        // B3's backstop. Already inside this call means the button we are
+        // about to return is what asked, which is the cycle.
+        guard hitTestDepth == 0 else { return nil }
+        hitTestDepth += 1
+        defer { hitTestDepth -= 1 }
+
+        // B3: never for a cursor or tracking event. See `forwardingApplies`.
+        guard forwardingApplies(to: currentEventType()) else { return nil }
+
         // Full screen: AppKit owns the cluster in its own auto-hiding overlay
         // and nothing is repositioned, so it must keep its own hit testing.
         guard let window, !isFullScreen(window) else { return nil }

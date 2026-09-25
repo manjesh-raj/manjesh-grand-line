@@ -69,6 +69,7 @@ enum WindowChromeFusionSelfTest {
             ("A1 the traffic lights actually answer a click", test_a1TrafficLightsAreHitTestable),
             ("A1 a real click on zoom actually zooms the window", test_a1ZoomButtonReallyZooms),
             ("A1 the cluster's hit slop steals nothing from the bar", test_a1HitSlopStealsNothingFromTheBar),
+            ("B3 cursor and tracking events never forward, and never re-entrantly", test_b3ForwardingIsClickOnlyAndNonRecursive),
             ("A1 the bar's leading content clears the traffic lights", test_a1LeadingContentClearsTheCluster),
             ("A1 the bar forces its own appearance", test_a1BarForcesItsOwnAppearance),
             ("A2 the leading swap is two-way", test_a2LeadingSwapIsTwoWay),
@@ -914,6 +915,112 @@ enum WindowChromeFusionSelfTest {
         let probe = NSPoint(x: claimed + 1, y: window.frame.height - DaylightBarController.trafficLightCenterY)
         if let hit = WindowChromeFusion.trafficLightHitTest(probe, in: window) {
             return "a point at x=\(probe.x), past the cluster, still resolves to \(type(of: hit))"
+        }
+        return nil
+    }
+
+
+    /// **Review bug B3**, the stack-overflow crash.
+    ///
+    /// `GrandLine-2026-09-25-131709.ips`: `cursorUpdate:` on a returned
+    /// traffic-light button walked up its responder chain,
+    /// `NSTitlebarContainerView._nextResponderForEvent:` hit-tested the
+    /// content view again, got the same button back, and the two recursed
+    /// until the thread's stack was gone. The button lives in the titlebar
+    /// container, not in the content view, which is what makes returning it
+    /// from the content view's `hitTest` a cycle.
+    ///
+    /// Two independent assertions, because the fix is two things:
+    ///
+    ///   * the forwarding answers a **click** and nothing else, which is the
+    ///     path that was captured (and all the forwarding was ever for);
+    ///   * it refuses re-entrantly whatever the event, which is the backstop
+    ///     for any other route back in.
+    ///
+    /// Driving the real recursion is not available here: `cursorUpdate:`
+    /// comes from the window server's own tracking areas, which is why the
+    /// review could not reproduce it by posting `mouseMoved` either.
+    private static func test_b3ForwardingIsClickOnlyAndNonRecursive() -> String? {
+        // The classification, in both directions. A click must still forward
+        // - the traffic lights were dead before this forwarding existed - and
+        // so must "no current event", because a headless suite and several of
+        // AppKit's own hit tests supply none, and an allow-list that got that
+        // wrong would trade a rare crash for a permanently dead close button.
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp, .leftMouseDragged,
+                     .rightMouseDown, .otherMouseDown] {
+            guard WindowChromeFusion.forwardingApplies(to: type) else {
+                return "\(type) must forward - the traffic lights would be dead again"
+            }
+        }
+        guard WindowChromeFusion.forwardingApplies(to: nil) else {
+            return "no current event must still forward - see forwardingApplies' own note"
+        }
+        for type in [NSEvent.EventType.cursorUpdate, .mouseMoved, .mouseEntered, .mouseExited] {
+            guard !WindowChromeFusion.forwardingApplies(to: type) else {
+                return "\(type) must NOT forward - returning a titlebar button for it is what "
+                    + "recursed through _nextResponderForEvent: until the stack was gone (B3)"
+            }
+        }
+
+        // And the behavioural half, on a real repositioned cluster: the exact
+        // point that answers a click must answer nothing for a cursor update.
+        let window = makeWindow(fused: true)
+        defer { window.close() }
+        let root = ChromeFusionRootView(frame: NSRect(x: 0, y: 0, width: 1220, height: 720))
+        root.onLayout = { [weak window] in
+            WindowChromeFusion.positionTrafficLights(
+                in: window,
+                verticalCenter: DaylightBarController.trafficLightCenterY,
+                leadingX: DaylightBarController.trafficLightLeadingX)
+        }
+        window.contentView = root
+        window.orderFront(nil)
+        root.layoutSubtreeIfNeeded()
+        guard let button = window.standardWindowButton(.closeButton) else {
+            return "the window has no close button to test"
+        }
+        let inWindow = button.convert(button.bounds, to: nil)
+        let centre = NSPoint(x: inWindow.midX, y: inWindow.midY)
+
+        WindowChromeFusion.debugCurrentEventTypeOverride = { .leftMouseDown }
+        let underClick = root.hitTest(centre)
+        WindowChromeFusion.debugCurrentEventTypeOverride = { .cursorUpdate }
+        let underCursorUpdate = root.hitTest(centre)
+        WindowChromeFusion.debugCurrentEventTypeOverride = nil
+
+        // Discriminating power: unless the click really does reach the button,
+        // the cursor-update assertion below is comparing two nothings.
+        guard underClick === button else {
+            return "the fixture is vacuous - a click at \(centre) did not reach the button either"
+        }
+        guard underCursorUpdate !== button else {
+            return "a cursorUpdate at \(centre) still resolves to the traffic-light button, so "
+                + "_nextResponderForEvent: still has its cycle (B3)"
+        }
+
+        // The backstop, driven directly. `currentEventType()` is consulted
+        // from *inside* `trafficLightHitTest`, so asking again from that
+        // closure puts a second call on the stack while the first is live -
+        // which is precisely the shape of B3's recursion, and the only way to
+        // exercise the depth guard without the window server's own tracking
+        // areas. The latch stops the probe recursing on itself.
+        var probed = false
+        var inner: NSView??
+        WindowChromeFusion.debugCurrentEventTypeOverride = {
+            if !probed {
+                probed = true
+                inner = .some(WindowChromeFusion.trafficLightHitTest(centre, in: window))
+            }
+            return .leftMouseDown
+        }
+        _ = WindowChromeFusion.trafficLightHitTest(centre, in: window)
+        WindowChromeFusion.debugCurrentEventTypeOverride = nil
+        guard probed, let inner else {
+            return "the re-entrancy probe never ran, so the backstop was not exercised"
+        }
+        guard inner == nil else {
+            return "a re-entrant trafficLightHitTest returned \(String(describing: inner)) rather than "
+                + "refusing - the recursion backstop is gone (B3)"
         }
         return nil
     }
