@@ -159,6 +159,17 @@ enum GrandLineWidgetContainer {
         if let override = environment[directoryOverrideVariable], !override.isEmpty {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
+        // A scratch-redirected process (a probe, a suite) must not reach the
+        // captain's real snapshot, and the App Group container below is a
+        // *shared* location that no per-store path override moves. This file
+        // is compiled into the widget extension as well as the app, so it
+        // cannot import `AppPaths` - the variable name is restated here and
+        // `WidgetSnapshotSelfTest` asserts the two agree, the same way it
+        // already does for the palette and the App Group id.
+        if let scratch = environment["FM_SCRATCH_ROOT"], !scratch.isEmpty {
+            return URL(fileURLWithPath: (scratch as NSString).expandingTildeInPath, isDirectory: true)
+                .appendingPathComponent("GrandLineWidgets", isDirectory: true)
+        }
         if appGroupIsTeamPrefixed,
            let group = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
             return group.appendingPathComponent("GrandLineWidgets", isDirectory: true)

@@ -61,25 +61,39 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     /// popover on this page rather than a destination of its own.
     private let dsl = WhiteboardDSLController()
 
+    // **Review bug B14.** These four labels used to read "Generate diagram",
+    // "Draw from text", "Capture region" and "Copy image". Together with the
+    // two icon buttons and the bar's own quick-access row, they left the drill
+    // header no room: measured at a 1512pt window, the title "Whiteboard"
+    // needed 88.5pt and was given 84.0, so it rendered "Whitebo..." - and the
+    // subtitle and the search pill went with it ("An empty b...", "Se...").
+    // Every other page in the app keeps its title, because no other page hands
+    // the bar six actions with four of them labelled.
+    //
+    // Shortened rather than turned into icons: each verb stays readable, and
+    // the tooltips - which is where the full sentence always lived - are
+    // untouched. `AppShellDrillHeaderTitleSelfTest` measures the result.
     private lazy var generateButton = HelmPageToolbar.labeledButton(
-        symbol: "sparkles", title: "Generate diagram",
+        symbol: "sparkles", title: "Generate",
         tooltip: "Describe a diagram and have Claude draw it here",
         target: self, action: #selector(generateTapped))
     private lazy var dslButton = HelmPageToolbar.labeledButton(
-        symbol: "point.topleft.down.to.point.bottomright.curvepath", title: "Draw from text",
+        symbol: "point.topleft.down.to.point.bottomright.curvepath", title: "From text",
         tooltip: "Type a flowchart or sequence diagram and draw it instantly - no model, no waiting",
         target: self, action: #selector(dslTapped))
-    /// F15's capture verb. Labeled rather than an icon because it is the one
+    /// F15's capture verb. Still labeled rather than an icon - it is the one
     /// action on this page that reaches *outside* the app, and a camera glyph
     /// alone does not say that it is a region drag rather than a photo picker.
+    /// The tooltip is what carries "a region of the screen"; the label only
+    /// has to carry the verb (B14).
     private lazy var captureButton = HelmPageToolbar.labeledButton(
-        symbol: "camera.viewfinder", title: "Capture region",
+        symbol: "camera.viewfinder", title: "Capture",
         tooltip: "Drag a region of the screen onto this board (\u{2318}\u{21E7}S)",
         target: self, action: #selector(captureTapped))
     /// The other end of F15: flatten the board - the capture plus every
     /// annotation over it - and put it on the clipboard.
     private lazy var copyButton = HelmPageToolbar.labeledButton(
-        symbol: "doc.on.doc", title: "Copy image",
+        symbol: "doc.on.doc", title: "Copy",
         tooltip: "Copy the whole board to the clipboard as a PNG",
         target: self, action: #selector(copyImageTapped))
     private lazy var fitButton = HelmPageToolbar.iconButton(

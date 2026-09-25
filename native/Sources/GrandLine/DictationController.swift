@@ -286,6 +286,12 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// `preferredMaxLayoutWidth` values set at construction time are only
     /// the safe *initial* seed for the very first layout pass, before any
     /// real width is known; every pass after that overwrites them here.
+    /// A text column never wraps narrower than this, whatever the arithmetic
+    /// below says. `SettingsRow.relayoutDescription`'s own floor, and for the
+    /// same reason: a column narrow enough to break words mid-word is worse
+    /// than one that overflows its row slightly.
+    private static let detailMinimumWidth: CGFloat = 180
+
     override func viewDidLayout() {
         super.viewDidLayout()
         for (stack, label) in [
@@ -295,11 +301,43 @@ final class DictationController: NSViewController, DaylightDrillActions {
             (localWhisperTextStack, localWhisperDetailLabel),
             (vocabularyColumn, explainerLabel),
         ] {
-            let available = stack.bounds.width
-            guard available > 0, label.preferredMaxLayoutWidth != available else { continue }
+            let available = availableDetailWidth(for: stack)
+            guard available > 0, abs(label.preferredMaxLayoutWidth - available) > 0.5 else { continue }
             label.preferredMaxLayoutWidth = available
             label.invalidateIntrinsicContentSize()
         }
+    }
+
+    /// How wide a text column's wrapping label may be, derived from the
+    /// **row's** own resolved width minus its rigid siblings.
+    ///
+    /// **Review bug B10.** This used to read `stack.bounds.width` directly,
+    /// and that is circular: the stack has no intrinsic size of its own, so
+    /// its resolved width comes from the label's intrinsic width, which comes
+    /// from `preferredMaxLayoutWidth`. Feeding the result back in makes
+    /// whichever pass ran first with a small width permanent. Measured on
+    /// this branch with an env-gated probe: on a first render of the
+    /// microphone-permission state the text stack resolved to **25pt** while
+    /// `preferredMaxLayoutWidth` still read its 520 seed - which is the
+    /// captain-visible defect, one word per line with words broken mid-word
+    /// ("permis / sion", "microp / hone") and a Status card grown to 380pt.
+    ///
+    /// The row *is* a real width (it is tied to the card, which is tied to the
+    /// page), and the siblings beside the text column are all `.required`
+    /// hugging, so their fitting widths are what they will actually take.
+    /// That makes this the same non-circular derivation
+    /// `SettingsRow.relayoutDescription` does from its card's width.
+    private func availableDetailWidth(for stack: NSStackView) -> CGFloat {
+        guard let row = stack.superview as? NSStackView, row.bounds.width > 0 else {
+            // No row to measure yet (the very first pass): leave the
+            // construction-time seed alone rather than replacing it with a
+            // number derived from nothing.
+            return 0
+        }
+        let siblings = row.arrangedSubviews.filter { $0 !== stack && !$0.isHidden }
+        let rigid = siblings.reduce(CGFloat(0)) { $0 + ceil($1.fittingSize.width) }
+        let gaps = row.spacing * CGFloat(max(0, row.arrangedSubviews.filter { !$0.isHidden }.count - 1))
+        return max(Self.detailMinimumWidth, row.bounds.width - rigid - gaps)
     }
 
     /// Re-reads real permission state and re-renders. Called on every page
@@ -1037,6 +1075,18 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// property that was wrong (`setContentHuggingPriority` on a view with no
     /// intrinsic size) reads as correct from the outside.
     var debugModelReadyPillFrame: NSRect { modelReadyPill.frame }
+    /// Review bug B10: the Status card's own frame and the wrapping detail
+    /// label's resolved width, which are the two numbers the defect is about.
+    var debugStatusCardFrame: NSRect { statusPanel.frame }
+    var debugStatusDetailFrame: NSRect { statusDetailLabel.frame }
+    var debugStatusDetailMaxLayoutWidth: CGFloat { statusDetailLabel.preferredMaxLayoutWidth }
+    var debugStatusRowWidth: CGFloat { (statusTextStack.superview as? NSStackView)?.bounds.width ?? -1 }
+    var debugStatusStackWidth: CGFloat { statusTextStack.bounds.width }
+    var debugAvailableDetailWidth: CGFloat { availableDetailWidth(for: statusTextStack) }
+    var debugPageWidth: CGFloat { view.bounds.width }
+    /// The floor `availableDetailWidth` applies, so the suite asserts against
+    /// the real number rather than re-declaring it.
+    static var debugDetailMinimumWidth: CGFloat { detailMinimumWidth }
     #endif
 
     /// Requests each permission directly via `DictationPermissions`' static

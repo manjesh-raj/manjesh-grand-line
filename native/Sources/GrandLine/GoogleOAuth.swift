@@ -453,7 +453,7 @@ final class GoogleOAuthClientStore {
 
     static let shared = GoogleOAuthClientStore()
 
-    static let service = "com.manjesh.grandline.native.google-oauth-client"
+    static let service = KeychainService.resolve("com.manjesh.grandline.native.google-oauth-client")
     private static let account = "client"
 
     /// The suites' replacement, set by `main.swift`'s `#if FM_SELFTESTS`
@@ -465,8 +465,11 @@ final class GoogleOAuthClientStore {
     func configuration() -> GoogleOAuthConfiguration? {
         if let override { return override }
         if let cache { return cache }
-        let value = read()
-        cache = .some(value)
+        let (value, cacheable) = read()
+        // Review bug B1: a Keychain error is not "no client configured", so it
+        // is not cached either - the next call retries once the Keychain
+        // settles, rather than reporting "not set up" for the whole session.
+        if cacheable { cache = .some(value) }
         return value
     }
 
@@ -489,20 +492,26 @@ final class GoogleOAuthClientStore {
         guard status == errSecSuccess else { throw KeychainError.osStatus(status) }
     }
 
-    private func read() -> GoogleOAuthConfiguration? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: Self.account,
-            kSecReturnData as String: true,
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
+    /// The stored pair, and whether the answer is worth caching. `false` means
+    /// the Keychain refused rather than answered.
+    private func read() -> (GoogleOAuthConfiguration?, cacheable: Bool) {
+        // Review bug B1's tri-state. Collapsing a Keychain error into "no
+        // client configured" makes Settings offer to set one up over a client
+        // id that is already stored, and `setConfiguration` deletes before it
+        // adds - so answering that offer would replace the captain's real pair
+        // with whatever was typed. The caller does not cache a refusal, so the
+        // next call retries.
+        let outcome = ClipboardHistoryKey.read(service: Self.service, account: Self.account)
+        if case .failed(let status) = outcome {
+            AppLog.keychain.error("google oauth client: the Keychain would not answer (\(status))")
+            return (nil, cacheable: false)
+        }
+        guard case .found(let data) = outcome,
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: String],
-              let id = object["clientID"], !id.isEmpty else { return nil }
+              let id = object["clientID"], !id.isEmpty else { return (nil, cacheable: true) }
         let secret = object["clientSecret"] ?? ""
-        return GoogleOAuthConfiguration(clientID: id, clientSecret: secret.isEmpty ? nil : secret)
+        return (GoogleOAuthConfiguration(clientID: id, clientSecret: secret.isEmpty ? nil : secret),
+                cacheable: true)
     }
 
     private func delete() {

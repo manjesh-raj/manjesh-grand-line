@@ -132,24 +132,46 @@ enum LegacyNameMigration {
     /// is what keeps the list honest: it greps the app's own sources for
     /// `static let service = "com.manjesh.grandline…"` and fails the run if a
     /// sixth one appears without joining this list.
+    /// Every service this app owns.
+    ///
+    /// Through `KeychainService.resolve` (B5) so a self-test process migrates
+    /// its own prefixed items rather than the captain's real ones - the same
+    /// reason every entry in `main.swift`'s redirect block exists. In a
+    /// release build `resolve` is the identity, so these are the literals they
+    /// have always been.
     static let keychainServices: [String] = [
         // KeychainKeyStore - the saved SSH keys and their passphrases.
-        "com.manjesh.grandline.sshkey",
+        KeychainService.resolve("com.manjesh.grandline.sshkey"),
         // ClipboardHistoryStore - the key the encrypted clipboard history is sealed with.
-        "com.manjesh.grandline.clipboard-history",
+        KeychainService.resolve("com.manjesh.grandline.clipboard-history"),
         // CredentialVaultKeyStore - Poneglyph's own master key wrap.
-        "com.manjesh.grandline.native.credential-vault",
+        KeychainService.resolve("com.manjesh.grandline.native.credential-vault"),
         // GoogleAccount - the two Google slots' refresh tokens and their metadata.
-        "com.manjesh.grandline.native.google-oauth",
+        KeychainService.resolve("com.manjesh.grandline.native.google-oauth"),
         // GoogleOAuth - the captain's OAuth client id and secret.
-        "com.manjesh.grandline.native.google-oauth-client",
+        KeychainService.resolve("com.manjesh.grandline.native.google-oauth-client"),
     ]
 
     /// The name a service string was written under before the rename, or `nil`
     /// for a string that never carried the old prefix.
     static func legacyName(for service: String) -> String? {
-        guard service.hasPrefix(identifierPrefix) else { return nil }
-        return legacyIdentifierPrefix + service.dropFirst(identifierPrefix.count)
+        // B5: a self-test process prefixes every service name, and the
+        // pre-rename name of a prefixed service is that same prefix in front
+        // of the pre-rename literal - otherwise a suite's own migration would
+        // read the captain's real legacy items.
+        let bare = KeychainService.bare(service)
+        let carried = String(service.dropLast(bare.count))
+        guard bare.hasPrefix(identifierPrefix) else { return nil }
+        // `dropFirst` yields a `Substring`, and concatenating it onto a
+        // three-term `String` expression is resolved differently by different
+        // Swift compilers - it built clean locally and failed CI's pinned
+        // toolchain outright ("cannot convert value of type String.SubSequence
+        // to expected argument type String"). AGENTS.md's Toolchain note
+        // records this class of divergence for warnings; this is the same
+        // shape as a hard error. Converted explicitly so neither compiler has
+        // to choose.
+        let suffix = String(bare.dropFirst(identifierPrefix.count))
+        return carried + legacyIdentifierPrefix + suffix
     }
 
     // MARK: - Application Support

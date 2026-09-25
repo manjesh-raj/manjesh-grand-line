@@ -633,9 +633,21 @@ final class NotebookController: NSViewController, DaylightDrillActions {
         store.updatePage(id: id, content: content)
 
         if let renamed = autoTitleIfUntitled(id: id, content: content) {
-            currentID = renamed
+            // **Review bug B7.** This used to set `currentID`, `reload()` and
+            // then `sidebar.select(renamed)` - and `select` moves the
+            // selection without firing `onSelect`, so `open(pageID:)` never
+            // ran. Monaco therefore kept posting `change` under the **old**
+            // id, and the next debounce hit `pageEdited`'s own
+            // `guard store.exists(id:)` and dropped every keystroke on the
+            // floor. Repro: new page, type `# Title`, wait for the debounce,
+            // keep typing, click the page - the paragraph is gone.
+            //
+            // `open(pageID:)` is the one path that re-registers the page with
+            // the editor (`openSnippet` with the new id), and it selects the
+            // sidebar row itself. `reload()` first, so the row it selects
+            // exists.
             reload()
-            sidebar.select(renamed)
+            open(pageID: renamed)
             return
         }
 
@@ -1146,6 +1158,16 @@ final class NotebookController: NSViewController, DaylightDrillActions {
     /// read Monaco's tokenizer output back rather than asserting that a
     /// palette was sent.
     var debugEditorIsReady: Bool { webView.isReady }
+    /// The "<slug>.md" caption over the editor, which only `open(pageID:)`
+    /// writes - review bug B7's one observable witness that the rename
+    /// re-pointed the editor, in a headless suite where the web view is never
+    /// ready and so no `openSnippet` is sent at all.
+    var debugEditorTitle: String { editorTitleLabel.stringValue }
+    /// The bridge's own call log, for review bug B7 - see
+    /// `CodePreviewWebView.debugCalls` for why nothing else can see that
+    /// defect.
+    var debugBridgeCalls: [(name: String, payload: [String: Any])] { webView.debugCalls }
+    func debugResetBridgeCalls() { webView.debugResetCalls() }
     func debugEditorCall(_ name: String, payload: [String: Any],
                          completion: @escaping (Result<[String: Any], CodePreviewBridgeError>) -> Void) {
         webView.call(name, payload: payload, completion: completion)

@@ -241,9 +241,7 @@ enum SRELead {
     /// prompt (when it appears) scopes to a small, purpose-built, always-
     /// empty app folder instead of the captain's entire home directory.
     private static func resolveWorkingDirectory() -> URL? {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        let dir = base.appendingPathComponent(AppPaths.applicationSupportFolderName, isDirectory: true)
+        let dir = AppPaths.dataRoot()
             .appendingPathComponent("sre-lead", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

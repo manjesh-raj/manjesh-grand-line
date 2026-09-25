@@ -3130,6 +3130,21 @@ final class AppShellController: NSViewController {
         codePreview.shutdown()
     }
 
+    /// Flush the Notebook's debounced edit and its git commit on the way to
+    /// quitting (**review bug B7's second half**).
+    ///
+    /// `NotebookController.shutdown()` has been documented as "called on quit"
+    /// since it shipped and had **no caller at all** - `main.swift` flushes
+    /// every other debounced store and not this one. A ⌘Q inside the page's
+    /// 500ms edit debounce lost the last keystrokes, which for a notebook is
+    /// the sentence the captain had just finished typing.
+    ///
+    /// The shell's forward for the same reason the others here are: `notebook`
+    /// is `private` and the app delegate is where quit is handled.
+    func shutdownNotebook() {
+        notebook.shutdown()
+    }
+
     /// Flush the credential vault's debounced backup on the way to quitting,
     /// so a credential added seconds before quitting is still pushed to the
     /// captain's private config repo (`fm/implement-grand-line-secrets-vault-poneg-ad`).

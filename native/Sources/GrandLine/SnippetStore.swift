@@ -44,9 +44,7 @@ final class SnippetStore {
         if let override = ProcessInfo.processInfo.environment["FM_SNIPPETS_FILE"], !override.isEmpty {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent(AppPaths.applicationSupportFolderName, isDirectory: true)
+        return AppPaths.dataRoot()
             .appendingPathComponent("snippets.json")
     }
 

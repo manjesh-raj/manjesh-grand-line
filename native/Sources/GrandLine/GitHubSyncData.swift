@@ -340,9 +340,7 @@ enum GitHubSyncSource {
         if let override = ProcessInfo.processInfo.environment["FM_GITHUB_SYNC_CLONE_ROOT"], !override.isEmpty {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent(AppPaths.applicationSupportFolderName, isDirectory: true).appendingPathComponent("github-sync-repos", isDirectory: true)
+        return AppPaths.dataRoot().appendingPathComponent("github-sync-repos", isDirectory: true)
     }
 
     /// A small per-repo scratch clone used only to compute real ahead/behind

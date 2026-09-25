@@ -151,9 +151,7 @@ final class ShiftGitSync {
         if let override = ProcessInfo.processInfo.environment["FM_SHIFT_GIT_CLONE_PATH"], !override.isEmpty {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent(AppPaths.applicationSupportFolderName, isDirectory: true).appendingPathComponent("shift-repo", isDirectory: true)
+        return AppPaths.dataRoot().appendingPathComponent("shift-repo", isDirectory: true)
     }
 
     /// `DotfilesSource.cloneURL` (the real `manjesh-config` repo) by default,
@@ -185,6 +183,42 @@ final class ShiftGitSync {
     /// Fires immediately with the current status, then on every change - same
     /// shape as `ThemeManager.observe`/`HostStore.observe`. Callbacks are
     /// always delivered on the main thread.
+    /// Called on the main thread whenever a pull, an auto-merge or a conflict
+    /// resolution has changed the files under `dataRoot` - i.e. whenever the
+    /// in-memory copy of them is stale.
+    ///
+    /// **Review bug B6.** Before this existed, a `git pull` fast-forward
+    /// reached nothing but `setStatus`: the sole consumer
+    /// (`ShiftController`'s sync pill) repainted a pill, and `ShiftStore` went
+    /// on holding the pre-pull tasks. The next edit rewrote the whole file
+    /// from that memory and pushed it, so a task created on the other machine
+    /// was **silently deleted** by the first keystroke on this one - between
+    /// two machines whose entire purpose is to share it.
+    ///
+    /// Deliberately separate from `observeStatus`: a status change is a
+    /// repaint (GL-24 - an observer repaints, it never fetches), and this is
+    /// a reload. Collapsing them would make every `.syncing` pill re-parse
+    /// four YAML files.
+    func observeRemoteChanges(_ handler: @escaping () -> Void) {
+        stateLock.lock()
+        _remoteChangeHandlers.append(handler)
+        stateLock.unlock()
+    }
+
+    private var _remoteChangeHandlers: [() -> Void] = []
+
+    /// Fire `observeRemoteChanges`. Always on the main thread, because every
+    /// caller is on this class's serial queue and every handler reloads a
+    /// store the UI reads.
+    private func notifyRemoteChanged(_ reason: String) {
+        stateLock.lock()
+        let handlers = _remoteChangeHandlers
+        stateLock.unlock()
+        guard !handlers.isEmpty else { return }
+        AppLog.store.info("Tasks: reloading after \(reason, privacy: .public)")
+        DispatchQueue.main.async { for handler in handlers { handler() } }
+    }
+
     func observeStatus(_ handler: @escaping (Status) -> Void) {
         stateLock.lock()
         _statusHandlers.append(handler)
@@ -454,9 +488,7 @@ final class ShiftGitSync {
     /// Copied here (not imported from `ShiftStore`) since that file's default
     /// changed - see `ShiftStore.resolveRoot()`'s own doc comment.
     private static func legacyLocalRoot() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent(AppPaths.applicationSupportFolderName, isDirectory: true).appendingPathComponent("shift", isDirectory: true)
+        return AppPaths.dataRoot().appendingPathComponent("shift", isDirectory: true)
     }
 
     /// Only ever runs once in practice - guarded by both "legacy data
@@ -612,6 +644,10 @@ final class ShiftGitSync {
         }
         let dirty = !uncommittedFiles().isEmpty
         setStatus(dirty ? .localChanges : .synced)
+        // B6: the files under `dataRoot` are not what they were a moment ago.
+        // Whoever holds them in memory has to re-read them before the next
+        // whole-file rewrite turns a fast-forward into a deletion.
+        notifyRemoteChanged("a pull fast-forwarded the tasks repo")
         return .fastForwarded
     }
 
@@ -643,7 +679,14 @@ final class ShiftGitSync {
             setStatus(.failed(reason))
             return .failed(reason)
         }
-        let set = computeConflictSet(base: base)
+        guard let set = computeConflictSet(base: base) else {
+            // B6: an unparseable revision on either side. Refusing is the
+            // whole point - the alternative this replaced was reading it as
+            // an empty list and pushing every record's deletion.
+            let reason = "A tasks file could not be read on one side of the merge - nothing was changed."
+            setStatus(.failed(reason))
+            return .failed(reason)
+        }
         if !set.hasConflicts {
             guard applyConflictResolution(set, choices: [:]) else {
                 return .failed("Automatic merge failed - see the sync pill for the reason.")
@@ -738,6 +781,32 @@ final class ShiftGitSync {
             setStatus(.failed("Could not start merge: \(mergeStart.stderr.isEmpty ? "unknown error" : mergeStart.stderr)"))
             return false
         }
+        // **Review bug B6.** `-s ours` takes the local side of *every* path in
+        // the tree, and only the three list files below are then re-resolved
+        // record by record. Everything else under `GrandLineDocs/personal-tasks`
+        // - `tasks/completed/<month>.yaml`, `activity/`, `attachments/`,
+        // `notes.yaml`, `settings.yaml` - silently kept the local side, so a
+        // task *completed* on the other machine disappeared from every file
+        // and the merge commit published that deletion as a deliberate one.
+        //
+        // So take the remote side of everything this merge does not resolve
+        // itself, before writing the three that it does. `checkout` rather
+        // than a smarter merge on purpose: the auto-merge is only reached
+        // when the record-level pass found no conflict in the three list
+        // files, and for the append-mostly files here (a month of completed
+        // tasks, an activity log, an attachment blob) the remote revision is
+        // the one carrying what this side has not seen. A local change to one
+        // of them is already committed - `commitLocalIfDirty` runs first - so
+        // it is in the history either way rather than lost.
+        for path in pathsToTakeFromRemote(excluding: resolvedListFiles) {
+            let checkout = runGit(["checkout", "origin/\(branch)", "--", path],
+                                  cwd: workingTree, authenticated: false)
+            if checkout.status != 0 {
+                _ = runGit(["merge", "--abort"], cwd: workingTree, authenticated: false)
+                setStatus(.failed("Could not take \(path) from origin: \(checkout.stderr)"))
+                return false
+            }
+        }
         do {
             try ShiftYaml.writeList(path: dataRoot.appendingPathComponent("tasks/active.yaml").path, key: "tasks", items: finalTasks.map(ShiftYaml.toYaml))
             try ShiftYaml.writeList(path: dataRoot.appendingPathComponent("follow-ups/follow-ups.yaml").path, key: "follow_ups", items: finalFollowUps.map(ShiftYaml.toYaml))
@@ -758,7 +827,51 @@ final class ShiftGitSync {
             setStatus(.failed("git commit failed: \(commit.stderr)"))
             return false
         }
+        // B6: the tree now holds the merged result, which is not what the
+        // store has in memory.
+        notifyRemoteChanged("a merge with origin/\(branch)")
         return pushOnly()
+    }
+
+    /// The three files `applyConflictResolution` rewrites itself, relative to
+    /// the working tree. Everything else under the shift subpath is taken
+    /// from the remote side - see that method's B6 note.
+    private var resolvedListFiles: Set<String> {
+        ["\(Self.shiftSubpath)/tasks/active.yaml",
+         "\(Self.shiftSubpath)/follow-ups/follow-ups.yaml",
+         "\(Self.shiftSubpath)/projects/projects.yaml"]
+    }
+
+    /// Every path under the shift subpath that differs between HEAD and
+    /// `origin/<branch>` and is not one of `excluding`.
+    ///
+    /// `--name-only` against a `diff`, not a status: the merge is in progress
+    /// with `--no-commit`, so `git status` describes the staged `-s ours`
+    /// result rather than the two sides.
+    private func pathsToTakeFromRemote(excluding: Set<String>) -> [String] {
+        let diff = runGit(["diff", "--name-only", "HEAD", "origin/\(branch)", "--", Self.shiftSubpath],
+                          cwd: workingTree, authenticated: false)
+        guard diff.status == 0 else { return [] }
+        let changed = diff.stdout
+            .split(separator: "\n")
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !excluding.contains($0) }
+        guard !changed.isEmpty else { return [] }
+
+        // A path that differs because it exists locally and **not** on the
+        // remote is a local-only file, and `git checkout origin/<branch> --`
+        // fails outright on one ("pathspec did not match"), which would abort
+        // a merge that had nothing wrong with it. Keep the local side for
+        // those: this fix is about not losing what the *other* machine did,
+        // and deleting a local file to achieve that would be the same bug
+        // pointed the other way.
+        let remoteList = runGit(["ls-tree", "-r", "--name-only", "origin/\(branch)", "--", Self.shiftSubpath],
+                                cwd: workingTree, authenticated: false)
+        guard remoteList.status == 0 else { return [] }
+        let onRemote = Set(remoteList.stdout
+            .split(separator: "\n")
+            .map { String($0).trimmingCharacters(in: .whitespaces) })
+        return changed.filter { onRemote.contains($0) }
     }
 
     /// Commits (never pushes - the caller is about to attempt a merge that
@@ -780,35 +893,50 @@ final class ShiftGitSync {
     /// one merge-base commit. `origin/<branch>` must already be up to date -
     /// true whenever this is called right after `pullNow()`'s own `git
     /// fetch`, which is the only production call path.
-    private func computeConflictSet(base: String) -> ShiftConflictSet {
+    /// `nil` when any of the nine revisions it reads will not parse - see
+    /// `loadRecords` (B6). The caller turns that into `.failed`, never into a
+    /// merge.
+    private func computeConflictSet(base: String) -> ShiftConflictSet? {
         var set = ShiftConflictSet()
 
         let taskPath = "\(Self.shiftSubpath)/tasks/active.yaml"
+        guard let baseTaskRecords = loadRecords(ref: base, path: taskPath, key: "tasks", parse: ShiftYaml.task),
+              let localTaskRecords = loadRecords(ref: "HEAD", path: taskPath, key: "tasks", parse: ShiftYaml.task),
+              let remoteTaskRecords = loadRecords(ref: "origin/\(branch)", path: taskPath, key: "tasks", parse: ShiftYaml.task)
+        else { return nil }
         let taskMerge = ShiftThreeWayMerge.run(
             kind: .task,
-            base: loadRecords(ref: base, path: taskPath, key: "tasks", parse: ShiftYaml.task),
-            local: loadRecords(ref: "HEAD", path: taskPath, key: "tasks", parse: ShiftYaml.task),
-            remote: loadRecords(ref: "origin/\(branch)", path: taskPath, key: "tasks", parse: ShiftYaml.task)
+            base: baseTaskRecords,
+            local: localTaskRecords,
+            remote: remoteTaskRecords
         )
         set.taskConflicts = taskMerge.conflicts
         set.resolvedTasks = taskMerge.resolved
 
         let followUpPath = "\(Self.shiftSubpath)/follow-ups/follow-ups.yaml"
+        guard let baseFollowUpRecords = loadRecords(ref: base, path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp),
+              let localFollowUpRecords = loadRecords(ref: "HEAD", path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp),
+              let remoteFollowUpRecords = loadRecords(ref: "origin/\(branch)", path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp)
+        else { return nil }
         let followUpMerge = ShiftThreeWayMerge.run(
             kind: .followUp,
-            base: loadRecords(ref: base, path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp),
-            local: loadRecords(ref: "HEAD", path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp),
-            remote: loadRecords(ref: "origin/\(branch)", path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp)
+            base: baseFollowUpRecords,
+            local: localFollowUpRecords,
+            remote: remoteFollowUpRecords
         )
         set.followUpConflicts = followUpMerge.conflicts
         set.resolvedFollowUps = followUpMerge.resolved
 
         let projectPath = "\(Self.shiftSubpath)/projects/projects.yaml"
+        guard let baseProjectRecords = loadRecords(ref: base, path: projectPath, key: "projects", parse: ShiftYaml.project),
+              let localProjectRecords = loadRecords(ref: "HEAD", path: projectPath, key: "projects", parse: ShiftYaml.project),
+              let remoteProjectRecords = loadRecords(ref: "origin/\(branch)", path: projectPath, key: "projects", parse: ShiftYaml.project)
+        else { return nil }
         let projectMerge = ShiftThreeWayMerge.run(
             kind: .project,
-            base: loadRecords(ref: base, path: projectPath, key: "projects", parse: ShiftYaml.project),
-            local: loadRecords(ref: "HEAD", path: projectPath, key: "projects", parse: ShiftYaml.project),
-            remote: loadRecords(ref: "origin/\(branch)", path: projectPath, key: "projects", parse: ShiftYaml.project)
+            base: baseProjectRecords,
+            local: localProjectRecords,
+            remote: remoteProjectRecords
         )
         set.projectConflicts = projectMerge.conflicts
         set.resolvedProjects = projectMerge.resolved
@@ -817,14 +945,33 @@ final class ShiftGitSync {
         return set
     }
 
-    /// `git show <ref>:<path>` - a file absent at that revision (never
-    /// created yet on that side) is treated as an empty record list, not an
-    /// error.
-    private func loadRecords<T>(ref: String, path: String, key: String, parse: (Yaml) -> T?) -> [T] {
+    /// `git show <ref>:<path>`.
+    ///
+    /// A file **absent** at that revision (never created yet on that side) is
+    /// an empty record list, which is the truth. A file that is present and
+    /// will not parse is `nil`, which is **not** the same thing and is what
+    /// review bug B6 was about: this returned `[]` for both, so an
+    /// unparseable `origin/<branch>:tasks/active.yaml` - a half-written push,
+    /// a merge marker, a YAML error from a newer build - read as "the other
+    /// machine has no tasks". `ShiftThreeWayMerge` then resolved every one of
+    /// the captain's tasks as deleted remotely and pushed that deletion.
+    /// GL-01 and GL-14, in the one place where the cost is the whole task
+    /// list.
+    private func loadRecords<T>(ref: String, path: String, key: String, parse: (Yaml) -> T?) -> [T]? {
         let result = runGit(["show", "\(ref):\(path)"], cwd: workingTree, authenticated: false)
+        // A non-zero status here is "no such path at that revision", which
+        // `git show` reports the same way for a genuinely absent file. Empty
+        // output is an empty file.
         guard result.status == 0, !result.stdout.isEmpty else { return [] }
-        guard let doc = try? Yaml.load(result.stdout) else { return [] }
-        let arr = doc.dictionary?[.string(key, quoted: .double)]?.array ?? []
+        guard let doc = try? Yaml.load(result.stdout) else {
+            AppLog.store.error("Tasks: \(path, privacy: .public) at \(ref, privacy: .public) will not parse - refusing to treat it as empty")
+            return nil
+        }
+        guard let dictionary = doc.dictionary else {
+            AppLog.store.error("Tasks: \(path, privacy: .public) at \(ref, privacy: .public) is not a mapping - refusing to treat it as empty")
+            return nil
+        }
+        let arr = dictionary[.string(key, quoted: .double)]?.array ?? []
         return arr.compactMap(parse)
     }
 

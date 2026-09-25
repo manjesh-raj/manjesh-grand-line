@@ -307,8 +307,15 @@ final class ClipboardHistoryPanelViewController: NSViewController {
             }
         }
 
-        let unavailable = !store.isAvailable
+        // B1 (and review finding B17): the picker used to read only
+        // `isAvailable`, so a history that was present-but-unopenable rendered
+        // "Nothing copied yet" - GL-14's exact prohibition, and the reason the
+        // captain did not learn for three days that two 200-entry files had
+        // been shelved. `loadFailed` is the second state, and any shelved file
+        // is named here because nothing else in the app ever mentioned them.
+        let unavailable = !store.isAvailable || store.loadFailed
         unavailableState.isHidden = !unavailable
+        if unavailable { unavailableState.setText(body: unavailableMessage()) }
         let matches = unavailable ? [] : store.filtered(filterField.stringValue)
         shownEntries = matches
         emptyState.isHidden = unavailable || !matches.isEmpty
@@ -340,6 +347,20 @@ final class ClipboardHistoryPanelViewController: NSViewController {
             : "\(store.entries.filter { $0.kind == .text }.count) items \u{00B7} encrypted on disk"
         applyTheme(theme)
         updateSize()
+    }
+
+    /// What the unavailable state says, which depends on *why* it is
+    /// unavailable and on whether anything was shelved.
+    private func unavailableMessage() -> String {
+        let shelved = store.shelvedBackups.count
+        let cause = store.isAvailable
+            ? "Clipboard history could not be opened \u{2014} the file is there, but this key does not read it."
+            : "Clipboard history is unavailable \u{2014} its Keychain key could not be read."
+        guard shelved > 0 else { return cause }
+        let noun = shelved == 1 ? "copy" : "copies"
+        return cause
+            + "\n\(shelved) earlier \(noun) kept beside it in "
+            + store.fileURL.deletingLastPathComponent().lastPathComponent + "."
     }
 
     private func makeRow(for entry: ClipboardHistoryEntry, number: Int) -> HelmAccentRow {

@@ -156,18 +156,67 @@ struct ClipboardHistoryEntry: Codable, Equatable, Identifiable {
 /// `ThisDeviceOnly` and never iCloud-synced, matching every other Keychain
 /// item this app writes.
 enum ClipboardHistoryKey {
-    private static let service = "com.manjesh.grandline.clipboard-history"
+    static let service = KeychainService.resolve("com.manjesh.grandline.clipboard-history")
     private static let account = "history-key-v1"
     /// A fixed, non-secret salt. The key itself is already 32 random bytes -
     /// the salt only scopes HKDF's subkey derivation, exactly as the vault's
     /// per-vault salt does, and there is nothing to derive it from here.
     private static let salt = Data("grand-line-clipboard-history/v1".utf8)
 
+    /// What a Keychain read actually said.
+    ///
+    /// **Review bug B1: collapsing these three into "no key" destroyed the
+    /// captain's clipboard history three times in five minutes.** `read()`
+    /// used to return `Data?`, so `errSecInteractionNotAllowed`,
+    /// `errSecAuthFailed` after an ACL denial, `errSecUserCanceled` and every
+    /// transient `securityd` failure all arrived at `load(create:)` looking
+    /// exactly like a fresh machine - which minted a new key, deleted the old
+    /// item, and left the real 200-entry history sealed by a key that no
+    /// longer existed anywhere. `KeychainKeyStore` and `CredentialVaultKeyStore`
+    /// both draw this distinction already; this store and the two Google
+    /// stores did not.
+    ///
+    /// The rule that falls out: **mint only on `errSecItemNotFound`.** "The
+    /// Keychain would not answer" is not "there is no key", and the difference
+    /// between them is the whole history.
+    enum ReadOutcome: Equatable {
+        case found(Data)
+        /// No such item. The only state in which minting a new key is right.
+        case notFound
+        /// The Keychain refused to answer. The key may be perfectly fine, so
+        /// nothing may be minted, deleted, or written over.
+        case failed(OSStatus)
+    }
+
+    /// Test seam for `read`. GL-27: debug builds only.
+    ///
+    /// A suite cannot make the real `securityd` return
+    /// `errSecInteractionNotAllowed` on demand, and B1's whole mechanism lives
+    /// on that status - so the one thing worth asserting is unreachable
+    /// without a seam. It is the raw read, not `load`, deliberately: the
+    /// branch under test is `load`'s own.
+    #if FM_SELFTESTS
+    static var debugReadOverride: ((String, String) -> ReadOutcome)?
+
+    /// The matching seam for the *write* half, and it is a safety device
+    /// rather than a convenience.
+    ///
+    /// `write` calls `remove()` first (overwrite semantics), so a suite that
+    /// drove `load(create: true)` far enough to mint would delete and replace
+    /// the captain's real clipboard key on their real login Keychain - which
+    /// is B1's own failure, performed by the test written to prevent it. This
+    /// was live: while confirming the fix by injection, the pre-B1 code path
+    /// reached `write` on this machine. Any suite touching `load(create:)`
+    /// installs this.
+    static var debugWriteOverride: ((Data) -> Bool)?
+    #endif
+
     /// The stored key, creating one on first use.
     ///
     /// Returns nil rather than throwing when the Keychain refuses: the caller
     /// (a store) degrades to "history unavailable", which is a state the
-    /// picker renders honestly (GL-14) - never to writing plaintext.
+    /// picker renders honestly (GL-14) - never to writing plaintext, and
+    /// never to minting over a history it simply could not open (B1).
     static func load(create: Bool = true) -> CredentialVaultKey? {
         // A self-test process must not create or read a real Keychain item on
         // the captain's machine - the same rule `main.swift`'s `#if
@@ -179,9 +228,39 @@ enum ClipboardHistoryKey {
         if (ProcessInfo.processInfo.environment["FM_CLIPBOARD_HISTORY_EPHEMERAL"] ?? "") == "1" {
             return ephemeralKey()
         }
-        if let raw = read(), let key = CredentialVaultKey.fromKeychainBytes(raw, salt: salt) {
+        switch read(service: service, account: account) {
+        case .found(let raw):
+            return CredentialVaultKey.fromKeychainBytes(raw, salt: salt)
+        case .failed(let status):
+            // B1: the history is unreadable *right now*, which is a different
+            // thing from there being no history. Degrade to "unavailable" and
+            // touch nothing - the caller's `loadFailed` says so honestly, and
+            // the next launch after the Keychain settles opens the real file.
+            AppLog.keychain.error("clipboard history: the Keychain would not answer (\(status)) - not minting a new key")
+            return nil
+        case .notFound:
+            break
+        }
+
+        // B1's second half, and the one that actually fired on 2026-09-24.
+        // `LegacyNameMigration` copies this service from its pre-rename name on
+        // a background queue two seconds after launch, while
+        // `DaylightBarController` constructs this store during shell load - so
+        // on the first launch after the rename the store asked before the copy
+        // arrived, minted, and the migration then counted the minted item as
+        // `alreadyPresent`. Reading the legacy name here removes the race
+        // rather than reordering around it: whichever runs first, the captain's
+        // real key is what gets used.
+        if let legacy = LegacyNameMigration.legacyName(for: service),
+           case .found(let raw) = read(service: legacy, account: account),
+           let key = CredentialVaultKey.fromKeychainBytes(raw, salt: salt) {
+            AppLog.keychain.info("clipboard history: adopted the pre-rename key")
+            // Best effort - the migration will copy it too, and a failure here
+            // only costs one more legacy read next launch.
+            _ = write(raw)
             return key
         }
+
         guard create else { return nil }
         var bytes = Data(count: CredentialVaultCrypto.keyByteCount)
         let status = bytes.withUnsafeMutableBytes { buffer -> OSStatus in
@@ -217,7 +296,11 @@ enum ClipboardHistoryKey {
         return CredentialVaultKey.fromKeychainBytes(bytes, salt: salt)
     }
 
-    private static func read() -> Data? {
+    /// The tri-state read. See `ReadOutcome` for why it is three states.
+    static func read(service: String, account: String) -> ReadOutcome {
+        #if FM_SELFTESTS
+        if let override = debugReadOverride { return override(service, account) }
+        #endif
         var result: AnyObject?
         let status = SecItemCopyMatching([
             kSecClass as String: kSecClassGenericPassword,
@@ -225,11 +308,17 @@ enum ClipboardHistoryKey {
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
         ] as CFDictionary, &result)
-        guard status == errSecSuccess else { return nil }
-        return result as? Data
+        if status == errSecItemNotFound { return .notFound }
+        guard status == errSecSuccess, let data = result as? Data else {
+            return .failed(status)
+        }
+        return .found(data)
     }
 
     private static func write(_ data: Data) -> Bool {
+        #if FM_SELFTESTS
+        if let override = debugWriteOverride { return override(data) }
+        #endif
         // Overwrite semantics, same as `KeychainKeyStore.save`: `SecItemAdd`
         // fails on a duplicate primary key.
         remove()
@@ -291,6 +380,17 @@ final class ClipboardHistoryStore {
     /// zero", and an unreadable history is not an empty one, GL-01).
     private(set) var loadFailed = false
 
+    /// Files this store has shelved beside `fileURL` because it could not open
+    /// them (`clipboard-history.sealed.corrupt-<epoch>`), newest first.
+    ///
+    /// B1: three of these appeared on the captain's machine within five
+    /// minutes, each holding roughly 200 real entries, and **nothing in the
+    /// app ever mentioned them**. The picker read "Nothing copied yet" while
+    /// two 49KB histories sat un-referenced on disk. Shelving is the right
+    /// GL-01 behaviour; shelving *silently* is what turned a recoverable
+    /// key mismatch into a loss the captain only found by listing the folder.
+    private(set) var shelvedBackups: [URL] = []
+
     var onChange: (() -> Void)?
 
     private let key: CredentialVaultKey?
@@ -303,6 +403,10 @@ final class ClipboardHistoryStore {
         self.fileURL = fileURL ?? Self.resolveFileURL()
         self.key = key
         load()
+        // Even a clean launch reports what a previous one shelved (B1): the
+        // captain's three orphaned files were written by earlier launches and
+        // the next launch said nothing about them.
+        if shelvedBackups.isEmpty { refreshShelvedBackups() }
     }
 
     static func resolveFileURL() -> URL {
@@ -310,10 +414,7 @@ final class ClipboardHistoryStore {
         if let override = env["FM_CLIPBOARD_HISTORY_FILE"], !override.isEmpty {
             return URL(fileURLWithPath: override)
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return base
-            .appendingPathComponent(AppPaths.applicationSupportFolderName, isDirectory: true)
+        return AppPaths.dataRoot()
             .appendingPathComponent("clipboard-history.sealed")
     }
 
@@ -342,12 +443,32 @@ final class ClipboardHistoryStore {
                                                      vaultKey: key,
                                                      purpose: Self.sealPurpose)
         } catch {
+            // Reaching here means the bytes are real but this key does not open
+            // them, which - now that a Keychain error can no longer masquerade
+            // as "no key" (B1) - is close to unreachable. It is kept because
+            // GL-01 says an unreadable file is backed up before the next write,
+            // and it now records what it shelved so the picker can say so.
             // GL-01 again: back it up before the next write overwrites it.
             loadFailed = true
             let backup = fileURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))")
             try? FileManager.default.moveItem(at: fileURL, to: backup)
             AppLog.ui.error("clipboard history: could not open the sealed file - kept a copy at \(backup.lastPathComponent, privacy: .public)")
+            refreshShelvedBackups()
         }
+    }
+
+    /// Every shelved file beside `fileURL`, newest first. Read from the
+    /// directory rather than remembered in memory, so a file shelved by an
+    /// earlier launch is still reported by this one - which is the case the
+    /// captain actually hit.
+    func refreshShelvedBackups() {
+        let directory = fileURL.deletingLastPathComponent()
+        let prefix = fileURL.lastPathComponent + ".corrupt-"
+        let found = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        shelvedBackups = found
+            .filter { $0.hasPrefix(prefix) }
+            .sorted(by: >)
+            .map { directory.appendingPathComponent($0) }
     }
 
     /// Newest first, pinned entries ahead of the rest - the picker's own

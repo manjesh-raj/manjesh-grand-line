@@ -189,6 +189,16 @@ final class DotfilesAutoSync {
         if let override = ProcessInfo.processInfo.environment["FM_DOTFILES_AUTOSYNC_PATH"], !override.isEmpty {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
         }
+        // This store's real target is `~/.dotfiles`, which is nowhere near
+        // Application Support, so it cannot pick up `FM_SCRATCH_ROOT` by
+        // nesting under `AppPaths.dataRoot()` the way the file-backed stores
+        // do. It has to ask. Getting this wrong is not a stale read: this
+        // watcher *commits and pushes*, so a probe or a suite that resolved
+        // the captain's real checkout would write to their real dotfiles repo
+        // (review bug B4).
+        if AppPaths.isScratchRedirected() {
+            return AppPaths.dataRoot().appendingPathComponent("dotfiles", isDirectory: true)
+        }
         if let resolved = DotfilesSource.resolvedDotfilesPath() {
             return URL(fileURLWithPath: resolved, isDirectory: true)
         }

@@ -313,6 +313,212 @@ enum ShiftConflictSelfTest {
             check(reloaded.first?.title == "Updated via the ordinary path", "happy-path scenario: B should see A's update after the fast-forward")
         }
 
+
+        // MARK: 4. Review bug B6 - a fast-forward reaches whoever holds the
+        // records in memory.
+        //
+        // Before the fix, `pullNow()`'s `.fastForwarded` set a status and
+        // nothing else. The sole consumer was `ShiftController`'s sync pill,
+        // so `ShiftStore` went on holding the pre-pull tasks and the next edit
+        // rewrote the whole file from that memory and pushed it - deleting the
+        // task machine A had just created. This drives the signal itself,
+        // which is the thing that was missing; `ShiftStore` subscribes to it
+        // in its own `init`, and case 4b asserts that call site exists.
+
+        do {
+            let remote = makeBareRemote(name: "remote-b6-signal")
+            seedRemoteWithTask(remote, id: "base-task", title: "Base task")
+
+            let wtA = scratch.appendingPathComponent("wt-b6-a", isDirectory: true)
+            let syncA = ShiftGitSync(workingTree: wtA, remoteURL: remote.path, debounceInterval: 0.2, periodicPullInterval: 999_999)
+            check(syncA.ensureWorkingTreeNow(), "B6: machine A should clone successfully")
+            let wtB = scratch.appendingPathComponent("wt-b6-b", isDirectory: true)
+            let syncB = ShiftGitSync(workingTree: wtB, remoteURL: remote.path, debounceInterval: 0.2, periodicPullInterval: 999_999)
+            check(syncB.ensureWorkingTreeNow(), "B6: machine B should clone successfully")
+
+            var reloadsRequested = 0
+            syncB.observeRemoteChanges { reloadsRequested += 1 }
+
+            // A adds a task and pushes. This is the record whose loss the
+            // captain would see.
+            let aFile = syncA.dataRoot.appendingPathComponent("tasks/active.yaml")
+            var aTasks = readTasks(aFile)
+            aTasks.append(ShiftTask(
+                id: "added-by-a-b6", title: "Created on the other machine", description: "", status: .todo, priority: .normal,
+                dueDate: nil, dueTime: nil, projectID: nil, tags: [], createdAt: "2026-01-02T00:00:00Z",
+                updatedAt: "2026-01-02T00:00:00Z", completedAt: nil, notes: nil, subtasks: [], hasAttachment: false
+            ))
+            try? writeTaskYaml(aTasks, to: aFile)
+            syncA.markDirty()
+            let deadline = Date().addingTimeInterval(5)
+            while syncA.status != .synced && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+            check(syncA.status == .synced, "B6: A should push its new task cleanly, got \(syncA.status)")
+
+            let outcome = syncB.pullNow()
+            check(outcome == .fastForwarded, "B6: B's pull should fast-forward, got \(outcome)")
+            // The handlers are dispatched to main, and this suite is on main.
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            check(reloadsRequested == 1,
+                  "B6: a fast-forward must tell its observers the files changed - it fired \(reloadsRequested) time(s). "
+                  + "Without this the store keeps the pre-pull tasks and the next edit pushes A's task away")
+
+            // Discriminating power: the pull really did bring a record B did
+            // not have, so the signal above is about something real.
+            let onDisk = readTasks(syncB.dataRoot.appendingPathComponent("tasks/active.yaml"))
+            check(onDisk.contains { $0.id == "added-by-a-b6" },
+                  "B6: the fixture is vacuous unless the fast-forward actually brought A's task, got \(onDisk.map(\.id))")
+        }
+
+        // MARK: 4b. The call site. A signal nobody subscribes to is the bug
+        // again, and a behavioural check cannot see it: `ShiftStore()`'s
+        // production path is the one that wires it, and constructing one here
+        // would reach `ShiftGitSync.shared` - the captain's real clone.
+
+        do {
+            if let dir = SelfTestSources.appSourceDirectory(),
+               let text = try? String(contentsOf: dir.appendingPathComponent("ShiftStore.swift"), encoding: .utf8) {
+                check(text.contains("observeRemoteChanges"),
+                      "B6: ShiftStore must subscribe to observeRemoteChanges - otherwise the signal fires into nothing "
+                      + "and the store still holds pre-pull records")
+                check(text.contains("reloadAllAsync"),
+                      "B6: and the subscription must actually reload")
+            } else {
+                failures.append("B6: could not read ShiftStore.swift, so the call-site guard checked nothing")
+            }
+        }
+
+        // MARK: 5. Review bug B6 - `-s ours` must not keep the local side of
+        // every file the record-level merge does not re-resolve.
+        //
+        // The auto-merge rewrites three list files. Everything else under
+        // `GrandLineDocs/personal-tasks` - `tasks/completed/<month>.yaml`,
+        // `activity/`, `attachments/`, `notes.yaml`, `settings.yaml` - took
+        // the local side silently, so a task *completed* on the other machine
+        // vanished from every file and the merge commit published that
+        // deletion as deliberate.
+
+        do {
+            let remote = makeBareRemote(name: "remote-b6-ours")
+            seedRemoteWithTask(remote, id: "base-task", title: "Base task")
+
+            let wtA = scratch.appendingPathComponent("wt-b6-ours-a", isDirectory: true)
+            let syncA = ShiftGitSync(workingTree: wtA, remoteURL: remote.path, debounceInterval: 0.2, periodicPullInterval: 999_999)
+            check(syncA.ensureWorkingTreeNow(), "B6 -s ours: machine A should clone successfully")
+            let wtB = scratch.appendingPathComponent("wt-b6-ours-b", isDirectory: true)
+            let syncB = ShiftGitSync(workingTree: wtB, remoteURL: remote.path, debounceInterval: 0.2, periodicPullInterval: 999_999)
+            check(syncB.ensureWorkingTreeNow(), "B6 -s ours: machine B should clone successfully")
+
+            // A completes a task - which writes `tasks/completed/<month>.yaml`,
+            // a file the record-level merge never looks at - and pushes.
+            let completedRelative = "tasks/completed/2026-01.yaml"
+            let aCompleted = syncA.dataRoot.appendingPathComponent(completedRelative)
+            try? fm.createDirectory(at: aCompleted.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? writeTaskYaml([ShiftTask(
+                id: "completed-on-a", title: "Finished on the other machine", description: "", status: .completed, priority: .normal,
+                dueDate: nil, dueTime: nil, projectID: nil, tags: [], createdAt: "2026-01-01T00:00:00Z",
+                updatedAt: "2026-01-03T00:00:00Z", completedAt: "2026-01-03T00:00:00Z", notes: nil, subtasks: [], hasAttachment: false
+            )], to: aCompleted)
+            syncA.markDirty()
+            let deadline = Date().addingTimeInterval(5)
+            while syncA.status != .synced && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+            check(syncA.status == .synced, "B6 -s ours: A should push its completed task, got \(syncA.status)")
+
+            // B, without pulling, adds a *different* task - no overlapping id,
+            // so the record-level pass auto-merges and `-s ours` runs.
+            let bFile = syncB.dataRoot.appendingPathComponent("tasks/active.yaml")
+            var bTasks = readTasks(bFile)
+            bTasks.append(ShiftTask(
+                id: "added-by-b", title: "Added on B", description: "", status: .todo, priority: .normal,
+                dueDate: nil, dueTime: nil, projectID: nil, tags: [], createdAt: "2026-01-02T00:00:00Z",
+                updatedAt: "2026-01-02T00:00:00Z", completedAt: nil, notes: nil, subtasks: [], hasAttachment: false
+            ))
+            try? writeTaskYaml(bTasks, to: bFile)
+            _ = shell("/usr/bin/git", ["-C", wtB.path, "add", "-A", "--", "GrandLineDocs/personal-tasks"])
+            _ = shell("/usr/bin/git", ["-C", wtB.path, "-c", "user.email=test@example.com", "-c", "user.name=Shift Test", "commit", "-m", "B's addition"])
+
+            check(syncB.pullNow() == .diverged, "B6 -s ours: B's pull should diverge")
+            let resolution = syncB.detectAndResolveConflicts()
+            var autoMerged = false
+            if case .autoMerged = resolution { autoMerged = true }
+            check(autoMerged, "B6 -s ours: two distinct additions should auto-merge, got \(resolution)")
+
+            // The assertion. A's completed file must survive the merge, on
+            // disk and on the remote.
+            let mergedCompleted = readTasks(syncB.dataRoot.appendingPathComponent(completedRelative))
+            check(mergedCompleted.contains { $0.id == "completed-on-a" },
+                  "B6 -s ours: the task A completed is gone from B's \(completedRelative) after the auto-merge - "
+                  + "`-s ours` kept B's (absent) side of a file the record-level merge never re-resolves")
+
+            let freshCheck = scratch.appendingPathComponent("wt-b6-ours-fresh", isDirectory: true)
+            _ = shell("/usr/bin/git", ["clone", remote.path, freshCheck.path])
+            let pushedCompleted = readTasks(freshCheck.appendingPathComponent("GrandLineDocs/personal-tasks/\(completedRelative)"))
+            check(pushedCompleted.contains { $0.id == "completed-on-a" },
+                  "B6 -s ours: and the merge commit published that deletion to the remote")
+
+            // Discriminating power in the other direction: B's own addition
+            // must still be there, so this is not passing by taking the whole
+            // remote side.
+            let mergedActive = readTasks(syncB.dataRoot.appendingPathComponent("tasks/active.yaml"))
+            check(mergedActive.contains { $0.id == "added-by-b" },
+                  "B6 -s ours: B's own new task must survive too, got \(mergedActive.map(\.id))")
+        }
+
+        // MARK: 6. Review bug B6 - an unparseable remote revision is a
+        // failure, never an empty task list.
+        //
+        // `loadRecords` returned `[]` for "absent" and for "will not parse"
+        // alike, so a half-written push or a YAML error on the other side read
+        // as "the other machine has no tasks". The three-way merge then
+        // resolved every one of the captain's tasks as deleted remotely and
+        // pushed that deletion.
+
+        do {
+            let remote = makeBareRemote(name: "remote-b6-garbage")
+            seedRemoteWithTask(remote, id: "base-task", title: "Base task")
+
+            let wtA = scratch.appendingPathComponent("wt-b6-garbage-a", isDirectory: true)
+            let syncA = ShiftGitSync(workingTree: wtA, remoteURL: remote.path, debounceInterval: 0.2, periodicPullInterval: 999_999)
+            check(syncA.ensureWorkingTreeNow(), "B6 garbage: machine A should clone successfully")
+            let wtB = scratch.appendingPathComponent("wt-b6-garbage-b", isDirectory: true)
+            let syncB = ShiftGitSync(workingTree: wtB, remoteURL: remote.path, debounceInterval: 0.2, periodicPullInterval: 999_999)
+            check(syncB.ensureWorkingTreeNow(), "B6 garbage: machine B should clone successfully")
+
+            // A pushes an active.yaml that is not YAML at all - a merge
+            // marker, a truncated write, a newer build's syntax.
+            let aFile = syncA.dataRoot.appendingPathComponent("tasks/active.yaml")
+            try? "tasks:\n  - id: [unclosed\n\t\tbroken: \"".write(to: aFile, atomically: true, encoding: .utf8)
+            _ = shell("/usr/bin/git", ["-C", wtA.path, "add", "-A", "--", "GrandLineDocs/personal-tasks"])
+            _ = shell("/usr/bin/git", ["-C", wtA.path, "-c", "user.email=test@example.com", "-c", "user.name=Shift Test", "commit", "-m", "A's broken write"])
+            _ = shell("/usr/bin/git", ["-C", wtA.path, "push", "origin", "main"])
+
+            // B has its own local edit, so the pull diverges and the merge
+            // machinery runs.
+            let bFile = syncB.dataRoot.appendingPathComponent("tasks/active.yaml")
+            var bTasks = readTasks(bFile)
+            check(!bTasks.isEmpty, "B6 garbage: the fixture is vacuous unless B starts with a real task")
+            bTasks.append(ShiftTask(
+                id: "b-only", title: "Only on B", description: "", status: .todo, priority: .normal,
+                dueDate: nil, dueTime: nil, projectID: nil, tags: [], createdAt: "2026-01-02T00:00:00Z",
+                updatedAt: "2026-01-02T00:00:00Z", completedAt: nil, notes: nil, subtasks: [], hasAttachment: false
+            ))
+            try? writeTaskYaml(bTasks, to: bFile)
+            _ = shell("/usr/bin/git", ["-C", wtB.path, "add", "-A", "--", "GrandLineDocs/personal-tasks"])
+            _ = shell("/usr/bin/git", ["-C", wtB.path, "-c", "user.email=test@example.com", "-c", "user.name=Shift Test", "commit", "-m", "B's addition"])
+
+            check(syncB.pullNow() == .diverged, "B6 garbage: B's pull should diverge")
+            let resolution = syncB.detectAndResolveConflicts()
+            var failed = false
+            if case .failed = resolution { failed = true }
+            check(failed,
+                  "B6 garbage: an unparseable remote revision must fail the merge, got \(resolution) - "
+                  + "reading it as an empty list is what resolved every one of B's tasks as deleted remotely")
+
+            // And nothing was written or pushed: B's tasks are all still here.
+            let afterwards = readTasks(syncB.dataRoot.appendingPathComponent("tasks/active.yaml"))
+            check(afterwards.contains { $0.id == "base-task" } && afterwards.contains { $0.id == "b-only" },
+                  "B6 garbage: B's own tasks must be untouched after the refusal, got \(afterwards.map(\.id))")
+        }
+
         return finish()
     }
 

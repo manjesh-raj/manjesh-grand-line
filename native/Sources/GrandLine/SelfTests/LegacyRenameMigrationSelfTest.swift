@@ -88,7 +88,12 @@ enum LegacyRenameMigrationSelfTest {
                 // A doc comment naming the pattern is not a declaration of one -
                 // `LegacyNameMigration`'s own header describes this very grep.
                 guard !trimmed.hasPrefix("//") else { continue }
-                guard line.contains("static let service = \"") else { continue }
+                // B5 wrapped every one of these in `KeychainService.resolve(...)`,
+                // so the literal now sits inside a call rather than straight
+                // after the `=`. Both spellings are matched: a future store
+                // that writes the bare form is exactly what this guard is for.
+                guard line.contains("let service = \"")
+                        || line.contains("let service = KeychainService.resolve(\"") else { continue }
                 guard let open = line.firstIndex(of: "\""),
                       let close = line.lastIndex(of: "\""), open < close else { continue }
                 let value = String(line[line.index(after: open)..<close])
@@ -99,7 +104,9 @@ enum LegacyRenameMigrationSelfTest {
         // empty set would match an empty list and pass vacuously.
         check(!found.isEmpty,
               "the source grep found at least one Keychain service literal", &ok)
-        let listed = Set(LegacyNameMigration.keychainServices)
+        // The listed names carry this process's B5 prefix; the source literals
+        // do not. Compare bare against bare.
+        let listed = Set(LegacyNameMigration.keychainServices.map(KeychainService.bare))
         let missing = found.subtracting(listed).sorted()
         let stale = listed.subtracting(found).sorted()
         check(missing.isEmpty,
@@ -665,11 +672,17 @@ enum LegacyRenameMigrationSelfTest {
         return raw as? Data
     }
 
+    /// Review bug B5's second half.
+    ///
+    /// `SecItemDelete` against the file-based login keychain removes **one**
+    /// matching item per call, so a single call left every item after the
+    /// first behind. This suite seeds two accounts under the legacy service
+    /// (`should-be-migrated` and `should-not-be-swept-up`), so it leaked the
+    /// second one on every single run - 33 of them were still on the captain's
+    /// machine when the review looked. Delete until the Keychain says there is
+    /// nothing left.
     private static func purge(service: String) {
-        SecItemDelete([
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-        ] as CFDictionary)
+        KeychainServiceSweep.deleteAll(service: service)
     }
 }
 

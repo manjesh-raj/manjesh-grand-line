@@ -45,6 +45,9 @@ enum FocusTimerSelfTest {
         checkShortSessionIsNotLogged(&ok)
         checkPerDayAggregation(&ok)
         checkActivityRoundTripKeepsTheDuration(&ok)
+        checkSwitchingTasksLogsTheFirstOne(&ok)
+        checkSleepEarnsNoFocusTime(&ok)
+        checkACaptainsPauseSurvivesASleep(&ok)
 
         if ok { print("[FocusTimerSelfTest] all checks passed") }
         return ok
@@ -218,6 +221,131 @@ enum FocusTimerSelfTest {
               + "\(engine.session?.elapsed(at: at(400)) ?? -1)", &ok)
         check(engine.session?.remaining(at: at(400)) == 1500,
               "and the countdown is the full plan, never more", &ok)
+    }
+
+
+    // MARK: Review bug B9
+
+    /// **Switching tasks logged nothing for the first one.**
+    ///
+    /// `FocusTimerEngine.start` handed the displaced session back with its
+    /// live segment unbanked, so `accumulatedSeconds` was 0 for any session
+    /// that had never been paused - which is every ordinary one - and
+    /// `FocusTimerController.logIfWorthLogging` reads exactly that field.
+    /// Twenty minutes of real work on the first task evaporated, while
+    /// `start`'s own doc comment promised "the minutes already spent on the
+    /// first task are real and must not evaporate".
+    ///
+    /// The existing displacement case reads `displaced?.elapsed(at:)`, which
+    /// recomputes from the segment and so passed throughout. What must be
+    /// asserted is the **logged** figure.
+    private static func checkSwitchingTasksLogsTheFirstOne(_ ok: inout Bool) {
+        withScratchStore { store in
+            var first = ShiftTask.fresh()
+            first.title = "Rotate the prod bastion SSH keys"
+            store.addTask(first)
+            var second = ShiftTask.fresh()
+            second.title = "Renew the wildcard cert"
+            store.addTask(second)
+
+            let timer = FocusTimerController(store: store)
+            var clock = t0
+            timer.clock = { clock }
+
+            timer.start(task: first, minutes: 25)
+            clock = at(1200)          // 20 real minutes on the first task
+            timer.start(task: second, minutes: 25)
+
+            let entries = store.recentActivity(reference: at(1200))
+                .filter { $0.kind == FocusActivityLog.kind }
+            check(entries.count == 1,
+                  "switching tasks must log the displaced session - got \(entries.count) entries. "
+                  + "The twenty minutes spent on the first task are simply gone otherwise (B9)", &ok)
+            check(entries.first?.targetID == first.id,
+                  "and the entry names the first task, got \(entries.first?.targetID ?? "nil")", &ok)
+            check(entries.first?.durationSeconds == 1200,
+                  "and carries the twenty minutes actually spent, got "
+                  + "\(entries.first?.durationSeconds.map(String.init) ?? "nil")", &ok)
+
+            // Discriminating power: the new session really is running and
+            // really did start from zero, so the entry above is the old one.
+            check(timer.session?.taskID == second.id,
+                  "the second task is the one now running", &ok)
+            check(timer.session?.elapsed(at: at(1200)) == 0,
+                  "and it started from zero", &ok)
+        }
+    }
+
+    /// **A session left running across a closed lid logged the whole sleep.**
+    ///
+    /// `stop()` banks `elapsed(at: now)`, which is wall-clock arithmetic from
+    /// `segmentStartedAt` and has no idea the machine was not awake. A
+    /// 25-minute Pomodoro started before the lid closed and stopped the next
+    /// morning wrote sixteen hours into the task's permanent activity log and
+    /// into the Weekly Review's "time on tasks" tile.
+    ///
+    /// `handleWillSleep`/`handleDidWake` are the real notification handlers -
+    /// driving them directly is the only way to test this, since a suite
+    /// cannot make the machine sleep, and `NSWorkspace` notifications cannot
+    /// be synthesised meaningfully without one.
+    private static func checkSleepEarnsNoFocusTime(_ ok: inout Bool) {
+        withScratchStore { store in
+            var task = ShiftTask.fresh()
+            task.title = "Renew the wildcard cert"
+            store.addTask(task)
+
+            let timer = FocusTimerController(store: store)
+            var clock = t0
+            timer.clock = { clock }
+            timer.start(task: task, minutes: 25)
+
+            clock = at(300)                 // five minutes of real focus
+            timer.handleWillSleep()
+            check(timer.isPaused, "the session is paused while the machine sleeps", &ok)
+
+            clock = at(300 + 8 * 3600)      // the lid was shut for eight hours
+            check(timer.session?.elapsed(at: clock) == 300,
+                  "a sleeping machine earns no focus time - got "
+                  + "\(timer.session?.elapsed(at: clock) ?? -1)s across an eight-hour sleep (B9)", &ok)
+
+            timer.handleDidWake()
+            check(!timer.isPaused, "and waking resumes the session the captain left running", &ok)
+            clock = at(300 + 8 * 3600 + 120)
+            let logged = timer.stop()
+            check(logged == 420,
+                  "the logged total is the five minutes before the sleep plus the two after - "
+                  + "got \(logged ?? -1)s (B9)", &ok)
+        }
+    }
+
+    /// The other half of the sleep latch: a session the *captain* paused must
+    /// still be paused when the machine wakes, or sleeping would silently
+    /// restart their timer.
+    private static func checkACaptainsPauseSurvivesASleep(_ ok: inout Bool) {
+        withScratchStore { store in
+            var task = ShiftTask.fresh()
+            task.title = "Chase the vendor invoice"
+            store.addTask(task)
+
+            let timer = FocusTimerController(store: store)
+            var clock = t0
+            timer.clock = { clock }
+            timer.start(task: task, minutes: 25)
+
+            clock = at(300)
+            timer.togglePauseByHand()
+            check(timer.isPaused, "the captain paused it", &ok)
+
+            clock = at(600)
+            timer.handleWillSleep()
+            clock = at(600 + 3600)
+            timer.handleDidWake()
+            check(timer.isPaused,
+                  "a sleep must not resume a session the captain paused by hand (B9)", &ok)
+            check(timer.session?.elapsed(at: clock) == 300,
+                  "and no time was earned while it was paused, got "
+                  + "\(timer.session?.elapsed(at: clock) ?? -1)", &ok)
+        }
     }
 
     // MARK: The activity log

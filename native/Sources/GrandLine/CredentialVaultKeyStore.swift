@@ -41,7 +41,7 @@ enum CredentialVaultKeyStore {
 
     /// Distinct from `KeychainKeyStore`'s own service so the two never collide
     /// and a vault reset cannot touch a saved SSH key.
-    private static let service = "com.manjesh.grandline.native.credential-vault"
+    private static let service = KeychainService.resolve("com.manjesh.grandline.native.credential-vault")
     private static let account = "vault-key"
 
     static var biometryAvailable: Bool {

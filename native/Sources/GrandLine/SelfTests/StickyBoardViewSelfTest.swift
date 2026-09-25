@@ -65,11 +65,54 @@ enum StickyBoardViewSelfTest {
         checkContextMenu(controller, check)
         checkChecklistNote(controller, check)
         checkArchiveDrawer(controller, check)
+        checkTheSubtitleDoesNotClaimAnUnrealSync(controller, check)
 
         if ok {
             print("[sticky-board-view] OK - all window-backed StickyBoard checks passed")
         }
         return ok
+    }
+
+
+    /// **Review bug B13**: the page's subtitle hard-coded "synced to
+    /// manjesh-config" into both of its branches.
+    ///
+    /// Under an `FM_STICKY_BOARD_DIR` or `FM_SHIFT_DIR` override the store has
+    /// no `gitSync` at all - nothing is pushed anywhere - and the header said
+    /// it was synced anyway. GL-14's shape: a state the app does not know is
+    /// rendered as a confident claim. Notebook and Reading List, the two
+    /// sibling pages on the same store shape, already derive it.
+    ///
+    /// This suite runs under exactly that override (`main.swift`'s redirect
+    /// block sets `FM_STICKY_BOARD_DIR` for every self-test process), which is
+    /// what makes this checkable at all: the controller here genuinely has no
+    /// sync, so the correct subtitle is "saved on this machine".
+    private static func checkTheSubtitleDoesNotClaimAnUnrealSync(
+        _ controller: StickyBoardController, _ check: (Bool, String) -> Void
+    ) {
+        // Discriminating power first: unless this really is a git-free store,
+        // the assertion below is about the wrong branch.
+        check(controller.debugStoreHasGitSync == false,
+              "this suite's store should have no git sync (it runs under FM_STICKY_BOARD_DIR) - "
+              + "if it has one, this case is testing the wrong branch")
+        guard controller.debugStoreHasGitSync == false else { return }
+
+        let subtitle = controller.drillHeaderSubtitle ?? ""
+        check(!subtitle.contains("synced to manjesh-config"),
+              "the subtitle claims \"synced to manjesh-config\" over a store with no git sync at "
+              + "all - nothing is being pushed anywhere (B13). Got: \"\(subtitle)\"")
+        check(subtitle.contains("saved on this machine"),
+              "and it should say so plainly, the way Notebook and Reading List do. Got: \"\(subtitle)\"")
+
+        // The archive branch carried its own copy of the same literal, so it
+        // needs its own assertion.
+        controller.debugToggleArchive()
+        let archiveSubtitle = controller.drillHeaderSubtitle ?? ""
+        check(!archiveSubtitle.contains("synced to manjesh-config"),
+              "the archive branch makes the same unreal claim (B13). Got: \"\(archiveSubtitle)\"")
+        check(archiveSubtitle.contains("saved on this machine"),
+              "and it should say so too. Got: \"\(archiveSubtitle)\"")
+        controller.debugToggleArchive()
     }
 
     // MARK: Finding 4.9 - the cork grain must not slide against the notes

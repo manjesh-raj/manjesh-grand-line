@@ -153,6 +153,10 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
 
     /// Which set the board is drawing.
     private var showingArchive = false
+    /// The live sync state, observed from the store's own sync (B13). Seeded
+    /// `.synced` the way Notebook and Reading List seed theirs - the observer
+    /// fires with the current value the moment it is registered.
+    private var syncStatus: StickyBoardGitSync.Status = .synced
 
     /// The notes the board should currently draw.
     private var visibleNotes: [StickyNote] {
@@ -181,10 +185,30 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         if store.isInFailedLoadState {
             return "\(noun) \u{00B7} the saved file couldn't be read - see the backed-up copy"
         }
-        if showingArchive { return "\(noun) archived \u{00B7} synced to manjesh-config" }
+        if showingArchive { return "\(noun) archived \u{00B7} \(syncSummary)" }
         let archived = store.archivedNotes.count
         let archiveNote = archived == 0 ? "" : " \u{00B7} \(archived) archived"
-        return "\(noun)\(archiveNote) \u{00B7} synced to manjesh-config"
+        return "\(noun)\(archiveNote) \u{00B7} \(syncSummary)"
+    }
+
+    /// One wording for the sync state, derived rather than asserted.
+    ///
+    /// **Review bug B13.** This page hard-coded "synced to manjesh-config"
+    /// into both of its subtitle branches, so the header made that claim
+    /// under an `FM_STICKY_BOARD_DIR` or `FM_SHIFT_DIR` override (where the
+    /// store has no `gitSync` at all and nothing is being pushed anywhere),
+    /// and it kept making it while a push was failing. Notebook and Reading
+    /// List - the two sibling pages on the same git-backed store shape -
+    /// already derive it; this is their wording, verbatim, so the three
+    /// cannot drift.
+    private var syncSummary: String {
+        guard store.gitSync != nil else { return "saved on this machine" }
+        switch syncStatus {
+        case .synced: return "synced to manjesh-config"
+        case .localChanges: return "saving\u{2026}"
+        case .syncing: return "syncing\u{2026}"
+        case .failed(let why): return "sync failed: \(why)"
+        }
     }
 
     // MARK: Lifecycle
@@ -256,6 +280,7 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
             self?.applyTheme()
         }
 
+        observeSyncStatus()
         rebuildNoteViews()
         applyTheme()
     }
@@ -288,6 +313,17 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         // and the direct call both raced sibling commits against the shared
         // working tree and could hold ⌘Q on a real network push.
         _ = store.gitSync?.flushForTerminationNow()
+    }
+
+    /// B13: the page's own subtitle is a claim about the sync, so it has to
+    /// be told when the sync's state changes. GL-24 - this repaints, it never
+    /// fetches.
+    private func observeSyncStatus() {
+        store.gitSync?.observeStatus { [weak self] status in
+            guard let self else { return }
+            self.syncStatus = status
+            self.onDrillSubtitleChanged?()
+        }
     }
 
     override func viewWillAppear() {
@@ -798,6 +834,10 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     /// Drives the real toolbar action, so a suite exercises the archive
     /// drawer the way the button does rather than setting the flag itself.
     func debugToggleArchive() { archiveToggleTapped() }
+    /// Review bug B13: whether this page's store is actually git-backed, so a
+    /// suite can assert the subtitle's claim against the truth rather than
+    /// against a literal.
+    var debugStoreHasGitSync: Bool { store.gitSync != nil }
     var debugShowingArchive: Bool { showingArchive }
     var debugArchiveButton: HelmButton { archiveButton }
     /// Re-themes this instance directly, bypassing `ThemeManager.shared.

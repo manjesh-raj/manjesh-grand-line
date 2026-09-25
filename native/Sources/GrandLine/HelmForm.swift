@@ -1465,8 +1465,19 @@ final class HelmToggleRow: NSView {
     }
 
     init(title: String, subtitle: String? = nil, trailing: NSView? = nil) {
-        titleLabel = NSTextField(labelWithString: title)
-        subtitleLabel = subtitle.map { NSTextField(labelWithString: $0) }
+        // B11: `labelWithString` builds a cell with `wraps = false` and
+        // `usesSingleLineMode`, so `maximumNumberOfLines` alone does nothing -
+        // the label truncates however wide its `preferredMaxLayoutWidth` is.
+        // `wrappingLabelWithString` is the constructor that sets the cell up
+        // to wrap; it also makes the field selectable, which a row title is
+        // not.
+        titleLabel = NSTextField(wrappingLabelWithString: title)
+        titleLabel.isSelectable = false
+        subtitleLabel = subtitle.map {
+            let label = NSTextField(wrappingLabelWithString: $0)
+            label.isSelectable = false
+            return label
+        }
         self.trailing = trailing
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -1519,6 +1530,37 @@ final class HelmToggleRow: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    #if FM_SELFTESTS
+    /// Review bug B11: the row's own title label, so a suite can compare what
+    /// the text needs against what it got.
+    var debugTitleLabel: NSTextField { titleLabel }
+    #endif
+
+    /// Re-wrap the title against the width this row actually has.
+    ///
+    /// B11, and the derivation is deliberately **not** the title label's own
+    /// resolved width: a wrapping label's intrinsic width comes from
+    /// `preferredMaxLayoutWidth`, so feeding its own bounds back in is
+    /// circular and locks in whatever the first pass happened to produce -
+    /// the mechanism behind review bug B10 on the Dictation page. The row's
+    /// width is real (it is tied to its container), and the toggle and the
+    /// optional trailing view are both `.required` hugging, so their fitting
+    /// widths are what they will take.
+    override func layout() {
+        super.layout()
+        guard bounds.width > 0 else { return }
+        let horizontalInsets: CGFloat = 13 * 2
+        let gap = HelmMetrics.s2 + 2
+        let toggleWidth = ceil(toggle.fittingSize.width) + gap
+        let trailingWidth = trailing.map { ceil($0.fittingSize.width) + gap } ?? 0
+        let available = max(120, bounds.width - horizontalInsets - toggleWidth - trailingWidth)
+        for label in [titleLabel, subtitleLabel].compactMap({ $0 }) {
+            guard abs(label.preferredMaxLayoutWidth - available) > 0.5 else { continue }
+            label.preferredMaxLayoutWidth = available
+            label.invalidateIntrinsicContentSize()
+        }
+    }
 
     /// The view carrying this row's sunken chrome - itself.
     var chromeView: NSView { self }

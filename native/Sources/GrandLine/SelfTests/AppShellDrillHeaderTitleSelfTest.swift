@@ -85,6 +85,7 @@ enum AppShellDrillHeaderTitleSelfTest {
             ("titleYieldsCorrectlyWhenGenuinelySqueezed", test_titleYieldsToGenuineSqueeze),
             ("titleRendersInFullAcrossEveryDestinationInSequence", test_titleFitsAcrossEveryDestination),
             ("titleRendersInFullAfterRepeatedRevisits", test_titleFitsAfterRepeatedRevisits),
+            ("b14WhiteboardKeepsItsTitleAtFullWidth", test_b14WhiteboardTitleFitsAtFullWidth),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -186,6 +187,40 @@ enum AppShellDrillHeaderTitleSelfTest {
     /// `stringValue`/`font` on every call, so comparing it against the real
     /// resolved frame catches a truncated-but-otherwise-correct title without
     /// needing to know the exact pixel width any given title should occupy.
+
+    /// **Review bug B14**: at a 1512pt window the Whiteboard's drill header
+    /// read "Whitebo..." and "An empty b...", and the search pill collapsed to
+    /// "Se...". Every other page kept its title.
+    ///
+    /// The widths the review used, both of them, because the cause is the
+    /// page's own toolbar rather than the window: the Whiteboard hands
+    /// `drillHeaderActions` six controls, four of them labelled verbs
+    /// ("Generate diagram", "Draw from text", "Capture region", "Copy image"),
+    /// and the bar has to fit those plus the quick-access icons beside the
+    /// title.
+    private static func test_b14WhiteboardTitleFitsAtFullWidth() -> String? {
+        withScratchEnv {
+            for width in [1512.0, 1220.0] as [CGFloat] {
+                let (window, shell) = makeMountedShell()
+                window.setFrame(NSRect(x: 0, y: 0, width: width, height: 950), display: true)
+                shell.show(.whiteboard)
+                window.displayIfNeeded()
+                shell.view.layoutSubtreeIfNeeded()
+                if let failure = titleFitsFailure(shell.drillHeaderForTests,
+                                                  context: ".whiteboard @\(width)pt") {
+                    return failure + " - the page's own toolbar is what leaves no room (B14)"
+                }
+                let subtitle = shell.drillHeaderForTests.subtitleLabelForTests
+                if subtitle.frame.width < subtitle.intrinsicContentSize.width - 1.0 {
+                    return ".whiteboard @\(width)pt: subtitle \"\(subtitle.stringValue)\" needs "
+                        + "\(subtitle.intrinsicContentSize.width)pt but its frame is only "
+                        + "\(subtitle.frame.width)pt wide (B14)"
+                }
+            }
+            return nil
+        }
+    }
+
     private static func titleFitsFailure(_ header: HelmDrillHeader, context: String) -> String? {
         guard !header.isHidden else { return nil } // the canvas has no drill header
         let label = header.titleLabelForTests

@@ -315,6 +315,36 @@ enum NotebookViewSelfTest {
             page.debugEdit(id: "wildcard-tls", content: "# Something else entirely\n")
             check(store.exists(id: "wildcard-tls"),
                   "a page that already has a real name keeps it when the heading changes")
+
+            // **Review bug B7**, which every assertion above passed straight
+            // over. The rename set `currentID`, renamed the file and moved the
+            // sidebar selection - and `HelmPageSidebar.select` does not fire
+            // `onSelect`, so `open(pageID:)` never ran and **Monaco kept the
+            // old id**. The editor went on posting `change` under `untitled`,
+            // and the next debounce hit `pageEdited`'s own
+            // `guard store.exists(id:)` and dropped the keystrokes silently.
+            //
+            // `open(pageID:)` is the only path that re-points the editor, and
+            // the only thing it writes that a headless suite can see is the
+            // editor's own caption - the web view is never ready here, so no
+            // `openSnippet` is sent at all and `currentID`/the sidebar
+            // selection were both already correct with the bug present. The
+            // caption is therefore the witness: it still read "untitled.md"
+            // after a rename to `wildcard-tls`.
+            check(page.debugEditorTitle == "something-else-entirely.md"
+                    || page.debugEditorTitle == "wildcard-tls.md",
+                  "after the auto-title rename the editor must be re-opened on the new id - its "
+                  + "caption still reads \(page.debugEditorTitle), so open(pageID:) never ran and "
+                  + "the editor keeps posting changes under the old id (B7)")
+
+            // Discriminating power, in both directions: the caption really is
+            // written by an open, and it really did start as the placeholder.
+            store.updatePage(id: "second-page", content: "# Second\n")
+            page.debugReload()
+            page.debugOpen(pageID: "second-page")
+            check(page.debugEditorTitle == "second-page.md",
+                  "the fixture is vacuous unless an open actually writes the caption, got "
+                  + page.debugEditorTitle)
         }
     }
 

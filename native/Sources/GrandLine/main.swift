@@ -765,6 +765,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // hides it: the Window menu, Mission Control and the window's own
         // proxy menu all read it.
         window.title = Self.windowTitle(context: appShell.currentContextTitle)
+        // **Review bug B8.** `isReleasedWhenClosed` defaults to `true` for a
+        // window created with `init(contentRect:...)`, and this one is
+        // referenced for the app's whole life - `AppDelegate.window`, the
+        // resize observers, `FullScreenMenuBarFill`, `WindowChromeFusion`'s
+        // per-window cluster cache, the lock overlay.
+        //
+        // With the stock `applicationShouldTerminateAfterLastWindowClosed`
+        // answer the red button quits the app, so the release is harmless. In
+        // **compact mode** that answer is `false`
+        // (`CompactModePolicy.terminatesAfterLastWindowClosed`), so the red
+        // button closes this window while the process keeps running - and
+        // then releases a window every one of those references still holds.
+        // The host editor window two hundred lines below already sets this,
+        // for the same reason; the main window never did because until
+        // compact mode shipped it could not outlive its own close.
+        window.isReleasedWhenClosed = false
         WindowChromeFusion.apply(to: window)
         fullScreenMenuBarFill = FullScreenMenuBarFill(window: window)
         // **`contentViewController` first, then the frame.** Assigning a
@@ -859,8 +875,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // now that the window is up and the captain can already use the app;
         // the short delay just keeps it off the very first frame's own layout
         // and session-restore work above.
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
-            LegacyNameMigration.runKeychainMigrationInBackground()
+        //
+        // B4: a scratch-redirected process (a probe) has no business writing
+        // real Keychain items under the app's own service names - see the
+        // matching guard on `runAtLaunch()`.
+        if !AppPaths.isScratchRedirected() {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+                LegacyNameMigration.runKeychainMigrationInBackground()
+            }
         }
     }
 
@@ -1192,6 +1214,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // the page's 500ms edit debounce loses those keystrokes and the final
         // commit+push never runs.
         appShell.shutdownCodePreview()
+        // B7: the Notebook's own 500ms edit debounce plus its git commit.
+        // `NotebookController.shutdown()` documented itself as called on quit
+        // and had no caller, so ⌘Q inside that window lost the last
+        // keystrokes - the same class as the four flushes around it.
+        appShell.shutdownNotebook()
         // `fm/implement-grand-line-secrets-vault-poneg-ad`: the credential
         // vault's git backup is debounced the same way, so ⌘Q within that
         // window would leave a just-added credential committed locally but not
@@ -1215,6 +1242,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         dictationHotkey.stop()
         snippetExpander.stop()
         appLock.stop()
+
+        // Review bug B2: the app aborts on quit whenever the local Whisper
+        // engine is still loaded, and macOS logs a crash every time.
+        //
+        // The vendored ggml keeps its Metal devices in a C++ static
+        // `std::vector<unique_ptr<ggml_metal_device>>`, whose destructor runs
+        // inside `exit()` - after this method, after `terminate:`, past
+        // anything AppKit can hook. `ggml_metal_device_free` asserts
+        // `[rsets->data count] == 0` ("you haven't deallocated all Metal
+        // resources before exiting") and `ggml_abort`s when a whisper context
+        // still holds residency sets. Two captured reports:
+        // `GrandLine-2026-09-24-210949.ips` and `-2026-09-25-122236.ips`,
+        // both SIGABRT on the main thread with that exact stack.
+        //
+        // Nothing is lost - every flush above has already run - but the
+        // "quit unexpectedly" dialog can appear, and a crash report per quit
+        // buries a real one.
+        //
+        // `whisper_free` (the engine's `deinit`) is what runs
+        // `ggml_metal_rsets_free`, so releasing the engine here empties the
+        // set before the static destructor ever looks at it. This is also why
+        // the crash only follows a *recent* dictation: E2's two-minute idle
+        // unload already releases it, and a quit after that window never
+        // aborted. Last in this method deliberately - it is the only entry
+        // here that is about the process rather than the captain's data.
+        dictationEngine.releaseWhisperEngine(reason: "terminate")
     }
 
     // MARK: App-level password lock (fm/grandline-app-lock)
@@ -1235,7 +1288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// the App menu's Hide/Quit (still allowed, same as any other macOS app).
     private func setContentMenusEnabled(_ enabled: Bool) {
         guard let mainMenu = NSApp.mainMenu else { return }
-        let appName = ProcessInfo.processInfo.processName
+        let appName = AppPaths.displayName
         for topLevelItem in mainMenu.items {
             guard let submenu = topLevelItem.submenu, submenu.title != "Edit" else { continue }
             for item in submenu.items {
@@ -1679,7 +1732,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
         appMenuItem.submenu = appMenu
-        let appName = ProcessInfo.processInfo.processName
+        let appName = AppPaths.displayName
         appMenu.addItem(withTitle: "About \(appName)", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
         // Nav-redesign task, item 5: Settings is a rail destination in the
@@ -2205,6 +2258,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 }
 
+// MARK: - Scratch-root guard (review bug B4)
+//
+// `FM_SCRATCH_ROOT` moves every file-backed store at once
+// (`AppPaths.dataRoot`), which is the whole anti-drift point: a probe or a lab
+// build sets one variable instead of a list that the next store to be added
+// falls off. Two pieces of state are **not** file paths, so they cannot ride
+// that redirect and have to be swapped here.
+//
+// Both are Keychain-backed, and both were live in the 2026-09-25 review's B4:
+// an ad-hoc-signed probe reading the captain's real Google items raises a
+// Keychain ACL dialog on their screen, and a probe that reached the OAuth
+// client store could start a real sign-in against the captain's own client id.
+// A scratch-redirected process is by definition not the captain's instance, so
+// it gets an in-memory account store and "no client configured" - which is the
+// shipped state anyway.
+//
+// This is deliberately outside `#if FM_SELFTESTS`: the release binary honours
+// it too, because the hazard is the *process*, not the build configuration.
+if AppPaths.isScratchRedirected() {
+    GoogleAccountStore.shared = InMemoryGoogleAccountStore()
+    GoogleOAuthClientStore.shared.override = .some(nil)
+}
+
 // MARK: - Self-test dispatch (GL-27: debug builds only)
 //
 // Every `FM_RUN_*_TESTS` block below is compiled out of the release binary,
@@ -2263,6 +2339,22 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     // before the first suite runs and recovers from one left by an interrupted
     // run. See `SelfTestDefaultsGuard`'s own header.
     SelfTestDefaultsGuard.arm()
+
+    // Review bug B5: the same treatment for the Keychain, which this block had
+    // never covered. `security dump-keychain` found 91 real SSH-key items
+    // under the production service - one pair per suite run over two days,
+    // each holding `THIS-MUST-NEVER-APPEAR-IN-A-BACKUP-FILE` - plus 33
+    // orphaned rename-migration items. A file in a temp directory is gone with
+    // the temp directory; a Keychain item is not.
+    //
+    // Set BEFORE anything reads `KeychainService.testPrefix`, which is a
+    // `static let` resolved once. The value carries the marker
+    // `KeychainServiceSweep` recognises plus this process's pid, so an
+    // interrupted run's items are identifiable by the next one.
+    setenv(KeychainService.prefixVariable,
+           "\(KeychainServiceSweep.marker)\(ProcessInfo.processInfo.processIdentifier).",
+           0)
+    KeychainServiceSweep.arm()
 
     // `fm/grandline-overview-layout-fix-gmail-settings`: the Google accounts.
     //
@@ -2610,6 +2702,28 @@ if ProcessInfo.processInfo.environment["FM_RUN_LEGACY_RENAME_MIGRATION_TESTS"] =
 }
 if ProcessInfo.processInfo.environment["FM_RUN_CERT_INSPECTOR_TESTS"] == "1" {
     exit(CertInspectorSelfTest.run() ? 0 : 1)
+}
+
+// Review bug B4: FM_SCRATCH_ROOT is the one variable that moves every
+// file-backed store, and this is the guard that stops a new store resolving
+// Application Support for itself and dropping back off it. Pure logic plus a
+// source grep, so it guards CI's blocking lane.
+if ProcessInfo.processInfo.environment["FM_RUN_PROBE_SCRATCH_ROOT_TESTS"] == "1" {
+    exit(ProbeScratchRootSelfTest.run() ? 0 : 1)
+}
+
+// Review bug B5: every Keychain service name carries a per-process prefix in a
+// self-test process, and the items are swept at exit. Pure logic plus a
+// Keychain round trip under this process's own prefixed service, so it guards
+// CI's blocking lane.
+if ProcessInfo.processInfo.environment["FM_RUN_KEYCHAIN_SERVICE_ISOLATION_TESTS"] == "1" {
+    exit(KeychainServiceIsolationSelfTest.run() ? 0 : 1)
+}
+
+// Review bug B10: the Dictation status card's wrapping column. Window-backed -
+// it measures real resolved geometry from a real layout pass.
+if ProcessInfo.processInfo.environment["FM_RUN_DICTATION_STATUS_CARD_LAYOUT_TESTS"] == "1" {
+    exit(DictationStatusCardLayoutSelfTest.run() ? 0 : 1)
 }
 
 // fm/cockpit-tools-yaml-order-perf-fix: same convention, for YamlBeautify's
@@ -4090,7 +4204,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_HERDR_RESTART_BUTTON_TESTS"] == "
 // captain's Accessibility and Automation grants are keyed to the bundle
 // identifier, which changed, and re-granting them is a manual System Settings
 // step by design.
-LegacyNameMigration.runAtLaunch()
+//
+// B4: skipped entirely in a scratch-redirected process. Both halves operate on
+// the captain's REAL locations by construction - the folder move renames
+// `~/Library/Application Support/FirstmateCockpit`, and the Keychain copy
+// writes real login-Keychain items - so neither has anything to do in a probe
+// and both would be reaching past `FM_SCRATCH_ROOT` if they ran.
+if !AppPaths.isScratchRedirected() {
+    LegacyNameMigration.runAtLaunch()
+}
 
 // GL-05: refuse to be a second instance. This sits *after* every
 // `FM_RUN_*_TESTS` block above (each of which `exit()`s, so a headless
