@@ -88,6 +88,7 @@ enum DictationEngineSelfTest {
             ("whisperEngineIsNotResidentUntilUsed", test_whisperNotResidentUntilUsed),
             ("whisperEngineIsReleasedAfterIdle", test_whisperReleasedAfterIdle),
             ("whisperEngineLifecycleIsNotIndefinite", test_whisperLifecycleSourceGuard),
+            ("whisperEngineIsReleasedOnTerminate", test_whisperReleasedOnTerminate),
             ("cleanupPassCorrectsAVocabularyMisrecognition", test_cleanupCorrectsVocabularyMisrecognition),
             ("cleanupPassDoesNotOverCorrectAGenuineWord", test_cleanupDoesNotOverCorrectGenuineWord),
         ]
@@ -423,6 +424,75 @@ enum DictationEngineSelfTest {
         }
         guard text.contains("cachedWhisperEngine = nil") else {
             return "nothing releases the cached engine, so `whisper_free`/`ggml_metal_rsets_free` never runs"
+        }
+        return nil
+    }
+
+
+    /// **Review bug B2.** The app aborted on quit whenever a Whisper context
+    /// was still loaded: ggml keeps its Metal devices in a C++ static vector
+    /// whose destructor runs inside `exit()`, past everything AppKit can hook,
+    /// and `ggml_metal_device_free` asserts the residency set is empty.
+    /// `GrandLine-2026-09-24-210949.ips` and `-2026-09-25-122236.ips` are both
+    /// that abort, on the main thread, from `-[NSApplication terminate:]`.
+    ///
+    /// The check is a source guard **scoped to `applicationWillTerminate`'s own
+    /// body**, not a file-wide grep: `releaseWhisperEngine` is called from
+    /// three other places (the idle timer, the model-change path, this suite),
+    /// so a grep over the file would stay green with the terminate call
+    /// deleted - the exact "assert the helper, not the wiring" trap AGENTS.md
+    /// warns about. A behavioural check cannot reach this at all: `NSApp` is
+    /// nil in a headless suite, so `AppDelegate` cannot be constructed, and
+    /// observing the abort needs a real 547MB model and a real process exit.
+    /// The model-backed half below asserts the release itself does empty the
+    /// context, which is the other half of the claim.
+    private static func test_whisperReleasedOnTerminate() -> String? {
+        guard let dir = SelfTestSources.appSourceDirectory() else { return nil }
+        let path = dir.appendingPathComponent("main.swift")
+        guard let text = try? String(contentsOf: path, encoding: .utf8) else {
+            return "main.swift could not be read, so this guard checked nothing"
+        }
+        guard let start = text.range(of: "func applicationWillTerminate(") else {
+            return "main.swift has no applicationWillTerminate - the flush point this depends on is gone"
+        }
+        // The body runs to the first line that closes it at the method's own
+        // indentation, which in this file is four spaces.
+        let after = text[start.upperBound...]
+        guard let end = after.range(of: "\n    }\n") else {
+            return "could not find the end of applicationWillTerminate"
+        }
+        let body = String(after[..<end.lowerBound])
+
+        // Discriminating power first: the extracted body has to be the real
+        // one, or every check below passes against an empty string.
+        guard body.contains("console.shutdown()") else {
+            return "the extracted applicationWillTerminate body does not look like the real one"
+        }
+        guard body.contains("releaseWhisperEngine(") else {
+            return "applicationWillTerminate does not release the Whisper engine - ggml's static "
+                + "destructor will ggml_abort inside exit() after any recent dictation (B2)"
+        }
+        guard body.contains("releaseWhisperEngine(reason: \"terminate\")") else {
+            return "the terminate release is there but does not name its reason 'terminate', which is "
+                + "what distinguishes it in the lifecycle log from the idle unload"
+        }
+
+        // The other half of the claim, where a real model is available: the
+        // release genuinely empties the context that holds the residency sets.
+        guard let modelPath = ProcessInfo.processInfo.environment["FM_WHISPER_TEST_MODEL_PATH"],
+              !modelPath.isEmpty, FileManager.default.fileExists(atPath: modelPath) else {
+            return nil
+        }
+        let h = Harness()
+        guard h.engine.debugLoadWhisperEngineForTests(modelPath: modelPath) else {
+            return "the real model at \(modelPath) failed to load, so the release could not be observed"
+        }
+        guard h.engine.isWhisperEngineResident else {
+            return "a successful load did not report the engine as resident"
+        }
+        h.engine.releaseWhisperEngine(reason: "terminate")
+        guard !h.engine.isWhisperEngineResident else {
+            return "the terminate release left a Whisper context alive - exit() would still abort"
         }
         return nil
     }

@@ -1221,6 +1221,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         dictationHotkey.stop()
         snippetExpander.stop()
         appLock.stop()
+
+        // Review bug B2: the app aborts on quit whenever the local Whisper
+        // engine is still loaded, and macOS logs a crash every time.
+        //
+        // The vendored ggml keeps its Metal devices in a C++ static
+        // `std::vector<unique_ptr<ggml_metal_device>>`, whose destructor runs
+        // inside `exit()` - after this method, after `terminate:`, past
+        // anything AppKit can hook. `ggml_metal_device_free` asserts
+        // `[rsets->data count] == 0` ("you haven't deallocated all Metal
+        // resources before exiting") and `ggml_abort`s when a whisper context
+        // still holds residency sets. Two captured reports:
+        // `GrandLine-2026-09-24-210949.ips` and `-2026-09-25-122236.ips`,
+        // both SIGABRT on the main thread with that exact stack.
+        //
+        // Nothing is lost - every flush above has already run - but the
+        // "quit unexpectedly" dialog can appear, and a crash report per quit
+        // buries a real one.
+        //
+        // `whisper_free` (the engine's `deinit`) is what runs
+        // `ggml_metal_rsets_free`, so releasing the engine here empties the
+        // set before the static destructor ever looks at it. This is also why
+        // the crash only follows a *recent* dictation: E2's two-minute idle
+        // unload already releases it, and a quit after that window never
+        // aborted. Last in this method deliberately - it is the only entry
+        // here that is about the process rather than the captain's data.
+        dictationEngine.releaseWhisperEngine(reason: "terminate")
     }
 
     // MARK: App-level password lock (fm/grandline-app-lock)
