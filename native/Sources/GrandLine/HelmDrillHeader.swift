@@ -365,6 +365,9 @@ final class HelmDrillHeader: NSView {
     /// check that catches a stale, too-narrow frame surviving a correct
     /// `stringValue` - see `AppShellDrillHeaderTitleSelfTest.swift`).
     var titleLabelForTests: NSTextField { titleLabel }
+    /// Review bug B14: the subtitle truncated beside the title ("An empty
+    /// b..."), so it needs its own read.
+    var subtitleLabelForTests: NSTextField { subtitleLabel }
     var textColumnForTests: NSView { textColumn }
 
     /// Fires the real back path a click or a VoiceOver press would.
