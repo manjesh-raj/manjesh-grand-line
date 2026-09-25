@@ -111,6 +111,8 @@ enum CompactModeViewSelfTest {
         checkTheMainWindowIsNotReleasedWhenClosed(check)
         checkLeavingTheModeTurnsItOff(check)
         checkTheLockRefusesThePopover(check)
+        checkLockedShowsAnUnlockFormInsteadOfTabs(check)
+        checkIconClickedShowsTheLockFormRatherThanRefusing(check)
 
         print(ok ? "CompactModeViewSelfTest: OK" : "CompactModeViewSelfTest: FAILURES")
         return ok
@@ -979,6 +981,109 @@ enum CompactModeViewSelfTest {
                       + "whole of the app, since there is no window for the lock overlay to cover")
             check(!controller.debugPopover.isShown,
                   "and no popover is left on screen above the overlay")
+        }
+    }
+
+    /// The compact-mode lock deadlock's content half: `prepareToShowLocked()`
+    /// must show `lockPane` and touch no data-bearing pane or provider, and a
+    /// successful `onAttempt` must transition the popover to the real tabs.
+    ///
+    /// This is the regression test for the captain's own report - before this
+    /// fix, a locked compact-mode app had no in-popover path back to unlocked
+    /// at all. Reverting `CompactModePopoverController.prepareToShowLocked()`
+    /// to a no-op (leaving `renderPane()`'s ordinary unlocked content in
+    /// place) makes `debugIsLocked`/`debugTabsRowIsHidden` below fail - the
+    /// case actually caught the regression, confirmed by reverting and
+    /// restoring it in the same working session (see this PR's description
+    /// for the transcript).
+    private static func checkLockedShowsAnUnlockFormInsteadOfTabs(_ check: (Bool, String) -> Void) {
+        mounted { controller, _ in
+            var providerCalls = 0
+            controller.todayProvider = { providerCalls += 1; return todayFixture }
+            controller.notesProvider = { providerCalls += 1; return notesFixture }
+            // Reset after `mounted`'s own unlocked `prepareToShow()` already
+            // read the fixtures once for the initial render.
+            providerCalls = 0
+
+            controller.prepareToShowLocked()
+            controller.view.layoutSubtreeIfNeeded()
+
+            check(controller.debugIsLocked, "the content must know it is showing the lock form")
+            check(controller.debugTabsRowIsHidden,
+                  "the tab strip must be hidden - there is nothing to switch between while locked")
+            check(controller.debugCaptureRowIsHidden,
+                  "the capture line must be hidden - nothing may be filed while locked")
+            check(!controller.debugLockPane.isHidden, "the lock pane itself must be showing")
+            check(controller.debugTodayPane.isHidden && controller.debugNotesPane.isHidden,
+                  "neither data pane may be visible while locked - GL-09's whole point")
+            check(providerCalls == 0,
+                  "prepareToShowLocked() must read no data provider at all - a captain's tasks or "
+                      + "notes must never be touched before the password check below succeeds, got "
+                      + "\(providerCalls) provider calls")
+
+            var attempts: [String] = []
+            var lastCompletion: ((Bool) -> Void)?
+            controller.onAttemptUnlock = { password, completion in
+                attempts.append(password)
+                lastCompletion = completion
+            }
+
+            controller.debugLockPane.debugSubmit("wrong")
+            check(attempts == ["wrong"], "submitting calls the wired unlock closure with the typed "
+                      + "password - got \(attempts)")
+            lastCompletion?(false)
+            check(controller.debugLockPane.debugErrorLabelText != nil,
+                  "a rejected password must say so, mirroring the real lock screen's own error label")
+            check(controller.debugIsLocked,
+                  "a rejected password must not leave the locked content - got debugIsLocked == false")
+
+            controller.debugLockPane.debugSubmit("correct")
+            check(attempts == ["wrong", "correct"], "and a second attempt is a second real call - got \(attempts)")
+            lastCompletion?(true)
+            controller.view.layoutSubtreeIfNeeded()
+
+            check(!controller.debugIsLocked,
+                  "a successful unlock must transition the popover out of the locked content")
+            check(!controller.debugTabsRowIsHidden,
+                  "...and back to the real tab strip")
+            check(controller.debugLockPane.isHidden,
+                  "...with the lock pane itself now hidden")
+            check(!controller.debugTodayPane.isHidden,
+                  "...showing the tab the popover was already on (Today) - not a second, blank open")
+        }
+    }
+
+    /// `CompactModeController.prepareContentToShow()` - the decision
+    /// `iconClicked()` makes before ever touching `popover.show()` (which a
+    /// headless process cannot safely drive through a status item that may
+    /// have no real window - `debugPrepareContentToShow()`'s own header).
+    ///
+    /// This is the controller-side half of the same regression: the old
+    /// `iconClicked()` refused outright while locked and never touched
+    /// `content` at all, so `content.debugIsLocked` stayed `false` and the
+    /// captain got a beep. Reverting `prepareContentToShow()` to that old
+    /// shape makes the `debugIsLocked` check below fail.
+    private static func checkIconClickedShowsTheLockFormRatherThanRefusing(_ check: (Bool, String) -> Void) {
+        withController { controller, setMode in
+            let wasLocked = AppLockGate.shared.isLocked
+            defer { AppLockGate.shared.setLocked(wasLocked) }
+            setMode(true, false)
+
+            AppLockGate.shared.setLocked(true)
+            let unlockedWhileLocked = controller.debugPrepareContentToShow()
+            check(!unlockedWhileLocked,
+                  "locked, the decision must report that it did NOT prepare the real content")
+            check(controller.debugContent.debugIsLocked,
+                  "...and the content must actually be showing its own lock form - this is the "
+                      + "captain's exact report: before this fix, a locked click touched `content` "
+                      + "not at all and only played a system beep")
+
+            AppLockGate.shared.setLocked(false)
+            let unlockedWhileUnlocked = controller.debugPrepareContentToShow()
+            check(unlockedWhileUnlocked,
+                  "unlocked, the decision must report that it DID prepare the real content")
+            check(!controller.debugContent.debugIsLocked,
+                  "...and the content must be back to its ordinary tabs")
         }
     }
 

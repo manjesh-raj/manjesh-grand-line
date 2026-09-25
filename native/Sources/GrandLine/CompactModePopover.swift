@@ -146,6 +146,13 @@ final class CompactModePopoverController: NSViewController {
     var onOpenSettings: (() -> Void)?
     /// Close the popover - used by a pane that has just navigated the window.
     var onDismiss: (() -> Void)?
+    /// `(typed password, completion(success))` - the lock pane's own escape
+    /// hatch (GL-09). `AppDelegate` wires this to
+    /// `AppShellController.attemptUnlockFromCompactMode`, the exact password
+    /// check and unlock transition the real lock screen's own `onAttempt`
+    /// runs, so a wrong guess here and a wrong guess there are one check
+    /// rather than two.
+    var onAttemptUnlock: ((String, @escaping (Bool) -> Void) -> Void)?
     /// Forwarded to `popover.contentSize`.
     ///
     /// It reports `Self.contentSize` - the same two numbers every time,
@@ -197,9 +204,22 @@ final class CompactModePopoverController: NSViewController {
                                                       showsOwnHeader: false)
     let crewPane = StrawHatMenuBarPopoverController(width: CompactModePopoverController.width,
                                                     showsOwnHeader: false)
+    /// GL-09's escape hatch: shown in place of the other four whenever
+    /// `isLocked`, so the popover has something real to open into instead of
+    /// refusing outright (`CompactMode.swift`'s `prepareContentToShow()`).
+    private let lockPane = CompactLockPane()
 
     private var selected: CompactModeTab = .today
     private var theme: HelmTheme = ThemeManager.shared.theme
+    /// Whether the popover is currently showing `lockPane` instead of the
+    /// four tabs. Deliberately separate from `AppLockGate.shared.isLocked`:
+    /// this is "what is this view showing right now", decided once when the
+    /// popover opens (`prepareToShowLocked()`/`prepareToShow()`), not a live
+    /// mirror of the gate - the gate can change under a popover that is
+    /// already open (a session-expiry lock firing mid-use), and that case is
+    /// handled by `CompactModeController`'s own `AppLockGate.shared.observe`
+    /// closing the popover outright, not by this view re-deciding itself.
+    private var isLocked = false
 
     // MARK: Build
 
@@ -440,8 +460,25 @@ final class CompactModePopoverController: NSViewController {
             self?.onOpenStickyBoard?()
             self?.onDismiss?()
         }
+        lockPane.onAttempt = { [weak self] password, completion in
+            guard let self, let onAttemptUnlock = self.onAttemptUnlock else {
+                completion(false)
+                return
+            }
+            onAttemptUnlock(password) { [weak self] success in
+                if success {
+                    // Same-thread, same call stack as the completion - the
+                    // password check itself completes on the main queue
+                    // (`AppShellController.attemptUnlockFromCompactMode`), so
+                    // there is no race between showing the real tabs here and
+                    // the caller re-enabling its own field/button on failure.
+                    self?.transitionToUnlockedContent()
+                }
+                completion(success)
+            }
+        }
 
-        for pane in [todayPane, notesPane, vaultPane.view, crewPane.view] as [NSView] {
+        for pane in [todayPane, notesPane, vaultPane.view, crewPane.view, lockPane] as [NSView] {
             pane.translatesAutoresizingMaskIntoConstraints = false
             bodyContainer.addArrangedSubview(pane)
             pane.widthAnchor.constraint(equalTo: bodyContainer.widthAnchor).isActive = true
@@ -512,10 +549,54 @@ final class CompactModePopoverController: NSViewController {
     /// its `present(codes:vaultUnlocked:)` below.
     func prepareToShow() {
         _ = view   // force `loadView()`; `loadViewIfNeeded()` is macOS 14+
+        isLocked = false
+        settingsButton.isHidden = false
         captureField.stringValue = ""
         hideCaptureNotice()
         renderPane()
         focusCaptureField()
+    }
+
+    /// GL-09's escape hatch: called instead of `prepareToShow()` whenever
+    /// `AppLockGate` refuses (`CompactMode.swift`'s `prepareContentToShow()`).
+    ///
+    /// Shows `lockPane` and nothing else - the tab strip, the capture line
+    /// and the four tabs' own content are all hidden, and none of their
+    /// providers is ever called, so no captain data is touched before the
+    /// password check below actually succeeds. `transitionToUnlockedContent()`
+    /// is what `lockPane`'s own `onAttempt` reaches on success.
+    func prepareToShowLocked() {
+        _ = view
+        isLocked = true
+        lockPane.reset()
+        renderLockState()
+        lockPane.focusPasswordField()
+    }
+
+    /// `lockPane`'s own `onAttempt` success path: leave the locked state and
+    /// build the real content, exactly as if the popover had opened unlocked
+    /// in the first place.
+    private func transitionToUnlockedContent() {
+        prepareToShow()
+    }
+
+    /// Shows only `lockPane` - the tab strip, the capture line and every
+    /// data-bearing pane hidden, per `prepareToShowLocked()`'s own header.
+    private func renderLockState() {
+        _ = view
+        tabsRow.isHidden = true
+        settingsButton.isHidden = true
+        todayPane.isHidden = true
+        notesPane.isHidden = true
+        vaultPane.view.isHidden = true
+        crewPane.view.isHidden = true
+        captureRow.isHidden = true
+        captureDivider.isHidden = true
+        lockPane.isHidden = false
+
+        view.layoutSubtreeIfNeeded()
+        scrollBodyToTop()
+        onSizeChanged?(Self.contentSize)
     }
 
     /// The popover closed. Forwarded to the vault pane so its 1Hz ticker
@@ -537,7 +618,13 @@ final class CompactModePopoverController: NSViewController {
 
     /// Build whichever tab is showing, hide the other three, and report the
     /// new height.
+    ///
+    /// Guarded on `isLocked` defensively - every caller already only runs from
+    /// a control that `renderLockState()` hid, so this should be unreachable
+    /// while locked, but a provider read is exactly what GL-09 exists to keep
+    /// from ever firing on a stale wire-up.
     private func renderPane() {
+        guard !isLocked else { return }
         _ = view
         switch selected {
         case .today:
@@ -553,10 +640,12 @@ final class CompactModePopoverController: NSViewController {
             break   // the crew pane holds its own conversation state across opens
         }
 
+        tabsRow.isHidden = false
         todayPane.isHidden = selected != .today
         notesPane.isHidden = selected != .notes
         vaultPane.view.isHidden = selected != .vault
         crewPane.view.isHidden = selected != .crew
+        lockPane.isHidden = true
 
         let hasCapture = selected.captureDestination != nil
         captureRow.isHidden = !hasCapture
@@ -654,6 +743,7 @@ final class CompactModePopoverController: NSViewController {
         notesPane.applyTheme(theme)
         vaultPane.applyTheme(theme)
         crewPane.applyTheme(theme)
+        lockPane.applyTheme(theme)
         if !captureNotice.isHidden { showCaptureNotice(captureNotice.stringValue) }
         // `settingsButton`, `captureButton` and `openWindowButton` are
         // `HelmButton`s and theme themselves - a page must never set their
@@ -687,6 +777,13 @@ final class CompactModePopoverController: NSViewController {
     }
     func debugSubmitCapture() { captureSubmitted() }
     func debugRenderPane() { renderPane() }
+    /// Whether the popover is currently showing `lockPane` instead of the
+    /// four tabs - the regression coverage for the compact-mode lock
+    /// deadlock's content half (`CompactMode.swift`'s own `debugPrepareContentToShow()`
+    /// covers the controller's decision half).
+    var debugIsLocked: Bool { isLocked }
+    var debugLockPane: CompactLockPane { lockPane }
+    var debugTabsRowIsHidden: Bool { tabsRow.isHidden }
     #endif
 }
 
@@ -915,6 +1012,150 @@ final class CompactNotesPane: NSView {
     var debugRowDetails: [String] { rows.map { $0.debugDetail } }
     var debugEmptyStateIsHidden: Bool { emptyState.isHidden }
     var debugRows: [CompactNoteRowView] { rows }
+    #endif
+}
+
+// MARK: - The lock pane
+
+/// GL-09's escape hatch for a locked app in compact mode: shown in place of
+/// the four tabs, never alongside them.
+///
+/// Before this pane existed, a locked app's popover simply refused to open at
+/// all (`CompactMode.swift`'s old `iconClicked()`) - and since every launch
+/// locks immediately, a captain who had compact mode already enabled from a
+/// previous session had no window, no lock screen and no popover: nothing but
+/// a beep. This is deliberately not a second copy of `LockScreenController`'s
+/// boat-and-wave scene - there is no room for one at 330pt - but the
+/// verification itself is not re-derived: `onAttempt` is wired straight to
+/// `AppShellController.attemptUnlockFromCompactMode`, the same
+/// `VaultSource.verifyAppPassword` check and the same `hideLock()`/
+/// `onUnlocked?()` unlock transition the real lock screen's own `onAttempt`
+/// runs.
+final class CompactLockPane: NSView {
+    /// `(typed password, completion(success))`, mirroring
+    /// `LockScreenController.onAttempt` exactly so both call sites read the
+    /// same shape.
+    var onAttempt: ((String, @escaping (Bool) -> Void) -> Void)?
+
+    private let titleLabel = NSTextField(labelWithString: "Grand Line is locked")
+    private let subtitleLabel = NSTextField(wrappingLabelWithString: "Enter your password to unlock.")
+    private let passwordField = HelmSecureTextField(placeholder: "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}")
+    /// H4's un-clipped host for the field's focus glow - `LockScreenController`'s
+    /// own `passwordWell`, same reason.
+    private let passwordWell = NSView()
+    private let unlockButton = HelmButton(title: "Unlock", variant: .primary, size: .small)
+    private let errorLabel = NSTextField(wrappingLabelWithString: "")
+    private let column = NSStackView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        subtitleLabel.font = HelmType.captionSmall()
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        passwordField.target = self
+        passwordField.action = #selector(submitTapped)
+        passwordWell.translatesAutoresizingMaskIntoConstraints = false
+        passwordWell.addSubview(passwordField)
+        NSLayoutConstraint.activate([
+            passwordField.leadingAnchor.constraint(equalTo: passwordWell.leadingAnchor),
+            passwordField.trailingAnchor.constraint(equalTo: passwordWell.trailingAnchor),
+            passwordField.topAnchor.constraint(equalTo: passwordWell.topAnchor),
+            passwordField.bottomAnchor.constraint(equalTo: passwordWell.bottomAnchor),
+        ])
+        passwordField.glowHost = passwordWell
+
+        unlockButton.target = self
+        unlockButton.action = #selector(submitTapped)
+        unlockButton.keyEquivalent = "\r"
+        unlockButton.translatesAutoresizingMaskIntoConstraints = false
+
+        errorLabel.font = HelmType.captionSmall()
+        errorLabel.translatesAutoresizingMaskIntoConstraints = false
+        errorLabel.isHidden = true
+
+        column.setViews([titleLabel, subtitleLabel, passwordWell, unlockButton, errorLabel], in: .leading)
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = HelmMetrics.s2
+        column.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s3),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s3),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s3),
+            column.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -HelmMetrics.s2),
+        ])
+        for child in [passwordWell, unlockButton] {
+            child.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// Called every time the pane is about to show - clears whatever a
+    /// previous attempt (in this session or an earlier one) left behind.
+    func reset() {
+        passwordField.stringValue = ""
+        passwordField.isEnabled = true
+        unlockButton.isEnabled = true
+        errorLabel.isHidden = true
+    }
+
+    func focusPasswordField() {
+        window?.makeFirstResponder(passwordField)
+    }
+
+    @objc private func submitTapped() {
+        let typed = passwordField.stringValue
+        guard !typed.isEmpty, let onAttempt else { return }
+        errorLabel.isHidden = true
+        passwordField.isEnabled = false
+        unlockButton.isEnabled = false
+        onAttempt(typed) { [weak self] success in
+            guard let self else { return }
+            if !success {
+                self.passwordField.isEnabled = true
+                self.unlockButton.isEnabled = true
+                self.passwordField.stringValue = ""
+                self.errorLabel.stringValue = "That password didn't match. Try again."
+                self.errorLabel.isHidden = false
+                self.window?.makeFirstResponder(self.passwordField)
+            }
+            // On success there is nothing further to do here:
+            // `CompactModePopoverController.lockPane.onAttempt` hears the same
+            // completion and transitions the whole popover to its unlocked
+            // content - this pane does not decide that for itself.
+        }
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        subtitleLabel.textColor = HelmTheme.mutedInk(theme)
+        passwordField.domainHue = .blue
+        passwordField.applyTheme(theme)
+        unlockButton.domainHue = .blue
+        errorLabel.textColor = HelmContrast.legibleTintedText(
+            tintHex: HelmTint.critical.hex(in: theme),
+            overAnyOf: [HelmTheme.nsColor(theme.chromeBackgroundHex)],
+            theme: theme)
+    }
+
+    #if FM_SELFTESTS
+    var debugPasswordField: HelmSecureTextField { passwordField }
+    var debugUnlockButton: HelmButton { unlockButton }
+    var debugErrorLabelText: String? { errorLabel.isHidden ? nil : errorLabel.stringValue }
+    /// Drives the real submit path - `submitTapped` itself, not a copy -
+    /// without needing a real first-responder/keyDown round trip, matching
+    /// `CompactModePopoverController.debugSubmitCapture()`'s own shape.
+    func debugSubmit(_ password: String) {
+        passwordField.stringValue = password
+        submitTapped()
+    }
     #endif
 }
 

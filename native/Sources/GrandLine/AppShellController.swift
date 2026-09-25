@@ -1481,6 +1481,34 @@ final class AppShellController: NSViewController {
         forEachConsole { $0.resumeAfterUnlock() }
     }
 
+    /// Compact mode's own escape hatch (F22, the menu-bar-only shape): the
+    /// same password check `lockScreen.onAttempt` runs, and on success the
+    /// same unlock transition `onUnlockAnimationFinished` runs, minus the
+    /// lock screen's own boat-and-wave flourish - a 330pt popover has no room
+    /// to play it, and the check itself is the thing that must not be
+    /// re-derived a second time (this app's "one component, not N copies"
+    /// convention, applied to a verification rather than a view).
+    ///
+    /// Before this, `CompactModeController.iconClicked()` refused the popover
+    /// outright whenever the app was locked - which, since every launch locks
+    /// immediately, meant a captain who had compact mode already enabled from
+    /// a previous session had no way back in at all: no popover, no lock
+    /// screen, nothing but a beep. This is that escape hatch, reachable from
+    /// the menu bar alone with no other window ever appearing.
+    func attemptUnlockFromCompactMode(password: String, completion: @escaping (Bool) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = VaultSource.verifyAppPassword(password)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { completion(false); return }
+                if ok {
+                    self.hideLock()
+                    self.onUnlocked?()
+                }
+                completion(ok)
+            }
+        }
+    }
+
     /// The shared Firstmate console plus every dedicated host page, in one
     /// place, so a lock-state change reaches all of them without either half
     /// being forgotten.

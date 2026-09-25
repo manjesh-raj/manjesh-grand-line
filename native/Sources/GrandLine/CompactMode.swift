@@ -310,11 +310,17 @@ final class CompactModeController: NSObject, NSPopoverDelegate {
         content.onDismiss = { [weak self] in self?.popover.performClose(nil) }
 
         // GL-09: this item lives outside the locked window entirely. Close
-        // the popover and drop the badge on every lock transition, rather
+        // the popover and drop the badge on the way *into* a lock, rather
         // than only on the next open - locking while a count is visible has
         // to clear it immediately.
-        AppLockGate.shared.observe { [weak self] _ in
-            self?.popover.performClose(nil)
+        //
+        // Deliberately NOT on the way out: the popover's own unlock form
+        // (`iconClicked()` below) authenticates while the popover is open, and
+        // closing it the instant `AppLockGate` reports unlocked would cut
+        // that transition off before the captain ever sees the tabs it just
+        // unlocked into.
+        AppLockGate.shared.observe { [weak self] locked in
+            if locked { self?.popover.performClose(nil) }
             self?.refreshStatusItemTitle()
         }
 
@@ -413,17 +419,47 @@ final class CompactModeController: NSObject, NSPopoverDelegate {
             popover.performClose(nil)
             return
         }
-        // GL-09, and refused outright rather than opened empty - the same
-        // posture both the crew's and Poneglyph's items take, for the same
-        // reason: an empty popover invites a second click, and every one of
-        // these four tabs would be showing the captain's own data.
+        prepareContentToShow()
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
+
+    /// Decides, and builds, whichever content the popover is about to
+    /// show - the real four tabs when unlocked, or the popover's own unlock
+    /// form when not (GL-09).
+    ///
+    /// This used to refuse the popover outright while locked, with nothing
+    /// but a beep - the same posture the crew's and Poneglyph's own
+    /// menu-bar items take, which is right for *them* (each has a real
+    /// window with its own lock screen to fall back to). Compact mode has no
+    /// window at all while it is on, and every launch locks immediately - so
+    /// that refusal was a dead end for a captain who had already enabled the
+    /// mode: no popover, no lock screen, no way back in.
+    /// `content.prepareToShowLocked()` shows a small unlock form in place of
+    /// the four tabs - never the tabs themselves, which is what keeps this
+    /// GL-09 compliant - wired to the same password check and the same
+    /// unlock transition the real lock screen uses
+    /// (`AppShellController.attemptUnlockFromCompactMode`), rather than a
+    /// second one invented for this popover.
+    ///
+    /// Split out, like `prepareToShow()` below, so a suite can assert the
+    /// decision without touching `popover.show()` - which a headless process
+    /// cannot safely drive through a status item that may have no real
+    /// window.
+    ///
+    /// - Returns: whether the real, unlocked content was prepared - `false`
+    ///   means the lock form was shown instead.
+    @discardableResult
+    private func prepareContentToShow() -> Bool {
         guard AppLockGate.shared.allows(.compactModePopover) else {
-            AppLog.lifecycle.info("compact-mode popover refused - app is locked (GL-09)")
-            NSSound.beep()
-            return
+            refreshStatusItemTitle()
+            applyTheme(ThemeManager.shared.theme)
+            AppLog.lifecycle.info(
+                "compact-mode popover opened locked (GL-09) - showing its own unlock form")
+            content.prepareToShowLocked()
+            return false
         }
         prepareToShow()
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        return true
     }
 
     /// ⌃⌥G. Toggles rather than opens, matching what the footer advertises.
@@ -495,5 +531,15 @@ final class CompactModeController: NSObject, NSPopoverDelegate {
     var debugHotkeyIsInstalled: Bool { hotkey.isInstalled }
     func debugPrepareToShow() { prepareToShow() }
     func debugRefreshStatusItemTitle() { refreshStatusItemTitle() }
+    /// Drives `iconClicked()`'s real content decision without touching
+    /// `popover.show()` - see `prepareContentToShow()`'s own header for why
+    /// that call is unsafe to drive from a headless suite. This is the
+    /// regression coverage for the compact-mode lock deadlock: reverting
+    /// `prepareContentToShow()` to its old "refuse and beep" shape leaves
+    /// `content` untouched while locked, which
+    /// `CompactModeViewSelfTest.checkLockedShowsAnUnlockFormInsteadOfTabs`
+    /// catches by asserting `debugContent.debugIsLocked` actually flips true.
+    @discardableResult
+    func debugPrepareContentToShow() -> Bool { prepareContentToShow() }
     #endif
 }

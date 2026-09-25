@@ -1113,6 +1113,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // are one code path with one set of refusals (F2).
         popover.captureFiler = appShell.makeCaptureFiler()
 
+        // The popover's own escape hatch while the app is locked: the exact
+        // password check and unlock transition the real lock screen uses,
+        // never a second one - see `AppShellController.attemptUnlockFromCompactMode`.
+        popover.onAttemptUnlock = { [weak self] password, completion in
+            self?.appShell.attemptUnlockFromCompactMode(password: password, completion: completion)
+        }
+
         compactMode.overdueCountProvider = { [weak self] in
             guard let self else { return 0 }
             return CompactModeDigest.today(tasks: self.shiftStore.activeTasks,
