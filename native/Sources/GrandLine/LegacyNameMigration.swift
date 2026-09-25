@@ -162,7 +162,16 @@ enum LegacyNameMigration {
         let bare = KeychainService.bare(service)
         let carried = String(service.dropLast(bare.count))
         guard bare.hasPrefix(identifierPrefix) else { return nil }
-        return carried + legacyIdentifierPrefix + bare.dropFirst(identifierPrefix.count)
+        // `dropFirst` yields a `Substring`, and concatenating it onto a
+        // three-term `String` expression is resolved differently by different
+        // Swift compilers - it built clean locally and failed CI's pinned
+        // toolchain outright ("cannot convert value of type String.SubSequence
+        // to expected argument type String"). AGENTS.md's Toolchain note
+        // records this class of divergence for warnings; this is the same
+        // shape as a hard error. Converted explicitly so neither compiler has
+        // to choose.
+        let suffix = String(bare.dropFirst(identifierPrefix.count))
+        return carried + legacyIdentifierPrefix + suffix
     }
 
     // MARK: - Application Support

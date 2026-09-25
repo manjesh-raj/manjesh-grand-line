@@ -288,6 +288,20 @@ does not emit, and a 5.10-only redundant-downcast warning that 6.x does not. A
 warning-clean build says nothing about the other compiler. Bump the image label,
 the assertion and `native/README.md`'s Requirements together.
 
+**And the divergence is not only about warnings - it reaches hard errors, so a
+green local build is not evidence the `build` job will pass.** Measured
+(`fm/grand-line-review-bugs-b1-b14`): `carried + legacyIdentifierPrefix +
+bare.dropFirst(n)` - a three-term concatenation ending in a `Substring` -
+compiled clean on a local 6.3.3 in **both** debug and release, and CI's pinned
+image rejected it outright with *"cannot convert value of type
+String.SubSequence to expected argument type String"*. Nothing local reproduces
+it, which is the point: **convert a `Substring` explicitly** (`String(...)`)
+rather than relying on either compiler's overload resolution, and treat a PR's
+own CI run as the only authority on whether it builds. `swift build -c release`
+is worth running before a push regardless - it is a second CI gate, it catches a
+`debug*` accessor referenced outside `#if FM_SELFTESTS`, and it is not what
+`./Scripts/run-all-tests.sh` builds.
+
 ### Vendored dependencies carry patches, and a sync must re-apply them
 
 Everything under `native/Vendor/` is committed source, not a remote package -
