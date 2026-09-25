@@ -476,6 +476,34 @@ enum DaylightModule: String, CaseIterable {
         }
     }
 
+    /// Does this module's card render at its own height, rather than joining
+    /// its row's equal-height tie?
+    ///
+    /// False for every module but one. `HelmResponsiveGrid`'s `equalHeights`
+    /// makes every card in a row as tall as the tallest in that row, which is
+    /// the right default for two ordinary cards - without it a shorter
+    /// neighbour squashes a taller card's body rather than the row growing to
+    /// fit (`HelmResponsiveGrid.tieHeights`' own doc comment has the
+    /// measurement). It is *not* right for a card whose design deliberately
+    /// needs more room than its neighbours: there is no standard card size
+    /// here, and stretching Morning briefing and Fleet to match one taller
+    /// card leaves them with the same content in a taller box.
+    ///
+    /// The Claude usage card is that card. Its sectioned usage report (#478)
+    /// is genuinely taller than a note or a peek list, and it is the only
+    /// module whose body is a multi-section readout. What the exemption
+    /// changes is narrow: the card stops being the height its neighbours tie
+    /// to, and holds its own height through a floor of its own instead. The
+    /// row still grows to it - `HelmResponsiveGrid.spanningRows` has the
+    /// measurement for why simply dropping the tie squashes the card rather
+    /// than freeing it.
+    var sizesToOwnContent: Bool {
+        switch self {
+        case .claudeStatus: return true
+        default: return false
+        }
+    }
+
     /// The destination a click on this module's card opens.
     var opens: RailDestination {
         switch self {

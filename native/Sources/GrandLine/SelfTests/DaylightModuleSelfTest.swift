@@ -47,6 +47,7 @@ enum DaylightModuleSelfTest {
         var allOK = true
         for check in [checkSpaceTable, checkSymbolsResolve, checkUniformCardSizing,
                       checkUniformCardHeight, checkRowsEqualiseCardHeights,
+                      checkAnExemptCardSizesToItsOwnContent,
                       checkNoCardIsAWindowFloor,
                       checkModuleAnatomy, checkCanvasConstructsNoStores,
                       checkBarAnatomy, checkBarDestinationIcons, checkBarDoesNotCapWindow,
@@ -884,6 +885,180 @@ enum DaylightModuleSelfTest {
                          + "(floor %.0f, old fixed height %.0f)",
                          cards.count, rowHeight,
                          HelmModuleCard.minimumHeight, HelmModuleCard.standardHeight))
+        }
+    }
+
+    /// One card may leave the row's height tie, and only that card.
+    ///
+    /// **The captain's report this exists for.** #478 made the Claude usage
+    /// card taller. `equalHeights` then pulled Morning briefing and Fleet up
+    /// to match it, so two cards whose design had not changed rendered the
+    /// same content in a taller box. There is no standard card size here:
+    /// `DaylightModule.sizesToOwnContent` lets exactly one module opt out.
+    ///
+    /// Three properties, and the second is the one that actually caught the
+    /// first attempt at this fix:
+    ///
+    ///   1. **The exempt card keeps its own taller height**, and nothing in
+    ///      it is clipped.
+    ///   2. **Its tied neighbour shrinks back to its own content.** Leaving a
+    ///      card out of `tieHeights` is *not* enough on its own - measured on
+    ///      the real home canvas, an untied card in a 171pt row still
+    ///      rendered 171pt tall, because an `NSStackView` stretches an
+    ///      arranged subview whose own height preference is weak (a card's is
+    ///      priority 1, `HelmModuleCard.bodyHug`). What makes it size to its
+    ///      content is the collapsing `NSLayoutGuide` the exempt path ties it
+    ///      to instead of the row. Asserting only "it is not in the tie"
+    ///      would have passed against the broken version.
+    ///   3. **A row with no exempt card is untouched**, still tied to its own
+    ///      tallest.
+    private static func checkAnExemptCardSizesToItsOwnContent(_ ok: inout Bool) {
+        print("\n-- module grid: an exempt card renders at its own height, and only it --")
+
+        /// A fixture module: a body, a span, and whether it leaves the tie.
+        struct Cell {
+            let body: HelmModuleCard.Body
+            let span: Int
+            let exempt: Bool
+        }
+
+        // Row 0: a tall exempt card beside a short one - the canvas's real
+        // shape, where `.claudeStatus` spans two columns and Fleet one.
+        // Row 1: two ordinary cards, neither exempt, of different natural
+        // heights - the case that must still tie.
+        // Row 2: the short card alone, which is the *reference*: a row of one
+        // is never tied to anything, so this is what that body renders at
+        // when nothing stretches it. Row 0's neighbour has to match it.
+        let tall = HelmModuleCard.Body.peekRows((1...HelmModuleCard.maxPeekRows).map {
+            HelmModulePeekRow(state: .warn, text: "task-\($0)", value: "needs decision")
+        })
+        let short = HelmModuleCard.Body.note("Locked.")
+        let cells = [
+            Cell(body: tall, span: 2, exempt: true),
+            Cell(body: short, span: 1, exempt: false),
+            Cell(body: short, span: 1, exempt: false),
+            Cell(body: tall, span: 2, exempt: false),
+            Cell(body: short, span: 1, exempt: false),
+        ]
+
+        let window = OffScreenProbe.window(width: 1200, height: 900, styleMask: [.titled, .resizable])
+        let host = NSView(frame: window.contentLayoutRect)
+        window.contentView = host
+
+        let containerWidth: CGFloat = 860
+        let rows = HelmResponsiveGrid.spanningRows(
+            cells,
+            spans: { $0.span },
+            containerWidth: containerWidth,
+            minItemWidth: HomeCanvasController.minModuleWidth,
+            spacing: HomeCanvasController.gridSpacing,
+            equalHeights: true,
+            exemptsHeightTie: { $0.exempt }
+        ) { cell, _ in
+            let card = HelmModuleCard()
+            card.configure(.init(title: "Module", subtitle: "updated 9:41 AM",
+                                 symbol: "circle.fill", hue: .teal, chip: nil, body: cell.body))
+            return card
+        }
+        guard rows.count == 3 else {
+            fail("expected the fixture to pack into 3 rows, got \(rows.count) - the packing "
+                 + "changed and every measurement below is about the wrong rows", &ok)
+            return
+        }
+
+        let column = NSStackView(views: rows)
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = HomeCanvasController.gridSpacing
+        column.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            column.topAnchor.constraint(equalTo: host.topAnchor),
+            column.widthAnchor.constraint(equalToConstant: containerWidth),
+        ])
+        for row in rows {
+            row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        }
+        host.layoutSubtreeIfNeeded()
+        defer { host.subviews.forEach { $0.removeFromSuperview() } }
+
+        let cards = rows.map { $0.arrangedSubviews.compactMap { $0 as? HelmModuleCard } }
+        guard cards[0].count == 2, cards[1].count == 2, cards[2].count == 1 else {
+            fail("expected 2, 2 and 1 cards in the three rows, got \(cards.map(\.count))", &ok)
+            return
+        }
+        // The fixture really laid out - otherwise every height below is 0 and
+        // every comparison passes vacuously.
+        guard rows.allSatisfy({ $0.frame.height > 0 }) else {
+            fail("a row never laid out (height 0) - every check below would be vacuous", &ok)
+            return
+        }
+
+        let exemptHeight = cards[0][0].anatomyForTests.cardHeight
+        let neighbourHeight = cards[0][1].anatomyForTests.cardHeight
+
+        // The fixture's own discriminating power: the two bodies must really
+        // want different heights, or "the neighbour is shorter" means nothing.
+        let tiedTall = cards[1][1].anatomyForTests.cardHeight
+        let tiedShort = cards[1][0].anatomyForTests.cardHeight
+        // The short body's own natural height, measured where nothing is
+        // tied to anything: row 2 holds it alone.
+        let loneShort = cards[2][0].anatomyForTests.cardHeight
+        // Measured on row 1 and row 2, neither of which contains an exempt
+        // card - so this stays a statement about the *fixture* even when the
+        // exemption is broken, and cannot swallow a real failure below.
+        if tiedTall <= loneShort + 1 {
+            fail("the fixture is not discriminating: a tied peek-list card settled at \(tiedTall) "
+                 + "and a lone one-line card at \(loneShort). The two bodies must want visibly "
+                 + "different heights or nothing below this line can fail", &ok)
+            return
+        }
+
+        // 1. The exempt card kept its own height, and nothing in it clips.
+        let exemptAnatomy = cards[0][0].anatomyForTests
+        if exemptAnatomy.bodyContentHeight > exemptAnatomy.bodyAreaHeight + 0.5 {
+            fail("the exempt card was clipped: its body needs \(exemptAnatomy.bodyContentHeight)pt "
+                 + "and it was given \(exemptAnatomy.bodyAreaHeight)pt", &ok)
+        }
+        if abs(exemptHeight - tiedTall) > 1 {
+            fail("the exempt card settled at \(exemptHeight) but the same body tied in row 1 "
+                 + "settled at \(tiedTall) - the exemption should change nothing about the "
+                 + "exempt card's own height", &ok)
+        }
+
+        // 2. Its neighbour is back at its own content, not stretched to it.
+        //    This is the regression: leaving the card out of the tie is not
+        //    enough, the stack stretches it anyway.
+        if abs(neighbourHeight - loneShort) > 1 {
+            fail("the exempt card's neighbour settled at \(neighbourHeight), not at the "
+                 + "\(loneShort) the same one-line card renders at on its own. It is being "
+                 + "stretched to the exempt card's \(exemptHeight) - which is the whole defect "
+                 + "the exemption exists to fix", &ok)
+        }
+
+        // 3. A row with no exempt card still ties to its own tallest.
+        if abs(tiedShort - tiedTall) > 1 {
+            fail("row 1 has no exempt card and should still be uniform, got "
+                 + "\(tiedShort) and \(tiedTall) - the exemption must not switch the tie off "
+                 + "for ordinary rows", &ok)
+        }
+        let tiedAnatomy = cards[1][1].anatomyForTests
+        if tiedAnatomy.bodyContentHeight > tiedAnatomy.bodyAreaHeight + 0.5 {
+            fail("the tied row squashed its taller card: body needs "
+                 + "\(tiedAnatomy.bodyContentHeight)pt, given \(tiedAnatomy.bodyAreaHeight)pt", &ok)
+        }
+
+        // And the one module that actually carries the exemption today.
+        let exempt = DaylightModule.allCases.filter(\.sizesToOwnContent)
+        if exempt != [.claudeStatus] {
+            fail("exactly one module should size to its own content (.claudeStatus), got \(exempt)", &ok)
+        }
+
+        if ok {
+            print(String(format: "  OK - exempt card %.0fpt, its neighbour back at its own %.0fpt "
+                         + "(not stretched), ordinary row still tied at %.0fpt",
+                         exemptHeight, neighbourHeight, tiedTall))
         }
     }
 

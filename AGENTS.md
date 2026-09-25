@@ -1193,6 +1193,18 @@ container (`scroll.bottom == bottom`) and let the *page* decide how tall the
 container gets. Any wrapper of this shape - `HelmPageSidebar` uses the same
 mechanism - wants the same check.
 
+**The same "nothing ties this height" shape, one level out: taking a view *out*
+of a height tie also takes away the container's protection of it.** A row stack
+resists clipping its content at 750 and hugs it at 250, and it is a card's own
+`== row` tie at 499 that transfers that protection to the card - so a card body
+whose vertical resistance is below 250 (`HelmModuleCard`'s `bodyHug` comment
+records exactly one) is squashed the moment the tie is dropped, measured as an
+86pt body rendered into a 68pt area. `HelmResponsiveGrid.spanningRows`'
+`exemptsHeightTie` is the worked example, and it needs *two* things rather than
+one: a reference the exempt view cannot inflate for everything still tied, and a
+floor of the exempt view's own `fittingSize.height` to replace what the tie used
+to supply. [`04-design-system.md`](docs/history/04-design-system.md).
+
 ### (17) An `NSTextView` is not a label, and it repaints your colours
 
 **Two separate traps that arrive together the moment a page needs *inline*
