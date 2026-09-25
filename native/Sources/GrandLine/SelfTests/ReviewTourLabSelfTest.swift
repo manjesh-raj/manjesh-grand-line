@@ -104,17 +104,45 @@ enum ReviewTourLabSelfTest {
                 fail("the PNG did not decode", &ok)
                 return
             }
-            check(rep.pixelsWide >= 1400 && rep.pixelsHigh >= 900,
-                  "the render should be at least the window's size in pixels, got "
+            // **The rep is in pixels and the view is in points**, and the two
+            // differ by the backing scale - 2x on every dev Mac here, 1x on a
+            // GitHub runner (AGENTS.md records both halves of this trap). The
+            // expected size is therefore derived from the *view that was
+            // rendered*, never from the window: a titled window's content view
+            // is shorter than its frame by the title bar. Measured here, a
+            // 1400x900 window renders a 1400x868 view, so the first version of
+            // this check (`>= 1400 && >= 900`) passed locally only because 2x
+            // doubled it to 2800x1736 - and failed on the runner at 1400x872,
+            // which is the defect, caught by CI rather than by this machine.
+            let scale = window.backingScaleFactor
+            let expectedWide = Int((shell.view.bounds.width * scale).rounded())
+            let expectedHigh = Int((shell.view.bounds.height * scale).rounded())
+            check(abs(rep.pixelsWide - expectedWide) <= 1 && abs(rep.pixelsHigh - expectedHigh) <= 1,
+                  "the render should be the rendered view's own size in pixels "
+                  + "(\(expectedWide)x\(expectedHigh) at \(scale)x), got "
                   + "\(rep.pixelsWide)x\(rep.pixelsHigh)", &ok)
+
             // And it is not one flat colour, which is what a view that never
             // drew looks like.
-            let a = rep.colorAt(x: rep.pixelsWide / 10, y: rep.pixelsHigh / 10)
-            let b = rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh / 2)
-            check(a != nil && b != nil, "could not sample the render", &ok)
-            if let a, let b {
-                check(a != b, "every sampled pixel is the same colour - the page did not draw", &ok)
+            //
+            // A sweep rather than two chosen points, for the same reason: two
+            // points in *pixel* coordinates land in different places on the
+            // page at 1x and at 2x, so a pair that straddles a card on one
+            // machine can sit on the same background on the other - which is
+            // the second half of what the runner caught. A sweep cannot be
+            // scale-dependent.
+            var distinct = Set<String>()
+            for row in 1..<8 {
+                for column in 1..<8 {
+                    let x = min(rep.pixelsWide * column / 8, rep.pixelsWide - 1)
+                    let y = min(rep.pixelsHigh * row / 8, rep.pixelsHigh - 1)
+                    guard let colour = rep.colorAt(x: x, y: y) else { continue }
+                    distinct.insert(String(describing: colour))
+                }
             }
+            check(distinct.count >= 3,
+                  "a 7x7 sweep of the render found \(distinct.count) distinct colour(s) - "
+                  + "the page did not draw", &ok)
         }
         return ok
     }
