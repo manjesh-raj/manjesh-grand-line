@@ -107,6 +107,8 @@ enum CompactModeViewSelfTest {
         checkTheSettingsCardCarriesAllThreeToggles(check)
         checkTheModeTransitionDoesTheFourThings(check)
         checkTheWindowIsHiddenOnlyOnTheWayIn(check)
+        checkAWindowIsHiddenWhenTheModeIsAlreadyOnAtLaunch(check)
+        checkTheMainWindowIsNotReleasedWhenClosed(check)
         checkLeavingTheModeTurnsItOff(check)
         checkTheLockRefusesThePopover(check)
 
@@ -808,6 +810,110 @@ enum CompactModeViewSelfTest {
                       + "\(hides). Otherwise flipping the badge switch would close a window the "
                       + "captain had just reopened")
         }
+    }
+
+
+    /// **Review bug B8**, the stale window at launch.
+    ///
+    /// `refresh()` hides the window only on the transition `!previous.isEnabled`,
+    /// and `policy` was seeded with `.current()` - so on a session that starts
+    /// with compact mode already on, `previous` and `policy` were identical on
+    /// the very first refresh and the transition never happened. Every other
+    /// part of the mode came up correctly (the merged status item, the hotkey,
+    /// the activation policy); only the one thing the mode is *for* did not.
+    ///
+    /// Deliberately constructs its own controller rather than using
+    /// `withController`, because that harness forces the settings off before
+    /// constructing one - which is the launch this bug does **not** affect.
+    /// The setting has to already be on when the controller is born.
+    private static func checkAWindowIsHiddenWhenTheModeIsAlreadyOnAtLaunch(_ check: (Bool, String) -> Void) {
+        autoreleasepool {
+            let saved = (AppSettings.shared.compactModeEnabled,
+                         AppSettings.shared.compactModeHidesDockIcon,
+                         AppSettings.shared.compactModeBadgesOverdueCount)
+            let savedPolicy = NSApplication.shared.activationPolicy()
+            defer {
+                AppSettings.shared.compactModeEnabled = saved.0
+                AppSettings.shared.compactModeHidesDockIcon = saved.1
+                AppSettings.shared.compactModeBadgesOverdueCount = saved.2
+                NSApplication.shared.setActivationPolicy(savedPolicy)
+            }
+
+            // The captain left the mode on last session. This is what launch
+            // reads, before any controller exists.
+            AppSettings.shared.compactModeEnabled = true
+            AppSettings.shared.compactModeHidesDockIcon = false
+            AppSettings.shared.compactModeBadgesOverdueCount = false
+
+            let content = CompactModePopoverController()
+            content.todayProvider = { todayFixture }
+            content.notesProvider = { notesFixture }
+            content.vaultCodesProvider = { [] }
+            content.vaultUnlockedProvider = { false }
+            let controller = CompactModeController(content: content)
+            var hides = 0
+            controller.onHideMainWindow = { hides += 1 }
+
+            // `main.swift`'s launch order: build the window, order it front,
+            // then one `refresh()`.
+            controller.refresh()
+            check(hides == 1,
+                  "a session that starts with compact mode already on must hide the main window on "
+                  + "its first refresh - it hid \(hides) time(s), so the captain gets a full window "
+                  + "with the mode otherwise fully engaged (B8)")
+            check(controller.policy.isEnabled,
+                  "and the policy really is enabled, or the check above is vacuous")
+            check(controller.debugStatusItemIsVisible,
+                  "and the rest of the mode came up too, which is what made this easy to miss")
+
+            // The gate it must not break: a second refresh while already in
+            // the mode does not re-hide a window brought back with "Open full
+            // window".
+            controller.refresh()
+            check(hides == 1,
+                  "and a later refresh while already in the mode does not hide it again - got \(hides)")
+        }
+    }
+
+    /// B8's second half: the main window must refuse to be released when
+    /// closed.
+    ///
+    /// In compact mode `applicationShouldTerminateAfterLastWindowClosed` is
+    /// `false`, so the red button closes the main window while the process
+    /// keeps running - and with the AppKit default (`true` for a window built
+    /// with `init(contentRect:)`) that *releases* a window `AppDelegate.window`,
+    /// the resize observers, `FullScreenMenuBarFill` and
+    /// `WindowChromeFusion`'s cluster cache all still hold. Reproduced live on
+    /// this branch with an env-gated probe: the unfixed binary exited 139
+    /// (SIGSEGV) on the first access to `self.window` after `performClose`.
+    ///
+    /// A source guard, because the crash is a use-after-free in `main.swift`'s
+    /// own window and `AppDelegate` cannot be constructed headlessly (`NSApp`
+    /// is nil - AGENTS.md's own rule). Scoped to the window's construction so
+    /// the host editor's identical line two hundred lines below cannot satisfy
+    /// it.
+    private static func checkTheMainWindowIsNotReleasedWhenClosed(_ check: (Bool, String) -> Void) {
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let text = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8)
+        else {
+            check(false, "main.swift could not be read, so this guard checked nothing")
+            return
+        }
+        guard let start = text.range(of: "window = NSWindow(") else {
+            check(false, "main.swift no longer builds its window the way this guard expects")
+            return
+        }
+        guard let end = text.range(of: "window.contentViewController = appShell", range: start.upperBound..<text.endIndex) else {
+            check(false, "could not find the end of the window's construction")
+            return
+        }
+        let construction = String(text[start.upperBound..<end.lowerBound])
+        // Discriminating power: the extracted region has to be the real one.
+        check(construction.contains("WindowChromeFusion.apply(to: window)"),
+              "the extracted window construction does not look like the real one")
+        check(construction.contains("window.isReleasedWhenClosed = false"),
+              "the main window must set isReleasedWhenClosed = false. In compact mode the red "
+              + "button closes it without quitting, and AppDelegate.window still points at it (B8)")
     }
 
     private static func checkLeavingTheModeTurnsItOff(_ check: (Bool, String) -> Void) {

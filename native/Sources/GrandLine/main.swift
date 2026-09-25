@@ -765,6 +765,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // hides it: the Window menu, Mission Control and the window's own
         // proxy menu all read it.
         window.title = Self.windowTitle(context: appShell.currentContextTitle)
+        // **Review bug B8.** `isReleasedWhenClosed` defaults to `true` for a
+        // window created with `init(contentRect:...)`, and this one is
+        // referenced for the app's whole life - `AppDelegate.window`, the
+        // resize observers, `FullScreenMenuBarFill`, `WindowChromeFusion`'s
+        // per-window cluster cache, the lock overlay.
+        //
+        // With the stock `applicationShouldTerminateAfterLastWindowClosed`
+        // answer the red button quits the app, so the release is harmless. In
+        // **compact mode** that answer is `false`
+        // (`CompactModePolicy.terminatesAfterLastWindowClosed`), so the red
+        // button closes this window while the process keeps running - and
+        // then releases a window every one of those references still holds.
+        // The host editor window two hundred lines below already sets this,
+        // for the same reason; the main window never did because until
+        // compact mode shipped it could not outlive its own close.
+        window.isReleasedWhenClosed = false
         WindowChromeFusion.apply(to: window)
         fullScreenMenuBarFill = FullScreenMenuBarFill(window: window)
         // **`contentViewController` first, then the frame.** Assigning a

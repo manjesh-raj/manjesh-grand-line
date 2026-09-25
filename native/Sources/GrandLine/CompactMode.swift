@@ -233,7 +233,24 @@ final class CompactModeController: NSObject, NSPopoverDelegate {
     /// The live policy. Re-read from `AppSettings` on every `refresh()`
     /// rather than cached at init, so Settings' three toggles take effect on
     /// the click rather than on the next launch.
-    private(set) var policy: CompactModePolicy = .current()
+    ///
+    /// **Review bug B8.** This used to be seeded with `.current()`, so at
+    /// launch `previous` and `policy` were already the same - and `refresh()`
+    /// hides the window only on the *transition* `!previous.isEnabled`. A
+    /// session that starts with compact mode already on therefore showed a
+    /// full window with no Dock icon: the mode was on in every other respect
+    /// (status item merged, hotkey armed, `.accessory` policy) except the one
+    /// thing it is for.
+    ///
+    /// Seeded "off" instead, so the first `refresh()` is always a real
+    /// transition into whatever the captain's setting says. Nothing is lost
+    /// when the setting is off - the `else` branch is idempotent - and the
+    /// `previous` gate keeps doing its actual job, which is that flipping the
+    /// badge toggle must not re-hide a window the captain brought back with
+    /// "Open full window" (which leaves the mode on).
+    private(set) var policy = CompactModePolicy(isEnabled: false,
+                                                hidesDockIcon: false,
+                                                badgesOverdueCount: false)
 
     /// How many of the captain's tasks are overdue, for the opt-in badge.
     var overdueCountProvider: (() -> Int)?
