@@ -967,7 +967,11 @@ enum SettingsSidebarNavigationSelfTest {
         // vacuously on a run where every page happened to fill its pane -
         // at which point equal margins prove nothing about centring.
         var discriminating = 0
-        for width in [CGFloat(1512), CGFloat(1400), CGFloat(1100)] {
+        // 1512.5 is deliberate: it puts the ideal centre *off* the backing
+        // grid even on a retina machine, which is the only way a dev box
+        // reproduces what CI's 1x runner hits at every even width. Without
+        // it this case passed locally and failed on CI.
+        for width in [CGFloat(1512), CGFloat(1512.5), CGFloat(1400), CGFloat(1100)] {
             autoreleasepool {
                 let settings = makeSettings()
                 let window = mount(settings, width: width, height: 950)
@@ -985,6 +989,25 @@ enum SettingsSidebarNavigationSelfTest {
                     let header = settings.debugToolbarFrameInRoot
                     let left = column.minX - edge.maxX
                     let right = root.bounds.maxX - column.maxX
+                    // **One device pixel, not half a point.** The visible
+                    // region beside the sidebar is an odd number of points
+                    // wide at every even window width (the sidebar's visible
+                    // edge lands on an odd coordinate, and the column's cap
+                    // is even), so the exact centre is a half point - and
+                    // Auto Layout aligns a frame to the *backing store*.
+                    // Shifting the column by d grows one margin by d and
+                    // shrinks the other by d, so the two differ by 2d, and d
+                    // is at most half a device pixel: 1.0pt on a 1x runner,
+                    // 0.5pt on a retina Mac. Measured both ways - 1512pt on
+                    // 2x gives an exact 287.5/287.5, 1512.5pt on 2x gives
+                    // 288.0/287.5, and CI's 1x runner at 1512pt gives
+                    // 288.0/287.0.
+                    //
+                    // This cannot mask the defect the case exists for: the
+                    // pre-fix left-pin put the column *one point left of the
+                    // sidebar's visible edge* with the whole slack on the
+                    // right, which is 577pt of asymmetry at 1512.
+                    let tolerance = 1.0 / max(window.backingScaleFactor, 1)
 
                     guard left > 0.5, right > 0.5 else {
                         fail("\(category.rawValue) at \(fmt(width)): the column runs "
@@ -996,11 +1019,11 @@ enum SettingsSidebarNavigationSelfTest {
                     if left > 40 { discriminating += 1 }
 
                     let delta = abs(left - right)
-                    check(delta <= 0.5,
+                    check(delta <= tolerance,
                           "\(category.rawValue) at \(fmt(width)): \(fmt(left))pt of visible "
                           + "margin on the left against \(fmt(right))pt on the right - "
-                          + "\(fmt(delta))pt apart, so the column is not centred beside the "
-                          + "sidebar", &ok)
+                          + "\(fmt(delta))pt apart against a \(fmt(tolerance))pt device-pixel "
+                          + "tolerance, so the column is not centred beside the sidebar", &ok)
 
                     // The header rides the same centre. Asserted here as well
                     // as in case 11 because that case compares the two to
@@ -1008,12 +1031,12 @@ enum SettingsSidebarNavigationSelfTest {
                     let headerLeft = header.minX - edge.maxX
                     let headerRight = root.bounds.maxX - header.maxX
                     let headerDelta = abs(headerLeft - headerRight)
-                    check(headerDelta <= 0.5,
+                    check(headerDelta <= tolerance,
                           "\(category.rawValue) at \(fmt(width)): the header has "
                           + "\(fmt(headerLeft))pt of visible margin on the left against "
                           + "\(fmt(headerRight))pt on the right", &ok)
 
-                    guard delta <= 0.5, headerDelta <= 0.5 else { continue }
+                    guard delta <= tolerance, headerDelta <= tolerance else { continue }
                     print("  ok   \(category.rawValue) at \(fmt(width)): visible margins "
                           + "\(fmt(left)) / \(fmt(right)), column "
                           + "\(fmt(column.minX))..\(fmt(column.maxX))")

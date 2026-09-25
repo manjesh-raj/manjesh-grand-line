@@ -667,6 +667,22 @@ fails unless its entry carries a trailing marker.
 - A GitHub runner has **Reduce Motion ON** and always-visible scrollbars. Pin
   `HelmMotion.reducedOverrideForTests` rather than inheriting the host's
   setting, and do not assert a pixel width that a scroller track can move.
+- **A GitHub runner's backing scale factor is 1x, and every dev Mac here is
+  2x** - so a frame that lands on a half point is exact locally and *rounds*
+  in CI. Auto Layout aligns a frame to the backing store, so a centred view
+  whose ideal origin is a half point shifts by up to half a device pixel, and
+  the two margins either side of it then differ by a **whole** device pixel:
+  0.5pt on a retina Mac, 1.0pt on a runner. A symmetry assertion therefore
+  needs `1.0 / window.backingScaleFactor`, never a hard-coded `0.5` - which
+  passes 4/4 locally and fails every case in CI, measured
+  (`fm/grand-line-settings-page-centering-fix`: Settings' centred column, an
+  exact `287.5 / 287.5` here against CI's `288.0 / 287.0`). It is not a bug
+  in the layout and there is nothing to round in the app: the visible region
+  beside a sidebar is simply an odd number of points wide at even window
+  widths. **To reproduce a 1x rounding defect on a 2x machine, add a
+  half-point window width** to the fixture (`1512.5`), which pushes the same
+  ideal centre off the retina grid; a suite that only tests whole widths
+  cannot see this class at all.
 
 ---
 

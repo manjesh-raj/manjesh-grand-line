@@ -1014,3 +1014,43 @@ The packaged `dist/Grand Line.app` was not launched, per AGENTS.md's first
 standing rule; the probe is a debug build of the same sources with the same
 layout code, and the defect is entirely inside the content view, so the
 title-bar and menu-bar caveats on an off-screen render do not apply here.
+
+### The centring assertion was written for a retina machine, and CI is 1x
+
+The fix above was correct and the suite that guards it was not, which CI caught
+on PR #480: `checkTheColumnIsCentredInTheVisibleSpace` passed 4/4 locally and
+failed **every** page at **every** width on both windowed CI legs, always by
+exactly 1.0pt - `288.0pt of visible margin on the left against 287.0pt on the
+right`.
+
+Nothing was wrong with the centring. The visible region beside the sidebar is
+an odd number of points wide at every even window width (the sidebar's visible
+edge lands on an odd coordinate, at `sidebarColumn.trailing + pageGutter + 1`,
+and the column's cap is even), so the exact centre is a half point.
+Auto Layout aligns a frame to the **backing store**, so that half point is
+representable on a 2x Mac and is not on CI's 1x runner.
+Shifting the column by `d` grows one margin by `d` and shrinks the other by
+`d`, so the two differ by `2d`, and `d` is at most half a device pixel - 0.5pt
+at 2x, 1.0pt at 1x.
+The assertion's hard-coded `0.5` tolerance was silently a retina assumption.
+
+Measured three ways rather than reasoned:
+
+| Where | Window | Left / right |
+|---|---|---|
+| local, 2x | 1512 | 287.5 / 287.5 |
+| local, 2x | 1512.5 | 288.0 / 287.5 |
+| CI, 1x | 1512 | 288.0 / 287.0 |
+
+The middle row is the point: **a half-point window width reproduces a 1x
+rounding defect on a 2x machine**, because it pushes the same ideal centre off
+the retina grid. `1512.5` is now a permanent fixture width for exactly that
+reason - without it the suite could only ever fail in CI.
+
+The tolerance is `1.0 / window.backingScaleFactor` - one device pixel, as
+tight as the hardware allows rather than a round number picked to make CI
+pass. It cannot mask the defect the case exists for: the pre-fix left-pin put
+the column one point *left* of the sidebar's visible edge with the entire
+slack on the right, which trips the case's "one margin is gone entirely" guard
+before the tolerance is consulted at all. Re-confirmed by re-running the same
+injection after the tolerance change - 38 failures, all in this case.
