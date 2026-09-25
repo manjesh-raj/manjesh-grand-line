@@ -2720,6 +2720,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_KEYCHAIN_SERVICE_ISOLATION_TESTS"
     exit(KeychainServiceIsolationSelfTest.run() ? 0 : 1)
 }
 
+// Review bug B10: the Dictation status card's wrapping column. Window-backed -
+// it measures real resolved geometry from a real layout pass.
+if ProcessInfo.processInfo.environment["FM_RUN_DICTATION_STATUS_CARD_LAYOUT_TESTS"] == "1" {
+    exit(DictationStatusCardLayoutSelfTest.run() ? 0 : 1)
+}
+
 // fm/cockpit-tools-yaml-order-perf-fix: same convention, for YamlBeautify's
 // key-order fidelity - see YamlBeautifySelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_YAML_BEAUTIFY_TESTS"] == "1" {

@@ -177,6 +177,11 @@ SKIP_FLAGS=(
 # deliberately a per-entry marker with a stated reason rather than a blanket
 # allowlist, the same shape as `OffScreenProbe-exempt:` above.
 NEEDS_SESSION=(
+  # Review bug B10: the Dictation status card's wrapping text column. It
+  # asserts real resolved frames from a real layout pass at several widths -
+  # the defect is a circular `preferredMaxLayoutWidth` derivation, which only
+  # exists once Auto Layout has actually resolved something.
+  "FM_RUN_DICTATION_STATUS_CARD_LAYOUT_TESTS"
   # The redesigned "Waiting for you" popover: the real panel mounted in a real
   # key window, because a `HoverHighlightView`'s tracking area is
   # `.activeInKeyWindow` and the hover-reveals-the-action swap is the whole
