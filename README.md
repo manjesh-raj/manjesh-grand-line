@@ -176,6 +176,7 @@ These tables are **complete in both directions**, and that is a check rather tha
 | `FM_WHITEBOARD_WEB_DIR` | The vendored Excalidraw bundle the Whiteboard destination loads (checked after `Contents/Resources`, before the source-tree walk-up) |
 | `FM_CODE_PREVIEW_WEB_DIR` | The vendored Monaco bundle the Code Preview panel loads (same lookup order) |
 | `FM_GITHUB_SYNC_CLONE_ROOT` | Where GitHub Sync keeps its scratch clones (never the captain's own working copies) |
+| `FM_DIAGNOSTICS_DIR` | The on-disk diagnostics log (`diagnostics/app.log`, one 256KB file plus one rotated generation) and the `last-launch` stamp `crashReportsSinceLastLaunch()` compares against. Errors and lifecycle events only - the unified log is still where detail goes |
 
 ### Tooling and test fixtures
 

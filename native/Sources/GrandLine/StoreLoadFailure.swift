@@ -70,9 +70,11 @@ enum StoreLoadFailure {
             // (a self-test case is what caught that second copy).
             SensitiveFile.restrict(backupURL)
             AppLog.store.error("\(name, privacy: .public) failed to decode - backed up to \(backupURL.path, privacy: .public)")
+            DiagnosticsLog.shared.error("store", "\(name) failed to decode - backed up to \(backupURL.path)")
             return backupURL.path
         } catch {
             AppLog.store.critical("\(name, privacy: .public) failed to decode AND could not be backed up: \(error.localizedDescription, privacy: .public)")
+            DiagnosticsLog.shared.error("store", "\(name) failed to decode AND could not be backed up: \(error.localizedDescription)")
             return nil
         }
     }
