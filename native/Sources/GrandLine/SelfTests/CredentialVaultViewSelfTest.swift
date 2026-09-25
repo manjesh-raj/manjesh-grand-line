@@ -93,6 +93,7 @@ enum CredentialVaultViewSelfTest {
         checkUnreadableNeverOffersCreate(scratch: scratch, window: window, check)
         checkEditorRoundTrip(check)
         checkExactlyOneSwitchPerToggleRow(check)
+        checkSetupGuidanceIsNotTruncated(window: window, check)
         checkPasswordChangeWarnsAboutGitHistory(check)
         checkThemeSweep(scratch: scratch, window: window, check)
         checkListBodyFillsItsCard(check)
@@ -1092,6 +1093,61 @@ enum CredentialVaultViewSelfTest {
         let settingsSwitches = countSwitchControls(in: settings.debugTouchIDRow)
         check(settingsSwitches == 1,
               "the settings sheet's Touch ID row should render exactly one switch, found \(settingsSwitches)")
+    }
+
+
+    /// **Review bug B11**: two strings on the vault's setup card were cut off
+    /// with no ellipsis at every window width.
+    ///
+    /// Both are inside a card capped at 420pt, so the *window's* width never
+    /// mattered - which is why the review measured the identical truncation at
+    /// 1512pt and at 1100pt. Measured on this branch before the fix: the
+    /// strength hint needed 412pt and got 376 ("...beats a short complicate"),
+    /// and the toggle title needed 356pt and got 300 ("...down somewh").
+    ///
+    /// The check is "does the text fit in the space it was given", asserted
+    /// against the string's own single-line width rather than against a pixel
+    /// count - so it keeps working if the copy, the font or the cap changes.
+    private static func checkSetupGuidanceIsNotTruncated(window: NSWindow, _ check: (Bool, String) -> Void) {
+        print("\n-- B11: the setup card's guidance strings are not truncated --")
+        for width in [1512.0, 1100.0] as [CGFloat] {
+            autoreleasepool {
+                let gate = CredentialVaultUnlockView()
+                let host = OffScreenProbe.window(width: width, height: 900)
+                defer { host.contentView = nil; host.close() }
+                host.contentView = gate
+                gate.frame = NSRect(x: 0, y: 0, width: width, height: 900)
+                gate.setMode(.create)
+                // The hint state, which is what the card shows before the
+                // captain has typed anything - and the state that truncated.
+                gate.debugFieldsChanged()
+                for _ in 0..<3 { gate.layoutSubtreeIfNeeded() }
+
+                let hint = gate.debugStrengthLabel
+                let toggle = gate.debugSavedItRow.debugTitleLabel
+
+                for (name, label) in [("the strength hint", hint), ("the confirm toggle", toggle)] {
+                    let singleLine = ceil((label.stringValue as NSString).size(
+                        withAttributes: [.font: label.font ?? NSFont.systemFont(ofSize: 12)]).width)
+                    // Discriminating power: unless the text genuinely does not
+                    // fit on one line at this width, the wrap assertion below
+                    // proves nothing.
+                    check(singleLine > label.frame.width,
+                          "@\(width): \(name) is the vacuous case - it fits on one line "
+                          + "(\(singleLine)pt in \(label.frame.width)pt), so this check is asserting nothing")
+                    guard singleLine > label.frame.width else { continue }
+
+                    let lineHeight = ceil((label.font ?? NSFont.systemFont(ofSize: 12)).boundingRectForFont.height)
+                    check(label.frame.height > lineHeight,
+                          "@\(width): \(name) needs \(singleLine)pt but was given \(label.frame.width)pt "
+                          + "and is still one line tall (\(label.frame.height)pt) - it is truncated with "
+                          + "no ellipsis, which is B11. \"\(label.stringValue)\"")
+                    check(label.cell?.wraps == true,
+                          "@\(width): \(name) must be built as a wrapping label - `maximumNumberOfLines` "
+                          + "alone does nothing to a cell whose `wraps` is false")
+                }
+            }
+        }
     }
 
     /// Every `NSSwitch`/`HelmToggle` in a view's subtree. `HelmToggle` is

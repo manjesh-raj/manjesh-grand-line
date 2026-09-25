@@ -53,7 +53,15 @@ final class CredentialVaultUnlockView: NSView {
     private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
     private let passwordField = HelmSecureTextField(placeholder: "Master password")
     private let confirmField = HelmSecureTextField(placeholder: "Confirm master password")
-    private let strengthLabel = NSTextField(labelWithString: "")
+    /// **Review bug B11.** A plain `labelWithString` here truncated with no
+    /// ellipsis at every window width: the hint it carries before a password
+    /// is typed ("At least 10 characters. A long passphrase beats a short
+    /// complicated one.") needs 412pt and the 420pt-capped card gives it 376.
+    /// Measured on this branch, identical at 1512pt and 1100pt - the card is
+    /// capped, so the window's width never mattered. It alternates with a
+    /// short verdict ("Strength: Fair"), which is why nobody noticed: the
+    /// state that truncates is the one before the captain has typed anything.
+    private let strengthLabel = NSTextField(wrappingLabelWithString: "")
     /// Review #3's UX8: "a password manager owes the user that sentence at
     /// *creation* time ('There is no recovery. Write this down.'), plus a
     /// strength meter and a 'confirm you saved it' step."
@@ -179,6 +187,11 @@ final class CredentialVaultUnlockView: NSView {
         }
         subtitleLabel.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
         messageLabel.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        // B11: a wrapping label in a leading-aligned vertical stack has no
+        // width Auto Layout is obliged to give it, so it needs the same tie
+        // the two labels above already have - see `HelmEmptyState`'s own note
+        // on the "No / sa" failure this shape produces without one.
+        strengthLabel.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
 
         card.setBody(column, insets: NSEdgeInsets(top: HelmMetrics.s5, left: HelmMetrics.s5,
                                                   bottom: HelmMetrics.s5, right: HelmMetrics.s5))
@@ -307,6 +320,11 @@ final class CredentialVaultUnlockView: NSView {
     var debugRecoveryWarningText: String { recoveryWarningLabel.stringValue }
     var debugRecoveryWarningVisible: Bool { recoveryWarningCard?.isHidden == false }
     var debugStrengthBarVisible: Bool { !strengthBar.isHidden }
+    /// Review bug B11: the two strings the review measured truncating at every
+    /// window width. `fittingSize` is what the text needs; `frame` is what it
+    /// got.
+    var debugStrengthLabel: NSTextField { strengthLabel }
+    var debugCard: NSView? { subviews.first }
     /// Drives the same path `controlTextDidChange` does, so a suite can set a
     /// field and have the gate re-evaluate exactly as typing would.
     func debugFieldsChanged() { updateStrength() }
