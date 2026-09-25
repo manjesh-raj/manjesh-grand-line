@@ -191,6 +191,21 @@ final class ShiftStore {
             gitSync = sync
         }
         reloadAll()
+        // **Review bug B6.** A pull that fast-forwards, an auto-merge and a
+        // conflict resolution all rewrite the files this store just read, and
+        // nothing told it so - the sole consumer of the sync's signal was a
+        // status pill. The next edit rewrote the whole file from this stale
+        // memory and pushed it, so a task added on the other machine was
+        // deleted by the first keystroke on this one.
+        //
+        // `reloadAllAsync` rather than `reloadAll`: this runs on the main
+        // thread from a background pull, and its own `mutationGeneration`
+        // check drops the reload if the captain edited something while it was
+        // parsing - which is the right answer, because that edit is about to
+        // push and carry the merged state with it.
+        gitSync?.observeRemoteChanges { [weak self] in
+            self?.reloadAllAsync {}
+        }
     }
 
     // MARK: Location
