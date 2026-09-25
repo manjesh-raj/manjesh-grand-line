@@ -1043,6 +1043,26 @@ a page whose content column is **capped** must pin that content to the page by
 a constant and let the column's 499 width stand uncontested, rather than
 chaining the two together. A page whose content is uncapped may keep the chain.
 
+**And a capped column is *centred*, never left-pinned - plus the centre it is
+measured against is not the one you would reach for.** A required
+`leading == content.leading + gutter` under a width cap is deliberate
+left-alignment with a ceiling: once the cap binds, every extra point of window
+becomes empty space on the right *only*. Gotcha (3) already prescribes the
+shape (`leading >=` / `trailing <=` / `centerX ==`, cap untouched, and the grow
+tie stated as a **width** rather than a trailing pin, which under a centring
+tie would be a statement about position too). It still shipped on Settings and
+the captain reported it three times before it was read as positioning rather
+than sizing. The second half is the one no diff shows: **the scroll area starts
+under the sidebar panel**, because `scroll.leading` is `sidebarColumn.trailing`
+while `sidebarPanel.trailing` is that *plus* `pageGutter`, with `sidebarEdge`'s
+1pt rule on top. Centring on the clip view therefore lands the column half that
+overlap left of the centre anyone can see - measured 219pt of visible margin
+against 244pt at a 1400pt window, which reads as "still not centred" and is
+what a fourth report would have been about. `SettingsController.
+visibleCentreNudge` is `(pageGutter + 1) / 2`, derived from those two
+constraints rather than written as a number, and the page's toolbar carries it
+too. [`09-setup-updates-bootstrap.md`](docs/history/09-setup-updates-bootstrap.md).
+
 **A content *hugging* priority travels the same chain in the opposite
 direction, and it is a width *ceiling* rather than a floor.** Everything above
 is about a minimum reaching the window; a hug is a label saying "never wider

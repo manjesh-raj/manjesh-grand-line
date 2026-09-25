@@ -410,6 +410,25 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     private var toolbarWidthCap: NSLayoutConstraint!
     private var scrollView: NSScrollView!
 
+    /// How far to nudge a centred column right of the scroll area's own
+    /// centre, so that it is centred in the space the captain can actually
+    /// *see*.
+    ///
+    /// The scroll area does not start where the sidebar appears to end. Its
+    /// leading edge is `sidebarColumn.trailing`, while `sidebarPanel` paints
+    /// a further `pageGutter` past that column plus a 1pt `sidebarEdge` rule
+    /// on top - so the first `pageGutter + 1` points of the scroll area are
+    /// underneath the panel. Centring on the clip view alone therefore lands
+    /// the column half that overlap left of the visible centre: measured at a
+    /// 1400pt window, 219pt of visible margin on the left against 244pt on
+    /// the right. Half the overlap puts both at 244.
+    ///
+    /// Derived from the two constraints that create the overlap
+    /// (`sidebarPanel.trailing == sidebarColumn.trailing + pageGutter`, and
+    /// `sidebarEdge.width == 1`) rather than written as a number, so moving
+    /// either one cannot leave this behind.
+    private static let visibleCentreNudge = (HelmMetrics.pageGutter + 1) / 2
+
     /// The container width the page's wrapping labels were last laid out
     /// against, so a resize that did not move it costs a float compare
     /// (GL-20).
@@ -555,14 +574,32 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(pageContainer)
-        // `leading ==` plus `trailing <=` plus a required width cap, never a
-        // required `==` width tie (gotcha (3)): the cap is what stops a
-        // 1500pt window rendering a 1400pt-wide settings row, and the
-        // inequality is what stops the cap becoming the window's own frame.
+        // **Capped and centered**, which is gotcha (3)'s own prescription for
+        // this exact shape: "position with `leadingAnchor >=` / `trailingAnchor
+        // <=` / `centerXAnchor ==` instead of a width tie". The cap is what
+        // stops a 1500pt window rendering a 1400pt-wide settings row; the
+        // `centerX ==` is what puts the leftover slack on *both* sides of the
+        // column rather than all of it on the right; and the two inequalities
+        // are what still guarantee a `pageGutter` margin once the window is
+        // narrow enough that the cap no longer binds.
+        //
+        // This replaced a required `leading == content.leading + pageGutter`,
+        // which is deliberate left-alignment with a width ceiling: past the
+        // cap the column had nowhere to go, so every extra point of window
+        // became empty space on the right only. The captain reported that
+        // three times ("left-aligned", "touching the sidebar") before it was
+        // read as positioning rather than as sizing.
+        //
+        // Gotcha (13) still holds: the only required constraints here are
+        // maxima and a centering tie, none of which can be a window-width
+        // *floor*, and the one equality that could grow the column sits below
+        // `NSLayoutPriorityWindowSizeStayPut` (500).
         pageWidthCap = pageContainer.widthAnchor
             .constraint(lessThanOrEqualToConstant: selectedCategory.contentMaxWidth)
         NSLayoutConstraint.activate([
-            pageContainer.leadingAnchor.constraint(equalTo: content.leadingAnchor,
+            pageContainer.centerXAnchor.constraint(equalTo: content.centerXAnchor,
+                                                   constant: Self.visibleCentreNudge),
+            pageContainer.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor,
                                                    constant: HelmMetrics.pageGutter),
             pageContainer.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor,
                                                     constant: -HelmMetrics.pageGutter),
@@ -570,12 +607,16 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             pageContainer.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -HelmMetrics.s6),
             pageWidthCap,
         ])
-        // "And otherwise be as wide as you are allowed to be." Below
-        // `NSLayoutPriorityWindowSizeStayPut` (500) so it can never widen the
-        // window (gotcha (13)); above the stack's own content, so the column
-        // fills the pane rather than shrink-wrapping onto its widest group.
-        let widthGrow = pageContainer.trailingAnchor.constraint(equalTo: content.trailingAnchor,
-                                                                constant: -HelmMetrics.pageGutter)
+        // "And otherwise be as wide as you are allowed to be." Stated as a
+        // *width* rather than as a trailing pin, because with the centering
+        // tie above a trailing pin is a statement about position as well as
+        // size. Below `NSLayoutPriorityWindowSizeStayPut` (500) so it can
+        // never widen the window (gotcha (13)); above the stack's own content,
+        // so the column fills the pane rather than shrink-wrapping onto its
+        // widest group.
+        let widthGrow = pageContainer.widthAnchor
+            .constraint(equalTo: content.widthAnchor,
+                        constant: -2 * HelmMetrics.pageGutter)
         widthGrow.priority = HelmDaylightPriority.contentTie
         widthGrow.isActive = true
 
@@ -647,10 +688,16 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             // that slack widen the column instead (measured at 303pt against
             // the component's own 208, `fm/grandline-settings-page-sidebar-
             // redesign`). A constant leaves the column's width uncontested.
-            toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor,
-                                             constant: HelmMetrics.pageGutter + HelmPageSidebar.width
-                                                 + HelmMetrics.s5 - HelmMetrics.pageGutter
-                                                 + HelmMetrics.pageGutter),
+            // The same capped-and-centered shape the content column uses a
+            // few lines up (see `pageWidthCap`), expressed against the clip
+            // view so the header and the column it heads share *both* edges
+            // rather than only their right one. A required `leading ==` here
+            // would left-pin the header while the column below it centres,
+            // which is the drift these two blocks exist to prevent.
+            toolbar.centerXAnchor.constraint(equalTo: scroll.contentView.centerXAnchor,
+                                             constant: Self.visibleCentreNudge),
+            toolbar.leadingAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.leadingAnchor,
+                                             constant: HelmMetrics.pageGutter),
             // **The toolbar ends where the content column ends, not where
             // the page does.** The toolbar is this page's header - the
             // breadcrumb on its left, "Saved on this Mac" on its right - and
@@ -704,9 +751,12 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         toolbarWidthCap = toolbar.widthAnchor
             .constraint(lessThanOrEqualToConstant: selectedCategory.contentMaxWidth)
         toolbarWidthCap.isActive = true
-        let toolbarWidthGrow = toolbar.trailingAnchor
-            .constraint(equalTo: scroll.contentView.trailingAnchor,
-                        constant: -HelmMetrics.pageGutter)
+        // Stated as a width, for the same reason the column's own grow tie is:
+        // with the centering tie above, a trailing pin would be a statement
+        // about position as well as size.
+        let toolbarWidthGrow = toolbar.widthAnchor
+            .constraint(equalTo: scroll.contentView.widthAnchor,
+                        constant: -2 * HelmMetrics.pageGutter)
         toolbarWidthGrow.priority = HelmDaylightPriority.contentTie
         toolbarWidthGrow.isActive = true
 

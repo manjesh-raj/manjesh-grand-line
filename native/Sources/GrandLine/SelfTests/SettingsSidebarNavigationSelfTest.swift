@@ -77,7 +77,8 @@ enum SettingsSidebarNavigationSelfTest {
                       checkTheBandIsPaintedApartFromTheContent,
                       checkTheDividerIsPainted,
                       checkEveryRowCarriesItsOwnColouredTile,
-                      checkTheHeaderEndsWhereItsColumnEnds] {
+                      checkTheHeaderEndsWhereItsColumnEnds,
+                      checkTheColumnIsCentredInTheVisibleSpace] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -935,6 +936,94 @@ enum SettingsSidebarNavigationSelfTest {
                 }
             }
         }
+    }
+
+    // MARK: 12. The column is centred, not left-pinned
+
+    /// **The captain reported this three times.** Every settings page
+    /// rendered flush against the sidebar with a large empty gap on the
+    /// right only, because the content column was positioned by a required
+    /// `leading == content.leading + pageGutter` underneath its width cap -
+    /// deliberate left-alignment with a ceiling, so past the cap every extra
+    /// point of window became slack on one side.
+    ///
+    /// Case 11 above cannot see this: it asserts the header and the column
+    /// share both *ends*, which was true throughout - the two were left-
+    /// pinned together. Nor can case 6, which only asserts the cap never
+    /// becomes a window floor. Centring is a third, independent property and
+    /// needs its own assertion.
+    ///
+    /// Measured against the sidebar's **visible** edge rather than the
+    /// scroll area's leading edge, which are 25pt apart: `scroll.leading` is
+    /// `sidebarColumn.trailing`, while `sidebarPanel` paints a further
+    /// `pageGutter` past that column with `sidebarEdge`'s 1pt rule on top.
+    /// The captain sees the panel, not the clip view, so the panel is what
+    /// the margins have to be equal about - and a version of this check
+    /// written against the clip view would pass on a page that visibly is
+    /// not centred.
+    private static func checkTheColumnIsCentredInTheVisibleSpace(_ ok: inout Bool) {
+        print("-- the content column is centred in the space beside the sidebar --")
+        // Counts the cases where the cap actually binds, so this cannot pass
+        // vacuously on a run where every page happened to fill its pane -
+        // at which point equal margins prove nothing about centring.
+        var discriminating = 0
+        for width in [CGFloat(1512), CGFloat(1400), CGFloat(1100)] {
+            autoreleasepool {
+                let settings = makeSettings()
+                let window = mount(settings, width: width, height: 950)
+                defer { window.close() }
+                for category in SettingsController.Category.allCases {
+                    guard click(category, in: settings) else {
+                        fail("\(category.rawValue) has no sidebar row to click", &ok)
+                        continue
+                    }
+                    settings.view.layoutSubtreeIfNeeded()
+                    let root = settings.view
+                    let edge = settings.debugSidebarEdge
+                        .convert(settings.debugSidebarEdge.bounds, to: root)
+                    let column = settings.debugPageContainerFrameInRoot
+                    let header = settings.debugToolbarFrameInRoot
+                    let left = column.minX - edge.maxX
+                    let right = root.bounds.maxX - column.maxX
+
+                    guard left > 0.5, right > 0.5 else {
+                        fail("\(category.rawValue) at \(fmt(width)): the column runs "
+                             + "\(fmt(column.minX))..\(fmt(column.maxX)) against a visible "
+                             + "sidebar edge of \(fmt(edge.maxX)) and a page edge of "
+                             + "\(fmt(root.bounds.maxX)) - one margin is gone entirely", &ok)
+                        continue
+                    }
+                    if left > 40 { discriminating += 1 }
+
+                    let delta = abs(left - right)
+                    check(delta <= 0.5,
+                          "\(category.rawValue) at \(fmt(width)): \(fmt(left))pt of visible "
+                          + "margin on the left against \(fmt(right))pt on the right - "
+                          + "\(fmt(delta))pt apart, so the column is not centred beside the "
+                          + "sidebar", &ok)
+
+                    // The header rides the same centre. Asserted here as well
+                    // as in case 11 because that case compares the two to
+                    // each other, and two equally off-centre things agree.
+                    let headerLeft = header.minX - edge.maxX
+                    let headerRight = root.bounds.maxX - header.maxX
+                    let headerDelta = abs(headerLeft - headerRight)
+                    check(headerDelta <= 0.5,
+                          "\(category.rawValue) at \(fmt(width)): the header has "
+                          + "\(fmt(headerLeft))pt of visible margin on the left against "
+                          + "\(fmt(headerRight))pt on the right", &ok)
+
+                    guard delta <= 0.5, headerDelta <= 0.5 else { continue }
+                    print("  ok   \(category.rawValue) at \(fmt(width)): visible margins "
+                          + "\(fmt(left)) / \(fmt(right)), column "
+                          + "\(fmt(column.minX))..\(fmt(column.maxX))")
+                }
+            }
+        }
+        check(discriminating > 0,
+              "no width x category combination left real slack beside the column, so every "
+              + "equal-margin comparison above was vacuous - the fixture widths need raising "
+              + "above the widest contentMaxWidth", &ok)
     }
 
 }

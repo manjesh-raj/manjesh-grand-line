@@ -919,3 +919,98 @@ The banner's text is asserted as a pure function of `(status, split)` via
 `BootstrapController.autoSyncBannerText`, and its layout follows gotchas (10)
 and (12) rather than being measured in a render.
 Nothing here ran against the real `manjesh-config`.
+
+## The Settings page's content column was left-pinned, not centred
+
+`fm/grand-line-settings-page-centering-fix`.
+The captain reported this three times, in the same words each time: every
+settings page renders "left-aligned" and "touching the sidebar", with a large
+empty gap down the right side only.
+Two earlier rounds treated it as a sizing bug and changed the cap.
+It was never a sizing bug.
+
+### The mechanism
+
+`SettingsController.loadView` positioned the content column with a **required**
+`pageContainer.leading == content.leading + pageGutter`, plus a required width
+cap and a `contentTie` (499) tie that took up whatever slack was left.
+Every one of those is individually defensible, and the block's own comment
+correctly cited gotcha (3)'s warning against tying a capped column to the
+window with a required `==` width.
+But a required *leading* pin is deliberate left-alignment with a ceiling: once
+the cap binds, the column has nowhere to go, so every additional point of window
+width becomes empty space on the right and only on the right.
+
+Measured on a real composited probe window at 1400pt, before the fix:
+
+    LayoutReportingStack x=256.0 w=680.0 rightGap=464.0
+
+24pt of margin on the left against 464pt on the right.
+
+Gotcha (3) already prescribes the right shape for exactly this case - "position
+with `leadingAnchor >=` / `trailingAnchor <=` / `centerXAnchor ==` instead of a
+width tie" - and `HostEditorController` had been the worked example of a
+capped-and-centred column in this codebase the whole time.
+
+### The fix
+
+A required `centerX ==`, the leading and trailing pins demoted to `>=` / `<=`
+so a `pageGutter` minimum survives at narrow widths, the required width cap
+untouched, and the grow tie restated as a **width** rather than as a trailing
+pin - because with a centring tie in play, a trailing pin is a statement about
+position as well as about size.
+Gotcha (13) is unaffected: the only required constraints are two maxima and a
+centring tie, none of which can be a window-width floor, and the one equality
+that could widen the column still sits below `NSLayoutPriorityWindowSizeStayPut`.
+
+The toolbar had the identical left-pin shape and got the identical treatment,
+so the page header and the column it heads cannot drift apart.
+
+### The part the fix brief did not anticipate: the scroll area starts under the sidebar
+
+Centring on the clip view alone was still visibly wrong, by half of a 25pt
+overlap nobody had written down.
+`scroll.leading` is `sidebarColumn.trailing`, but `sidebarPanel.trailing` is
+`sidebarColumn.trailing + pageGutter` and `sidebarEdge` adds a 1pt rule on top
+of that - so the first `pageGutter + 1` points of the scroll area are painted
+over by the sidebar.
+Centring on the clip view therefore lands the column half that overlap left of
+the centre the captain can actually see: 219pt of visible margin on the left
+against 244pt on the right, at 1400pt.
+
+`visibleCentreNudge` is `(pageGutter + 1) / 2`, derived from the two
+constraints that create the overlap rather than written as a number, and both
+the column and the toolbar carry it.
+It is correct at every width rather than only where the cap binds: below the
+cap it costs the column `2 * nudge` of width, which is exactly what makes the
+two visible gutters equal instead of the two clip-view gutters.
+
+### Verified
+
+Not by `screencapture`: Screen Recording is **not** granted to the agent shell
+on this machine (both `-l <windowID>` and a full-screen capture fail with
+"could not create image from display"), which contradicts AGENTS.md's own note
+and is worth knowing before planning a round of visual work.
+Instead, a temporary `FM_DEBUG_OPEN_DESTINATION` probe in `main.swift` drove
+`build-probe-app.sh`'s separately-identified copy to a named settings category
+at a named window width, then dumped live frames and rendered the **real,
+composited, on-screen** window's own content view to a PNG the agent read back.
+The instrumentation was reverted before committing.
+
+Visible left / right margins after the fix, measured from the frames and
+confirmed by pixel-scanning the renders for the sidebar's visible edge:
+
+| Page | Window | Left | Right |
+|---|---|---|---|
+| Appearance | 1400 | 231.5 | 231.5 |
+| Menu Bar | 1400 | 231.5 | 231.5 |
+| Appearance | 1000 | 31.5 | 31.5 |
+| Menu Bar | 1512 | 287.5 | 287.5 |
+| App Intents (wide, 980 cap) | 1512 | 137.5 | 137.5 |
+
+### What was not verified
+
+The packaged `dist/Grand Line.app` was not launched, per AGENTS.md's first
+standing rule; the probe is a debug build of the same sources with the same
+layout code, and the defect is entirely inside the content view, so the
+title-bar and menu-bar caveats on an off-screen render do not apply here.
