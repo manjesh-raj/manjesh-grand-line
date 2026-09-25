@@ -131,6 +131,18 @@ installed over `/Applications`. The version comes from `git describe` (GL-18), s
 a release is cut by tagging - never by editing a constant. Releases are
 unsigned; see the repo-root README.
 
+**The copy being replaced is kept.** The script renames it to
+`/Applications/Grand Line (previous).app.bak` before installing, one generation
+only, so a bad build always has a last-known-good beside it (P8 of the
+2026-09-25 review - it used to `rm -rf` the installed copy first). The `.bak`
+suffix means macOS does not register it as a second app under the same bundle
+identifier. To roll back, with the app quit:
+
+```bash
+rm -rf "/Applications/Grand Line.app"
+mv "/Applications/Grand Line (previous).app.bak" "/Applications/Grand Line.app"
+```
+
 ### App Intents / Shortcuts registration (F21)
 
 The five `AppIntent` types compile into the binary with a plain `swift build`,
