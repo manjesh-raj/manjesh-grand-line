@@ -362,7 +362,7 @@ final class FocusTimerPanelController: NSViewController {
     // MARK: Actions
 
     @objc private func pauseTapped() {
-        timer.togglePause()
+        timer.togglePauseByHand()
         render()
     }
 

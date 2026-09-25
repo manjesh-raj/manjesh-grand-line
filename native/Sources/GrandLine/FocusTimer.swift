@@ -22,9 +22,16 @@
 // minutes the captain did not spend. Deriving `now - startedAt` would credit
 // the whole lunch break to the task. So the engine banks `accumulated`
 // seconds at every pause and measures only the *current* run segment from
-// `segmentStartedAt` - which also makes a wall-clock jump (a sleep, a
-// timezone change) cost at most the one segment it happened in rather than
-// the entire session.
+// `segmentStartedAt` - which makes a wall-clock jump cost at most the one
+// segment it happened in rather than the entire session.
+//
+// **That last sentence used to be a claim this file did not earn, and review
+// bug B9 is the difference.** A machine that sleeps mid-session does not end
+// the segment, so "the one segment it happened in" *was* the whole night: a
+// 25-minute Pomodoro left running over a closed lid logged sixteen hours to
+// the task. `observeSleepAndWake` is what makes the sentence true - it banks
+// the segment at `willSleep` and starts a fresh one at `didWake`, through
+// the engine's own pause/resume rather than a second way of counting.
 //
 // **Why the logged duration is focused seconds, not planned minutes.**
 // "Start 25 min" is a request, not a record. A session stopped at 6 minutes
@@ -33,6 +40,7 @@
 // what was *intended* is GL-14's "unknown rendered as a number" in a
 // different costume.
 
+import AppKit
 import Foundation
 
 // MARK: - The session
@@ -159,7 +167,22 @@ struct FocusTimerEngine {
     /// must not evaporate.
     @discardableResult
     mutating func start(taskID: String, title: String, minutes: Int, now: Date) -> FocusSession? {
-        let displaced = session
+        // **Review bug B9.** This used to hand the displaced session back
+        // untouched, with its live segment still unbanked - so
+        // `accumulatedSeconds` was 0 for any session that had never been
+        // paused, which is every ordinary one. `logIfWorthLogging` reads
+        // exactly that field, so switching tasks logged **nothing** for the
+        // first one, twenty minutes of real work included, while the comment
+        // above promised the opposite.
+        //
+        // Banked the same way `stop` banks it, so "the returned session's
+        // `accumulatedSeconds` is the final figure" is true of both exits.
+        var displaced = session
+        if var banked = displaced {
+            banked.accumulatedSeconds = banked.elapsed(at: now)
+            banked.segmentStartedAt = nil
+            displaced = banked
+        }
         session = FocusSession(
             taskID: taskID,
             taskTitle: title,
@@ -265,11 +288,65 @@ final class FocusTimerController {
     /// on wall-clock seconds.
     var clock: () -> Date = { Date() }
 
+    /// Whether this controller paused the session itself because the machine
+    /// slept, as opposed to the captain pausing it. Only a sleep-pause is
+    /// resumed on wake.
+    private var pausedForSleep = false
+
     init(store: ShiftStore) {
         self.store = store
+        observeSleepAndWake()
     }
 
-    deinit { timer?.invalidate() }
+    deinit {
+        timer?.invalidate()
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+    }
+
+    // MARK: Sleep and wake (review bug B9)
+
+    /// **A session left running across a closed lid used to log the whole
+    /// sleep as focus.**
+    ///
+    /// `stop()` banks `elapsed(at: now)`, and `elapsed` is wall-clock
+    /// arithmetic from `segmentStartedAt` - it has no idea the machine was
+    /// not awake for any of it. A captain who started a 25-minute Pomodoro,
+    /// shut the lid and reopened it the next morning got sixteen hours
+    /// written into that task's permanent activity log, and into the Weekly
+    /// Review's "time on tasks" tile.
+    ///
+    /// Banking at sleep and starting a fresh segment at wake is the whole
+    /// fix: it uses the engine's own pause/resume, which already exist for
+    /// exactly this arithmetic, so no new way of counting is introduced.
+    ///
+    /// `pausedForSleep` is why this is not simply "pause on sleep, resume on
+    /// wake": a session the *captain* paused before the lid closed must
+    /// still be paused when it opens, or the machine's sleep would silently
+    /// restart their timer.
+    private func observeSleepAndWake() {
+        let center = NSWorkspace.shared.notificationCenter
+        center.addObserver(forName: NSWorkspace.willSleepNotification,
+                           object: nil, queue: .main) { [weak self] _ in
+            self?.handleWillSleep()
+        }
+        center.addObserver(forName: NSWorkspace.didWakeNotification,
+                           object: nil, queue: .main) { [weak self] _ in
+            self?.handleDidWake()
+        }
+    }
+
+    func handleWillSleep() {
+        guard let session, !session.isPaused else { return }
+        pausedForSleep = true
+        pause()
+    }
+
+    func handleDidWake() {
+        guard pausedForSleep else { return }
+        pausedForSleep = false
+        guard session != nil else { return }
+        resume()
+    }
 
     // MARK: Reading
 
@@ -348,6 +425,15 @@ final class FocusTimerController {
         engine.resume(now: clock())
         startTicking()
         notify()
+    }
+
+    /// The captain's own pause/resume, which is what every button calls.
+    /// Distinct from `pause()`/`resume()` only in that it clears the
+    /// sleep latch (B9): once the captain has touched the timer by hand,
+    /// waking the machine must not override what they chose.
+    func togglePauseByHand() {
+        pausedForSleep = false
+        togglePause()
     }
 
     func togglePause() {
