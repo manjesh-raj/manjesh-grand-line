@@ -131,11 +131,9 @@ If a test would have to give up a real assertion to move to the cheaper harness,
 
 Behaviour overrides. Everything here is optional; the app has working defaults for all of it.
 
-This table is **complete** as of the end-to-end review's L8 fix: every `FM_*` variable the app reads is listed, and nothing listed is unread. The two that were unread - `FM_MIRROR_TARGET` and `FM_BACKEND` - documented the removed mirror/backend-detection feature and were dropped rather than left promising an override that does nothing. To re-check after adding one, diff the code against this file:
+These tables are **complete in both directions**, and that is a check rather than a claim: `FM_RUN_ENVIRONMENT_DOCS_TESTS` fails the run when a `FM_*` variable is read with no row here, and when a row here names a variable nothing reads. The second direction is what removed `FM_MIRROR_TARGET` and `FM_BACKEND` - they documented the deleted mirror/backend-detection feature, and a row promising an override that does nothing is worse than no row. Before that guard existed the re-check was a `grep` written down here and run by hand, which is how `FM_SUITE_TIMEOUT`, `FM_PROBE_SCRATCH` and `FM_CODE_RUNNER_SECRET_PROBE` came to be read and unlisted for months.
 
-```bash
-grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/GrandLine/*.swift | tr -d '"' | grep -v '^FM_RUN_' | sort -u
-```
+`FM_RUN_*` is not listed here at all: `./Scripts/run-all-tests.sh --list` is the authoritative list, discovered from `main.swift` (GL-19).
 
 ### Data locations (point these at scratch paths in tests)
 
@@ -178,6 +176,16 @@ grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/GrandLine/*.swift | tr -d '"' | grep
 | `FM_WHITEBOARD_WEB_DIR` | The vendored Excalidraw bundle the Whiteboard destination loads (checked after `Contents/Resources`, before the source-tree walk-up) |
 | `FM_CODE_PREVIEW_WEB_DIR` | The vendored Monaco bundle the Code Preview panel loads (same lookup order) |
 | `FM_GITHUB_SYNC_CLONE_ROOT` | Where GitHub Sync keeps its scratch clones (never the captain's own working copies) |
+
+### Tooling and test fixtures
+
+Read by the scripts and the suites rather than by the app, and listed for the same reason everything above is: the guard checks this whole section, not only the app's own reads.
+
+| Variable | Effect |
+| --- | --- |
+| `FM_SUITE_TIMEOUT` | Per-suite wall-clock bound in `Scripts/run-all-tests.sh`, in real seconds (default 300). A suite that exceeds it is reported as `TIMEOUT <flag>` by name and the run continues |
+| `FM_PROBE_SCRATCH` | Where `Scripts/build-probe-app.sh` puts the probe's scratch data root, which it then passes to the probe as `FM_SCRATCH_ROOT` (default `$TMPDIR/grand-line-probe`) |
+| `FM_CODE_RUNNER_SECRET_PROBE` | Set by `CodeRunnerSelfTest` on its own process as a marked secret, so the suite can assert that a sandboxed run does not inherit it. Nothing in the app reads it |
 
 ### Behaviour
 

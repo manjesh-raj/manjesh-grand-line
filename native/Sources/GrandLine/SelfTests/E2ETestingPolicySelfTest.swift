@@ -709,12 +709,28 @@ enum E2ETestingPolicySelfTest {
         }
 
         // Read by production code, i.e. anything named in a string literal
-        // outside `SelfTests/` (which `appSourceFiles` already excludes) and
         // outside the per-suite flags.
+        //
+        // **Process issue P1 widened this sweep past the app's own sources.**
+        // It used to scan `appSourceFiles()` alone, so a variable read only by
+        // a suite or only by a shipped script was invisible to it while the
+        // README still called the table complete - which is how
+        // `FM_SUITE_TIMEOUT` (the runner's own per-suite bound),
+        // `FM_PROBE_SCRATCH` (where `build-probe-app.sh` puts the probe's data)
+        // and `FM_CODE_RUNNER_SECRET_PROBE` (a suite's marked-secret fixture)
+        // were all read and all undocumented at the 2026-09-25 review. Those
+        // three are exactly the overrides a *future* agent goes looking for,
+        // which is the whole reason the table is worth keeping honest.
         var read: Set<String> = []
-        for file in sources {
+        for file in sources + suiteSources() {
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             for match in envNames(in: strippingComments(text)) where !match.hasPrefix("FM_RUN_") {
+                read.insert(match)
+            }
+        }
+        for script in shippedScripts() {
+            guard let text = try? String(contentsOf: script, encoding: .utf8) else { continue }
+            for match in shellEnvNames(in: text) where !match.hasPrefix("FM_RUN_") {
                 read.insert(match)
             }
         }
@@ -737,12 +753,13 @@ enum E2ETestingPolicySelfTest {
             fail("read by the app but missing from the README's env table: \(missing.joined(separator: ", "))", &ok)
         }
 
-        // The other direction, scoped to the two tables' own subject: a row
-        // for something nothing reads. Suite opt-ins (`FM_WHISPER_TEST_*`) are
-        // read from `SelfTests/`, which the sweep above deliberately does not
-        // scan, so they are exempt by name rather than by a looser rule.
-        let suiteOptIns: Set<String> = ["FM_WHISPER_TEST_MODEL_PATH", "FM_WHISPER_TEST_AUDIO_PATH"]
-        let unread = documented.subtracting(read).subtracting(suiteOptIns).sorted()
+        // The other direction: a row for something nothing reads. This used to
+        // need a by-name exemption for the two `FM_WHISPER_TEST_*` opt-ins,
+        // because they are read from `SelfTests/` and the sweep above did not
+        // look there. It scans the suites now, so the exemption is gone - and
+        // an exemption list that is no longer needed is an exemption list that
+        // cannot go stale.
+        let unread = documented.subtracting(read).sorted()
         if !unread.isEmpty {
             fail("in the README's env table but read nowhere in the app: \(unread.joined(separator: ", "))", &ok)
         }
@@ -765,6 +782,54 @@ enum E2ETestingPolicySelfTest {
                 return trimmed.hasPrefix("//") ? "" : String(line)
             }
             .joined(separator: "\n")
+    }
+
+    /// The suites themselves. `appSourceFiles()` deliberately excludes this
+    /// directory (a source guard scanning its own suites trips on the tokens
+    /// it exists to forbid), but for the env-table question the suites are a
+    /// legitimate reader: `FM_WHISPER_TEST_*` and `FM_CODE_RUNNER_SECRET_PROBE`
+    /// are read nowhere else.
+    private static func suiteSources() -> [URL] {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: selfTestsDirectory, includingPropertiesForKeys: nil)) ?? []
+        return files.filter { $0.pathExtension == "swift" }
+    }
+
+    /// The shipped shell scripts, which read variables of their own that never
+    /// reach Swift at all - the runner's `FM_SUITE_TIMEOUT` and the probe
+    /// script's `FM_PROBE_SCRATCH`.
+    private static func shippedScripts() -> [URL] {
+        let dir = runnerScript.deletingLastPathComponent()
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil)) ?? []
+        return files.filter { $0.pathExtension == "sh" }
+    }
+
+    /// Every `FM_...` a shell script *reads*, i.e. one introduced by `${`.
+    ///
+    /// Deliberately not every token: a script that **sets** a variable for a
+    /// child process (`--env "FM_SCRATCH_ROOT=$SCRATCH"`, and
+    /// `run-all-tests.sh` sets a dozen store overrides the same way) is
+    /// passing the app its own documented override, not reading one of its
+    /// own, and those are already covered by the Swift sweep.
+    private static func shellEnvNames(in text: String) -> Set<String> {
+        var out: Set<String> = []
+        let chars = Array(text)
+        var i = 0
+        while i + 4 < chars.count {
+            guard chars[i] == "$", chars[i + 1] == "{",
+                  chars[i + 2] == "F", chars[i + 3] == "M", chars[i + 4] == "_" else {
+                i += 1
+                continue
+            }
+            var end = i + 5
+            while end < chars.count,
+                  chars[end].isUppercase || chars[end].isNumber || chars[end] == "_" { end += 1 }
+            let name = String(chars[(i + 2)..<end])
+            if !name.hasSuffix("_") { out.insert(name) }
+            i = end
+        }
+        return out
     }
 
     /// Every `FM_...` token inside a double-quoted or backticked span.
