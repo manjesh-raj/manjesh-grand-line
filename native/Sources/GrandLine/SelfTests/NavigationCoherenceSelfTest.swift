@@ -48,6 +48,7 @@ enum NavigationCoherenceSelfTest {
         ok = checkQuickAccessRoundTrips() && ok
         ok = checkContextualNewRouting() && ok
         ok = checkMenuBarShape() && ok
+        ok = checkTheAppMenuSaysTheDisplayName() && ok
         ok = checkShortcutCatalog() && ok
         ok = checkFirstRunOnboarding() && ok
         ok = checkDestinationNamingIsCanonical() && ok
@@ -634,6 +635,51 @@ enum NavigationCoherenceSelfTest {
                                                        modifiers: item.keyEquivalentModifierMask).joined()))
         }
         return out
+    }
+
+
+    /// **Review bug B12**: the App menu read "Quit GrandLine".
+    ///
+    /// It was built from `ProcessInfo.processInfo.processName`, which is the
+    /// *executable* name - and the executable is `GrandLine` while the app is
+    /// "Grand Line". AGENTS.md's naming rule and
+    /// `LegacyRenameMigrationSelfTest` guard the spelling in the sources, and
+    /// neither could see this: the sources spell no name at all there.
+    ///
+    /// Asserted against `AppPaths.displayName` rather than a literal, so the
+    /// check is "the menu agrees with the app's one definition of its name"
+    /// rather than a second place to update at the next rename - plus a
+    /// standing refusal of the run-together spelling, which is the specific
+    /// defect and the one a future `processName` would bring back.
+    private static func checkTheAppMenuSaysTheDisplayName() -> Bool {
+        var ok = true
+        guard let menu = buildRealMenuBar() else {
+            fail("the app's menu bar could not be built, so this checked nothing", &ok)
+            return ok
+        }
+        guard let appMenu = menu.items.first?.submenu else {
+            fail("the menu bar has no App menu", &ok)
+            return ok
+        }
+        let titles = appMenu.items.map(\.title)
+        let name = AppPaths.displayName
+
+        // Discriminating power: the display name has to be the human spelling,
+        // or every check below passes against the executable's own name.
+        check(name.contains(" "),
+              "AppPaths.displayName is '\(name)' - the app's display name has a space in it; "
+              + "resolving to the executable name is exactly B12", &ok)
+        check(name != ProcessInfo.processInfo.processName || name == "Grand Line",
+              "the display name must not simply be the process name", &ok)
+
+        for verb in ["About", "Hide", "Quit"] {
+            check(titles.contains("\(verb) \(name)"),
+                  "the App menu should carry \"\(verb) \(name)\" - it has \(titles)", &ok)
+        }
+        check(!titles.contains(where: { $0.contains("GrandLine") }),
+              "no App menu item may spell the executable name \"GrandLine\" - that is B12, "
+              + "\"Quit GrandLine\" in the captain's own menu bar. Got \(titles)", &ok)
+        return ok
     }
 
     /// The app's own menu bar, built by the app's own `buildMenu()`.

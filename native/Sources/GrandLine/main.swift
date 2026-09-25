@@ -1288,7 +1288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// the App menu's Hide/Quit (still allowed, same as any other macOS app).
     private func setContentMenusEnabled(_ enabled: Bool) {
         guard let mainMenu = NSApp.mainMenu else { return }
-        let appName = ProcessInfo.processInfo.processName
+        let appName = AppPaths.displayName
         for topLevelItem in mainMenu.items {
             guard let submenu = topLevelItem.submenu, submenu.title != "Edit" else { continue }
             for item in submenu.items {
@@ -1732,7 +1732,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
         appMenuItem.submenu = appMenu
-        let appName = ProcessInfo.processInfo.processName
+        let appName = AppPaths.displayName
         appMenu.addItem(withTitle: "About \(appName)", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
         // Nav-redesign task, item 5: Settings is a rail destination in the

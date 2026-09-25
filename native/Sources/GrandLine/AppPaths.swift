@@ -29,6 +29,34 @@ enum AppPaths {
     /// `LegacyNameMigration` should read this.
     static let legacyApplicationSupportFolderName = "FirstmateCockpit"
 
+    /// The app's **display** name - what a human reads, in the menu bar and
+    /// anywhere else this app names itself to the captain.
+    ///
+    /// **Review bug B12.** The App menu built "About / Hide / Quit" from
+    /// `ProcessInfo.processInfo.processName`, which is the *executable* name.
+    /// The executable is `GrandLine` and the app is "Grand Line", so the menu
+    /// read "Quit GrandLine" - the one place the rename was left behind, and
+    /// one that `LegacyRenameMigrationSelfTest`'s source grep could not see
+    /// because the sources spell no name at all there.
+    ///
+    /// `CFBundleDisplayName` first (what Finder and the Dock use), then
+    /// `CFBundleName`, then the literal - because an unbundled
+    /// `.build/debug/GrandLine` has no `Info.plist` at all and must still say
+    /// the right thing. AGENTS.md's rule is that this app has exactly one
+    /// name with a single definition; this is that definition for the
+    /// human-facing half, as `applicationSupportFolderName` is for the
+    /// on-disk half.
+    static var displayName: String {
+        let bundle = Bundle.main
+        for key in ["CFBundleDisplayName", "CFBundleName"] {
+            if let value = bundle.object(forInfoDictionaryKey: key) as? String,
+               !value.trimmingCharacters(in: .whitespaces).isEmpty {
+                return value
+            }
+        }
+        return "Grand Line"
+    }
+
     /// `~/Library/Application Support`, with the same fallback every store in
     /// this app already used before it was written down in one place.
     static func applicationSupportBase(_ fileManager: FileManager = .default) -> URL {
