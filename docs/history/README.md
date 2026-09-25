@@ -77,3 +77,6 @@ so `git log` is the tiebreaker.
 | [`43-google-accounts.md`](43-google-accounts.md) | Gmail sign-in, the OAuth/PKCE flow, and Google Calendar as a second read-only source for the daily review | 9KB |
 | [`44-new-theme-families.md`](44-new-theme-families.md) | Six new theme families: the picker from 14 palettes to 26 (Nord, Dracula, One, Ayu, Night Owl, Oxocarbon) | 11KB |
 | [`45-rename-to-grand-line.md`](45-rename-to-grand-line.md) | The rename to "Grand Line": the new bundle identifier, the Keychain and data-folder migrations, and the System Settings re-grant it costs | 9KB |
+| [`46-review-bugs-b1-b14.md`](46-review-bugs-b1-b14.md) | The 2026-09-25 review's bugs B1-B14: `FM_SCRATCH_ROOT` and the probe's safety, the Keychain service prefix, the quit-time ggml abort, the traffic-light hit-test recursion, Shift git sync's three data-loss paths | 16KB |
+| [`47-appkit-gotchas.md`](47-appkit-gotchas.md) | The AppKit gotcha catalogue's full measurements - the probe, the numbers and the wrong fixes tried first for each of the 22 traps AGENTS.md states as rules | 56KB |
+| [`48-test-hermeticity.md`](48-test-hermeticity.md) | The `UserDefaults` leak between self-test processes: the five incidents, the mitigations that did not close it, and the per-process suite domain that did | 12KB |

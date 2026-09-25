@@ -29,7 +29,7 @@ enum Phase3PolishSelfTest {
         checkGrowthCaps(&ok)
         checkUndoToastShape(&ok)
         checkSuitesRestoreTheTheme(&ok)
-        checkSignalInterruptedRunIsRecovered(&ok)
+        checkTheRealDomainIsNeverWritten(&ok)
         print(ok ? "Phase3PolishSelfTest: all checks passed" : "Phase3PolishSelfTest: FAILED")
         return ok
     }
@@ -290,82 +290,84 @@ enum Phase3PolishSelfTest {
 
     private static func undoButtonCount(in view: NSView) -> Int { undoButtons(in: view).count }
 
-    // MARK: Suite hygiene - an interrupted run must not poison the next one
+    // MARK: Suite hygiene - a suite must not write the real preference domain
 
-    /// The half `checkSuitesRestoreTheTheme` above structurally cannot cover.
+    /// The half `checkSuitesRestoreTheTheme` above structurally cannot cover,
+    /// and P10's fix for it.
     ///
     /// That guard asserts every suite *saves* the theme before changing it,
     /// which is a necessary condition for putting it back - and a `defer`
-    /// restore only runs on a normal exit. P4 of full review #3 measured the
-    /// other case: a SIGSEGV in a probe left `fm.themeID` on
-    /// `catppuccin-latte` with no `defer` ever firing, and the next unrelated
-    /// run failed `FM_RUN_CONTRAST_TESTS` and
-    /// `FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS` on a clean tree. The runner's own
-    /// SIGKILL at `FM_SUITE_TIMEOUT` does the same thing.
+    /// restore only runs on a normal exit. The other case was measured: a
+    /// SIGSEGV in a probe left `fm.themeID` on `catppuccin-latte` with no
+    /// `defer` ever firing, and the next unrelated run failed
+    /// `FM_RUN_CONTRAST_TESTS` and `FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS` on a
+    /// clean tree. The runner's own SIGKILL at `FM_SUITE_TIMEOUT` does the
+    /// same.
     ///
-    /// `SelfTestDefaultsGuard`'s recovery is what closes it, and this drives
-    /// that recovery path directly rather than by killing a process: plant the
-    /// sidecar an interrupted run would have left, move the live value away
-    /// from it, and require the recovery to put it back.
-    ///
-    /// Restores this process's own real starting value afterwards, because
-    /// this suite is subject to the very rule it is checking.
-    private static func checkSignalInterruptedRunIsRecovered(_ ok: inout Bool) {
-        print("\n-- suite hygiene: an interrupted run is recovered from --")
+    /// This used to drive `SelfTestDefaultsGuard`'s sidecar recovery, which
+    /// repaired the damage one run late. P10 removed the damage instead:
+    /// `AppDefaults.store` is a per-process `UserDefaults(suiteName:)` in
+    /// every `FM_RUN_*` process, so the real domain is never written and there
+    /// is nothing to restore. What this checks now is that claim, the only way
+    /// it can be checked - by doing the thing that used to leak.
+    private static func checkTheRealDomainIsNeverWritten(_ ok: inout Bool) {
+        print("\n-- suite hygiene: a suite must not write the real preference domain --")
+
+        // This process must actually be redirected, or everything below passes
+        // for the wrong reason.
+        guard let suite = AppDefaults.testSuiteName else {
+            fail("this process has no suite domain - AppDefaults was not redirected, so "
+                 + "every check below would be vacuous", &ok)
+            return
+        }
+        print("  suite domain: \(suite)")
+        if AppDefaults.store == UserDefaults.standard {
+            fail("AppDefaults.store IS UserDefaults.standard - the redirect did not take", &ok)
+            return
+        }
 
         let realTheme = ThemeManager.shared.theme
         let realFontSize = AppSettings.shared.fontSize
         defer {
             ThemeManager.shared.setTheme(realTheme)
             AppSettings.shared.fontSize = realFontSize
-            SelfTestDefaultsGuard.debugClearSidecar()
+            SelfTestDefaultsGuard.debugRebaseline()
         }
 
-        // Two distinct themes, or the check cannot tell a recovery from a
-        // no-op. `allThemes` has fourteen, so this cannot go vacuous.
+        // Two distinct themes, or the check cannot tell a write from a no-op.
         guard let other = HelmTheme.allThemes.first(where: { $0.id != realTheme.id }) else {
             fail("only one theme is registered - this check would assert nothing", &ok)
             return
         }
 
-        // What an interrupted run leaves behind: a sidecar naming the values it
-        // found, and a live domain holding whatever it had got to.
-        SelfTestDefaultsGuard.debugPlantSidecar([
-            "fm.themeID": realTheme.id,
-            "fm.fontSize": "\(Int(realFontSize))",
-        ])
         ThemeManager.shared.setTheme(other)
         AppSettings.shared.fontSize = realFontSize + 3
 
+        // Discriminating power: the app really did change, so "the real domain
+        // did not move" is a statement about where the write went rather than
+        // about nothing having happened.
         guard ThemeManager.shared.theme.id == other.id else {
-            fail("could not move the theme away from \(realTheme.id) - the rest of this check would be vacuous", &ok)
+            fail("could not move the theme away from \(realTheme.id) - the rest of this check "
+                 + "would be vacuous", &ok)
             return
         }
-
-        SelfTestDefaultsGuard.debugRecoverNow()
-
-        if ThemeManager.shared.theme.id != realTheme.id {
-            fail("recovery left the theme on \(ThemeManager.shared.theme.id), want \(realTheme.id) - "
-                 + "an interrupted run's leak survives into the next run", &ok)
+        if AppDefaults.store.string(forKey: "fm.themeID") == other.id {
+            print("  OK   the write landed in the suite domain")
         } else {
-            print("  OK   theme recovered to \(realTheme.id)")
-        }
-        if AppSettings.shared.fontSize != realFontSize {
-            fail("recovery left fontSize at \(AppSettings.shared.fontSize), want \(realFontSize)", &ok)
-        } else {
-            print("  OK   fontSize recovered to \(Int(realFontSize))")
+            fail("the theme change did not reach the suite domain at all - this check cannot "
+                 + "tell a redirect from a store that persists nothing", &ok)
         }
 
-        // A clean recovery must also clear the marker, or every later run
-        // reports a stale interruption it did not have.
-        if FileManager.default.fileExists(atPath: SelfTestDefaultsGuard.debugSidecarPath()) {
-            fail("the sidecar survived recovery - every later run would report a stale interruption", &ok)
+        let drift = SelfTestDefaultsGuard.realDomainDrift()
+        if drift.isEmpty {
+            print("  OK   the real GrandLine domain is untouched")
         } else {
-            print("  OK   the interrupted-run marker was cleared")
+            fail("a suite process wrote the REAL preference domain: \(drift.joined(separator: ", "))"
+                 + " - this is exactly the leak AppDefaults exists to stop", &ok)
         }
 
-        // And `main.swift` has to actually arm it. Recovery that works and is
-        // never called is indistinguishable from the bug.
+        // And `main.swift` has to actually arm both halves. A redirect that
+        // works and is never armed is indistinguishable from the bug.
         let mainSwift = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -374,14 +376,26 @@ enum Phase3PolishSelfTest {
             fail("could not read main.swift - this half would silently pass", &ok)
             return
         }
-        let armed = source
+        let lines = source
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .contains { !$0.hasPrefix("//") && $0.contains("SelfTestDefaultsGuard.arm()") }
-        if armed {
-            print("  OK   main.swift arms the guard for every FM_RUN_* process")
-        } else {
-            fail("main.swift never calls SelfTestDefaultsGuard.arm() - the recovery above can never run", &ok)
+            .filter { !$0.hasPrefix("//") }
+        for call in ["SelfTestDefaultsGuard.arm()", "AppDefaultsSweep.arm()"] {
+            if lines.contains(where: { $0.contains(call) }) {
+                print("  OK   main.swift calls \(call)")
+            } else {
+                fail("main.swift never calls \(call) - the redirect above can never run", &ok)
+            }
+        }
+        // The suite name has to be set before anything resolves the store,
+        // which is a `static let`: the setenv must come before `arm()`.
+        if let setIndex = lines.firstIndex(where: { $0.contains("AppDefaults.suiteVariable") }),
+           let armIndex = lines.firstIndex(where: { $0.contains("AppDefaultsSweep.arm()") }) {
+            if setIndex < armIndex {
+                print("  OK   the suite name is set before the sweep is armed")
+            } else {
+                fail("main.swift arms AppDefaultsSweep before setting AppDefaults.suiteVariable", &ok)
+            }
         }
     }
 }

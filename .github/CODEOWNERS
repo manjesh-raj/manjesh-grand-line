@@ -1,0 +1,20 @@
+# Process issue P3 (2026-09-25 review): "nothing enforces the blocking lanes".
+#
+# 477 PRs had merged with `review: none`, no branch protection, no ruleset, no
+# PR template and no CODEOWNERS - so "the `test` and `test-windowed` lanes are
+# blocking" was a sentence in `ci.yml`'s header and nothing else. P2's
+# cancelled `main` runs are what it already cost.
+#
+# This file is the cheap half. It does not *require* a review - that is a
+# branch-protection setting, and this is effectively a one-maintainer
+# repository backed by an AI fleet, so a mandatory second reviewer would lock
+# the captain out of merging his own work. What it does is put the captain on
+# every pull request as a reviewer automatically, so a PR that wants a look
+# gets one requested without anybody remembering to ask.
+#
+# The enforcing half is a repository ruleset requiring the four CI checks to
+# pass before a merge, with no review requirement. It is written out in the PR
+# that added this file; it changes who can merge and how, so it is the
+# captain's to enable rather than something a worktree flips.
+
+*       @manjesh-raj

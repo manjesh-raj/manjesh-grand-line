@@ -297,6 +297,14 @@ final class HealthCardView: NSObject {
         let services = ServiceHealthRegistry.shared.knownServices()
         var rows: [NSView] = []
 
+        // P9: two SIGABRTs in 24 hours sat unnoticed in
+        // `~/Library/Logs/DiagnosticReports` because nothing in this app ever
+        // looked. This row is the looking. It is above the service rows
+        // because it is about the app itself rather than about one background
+        // service, and it appears only when there is something to say - an
+        // always-present "no crashes" row is noise on every other day.
+        if let crashRow = crashReportRow() { rows.append(crashRow) }
+
         if services.isEmpty {
             // Review #3's UI12. Honest rather than reassuring - nothing has
             // reported yet, which at launch is simply true - but until this it
@@ -338,6 +346,28 @@ final class HealthCardView: NSObject {
             healthStack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: healthStack.widthAnchor).isActive = true
         }
+    }
+
+    /// `nil` when this run has no crash report to report, which is almost
+    /// always. `DiagnosticsLog` answers "none" rather than guessing whenever
+    /// it cannot tell - no previous launch recorded, no reports directory, an
+    /// unreadable directory - so this row is only ever built from a real file
+    /// with a real timestamp after the previous launch.
+    private func crashReportRow() -> NSView? {
+        let crashes = DiagnosticsLog.shared.crashReportsSinceLastLaunch()
+        guard !crashes.isEmpty else { return nil }
+        let count = crashes.count == 1 ? "1 crash report" : "\(crashes.count) crash reports"
+        let row = HelmAccentRow(hover: false)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.configure(HelmAccentRow.Content(
+            tint: .critical,
+            kicker: "Since the previous launch",
+            title: "\(count) from this app",
+            meta: "In ~/Library/Logs/DiagnosticReports: "
+                + crashes.joined(separator: ", ")
+                + ". \u{201C}Copy diagnostics\u{201D} includes these names and this app\u{2019}s own recent error log.",
+            badgeSymbol: "exclamationmark.triangle.fill"), theme: theme)
+        return row
     }
 
     private func healthRow(for service: HealthService) -> NSView {
@@ -442,6 +472,24 @@ final class HealthCardView: NSObject {
                 lines.append("- \(failure.what) -> \(failure.path): \(failure.reason)")
             }
         }
+        // P9: the two things an investigation an hour later actually wants,
+        // and neither was reachable before - `log show` returns nothing for
+        // this subsystem and the crash reports sit unread in
+        // `~/Library/Logs/DiagnosticReports`. Both are this machine's own
+        // files; nothing new leaves it.
+        let crashes = DiagnosticsLog.shared.crashReportsSinceLastLaunch()
+        if crashes.isEmpty {
+            lines.append("No crash report since the previous launch.")
+        } else {
+            lines.append("Crash reports since the previous launch:")
+            for name in crashes { lines.append("- \(name)") }
+        }
+        let recent = DiagnosticsLog.shared.recentLines()
+        if !recent.isEmpty {
+            lines.append("Recent diagnostics (newest last):")
+            lines.append(contentsOf: recent.map { "  \($0)" })
+        }
+
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
         Toast.show(in: card, message: "Diagnostics copied")

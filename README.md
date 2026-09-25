@@ -73,7 +73,7 @@ home directory happens to contain.
 
 ## Testing
 
-There is no XCTest target. The app carries 50+ permanent self-test suites, each gated behind its own environment variable and each exiting the process with 0 or 1 before `NSApplication` is ever touched - so they run headless and are safe to run while the real app is open.
+There is no XCTest target. The app carries one permanent self-test suite per `FM_RUN_*` flag - run `native/Scripts/run-all-tests.sh --list` for the current set and its total, rather than trusting a number written down in prose. Each is gated behind its own environment variable and exits the process with 0 or 1 before `NSApplication` is ever touched, so they run headless and are safe to run while the real app is open.
 
 They live in `native/Sources/GrandLine/SelfTests/` and are compiled into **debug builds only** - `Package.swift` defines `FM_SELFTESTS` for the debug configuration. So `swift build` (and CI, and the runner below) has every suite, while `swift build -c release` - what `native/build_native_app.sh` assembles the shipped `.app` from - contains none of the ~10,500 lines of test code. A release binary silently runs zero suites and exits 0, which looks exactly like a clean run: always test against `.build/debug/GrandLine`.
 
@@ -131,11 +131,9 @@ If a test would have to give up a real assertion to move to the cheaper harness,
 
 Behaviour overrides. Everything here is optional; the app has working defaults for all of it.
 
-This table is **complete** as of the end-to-end review's L8 fix: every `FM_*` variable the app reads is listed, and nothing listed is unread. The two that were unread - `FM_MIRROR_TARGET` and `FM_BACKEND` - documented the removed mirror/backend-detection feature and were dropped rather than left promising an override that does nothing. To re-check after adding one, diff the code against this file:
+These tables are **complete in both directions**, and that is a check rather than a claim: `FM_RUN_ENVIRONMENT_DOCS_TESTS` fails the run when a `FM_*` variable is read with no row here, and when a row here names a variable nothing reads. The second direction is what removed `FM_MIRROR_TARGET` and `FM_BACKEND` - they documented the deleted mirror/backend-detection feature, and a row promising an override that does nothing is worse than no row. Before that guard existed the re-check was a `grep` written down here and run by hand, which is how `FM_SUITE_TIMEOUT`, `FM_PROBE_SCRATCH` and `FM_CODE_RUNNER_SECRET_PROBE` came to be read and unlisted for months.
 
-```bash
-grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/GrandLine/*.swift | tr -d '"' | grep -v '^FM_RUN_' | sort -u
-```
+`FM_RUN_*` is not listed here at all: `./Scripts/run-all-tests.sh --list` is the authoritative list, discovered from `main.swift` (GL-19).
 
 ### Data locations (point these at scratch paths in tests)
 
@@ -178,6 +176,19 @@ grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/GrandLine/*.swift | tr -d '"' | grep
 | `FM_WHITEBOARD_WEB_DIR` | The vendored Excalidraw bundle the Whiteboard destination loads (checked after `Contents/Resources`, before the source-tree walk-up) |
 | `FM_CODE_PREVIEW_WEB_DIR` | The vendored Monaco bundle the Code Preview panel loads (same lookup order) |
 | `FM_GITHUB_SYNC_CLONE_ROOT` | Where GitHub Sync keeps its scratch clones (never the captain's own working copies) |
+| `FM_DIAGNOSTICS_DIR` | The on-disk diagnostics log (`diagnostics/app.log`, one 256KB file plus one rotated generation) and the `last-launch` stamp `crashReportsSinceLastLaunch()` compares against. Errors and lifecycle events only - the unified log is still where detail goes |
+
+### Tooling and test fixtures
+
+Read by the scripts and the suites rather than by the app, and listed for the same reason everything above is: the guard checks this whole section, not only the app's own reads.
+
+| Variable | Effect |
+| --- | --- |
+| `FM_DEFAULTS_SUITE` | The `UserDefaults(suiteName:)` a self-test process reads and writes instead of the real `GrandLine` preference domain (`AppDefaults.store`). **Debug builds only**, set per process by `main.swift`'s self-test redirect block with this process's pid, and the domain is removed at exit - so a suite can no longer leave `fm.themeID` behind and two concurrent runs are two domains rather than two writers of one |
+| `FM_REVIEW_TOUR` | Path to a tour file for `ReviewTourLab` - the file-driven probe driver. Mounts an off-screen shell, walks the tour (`goto`/`theme`/`resize`/`render`/`menu`) and writes one PNG per `render` beside the tour file. **Debug builds only**, and deliberately not an `FM_RUN_*` name, which the runner discovers suites by |
+| `FM_SUITE_TIMEOUT` | Per-suite wall-clock bound in `Scripts/run-all-tests.sh`, in real seconds (default 300). A suite that exceeds it is reported as `TIMEOUT <flag>` by name and the run continues |
+| `FM_PROBE_SCRATCH` | Where `Scripts/build-probe-app.sh` puts the probe's scratch data root, which it then passes to the probe as `FM_SCRATCH_ROOT` (default `$TMPDIR/grand-line-probe`) |
+| `FM_CODE_RUNNER_SECRET_PROBE` | Set by `CodeRunnerSelfTest` on its own process as a marked secret, so the suite can assert that a sandboxed run does not inherit it. Nothing in the app reads it |
 
 ### Behaviour
 

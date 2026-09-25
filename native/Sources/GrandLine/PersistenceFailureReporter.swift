@@ -56,6 +56,10 @@ enum PersistenceFailureReporter {
             failed to save \(what, privacy: .public) to \(path, privacy: .public): \
             \(reason, privacy: .public)
             """)
+        // P9: the unified log does not survive an investigation - `log show`
+        // returned zero lines for five hours of real use. Every failed save
+        // also lands in the on-disk diagnostics file, which does.
+        DiagnosticsLog.shared.error("store", "failed to save \(what) to \(path): \(reason)")
 
         DispatchQueue.main.async {
             totalCount += 1

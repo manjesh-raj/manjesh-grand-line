@@ -351,13 +351,67 @@ fi
 # app is still running is safe on macOS: the running process keeps its own
 # open file handles to the old bundle's files, so this doesn't disturb it -
 # the replacement just means the *next* launch picks up the new build.
+#
+# P8 (2026-09-25 review): "there is no release cadence and no rollback". This
+# step used to `rm -rf` the installed copy and then `ditto` the new one, which
+# means that between those two commands there is no copy of this app on the
+# machine at all, and afterwards there is no previous build to go back to.
+#
+# With 4-24 commits a day landing in /Applications the next time somebody runs
+# this script, "roll back" meant remembering a good commit, checking it out and
+# waiting for a full release build - and the captain only finds out a build is
+# bad by using it, which is after the old one is gone.
+#
+# So the old copy is renamed aside rather than deleted, and exactly one
+# generation is kept. The rename is on the same volume, so it is a directory
+# entry change rather than a copy: it costs nothing and is atomic, which also
+# closes the window where neither copy existed. If the `ditto` then fails, the
+# previous copy is put straight back - the failure path is now "nothing
+# changed" instead of "the app is gone".
+#
+# One generation on purpose. Two would be a retention policy to maintain and a
+# second multi-hundred-megabyte bundle on the disk, and the thing this is
+# actually for is the build that was fine an hour ago.
+#
+# **The `.bak` suffix is load-bearing, not decoration.** Every build of this app
+# declares the same `com.manjesh.grandline.native` bundle identifier - that is
+# the whole reason for this repo's "never launch a built copy from a worktree"
+# rule - so a second *launchable* `.app` beside it in /Applications gives
+# Launch Services two registrations for one identity, and which one `open -a`
+# or a Dock item resolves to is then its business rather than the captain's. A
+# directory whose name does not end in `.app` is not an app bundle, so it is
+# never registered and never launched by accident. Rolling back is the rename
+# back, which is also how it becomes launchable again.
 INSTALLED_APP="/Applications/$APP_NAME"
+PREVIOUS_APP="/Applications/${APP_NAME%.app} (previous).app.bak"
 INSTALL_OK=1
+KEPT_PREVIOUS=0
 if [ -d "/Applications" ] && [ -w "/Applications" ]; then
-  if rm -rf "$INSTALLED_APP" 2>/dev/null && ditto "$APP_DIR" "$INSTALLED_APP" 2>/dev/null; then
+  if [ -d "$INSTALLED_APP" ]; then
+    # Drop the generation before last, then rename the current one aside.
+    rm -rf "$PREVIOUS_APP" 2>/dev/null || true
+    if mv "$INSTALLED_APP" "$PREVIOUS_APP" 2>/dev/null; then
+      KEPT_PREVIOUS=1
+    else
+      # Could not rename it - fall back to the old behaviour rather than
+      # refusing to install, but say so.
+      echo "⚠️  Could not keep a previous copy at $PREVIOUS_APP - replacing in place."
+      rm -rf "$INSTALLED_APP" 2>/dev/null || true
+    fi
+  fi
+  if ditto "$APP_DIR" "$INSTALLED_APP" 2>/dev/null; then
     INSTALL_OK=1
   else
     INSTALL_OK=0
+    # Put the previous copy back: a failed install must not leave the machine
+    # with no app at all.
+    if [ "$KEPT_PREVIOUS" -eq 1 ]; then
+      rm -rf "$INSTALLED_APP" 2>/dev/null || true
+      if mv "$PREVIOUS_APP" "$INSTALLED_APP" 2>/dev/null; then
+        KEPT_PREVIOUS=0
+        echo "⚠️  Install failed - the previous copy was restored to $INSTALLED_APP."
+      fi
+    fi
   fi
 else
   INSTALL_OK=0
@@ -372,5 +426,10 @@ echo ""
 echo "✓ Built: $(cd "$DIST_DIR" && pwd)/$APP_NAME"
 if [ "$INSTALL_OK" -eq 1 ]; then
   echo "✓ Installed: $INSTALLED_APP"
+fi
+if [ "$KEPT_PREVIOUS" -eq 1 ]; then
+  echo "✓ Previous build kept: $PREVIOUS_APP"
+  echo "    To roll back, with the app quit:"
+  echo "      rm -rf \"$INSTALLED_APP\" && mv \"$PREVIOUS_APP\" \"$INSTALLED_APP\""
 fi
 echo "  Open with:  open $APP_DIR"

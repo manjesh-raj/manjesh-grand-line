@@ -70,7 +70,7 @@ is vendored under `Vendor/`, so the build needs no network.
 
 | `Vendor/` | What, and the catch |
 |---|---|
-| `SwiftTerm` | Pinned to upstream 1.15.0 with **five local patches** - read `Vendor/SwiftTerm/README.md` before touching or re-syncing it |
+| `SwiftTerm` | Pinned to upstream 1.15.0 with **six local patches** - read `Vendor/SwiftTerm/README.md` before touching or re-syncing it |
 | `whisper.cpp` | Local Whisper for dictation, CPU + Metal. The shader is a generated file; see `Scripts/build-whisper-metal-shader.py` |
 | `YamlSwift` | Patched for insertion order and quote preservation |
 | `Excalidraw`, `Monaco` | Committed, self-contained web bundles for the Whiteboard and Code Preview (the Notebook's source pane loads the same Monaco bundle - one integration, not two). Loaded from disk with no CDN and no runtime download; `swift build` never touches them |
@@ -90,8 +90,10 @@ does.
 ./Scripts/run-all-tests.sh --no-build FM_RUN_SHIFT_STORE_TESTS
 ```
 
-There is no XCTest target. The app carries ~157 permanent self-test suites, each
-behind its own `FM_RUN_*_TESTS=1` variable and each handled **before**
+There is no XCTest target. The app carries a permanent self-test suite per
+`FM_RUN_*` flag - `./Scripts/run-all-tests.sh --list` prints the current list
+and its total, which is the only place that count is not stale. Each sits
+behind its own `FM_RUN_*_TESTS=1` variable and each is handled **before**
 `NSApplication` is ever touched - so they run headless and are safe alongside
 the real app. The runner discovers its list from `main.swift`, so a new suite
 joins automatically.
@@ -128,6 +130,18 @@ cd native
 installed over `/Applications`. The version comes from `git describe` (GL-18), so
 a release is cut by tagging - never by editing a constant. Releases are
 unsigned; see the repo-root README.
+
+**The copy being replaced is kept.** The script renames it to
+`/Applications/Grand Line (previous).app.bak` before installing, one generation
+only, so a bad build always has a last-known-good beside it (P8 of the
+2026-09-25 review - it used to `rm -rf` the installed copy first). The `.bak`
+suffix means macOS does not register it as a second app under the same bundle
+identifier. To roll back, with the app quit:
+
+```bash
+rm -rf "/Applications/Grand Line.app"
+mv "/Applications/Grand Line (previous).app.bak" "/Applications/Grand Line.app"
+```
 
 ### App Intents / Shortcuts registration (F21)
 

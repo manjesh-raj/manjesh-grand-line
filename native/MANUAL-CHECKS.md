@@ -269,7 +269,7 @@ decision rule and the running record are in
 vendored copy, and the scheduled check".
 
 Here because it is a network fetch plus a judgement call: the question is not
-"is there a newer tag" (there always is) but "has any of the five local patches'
+"is there a newer tag" (there always is) but "has any of the six local patches'
 root cause been fixed upstream, or gained a `public`/`open` hook" - which needs
 reading upstream's current source and deciding, not a comparison a suite can
 make.
@@ -279,9 +279,41 @@ make.
       "stay pinned"** - a check that leaves no record is one nobody can tell was
       skipped.
 
-`FM_RUN_VENDORED_PATCHES_TESTS` covers the automated half (all five patches are
+`FM_RUN_VENDORED_PATCHES_TESTS` covers the automated half (all six patches are
 still present in the tree, so a sync that drops one fails by name) and prints a
 NOTE - never a failure - once the recorded date is older than the interval.
+
+## 15a. Open: the vendored Excalidraw bundle does not match its inputs
+
+P11 of the 2026-09-25 review added a committed `package-lock.json` and a
+`--check` to both web-bundle generators. Monaco passes:
+`./Scripts/build-monaco-web.sh --check` reproduces
+`Vendor/Monaco/web` byte for byte. **Excalidraw does not.**
+
+Measured on 2026-09-25:
+
+- `Vendor/Excalidraw/web/whiteboard.js` is 8,449,843 bytes; a rebuild from the
+  now-pinned inputs is 8,451,183. Everything else in that directory - the CSS,
+  the HTML, the fonts and `BUILD-INFO.txt` - matches.
+- The build is **deterministic**: two rebuilds from the lockfile came out
+  byte-identical to each other. So this is not build nondeterminism; the
+  committed bundle was produced from a different transitive dependency tree,
+  which is exactly the drift the lockfile now prevents and the reason the
+  review asked for one.
+- `BUILD-INFO.txt` matching means the *direct* pins agree
+  (`@excalidraw/excalidraw` 0.18.1, React 19.1.0, esbuild 0.25.9). The
+  difference is below them.
+
+Deliberately not fixed in that PR: regenerating it replaces a shipped 8MB
+artifact the Whiteboard loads, and an agent worktree cannot launch the app to
+confirm the Whiteboard still works (see AGENTS.md, "Never launch a built copy
+from a worktree"). It wants its own change with a real check.
+
+- [ ] `./Scripts/build-excalidraw-web.sh`, commit the result, then open the
+      Whiteboard and confirm drawing, the DSL, image export and the annotate
+      flow still work. `FM_RUN_WHITEBOARD_VIEW_TESTS` covers the page's own
+      wiring but not Excalidraw's internals.
+- [ ] Re-run `--check` afterwards; it should print "matches a rebuild".
 
 ## 16. Packaging
 
@@ -301,8 +333,8 @@ it is the one open item F23 was scoped around.
 
 - [ ] **Developer ID.** `security find-identity -v -p codesigning` shows a
       `Developer ID Application: … (TEAMID)` certificate. Until it does,
-      everything below is unreachable - and `codesign -dv "dist/Manjesh Grand
-      Line.app"` reporting `TeamIdentifier=not set` is the current state.
+      everything below is unreachable - and `codesign -dv "dist/Grand Line.app"`
+      reporting `TeamIdentifier=not set` is the current state.
 - [ ] **The App Group id agrees in both files.** Set
       `GrandLineWidgetContainer.appGroupIdentifier` and
       `GrandLineWidgets/GrandLineWidgets.entitlements` to

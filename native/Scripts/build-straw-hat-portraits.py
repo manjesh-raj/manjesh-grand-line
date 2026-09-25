@@ -177,7 +177,7 @@ def swift_source(payloads: dict) -> str:
         "/// build cannot see.",
         "enum StrawHatPortraits {",
         "",
-        f"    /// The pixel side of every payload below.",
+        "    /// The pixel side of every payload below.",
         f"    static let side: CGFloat = {SIDE}",
         "",
         "    static func image(for member: StrawHatMember) -> NSImage? {",

@@ -68,7 +68,7 @@ final class AppSettings {
     /// the real value, which is the honest thing to do for a *singleton*'s
     /// behaviour, and switching them to an injected store would change what
     /// they prove. This is the seam, not a migration.
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = AppDefaults.store) {
         self.defaults = defaults
     }
 

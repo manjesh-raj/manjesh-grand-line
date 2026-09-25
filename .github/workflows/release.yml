@@ -61,10 +61,23 @@ env:
   # See the header. Flip to 'true' only once every secret listed above exists.
   SIGNING_ENABLED: 'false'
 
+  # P6 (2026-09-25 review): this workflow ran `macos-14` and asserted nothing
+  # about the toolchain, while `ci.yml` pins `macos-15`, asserts the Swift
+  # major, and says in its own comment to "keep all four in sync". So the
+  # artifact the captain would actually install was the one build in the repo
+  # compiled by a toolchain nothing checked - and the two compilers genuinely
+  # disagree in both directions, including on hard errors (AGENTS.md's
+  # Toolchain section has the measurement). A release is the last place to
+  # discover that.
+  #
+  # Same value and same assertion as `ci.yml`. Bump both together, along with
+  # the four `runs-on` labels there and native/README.md's Requirements.
+  EXPECTED_SWIFT_MAJOR: "6"
+
 jobs:
   release:
     name: build and publish
-    runs-on: macos-14
+    runs-on: macos-15   # keep in step with ci.yml's four - see EXPECTED_SWIFT_MAJOR above
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,6 +91,11 @@ jobs:
         working-directory: native
         run: |
           swift --version
+          if ! swift --version 2>&1 | grep -qE "Apple Swift version ${EXPECTED_SWIFT_MAJOR}\."; then
+            echo "::error::expected a Swift ${EXPECTED_SWIFT_MAJOR}.x toolchain; this runner has something else."
+            echo "::error::see ci.yml's runner-image note and native/README.md's Requirements."
+            exit 1
+          fi
           echo "git describe: $(git describe --tags --dirty --always)"
 
       # The same gate `ci.yml` enforces. A release should never be the first

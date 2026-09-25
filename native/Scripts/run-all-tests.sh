@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Run every self-test suite in the app (GL-19).
 #
-# This project has no XCTest target - it has ~44 permanent self-test suites,
-# each gated behind its own `FM_RUN_<NAME>_TESTS=1` environment variable and
-# each exiting the process with 0/1 (see any `*SelfTest.swift` header, or
-# AGENTS.md's "Verifying native UI bugs" section, for why that convention
-# exists). Until this script existed, running "the tests" meant 44 manual
-# invocations, which in practice meant nobody ran the ones they had not
-# personally written.
+# This project has no XCTest target - it has one permanent self-test suite per
+# `FM_RUN_<NAME>_TESTS=1` environment variable, each exiting the process with
+# 0/1 (see any `*SelfTest.swift` header, or AGENTS.md's "Verifying native UI
+# bugs" section, for why that convention exists). Until this script existed,
+# running "the tests" meant invoking every one of them by hand, which in
+# practice meant nobody ran the ones they had not personally written.
+#
+# **No count is written down here, or anywhere else, on purpose.** Four
+# different documents carried four different hardcoded numbers - 44, 157, 205
+# and "50+" - none of which matched the tree by the 2026-09-25 review (P6).
+# `--list` is the answer, and it prints the total.
 #
 # The suite list is discovered from `main.swift` rather than hardcoded here, so
 # adding a new suite makes it part of this run automatically and this script
@@ -17,6 +21,17 @@
 #   ./Scripts/run-all-tests.sh              # build, then run every suite
 #   ./Scripts/run-all-tests.sh --no-build   # skip `swift build`
 #   ./Scripts/run-all-tests.sh --list       # print the discovered suites and exit
+#   ./Scripts/run-all-tests.sh --describe   # ...with what each one is about
+#
+# `--describe` exists because of P11 of the 2026-09-25 review: 31 of the
+# suites are named after the audit or the branch that created them
+# (`AUDIT3_UI_FIXES`, `DAYLIGHT_DRILL_SLICE2`, `SETTINGS_REDESIGN`), which
+# tells a later agent nothing about what they cover - and AGENTS.md now lets a
+# narrow change run only the relevant suites, which you cannot pick from a
+# list of those names. Renaming 31 flags would churn ~180 source comments and
+# the CI lists for a guess at what each one is "really" about; printing the
+# first paragraph of each suite's own header answers the same question from
+# what the author already wrote.
 #   ./Scripts/run-all-tests.sh --ci         # skip suites that need a real login
 #                                           # session (see NEEDS_SESSION below)
 #   ./Scripts/run-all-tests.sh --session-only
@@ -68,6 +83,7 @@ cd "$(dirname "$0")/.."
 
 BUILD=1
 LIST_ONLY=0
+DESCRIBE=0
 CI_MODE=0
 SESSION_ONLY=0
 REQUESTED=()
@@ -76,6 +92,7 @@ for arg in "$@"; do
   case "$arg" in
     --no-build) BUILD=0 ;;
     --list) LIST_ONLY=1 ;;
+    --describe) LIST_ONLY=1; DESCRIBE=1 ;;
     --ci) CI_MODE=1 ;;
     --session-only) SESSION_ONLY=1 ;;
     -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -103,13 +120,39 @@ MAIN="Sources/GrandLine/main.swift"
 # subprocesses and real page loads.
 SUITE_TIMEOUT="${FM_SUITE_TIMEOUT:-300}"
 
+# Per-suite exceptions to that bound, each with the measurement that earned it.
+#
+# P4 of the 2026-09-25 review found the bound was counted in ticks of
+# `sleep 0.1` rather than in seconds (see `run_suite`), so "300s" was really
+# 330s or more - and that the slowest suite in the app lives in exactly the
+# band that opened up. Fixing the arithmetic without this table would start
+# killing a suite that has been passing.
+#
+# `FM_RUN_APP_SHELL_BODY_WIDTH_TESTS` mounts a real `AppShellController` in a
+# real window and drives 21 cases through full resize sequences. Measured: 67s
+# on the captain's machine, and **333s and 371s on two green CI runs** - a
+# GitHub macOS runner is roughly five times slower at window-server work than
+# this laptop, which is a property of the runner and not of the suite. 900
+# leaves real headroom over 371 while still being a bound: a genuine hang in
+# it is caught in fifteen minutes instead of by GitHub's six-hour job cap,
+# which is the incident this whole mechanism exists for.
+#
+# Raising the global default instead would have bought that one suite its
+# headroom by taking the backstop away from the other 215.
+suite_timeout_for() {
+  case "$1" in
+    FM_RUN_APP_SHELL_BODY_WIDTH_TESTS) echo 900 ;;
+    *) echo "$SUITE_TIMEOUT" ;;
+  esac
+}
+
 # Per-suite wall clock (P6 of full review #3).
 #
-# A 10-minute run of ~157 suites used to print PASS/FAIL and nothing else, so a
-# suite that doubled its runtime was invisible until the whole run started
-# feeling slow. Every suite is timed now, and the slowest few are listed again
-# at the end - which is the part that actually catches a regression, since
-# nobody diffs 157 individual numbers.
+# A 10-minute run used to print PASS/FAIL and nothing else, so a suite that
+# doubled its runtime was invisible until the whole run started feeling slow.
+# Every suite is timed now, and the slowest few are listed again at the end -
+# which is the part that actually catches a regression, since nobody diffs two
+# hundred individual numbers.
 #
 # Resolution: tenths of a second via system perl's Time::HiRes, which ships
 # with macOS and with GitHub's macOS runner images. `date +%s` is whole-second
@@ -177,6 +220,11 @@ SKIP_FLAGS=(
 # deliberately a per-entry marker with a stated reason rather than a blanket
 # allowlist, the same shape as `OffScreenProbe-exempt:` above.
 NEEDS_SESSION=(
+  # P11: the tour lab mounts a real AppShellController in a real window and
+  # renders it - through `ReviewTourLab.makeOffScreenShell()`, so the window
+  # is built one file away and the `OffScreenProbe.window(` marker cannot see
+  # it here.
+  "FM_RUN_REVIEW_TOUR_LAB_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
   # Review bug B10: the Dictation status card's wrapping text column. It
   # asserts real resolved frames from a real layout pass at several widths -
   # the defect is a circular `preferredMaxLayoutWidth` derivation, which only
@@ -539,6 +587,16 @@ NEEDS_SESSION=(
 # Re-measure before adding to this list, and prefer fixing where a fix does not
 # mean weakening an assertion that is correct on the captain's machine.
 CI_UNSUPPORTED=(
+  # P11 of the 2026-09-25 review: "five window-backed suites never run in CI;
+  # split the single failing cases out so the rest guard merges". This list is
+  # four now - `FM_RUN_DESTINATION_MOUNTING_TESTS` was here because GL-31 lands
+  # a machine with no resolvable firstmate home on `.bootstrap`, which is true
+  # of every runner, so two of its sixteen cases measured a different launch
+  # destination there than here. The suite pins a scratch firstmate home of its
+  # own now (`pinAFirstmateHome`), which makes the launch destination
+  # deterministic on any machine, and all sixteen cases guard merges again.
+  # Reproduced locally before the fix by unsetting the pin: exactly the two
+  # cases the entry described failed, by name.
   # A wall-clock performance budget. The runner parsed 400 synthetic blocks in
   # 19.3s against an 8s budget calibrated on the captain's Apple silicon.
   # Loosening the budget to whatever a shared runner manages would retire the
@@ -555,11 +613,6 @@ CI_UNSUPPORTED=(
   # page: this one needs a genuinely composited window, not just a window
   # server. Its other 37 cases passed on the runner.
   "FM_RUN_KUBERNETES_DESTINATION_TESTS"
-  # Two cases assume the launch destination is the canvas. GL-31 lands a
-  # machine with no resolvable firstmate home on `.bootstrap` instead, so a
-  # runner mounts a second slot and the "only eager slots at launch"
-  # assertions see it. About `$FM_HOME`, not about mounting.
-  "FM_RUN_DESTINATION_MOUNTING_TESTS"
   # Hung outright on the runner - it produced no output and was killed at the
   # 300s per-suite bound. This is the suite that took the job to GitHub's
   # 6-hour cap before that bound existed. Genuinely unexplained; worth its own
@@ -638,8 +691,32 @@ else
   FLAGS=("${ALL_FLAGS[@]}")
 fi
 
+# The first paragraph of a suite's own header comment - which is where the
+# author already wrote down what it is about. The enum name comes from the
+# `XSelfTest.run()` main.swift dispatches to for this flag, so this cannot
+# drift from the flag the way a second hand-maintained table would.
+describe_suite() {
+  local flag="$1"
+  local enum_name
+  enum_name="$(grep -A3 "\"$flag\"" "$MAIN" | grep -oE '[A-Za-z0-9_]+SelfTest\.run\(\)' | head -1 | sed 's/\.run()//')"
+  if [ -z "$enum_name" ]; then echo "    (no suite type found in $MAIN)"; return; fi
+  local file="Sources/GrandLine/SelfTests/$enum_name.swift"
+  if [ ! -f "$file" ]; then echo "    ($file not found)"; return; fi
+  # Skip the one-line product banner and the blank comment after it, then take
+  # comment lines until the paragraph ends.
+  awk '
+    NR <= 2 { next }
+    /^\/\/$/ { if (started) exit; next }
+    /^\/\// { started = 1; sub(/^\/\/ ?/, ""); print "    " $0; next }
+    { if (started) exit }
+  ' "$file"
+}
+
 if [ "$LIST_ONLY" -eq 1 ]; then
-  printf '%s\n' "${FLAGS[@]}"
+  for flag in "${FLAGS[@]}"; do
+    echo "$flag"
+    if [ "$DESCRIBE" -eq 1 ]; then describe_suite "$flag"; echo ""; fi
+  done
   echo ""
   echo "${#FLAGS[@]} suite(s) discovered in $MAIN."
   exit 0
@@ -670,18 +747,34 @@ run_suite() {
   local outfile="$2"
   env "$flag=1" "$BIN" >"$outfile" 2>&1 &
   local pid=$!
-  # Tenths, not whole seconds. The poll interval is also the floor on every
-  # duration this script reports (P6): at `sleep 1` the fastest suite in the
-  # app measured 1.0s and so did the second fastest, which is no measurement
-  # at all. `sleep 0.1` costs one extra fork per tenth of a suite's life and
-  # buys a number that can actually move.
+  # The poll interval is tenths, not whole seconds: it is also the floor on
+  # every duration this script reports (P6 of full review #3), and at `sleep 1`
+  # the fastest suite in the app measured 1.0s and so did the second fastest,
+  # which is no measurement at all.
   #
-  # The bound drifts *longer* than SUITE_TIMEOUT by however much fork overhead
-  # each tick adds, which is the safe direction for a backstop.
-  local ticks=0
-  local tick_limit=$((SUITE_TIMEOUT * 10))
+  # **The bound itself is real seconds, and it used to be ticks** (P4 of the
+  # 2026-09-25 review). Counting to `SUITE_TIMEOUT * 10` assumes `sleep 0.1`
+  # costs exactly a tenth of a second, and it does not - each tick also forks
+  # `sleep`, and the fork is not free. Measured on this machine: 200 ticks took
+  # **22s** against a nominal 20, so a `SUITE_TIMEOUT` of 300 was really 330 or
+  # more, and more again on a loaded runner where each fork costs longer.
+  #
+  # That is not a rounding error, because a real suite sits in the band it
+  # opens: `FM_RUN_APP_SHELL_BODY_WIDTH_TESTS` took 333s and 371s on two green
+  # CI runs. Under the tick bound, whether it survived depended on how heavily
+  # the runner was loaded - the same load that makes the suite slow also
+  # inflates the bound that is supposed to catch it, so the backstop was
+  # loosest exactly when it was most needed, and a suite that genuinely hung
+  # near the limit could be reported either way from one run to the next.
+  #
+  # `SECONDS` is bash's own wall clock (seconds since this shell started), so
+  # the deadline costs nothing - no fork, no `date`, no perl - and a tick that
+  # takes longer than a tenth of a second can no longer buy a suite extra time.
+  local bound
+  bound="$(suite_timeout_for "$flag")"
+  local deadline=$((SECONDS + bound))
   while kill -0 "$pid" 2>/dev/null; do
-    if [ "$ticks" -ge "$tick_limit" ]; then
+    if [ "$SECONDS" -ge "$deadline" ]; then
       # TERM first so a suite with a cleanup path can take it, then KILL.
       kill -TERM "$pid" 2>/dev/null
       sleep 2
@@ -690,7 +783,6 @@ run_suite() {
       return 124
     fi
     sleep 0.1
-    ticks=$((ticks + 1))
   done
   wait "$pid"
   return $?
@@ -701,7 +793,8 @@ FAILED=()
 SKIPPED=()
 TIMEDOUT=()
 # "<ms> <flag>" per suite, for the slowest-first tail below. A suite that
-# doubles its runtime shows up there; it does not show up in 157 PASS lines.
+# doubles its runtime shows up there; it does not show up in two hundred PASS
+# lines.
 DURATIONS=()
 TOTAL_SUITE_MS=0
 RUN_STARTED_MS=$(now_ms)
@@ -733,7 +826,7 @@ for flag in "${FLAGS[@]}"; do
     printf 'PASS  %-52s %8s\n' "$flag" "$(fmt_ms "$elapsed")"
     PASSED+=("$flag")
   elif [ "$status" -eq 124 ]; then
-    printf 'TIMEOUT  %s (killed after %ss)\n' "$flag" "$SUITE_TIMEOUT"
+    printf 'TIMEOUT  %s (killed after %ss)\n' "$flag" "$(suite_timeout_for "$flag")"
     TIMEDOUT+=("$flag")
     echo "$output" | tail -20 | sed 's/^/      | /'
   else
@@ -793,7 +886,7 @@ fi
 echo ""
 echo "======================================================"
 # Slowest first, so a runtime regression is one line to read rather than a
-# diff of 157. `sort -rn` on "<ms> <name>" is enough - no need for anything
+# diff of two hundred. `sort -rn` on "<ms> <name>" is enough - no need for anything
 # the runner would have to install.
 if [ ${#DURATIONS[@]} -gt 0 ]; then
   printf 'suite wall clock: %s across %d suite(s); whole run %s\n' \

@@ -181,7 +181,7 @@ enum ThemeMotionWebIslandsSelfTest {
             print("  NOTE could not read ThemeManager.swift - skipping the precedence guard")
             return
         }
-        let storedFirst = source.range(of: "UserDefaults.standard.string(forKey: Self.defaultsKey)")
+        let storedFirst = source.range(of: "AppDefaults.store.string(forKey: Self.defaultsKey)")
         let fallbackUse = source.range(of: "theme = Self.fallbackTheme")
         guard let storedFirst, let fallbackUse, storedFirst.lowerBound < fallbackUse.lowerBound else {
             print("  FAIL ThemeManager.init must read the saved fm.themeID BEFORE falling back, or a new default silently discards the captain's own past choice")

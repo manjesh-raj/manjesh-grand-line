@@ -1200,6 +1200,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// sessions on quit - the shared Firstmate console and (Fix 1) every
     /// host's own dedicated console.
     func applicationWillTerminate(_ notification: Notification) {
+        // P9: the pair to `noteLaunch`. Two lifecycle lines per run is what
+        // makes a crash legible after the fact - a launch with no matching
+        // "quitting" before it is a run that did not exit cleanly, which is
+        // exactly the case `crashReportsSinceLastLaunch()` then explains.
+        DiagnosticsLog.shared.lifecycle("lifecycle", "quitting")
         console.shutdown()
         appShell.shutdownAllHostConsoles()
         // Findings 3.3/4.6: the Sticky Board's text/title writes are debounced
@@ -2329,7 +2334,13 @@ if AppPaths.isScratchRedirected() {
 // all. No suite drives a schedule write today, which is the only reason
 // nothing has been corrupted yet; AGENTS.md's own post-incident rule says to
 // close that here rather than wait for the suite that does.
-if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_RUN_") }) {
+// P11: `FM_REVIEW_TOUR` arms this block too. The tour lab mounts a real
+// `AppShellController` with real stores, exactly as a window-backed suite
+// does, so it needs every redirect below for the same reason - and it is not
+// an `FM_RUN_*` flag, deliberately (see `ReviewTourLab.variable`), so it has
+// to be named here rather than caught by the prefix.
+if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_RUN_") })
+    || !(ProcessInfo.processInfo.environment["FM_REVIEW_TOUR"] ?? "").isEmpty {
     let scratchRoot = FileManager.default.temporaryDirectory
         .appendingPathComponent("selftest-process-\(ProcessInfo.processInfo.processIdentifier)",
                                 isDirectory: true)
@@ -2346,6 +2357,27 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     // before the first suite runs and recovers from one left by an interrupted
     // run. See `SelfTestDefaultsGuard`'s own header.
     SelfTestDefaultsGuard.arm()
+
+    // P10 (2026-09-25 review): the same treatment for `UserDefaults`, which is
+    // the one piece of shared state the redirects above could not cover
+    // because it is not a path.
+    //
+    // Everything AGENTS.md documents about `fm.themeID` leaking between suites
+    // - the intermittent `FM_RUN_CONTRAST_TESTS` failure on a clean tree, two
+    // concurrent passes restoring each other's values, `defaults read
+    // GrandLine` as the documented recovery - is a consequence of this process
+    // writing the real domain. It writes a per-process suite domain now, so
+    // there is nothing to leak into and nothing for a sibling pass to fight
+    // over.
+    //
+    // Set BEFORE anything reads `AppDefaults.store`, which is a `static let`
+    // resolved once. The name carries `AppDefaultsSweep`'s marker plus this
+    // process's pid, so an interrupted run's domain is identifiable by the
+    // next one.
+    setenv(AppDefaults.suiteVariable,
+           "\(AppDefaultsSweep.marker)\(ProcessInfo.processInfo.processIdentifier)",
+           0)
+    AppDefaultsSweep.arm()
 
     // Review bug B5: the same treatment for the Keychain, which this block had
     // never covered. `security dump-keychain` found 91 real SSH-key items
@@ -2556,6 +2588,15 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     if (ProcessInfo.processInfo.environment["FM_SCRATCHPAD_FILE"] ?? "").isEmpty {
         setenv("FM_SCRATCHPAD_FILE", scratchRoot.appendingPathComponent("scratchpad.json").path, 1)
     }
+    // P9's diagnostics log. `DiagnosticsLog.shared` is a singleton reached
+    // from `PersistenceFailureReporter` and `StoreLoadFailure`, both of which
+    // a dozen store suites drive deliberately - so without this every suite
+    // run would append its own fault-injection failures to the captain's real
+    // diagnostics file, which is precisely the file a real investigation would
+    // then be reading.
+    if (ProcessInfo.processInfo.environment["FM_DIAGNOSTICS_DIR"] ?? "").isEmpty {
+        setenv("FM_DIAGNOSTICS_DIR", scratchRoot.appendingPathComponent("diagnostics", isDirectory: true).path, 1)
+    }
     // F23's widget snapshot (`fm/grandline-feature-f23-widgets`). The one
     // store in this app whose default location is **outside** the captain's
     // profile in the usual sense - it is the App Group container the widget
@@ -2717,6 +2758,32 @@ if ProcessInfo.processInfo.environment["FM_RUN_CERT_INSPECTOR_TESTS"] == "1" {
 // source grep, so it guards CI's blocking lane.
 if ProcessInfo.processInfo.environment["FM_RUN_PROBE_SCRATCH_ROOT_TESTS"] == "1" {
     exit(ProbeScratchRootSelfTest.run() ? 0 : 1)
+}
+
+// Review process issue P7: AGENTS.md is imported into every agent session, so
+// its size is a cost every session pays. Pure logic plus one file read, so it
+// guards CI's blocking lane.
+if ProcessInfo.processInfo.environment["FM_RUN_AGENTS_BUDGET_TESTS"] == "1" {
+    exit(AgentsFileBudgetSelfTest.run() ? 0 : 1)
+}
+
+// Review process issue P9: the on-disk diagnostics sink and the crash-report
+// check. Pure logic plus real file round trips, so it guards CI's blocking
+// lane.
+if ProcessInfo.processInfo.environment["FM_RUN_DIAGNOSTICS_LOG_TESTS"] == "1" {
+    exit(DiagnosticsLogSelfTest.run() ? 0 : 1)
+}
+
+// Review process issue P11: the tour lab's own coverage. Window-backed.
+if ProcessInfo.processInfo.environment["FM_RUN_REVIEW_TOUR_LAB_TESTS"] == "1" {
+    exit(ReviewTourLabSelfTest.run() ? 0 : 1)
+}
+
+// Review process issue P11: the file-driven probe driver. Not a suite - it
+// takes a tour file's path, not `=1` - and deliberately not named `FM_RUN_*`,
+// which `run-all-tests.sh` discovers suites by.
+if let tour = ProcessInfo.processInfo.environment[ReviewTourLab.variable], !tour.isEmpty {
+    exit(ReviewTourLab.runTourFile(at: tour) ? 0 : 1)
 }
 
 // Review bug B5: every Keychain service name carries a per-process prefix in a
@@ -4241,6 +4308,17 @@ case .alreadyRunning(let pid):
         """)
     exit(0)
 }
+
+// P9: the on-disk diagnostics sink. This is the first thing after the instance
+// guard so the launch line is the first line of every run, and it must be
+// *after* the guard - a second instance that exits is not a launch and should
+// not stamp `last-launch`, which is what
+// `DiagnosticsLog.crashReportsSinceLastLaunch()` compares against.
+//
+// `DiagnosticsLog.shared` reads the *previous* stamp at init, so the read has
+// already happened by the time this overwrites it.
+DiagnosticsLog.shared.noteLaunch(
+    version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unbundled")
 
 let app = NSApplication.shared
 // Regular activation policy so a `swift run`-launched executable gets a real

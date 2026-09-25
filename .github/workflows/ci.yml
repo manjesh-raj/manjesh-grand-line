@@ -6,8 +6,11 @@
 #
 # Two jobs, deliberately separate:
 #
-#   build - `swift build` with warnings treated as failures. Cheap, and the
-#           thing most likely to catch a bad merge.
+#   build - `swift build` with warnings treated as failures, plus the release
+#           compile. Cheap, the thing most likely to catch a bad merge, and
+#           since P2 the one place the debug binary is compiled: the two test
+#           jobs take it from here as an artifact instead of building their
+#           own.
 #   test  - the headless-safe suite subset, via the same
 #           `Scripts/run-all-tests.sh` a developer runs locally. `--ci` skips
 #           the suites that need a real login session or the machine's own
@@ -17,6 +20,15 @@
 #           ~50 suites that mount real `NSWindow`s and drive real AppKit
 #           layout, accessibility presses, contrast measurement, terminal
 #           rendering and WebKit visibility gating.
+#   widget - P11 of the 2026-09-25 review: `build-widget-extension.sh --check`.
+#           The WidgetKit extension is not a SwiftPM target, so `swift build`
+#           never compiles it - and `WidgetSharedContract.swift` is compiled
+#           into both binaries, so an import added to it breaks the extension
+#           and nothing else.
+#   python  - P11: `ruff` over the ~4.4K lines of security-relevant Python.
+#           Their unittest suites already ran (the `test` job runs them); the
+#           lint is new. `native/Scripts/ruff.toml` carries the rule set and
+#           the reason each large group is left out.
 #   generated - M4 of the end-to-end review: the `--check` mode of the
 #           self-contained generator scripts, so drift in a committed
 #           generated artifact fails a PR instead of waiting for somebody to
@@ -44,9 +56,19 @@
 
 name: CI
 
+# P2 (2026-09-25 review): this used to be `push: branches: ["**"]` plus
+# `pull_request`, in two different concurrency groups, so every push to an
+# `fm/*` branch with an open PR ran the whole workflow **twice** - 35 duplicate
+# pairs in the 100 runs before the review, at 7-22 minutes of macOS runner time
+# per job.
+#
+# `push` is now the default branch only, which is the post-merge run, and
+# `pull_request` is what guards a branch before it lands. The one thing this
+# gives up is CI on a branch with no PR open yet; `workflow_dispatch` covers
+# the case where that is actually wanted.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -81,7 +103,16 @@ concurrency:
   # A new push supersedes an in-flight run for the same ref - a macOS runner
   # minute is expensive enough to care.
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # ...except on `main`, where it is the opposite of what anyone wants (P2).
+  # Merges land 4-24 times a day, so a second merge routinely arrived while the
+  # first one's run was still going and cancelled it: 15 of the 100 runs before
+  # the review were cancelled `main` runs, so roughly one merge in seven never
+  # got a completed run of its own exact tree. That is the run people actually
+  # go back and read when something breaks in `/Applications`.
+  #
+  # A superseded PR run is still cancelled, which is where the saving is and
+  # where nobody needs the old result.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 defaults:
   run:
@@ -124,6 +155,31 @@ jobs:
           fi
           echo "no warnings in Sources/GrandLine"
 
+      # P2: the two test jobs used to run their own `swift build`, so one push
+      # compiled the vendored whisper.cpp, SwiftTerm and YamlSwift three times
+      # - 7.5-9.2 minutes each, none of it cached. They take this binary
+      # instead and keep their `--no-build`.
+      #
+      # Only the executable travels. The suites still read the checked-out
+      # sources (`SelfTestSources` resolves `#filePath`, which is an absolute
+      # path baked in at compile time), and every job in a run checks out to
+      # the same `/Users/runner/work/<repo>/<repo>` on the same runner image,
+      # so a source guard resolves identically in the job that built it and in
+      # the job that downloads it.
+      #
+      # An `actions/cache` of `native/.build` was considered and deliberately
+      # not used: `actions/checkout` gives every file a fresh mtime, llbuild
+      # keys its incremental decisions on file mtime and size, so a restored
+      # `.build` would be rebuilt from scratch anyway and the cache would only
+      # add a multi-gigabyte upload and download to each job.
+      - name: Share the debug binary with the test jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: grandline-debug-binary
+          path: native/.build/debug/GrandLine
+          retention-days: 1
+          if-no-files-found: error
+
       # GL-27: the self-test suites are compiled into debug builds only, which
       # means the release configuration is a genuinely different compilation
       # and can break on its own - a reference to a suite or a `debug*` shim
@@ -146,6 +202,11 @@ jobs:
   test:
     name: self-test suites
     runs-on: macos-15   # keep all four in sync - see the runner-image note above
+    # P2: this job consumes the `build` job's debug binary rather than
+    # compiling its own, so it waits for it. Total runner minutes fall by two
+    # full builds per run; wall clock is roughly unchanged, because the build
+    # this job used to do was on its own critical path anyway.
+    needs: build
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -161,8 +222,16 @@ jobs:
             exit 1
           fi
 
-      - name: Build
-        run: swift build
+      # P2: built once in the `build` job above, not a fourth time here.
+      - name: Take the debug binary from the build job
+        uses: actions/download-artifact@v4
+        with:
+          name: grandline-debug-binary
+          path: native/.build/debug
+      - name: Make it executable
+        # `upload-artifact` does not carry the executable bit, and the runner
+        # script refuses to start without it (`[ ! -x "$BIN" ]`).
+        run: chmod +x .build/debug/GrandLine
 
       # Every store in this app honours an `FM_*` override for where it reads
       # and writes (see the README's env-var index). Pointing all of them at a
@@ -191,6 +260,8 @@ jobs:
   test-windowed:
     name: self-test suites (window-backed)
     runs-on: macos-15   # keep all four in sync - see the runner-image note above
+    # P2: same as `test` above - the `build` job's binary, not a third compile.
+    needs: build
     # A bound, because this job has already needed one: its first run hung and
     # was killed by GitHub's own 6-hour cap, producing no usable log. The
     # runner script now bounds each suite individually (`FM_SUITE_TIMEOUT`), so
@@ -233,8 +304,16 @@ jobs:
             exit 1
           fi
 
-      - name: Build
-        run: swift build
+      # P2: built once in the `build` job above, not a fourth time here.
+      - name: Take the debug binary from the build job
+        uses: actions/download-artifact@v4
+        with:
+          name: grandline-debug-binary
+          path: native/.build/debug
+      - name: Make it executable
+        # `upload-artifact` does not carry the executable bit, and the runner
+        # script refuses to start without it (`[ ! -x "$BIN" ]`).
+        run: chmod +x .build/debug/GrandLine
 
       # Deliberately identical to the `test` job's block above. GitHub Actions
       # supports neither YAML anchors nor a workflow-level `env` that can see
@@ -339,12 +418,17 @@ jobs:
       #     job should not make on the captain's behalf. Its `--check` is
       #     in-memory now either way (L1's other half), so a local run leaves
       #     nothing behind.
-      #   build-monaco-web.sh / build-excalidraw-web.sh - a rebuild-and-diff
-      #     needs node + a full npm install of an upstream package whose
-      #     transitive tree is not pinned by this repo, so a "drift" failure
-      #     would as often mean "npm resolved a different patch version today".
-      #     Worth doing as a scheduled job with a pinned lockfile; not worth
-      #     making every PR wait for it, and not worth a flaky red X.
+      #   build-monaco-web.sh / build-excalidraw-web.sh - both gained a
+      #     `--check` and a committed `package-lock.json` in P11, so the
+      #     original objection ("npm resolved a different patch version
+      #     today") no longer holds: `npm ci` installs exactly the lockfile
+      #     and the rebuild is reproducible, measured - two rebuilds of the
+      #     Excalidraw bundle came out byte-identical. What is left is cost:
+      #     a node + npm install of Excalidraw, React and esbuild on every
+      #     pull request, for bundles that change a few times a year. The
+      #     review's own suggestion is a scheduled job, and that is the
+      #     captain's call; `./Scripts/build-{monaco,excalidraw}-web.sh
+      #     --check` is one command either way.
       - name: Card shortcut icons
         run: python3 Scripts/build-card-shortcut-icons.py --check
 
@@ -359,3 +443,64 @@ jobs:
 
       - name: Whisper Metal shader
         run: python3 Scripts/build-whisper-metal-shader.py --check
+
+  widget:
+    name: widget extension compiles
+    runs-on: macos-15   # keep in sync - see the runner-image note above
+    # P11 (2026-09-25 review): "`build-widget-extension.sh --check` is not in
+    # CI even though `WidgetSharedContract.swift` compiles into both
+    # binaries". SwiftPM has no bundle product, so the WidgetKit extension is
+    # compiled by `swiftc` from its own script and `swift build` does not touch
+    # it - which means the one file shared between the app and the extension
+    # was only ever compiled one of the two ways CI checks. Adding an
+    # `AppKit`/`Yaml` import to it breaks the extension and nothing else, and
+    # nothing would have said so until somebody ran the script by hand.
+    #
+    # `--check` compiles and links without assembling or signing the `.appex`,
+    # so it needs no Developer ID - which is the item the extension itself is
+    # blocked on (see native/Widgets/README.md).
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          if ! swift --version 2>&1 | grep -qE "Apple Swift version ${EXPECTED_SWIFT_MAJOR}\."; then
+            echo "::error::expected a Swift ${EXPECTED_SWIFT_MAJOR}.x toolchain; this runner has something else."
+            exit 1
+          fi
+
+      - name: Compile the widget extension
+        run: ./Scripts/build-widget-extension.sh --check
+
+  python:
+    name: python lint and tests
+    runs-on: macos-15   # keep in sync - see the runner-image note above
+    # P11: "the 4.4K lines of security-relevant Python have tests but no
+    # `ruff`". The tests were already run by `run-all-tests.sh` (and so by the
+    # `test` job); the lint is new. `Scripts/ruff.toml` carries the rule set
+    # and, more usefully, the reason each large rule group is left out.
+    #
+    # Minutes, not tens of minutes: no Swift, no app.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Deliberately NOT the version the scripts run under. macOS ships
+          # 3.9 as `python3` and `Scripts/ruff.toml` pins `target-version` to
+          # match, so the rules ruff applies are the ones that suit the real
+          # runtime whatever interpreter runs ruff itself.
+          python-version: '3.12'
+
+      - name: Install ruff
+        # Pinned for the same reason the `generated` job pins Pillow: an
+        # unpinned linter turns a green gate into a coin flip the day it adds
+        # a rule.
+        run: python3 -m pip install --quiet 'ruff==0.16.3'
+
+      - name: Lint
+        run: ruff check --config Scripts/ruff.toml Scripts/*.py
