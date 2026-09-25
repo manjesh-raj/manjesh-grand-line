@@ -32,6 +32,26 @@ enum PoneglyphTOTPRecoveryViewSelfTest {
     /// against. `TOTP.code` at this instant is deterministic, so the row's
     /// rendered text can be asserted exactly rather than by shape.
     private static let seed = "JBSWY3DPEHPK3PXP"
+
+    /// The password the CSV-import case feeds in and then looks for in the
+    /// sealed file on disk.
+    ///
+    /// **P5 (2026-09-25 review): this used to be the literal `pw1`, and that
+    /// is a flaky test rather than a strict one.** The file it is searched in
+    /// is base64 AES-GCM ciphertext, so a three-character needle drawn from
+    /// the base64 alphabet turns up by chance roughly `n / 64^3` of the time -
+    /// a few percent at this file's size. It failed on `main` runs
+    /// 35875330443 and 35845819109 and passed on both of the PRs that produced
+    /// them, which is the worst possible shape: red after the merge, green
+    /// before it.
+    ///
+    /// Spaces are what actually close it rather than length alone. Base64 has
+    /// no space in its alphabet, so a needle containing one cannot appear in
+    /// the ciphertext by chance at any file size - the probability goes to
+    /// zero rather than merely getting small. The assertion is unchanged in
+    /// what it means: the imported secret must not be readable on disk.
+    private static let importedPassword = "correct horse battery staple 7f3a1c"
+    private static let secondPassword = "another long fixture password 4b19e2"
     private static let instant = Date(timeIntervalSince1970: 1_700_000_010)
 
     static func run() -> Bool {
@@ -511,8 +531,8 @@ enum PoneglyphTOTPRecoveryViewSelfTest {
 
         let csv = """
         Title,Url,Username,Password,OTPAuth,Tags,Notes
-        Work Gmail,https://mail.google.com,me@example.com,pw1,otpauth://totp/G:me?secret=\(seed),work,
-        AWS root,https://console.aws.amazon.com,root,pw2,,,
+        Work Gmail,https://mail.google.com,me@example.com,\(importedPassword),otpauth://totp/G:me?secret=\(seed),work,
+        AWS root,https://console.aws.amazon.com,root,\(secondPassword),,,
         ,,,,,,
         """
         sheet.debugLoadCSV(csv, named: "1password-export.csv")
@@ -540,7 +560,17 @@ enum PoneglyphTOTPRecoveryViewSelfTest {
             check(false, "could not read the vault file back")
             return
         }
-        check(!text.contains("pw1") && !text.contains("Work Gmail") && !text.contains(seed),
+        // The fixture's own discriminating power, and the reason it is worth
+        // stating: this assertion is only as good as the improbability of its
+        // needles turning up in ciphertext by chance, so each one must be long
+        // enough - and ideally shaped unlike base64 - for that to be zero
+        // rather than small. It failed twice on `main` when the password was
+        // the literal `pw1` (P5 of the 2026-09-25 review).
+        check(csv.contains(importedPassword) && csv.contains(seed) && csv.contains("Work Gmail"),
+              "the needles must be in the plaintext, or their absence downstream proves nothing")
+        check(importedPassword.contains(" ") && importedPassword.count > 24,
+              "the password needle must be long and non-base64, or this is a coin flip")
+        check(!text.contains(importedPassword) && !text.contains("Work Gmail") && !text.contains(seed),
               "no imported value, title or 2FA seed may appear in the file on disk")
 
         // A second import of the same file, merging, must update rather than
