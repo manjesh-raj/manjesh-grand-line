@@ -30,7 +30,7 @@ as they are rather than rewritten across 180 files.
 - [Build, run, test](#build-run-test) - the two CI lanes, the second (widget) binary, and the vendored patches a sync must re-apply
 - [Verification conventions](#verification-conventions) - how a change is proved here, and how much of the suite a PR has to run locally
 - [Writing a self-test](#writing-a-self-test)
-- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 21 measured traps
+- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 22 measured traps
 - [GL invariants](#gl-invariants) - GL-01 .. GL-38, one line each
 - [The component index](#the-component-index) - one button, one card, one row
 - [Stores, subprocesses and secrets](#stores-subprocesses-and-secrets)
@@ -445,23 +445,30 @@ is scoped by blast radius, and CI's run is not.
 
 ### Verifying native UI bugs without a real screenshot
 
-**`screencapture` works from an agent shell now, and the bullet below (which
-says it does not) is the older state of this machine.** Screen Recording has
-since been granted to the shell: `screencapture -x <file>` captures the whole
-screen and `screencapture -x -o -l <windowID>` captures **one window, alpha
-preserved** - which is how `fm/grandline-settings-black-band-real-fix` proved
-that a black band two prior rounds had chased belonged to the Window Server's
-menu bar rather than to this app. `CGWindowListCopyWindowInfo` is the other
-half: it names every window in the strip you are looking at, its owner and its
-layer. Accessibility is still *not* granted (no synthetic clicks; a real
-`performClick` is still the substitute, and `CGWarpMouseCursorPosition` moves
-the pointer without it). Nothing below is retired - env-gated instrumentation
-is still the right tool for geometry and for anything that has to be read out
-of a layout pass - but **do not conclude a pixel is or is not app-painted from
-an off-screen render when a real capture is available.** An off-screen render
-has no full-screen Space, no title bar and no menu bar window, so it
-structurally cannot reproduce a defect in that region and a clean diff there
-proves nothing;
+**`screencapture` does NOT work from an agent shell on this machine.**
+`screencapture -x` fails with "could not create image from display" - measured
+by the 2026-09-25 full-app review and again, independently, by
+`fm/grand-line-review-bugs-b1-b14`. A grant this file recorded after
+`fm/grandline-settings-black-band-real-fix` has since lapsed (a shell that is
+re-signed or relaunched under a different parent loses it), so **check before
+relying on it rather than trusting either state written here**: one
+`screencapture -x /tmp/x.png` says which machine you are on today. Where it
+does work, `screencapture -x -o -l <windowID>` captures one window with alpha
+preserved, and `CGWindowListCopyWindowInfo` names every window, its owner and
+its layer.
+
+Accessibility is *not* granted either, and the failure mode is worse than an
+error: `System Events` answers a window query for another process with `0`
+rather than refusing, so a count of zero is not evidence of no window
+(measured, `fm/grand-line-review-bugs-b1-b14`). A real `performClick` is still
+the substitute for a synthetic click, and `CGWarpMouseCursorPosition` moves the
+pointer without it.
+
+So env-gated instrumentation and off-screen renders are the working tools, not
+the fallback - but **an off-screen render still cannot prove a pixel is or is
+not app-painted**: it has no full-screen Space, no title bar and no menu bar
+window, so it structurally cannot reproduce a defect in that region and a clean
+diff there proves nothing;
 [`24-window-and-layout.md`](docs/history/24-window-and-layout.md) records the
 round that cost.
 
@@ -688,7 +695,7 @@ fails unless its entry carries a trailing marker.
 
 ## The AppKit gotcha catalogue
 
-Twenty-one traps, every one measured on this app rather than read about. Each was
+Twenty-two traps, every one measured on this app rather than read about. Each was
 found by instrumenting a real layout or event pass; several took a full task to
 root-cause, and at least four have recurred in a new file after being fixed in
 an old one. **Read the ones that match what you are about to touch** - a tab
@@ -1486,6 +1493,40 @@ reset hook, because a process-global "already asked" latch otherwise lets the
 first case to consume it leave every later case passing for the wrong reason.
 
 
+### (22) A wrapping label's `preferredMaxLayoutWidth` must never come from its own resolved width
+
+**Deriving it from the label's own bounds - or from the bounds of a stack whose
+size that label decides - is circular, and whichever layout pass ran first with
+a small width becomes permanent.** An `NSStackView` has no intrinsic size
+(gotcha (12)), so its resolved width comes *from* the label's intrinsic width,
+which comes from `preferredMaxLayoutWidth`. Feeding the result back in closes
+the loop.
+
+Measured twice in one branch (`fm/grand-line-review-bugs-b1-b14`). The
+Dictation page's `viewDidLayout` read `stack.bounds.width`: settling the page
+from an intermediate width to 1512 locked the text column at **11pt** (from a
+700pt intermediate), 91pt (860) and 161pt (1000). An 11pt column is the
+captain's own report - one word per line, words broken mid-word ("permis /
+sion", "microp / hone") - with the Status card grown to 380pt around it. Both
+the correct and the broken derivation converge once a further pass runs, which
+is why a theme change "fixed" it and why it only ever appeared on a first
+visit.
+
+**The shape that works** is `SettingsRow.relayoutDescription`'s, and it is
+non-circular because it measures things that are not decided by this label:
+the **row's** own resolved width, minus its rigid siblings' `fittingSize.width`
+(they are `.required` hugging, so that is what they will take), minus the
+spacing, floored. `DictationController.availableDetailWidth` and
+`HelmToggleRow.layout()` are the two worked examples.
+
+**And the trap underneath it: `NSTextField(labelWithString:)` builds a cell
+whose `wraps` is false**, so `maximumNumberOfLines = 0` and a word-wrap line
+break mode do nothing at all - the label truncates with no ellipsis however
+wide you make it. `wrappingLabelWithString` is the constructor that sets the
+cell up; it also makes the field selectable, which a row title is not. Two
+single-line labels in a 420pt-capped card truncated this way for as long as the
+credential vault's setup screen has existed.
+
 ---
 
 ## GL invariants
@@ -1682,11 +1723,36 @@ noted.
   action - say so in the PR rather than leaving the captain to find out.
   [`45-rename-to-grand-line.md`](docs/history/45-rename-to-grand-line.md) is
   what a future one has to read first.
-- **Every store honours an `FM_*` override** for where it reads and writes; the
-  repo-root README has the complete index. A store nested under Shift's data
-  root must honour `FM_SHIFT_DIR` as a fallback, not only its own narrow
-  variable - and it needs an entry in `main.swift`'s `#if FM_SELFTESTS` redirect
-  block, which is the backstop for a store reachable from a bare constructor.
+- **A store's default path comes through `AppPaths.dataRoot()`, which is the
+  one place `FM_SCRATCH_ROOT` is honoured.** That single variable moves every
+  file-backed store at once, and it exists because the alternative - a list -
+  drifted: `build-probe-app.sh` promised its `ENV_ARGS` were "every FM_*
+  location override, in one place", and by the 2026-09-25 review seven stores
+  had been added that it did not redirect, so a probe launch wrote the
+  captain's real clipboard history, session-restore file, scratchpad and widget
+  snapshot. A store that resolves `.applicationSupportDirectory` for itself is
+  a store no probe and no suite can move; `FM_RUN_PROBE_SCRATCH_ROOT_TESTS`
+  fails the run on one. A default that is **not** under Application Support
+  (`~/.dotfiles`, a shared App Group container) cannot nest under the root and
+  must ask `AppPaths.isScratchRedirected()` instead.
+- **Every store also honours its own narrow `FM_*` override**, which wins over
+  the root; the repo-root README has the complete index. A store nested under
+  Shift's data root must honour `FM_SHIFT_DIR` as a fallback, not only its own
+  narrow variable - and it needs an entry in `main.swift`'s `#if FM_SELFTESTS`
+  redirect block, which is the backstop for a store reachable from a bare
+  constructor.
+- **A Keychain service name comes through `KeychainService.resolve`**, which
+  applies `FM_KEYCHAIN_SERVICE_PREFIX` in a debug build and is the identity in
+  a release one. The same rule as the paths above, for the state that outlives
+  the run: before it existed, `BackupSelfTest` had written **91 real items**
+  under the production `com.manjesh.grandline.sshkey` service on the captain's
+  login Keychain, each holding a literal test passphrase, and nothing removed
+  them. `KeychainServiceSweep` deletes this process's items at exit and
+  anything an interrupted earlier run left. Two traps it encodes:
+  **`SecItemDelete` removes one matching item per call** on the file-based
+  login keychain (a single call leaked a second seeded account 33 times), and
+  a suite that drives a key store's `load(create:)` far enough to *mint* will
+  delete and replace the captain's real key - install the store's write seam.
 - **A new field on a `Codable` store type needs a hand-written
   `init(from:)` with `decodeIfPresent` and a default** (GL-01). A Swift-side
   default does *not* make a declared key optional to the synthesised decoder,
@@ -1948,6 +2014,7 @@ can correct an earlier one - and several do.
 | [`43-google-accounts.md`](docs/history/43-google-accounts.md) | Gmail sign-in (two independent Google accounts), the OAuth/PKCE flow, and Google Calendar as a second read-only source for the daily review |
 | [`44-new-theme-families.md`](docs/history/44-new-theme-families.md) | The six families that took the picker from 14 palettes to 26 (Nord, Dracula/Alucard, One, Ayu, Night Owl/Light Owl, Oxocarbon) |
 | [`45-rename-to-grand-line.md`](docs/history/45-rename-to-grand-line.md) | The app's name, the bundle identifier, the Keychain service names, the Application Support folder |
+| [`46-review-bugs-b1-b14.md`](docs/history/46-review-bugs-b1-b14.md) | `FM_SCRATCH_ROOT` and the probe's safety, the Keychain service prefix, the quit-time ggml abort, the traffic-light hit-test recursion, Shift git sync's three data-loss paths |
 
 ## Maintaining this file
 
