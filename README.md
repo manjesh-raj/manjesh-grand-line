@@ -184,6 +184,7 @@ Read by the scripts and the suites rather than by the app, and listed for the sa
 
 | Variable | Effect |
 | --- | --- |
+| `FM_DEFAULTS_SUITE` | The `UserDefaults(suiteName:)` a self-test process reads and writes instead of the real `GrandLine` preference domain (`AppDefaults.store`). **Debug builds only**, set per process by `main.swift`'s self-test redirect block with this process's pid, and the domain is removed at exit - so a suite can no longer leave `fm.themeID` behind and two concurrent runs are two domains rather than two writers of one |
 | `FM_SUITE_TIMEOUT` | Per-suite wall-clock bound in `Scripts/run-all-tests.sh`, in real seconds (default 300). A suite that exceeds it is reported as `TIMEOUT <flag>` by name and the run continues |
 | `FM_PROBE_SCRATCH` | Where `Scripts/build-probe-app.sh` puts the probe's scratch data root, which it then passes to the probe as `FM_SCRATCH_ROOT` (default `$TMPDIR/grand-line-probe`) |
 | `FM_CODE_RUNNER_SECRET_PROBE` | Set by `CodeRunnerSelfTest` on its own process as a marked secret, so the suite can assert that a sandboxed run does not inherit it. Nothing in the app reads it |

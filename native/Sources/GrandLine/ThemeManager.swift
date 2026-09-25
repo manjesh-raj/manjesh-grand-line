@@ -143,9 +143,11 @@ final class ThemeManager {
     static let fallbackTheme: HelmTheme = .dusk
 
     private init() {
-        if let id = UserDefaults.standard.string(forKey: Self.defaultsKey), let match = HelmTheme.theme(id: id) {
+        // P10: `AppDefaults.store` is `UserDefaults.standard` in the real app
+        // and a per-process suite domain in a self-test process.
+        if let id = AppDefaults.store.string(forKey: Self.defaultsKey), let match = HelmTheme.theme(id: id) {
             theme = match
-        } else if let legacyMode = UserDefaults.standard.string(forKey: Self.legacyModeKey) {
+        } else if let legacyMode = AppDefaults.store.string(forKey: Self.legacyModeKey) {
             // A pre-`fm.themeID` install: honour the dark/light bit it
             // recorded rather than the new default. That captain expressed a
             // preference too, just in an older vocabulary, and the migration's
@@ -166,7 +168,7 @@ final class ThemeManager {
         // simply runs, which is the pre-K3 behaviour byte for byte.
         let apply = {
             self.theme = theme
-            UserDefaults.standard.set(theme.id, forKey: Self.defaultsKey)
+            AppDefaults.store.set(theme.id, forKey: Self.defaultsKey)
             self.observers.forEach { $0.fn(theme) }
         }
         if let transitionCoordinator {

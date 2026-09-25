@@ -2345,6 +2345,27 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     // run. See `SelfTestDefaultsGuard`'s own header.
     SelfTestDefaultsGuard.arm()
 
+    // P10 (2026-09-25 review): the same treatment for `UserDefaults`, which is
+    // the one piece of shared state the redirects above could not cover
+    // because it is not a path.
+    //
+    // Everything AGENTS.md documents about `fm.themeID` leaking between suites
+    // - the intermittent `FM_RUN_CONTRAST_TESTS` failure on a clean tree, two
+    // concurrent passes restoring each other's values, `defaults read
+    // GrandLine` as the documented recovery - is a consequence of this process
+    // writing the real domain. It writes a per-process suite domain now, so
+    // there is nothing to leak into and nothing for a sibling pass to fight
+    // over.
+    //
+    // Set BEFORE anything reads `AppDefaults.store`, which is a `static let`
+    // resolved once. The name carries `AppDefaultsSweep`'s marker plus this
+    // process's pid, so an interrupted run's domain is identifiable by the
+    // next one.
+    setenv(AppDefaults.suiteVariable,
+           "\(AppDefaultsSweep.marker)\(ProcessInfo.processInfo.processIdentifier)",
+           0)
+    AppDefaultsSweep.arm()
+
     // Review bug B5: the same treatment for the Keychain, which this block had
     // never covered. `security dump-keychain` found 91 real SSH-key items
     // under the production service - one pair per suite run over two days,
