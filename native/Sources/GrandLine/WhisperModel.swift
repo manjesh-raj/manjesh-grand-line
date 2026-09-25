@@ -99,9 +99,7 @@ final class WhisperModelManager: NSObject {
         if let override = ProcessInfo.processInfo.environment["FM_WHISPER_MODEL_DIR"], !override.isEmpty {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent(AppPaths.applicationSupportFolderName, isDirectory: true)
+        return AppPaths.dataRoot()
             .appendingPathComponent("whisper", isDirectory: true)
     }
 

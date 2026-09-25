@@ -310,10 +310,7 @@ final class ClipboardHistoryStore {
         if let override = env["FM_CLIPBOARD_HISTORY_FILE"], !override.isEmpty {
             return URL(fileURLWithPath: override)
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return base
-            .appendingPathComponent(AppPaths.applicationSupportFolderName, isDirectory: true)
+        return AppPaths.dataRoot()
             .appendingPathComponent("clipboard-history.sealed")
     }
 

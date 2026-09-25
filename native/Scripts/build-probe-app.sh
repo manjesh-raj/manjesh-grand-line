@@ -35,9 +35,26 @@
 #   2. A different FM_INSTANCE_LOCK_FILE. SingleInstanceGuard's third layer is
 #      an advisory flock on a fixed path, which is id-independent - without
 #      this, the probe and the real app contend for one lock.
-#   3. Every FM_* store override pointed at a scratch directory. Otherwise the
-#      probe reads and writes the captain's real hosts, keys, tasks and - via
+#   3. FM_SCRATCH_ROOT pointed at a scratch directory. Otherwise the probe
+#      reads and writes the captain's real hosts, keys, tasks and - via
 #      ShiftGitSync - a real clone of their private config repo.
+#
+#      This used to be a hand-maintained list of per-store FM_* overrides,
+#      described right here as "every FM_* location override, in one place, so
+#      a launch cannot reach real data through a store somebody forgot". It
+#      drifted, exactly as a list does: the 2026-09-25 review (bug B4) diffed
+#      it against `grep -rhoE '"FM_[A-Z0-9_]+"' Sources/GrandLine` and found
+#      seven stores it did not redirect - the sealed clipboard history, the
+#      session-restore file, the scratchpad, the widget snapshot, the dotfiles
+#      auto-sync working tree, and both git clone roots. A probe launch wrote
+#      all of them. The clipboard one sealed the captain's real history file
+#      with a random per-process key, orphaning it (bug B1).
+#
+#      So the guarantee lives in the *app* now: `AppPaths.dataRoot()` resolves
+#      FM_SCRATCH_ROOT, every file-backed store's default comes through it,
+#      and `FM_RUN_PROBE_SCRATCH_ROOT_TESTS` fails the run on a production file
+#      that resolves Application Support for itself. A store added tomorrow is
+#      redirected whether or not anybody edits this script.
 #
 # `LSUIElement` is also forced true so the probe never takes over the Dock icon
 # or the menu bar from the real app.
@@ -161,30 +178,39 @@ mkdir -p "$SCRATCH"
 # Every FM_* location override, in one place, so a launch cannot reach real
 # data through a store somebody forgot. Keep this in sync with the README's
 # env-var index; a store missing here falls back to the captain's real one.
+# The scratch redirect. FM_SCRATCH_ROOT is the load-bearing line: the app
+# derives every file-backed store's default from it (`AppPaths.dataRoot()`),
+# so a store added after this script was last edited is redirected anyway.
+# That is the whole point - see WHAT MAKES IT SAFE (3) above, and bug B4.
+#
+# The entries after it are the ones FM_SCRATCH_ROOT genuinely cannot cover,
+# each with the reason:
 ENV_ARGS=(
+  --env "FM_SCRATCH_ROOT=$SCRATCH"
+  # Not a store: the advisory flock SingleInstanceGuard's third layer takes.
+  # It has an Application Support default and so already follows the root
+  # above, but it is named explicitly because contending for the captain's
+  # lock is the one failure that takes their session down rather than their
+  # data, and this file's header promises it by name.
   --env "FM_INSTANCE_LOCK_FILE=$SCRATCH/instance.lock"
-  --env "FM_HOSTS_FILE=$SCRATCH/hosts.json"
-  --env "FM_KEYS_FILE=$SCRATCH/keys.json"
-  --env "FM_SNIPPETS_FILE=$SCRATCH/snippets.json"
-  --env "FM_SCHEDULES_FILE=$SCRATCH/schedules.json"
-  --env "FM_SCHEDULE_HISTORY_DIR=$SCRATCH/schedule-history"
-  --env "FM_SHIFT_DIR=$SCRATCH/tasks"
-  --env "FM_DICTATION_DIR=$SCRATCH/dictation"
-  --env "FM_DOCS_DIR=$SCRATCH/docs"
-  --env "FM_DOCS_RUNBOOKS_DIR=$SCRATCH/runbooks"
-  --env "FM_COMMAND_LIBRARY_DIR=$SCRATCH/commands"
-  --env "FM_LOG_ANALYZER_DIR=$SCRATCH/investigations"
-  --env "FM_FLEET_LOG_DIR=$SCRATCH/fleet-log"
-  --env "FM_INCIDENTS_DIR=$SCRATCH/incidents"
-  --env "FM_STICKY_BOARD_DIR=$SCRATCH/sticky-board"
-  --env "FM_CODE_PREVIEW_DIR=$SCRATCH/code-snippets"
-  --env "FM_WHISPER_MODEL_DIR=$SCRATCH/whisper"
-  # Not a path override, and the one piece of probe state that is not a file:
-  # the clipboard history's key lives in the captain's login Keychain under the
-  # real app's own service name, so a probe would read - and on a failed read
-  # *overwrite* - theirs. Each probe build is a fresh ad-hoc signature, so that
-  # read is also where a probe hangs on an invisible Keychain ACL prompt.
+  # Not a path at all. The clipboard history's key lives in the captain's
+  # login Keychain under the real app's service name, so a probe would read -
+  # and on a failed read overwrite - theirs. Each probe build is a fresh
+  # ad-hoc signature, so that read is also where a probe hangs on an invisible
+  # Keychain ACL prompt. A random per-process key avoids both. Safe now that
+  # the sealed FILE moves with the root above: before B4's fix, an ephemeral
+  # key plus the real file path is precisely what destroyed a real history.
   --env "FM_CLIPBOARD_HISTORY_EPHEMERAL=1"
+  # Not this app's data and nowhere near Application Support: DotfilesAutoSync
+  # resolves the captain's real ~/.dotfiles checkout and its job is to commit
+  # and push it. The app refuses to resolve that under a scratch root
+  # (`AppPaths.isScratchRedirected`); this pins the path as well, so the
+  # refusal and the override cannot disagree.
+  --env "FM_DOTFILES_AUTOSYNC_PATH=$SCRATCH/dotfiles"
+  # A network remote rather than a path. ShiftGitSync's default is the
+  # captain's real private manjesh-config; pointed at a path that is not a
+  # repository, the sync reports a failed clone and pushes nothing.
+  --env "FM_SHIFT_REMOTE_URL=$SCRATCH/no-such-remote.git"
 )
 
 echo ""

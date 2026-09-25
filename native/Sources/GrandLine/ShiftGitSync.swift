@@ -151,9 +151,7 @@ final class ShiftGitSync {
         if let override = ProcessInfo.processInfo.environment["FM_SHIFT_GIT_CLONE_PATH"], !override.isEmpty {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent(AppPaths.applicationSupportFolderName, isDirectory: true).appendingPathComponent("shift-repo", isDirectory: true)
+        return AppPaths.dataRoot().appendingPathComponent("shift-repo", isDirectory: true)
     }
 
     /// `DotfilesSource.cloneURL` (the real `manjesh-config` repo) by default,
@@ -454,9 +452,7 @@ final class ShiftGitSync {
     /// Copied here (not imported from `ShiftStore`) since that file's default
     /// changed - see `ShiftStore.resolveRoot()`'s own doc comment.
     private static func legacyLocalRoot() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent(AppPaths.applicationSupportFolderName, isDirectory: true).appendingPathComponent("shift", isDirectory: true)
+        return AppPaths.dataRoot().appendingPathComponent("shift", isDirectory: true)
     }
 
     /// Only ever runs once in practice - guarded by both "legacy data

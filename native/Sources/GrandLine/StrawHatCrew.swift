@@ -521,9 +521,7 @@ enum StrawHatCrew {
     /// A separate folder from SRE Lead's on purpose - two features that can
     /// be trusted independently should be.
     static func resolveWorkingDirectory() -> URL? {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        let dir = base.appendingPathComponent(AppPaths.applicationSupportFolderName, isDirectory: true)
+        let dir = AppPaths.dataRoot()
             .appendingPathComponent("straw-hat", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

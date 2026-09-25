@@ -258,9 +258,7 @@ final class CredentialVaultStore {
     /// it in this codebase, so this matches the established shape rather than
     /// introducing one for a single caller.
     static var applicationSupportRoot: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent(AppPaths.applicationSupportFolderName, isDirectory: true)
+        return AppPaths.dataRoot()
             .appendingPathComponent("grand-line-vault", isDirectory: true)
     }
 

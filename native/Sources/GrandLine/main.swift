@@ -859,8 +859,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // now that the window is up and the captain can already use the app;
         // the short delay just keeps it off the very first frame's own layout
         // and session-restore work above.
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
-            LegacyNameMigration.runKeychainMigrationInBackground()
+        //
+        // B4: a scratch-redirected process (a probe) has no business writing
+        // real Keychain items under the app's own service names - see the
+        // matching guard on `runAtLaunch()`.
+        if !AppPaths.isScratchRedirected() {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+                LegacyNameMigration.runKeychainMigrationInBackground()
+            }
         }
     }
 
@@ -2205,6 +2211,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 }
 
+// MARK: - Scratch-root guard (review bug B4)
+//
+// `FM_SCRATCH_ROOT` moves every file-backed store at once
+// (`AppPaths.dataRoot`), which is the whole anti-drift point: a probe or a lab
+// build sets one variable instead of a list that the next store to be added
+// falls off. Two pieces of state are **not** file paths, so they cannot ride
+// that redirect and have to be swapped here.
+//
+// Both are Keychain-backed, and both were live in the 2026-09-25 review's B4:
+// an ad-hoc-signed probe reading the captain's real Google items raises a
+// Keychain ACL dialog on their screen, and a probe that reached the OAuth
+// client store could start a real sign-in against the captain's own client id.
+// A scratch-redirected process is by definition not the captain's instance, so
+// it gets an in-memory account store and "no client configured" - which is the
+// shipped state anyway.
+//
+// This is deliberately outside `#if FM_SELFTESTS`: the release binary honours
+// it too, because the hazard is the *process*, not the build configuration.
+if AppPaths.isScratchRedirected() {
+    GoogleAccountStore.shared = InMemoryGoogleAccountStore()
+    GoogleOAuthClientStore.shared.override = .some(nil)
+}
+
 // MARK: - Self-test dispatch (GL-27: debug builds only)
 //
 // Every `FM_RUN_*_TESTS` block below is compiled out of the release binary,
@@ -2610,6 +2639,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_LEGACY_RENAME_MIGRATION_TESTS"] =
 }
 if ProcessInfo.processInfo.environment["FM_RUN_CERT_INSPECTOR_TESTS"] == "1" {
     exit(CertInspectorSelfTest.run() ? 0 : 1)
+}
+
+// Review bug B4: FM_SCRATCH_ROOT is the one variable that moves every
+// file-backed store, and this is the guard that stops a new store resolving
+// Application Support for itself and dropping back off it. Pure logic plus a
+// source grep, so it guards CI's blocking lane.
+if ProcessInfo.processInfo.environment["FM_RUN_PROBE_SCRATCH_ROOT_TESTS"] == "1" {
+    exit(ProbeScratchRootSelfTest.run() ? 0 : 1)
 }
 
 // fm/cockpit-tools-yaml-order-perf-fix: same convention, for YamlBeautify's
@@ -4090,7 +4127,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_HERDR_RESTART_BUTTON_TESTS"] == "
 // captain's Accessibility and Automation grants are keyed to the bundle
 // identifier, which changed, and re-granting them is a manual System Settings
 // step by design.
-LegacyNameMigration.runAtLaunch()
+//
+// B4: skipped entirely in a scratch-redirected process. Both halves operate on
+// the captain's REAL locations by construction - the folder move renames
+// `~/Library/Application Support/FirstmateCockpit`, and the Keychain copy
+// writes real login-Keychain items - so neither has anything to do in a probe
+// and both would be reaching past `FM_SCRATCH_ROOT` if they ran.
+if !AppPaths.isScratchRedirected() {
+    LegacyNameMigration.runAtLaunch()
+}
 
 // GL-05: refuse to be a second instance. This sits *after* every
 // `FM_RUN_*_TESTS` block above (each of which `exit()`s, so a headless
