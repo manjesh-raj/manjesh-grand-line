@@ -2712,6 +2712,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_PROBE_SCRATCH_ROOT_TESTS"] == "1"
     exit(ProbeScratchRootSelfTest.run() ? 0 : 1)
 }
 
+// Review process issue P7: AGENTS.md is imported into every agent session, so
+// its size is a cost every session pays. Pure logic plus one file read, so it
+// guards CI's blocking lane.
+if ProcessInfo.processInfo.environment["FM_RUN_AGENTS_BUDGET_TESTS"] == "1" {
+    exit(AgentsFileBudgetSelfTest.run() ? 0 : 1)
+}
+
 // Review bug B5: every Keychain service name carries a per-process prefix in a
 // self-test process, and the items are swept at exit. Pure logic plus a
 // Keychain round trip under this process's own prefixed service, so it guards
