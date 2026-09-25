@@ -667,6 +667,22 @@ fails unless its entry carries a trailing marker.
 - A GitHub runner has **Reduce Motion ON** and always-visible scrollbars. Pin
   `HelmMotion.reducedOverrideForTests` rather than inheriting the host's
   setting, and do not assert a pixel width that a scroller track can move.
+- **A GitHub runner's backing scale factor is 1x, and every dev Mac here is
+  2x** - so a frame that lands on a half point is exact locally and *rounds*
+  in CI. Auto Layout aligns a frame to the backing store, so a centred view
+  whose ideal origin is a half point shifts by up to half a device pixel, and
+  the two margins either side of it then differ by a **whole** device pixel:
+  0.5pt on a retina Mac, 1.0pt on a runner. A symmetry assertion therefore
+  needs `1.0 / window.backingScaleFactor`, never a hard-coded `0.5` - which
+  passes 4/4 locally and fails every case in CI, measured
+  (`fm/grand-line-settings-page-centering-fix`: Settings' centred column, an
+  exact `287.5 / 287.5` here against CI's `288.0 / 287.0`). It is not a bug
+  in the layout and there is nothing to round in the app: the visible region
+  beside a sidebar is simply an odd number of points wide at even window
+  widths. **To reproduce a 1x rounding defect on a 2x machine, add a
+  half-point window width** to the fixture (`1512.5`), which pushes the same
+  ideal centre off the retina grid; a suite that only tests whole widths
+  cannot see this class at all.
 
 ---
 
@@ -1042,6 +1058,26 @@ suites all passed at that width, and only an off-screen render showed it. So:
 a page whose content column is **capped** must pin that content to the page by
 a constant and let the column's 499 width stand uncontested, rather than
 chaining the two together. A page whose content is uncapped may keep the chain.
+
+**And a capped column is *centred*, never left-pinned - plus the centre it is
+measured against is not the one you would reach for.** A required
+`leading == content.leading + gutter` under a width cap is deliberate
+left-alignment with a ceiling: once the cap binds, every extra point of window
+becomes empty space on the right *only*. Gotcha (3) already prescribes the
+shape (`leading >=` / `trailing <=` / `centerX ==`, cap untouched, and the grow
+tie stated as a **width** rather than a trailing pin, which under a centring
+tie would be a statement about position too). It still shipped on Settings and
+the captain reported it three times before it was read as positioning rather
+than sizing. The second half is the one no diff shows: **the scroll area starts
+under the sidebar panel**, because `scroll.leading` is `sidebarColumn.trailing`
+while `sidebarPanel.trailing` is that *plus* `pageGutter`, with `sidebarEdge`'s
+1pt rule on top. Centring on the clip view therefore lands the column half that
+overlap left of the centre anyone can see - measured 219pt of visible margin
+against 244pt at a 1400pt window, which reads as "still not centred" and is
+what a fourth report would have been about. `SettingsController.
+visibleCentreNudge` is `(pageGutter + 1) / 2`, derived from those two
+constraints rather than written as a number, and the page's toolbar carries it
+too. [`09-setup-updates-bootstrap.md`](docs/history/09-setup-updates-bootstrap.md).
 
 **A content *hugging* priority travels the same chain in the opposite
 direction, and it is a width *ceiling* rather than a floor.** Everything above
