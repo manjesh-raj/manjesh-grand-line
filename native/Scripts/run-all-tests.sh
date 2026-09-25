@@ -103,6 +103,32 @@ MAIN="Sources/GrandLine/main.swift"
 # subprocesses and real page loads.
 SUITE_TIMEOUT="${FM_SUITE_TIMEOUT:-300}"
 
+# Per-suite exceptions to that bound, each with the measurement that earned it.
+#
+# P4 of the 2026-09-25 review found the bound was counted in ticks of
+# `sleep 0.1` rather than in seconds (see `run_suite`), so "300s" was really
+# 330s or more - and that the slowest suite in the app lives in exactly the
+# band that opened up. Fixing the arithmetic without this table would start
+# killing a suite that has been passing.
+#
+# `FM_RUN_APP_SHELL_BODY_WIDTH_TESTS` mounts a real `AppShellController` in a
+# real window and drives 21 cases through full resize sequences. Measured: 67s
+# on the captain's machine, and **333s and 371s on two green CI runs** - a
+# GitHub macOS runner is roughly five times slower at window-server work than
+# this laptop, which is a property of the runner and not of the suite. 900
+# leaves real headroom over 371 while still being a bound: a genuine hang in
+# it is caught in fifteen minutes instead of by GitHub's six-hour job cap,
+# which is the incident this whole mechanism exists for.
+#
+# Raising the global default instead would have bought that one suite its
+# headroom by taking the backstop away from the other 215.
+suite_timeout_for() {
+  case "$1" in
+    FM_RUN_APP_SHELL_BODY_WIDTH_TESTS) echo 900 ;;
+    *) echo "$SUITE_TIMEOUT" ;;
+  esac
+}
+
 # Per-suite wall clock (P6 of full review #3).
 #
 # A 10-minute run of ~157 suites used to print PASS/FAIL and nothing else, so a
@@ -670,18 +696,34 @@ run_suite() {
   local outfile="$2"
   env "$flag=1" "$BIN" >"$outfile" 2>&1 &
   local pid=$!
-  # Tenths, not whole seconds. The poll interval is also the floor on every
-  # duration this script reports (P6): at `sleep 1` the fastest suite in the
-  # app measured 1.0s and so did the second fastest, which is no measurement
-  # at all. `sleep 0.1` costs one extra fork per tenth of a suite's life and
-  # buys a number that can actually move.
+  # The poll interval is tenths, not whole seconds: it is also the floor on
+  # every duration this script reports (P6 of full review #3), and at `sleep 1`
+  # the fastest suite in the app measured 1.0s and so did the second fastest,
+  # which is no measurement at all.
   #
-  # The bound drifts *longer* than SUITE_TIMEOUT by however much fork overhead
-  # each tick adds, which is the safe direction for a backstop.
-  local ticks=0
-  local tick_limit=$((SUITE_TIMEOUT * 10))
+  # **The bound itself is real seconds, and it used to be ticks** (P4 of the
+  # 2026-09-25 review). Counting to `SUITE_TIMEOUT * 10` assumes `sleep 0.1`
+  # costs exactly a tenth of a second, and it does not - each tick also forks
+  # `sleep`, and the fork is not free. Measured on this machine: 200 ticks took
+  # **22s** against a nominal 20, so a `SUITE_TIMEOUT` of 300 was really 330 or
+  # more, and more again on a loaded runner where each fork costs longer.
+  #
+  # That is not a rounding error, because a real suite sits in the band it
+  # opens: `FM_RUN_APP_SHELL_BODY_WIDTH_TESTS` took 333s and 371s on two green
+  # CI runs. Under the tick bound, whether it survived depended on how heavily
+  # the runner was loaded - the same load that makes the suite slow also
+  # inflates the bound that is supposed to catch it, so the backstop was
+  # loosest exactly when it was most needed, and a suite that genuinely hung
+  # near the limit could be reported either way from one run to the next.
+  #
+  # `SECONDS` is bash's own wall clock (seconds since this shell started), so
+  # the deadline costs nothing - no fork, no `date`, no perl - and a tick that
+  # takes longer than a tenth of a second can no longer buy a suite extra time.
+  local bound
+  bound="$(suite_timeout_for "$flag")"
+  local deadline=$((SECONDS + bound))
   while kill -0 "$pid" 2>/dev/null; do
-    if [ "$ticks" -ge "$tick_limit" ]; then
+    if [ "$SECONDS" -ge "$deadline" ]; then
       # TERM first so a suite with a cleanup path can take it, then KILL.
       kill -TERM "$pid" 2>/dev/null
       sleep 2
@@ -690,7 +732,6 @@ run_suite() {
       return 124
     fi
     sleep 0.1
-    ticks=$((ticks + 1))
   done
   wait "$pid"
   return $?
@@ -733,7 +774,7 @@ for flag in "${FLAGS[@]}"; do
     printf 'PASS  %-52s %8s\n' "$flag" "$(fmt_ms "$elapsed")"
     PASSED+=("$flag")
   elif [ "$status" -eq 124 ]; then
-    printf 'TIMEOUT  %s (killed after %ss)\n' "$flag" "$SUITE_TIMEOUT"
+    printf 'TIMEOUT  %s (killed after %ss)\n' "$flag" "$(suite_timeout_for "$flag")"
     TIMEDOUT+=("$flag")
     echo "$output" | tail -20 | sed 's/^/      | /'
   else
