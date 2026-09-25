@@ -73,7 +73,7 @@ home directory happens to contain.
 
 ## Testing
 
-There is no XCTest target. The app carries 50+ permanent self-test suites, each gated behind its own environment variable and each exiting the process with 0 or 1 before `NSApplication` is ever touched - so they run headless and are safe to run while the real app is open.
+There is no XCTest target. The app carries one permanent self-test suite per `FM_RUN_*` flag - run `native/Scripts/run-all-tests.sh --list` for the current set and its total, rather than trusting a number written down in prose. Each is gated behind its own environment variable and exits the process with 0 or 1 before `NSApplication` is ever touched, so they run headless and are safe to run while the real app is open.
 
 They live in `native/Sources/GrandLine/SelfTests/` and are compiled into **debug builds only** - `Package.swift` defines `FM_SELFTESTS` for the debug configuration. So `swift build` (and CI, and the runner below) has every suite, while `swift build -c release` - what `native/build_native_app.sh` assembles the shipped `.app` from - contains none of the ~10,500 lines of test code. A release binary silently runs zero suites and exits 0, which looks exactly like a clean run: always test against `.build/debug/GrandLine`.
 

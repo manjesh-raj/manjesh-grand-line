@@ -269,7 +269,7 @@ decision rule and the running record are in
 vendored copy, and the scheduled check".
 
 Here because it is a network fetch plus a judgement call: the question is not
-"is there a newer tag" (there always is) but "has any of the five local patches'
+"is there a newer tag" (there always is) but "has any of the six local patches'
 root cause been fixed upstream, or gained a `public`/`open` hook" - which needs
 reading upstream's current source and deciding, not a comparison a suite can
 make.
@@ -279,7 +279,7 @@ make.
       "stay pinned"** - a check that leaves no record is one nobody can tell was
       skipped.
 
-`FM_RUN_VENDORED_PATCHES_TESTS` covers the automated half (all five patches are
+`FM_RUN_VENDORED_PATCHES_TESTS` covers the automated half (all six patches are
 still present in the tree, so a sync that drops one fails by name) and prints a
 NOTE - never a failure - once the recorded date is older than the interval.
 
@@ -301,8 +301,8 @@ it is the one open item F23 was scoped around.
 
 - [ ] **Developer ID.** `security find-identity -v -p codesigning` shows a
       `Developer ID Application: … (TEAMID)` certificate. Until it does,
-      everything below is unreachable - and `codesign -dv "dist/Manjesh Grand
-      Line.app"` reporting `TeamIdentifier=not set` is the current state.
+      everything below is unreachable - and `codesign -dv "dist/Grand Line.app"`
+      reporting `TeamIdentifier=not set` is the current state.
 - [ ] **The App Group id agrees in both files.** Set
       `GrandLineWidgetContainer.appGroupIdentifier` and
       `GrandLineWidgets/GrandLineWidgets.entitlements` to

@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Run every self-test suite in the app (GL-19).
 #
-# This project has no XCTest target - it has ~44 permanent self-test suites,
-# each gated behind its own `FM_RUN_<NAME>_TESTS=1` environment variable and
-# each exiting the process with 0/1 (see any `*SelfTest.swift` header, or
-# AGENTS.md's "Verifying native UI bugs" section, for why that convention
-# exists). Until this script existed, running "the tests" meant 44 manual
-# invocations, which in practice meant nobody ran the ones they had not
-# personally written.
+# This project has no XCTest target - it has one permanent self-test suite per
+# `FM_RUN_<NAME>_TESTS=1` environment variable, each exiting the process with
+# 0/1 (see any `*SelfTest.swift` header, or AGENTS.md's "Verifying native UI
+# bugs" section, for why that convention exists). Until this script existed,
+# running "the tests" meant invoking every one of them by hand, which in
+# practice meant nobody ran the ones they had not personally written.
+#
+# **No count is written down here, or anywhere else, on purpose.** Four
+# different documents carried four different hardcoded numbers - 44, 157, 205
+# and "50+" - none of which matched the tree by the 2026-09-25 review (P6).
+# `--list` is the answer, and it prints the total.
 #
 # The suite list is discovered from `main.swift` rather than hardcoded here, so
 # adding a new suite makes it part of this run automatically and this script
@@ -131,11 +135,11 @@ suite_timeout_for() {
 
 # Per-suite wall clock (P6 of full review #3).
 #
-# A 10-minute run of ~157 suites used to print PASS/FAIL and nothing else, so a
-# suite that doubled its runtime was invisible until the whole run started
-# feeling slow. Every suite is timed now, and the slowest few are listed again
-# at the end - which is the part that actually catches a regression, since
-# nobody diffs 157 individual numbers.
+# A 10-minute run used to print PASS/FAIL and nothing else, so a suite that
+# doubled its runtime was invisible until the whole run started feeling slow.
+# Every suite is timed now, and the slowest few are listed again at the end -
+# which is the part that actually catches a regression, since nobody diffs two
+# hundred individual numbers.
 #
 # Resolution: tenths of a second via system perl's Time::HiRes, which ships
 # with macOS and with GitHub's macOS runner images. `date +%s` is whole-second
@@ -742,7 +746,8 @@ FAILED=()
 SKIPPED=()
 TIMEDOUT=()
 # "<ms> <flag>" per suite, for the slowest-first tail below. A suite that
-# doubles its runtime shows up there; it does not show up in 157 PASS lines.
+# doubles its runtime shows up there; it does not show up in two hundred PASS
+# lines.
 DURATIONS=()
 TOTAL_SUITE_MS=0
 RUN_STARTED_MS=$(now_ms)
@@ -834,7 +839,7 @@ fi
 echo ""
 echo "======================================================"
 # Slowest first, so a runtime regression is one line to read rather than a
-# diff of 157. `sort -rn` on "<ms> <name>" is enough - no need for anything
+# diff of two hundred. `sort -rn` on "<ms> <name>" is enough - no need for anything
 # the runner would have to install.
 if [ ${#DURATIONS[@]} -gt 0 ]; then
   printf 'suite wall clock: %s across %d suite(s); whole run %s\n' \

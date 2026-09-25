@@ -423,7 +423,8 @@ enough to explain itself.
 
 ### How much of the suite to run before opening a PR
 
-`./Scripts/run-all-tests.sh` is 205 suites and takes 10-15 minutes, and CI then
+`./Scripts/run-all-tests.sh` is every suite in the app (`--list` for the count,
+which is over two hundred) and takes 10-15 minutes, and CI then
 runs the same suites again on the pushed branch. Paying that twice for a change
 whose blast radius is one literal is redundant. So the **local** run before a PR
 is scoped by blast radius, and CI's run is not.
