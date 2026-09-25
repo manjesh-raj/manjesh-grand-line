@@ -156,7 +156,7 @@ struct ClipboardHistoryEntry: Codable, Equatable, Identifiable {
 /// `ThisDeviceOnly` and never iCloud-synced, matching every other Keychain
 /// item this app writes.
 enum ClipboardHistoryKey {
-    static let service = "com.manjesh.grandline.clipboard-history"
+    static let service = KeychainService.resolve("com.manjesh.grandline.clipboard-history")
     private static let account = "history-key-v1"
     /// A fixed, non-secret salt. The key itself is already 32 random bytes -
     /// the salt only scopes HKDF's subkey derivation, exactly as the vault's

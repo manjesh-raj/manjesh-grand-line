@@ -154,7 +154,7 @@ final class KeychainGoogleAccountStore: GoogleAccountStoring {
     /// Its own service name, distinct from `KeychainKeyStore`'s and
     /// `CredentialVaultKeyStore`'s so the three can never collide on an
     /// account name.
-    static let service = "com.manjesh.grandline.native.google-oauth"
+    static let service = KeychainService.resolve("com.manjesh.grandline.native.google-oauth")
 
     /// A small in-process cache, so a card that repaints on every theme change
     /// does not become a Keychain read per repaint. Written through on every

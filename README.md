@@ -142,6 +142,7 @@ grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/GrandLine/*.swift | tr -d '"' | grep
 | Variable | What it overrides |
 | --- | --- |
 | `FM_SCRATCH_ROOT` | **The one that moves everything.** Every file-backed store's *default* is `FM_SCRATCH_ROOT/<name>` instead of `~/Library/Application Support/GrandLine/<name>` (`AppPaths.dataRoot()`), so a probe, a lab build or a suite redirects the whole app with one variable rather than the list below. A narrow per-store variable still wins over it. Setting it also puts the Google account and OAuth client stores in memory and skips the rename migrations, since neither is a path. A self-test guard fails the run on a store that resolves Application Support for itself and so drops off this |
+| `FM_KEYCHAIN_SERVICE_PREFIX` | Prepended to every Keychain service name this app owns (`KeychainService.resolve`). **Debug builds only** - a prefix that reached a release build would orphan every saved SSH key. Set per process by `main.swift`'s self-test redirect block, and everything carrying it is deleted at exit, so a suite can no longer leave real items in the login Keychain |
 | `FM_HOME` / `FIRSTMATE_HOME` | The firstmate home the app reads fleet state from |
 | `FM_HOSTS_FILE` | `hosts.json` (saved SSH hosts) |
 | `FM_KEYS_FILE` | `keys.json` (SSH key *metadata*; key material is Keychain-only) |

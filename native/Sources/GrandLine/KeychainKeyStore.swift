@@ -78,7 +78,14 @@ enum KeychainError: LocalizedError {
 }
 
 enum KeychainKeyStore {
-    private static let service = "com.manjesh.grandline.sshkey"
+    private static let service = KeychainService.resolve("com.manjesh.grandline.sshkey")
+
+    #if FM_SELFTESTS
+    /// GL-27: read-only, for `KeychainServiceIsolationSelfTest` (review bug
+    /// B5), which has to assert that this exact constant is isolated - 91 real
+    /// items under it is what the bug was.
+    static var debugServiceName: String { service }
+    #endif
 
     /// Whether Touch ID (or another biometric) is enrolled and usable right
     /// now. When it isn't, the fallback below is the device passcode - still

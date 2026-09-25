@@ -453,7 +453,7 @@ final class GoogleOAuthClientStore {
 
     static let shared = GoogleOAuthClientStore()
 
-    static let service = "com.manjesh.grandline.native.google-oauth-client"
+    static let service = KeychainService.resolve("com.manjesh.grandline.native.google-oauth-client")
     private static let account = "client"
 
     /// The suites' replacement, set by `main.swift`'s `#if FM_SELFTESTS`

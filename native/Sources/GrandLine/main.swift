@@ -2293,6 +2293,22 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     // run. See `SelfTestDefaultsGuard`'s own header.
     SelfTestDefaultsGuard.arm()
 
+    // Review bug B5: the same treatment for the Keychain, which this block had
+    // never covered. `security dump-keychain` found 91 real SSH-key items
+    // under the production service - one pair per suite run over two days,
+    // each holding `THIS-MUST-NEVER-APPEAR-IN-A-BACKUP-FILE` - plus 33
+    // orphaned rename-migration items. A file in a temp directory is gone with
+    // the temp directory; a Keychain item is not.
+    //
+    // Set BEFORE anything reads `KeychainService.testPrefix`, which is a
+    // `static let` resolved once. The value carries the marker
+    // `KeychainServiceSweep` recognises plus this process's pid, so an
+    // interrupted run's items are identifiable by the next one.
+    setenv(KeychainService.prefixVariable,
+           "\(KeychainServiceSweep.marker)\(ProcessInfo.processInfo.processIdentifier).",
+           0)
+    KeychainServiceSweep.arm()
+
     // `fm/grandline-overview-layout-fix-gmail-settings`: the Google accounts.
     //
     // Not a file - a **Keychain** item - and it is exactly the shape this
@@ -2647,6 +2663,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_CERT_INSPECTOR_TESTS"] == "1" {
 // source grep, so it guards CI's blocking lane.
 if ProcessInfo.processInfo.environment["FM_RUN_PROBE_SCRATCH_ROOT_TESTS"] == "1" {
     exit(ProbeScratchRootSelfTest.run() ? 0 : 1)
+}
+
+// Review bug B5: every Keychain service name carries a per-process prefix in a
+// self-test process, and the items are swept at exit. Pure logic plus a
+// Keychain round trip under this process's own prefixed service, so it guards
+// CI's blocking lane.
+if ProcessInfo.processInfo.environment["FM_RUN_KEYCHAIN_SERVICE_ISOLATION_TESTS"] == "1" {
+    exit(KeychainServiceIsolationSelfTest.run() ? 0 : 1)
 }
 
 // fm/cockpit-tools-yaml-order-perf-fix: same convention, for YamlBeautify's
