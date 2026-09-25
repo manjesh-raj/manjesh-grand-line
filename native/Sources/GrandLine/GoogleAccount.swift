@@ -164,9 +164,24 @@ final class KeychainGoogleAccountStore: GoogleAccountStoring {
 
     func record(for slot: GoogleAccountSlot) -> GoogleAccountRecord? {
         if loaded.contains(slot) { return cache[slot] }
-        loaded.insert(slot)
-        guard let data = readItem(account: slot.keychainAccount) else {
+        let data: Data
+        switch ClipboardHistoryKey.read(service: Self.service, account: slot.keychainAccount) {
+        case .found(let raw):
+            loaded.insert(slot)
+            data = raw
+        case .notFound:
+            loaded.insert(slot)
             cache[slot] = nil
+            return nil
+        case .failed(let status):
+            // Review bug B1's distinction, applied here for the same reason.
+            // "The Keychain would not answer" is not "this slot is not
+            // connected", and caching the second for the first would render a
+            // connected account as disconnected for the rest of the session -
+            // with a Connect button that starts a fresh OAuth flow over a
+            // token that was there all along. Deliberately NOT marked loaded,
+            // so the next read retries once the Keychain settles.
+            AppLog.keychain.error("google \(slot.rawValue, privacy: .public): the Keychain would not answer (\(status))")
             return nil
         }
         do {
@@ -207,19 +222,6 @@ final class KeychainGoogleAccountStore: GoogleAccountStoring {
         deleteItem(account: slot.keychainAccount)
         cache[slot] = nil
         loaded.insert(slot)
-    }
-
-    private func readItem(account: String) -> Data? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-        ]
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess else { return nil }
-        return result as? Data
     }
 
     private func deleteItem(account: String) {

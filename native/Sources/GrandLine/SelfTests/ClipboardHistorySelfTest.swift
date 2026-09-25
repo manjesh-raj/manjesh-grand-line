@@ -50,6 +50,9 @@ enum ClipboardHistorySelfTest {
         checkSealedRoundTrip(check)
         checkAnUnreadableFileIsNotAnEmptyOne(check)
         checkNoKeyIsNotAnEmptyHistory(check)
+        checkAKeychainErrorNeverMintsANewKey(check)
+        checkTheLegacyServiceKeyIsAdoptedBeforeMinting(check)
+        checkShelvedFilesAreReported(check)
         checkFilter(check)
         checkTheSharedChangeWatch(check)
 
@@ -397,6 +400,160 @@ enum ClipboardHistorySelfTest {
         }
         check(!FileManager.default.fileExists(atPath: file.path),
               "and writes no file at all")
+    }
+
+
+    // MARK: Review bug B1 - the key, and the history it destroyed
+
+    /// **The case B1 is about.** `read()` used to return `Data?`, so every
+    /// `OSStatus` that was not `errSecSuccess` arrived at `load(create:)`
+    /// looking like a fresh machine - and `load` minted a new key and deleted
+    /// the old item. The captain's real history was still on disk, sealed by a
+    /// key that no longer existed; the next `load()` shelved it as
+    /// `.corrupt-<epoch>` and started again. Three times in five minutes.
+    ///
+    /// `errSecInteractionNotAllowed` is the one used here because it is the
+    /// realistic trigger (a locked Keychain, a screen-locked Mac, an ACL
+    /// prompt nobody answered), but the assertion is about the *class*: no
+    /// status except `errSecItemNotFound` may mint.
+    private static func checkAKeychainErrorNeverMintsANewKey(_ check: (Bool, String) -> Void) {
+        // `main.swift`'s `#if FM_SELFTESTS` block sets
+        // `FM_CLIPBOARD_HISTORY_EPHEMERAL=1` for the whole process, which
+        // short-circuits `load` before it ever reads - so the branch under
+        // test is unreachable until it is lifted. Restored below.
+        let previouslyEphemeral = ProcessInfo.processInfo.environment["FM_CLIPBOARD_HISTORY_EPHEMERAL"]
+        unsetenv("FM_CLIPBOARD_HISTORY_EPHEMERAL")
+        defer { if let previouslyEphemeral { setenv("FM_CLIPBOARD_HISTORY_EPHEMERAL", previouslyEphemeral, 1) } }
+
+        var asked: [(String, String)] = []
+        var wrote: [Data] = []
+        ClipboardHistoryKey.debugReadOverride = { service, account in
+            asked.append((service, account))
+            return .failed(errSecInteractionNotAllowed)
+        }
+        // Not optional: without it, a regression that mints would delete and
+        // replace the captain's REAL clipboard key from this suite. See
+        // `debugWriteOverride`'s own note.
+        ClipboardHistoryKey.debugWriteOverride = { data in wrote.append(data); return true }
+        defer {
+            ClipboardHistoryKey.debugReadOverride = nil
+            ClipboardHistoryKey.debugWriteOverride = nil
+        }
+
+        // A guard on the fixture itself: the seam must actually be consulted,
+        // or this case passes while testing nothing.
+        let key = ClipboardHistoryKey.load(create: true)
+        check(!asked.isEmpty, "the read seam was consulted at all")
+        check(key == nil,
+              "a Keychain error must degrade to unavailable, not mint a key")
+        check(asked.count == 1,
+              "a hard Keychain error must not go on to try the legacy service - "
+              + "it read \(asked.count) time(s): \(asked.map(\.0))")
+        check(wrote.isEmpty,
+              "and must mint nothing - it wrote \(wrote.count) key(s)")
+
+        // And the direction that proves the check can tell the two apart: a
+        // genuine `notFound` on both services *does* mint.
+        ClipboardHistoryKey.debugReadOverride = { _, _ in .notFound }
+        check(ClipboardHistoryKey.load(create: false) == nil,
+              "notFound with create:false still yields no key")
+    }
+
+    /// B1's second half: the store is built during shell load, and
+    /// `LegacyNameMigration` copies this service from its pre-rename name two
+    /// seconds later on a background queue. Asking the legacy name here is
+    /// what removes the race - whichever runs first, the real key is used.
+    private static func checkTheLegacyServiceKeyIsAdoptedBeforeMinting(_ check: (Bool, String) -> Void) {
+        guard let legacyService = LegacyNameMigration.legacyName(for: ClipboardHistoryKey.service) else {
+            check(false, "the clipboard service should have a pre-rename name")
+            return
+        }
+        check(legacyService != ClipboardHistoryKey.service,
+              "the fixture is vacuous unless the two service names differ")
+
+        // See the note in the case above: the ephemeral short-circuit has to
+        // be lifted for `load` to reach the Keychain path at all.
+        let previouslyEphemeral = ProcessInfo.processInfo.environment["FM_CLIPBOARD_HISTORY_EPHEMERAL"]
+        unsetenv("FM_CLIPBOARD_HISTORY_EPHEMERAL")
+        defer { if let previouslyEphemeral { setenv("FM_CLIPBOARD_HISTORY_EPHEMERAL", previouslyEphemeral, 1) } }
+
+        // 32 bytes standing in for the captain's real pre-rename key.
+        let realKeyBytes = Data((0..<32).map { UInt8($0 &* 7 &+ 3) })
+        var asked: [String] = []
+        var wrote: [Data] = []
+        ClipboardHistoryKey.debugReadOverride = { service, _ in
+            asked.append(service)
+            return service == legacyService ? .found(realKeyBytes) : .notFound
+        }
+        ClipboardHistoryKey.debugWriteOverride = { data in wrote.append(data); return true }
+        defer {
+            ClipboardHistoryKey.debugReadOverride = nil
+            ClipboardHistoryKey.debugWriteOverride = nil
+        }
+
+        let adopted = ClipboardHistoryKey.load(create: true)
+        check(asked.contains(legacyService),
+              "the legacy service must be tried before minting, asked: \(asked)")
+        check(adopted != nil, "and the pre-rename key is adopted")
+        check(wrote == [realKeyBytes],
+              "and what it copies forward is the pre-rename key's own bytes, not a fresh one")
+
+        // The decisive assertion: the key adopted is derived from the legacy
+        // *bytes*, not from freshly minted ones. Sealing with one and opening
+        // with the other is the whole of B1's failure mode.
+        ClipboardHistoryKey.debugReadOverride = nil
+        guard let expected = CredentialVaultKey.fromKeychainBytes(
+                realKeyBytes, salt: Data("grand-line-clipboard-history/v1".utf8)),
+              let adopted else {
+            check(false, "could not derive the expected key")
+            return
+        }
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("grandline-clipboard-legacy-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("clipboard-history.sealed")
+        let seeded = ClipboardHistoryStore(fileURL: file, key: expected)
+        withPasteboard { pasteboard in
+            pasteboard.clearContents()
+            pasteboard.setString("sealed-with-the-pre-rename-key", forType: .string)
+            _ = seeded.record(from: pasteboard)
+        }
+        check(seeded.entries.count == 1, "the fixture sealed one entry")
+        let reopened = ClipboardHistoryStore(fileURL: file, key: adopted)
+        check(!reopened.loadFailed && reopened.entries.count == 1,
+              "the adopted key opens a history sealed by the pre-rename key")
+        check(reopened.shelvedBackups.isEmpty,
+              "and nothing was shelved, found \(reopened.shelvedBackups.count)")
+    }
+
+    /// The third of B1's costs, and the one the captain actually noticed: a
+    /// shelved file was never mentioned anywhere, so the picker said "Nothing
+    /// copied yet" over two 49KB histories.
+    private static func checkShelvedFilesAreReported(_ check: (Bool, String) -> Void) {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("grandline-clipboard-shelved-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("clipboard-history.sealed")
+        try? Data("sealed by a key that is gone".utf8).write(to: file)
+
+        guard let key = ClipboardHistoryKey.ephemeralKey() else {
+            check(false, "could not build a throwaway key")
+            return
+        }
+        let store = ClipboardHistoryStore(fileURL: file, key: key)
+        check(store.loadFailed, "an unopenable file is a failure, not an empty history")
+        check(store.shelvedBackups.count == 1,
+              "the shelved file is reported, found \(store.shelvedBackups.count)")
+
+        // And a later launch still reports it, which is the case that matters:
+        // the captain's three files were shelved by earlier launches.
+        let relaunched = ClipboardHistoryStore(fileURL: file, key: key)
+        check(relaunched.shelvedBackups.count == 1,
+              "a later launch still reports what an earlier one shelved, found "
+              + "\(relaunched.shelvedBackups.count)")
+        check(!relaunched.loadFailed,
+              "with the bad file shelved away, the next launch itself reads clean")
     }
 
     // MARK: Filtering
