@@ -1198,6 +1198,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // the page's 500ms edit debounce loses those keystrokes and the final
         // commit+push never runs.
         appShell.shutdownCodePreview()
+        // B7: the Notebook's own 500ms edit debounce plus its git commit.
+        // `NotebookController.shutdown()` documented itself as called on quit
+        // and had no caller, so ⌘Q inside that window lost the last
+        // keystrokes - the same class as the four flushes around it.
+        appShell.shutdownNotebook()
         // `fm/implement-grand-line-secrets-vault-poneg-ad`: the credential
         // vault's git backup is debounced the same way, so ⌘Q within that
         // window would leave a just-added credential committed locally but not

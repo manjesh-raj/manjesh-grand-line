@@ -173,6 +173,9 @@ final class CodePreviewWebView: WKWebView {
         let callID = nextCallID
         nextCallID += 1
         if let completion { pendingCalls[callID] = completion }
+        #if FM_SELFTESTS
+        debugCalls.append((name, payload))
+        #endif
 
         let json: String
         if let data = try? JSONSerialization.data(withJSONObject: payload),
@@ -335,6 +338,19 @@ final class CodePreviewWebView: WKWebView {
     /// Whether a bridge call is still waiting for its reply - a leaked
     /// completion would mean a caller hangs forever.
     var debugPendingCallCount: Int { pendingCalls.count }
+
+    /// Every bridge call this view has made, in order. GL-27: debug builds
+    /// only.
+    ///
+    /// Review bug B7 is what needed it: the Notebook's auto-title rename left
+    /// Monaco registered under the *old* page id, and nothing observable from
+    /// the controller said so - `currentID` was already the new one, the
+    /// sidebar row was already selected, and the file on disk was already
+    /// renamed. The only thing that distinguishes "the editor was re-pointed"
+    /// from "the editor was not" is whether an `openSnippet` carrying the new
+    /// id was actually sent.
+    var debugCalls: [(name: String, payload: [String: Any])] = []
+    func debugResetCalls() { debugCalls.removeAll() }
     /// Feed a message as if the page had posted it, so the reply plumbing and
     /// the ready/error/change paths are testable without a real page.
     func debugHandle(message: [String: Any]) { handle(message: message) }
