@@ -6,8 +6,11 @@
 #
 # Two jobs, deliberately separate:
 #
-#   build - `swift build` with warnings treated as failures. Cheap, and the
-#           thing most likely to catch a bad merge.
+#   build - `swift build` with warnings treated as failures, plus the release
+#           compile. Cheap, the thing most likely to catch a bad merge, and
+#           since P2 the one place the debug binary is compiled: the two test
+#           jobs take it from here as an artifact instead of building their
+#           own.
 #   test  - the headless-safe suite subset, via the same
 #           `Scripts/run-all-tests.sh` a developer runs locally. `--ci` skips
 #           the suites that need a real login session or the machine's own
@@ -44,9 +47,19 @@
 
 name: CI
 
+# P2 (2026-09-25 review): this used to be `push: branches: ["**"]` plus
+# `pull_request`, in two different concurrency groups, so every push to an
+# `fm/*` branch with an open PR ran the whole workflow **twice** - 35 duplicate
+# pairs in the 100 runs before the review, at 7-22 minutes of macOS runner time
+# per job.
+#
+# `push` is now the default branch only, which is the post-merge run, and
+# `pull_request` is what guards a branch before it lands. The one thing this
+# gives up is CI on a branch with no PR open yet; `workflow_dispatch` covers
+# the case where that is actually wanted.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -81,7 +94,16 @@ concurrency:
   # A new push supersedes an in-flight run for the same ref - a macOS runner
   # minute is expensive enough to care.
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # ...except on `main`, where it is the opposite of what anyone wants (P2).
+  # Merges land 4-24 times a day, so a second merge routinely arrived while the
+  # first one's run was still going and cancelled it: 15 of the 100 runs before
+  # the review were cancelled `main` runs, so roughly one merge in seven never
+  # got a completed run of its own exact tree. That is the run people actually
+  # go back and read when something breaks in `/Applications`.
+  #
+  # A superseded PR run is still cancelled, which is where the saving is and
+  # where nobody needs the old result.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 defaults:
   run:
@@ -124,6 +146,31 @@ jobs:
           fi
           echo "no warnings in Sources/GrandLine"
 
+      # P2: the two test jobs used to run their own `swift build`, so one push
+      # compiled the vendored whisper.cpp, SwiftTerm and YamlSwift three times
+      # - 7.5-9.2 minutes each, none of it cached. They take this binary
+      # instead and keep their `--no-build`.
+      #
+      # Only the executable travels. The suites still read the checked-out
+      # sources (`SelfTestSources` resolves `#filePath`, which is an absolute
+      # path baked in at compile time), and every job in a run checks out to
+      # the same `/Users/runner/work/<repo>/<repo>` on the same runner image,
+      # so a source guard resolves identically in the job that built it and in
+      # the job that downloads it.
+      #
+      # An `actions/cache` of `native/.build` was considered and deliberately
+      # not used: `actions/checkout` gives every file a fresh mtime, llbuild
+      # keys its incremental decisions on file mtime and size, so a restored
+      # `.build` would be rebuilt from scratch anyway and the cache would only
+      # add a multi-gigabyte upload and download to each job.
+      - name: Share the debug binary with the test jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: grandline-debug-binary
+          path: native/.build/debug/GrandLine
+          retention-days: 1
+          if-no-files-found: error
+
       # GL-27: the self-test suites are compiled into debug builds only, which
       # means the release configuration is a genuinely different compilation
       # and can break on its own - a reference to a suite or a `debug*` shim
@@ -146,6 +193,11 @@ jobs:
   test:
     name: self-test suites
     runs-on: macos-15   # keep all four in sync - see the runner-image note above
+    # P2: this job consumes the `build` job's debug binary rather than
+    # compiling its own, so it waits for it. Total runner minutes fall by two
+    # full builds per run; wall clock is roughly unchanged, because the build
+    # this job used to do was on its own critical path anyway.
+    needs: build
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -161,8 +213,16 @@ jobs:
             exit 1
           fi
 
-      - name: Build
-        run: swift build
+      # P2: built once in the `build` job above, not a fourth time here.
+      - name: Take the debug binary from the build job
+        uses: actions/download-artifact@v4
+        with:
+          name: grandline-debug-binary
+          path: native/.build/debug
+      - name: Make it executable
+        # `upload-artifact` does not carry the executable bit, and the runner
+        # script refuses to start without it (`[ ! -x "$BIN" ]`).
+        run: chmod +x .build/debug/GrandLine
 
       # Every store in this app honours an `FM_*` override for where it reads
       # and writes (see the README's env-var index). Pointing all of them at a
@@ -191,6 +251,8 @@ jobs:
   test-windowed:
     name: self-test suites (window-backed)
     runs-on: macos-15   # keep all four in sync - see the runner-image note above
+    # P2: same as `test` above - the `build` job's binary, not a third compile.
+    needs: build
     # A bound, because this job has already needed one: its first run hung and
     # was killed by GitHub's own 6-hour cap, producing no usable log. The
     # runner script now bounds each suite individually (`FM_SUITE_TIMEOUT`), so
@@ -233,8 +295,16 @@ jobs:
             exit 1
           fi
 
-      - name: Build
-        run: swift build
+      # P2: built once in the `build` job above, not a fourth time here.
+      - name: Take the debug binary from the build job
+        uses: actions/download-artifact@v4
+        with:
+          name: grandline-debug-binary
+          path: native/.build/debug
+      - name: Make it executable
+        # `upload-artifact` does not carry the executable bit, and the runner
+        # script refuses to start without it (`[ ! -x "$BIN" ]`).
+        run: chmod +x .build/debug/GrandLine
 
       # Deliberately identical to the `test` job's block above. GitHub Actions
       # supports neither YAML anchors nor a workflow-level `env` that can see
