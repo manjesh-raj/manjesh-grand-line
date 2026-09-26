@@ -96,6 +96,17 @@ final class CredentialVaultRecoverySheetController: NSViewController {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    /// PF16 of the 2026-09-25 full review: this sheet stored its theme
+    /// observation and never unregistered it, and unlike the two app-lifetime
+    /// registrations PF16 also names, **this one is built fresh every time the
+    /// sheet is presented** (`CredentialVaultController` constructs a new
+    /// controller per press). So every visit to the recovery kit left a dead
+    /// closure in `ThemeManager.observers` for the life of the process, and
+    /// every theme change afterwards called one more of them.
+    deinit {
+        if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
+    }
+
     // MARK: Layout
 
     override func loadView() {

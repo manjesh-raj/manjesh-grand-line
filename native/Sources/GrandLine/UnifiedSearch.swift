@@ -144,7 +144,11 @@ final class UnifiedSearchController: NSWindowController {
 
         buildUI(in: panel)
         _ = panel.followHelmTheme()
-        ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
+        // PF16: the token used to be discarded. This controller is
+        // app-lifetime, so nothing accumulated in practice - but a
+        // registration nothing can cancel is a leak waiting for the first
+        // caller that does not live forever.
+        themeObservation = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
         // Audit §5.1: gating `present()` only covers *opening* while locked.
         // This panel is `.floating`, so it renders above the lock overlay -
         // which is a subview of the main window, not a screen-level shield -
@@ -154,6 +158,12 @@ final class UnifiedSearchController: NSWindowController {
         // the gate orders it out on every lock. Same shape as the Host Editor's
         // own registration in `main.swift`.
         AppLockGate.shared.registerSecondaryWindow { [weak self] in self?.window }
+    }
+
+    private var themeObservation: ThemeObservation?
+
+    deinit {
+        if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }

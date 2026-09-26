@@ -122,11 +122,20 @@ final class FullScreenMenuBarFill {
         // GL-24: repaint, never fetch. Fires synchronously at registration,
         // which is harmless here - `update()` finds no full-screen window yet
         // and simply tears nothing down.
-        _ = ThemeManager.shared.observe { [weak self] _ in self?.update() }
+        //
+        // PF16 of the 2026-09-25 full review: the token used to be discarded.
+        // This object is app-lifetime, so nothing accumulated in practice -
+        // but a registration nothing can ever cancel is a leak waiting for the
+        // first caller that does not live forever, and the `deinit` below
+        // already had to clean up its sibling notification observers.
+        themeObservation = ThemeManager.shared.observe { [weak self] _ in self?.update() }
     }
+
+    private var themeObservation: ThemeObservation?
 
     deinit {
         observers.forEach(NotificationCenter.default.removeObserver)
+        if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
         panel?.orderOut(nil)
     }
 
