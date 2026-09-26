@@ -716,7 +716,30 @@ final class HerdrThemeSync {
 
         let colors = HerdrThemeColors.derive(from: theme)
         let path = Self.configPath()
-        let original = (try? String(contentsOf: path, encoding: .utf8)) ?? ""
+        // GL-01, and B26: "file missing" and "file present but unreadable" are
+        // different states, and this collapsed them with `?? ""`. A
+        // config.toml that is there but cannot be decoded - a foreign
+        // encoding, a permissions change, a transient read error - became an
+        // empty string, the patcher happily produced a fresh `[theme.custom]`
+        // block out of nothing, and `AtomicWrite` replaced the captain's real
+        // herdr config (worktrees, integrations, custom commands and all) with
+        // it. Measured: 5 unreadable bytes became a 398-byte file this app
+        // invented.
+        let original: String
+        if FileManager.default.fileExists(atPath: path.path) {
+            guard let text = try? String(contentsOf: path, encoding: .utf8) else {
+                AppLog.store.error("""
+                    herdr theme sync: config.toml at \(path.path, privacy: .public) exists but \
+                    could not be read - refusing to overwrite it
+                    """)
+                return
+            }
+            original = text
+        } else {
+            // A genuinely absent file is the one case where writing a fresh
+            // config is right: there is nothing to lose.
+            original = ""
+        }
 
         guard let result = HerdrConfigPatcher.apply(colors: colors, to: original) else {
             AppLog.store.notice("""
