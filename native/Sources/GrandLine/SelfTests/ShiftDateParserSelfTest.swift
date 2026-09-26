@@ -111,8 +111,63 @@ enum ShiftDateParserSelfTest {
             failures.append("'Version 2 release notes' unexpectedly parsed a date from the bare number")
         }
 
+        // 9. B21: an abbreviation inside an ordinary word is not a weekday.
+        //
+        // "Followed up with the vendor" was parsed as due on Wednesday (`wed`
+        // inside `followed`) and "Common ownership review" as due on Monday
+        // (`mon` inside `common`). The captain never typed a date, and the
+        // task silently acquired one - and then showed up as overdue.
+        let embedded = [
+            "Followed up with the vendor",          // wed
+            "Common ownership review",              // mon
+            "Monsoon readiness plan",               // mon
+            "Satellite uplink runbook",             // sat
+            "Sunset the old API",                   // sun
+            "Tomorrowland ticket refund",           // tomorrow
+            "Thursday-ish planning".replacingOccurrences(of: "Thursday", with: "Thursdayish"),
+            "Refactor the frieze renderer",         // fri
+        ]
+        for title in embedded {
+            if let parsed = ShiftDateParser.parse(title, now: now) {
+                failures.append("B21: \(title.debugDescription) must not parse a date, "
+                                + "matched \(parsed.matchedText.debugDescription)")
+            }
+        }
+
+        // The discriminating half: the very same words with a real boundary
+        // still parse, so the boundary rule cannot quietly become "never
+        // match an abbreviation".
+        let standalone: [(String, Int)] = [
+            ("Followed up, due wed", 4),            // Wed 2026-08-12 -> 19 (not today)
+            ("Common review on mon", 2),
+            ("Ship it (fri)", 6),
+            ("Ship it sat.", 7),
+        ]
+        for (title, weekday) in standalone {
+            guard let parsed = ShiftDateParser.parse(title, now: now) else {
+                failures.append("B21: \(title.debugDescription) should still parse a weekday")
+                continue
+            }
+            let got = cal.component(.weekday, from: parsed.date)
+            if got != weekday {
+                failures.append("B21: \(title.debugDescription) resolved to weekday \(got), "
+                                + "expected \(weekday)")
+            }
+        }
+
+        // And a rejected embedded hit must not hide a real one later in the
+        // same string - `wed` inside `followed` comes first.
+        if let parsed = ShiftDateParser.parse("Followed up on wed", now: now) {
+            if cal.component(.weekday, from: parsed.date) != 4 {
+                failures.append("B21: a real weekday after an embedded hit must still be found, "
+                                + "got weekday \(cal.component(.weekday, from: parsed.date))")
+            }
+        } else {
+            failures.append("B21: 'Followed up on wed' must still find the real 'wed'")
+        }
+
         if failures.isEmpty {
-            print("PASS: ShiftDateParserSelfTest (8 checks)")
+            print("PASS: ShiftDateParserSelfTest (9 checks)")
             return true
         } else {
             for f in failures { print("FAIL: \(f)") }

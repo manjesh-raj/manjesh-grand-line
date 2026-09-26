@@ -48,16 +48,21 @@ enum ShiftDateParser {
         // Longest/most-specific phrases first so "next week" isn't shadowed
         // by a bare "next" and "next monday" isn't shadowed by a bare
         // "monday" match later in the same string.
-        if let range = lower.range(of: "next week") {
+        //
+        // Every one of these goes through `firstWholeWord`, never a bare
+        // `range(of:)`: B21 was a missing leading word boundary, and the
+        // literals here have exactly the same exposure as the weekday table
+        // ("Tomorrowland tickets", "Todays-standup notes").
+        if let range = firstWholeWord("next week", in: lower) {
             baseDate = cal.date(byAdding: .day, value: 7, to: cal.startOfDay(for: now))
             dayMatch = String(lower[range])
         } else if let (weekday, range) = firstMatch(of: weekdayNames, prefixedBy: "next ", in: lower) {
             baseDate = nextOccurrence(of: weekday, from: now, cal: cal, allowToday: false, skipCurrentWeek: true)
             dayMatch = String(lower[range])
-        } else if let range = lower.range(of: "tomorrow") {
+        } else if let range = firstWholeWord("tomorrow", in: lower) {
             baseDate = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: now))
             dayMatch = String(lower[range])
-        } else if let range = lower.range(of: "today") {
+        } else if let range = firstWholeWord("today", in: lower) {
             baseDate = cal.startOfDay(for: now)
             dayMatch = String(lower[range])
         } else if let (weekday, range) = firstMatch(of: weekdayNames, prefixedBy: nil, in: lower) {
@@ -105,18 +110,49 @@ enum ShiftDateParser {
         var best: (Int, Range<String.Index>)?
         for (name, weekday) in table {
             let needle = (prefix ?? "") + name
-            guard let range = text.range(of: needle) else { continue }
-            // Require a word boundary after the match so "friday" doesn't
-            // match inside "fridayish" (unlikely in practice, but cheap to
-            // guard). No boundary check before `prefix` itself since callers
-            // pass a literal like "next " that already ends in a space.
-            let afterOK = range.upperBound == text.endIndex || !text[range.upperBound].isLetter
-            guard afterOK else { continue }
+            guard let range = firstWholeWord(needle, in: text) else { continue }
             if best == nil || range.lowerBound < best!.1.lowerBound {
                 best = (weekday, range)
             }
         }
         return best
+    }
+
+    /// The first occurrence of `needle` in `text` that is a whole word.
+    ///
+    /// **Both** boundaries, and every occurrence rather than only the first.
+    /// B21: there was a boundary check after the match but none before it, so
+    /// the three-letter abbreviations matched inside ordinary words - a task
+    /// called "Followed up with the vendor" was parsed as due on **Wednesday**
+    /// (`wed` inside `followed`) and "Common ownership review" as due on
+    /// **Monday** (`mon` inside `common`). The captain never typed a date.
+    ///
+    /// Scanning past a rejected hit matters for the same reason: "followed up
+    /// on wed" has `wed` inside `followed` first, and stopping at that one
+    /// would lose the real weekday further along.
+    ///
+    /// A boundary is "not a letter and not a digit" on either side, so
+    /// "wed." and "(wed)" and "wed," all still match while "wed2" and
+    /// "followed" do not.
+    private static func firstWholeWord(_ needle: String, in text: String) -> Range<String.Index>? {
+        guard !needle.isEmpty else { return nil }
+        var searchFrom = text.startIndex
+        while let range = text.range(of: needle, range: searchFrom..<text.endIndex) {
+            let beforeOK = range.lowerBound == text.startIndex
+                || !isWordCharacter(text[text.index(before: range.lowerBound)])
+            let afterOK = range.upperBound == text.endIndex
+                || !isWordCharacter(text[range.upperBound])
+            if beforeOK && afterOK { return range }
+            // Advance by one character rather than to `range.upperBound`, so
+            // an overlapping later occurrence is not skipped.
+            guard range.lowerBound < text.endIndex else { return nil }
+            searchFrom = text.index(after: range.lowerBound)
+        }
+        return nil
+    }
+
+    private static func isWordCharacter(_ character: Character) -> Bool {
+        character.isLetter || character.isNumber
     }
 
     /// The next date matching `weekday` (1=Sunday...7=Saturday) strictly
