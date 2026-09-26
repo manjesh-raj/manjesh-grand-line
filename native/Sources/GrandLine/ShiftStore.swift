@@ -522,8 +522,27 @@ final class ShiftStore {
     /// already have edited is the worse of the two surprises.
     static func nextOccurrence(after task: ShiftTask, now: Date = Date()) -> ShiftTask? {
         guard let rule = task.recurrence,
-              let anchor = ShiftDateFormatting.dateTime(from: task.dueDate, time: task.dueTime),
-              let next = rule.next(after: anchor, anchor: anchor) else { return nil }
+              let anchor = ShiftDateFormatting.dateTime(from: task.dueDate, time: task.dueTime)
+        else { return nil }
+        // B24, first half: `COUNT` never ran out. Each spawned instance has
+        // its own due date, and that date was handed to the rule as the
+        // series anchor - so the walk's "this is occurrence N" restarted at 1
+        // on every completion and a `COUNT=3` task repeated for ever. The
+        // remaining budget travels on the instance instead, because there is
+        // no stored series to hold it in.
+        guard let remaining = rule.afterOneOccurrence else { return nil }
+        // B24, second half: an overdue task caught up rather than scheduling
+        // into the past. A daily task last done ten days ago used to respawn
+        // for *nine* days ago - still overdue the moment it was written, and
+        // still overdue after the captain ticked it off again, which is a
+        // loop the captain cannot get out of except by editing the date.
+        //
+        // `withoutCount` on this walk deliberately: skipping the slots that
+        // elapsed while nobody was looking must not spend the occurrences the
+        // rule promised. `UNTIL` still terminates it, because `UNTIL` is a
+        // real calendar edge rather than a budget.
+        let from = max(anchor, now)
+        guard let next = rule.withoutCount.next(after: from, anchor: anchor) else { return nil }
         let iso = ShiftStore.iso8601(now)
         let (dateStr, timeStr) = ShiftDateFormatting.components(from: next)
         var spawned = task
@@ -539,6 +558,10 @@ final class ShiftStore {
         spawned.dueTime = task.dueTime == nil ? nil : timeStr
         spawned.subtasks = task.subtasks.map { ShiftSubtask(id: UUID().uuidString, title: $0.title, done: false) }
         spawned.hasAttachment = false
+        // The remaining budget, so the series really does run out (B24). An
+        // unbounded rule is unchanged, so an ordinary repeating task's YAML
+        // line is byte-identical to what it always was.
+        spawned.recurrence = remaining
         return spawned
     }
 

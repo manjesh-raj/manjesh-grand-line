@@ -186,6 +186,11 @@ enum ShiftRecurrenceSelfTest {
     // MARK: Completion advances the series
 
     private static func checkCompletionAdvances(_ ok: inout Bool) {
+        // Pinned, never the real clock. B24 made `nextOccurrence` catch up to
+        // "now" rather than scheduling into the past, so a fixture that let
+        // `now` default to `Date()` would pass today and drift tomorrow -
+        // which is exactly the shape of bug this suite exists to catch.
+        let completedAt = date("2026-09-16 10:00")
         var task = ShiftTask.fresh()
         task.title = "Standup notes"
         task.dueDate = "2026-09-16"
@@ -193,7 +198,7 @@ enum ShiftRecurrenceSelfTest {
         task.subtasks = [ShiftSubtask(id: "s1", title: "Read the board", done: true)]
         task.recurrence = ShiftRecurrence(frequency: .weekly, weekdays: ShiftRecurrence.weekdaySet)
 
-        guard let spawned = ShiftStore.nextOccurrence(after: task) else {
+        guard let spawned = ShiftStore.nextOccurrence(after: task, now: completedAt) else {
             fail("completing a recurring task should produce the next occurrence", &ok)
             return
         }
@@ -213,17 +218,127 @@ enum ShiftRecurrenceSelfTest {
         // The negative cases, so the check above cannot pass vacuously.
         var once = task
         once.recurrence = nil
-        check(ShiftStore.nextOccurrence(after: once) == nil,
+        check(ShiftStore.nextOccurrence(after: once, now: completedAt) == nil,
               "a task with no rule must not spawn anything", &ok)
         var undated = task
         undated.dueDate = nil
         undated.dueTime = nil
-        check(ShiftStore.nextOccurrence(after: undated) == nil,
+        check(ShiftStore.nextOccurrence(after: undated, now: completedAt) == nil,
               "a rule with no due date to anchor on must not spawn anything", &ok)
         var finished = task
         finished.recurrence = ShiftRecurrence(frequency: .daily, count: 1)
-        check(ShiftStore.nextOccurrence(after: finished) == nil,
+        check(ShiftStore.nextOccurrence(after: finished, now: completedAt) == nil,
               "an exhausted rule must not spawn anything", &ok)
+
+        checkCountRunsOut(&ok)
+        checkAnOverdueSeriesCatchesUp(&ok)
+    }
+
+    // MARK: B24 - COUNT really runs out
+
+    /// A `COUNT=3` series repeated for ever.
+    ///
+    /// Every spawned instance has its own due date, and that date was handed
+    /// to the rule as the series anchor - so the walk's "this is occurrence N"
+    /// restarted at 1 on every completion and the budget was never spent. The
+    /// remaining count travels on the instance now.
+    private static func checkCountRunsOut(_ ok: inout Bool) {
+        var task = ShiftTask.fresh()
+        task.title = "Onboarding check-in"
+        task.dueDate = "2026-09-01"
+        task.recurrence = ShiftRecurrence(frequency: .daily, count: 3)
+
+        var dates: [String] = []
+        var current: ShiftTask? = task
+        // Bounded, so the *failure* is a wrong count rather than a hung suite
+        // - which is what the bug would otherwise produce.
+        for _ in 0..<12 {
+            guard let live = current else { break }
+            // Completed on the day it was due, so nothing here depends on the
+            // catch-up rule below.
+            let completedAt = ShiftDateFormatting.dateTime(from: live.dueDate, time: nil)
+                .map { $0.addingTimeInterval(600) } ?? Date()
+            current = ShiftStore.nextOccurrence(after: live, now: completedAt)
+            if let spawned = current { dates.append(spawned.dueDate ?? "nil") }
+        }
+        check(dates == ["2026-09-02", "2026-09-03"],
+              "COUNT=3 means the anchor plus two more, and then it stops (B24) - got \(dates)", &ok)
+
+        // COUNT=1 is "this once", and the remaining budget is visible on the
+        // instance rather than only implied.
+        var twice = task
+        twice.recurrence = ShiftRecurrence(frequency: .daily, count: 2)
+        let after = ShiftStore.nextOccurrence(after: twice, now: date("2026-09-01 10:00"))
+        check(after?.recurrence?.count == 1,
+              "the spawned instance carries the REMAINING count, got "
+              + "\(after?.recurrence?.count.map(String.init) ?? "nil")", &ok)
+        check(after.flatMap { ShiftStore.nextOccurrence(after: $0, now: date("2026-09-02 10:00")) } == nil,
+              "and that last instance spawns nothing", &ok)
+
+        // An unbounded rule is untouched, so an ordinary repeating task's YAML
+        // line is byte-identical to what it always was.
+        var forever = task
+        forever.recurrence = ShiftRecurrence(frequency: .daily)
+        let next = ShiftStore.nextOccurrence(after: forever, now: date("2026-09-01 10:00"))
+        check(next?.recurrence == forever.recurrence,
+              "an unbounded rule carries forward unchanged", &ok)
+
+        // UNTIL still terminates, and it is a calendar edge rather than a
+        // budget - so it must not be affected by the catch-up walk.
+        var bounded = task
+        bounded.recurrence = ShiftRecurrence(frequency: .daily, until: "2026-09-02")
+        check(ShiftStore.nextOccurrence(after: bounded, now: date("2026-09-01 10:00"))?.dueDate
+                == "2026-09-02",
+              "UNTIL's own last day is still produced", &ok)
+        var atUntil = bounded
+        atUntil.dueDate = "2026-09-02"
+        check(ShiftStore.nextOccurrence(after: atUntil, now: date("2026-09-02 10:00")) == nil,
+              "and nothing past it", &ok)
+    }
+
+    // MARK: B24 - an overdue series catches up instead of scheduling into the past
+
+    private static func checkAnOverdueSeriesCatchesUp(_ ok: inout Bool) {
+        var task = ShiftTask.fresh()
+        task.title = "Water the plants"
+        task.dueDate = "2026-09-16"
+        task.recurrence = ShiftRecurrence(frequency: .daily)
+
+        // Ticked off ten days late. The next instance used to be 2026-09-17 -
+        // overdue the moment it was written, and still overdue after the
+        // captain ticked it off again, which is a loop with no way out but
+        // editing the date by hand.
+        let spawned = ShiftStore.nextOccurrence(after: task, now: date("2026-09-26 11:00"))
+        check(spawned?.dueDate == "2026-09-27",
+              "an overdue daily task schedules its next instance in the FUTURE (B24), got "
+              + "\(spawned?.dueDate ?? "nil")", &ok)
+
+        // The discriminating half: a task completed *early* is not pushed
+        // forward, so this is a catch-up and not a "always tomorrow" rule.
+        let early = ShiftStore.nextOccurrence(after: task, now: date("2026-09-14 11:00"))
+        check(early?.dueDate == "2026-09-17",
+              "a task completed early still follows the rule from its own due date, got "
+              + "\(early?.dueDate ?? "nil")", &ok)
+
+        // And a weekly series keeps its weekday rather than landing on
+        // whatever day the catch-up happened to be.
+        var weekly = task
+        weekly.recurrence = ShiftRecurrence(frequency: .weekly, weekdays: [4])  // Wednesday
+        let caught = ShiftStore.nextOccurrence(after: weekly, now: date("2026-09-26 11:00"))
+        check(caught?.dueDate == "2026-09-30",
+              "a caught-up weekly series lands on its own weekday, got "
+              + "\(caught?.dueDate ?? "nil")", &ok)
+
+        // Catching up must not spend the budget: a COUNT series that went
+        // unnoticed still owes the captain its remaining occurrences.
+        var counted = task
+        counted.recurrence = ShiftRecurrence(frequency: .daily, count: 3)
+        let caughtCounted = ShiftStore.nextOccurrence(after: counted, now: date("2026-09-26 11:00"))
+        check(caughtCounted?.dueDate == "2026-09-27",
+              "a COUNT series catches up too, got \(caughtCounted?.dueDate ?? "nil")", &ok)
+        check(caughtCounted?.recurrence?.count == 2,
+              "and the days it was missed do not eat its remaining occurrences, got "
+              + "\(caughtCounted?.recurrence?.count.map(String.init) ?? "nil")", &ok)
     }
 
     // MARK: The reminder offset
