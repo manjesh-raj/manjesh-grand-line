@@ -489,6 +489,99 @@ enum DotfilesAutoSyncSelfTest {
                   "case 11: a quoted path (one with a space) has its quotes removed")
         }
 
+        // MARK: 12 - B25: "Sync now" runs on the sync's own queue
+
+        do {
+            let remote = makeBareRemote("case12.git")
+            let tree = makeClone(of: remote, named: "case12", seed: true)
+            // A long debounce, so a pending commit is unambiguously still
+            // waiting when the button is pressed.
+            let sync = makeSync(tree, remote: remote, debounce: 30)
+            defer { sync.stop() }
+
+            let before = commitCount(tree)
+            let config = tree.appendingPathComponent("home/.config/herdr/config.toml")
+            write(config, "[theme.custom]\naccent = \"#abcdef\"\n")
+            sync.fileSystemChanged()
+            sync.drainQueueForTests()
+            // Discriminating power first: there really is a debounced commit
+            // in flight, which is what the button used to race.
+            check(sync.hasPendingCommitForTests,
+                  "case 12 fixture: a debounced commit should be pending when the button is pressed")
+            check(commitCount(tree) == before,
+                  "case 12 fixture: and nothing should be committed yet")
+
+            let done = DispatchSemaphore(value: 0)
+            var outcome: DotfilesAutoSync.Outcome?
+            sync.syncNowFromUI { result in
+                outcome = result
+                done.signal()
+            }
+            // `syncNowFromUI` calls back on main, and this suite is on main -
+            // so the wait has to keep the run loop turning or it deadlocks.
+            let deadline = Date().addingTimeInterval(30)
+            while done.wait(timeout: .now()) == .timedOut, Date() < deadline {
+                RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            }
+            check(outcome == .pushed(fileCount: 1),
+                  "case 12: \"Sync now\" should commit and push the pending edit, got "
+                  + String(describing: outcome))
+            check(commitCount(tree) == before + 1,
+                  "case 12: exactly one commit, got \(commitCount(tree) - before)")
+            // The point of B25: the debounce it duplicated is cancelled from
+            // inside the queue, so the timer cannot fire a second pass into
+            // the same working tree afterwards.
+            check(!sync.hasPendingCommitForTests,
+                  "case 12: the pending debounce is cancelled rather than left to fire a "
+                  + "second git run against the same .git/index.lock (B25)")
+            sync.drainQueueForTests()
+            check(commitCount(tree) == before + 1,
+                  "case 12: and still exactly one commit after the queue drains, got "
+                  + "\(commitCount(tree) - before)")
+        }
+
+        // MARK: 13 - B25: no UI call site reaches the synchronous core directly
+
+        do {
+            guard let root = SelfTestSources.appSourceDirectory() else {
+                check(false, "case 13: app sources are not next to this binary - "
+                      + "this guard would pass vacuously")
+                return finish(failures)
+            }
+            let files = (try? FileManager.default.contentsOfDirectory(
+                at: root, includingPropertiesForKeys: nil)) ?? []
+            var offenders: [String] = []
+            var sawTheOwner = false
+            for file in files where file.pathExtension == "swift" {
+                guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+                if file.lastPathComponent == "DotfilesAutoSync.swift" {
+                    // The owner reaches its own core on its own queue; that is
+                    // the whole design.
+                    sawTheOwner = text.contains("func syncNow() -> Outcome")
+                    continue
+                }
+                // Only files that actually hold one of these - `syncNow()` is
+                // a common enough method name that a bare grep also finds
+                // `CredentialVaultStore`'s, which is a different class with a
+                // different queue.
+                guard text.contains("DotfilesAutoSync") else { continue }
+                for (index, line) in text.components(separatedBy: "\n").enumerated() {
+                    let code = line.trimmingCharacters(in: .whitespaces)
+                    guard !code.hasPrefix("//"), !code.hasPrefix("///") else { continue }
+                    guard code.contains("syncNow()"), !code.contains("syncNowFromUI") else { continue }
+                    offenders.append("\(file.lastPathComponent):\(index + 1)")
+                }
+            }
+            check(sawTheOwner,
+                  "case 13 fixture: DotfilesAutoSync.swift must still declare the synchronous "
+                  + "core, or this grep is measuring nothing")
+            check(offenders.isEmpty,
+                  "case 13: only DotfilesAutoSync itself may call `syncNow()` - everything else "
+                  + "goes through `syncNowFromUI`, which runs on the serial queue and cancels "
+                  + "the debounce from inside it. Two git runs against one working tree race "
+                  + "`.git/index.lock` (B25). Offenders: " + offenders.joined(separator: ", "))
+        }
+
         return finish(failures)
     }
 

@@ -12,6 +12,12 @@ import Foundation
 
 enum ScratchpadMath {
 
+    /// B18: the one sentence both this file and `ScratchpadEngine` say when a
+    /// duration cannot land on a real date. It used to be a trap inside
+    /// `Int(Double)`.
+    static let outOfRange = "that duration is too large to land on a real date"
+
+
     // MARK: Addition
 
     static func add(_ left: ScratchpadValue, _ right: ScratchpadValue, subtract: Bool,
@@ -26,12 +32,19 @@ enum ScratchpadMath {
             guard q.unit?.dimension == .duration else {
                 throw ScratchpadError.semantic("only a duration can be added to a date")
             }
-            return .date(ScratchpadDates.shift(a, by: q, sign: subtract ? -1 : 1, calendar: calendar))
+            guard let shifted = ScratchpadDates.shift(a, by: q, sign: subtract ? -1 : 1,
+                                                      calendar: calendar) else {
+                throw ScratchpadError.semantic(outOfRange)
+            }
+            return .date(shifted)
         case (.quantity(let q), .date(let b)):
             guard !subtract, q.unit?.dimension == .duration else {
                 throw ScratchpadError.semantic("only a duration can be added to a date")
             }
-            return .date(ScratchpadDates.shift(b, by: q, sign: 1, calendar: calendar))
+            guard let shifted = ScratchpadDates.shift(b, by: q, sign: 1, calendar: calendar) else {
+                throw ScratchpadError.semantic(outOfRange)
+            }
+            return .date(shifted)
         case (.quantity(var a), .quantity(let b)):
             // `2400 + 15%` is 2760. A percentage on the right of a sum is
             // read as a change *to* the left, which is how every pad and

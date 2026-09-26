@@ -199,7 +199,14 @@ final class ShiftTaskListView: NSObject {
 
     func setTasks(_ tasks: [ShiftTask], projects: [ShiftProject]) {
         self.tasks = tasks
-        self.projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
+        // B19: `uniquingKeysWith`, never `uniqueKeysWithValues` - the latter
+        // *traps*, and `projects.yaml` is a git-synced file a bad merge or a
+        // hand edit can leave with two entries sharing an id. Keeping the
+        // first is what the rest of this app already does for a duplicated
+        // id (`main.swift`'s session restore); crashing the app because a
+        // synced file grew a duplicate is never the better answer.
+        self.projectsByID = Dictionary(projects.map { ($0.id, $0) },
+                                       uniquingKeysWith: { first, _ in first })
         tableView.reloadData()
     }
 
@@ -372,10 +379,10 @@ private final class ShiftTaskRowView: NSView {
         self.onToggle = onToggle
         self.onFocus = onFocus
 
-        let isOverdue: Bool = {
-            guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
-            return due < Calendar.current.startOfDay(for: Date())
-        }()
+        // B22: one definition, shared with the notifier - which used to call a
+        // date-only task overdue at local midnight while this row did not
+        // until the next day.
+        let isOverdue = ShiftDue.isOverdue(date: task.dueDate, time: task.dueTime, now: Date())
         let (priorityText, priorityTint): (String, HelmTint) = {
             switch task.priority {
             case .high: return ("High", .critical)

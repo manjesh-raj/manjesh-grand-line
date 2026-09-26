@@ -40,6 +40,7 @@ enum ReadingListSelfTest {
         checkURLDetection(check)
         checkNormalisation(check)
         checkHostAndMonogram(check)
+        checkNavigationPolicy(check)
         checkHostHueIsStable(check)
         checkTagNormalisation(check)
         checkTagCounts(check)
@@ -50,6 +51,7 @@ enum ReadingListSelfTest {
         checkStoreRefusesNonURLsAndDuplicates(check)
         checkStoreRefusesWritingAnUnreadableFile(check)
         checkStorePreservesRecordsThisBuildCannotDecode(check)
+        checkStorePreservesUnknownKeys(check)
         checkLegacyRecordDecode(check)
         checkStoreHonoursShiftDirOverride(check)
         checkIconCacheNaming(check)
@@ -183,6 +185,58 @@ enum ReadingListSelfTest {
         let hues = Set(["a.com", "b.com", "c.io", "d.dev", "e.net", "f.org", "g.co", "h.ai"]
             .map { ReadingListHostHue.hue(for: "https://" + $0) })
         check(hues.count >= 3, "host hue: eight hosts collapsed onto fewer than three hues")
+    }
+
+    // MARK: Navigation policy
+
+    /// B15: the same-host rule is about the *top-level* page.
+    ///
+    /// The discriminating power of the fixture first - a policy that answered
+    /// `.allow` to everything would pass a sweep that only ever asks about
+    /// same-host URLs, so the main-frame cases assert all three outcomes
+    /// before the sub-frame cases assert that they differ.
+    private static func checkNavigationPolicy(_ check: (Bool, String) -> Void) {
+        let saved = "pganalyze.com"
+        func decide(_ url: String, main: Bool) -> ReadingListNavigation.Decision {
+            guard let parsed = URL(string: url) else { return .cancel }
+            return ReadingListNavigation.decide(url: parsed, savedHost: saved, isMainFrame: main)
+        }
+
+        check(decide("https://pganalyze.com/blog/page-2", main: true) == .allow,
+              "navigation: the saved link's own site is reading, and stays in the reader")
+        check(decide("https://www.pganalyze.com/blog/page-2", main: true) == .allow,
+              "navigation: `www.` is folded by `ReadingListURL.host`, so it is the same site")
+        check(decide("https://news.ycombinator.com/item?id=1", main: true) == .openExternally,
+              "navigation: a top-level jump off the site is the captain's decision, in a real browser")
+        check(decide("file:///etc/passwd", main: true) == .cancel,
+              "navigation: a `file:` redirect from a remote page goes nowhere - "
+              + "not the reader, and not `NSWorkspace` either")
+        check(decide("x-apple.systempreferences:root=Privacy", main: true) == .cancel,
+              "navigation: nor a custom scheme")
+        check(decide("about:blank", main: true) == .allow,
+              "navigation: `about:` is the web view's own idle page")
+
+        // The sub-frame half. Every one of these is a real embed shape, and
+        // every one of them was `.openExternally` before B15.
+        check(decide("https://www.youtube.com/embed/abc", main: false) == .allow,
+              "navigation: a YouTube embed is part of rendering the article, not a jump off it")
+        check(decide("https://disqus.com/embed/comments/", main: false) == .allow,
+              "navigation: so is a comment widget")
+        check(decide("https://pganalyze.com/blog/page-2", main: false) == .allow,
+              "navigation: a same-host sub-frame is allowed for the same reason")
+        check(decide("file:///etc/passwd", main: false) == .cancel,
+              "navigation: the scheme check still applies to a sub-frame - "
+              + "a sub-frame is not a licence to load anything")
+
+        check(decide("https://news.ycombinator.com/item?id=1", main: true)
+                != decide("https://news.ycombinator.com/item?id=1", main: false),
+              "navigation: the two frame cases must genuinely differ, or this sweep is vacuous")
+
+        check(ReadingListNavigation.decide(url: URL(string: "https://example.com")!,
+                                           savedHost: "",
+                                           isMainFrame: true) == .openExternally,
+              "navigation: with no saved host to compare against, a top-level load is external - "
+              + "an empty host must never match an empty target host and let everything through")
     }
 
     // MARK: Tags
@@ -456,6 +510,57 @@ enum ReadingListSelfTest {
         check(after.range(of: "from-a-newer-build")!.lowerBound
               < after.range(of: "ordinary")!.lowerBound,
               "skew: a preserved record keeps its place in the file rather than drifting to the end")
+    }
+
+    /// B23: the *other* half of GL-01's cross-build rule.
+    ///
+    /// `checkStorePreservesRecordsThisBuildCannotDecode` above covers a record
+    /// this build cannot decode at all. This covers a record it decodes
+    /// perfectly well which carries one extra key from a newer build - and
+    /// that is the worse of the two in practice, because the link keeps
+    /// working, nothing looks wrong, and the newer build silently finds its
+    /// own field gone every time the older one rewrites the file.
+    private static func checkStorePreservesUnknownKeys(_ check: (Bool, String) -> Void) {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("fm-reading-list-keys-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = root.appendingPathComponent("links.yaml")
+        try? """
+        links:
+          - id: "https://example.com/a"
+            url: "https://example.com/a"
+            title: "A real link"
+            added_at: "2026-09-01T09:00:00Z"
+            metadata_state: "resolved"
+            reading_time_minutes: 12
+            highlight_count: 3
+
+        """.write(to: path, atomically: true, encoding: .utf8)
+
+        let store = ReadingListStore(root: root)
+        // Both halves of the fixture's discriminating power: the record really
+        // did decode (so this is not the `unreadableRecords` path), and this
+        // build really does regard those two keys as foreign.
+        check(store.links.count == 1,
+              "fixture: the record must decode fine - this is a read that SUCCEEDS, got "
+              + "\(store.links.count) links")
+        check(store.unreadableRecordCount == 0,
+              "fixture: and it is not the unreadable-record path, got "
+              + "\(store.unreadableRecordCount)")
+        check(store.recordsWithUnknownKeys == 1,
+              "fixture: this build must regard the record as carrying unknown keys, got "
+              + "\(store.recordsWithUnknownKeys)")
+
+        store.setRead(id: "https://example.com/a", read: true)
+        let after = (try? String(contentsOf: path, encoding: .utf8)) ?? ""
+        check(after.contains("read_at"), "fixture: the file really was rewritten")
+        check(after.contains("reading_time_minutes"),
+              "B23: a key from a newer build must survive this build's whole-file rewrite")
+        check(after.contains("highlight_count"), "B23: all of them, not just the first")
+        check(after.components(separatedBy: "reading_time_minutes").count == 2,
+              "and must not be written twice - a duplicated key here means a field was added "
+              + "to ReadingLink without adding its key to `ReadingListStore.knownKeys`")
     }
 
     private static func checkLegacyRecordDecode(_ check: (Bool, String) -> Void) {

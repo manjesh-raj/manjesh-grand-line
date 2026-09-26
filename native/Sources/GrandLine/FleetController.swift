@@ -438,6 +438,18 @@ final class FleetController: NSViewController {
         // a briefing that still said "2 due" after both were ticked off
         // would be worse than no card.
         renderDailyReview()
+        // B16: the one daily-review source that is not already in memory is a
+        // connected Google account's calendar, and `events(on:)` only ever
+        // reads its cached snapshot (it is synchronous and on the main
+        // thread - GL-04/GL-12). Without this, Fleet's copy of the card
+        // rendered whatever snapshot some *other* page had last fetched, and
+        // showed a stated gap forever on a machine where Fleet is the only
+        // page the captain opens. The same call Overview already makes, with
+        // the same re-render-only-if-changed rule.
+        DailyReviewCalendarSources.shared.refreshGoogle(for: Date()) { [weak self] changed in
+            guard changed, let self, self.isViewLoaded, !self.view.isHidden else { return }
+            self.renderDailyReview()
+        }
         refresh()
     }
 

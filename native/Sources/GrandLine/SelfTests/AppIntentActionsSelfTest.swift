@@ -388,7 +388,7 @@ enum AppIntentActionsSelfTest {
         let challenge = IntentBiometricChallenge(isAvailable: { biometryAvailable },
                                                  evaluate: { _, completion in completion(biometryAllows) })
         var outcome: Result<IntentActionResult, IntentActionError>?
-        GrandLineIntentActions.copyCredential(title: title, vault: vault, challenge: challenge,
+        GrandLineIntentActions.copyCredential(title: title, vault: { vault }, challenge: challenge,
                                               clipboard: clipboard) { outcome = $0 }
         // Every stand-in above is synchronous, and the action's own `finish`
         // calls back inline when it is already on the main thread - so this
@@ -562,7 +562,7 @@ enum AppIntentActionsSelfTest {
         let challenge = IntentBiometricChallenge(isAvailable: { true },
                                                  evaluate: { _, completion in challenged = true; completion(true) })
         let plain = FakeVault(isUnlocked: true, credentials: sampleCredentials())
-        GrandLineIntentActions.copyCredential(title: "AWS prod", vault: plain, challenge: challenge,
+        GrandLineIntentActions.copyCredential(title: "AWS prod", vault: { plain }, challenge: challenge,
                                               clipboard: clipboard) { _ in }
         check(!challenged, "a credential with no per-item gate is not challenged")
     }
@@ -665,7 +665,74 @@ enum AppIntentActionsSelfTest {
             check(false, "Copy Credential refuses while the app is locked, even with an unlocked vault")
         }
         check(lockedCopied.isEmpty, "and copies nothing")
+
+        // B29: the gate must come before the vault store **exists**, not just
+        // before it is read.
+        //
+        // `copyCredential`'s gate was already its first statement, but the
+        // intent passed `GrandLineServices.shared.vault` as an argument - and
+        // Swift evaluates an argument before the call. That property *builds*
+        // the store: it starts `CredentialVaultGitSync`, creates the vault
+        // directory and runs `adoptLocalOnlyVaultIfNeeded`, which moves files.
+        // So a Shortcuts or Siri trigger did all of that against the captain's
+        // vault while the app was locked, and only then was refused.
+        //
+        // Asserted by counting how many times the provider is called, which is
+        // the only observable that distinguishes "refused before touching the
+        // vault" from "refused after building it".
+        var vaultBuilds = 0
+        var lockedOutcome: Result<IntentActionResult, IntentActionError>?
+        GrandLineIntentActions.copyCredential(
+            title: "AWS prod",
+            vault: {
+                vaultBuilds += 1
+                return FakeVault(isUnlocked: true, credentials: sampleCredentials())
+            },
+            challenge: IntentBiometricChallenge(isAvailable: { true },
+                                                evaluate: { _, done in done(true) }),
+            clipboard: IntentClipboardSink { _, _ in }) { lockedOutcome = $0 }
+        check(vaultBuilds == 0,
+              "B29: a locked app must refuse BEFORE the vault store is built - building it "
+              + "starts the vault's git sync, creates its directory and moves files, all on "
+              + "an untrusted trigger. The provider was called \(vaultBuilds) time(s)")
+        if case .failure(let error)? = lockedOutcome {
+            check(error == .appLocked, "and the refusal is the lock, got \(error)")
+        } else {
+            check(false, "and the refusal is the lock, got \(String(describing: lockedOutcome))")
+        }
+
         AppLockGate.shared.setLocked(false)
+
+        // The discriminating half: unlocked, the provider IS consulted -
+        // otherwise a `copyCredential` that never touched the vault at all
+        // would pass the check above.
+        vaultBuilds = 0
+        GrandLineIntentActions.copyCredential(
+            title: "AWS prod",
+            vault: {
+                vaultBuilds += 1
+                return FakeVault(isUnlocked: true, credentials: sampleCredentials())
+            },
+            challenge: IntentBiometricChallenge(isAvailable: { true },
+                                                evaluate: { _, done in done(true) }),
+            clipboard: IntentClipboardSink { _, _ in }) { _ in }
+        check(vaultBuilds == 1,
+              "and an unlocked app does build it exactly once, got \(vaultBuilds)")
+
+        // And the source guard: the intent must not evaluate the store into
+        // an argument again. A closure is the only shape that defers it.
+        if let sources = SelfTestSources.appSourceDirectory(),
+           let intents = try? String(contentsOf: sources.appendingPathComponent("GrandLineAppIntents.swift"),
+                                     encoding: .utf8) {
+            check(intents.contains("vault: { GrandLineServices.shared.vault }"),
+                  "B29: the Copy Credential intent must pass the vault as a closure, so the "
+                  + "lock gate runs before the store is built")
+            check(!intents.contains("vault: GrandLineServices.shared.vault,"),
+                  "B29: and must not also evaluate it as a value")
+        } else {
+            check(false, "B29: could not read GrandLineAppIntents.swift - this guard would "
+                  + "pass vacuously")
+        }
     }
 
     /// `GrandLineServices.register` must be called from

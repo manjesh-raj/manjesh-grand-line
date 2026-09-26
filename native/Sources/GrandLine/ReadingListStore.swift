@@ -266,6 +266,24 @@ final class ReadingListStore {
     /// serve, and dropping it would destroy data rather than only hide it.
     private var unreadableRecords: [(sortKey: Date, raw: Yaml)] = []
 
+    /// Keys this build writes for a link. Anything else on a record this
+    /// build could decode is preserved verbatim - see `passthrough` and B23.
+    ///
+    /// Adding a field to `ReadingLink` means adding its key here in the same
+    /// change, or this build treats its own output as foreign and writes the
+    /// key twice. `ReadingListSelfTest.checkStorePreservesUnknownKeys`
+    /// asserts a round trip leaves no duplicates, which is what catches that.
+    static let knownKeys: Set<String> = [
+        "id", "url", "title", "summary", "ai_summary", "tags", "added_at",
+        "metadata_state", "metadata_error", "read_at",
+    ]
+
+    private var passthrough = ShiftYamlPassthrough()
+
+    /// How many records carry a key this build does not write. Zero for a
+    /// file this build produced.
+    var recordsWithUnknownKeys: Int { passthrough.recordsWithExtras }
+
     var unreadableRecordCount: Int { unreadableRecords.count }
 
     init() {
@@ -319,6 +337,13 @@ final class ReadingListStore {
                     """)
             }
             unreadableRecords = unreadable
+            // B23 / GL-01's second half. `unreadableRecords` above keeps a
+            // record this build cannot decode at all; this keeps the stray
+            // *keys* on a record it decodes perfectly well. Neither covers
+            // the other, and it is the second one that has no symptom: the
+            // link keeps working, and the newer build silently finds its own
+            // field gone every time this one rewrites the file.
+            passthrough.capture(items, knownKeys: Self.knownKeys)
             links = decoded.sorted { $0.addedAt < $1.addedAt }
         case .missing:
             isInFailedLoadState = false
@@ -500,7 +525,7 @@ final class ReadingListStore {
         // write (which would make `git diff` unreadable for the build that
         // *can* read it).
         var merged: [(sortKey: Date, raw: Yaml)] =
-            links.map { ($0.addedAt, Self.yaml($0)) } + unreadableRecords
+            links.map { ($0.addedAt, passthrough.merged(Self.yaml($0), id: $0.id)) } + unreadableRecords
         merged.sort { $0.sortKey < $1.sortKey }
         do {
             try ShiftYaml.writeList(path: linksPath, key: "links", items: merged.map(\.raw))

@@ -31,6 +31,8 @@ enum ShiftTasksPageSelfTest {
             SelfTestAssertions.record(condition, message, into: &failures)
         }
 
+        checkDuplicateProjectIDsDoNotCrash(check)
+
         // MARK: The column filters the board, and says so honestly
 
         withScratchStore { store in
@@ -517,6 +519,52 @@ enum ShiftTasksPageSelfTest {
         for _ in 0..<turns {
             RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
         }
+    }
+
+    /// B19: a hand-edited or badly-merged `projects.yaml` carrying two
+    /// entries with one id **killed the app**.
+    ///
+    /// `Dictionary(uniqueKeysWithValues:)` traps rather than throwing, and
+    /// this is the real path a synced file reaches it by - the store reads
+    /// the YAML, the page hands the projects to the list. Driven through a
+    /// disposable `FM_SHIFT_DIR` and a file written by hand, because the
+    /// store's own API cannot produce the duplicate that a merge can.
+    private static func checkDuplicateProjectIDsDoNotCrash(_ check: (Bool, String) -> Void) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shift-dup-project-\(UUID().uuidString)", isDirectory: true)
+        let projects = root.appendingPathComponent("projects", isDirectory: true)
+        try? FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        try? """
+        projects:
+          - id: raas-migration
+            name: RaaS Migration
+            description: the real one
+            status: active
+            created_at: "2026-09-01"
+          - id: raas-migration
+            name: RaaS Migration (what a bad merge leaves behind)
+            description: ""
+            status: active
+            created_at: "2026-09-02"
+        """.write(to: projects.appendingPathComponent("projects.yaml"),
+                  atomically: true, encoding: .utf8)
+        setenv("FM_SHIFT_DIR", root.path, 1)
+        defer {
+            unsetenv("FM_SHIFT_DIR")
+            try? FileManager.default.removeItem(at: root)
+        }
+        let store = ShiftStore()
+        // The fixture's own discriminating power: the store really did read
+        // two projects sharing an id, so a parser change that silently
+        // de-duplicated would fail here rather than make the check vacuous.
+        check(store.projects.filter { $0.id == "raas-migration" }.count == 2,
+              "fixture: the store must actually hold two projects with one id, got "
+              + store.projects.map { $0.id }.joined(separator: ","))
+        // The line that trapped. Reaching the next statement at all is the
+        // assertion; the check below is so a passing run says so out loud.
+        let list = ShiftTaskListView()
+        list.setTasks(store.activeTasks, projects: store.projects)
+        check(true, "a duplicated project id must not kill the app (B19)")
     }
 
     private static func withScratchStore(_ body: (ShiftStore) -> Void) {

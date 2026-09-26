@@ -161,6 +161,32 @@ final class KeychainGoogleAccountStore: GoogleAccountStoring {
     /// save and removal, so it cannot disagree with the item.
     private var cache: [GoogleAccountSlot: GoogleAccountRecord] = [:]
     private var loaded: Set<GoogleAccountSlot> = []
+    private var migrationObserver: NSObjectProtocol?
+
+    init() {
+        // B30, the repair half: the rename's Keychain migration runs two
+        // seconds after launch on a background queue, and by then a card has
+        // usually already asked this store whether an account is connected.
+        // If the answer came from the pre-migration Keychain, every absence
+        // this store cached is now wrong.
+        migrationObserver = NotificationCenter.default.addObserver(
+            forName: LegacyNameMigration.keychainItemsCopiedNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.forgetCachedAbsences()
+        }
+    }
+
+    deinit {
+        if let migrationObserver { NotificationCenter.default.removeObserver(migrationObserver) }
+    }
+
+    /// Drops every slot this store believes is *absent*, keeping the records
+    /// it actually read. A record that was found cannot have been affected by
+    /// a migration that only ever copies items in.
+    func forgetCachedAbsences() {
+        for slot in loaded where cache[slot] == nil { loaded.remove(slot) }
+    }
 
     func record(for slot: GoogleAccountSlot) -> GoogleAccountRecord? {
         if loaded.contains(slot) { return cache[slot] }
@@ -170,8 +196,17 @@ final class KeychainGoogleAccountStore: GoogleAccountStoring {
             loaded.insert(slot)
             data = raw
         case .notFound:
-            loaded.insert(slot)
             cache[slot] = nil
+            // B30, the prevention half: while the rename's Keychain migration
+            // may still copy this slot's item across, "not there" is not a
+            // settled answer - so it is not cached. One extra Keychain read
+            // per repaint until the migration reports complete, which is once
+            // per machine, against a card that renders "Not connected" for the
+            // whole session otherwise.
+            guard LegacyNameMigration.keychainMigrationIsOutstanding() else {
+                loaded.insert(slot)
+                return nil
+            }
             return nil
         case .failed(let status):
             // Review bug B1's distinction, applied here for the same reason.

@@ -46,9 +46,72 @@ enum SnippetExpansionSelfTest {
         checkKeyEventClassification(&ok)
         checkClipboardRefusesVaultMaterial(&ok)
         checkEndToEndExpansion(&ok)
+        checkTheTrustReassertIsWired(&ok)
+        checkThePasteboardSnapshotKeepsEveryFlavour(&ok)
 
         if ok { print("[SnippetExpansionSelfTest] all checks passed") }
         return ok
+    }
+
+    // MARK: B20 - the monitor is re-armed after a mid-session grant
+
+    /// A source guard, because the behaviour needs a real Accessibility grant
+    /// arriving mid-process and this shell has none (AGENTS.md's "Verifying
+    /// native UI bugs").
+    ///
+    /// AGENTS.md gotcha (21): macOS arms a global `NSEvent` monitor from the
+    /// trust the process held **when the monitor was registered**, and never
+    /// retroactively. The launch that first prompts for Accessibility installs
+    /// the expander's monitors before the captain grants it, so the feature
+    /// stayed silently dead until the next relaunch while its own card said
+    /// "Granted - N triggers armed" (B20).
+    private static func checkTheTrustReassertIsWired(_ ok: inout Bool) {
+        guard let root = SelfTestSources.appSourceDirectory() else {
+            check(false, "app sources are not next to this binary - "
+                  + "this guard would pass vacuously", &ok)
+            return
+        }
+        func text(_ name: String) -> String? {
+            try? String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+        }
+        guard let expander = text("SnippetExpander.swift"), let main = text("main.swift") else {
+            check(false, "could not read SnippetExpander.swift / main.swift", &ok)
+            return
+        }
+        // Discriminating power: these really are the files that install and
+        // drive the monitors.
+        check(expander.contains("addGlobalMonitorForEvents"),
+              "SnippetExpander.swift should be the file that installs the global monitor", &ok)
+        check(expander.contains("installedWhileTrusted = isAccessibilityTrusted"),
+              "the expander must record the trust it had at install time, "
+              + "or nothing can notice a later grant (B20)", &ok)
+        check(expander.contains("func reassertIfTrustChanged()"),
+              "and must offer the same re-arm ShiftGlobalHotkey does", &ok)
+        check(main.contains("snippetExpander.reassertIfTrustChanged()"),
+              "and main.swift must drive it from didBecomeActiveNotification - "
+              + "an unreachable re-arm is the same bug with more code (B20)", &ok)
+        check(main.range(of: "didBecomeActiveNotification") != nil,
+              "on app activation, which is the first moment a grant can be noticed", &ok)
+
+        // B20, the restore race. The timing itself cannot be asserted without
+        // a real frontmost app reading a real pasteboard, but the two things
+        // that make it safe are structural and can be.
+        check(expander.contains("PasteboardSnapshot.take("),
+              "the restore must snapshot every flavour, not `string(forType: .string)` (B20)", &ok)
+        check(!expander.contains("NSPasteboard.general.string(forType: .string)"),
+              "and the plain-string capture must be gone, or both paths exist", &ok)
+        check(expander.contains("NSPasteboard.general.changeCount == ours"),
+              "and must refuse to restore over a pasteboard something else has written "
+              + "since - a longer wait makes the race rarer, only this makes losing "
+              + "the newer write impossible (B20)", &ok)
+        check(expander.contains("IsSecureEventInputEnabled()"),
+              "the secure-field refusal must be a real system reading, not a constant (B20)", &ok)
+        check(expander.contains("secureInputActive: Self.isSecureInputActive()"),
+              "and the live context must carry it - a policy nothing populates refuses "
+              + "nothing (B20)", &ok)
+        check(SnippetExpander.clipboardRestoreDelay >= 0.3,
+              "and must leave the expansion on the pasteboard long enough for a slow "
+              + "receiver to read it, got \(SnippetExpander.clipboardRestoreDelay)s", &ok)
     }
 
     // MARK: The grammar
@@ -257,6 +320,70 @@ enum SnippetExpansionSelfTest {
         pasteboard.clearContents()
     }
 
+    // MARK: B20 - the clipboard comes back whole
+
+    /// The expander borrows `NSPasteboard.general` for one synthetic ⌘V and
+    /// has to hand it back.
+    ///
+    /// It used to hand back `string(forType: .string)` alone, so expanding
+    /// `;sig` over a copied image, a copied file or a formatted run destroyed
+    /// all of it. Driven against a real named pasteboard with three flavours
+    /// on two items, which is what a real "copy" from a browser or a mail
+    /// client looks like.
+    private static func checkThePasteboardSnapshotKeepsEveryFlavour(_ ok: inout Bool) {
+        let board = NSPasteboard(name: NSPasteboard.Name("fm.snippet.snapshot.selftest"))
+        defer { board.releaseGlobally() }
+        board.clearContents()
+
+        let rtf = Data("{\\rtf1\\ansi Manjesh}".utf8)
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        let rich = NSPasteboardItem()
+        rich.setString("Manjesh P", forType: .string)
+        rich.setData(rtf, forType: .rtf)
+        let image = NSPasteboardItem()
+        image.setData(png, forType: .png)
+        board.writeObjects([rich, image])
+
+        // The fixture's own discriminating power: a snapshot that only kept
+        // `.string` would still pass a one-flavour fixture.
+        check(board.pasteboardItems?.count == 2,
+              "fixture: two items really are on the board, got "
+              + "\(board.pasteboardItems?.count ?? -1)", &ok)
+        check((board.pasteboardItems?.first?.types.count ?? 0) >= 2,
+              "fixture: and the first really carries more than one flavour, got "
+              + "\(board.pasteboardItems?.first?.types.map { $0.rawValue } ?? [])", &ok)
+
+        let snapshot = PasteboardSnapshot.take(board)
+        check(!snapshot.isEmpty, "a snapshot of a non-empty board is not empty", &ok)
+
+        // The expander's borrow: clear it and write its own plain string, then
+        // put the captain's back.
+        board.clearContents()
+        board.setString("## Incident 2026-09-26", forType: .string)
+        check(board.data(forType: .rtf) == nil,
+              "fixture: the borrow really did destroy the other flavours", &ok)
+
+        snapshot.restore(to: board)
+        check(board.pasteboardItems?.count == 2,
+              "both items come back, got \(board.pasteboardItems?.count ?? -1)", &ok)
+        check(board.pasteboardItems?.first?.string(forType: .string) == "Manjesh P",
+              "the plain string comes back", &ok)
+        check(board.pasteboardItems?.first?.data(forType: .rtf) == rtf,
+              "and so does the RTF the old restore threw away (B20)", &ok)
+        check(board.pasteboardItems?.last?.data(forType: .png) == png,
+              "and the copied image, byte for byte (B20)", &ok)
+
+        // An empty clipboard is a state too, and restoring it must not leave
+        // the expansion behind.
+        board.clearContents()
+        let empty = PasteboardSnapshot.take(board)
+        board.setString("## Incident", forType: .string)
+        empty.restore(to: board)
+        check(board.string(forType: .string) == nil,
+              "restoring an empty snapshot clears rather than leaving the expansion, got "
+              + "\(board.string(forType: .string).debugDescription)", &ok)
+    }
+
     // MARK: Policy
 
     private static func base(_ overrides: (inout SnippetExpansionContext) -> Void = { _ in })
@@ -304,6 +431,35 @@ enum SnippetExpansionSelfTest {
             $0.appIsLocked = true
             $0.accessibilityTrusted = false
         }) == .appLocked, "the lock is reported before the permission", &ok)
+
+        // B20: a password field. Nothing asked before this, so a system-wide
+        // trigger expanded into the vault's own master-password field and into
+        // every login sheet on the machine - and since the expansion path is a
+        // synthetic ⌘V, the snippet's text landed on the general pasteboard on
+        // its way in.
+        check(SnippetExpansionPolicy.refusal(for: wide, in: base { $0.secureInputActive = true })
+                == .secureField,
+              "a system-wide snippet must not expand into a password field (B20)", &ok)
+        check(SnippetExpansionPolicy.refusal(for: shell, in: base {
+            $0.secureInputActive = true
+            $0.isGrandLineFrontmost = true
+            $0.isConsoleFocused = true
+        }) == .secureField,
+              "nor a console-scoped one into a password prompt in a terminal (B20)", &ok)
+        // The refusal is about where the caret is, so it must not depend on
+        // the permission or on the snippet's own rules being satisfied first.
+        check(SnippetExpansionPolicy.refusal(for: wide, in: base {
+            $0.secureInputActive = true
+            $0.accessibilityTrusted = false
+        }) == .secureField, "and it is reported ahead of the permission", &ok)
+        // The discriminating half: the very same snippet and context expand
+        // when the field is not secure, so this is not a check that refuses
+        // everything.
+        check(SnippetExpansionPolicy.refusal(for: wide, in: base { $0.secureInputActive = false })
+                == nil,
+              "and an ordinary field still expands", &ok)
+        check(!SnippetExpansionRefusal.secureField.explanation.isEmpty,
+              "a refusal the captain can see needs a sentence", &ok)
 
         let untriggered = Snippet(label: "Plain", command: "echo", scope: .systemWide)
         check(SnippetExpansionPolicy.refusal(for: untriggered, in: base()) == .noTrigger,
@@ -388,6 +544,36 @@ enum SnippetExpansionSelfTest {
               "Return abandons the run", &ok)
         check(SnippetExpander.typingEvents(for: keyDown("", keyCode: 123)) == [.abandon],
               "so does an arrow key", &ok)
+
+        // B20: ⌥⌫ deletes a word and ⌘⌫ deletes to the start of the line.
+        // Both used to arrive as one plain backspace, so the buffer dropped
+        // one character while the screen lost several - and the next `;sig`
+        // then expanded against a trigger that was no longer there.
+        check(SnippetExpander.typingEvents(for: keyDown("\u{08}", keyCode: 51, flags: .option))
+                == [.abandon],
+              "⌥⌫ deletes a whole word, so the run is over - it is not one backspace (B20)", &ok)
+        check(SnippetExpander.typingEvents(for: keyDown("\u{08}", keyCode: 51, flags: .command))
+                == [.abandon],
+              "⌘⌫ deletes to the start of the line, likewise", &ok)
+        check(SnippetExpander.typingEvents(for: keyDown("\u{08}", keyCode: 51, flags: .shift))
+                == [.backspace],
+              "but ⇧⌫ is still one character - the rule is about word-wise deletes, "
+              + "not about any modifier at all", &ok)
+
+        // And the consequence, through the real buffer: a word-wise delete
+        // must not leave a trigger armed.
+        var buffer = SnippetTypingBuffer()
+        for event in SnippetExpander.typingEvents(for: keyDown(";")) { _ = buffer.consume(event) }
+        for character in "sig" {
+            for event in SnippetExpander.typingEvents(for: keyDown(String(character))) {
+                _ = buffer.consume(event)
+            }
+        }
+        for event in SnippetExpander.typingEvents(for: keyDown("\u{08}", keyCode: 51, flags: .option)) {
+            _ = buffer.consume(event)
+        }
+        check(buffer.run.isEmpty,
+              "after ⌥⌫ the buffer holds nothing, got \u{201c}\(buffer.run)\u{201d}", &ok)
     }
 
     // MARK: End to end
@@ -414,6 +600,37 @@ enum SnippetExpansionSelfTest {
         expander.contextOverrideForTests = base()
         var injections: [SnippetInjection] = []
         expander.injectionSinkForTests = { injections.append($0) }
+
+        // B20 end to end: the same store, the same typing, one field secure
+        // and one not - through `attemptExpansion`, not just the policy.
+        func injectionsWhenSecure(_ secure: Bool) -> [SnippetInjection] {
+            let probe = SnippetExpander(store: store)
+            probe.clock = { t0 }
+            probe.contextOverrideForTests = base { $0.secureInputActive = secure }
+            var caught: [SnippetInjection] = []
+            probe.injectionSinkForTests = { caught.append($0) }
+            probe.debugType("Thanks - will confirm. ;sig ")
+            return caught
+        }
+        // The control first, so the refusal below cannot pass because the
+        // fixture never expanded at all.
+        check(injectionsWhenSecure(false).count == 1,
+              "fixture: this typing really does expand in an ordinary field, got "
+              + "\(injectionsWhenSecure(false).count) injections", &ok)
+        check(injectionsWhenSecure(true).isEmpty,
+              "typing ;sig into a password field must inject nothing - it would also put the "
+              + "snippet on the general pasteboard on its way in (B20), got "
+              + "\(injectionsWhenSecure(true).count) injections", &ok)
+
+        // And the live context really is what reads the system flag, so the
+        // policy is not being handed a constant.
+        SnippetExpander.secureInputOverrideForTests = true
+        check(SnippetExpander(store: store).currentContext().secureInputActive,
+              "the live context reads the secure-input flag (B20)", &ok)
+        SnippetExpander.secureInputOverrideForTests = false
+        check(!SnippetExpander(store: store).currentContext().secureInputActive,
+              "and reads it as false when it is false, so the check above is not vacuous", &ok)
+        SnippetExpander.secureInputOverrideForTests = nil
 
         check(expander.armedTriggerCount == 3,
               "three saved triggers are armed, got \(expander.armedTriggerCount)", &ok)

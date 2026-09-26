@@ -245,9 +245,13 @@ enum TOTP {
         // `hotp://` is counter-based and this app does not implement it -
         // accepting it would produce a code that is simply wrong.
         guard (components.host ?? "").lowercased() == "totp" else { return nil }
-        let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map {
+        // B19: a scanned or pasted `otpauth://` URI is arbitrary text, and
+        // nothing stops it carrying `secret=` twice - which trapped rather
+        // than being rejected or read. First occurrence wins, matching how
+        // the Key URI spec's own readers treat a repeated parameter.
+        let query = Dictionary((components.queryItems ?? []).map {
             ($0.name.lowercased(), $0.value ?? "")
-        })
+        }, uniquingKeysWith: { first, _ in first })
         guard let secret = query["secret"], base32Decode(secret) != nil else { return nil }
 
         // The label is `/Issuer:account` or `/account`; the `issuer=` query

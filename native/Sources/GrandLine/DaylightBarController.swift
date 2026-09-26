@@ -692,7 +692,15 @@ final class DaylightBarController: NSViewController {
         // Light.
         popover.appearance = NSAppearance(
             named: ThemeManager.shared.theme.mode == .dark ? .darkAqua : .aqua)
-        popover.contentViewController = FocusTimerPanelController(timer: focusTimer)
+        let panel = FocusTimerPanelController(timer: focusTimer)
+        // B28: the panel closes *this* popover, never a window. It is an
+        // assigned `contentViewController`, so it can neither `dismiss` itself
+        // (gotcha (6)) nor reach the `NSPopover` that owns it.
+        panel.onRequestClose = { [weak self, weak popover] in
+            popover?.performClose(nil)
+            self?.focusPopover = nil
+        }
+        popover.contentViewController = panel
         popover.show(relativeTo: focusChip.bounds, of: focusChip, preferredEdge: .maxY)
         focusPopover = popover
     }

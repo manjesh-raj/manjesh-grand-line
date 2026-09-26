@@ -48,6 +48,7 @@
 
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 
 /// What an expansion would do to the frontmost app, as one value. The real
 /// path carries it out; a suite reads it.
@@ -151,6 +152,13 @@ final class SnippetExpander {
     private func start() {
         guard !isRunning else { return }
         isRunning = true
+        // AGENTS.md gotcha (21): a global `NSEvent` monitor is armed from the
+        // trust the process held **when it was registered**, and macOS does
+        // not arm one retroactively. Recorded at install time so
+        // `reassertIfTrustChanged()` can notice the transition and so the
+        // Settings card can say "granted, but this monitor predates the
+        // grant" rather than only "granted" (B20).
+        installedWhileTrusted = isAccessibilityTrusted
         buffer = SnippetTypingBuffer()
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handle(event)
@@ -178,6 +186,38 @@ final class SnippetExpander {
         AppLog.lifecycle.info("snippet expander: monitors installed")
     }
 
+    /// Whether the process was a trusted Accessibility client at the moment
+    /// the current monitors were installed. See `start()`.
+    private(set) var installedWhileTrusted = false
+
+    /// True when the feature is on and its monitors were installed **after**
+    /// Accessibility trust was granted - i.e. when a system-wide trigger will
+    /// genuinely fire.
+    ///
+    /// The Settings card reads this rather than `isAccessibilityTrusted`
+    /// alone. B20: on the launch that first prompts for Accessibility, the
+    /// monitors are installed before the captain grants it, so the card said
+    /// "Granted - 4 triggers armed" over a monitor that was permanently deaf
+    /// until the next relaunch, and nothing anywhere said so.
+    var isArmed: Bool { isRunning && installedWhileTrusted && isAccessibilityTrusted }
+
+    /// Reinstalls the monitors if Accessibility trust has been granted since
+    /// they were installed.
+    ///
+    /// `ShiftGlobalHotkey.reassertIfTrustChanged()` verbatim, for the same
+    /// reason and driven from the same `didBecomeActiveNotification`: coming
+    /// back to this app is the first moment the grant can be noticed, and the
+    /// check is one `AXIsProcessTrusted()` read that returns immediately
+    /// unless the answer actually changed.
+    @discardableResult
+    func reassertIfTrustChanged() -> Bool {
+        guard isRunning, !installedWhileTrusted, isAccessibilityTrusted else { return false }
+        AppLog.lifecycle.info("snippet expander: accessibility granted since install - reinstalling monitors")
+        stop()
+        start()
+        return true
+    }
+
     func stop() {
         for monitor in [localKeyMonitor, globalKeyMonitor, localMouseMonitor, globalMouseMonitor] {
             if let monitor { NSEvent.removeMonitor(monitor) }
@@ -193,6 +233,7 @@ final class SnippetExpander {
         // Not merely "stop reading it" - the run is dropped, so turning the
         // feature off leaves nothing of the captain's typing behind.
         buffer = SnippetTypingBuffer()
+        installedWhileTrusted = false
         guard isRunning else { return }
         isRunning = false
         AppLog.lifecycle.info("snippet expander: monitors removed")
@@ -225,7 +266,18 @@ final class SnippetExpander {
         if !event.modifierFlags.intersection(disqualifying).isEmpty { return [.abandon] }
 
         switch event.keyCode {
-        case 51: return [.backspace]                    // delete
+        case 51:
+            // B20: ⌥⌫ deletes a whole **word** and ⌘⌫ deletes to the start of
+            // the line, and both of them arrived here as one plain backspace -
+            // so the buffer dropped a single character while the screen lost
+            // the lot. The run is over either way; guessing how many
+            // characters the receiving app removed is not something this
+            // buffer can do, and guessing wrong is what made a later `;sig`
+            // expand against a trigger that was no longer on screen. (⌘ is
+            // already disqualifying above, so this is really about ⌥ - it is
+            // written for both so the rule survives that list changing.)
+            let wordwise: NSEvent.ModifierFlags = [.option, .command]
+            return event.modifierFlags.intersection(wordwise).isEmpty ? [.backspace] : [.abandon]
         case 36, 76, 48, 53: return [.abandon]          // return, enter, tab, escape
         case 115...121, 123...126: return [.abandon]    // home/end/page, arrows
         default: break
@@ -295,8 +347,23 @@ final class SnippetExpander {
             isGrandLineFrontmost: frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
             isConsoleFocused: isConsoleFocusedProvider?() ?? false,
             frontmostBundleID: frontmost?.bundleIdentifier,
-            frontmostAppName: frontmost?.localizedName
+            frontmostAppName: frontmost?.localizedName,
+            secureInputActive: Self.isSecureInputActive()
         )
+    }
+
+    /// Whether a password field has focus anywhere on the machine.
+    ///
+    /// `IsSecureEventInputEnabled()` is a system-wide flag macOS raises while
+    /// a secure text field is focused - which is precisely the condition
+    /// under which this app must not type, and must not put the snippet's
+    /// text on the general pasteboard on its way in (B20). Overridable so a
+    /// suite can drive both answers without a real password field.
+    static var secureInputOverrideForTests: Bool?
+
+    static func isSecureInputActive() -> Bool {
+        if let secureInputOverrideForTests { return secureInputOverrideForTests }
+        return IsSecureEventInputEnabled()
     }
 
     /// `nil` rather than the string whenever the pasteboard is carrying vault
@@ -326,8 +393,14 @@ final class SnippetExpander {
         // plain string would strip the very markers
         // `CredentialVaultClipboard.isConcealed` exists to find, which would
         // hand it straight to the clipboard history this app also ships.
+        //
+        // B20: this used to capture `string(forType: .string)` alone, so an
+        // expansion silently destroyed a copied image, a copied file, an RTF
+        // run with its formatting, or a URL with its title - everything got
+        // put back as its plain-text shadow, or as nothing at all.
+        // `PasteboardSnapshot` carries every item and every type.
         let restorable = CredentialVaultClipboard.isConcealed()
-            ? nil : NSPasteboard.general.string(forType: .string)
+            ? nil : PasteboardSnapshot.take(.general)
 
         for _ in 0..<injection.deleteCount { Self.postKey(Self.deleteKeyCode) }
 
@@ -340,17 +413,50 @@ final class SnippetExpander {
         // use can confirm.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
             DictationEngine.pasteAtCursor(injection.text)
-            guard injection.caretLeftCount > 0 || restorable != nil else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                for _ in 0..<injection.caretLeftCount { Self.postKey(Self.leftArrowKeyCode) }
-                if let restorable {
-                    let pasteboard = NSPasteboard.general
-                    pasteboard.clearContents()
-                    pasteboard.setString(restorable, forType: .string)
+            // What the pasteboard reads as immediately after *our* write. The
+            // restore below refuses unless it is still this - see
+            // `clipboardRestoreDelay`.
+            let ours = NSPasteboard.general.changeCount
+
+            // The caret arrows do not touch the pasteboard, so they keep the
+            // short hop they always had.
+            if injection.caretLeftCount > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    for _ in 0..<injection.caretLeftCount { Self.postKey(Self.leftArrowKeyCode) }
                 }
+            }
+
+            guard let restorable else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.clipboardRestoreDelay) {
+                // B20: the restore raced the receiver. A synthetic ⌘V is
+                // delivered to another process's run loop, and that process
+                // reads the pasteboard whenever it gets round to it - a slow
+                // or busy receiver read *after* the old contents had been put
+                // back, and pasted the wrong thing. A longer wait makes that
+                // rarer and cannot make it impossible, so the restore is also
+                // **conditional**: if anything has written to the pasteboard
+                // since our own write, that write is newer than this snapshot
+                // and putting the snapshot back would be the destructive
+                // answer.
+                guard NSPasteboard.general.changeCount == ours else {
+                    AppLog.lifecycle.info("snippet expander: pasteboard changed since the expansion - leaving it alone")
+                    return
+                }
+                restorable.restore(to: .general)
             }
         }
     }
+
+    /// How long to leave the expansion on the pasteboard before putting the
+    /// captain's own contents back.
+    ///
+    /// Deliberately much longer than the 0.08s it was: the only thing this
+    /// delay protects is a receiving app that has not yet got round to reading
+    /// the pasteboard for the synthetic ⌘V, and half a second of a stale
+    /// clipboard is a far cheaper failure than a paste that lands empty. The
+    /// `changeCount` guard at the restore site is what makes the wait safe to
+    /// lengthen.
+    static let clipboardRestoreDelay: TimeInterval = 0.6
 
     static let deleteKeyCode: CGKeyCode = 51
     static let leftArrowKeyCode: CGKeyCode = 123

@@ -33,6 +33,25 @@ enum CommandLibraryStoreSelfTest {
             SelfTestAssertions.record(condition, message, into: &failures)
         }
 
+        // B19: a command's `parameters` come from git-synced YAML, and two
+        // entries sharing a name **trapped** inside `effectiveParameters`.
+        let duplicateParam = DevOpsCommand(
+            id: "dup", name: "Duplicate parameter", description: "",
+            category: "kubernetes",
+            commandTemplate: "kubectl -n {{namespace}} get pods",
+            parameters: [
+                CommandParameter(name: "namespace", label: "First", required: true),
+                CommandParameter(name: "namespace", label: "Second", required: true),
+            ])
+        check(duplicateParam.effectiveParameters.map { $0.label } == ["First"],
+              "B19: a duplicated parameter name must resolve to the first declaration "
+              + "rather than trapping, got "
+              + duplicateParam.effectiveParameters.map { $0.label }.joined(separator: ","))
+        check(duplicateParam.generatedCommand(values: ["namespace": "raas"])
+                == "kubectl -n raas get pods",
+              "and the command still substitutes, got "
+              + duplicateParam.generatedCommand(values: ["namespace": "raas"]))
+
         let scratchRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("command-library-selftest-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: scratchRoot) }

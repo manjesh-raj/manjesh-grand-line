@@ -623,7 +623,7 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         guard isViewLoaded else { return }
         let counts = SchedulesCardView.filterCounts(scheduleStore.schedules,
                                                     query: schedulesCard.currentSearchQuery)
-        sidebar.setCounts(Dictionary(uniqueKeysWithValues: counts.map { ($0.key.rawValue, $0.value) }))
+        sidebar.setCounts(Dictionary(uniqueKeysWithValues: counts.map { ($0.key.rawValue, $0.value) }))  // unique-keys-ok: keyed by an enum
     }
 
     /// The page-level Refresh. Nothing here re-runs a schedule - it re-reads

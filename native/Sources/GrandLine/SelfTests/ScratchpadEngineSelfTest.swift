@@ -279,6 +279,47 @@ enum ScratchpadEngineSelfTest {
 
         check(result("today + today").isError, "two dates cannot be added")
         check(result("today * 2").isError, "a date cannot be multiplied")
+
+        checkAbsurdDurationsAreRefusedRatherThanFatal(check)
+    }
+
+    /// B18: `1e30 days from today` **killed the process**.
+    ///
+    /// `Int(Double)` traps rather than returning nil for anything past
+    /// `Int.max`, so a line the captain typed into a scratchpad took the whole
+    /// app down - and every one of these phrasings reaches a different one of
+    /// the four `ScratchpadDates.shift` call sites. Nothing here can run at
+    /// all if the trap is back, which is the point: a crashed suite is the
+    /// failure.
+    private static func checkAbsurdDurationsAreRefusedRatherThanFatal(
+        _ check: (Bool, String) -> Void) {
+        let absurd = [
+            "1e30 days from today",       // `from`
+            "1e30 weeks from today",      // the `* 7` overflow, one step further in
+            "1e30 years from today",
+            "1e30 months from today",
+            "1e30 days ago",              // `ago`
+            "today + 1e30 days",          // ScratchpadMath, date on the left
+            "1e30 days + today",          // ScratchpadMath, date on the right
+            "today - 1e30 days",
+            "1e30 seconds from today",    // the seconds path, which never trapped
+                                          // but did produce an unrenderable Date
+            "1e400 days from today",      // literal overflows to `.infinity`
+        ]
+        for line in absurd {
+            let answer = result(line)
+            check(answer.isError,
+                  "\"\(line)\" must be refused as out of range, got \"\(answer.display)\"")
+        }
+
+        // The discriminating half: the cap must not be so tight that a real
+        // date phrase is refused with it.
+        check(!result("5000 days from today").isError,
+              "a large but sane duration still resolves - "
+              + "got \"\(display("5000 days from today"))\"")
+        check(display("36500 days from today").hasSuffix("2126"),
+              "a century out still resolves to a real date, got "
+              + "\"\(display("36500 days from today"))\"")
     }
 
     private static func checkKubernetesCPU(_ check: (Bool, String) -> Void) {

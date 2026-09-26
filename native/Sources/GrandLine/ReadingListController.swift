@@ -925,7 +925,9 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
 extension ReadingListController: WKNavigationDelegate {
 
     /// The reader loads the saved link and whatever that page navigates to on
-    /// the same site; anything else goes to the system browser.
+    /// the same site; anything else goes to the system browser. The rule is
+    /// `ReadingListNavigation.decide`, and it applies to the **main frame**
+    /// only - see that type for why a sub-frame must not take it.
     ///
     /// Deliberately narrower than Docs', which hosts a browsable local site
     /// and hands *everything* else to `NSWorkspace`. The difference is what
@@ -940,26 +942,20 @@ extension ReadingListController: WKNavigationDelegate {
             decisionHandler(.allow)
             return
         }
-        if url.scheme == "about" {
-            decisionHandler(.allow)
-            return
-        }
-        let scheme = url.scheme?.lowercased() ?? ""
-        guard scheme == "http" || scheme == "https" else {
-            // A `file:` or a custom-scheme redirect from a remote page is not
-            // something a reading list should follow at all - not to the web
-            // view, and not to the system browser either.
-            decisionHandler(.cancel)
-            return
-        }
         let savedHost = readingID.flatMap { store.link(id: $0) }.map { $0.host } ?? ""
-        let targetHost = ReadingListURL.host(of: url.absoluteString)
-        if !savedHost.isEmpty, targetHost == savedHost {
+        // A nil target frame is a navigation into a frame that does not exist
+        // yet (`target="_blank"`), which is a new top-level page rather than
+        // an embed - so it takes the strict path.
+        let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+        switch ReadingListNavigation.decide(url: url, savedHost: savedHost, isMainFrame: isMainFrame) {
+        case .allow:
             decisionHandler(.allow)
-            return
+        case .cancel:
+            decisionHandler(.cancel)
+        case .openExternally:
+            decisionHandler(.cancel)
+            NSWorkspace.shared.open(url)
         }
-        decisionHandler(.cancel)
-        NSWorkspace.shared.open(url)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

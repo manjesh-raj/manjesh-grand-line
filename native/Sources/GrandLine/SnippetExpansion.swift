@@ -366,6 +366,23 @@ struct SnippetExpansionContext: Equatable {
     var isConsoleFocused: Bool
     var frontmostBundleID: String?
     var frontmostAppName: String?
+    /// Whether the caret is in a **password field** right now.
+    ///
+    /// B20: nothing asked. A system-wide trigger fired wherever the captain
+    /// was typing, including this app's own vault master-password field and
+    /// every login sheet on the machine - and the expansion path is a
+    /// synthetic ⌘V through the *general* pasteboard, so the snippet's text
+    /// also lands on the clipboard on its way in. A password field is the one
+    /// place neither of those may happen.
+    ///
+    /// Read from `IsSecureEventInputEnabled()`, which macOS turns on for the
+    /// whole system while a secure field has focus. Deliberately not an
+    /// `AXUIElement` walk of the focused element: that is a second
+    /// Accessibility integration (this file's header explains why there is
+    /// exactly one), it is a cross-process call on every keystroke, and it
+    /// answers for fewer fields - a Terminal reading a passphrase has no
+    /// AX text field at all but does turn secure input on.
+    var secureInputActive: Bool = false
 }
 
 /// Why an expansion did not happen. Every one of these is a state the UI can
@@ -379,6 +396,8 @@ enum SnippetExpansionRefusal: Equatable {
     case noTrigger
     case outsideConsole
     case excludedApp(String)
+    /// The caret is in a password field. See `SnippetExpansionContext.secureInputActive`.
+    case secureField
 
     var explanation: String {
         switch self {
@@ -388,6 +407,7 @@ enum SnippetExpansionRefusal: Equatable {
         case .noTrigger: return "This snippet has no trigger."
         case .outsideConsole: return "This snippet only expands in the Console."
         case .excludedApp(let app): return "This snippet is excluded from \(app)."
+        case .secureField: return "Snippets never expand into a password field."
         }
     }
 }
@@ -401,6 +421,10 @@ enum SnippetExpansionPolicy {
                         in context: SnippetExpansionContext) -> SnippetExpansionRefusal? {
         if !context.expansionEnabled { return .expansionTurnedOff }
         if context.appIsLocked { return .appLocked }
+        // Before the permission check and before the snippet's own rules: a
+        // password field is a refusal about *where the caret is*, and it must
+        // not depend on which snippet fired or how it was scoped (B20).
+        if context.secureInputActive { return .secureField }
         if !context.accessibilityTrusted { return .accessibilityNotTrusted }
         if SnippetTrigger.normalize(snippet.trigger).isEmpty { return .noTrigger }
         switch snippet.scope {

@@ -563,6 +563,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.shiftHotkey.reassertIfTrustChanged()
+            // B20: the snippet expander's global monitor is armed from the
+            // same one grant and has exactly the same retroactivity problem.
+            self?.snippetExpander.reassertIfTrustChanged()
         }
         tabShortcuts.start()
         // fm/grandline-notification-center: feeds the same due-detection
@@ -649,9 +652,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         snippetStore.observe { [weak self] in self?.snippetExpander.rebuildTable() }
         hostsPanel.snippetExpansionState = { [weak self] in
-            guard let self else { return (enabled: false, trusted: false, triggerCount: 0) }
+            guard let self else { return (enabled: false, trusted: false, armed: false, triggerCount: 0) }
             return (enabled: AppSettings.shared.snippetExpansionEnabled,
                     trusted: self.snippetExpander.isAccessibilityTrusted,
+                    armed: self.snippetExpander.isArmed,
                     triggerCount: self.snippetExpander.armedTriggerCount)
         }
         hostsPanel.onSnippetExpansionToggled = { [weak self] enabled in
@@ -2843,6 +2847,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_BOARD_VIEW_TESTS"] == "1" {
 // advance, and the per-task reminder offset's own comparison. Pure logic, so
 // it runs in CI's blocking lane; the calendar's render is its window-backed
 // sibling below.
+// B22: the app's one definition of "overdue" (the task list and the notifier
+// used to disagree about a date-only task all day long), and the withdrawal of
+// a banner whose task is gone. Pure logic - no window, no notification centre.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_DUE_TESTS"] == "1" {
+    exit(ShiftDueSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_RECURRENCE_TESTS"] == "1" {
     exit(ShiftRecurrenceSelfTest.run() ? 0 : 1)
 }

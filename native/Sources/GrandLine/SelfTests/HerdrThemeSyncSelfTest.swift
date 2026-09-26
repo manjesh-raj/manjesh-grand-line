@@ -747,6 +747,59 @@ enum HerdrThemeSyncSelfTest {
                   "a failed reload's message must not claim the pane's colours changed, got:\n\(message)", &ok)
         }
 
+        // 30. B26 / GL-01: "file missing" and "file present but unreadable"
+        //     are different states.
+        //
+        //     `(try? String(contentsOf:)) ?? ""` collapsed them, so a
+        //     config.toml that was there but could not be decoded - a foreign
+        //     encoding, a permissions change, a transient read error - became
+        //     an empty string, the patcher produced a fresh `[theme.custom]`
+        //     block out of nothing, and the write replaced the captain's real
+        //     herdr config (worktrees, integrations, custom commands and all).
+        //     Measured before the fix: 5 unreadable bytes became 398.
+        do {
+            let fm = FileManager.default
+            let dir = fm.temporaryDirectory
+                .appendingPathComponent("herdr-unreadable-\(UUID().uuidString)", isDirectory: true)
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: dir) }
+            let file = dir.appendingPathComponent("config.toml")
+            // Not valid UTF-8, which is the everyday shape of this.
+            let bytes = Data([0xFF, 0xFE, 0x00, 0x80, 0x81])
+            try? bytes.write(to: file)
+
+            let savedPath = HerdrThemeSync.configPathOverrideForTests
+            let savedInstalled = HerdrThemeSync.herdrInstalledOverrideForTests
+            HerdrThemeSync.configPathOverrideForTests = file
+            HerdrThemeSync.herdrInstalledOverrideForTests = true
+            defer {
+                HerdrThemeSync.configPathOverrideForTests = savedPath
+                HerdrThemeSync.herdrInstalledOverrideForTests = savedInstalled
+            }
+
+            // The fixture's own discriminating power: the file really is
+            // present and really cannot be decoded as text, so this is the
+            // "unreadable" state rather than the "absent" one.
+            check(fm.fileExists(atPath: file.path),
+                  "case 30 fixture: the config file must exist", &ok)
+            check((try? String(contentsOf: file, encoding: .utf8)) == nil,
+                  "case 30 fixture: and must genuinely fail to decode as UTF-8", &ok)
+
+            HerdrThemeSync.shared.syncNow(theme: HelmTheme.allThemes[0])
+            check((try? Data(contentsOf: file)) == bytes,
+                  "case 30: an unreadable config.toml must be left exactly as it was, not "
+                  + "replaced with a config this app invented (B26, GL-01) - got "
+                  + "\((try? Data(contentsOf: file))?.count ?? -1) bytes, expected \(bytes.count)", &ok)
+
+            // The other half, so the refusal cannot quietly become "never
+            // write anything": a genuinely absent file still gets one.
+            let fresh = dir.appendingPathComponent("absent.toml")
+            HerdrThemeSync.configPathOverrideForTests = fresh
+            HerdrThemeSync.shared.syncNow(theme: HelmTheme.allThemes[0])
+            check(fm.fileExists(atPath: fresh.path),
+                  "case 30: an absent config.toml is still written - there is nothing to lose", &ok)
+        }
+
         print(ok ? "HerdrThemeSyncSelfTest: all checks passed" : "HerdrThemeSyncSelfTest: FAILED")
         return ok
     }

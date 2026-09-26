@@ -480,6 +480,8 @@ enum ShiftStoreSelfTest {
         check(!deleteStore.deleteFollowUp(id: doomedFollowUp.id),
               "deleting an already-deleted follow-up should report that nothing was removed")
 
+        checkUnknownKeyPassthrough(check)
+
         return report(failures)
     }
 
@@ -497,6 +499,79 @@ enum ShiftStoreSelfTest {
 
     private static func cal30Minutes(from date: Date) -> Date {
         Calendar.current.date(byAdding: .minute, value: 30, to: date) ?? date
+    }
+
+    // MARK: B23 - GL-01's second half
+
+    /// A key a *newer* build wrote must survive this build rewriting the file.
+    ///
+    /// `ShiftStore` rewrites `active.yaml` whole from its decoded structs, and
+    /// a struct has nowhere to put a key it does not know - so the newer
+    /// machine silently found its own field gone every time the older one
+    /// touched the file, across a git sync whose entire purpose is two
+    /// machines on two builds. Nothing failed and there was nothing to notice.
+    ///
+    /// Driven through a **disposable** `FM_SHIFT_DIR` and a hand-written file,
+    /// never the captain's real synced data - the store's own API cannot
+    /// produce the record a newer build would.
+    private static func checkUnknownKeyPassthrough(_ check: (Bool, String) -> Void) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shift-passthrough-\(UUID().uuidString)", isDirectory: true)
+        let tasks = root.appendingPathComponent("tasks", isDirectory: true)
+        try? FileManager.default.createDirectory(at: tasks, withIntermediateDirectories: true)
+        let file = tasks.appendingPathComponent("active.yaml")
+        try? """
+        tasks:
+          - id: "t1"
+            title: "Ship the release"
+            description: ""
+            status: "todo"
+            priority: "normal"
+            created_at: "2026-09-01T09:00:00Z"
+            updated_at: "2026-09-01T09:00:00Z"
+            energy_level: "deep-work"
+            estimated_minutes: 90
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        let savedShiftDir = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+        setenv("FM_SHIFT_DIR", root.path, 1)
+        defer {
+            if let savedShiftDir { setenv("FM_SHIFT_DIR", savedShiftDir, 1) } else { unsetenv("FM_SHIFT_DIR") }
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let store = ShiftStore()
+        // The fixture's own discriminating power, in both directions: the
+        // record really did decode (so this is the silent case, not the
+        // `unreadableRecords` one), and this build really does regard those
+        // two keys as foreign.
+        check(store.activeTasks.count == 1,
+              "fixture: the record must decode fine - this is about a read that SUCCEEDS "
+              + "and a write that loses something, got \(store.activeTasks.count) tasks")
+        check(store.debugTaskRecordsWithUnknownKeys == 1,
+              "fixture: and this build must regard the record as carrying unknown keys, got "
+              + "\(store.debugTaskRecordsWithUnknownKeys)")
+
+        guard var task = store.activeTasks.first else { return }
+        task.title = "Ship the release (edited on the older build)"
+        store.updateTask(task)
+
+        let rewritten = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+        check(rewritten.contains("Ship the release (edited on the older build)"),
+              "fixture: the file really was rewritten from the decoded struct")
+        check(rewritten.contains("energy_level"),
+              "B23: a key from a newer build must survive this build's whole-file rewrite")
+        check(rewritten.contains("estimated_minutes"), "B23: all of them, not just the first")
+        check(rewritten.components(separatedBy: "energy_level").count == 2,
+              "and must not be written twice - a key duplicated here means a field was "
+              + "added to ShiftTask without adding its key to `ShiftYaml.taskKnownKeys`")
+
+        // And a file this build wrote itself carries nothing foreign, so the
+        // known-key set really does cover this build's own output.
+        let reloaded = ShiftStore()
+        check(reloaded.debugTaskRecordsWithUnknownKeys == 1,
+              "the same two keys are still unknown after a reload, got "
+              + "\(reloaded.debugTaskRecordsWithUnknownKeys)")
     }
 
     private static func report(_ failures: [String]) -> Bool {

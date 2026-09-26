@@ -422,6 +422,53 @@ enum LegacyNameMigration {
     /// `keychainMigrationCompleteKey` rather than instead of it.
     static let keychainMigratedItemsKey = "fm.keychainMigratedItems"
 
+    /// How many passes have ended with at least one failure.
+    ///
+    /// B30: without this the retry was **unbounded**. A single item whose
+    /// legacy ACL this build can never satisfy kept
+    /// `keychainMigrationCompleteKey` unset for ever, so every launch
+    /// re-queried it - and re-raised its Keychain prompt at the captain, on
+    /// every launch, with no way to make it stop but signing out of whatever
+    /// the item belonged to. Three passes is enough to cover a transient
+    /// refusal (a locked Keychain, an interrupted first launch) and few
+    /// enough that a permanent one stops being a daily interruption.
+    static let keychainMigrationAttemptsKey = "fm.keychainMigrationFailedAttempts"
+
+    /// The reasons of the pass that gave up, kept so the failure is
+    /// recoverable rather than only logged (GL-11: log before degrading, and
+    /// this degrades permanently).
+    static let keychainMigrationGaveUpReasonsKey = "fm.keychainMigrationGaveUpReasons"
+
+    /// How many failing passes are tried before the migration gives up.
+    static let keychainMigrationMaxAttempts = 3
+
+    /// Posted on the main queue after a pass that actually copied something.
+    ///
+    /// B30: the Keychain migration runs two seconds after launch, on a
+    /// background queue, and by then a card has usually already asked
+    /// `GoogleAccountStore` whether an account is connected. That read
+    /// answered "no" from the *pre-migration* Keychain and cached it for the
+    /// session, so a captain whose token was migrated a moment later still
+    /// saw "Not connected", with a Connect button that would have started a
+    /// fresh OAuth flow over a token that was there all along - until the next
+    /// relaunch.
+    ///
+    /// A notification rather than a direct call, so a migration does not have
+    /// to know which caches exist; each cache observes it and drops the
+    /// absences it recorded. `keychainMigrationIsOutstanding` below is the
+    /// other half - it stops the absence being cached in the first place.
+    static let keychainItemsCopiedNotification =
+        Notification.Name("fm.legacyNameMigration.keychainItemsCopied")
+
+    /// Whether a Keychain migration pass may still copy an item across in
+    /// this process.
+    ///
+    /// A cache that records "this item is not there" must not treat that as
+    /// settled while this is true.
+    static func keychainMigrationIsOutstanding(_ defaults: UserDefaults = AppDefaults.store) -> Bool {
+        !defaults.bool(forKey: keychainMigrationCompleteKey)
+    }
+
     enum KeychainMigrationOutcome: Equatable {
         /// The flag was already set - nothing was queried, and nothing was
         /// read. This is the case that used to not exist at all.
@@ -484,6 +531,25 @@ enum LegacyNameMigration {
         }
         if outcome.failures.isEmpty {
             defaults.set(true, forKey: keychainMigrationCompleteKey)
+            defaults.removeObject(forKey: keychainMigrationAttemptsKey)
+            return .ran(outcome)
+        }
+        // B30: bounded. Anything that has already succeeded is in
+        // `keychainMigratedItemsKey` and was never re-queried, so giving up
+        // costs only the items that have refused this build three times
+        // running - and it is those items' repeated Keychain prompts that
+        // this is trading away.
+        let attempts = defaults.integer(forKey: keychainMigrationAttemptsKey) + 1
+        defaults.set(attempts, forKey: keychainMigrationAttemptsKey)
+        if attempts >= keychainMigrationMaxAttempts {
+            defaults.set(true, forKey: keychainMigrationCompleteKey)
+            defaults.set(outcome.failures, forKey: keychainMigrationGaveUpReasonsKey)
+            AppLog.keychain.error("""
+                legacy keychain migration: giving up after \(attempts, privacy: .public) \
+                failing passes - \(outcome.failures.count, privacy: .public) item(s) were not \
+                migrated and will not be asked about again: \
+                \(outcome.failures.joined(separator: "; "), privacy: .public)
+                """)
         }
         return .ran(outcome)
     }
@@ -601,6 +667,12 @@ enum LegacyNameMigration {
                     Rename: copied \(keychain.copied.count, privacy: .public) Keychain item(s) \
                     onto the new service names. The originals were left in place on purpose.
                     """)
+                // B30: anything that cached "not there" from the pre-migration
+                // Keychain is now wrong. Posted on main, because the observers
+                // are stores the UI reads.
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: keychainItemsCopiedNotification, object: nil)
+                }
             }
             for failure in keychain.failures {
                 AppLog.keychain.error("Rename: Keychain copy failed - \(failure, privacy: .public)")

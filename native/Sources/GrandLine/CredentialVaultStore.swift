@@ -1523,8 +1523,13 @@ final class CredentialVaultStore {
             throw CredentialVaultStoreError.rekeyedElsewhere
         }
 
-        var mine = Dictionary(uniqueKeysWithValues: credentials.map { ($0.id, $0) })
-        let base = Dictionary(uniqueKeysWithValues: baseline.map { ($0.id, $0) })
+        // B19: the vault file is git-synced too, so a merge can leave two
+        // records sharing an id. A trap here would be a crash on the *write*
+        // path of the app's most security-sensitive store.
+        var mine = Dictionary(credentials.map { ($0.id, $0) },
+                              uniquingKeysWith: { first, _ in first })
+        let base = Dictionary(baseline.map { ($0.id, $0) },
+                              uniquingKeysWith: { first, _ in first })
         // The order this machine already had, so a merge replaces *values*
         // without reshuffling the array. Anything genuinely new is appended.
         var order = credentials.map(\.id)

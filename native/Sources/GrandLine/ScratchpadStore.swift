@@ -139,6 +139,6 @@ final class ScratchpadStore {
     private func prune() {
         guard pads.count > Self.maximumPads else { return }
         let keep = pads.sorted { $0.value.updatedAt > $1.value.updatedAt }.prefix(Self.maximumPads)
-        pads = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
+        pads = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })  // unique-keys-ok: a slice of an existing dictionary
     }
 }

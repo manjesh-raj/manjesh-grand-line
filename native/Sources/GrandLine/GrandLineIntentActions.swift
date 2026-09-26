@@ -382,8 +382,19 @@ enum GrandLineIntentActions {
     /// unlocked - so a locked vault cannot even be probed for which titles
     /// exist, which a lookup-then-unlock ordering would leak through the
     /// difference between "not found" and "vault locked".
+    /// B29: `vault` is a **provider**, not a value.
+    ///
+    /// The gate was already the first statement in this function, but the
+    /// caller evaluated `GrandLineServices.shared.vault` to pass it in - and
+    /// that property *builds* the store on first use: it starts
+    /// `CredentialVaultGitSync`, creates the vault directory and runs
+    /// `adoptLocalOnlyVaultIfNeeded`, which moves files. So a Shortcuts or
+    /// Siri trigger did all of that against the captain's vault repo while
+    /// the app was locked, and only then was told no. Swift evaluates an
+    /// argument before the call, so the only way the gate can genuinely come
+    /// first is for the store not to exist yet when it runs.
     static func copyCredential(title: String,
-                               vault: IntentVaultAccess?,
+                               vault: @escaping () -> IntentVaultAccess?,
                                challenge: IntentBiometricChallenge = .live,
                                clipboard: IntentClipboardSink = .live,
                                completion: @escaping (Result<IntentActionResult, IntentActionError>) -> Void) {
@@ -393,7 +404,8 @@ enum GrandLineIntentActions {
         }
 
         guard AppLockGate.shared.allows(.appIntentCopyCredential) else { return finish(.failure(.appLocked)) }
-        guard let vault else { return finish(.failure(.appNotReady)) }
+        // Only now. Nothing above this line may touch the vault.
+        guard let vault = vault() else { return finish(.failure(.appNotReady)) }
         let wanted = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wanted.isEmpty else { return finish(.failure(.missingInput("a credential name"))) }
 

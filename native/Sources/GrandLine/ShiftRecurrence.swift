@@ -85,6 +85,44 @@ struct ShiftRecurrence: Equatable {
         return copy
     }
 
+    // MARK: B24 - COUNT across instances
+
+    /// The same rule with no `COUNT`, so a walk terminates only on `UNTIL`.
+    ///
+    /// B24: `COUNT` is consumed **per instance actually created**, not per
+    /// calendar slot that elapsed. `ShiftStore` enforces it with
+    /// `afterOneOccurrence` below, and asks the walk itself for a date using
+    /// this - otherwise a task that went 8 days unnoticed would have its
+    /// remaining occurrences eaten by the days it was missed.
+    var withoutCount: ShiftRecurrence {
+        var copy = self
+        copy.count = nil
+        return copy
+    }
+
+    /// The rule the **next** instance should carry, or `nil` when this
+    /// instance was the last one.
+    ///
+    /// B24: `ShiftStore.nextOccurrence` asked the rule for "the occurrence
+    /// after this task's due date, anchored at this task's due date" - and
+    /// every spawned instance has its own due date, so `COUNT`'s walk
+    /// restarted from 1 on every completion and a `COUNT=3` series repeated
+    /// for ever. Carrying the *remaining* count on the instance is what makes
+    /// the budget survive the hop from one task to the next; there is no
+    /// stored series to hold it in (see `ShiftStore.nextOccurrence`'s own
+    /// header for why).
+    ///
+    /// `COUNT` includes the anchor (RFC 5545), so an instance carrying
+    /// `COUNT=1` is the last one and spawns nothing.
+    var afterOneOccurrence: ShiftRecurrence? {
+        let rule = normalized
+        guard let count = rule.count else { return rule }
+        guard count > 1 else { return nil }
+        var copy = rule
+        copy.count = count - 1
+        return copy
+    }
+
     // MARK: Serialization
 
     /// The RRULE-lite string written under the task's `recurrence` key. Key

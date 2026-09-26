@@ -53,6 +53,34 @@ enum ClipboardHistoryViewSelfTest {
 
     // MARK: Fixture
 
+    /// A panel over a history file that is **present but unopenable**: real
+    /// bytes, a real key, and the two do not match.
+    ///
+    /// This is B17's exact state and the one `withPanel(key: nil)` cannot
+    /// reach - that one has no key at all, so it fails `isAvailable`, which
+    /// the picker has always read. `loadFailed` is the second state, and it
+    /// is the one that rendered "Nothing copied yet" over a 200-entry file.
+    private static func withCorruptPanel(_ body: (ClipboardHistoryPanelViewController,
+                                                 ClipboardHistoryStore) -> Void) {
+        autoreleasepool {
+            let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+                .appendingPathComponent("grandline-clipboard-corrupt-\(UUID().uuidString)",
+                                        isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let file = root.appendingPathComponent("history.sealed")
+            try? Data("this is not a sealed box".utf8).write(to: file)
+            let store = ClipboardHistoryStore(fileURL: file, key: ClipboardHistoryKey.ephemeralKey())
+            // The caller's first check asserts `loadFailed && isAvailable`,
+            // so a store that stopped reaching that state fails loudly rather
+            // than letting the assertions below pass vacuously.
+            let content = ClipboardHistoryPanelViewController(store: store)
+            content.loadView()
+            content.reload()
+            body(content, store)
+        }
+    }
+
     private static func withPanel(entries: [String],
                                   pinned: Set<String> = [],
                                   includeSkipped: Bool = false,
@@ -216,6 +244,19 @@ enum ClipboardHistoryViewSelfTest {
         withPanel(entries: [], key: nil) { content, _ in
             check(!content.debugUnavailableStateIsHidden, "a keyless history shows the unavailable state")
             check(content.debugEmptyStateIsHidden, "and NOT the empty state")
+            check(content.debugCountText == "unavailable",
+                  "and never counts zero items, got \(content.debugCountText)")
+        }
+        // B17: present-but-unopenable, which is neither "empty" nor "no key".
+        withCorruptPanel { content, store in
+            check(store.loadFailed && store.isAvailable,
+                  "fixture: an unopenable file with a real key is the state B17 is about, "
+                  + "got loadFailed=\(store.loadFailed) isAvailable=\(store.isAvailable)")
+            check(!content.debugUnavailableStateIsHidden,
+                  "a history that could not be opened says so (GL-14) - it read "
+                  + "\"Nothing copied yet\" over a 200-entry file")
+            check(content.debugEmptyStateIsHidden,
+                  "and NOT the empty state - those are different sentences")
             check(content.debugCountText == "unavailable",
                   "and never counts zero items, got \(content.debugCountText)")
         }

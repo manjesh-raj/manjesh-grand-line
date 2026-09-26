@@ -2011,15 +2011,16 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         }
     }
 
-    /// The banner's "Sync now" - the same synchronous core the watcher's own
-    /// debounce reaches, run off the main thread because it shells out to
-    /// `git fetch`/`git push` (GL-04/GL-12).
+    /// The banner's "Sync now".
+    ///
+    /// B25: this used to run `syncNow()` on a global queue of its own, which
+    /// raced the watcher's debounce on one `.git/index.lock`.
+    /// `syncNowFromUI` puts it on the sync's own serial queue and cancels the
+    /// pending debounce from inside it; it still shells out to
+    /// `git fetch`/`git push` off the main thread (GL-04/GL-12) and calls
+    /// back on main.
     @objc private func syncDotfilesNowClicked() {
-        let sync = autoSync
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            _ = sync.syncNow()
-            DispatchQueue.main.async { self?.refreshDotfiles() }
-        }
+        autoSync.syncNowFromUI { [weak self] _ in self?.refreshDotfiles() }
     }
 
     private func buildUsernameRow(repoPath: String) -> NSView {

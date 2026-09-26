@@ -392,13 +392,44 @@ final class DotfilesAutoSync {
         timer.resume()
     }
 
+    /// The captain pressing "Sync now".
+    ///
+    /// B25: Bootstrap's button called `syncNow()` straight off a global queue,
+    /// which is the one thing this class's serial queue exists to prevent -
+    /// two `git` runs against one working tree race `.git/index.lock`, and the
+    /// debounce timer could fire into the middle of it. (`syncNow`'s own
+    /// header already said "production always reaches it on `queue`"; that
+    /// call site did not.)
+    ///
+    /// Onto `queue`, and the pending debounce is cancelled **inside** the
+    /// queue block - the same shape the git-backed stores' terminate-time
+    /// flush uses, and for the same reason: cancelling from the caller's
+    /// thread races the timer it is trying to cancel. `completion` runs on
+    /// main, once.
+    func syncNowFromUI(completion: @escaping (Outcome) -> Void = { _ in }) {
+        queue.async { [weak self] in
+            guard let self else {
+                DispatchQueue.main.async { completion(.off) }
+                return
+            }
+            // The captain just asked for exactly what the debounce was
+            // waiting to do, so the wait is over rather than duplicated.
+            self.pendingCommit?.cancel()
+            self.pendingCommit = nil
+            let outcome = self.syncNow()
+            DispatchQueue.main.async { completion(outcome) }
+        }
+    }
+
     // MARK: The synchronous core (what the tests drive directly)
 
     /// Fetch, fast-forward if that is clean, commit `home/`, push. Every early
     /// exit leaves the working tree exactly as it found it.
     ///
     /// Safe to call from any thread only in a test; production always reaches
-    /// it on `queue`.
+    /// it on `queue`, through `fileSystemChanged`'s debounce, the safety-net
+    /// timer, or `syncNowFromUI`. A UI call site that reaches this directly
+    /// off a global queue is B25.
     @discardableResult
     func syncNow() -> Outcome {
         guard isEnabled() else { setStatus(.off); return .off }

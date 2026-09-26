@@ -248,10 +248,7 @@ private final class ShiftProjectTaskRowView: NSView {
         // Same overdue-wins-over-priority tint rule `ShiftTaskRowView`
         // (`ShiftListViews.swift`) uses for the main My Tasks list, so a
         // project's own task checklist reads consistently with it.
-        let isOverdue: Bool = {
-            guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
-            return due < Calendar.current.startOfDay(for: Date())
-        }()
+        let isOverdue = ShiftDue.isOverdue(date: task.dueDate, time: task.dueTime, now: Date())
         let priorityTint: HelmTint = {
             switch task.priority {
             case .high: return .critical
