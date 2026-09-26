@@ -66,8 +66,8 @@ enum SnippetExpanderViewSelfTest {
     /// harness shape `HostsRedesignSelfTest.page` uses, and never made key:
     /// this machine may be running the captain's own instance.
     private static func page(_ snippets: [Snippet],
-                             state: (enabled: Bool, trusted: Bool, triggerCount: Int)
-                                = (enabled: true, trusted: true, triggerCount: 2))
+                             state: (enabled: Bool, trusted: Bool, armed: Bool, triggerCount: Int)
+                                = (enabled: true, trusted: true, armed: true, triggerCount: 2))
         -> (HostsController, NSWindow) {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("snippet-view-\(UUID().uuidString)", isDirectory: true)
@@ -135,11 +135,11 @@ enum SnippetExpanderViewSelfTest {
         }
     }
 
-    // MARK: The three states read differently (GL-14)
+    // MARK: The four states read differently (GL-14)
 
     private static func checkCardStates(_ check: (Bool, String) -> Void) {
         autoreleasepool {
-            let (off, offWindow) = page([signature], state: (false, true, 2))
+            let (off, offWindow) = page([signature], state: (false, true, true, 2))
             offWindow.orderFront(nil)
             defer { offWindow.orderOut(nil) }
             let offCard = off.debugSideStack.expansion
@@ -148,7 +148,7 @@ enum SnippetExpanderViewSelfTest {
             check(!offCard.debugToggleIsOn, "and the switch agrees")
         }
         autoreleasepool {
-            let (untrusted, window) = page([signature], state: (true, false, 2))
+            let (untrusted, window) = page([signature], state: (true, false, false, 2))
             window.orderFront(nil)
             defer { window.orderOut(nil) }
             let card = untrusted.debugSideStack.expansion
@@ -159,7 +159,7 @@ enum SnippetExpanderViewSelfTest {
                   "and the one-grant prompt is offered - graceful degradation, not a silent no-op")
         }
         autoreleasepool {
-            let (armed, window) = page([signature, drain], state: (true, true, 2))
+            let (armed, window) = page([signature, drain], state: (true, true, true, 2))
             window.orderFront(nil)
             defer { window.orderOut(nil) }
             let card = armed.debugSideStack.expansion
@@ -169,12 +169,29 @@ enum SnippetExpanderViewSelfTest {
 
             // The fixture's own discriminating power: the three strings must
             // differ, or every check above is vacuous.
-            let (other, otherWindow) = page([signature], state: (true, true, 1))
+            let (other, otherWindow) = page([signature], state: (true, true, true, 1))
             otherWindow.orderFront(nil)
             defer { otherWindow.orderOut(nil) }
             check(other.debugSideStack.expansion.debugStatusText == "Granted \u{00b7} 1 trigger armed",
                   "and one trigger is singular, got "
                     + "\u{201c}\(other.debugSideStack.expansion.debugStatusText)\u{201d}")
+        }
+        // B20: granted, but the monitor predates the grant. macOS never arms
+        // an already-registered global monitor retroactively, so this is a
+        // real fourth state - and it is the one that used to read
+        // "Granted - 2 triggers armed" over a permanently deaf monitor.
+        autoreleasepool {
+            let (stale, window) = page([signature, drain], state: (true, true, false, 2))
+            window.orderFront(nil)
+            defer { window.orderOut(nil) }
+            let card = stale.debugSideStack.expansion
+            check(!card.debugStatusText.contains("armed"),
+                  "granted-but-not-armed must not claim the triggers will fire (B20), got "
+                    + "\u{201c}\(card.debugStatusText)\u{201d}")
+            check(card.debugStatusText.lowercased().contains("restart"),
+                  "and must say what fixes it, got \u{201c}\(card.debugStatusText)\u{201d}")
+            check(card.debugGrantButtonIsHidden,
+                  "the grant is not what is missing, so the grant button stays away")
         }
     }
 
@@ -239,7 +256,7 @@ enum SnippetExpanderViewSelfTest {
 
     private static func checkCardRethemes(_ check: (Bool, String) -> Void) {
         autoreleasepool {
-            let (controller, window) = page([signature], state: (true, true, 1))
+            let (controller, window) = page([signature], state: (true, true, true, 1))
             window.orderFront(nil)
             defer { window.orderOut(nil) }
             let card = controller.debugSideStack.expansion

@@ -46,9 +46,51 @@ enum SnippetExpansionSelfTest {
         checkKeyEventClassification(&ok)
         checkClipboardRefusesVaultMaterial(&ok)
         checkEndToEndExpansion(&ok)
+        checkTheTrustReassertIsWired(&ok)
 
         if ok { print("[SnippetExpansionSelfTest] all checks passed") }
         return ok
+    }
+
+    // MARK: B20 - the monitor is re-armed after a mid-session grant
+
+    /// A source guard, because the behaviour needs a real Accessibility grant
+    /// arriving mid-process and this shell has none (AGENTS.md's "Verifying
+    /// native UI bugs").
+    ///
+    /// AGENTS.md gotcha (21): macOS arms a global `NSEvent` monitor from the
+    /// trust the process held **when the monitor was registered**, and never
+    /// retroactively. The launch that first prompts for Accessibility installs
+    /// the expander's monitors before the captain grants it, so the feature
+    /// stayed silently dead until the next relaunch while its own card said
+    /// "Granted - N triggers armed" (B20).
+    private static func checkTheTrustReassertIsWired(_ ok: inout Bool) {
+        guard let root = SelfTestSources.appSourceDirectory() else {
+            check(false, "app sources are not next to this binary - "
+                  + "this guard would pass vacuously", &ok)
+            return
+        }
+        func text(_ name: String) -> String? {
+            try? String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+        }
+        guard let expander = text("SnippetExpander.swift"), let main = text("main.swift") else {
+            check(false, "could not read SnippetExpander.swift / main.swift", &ok)
+            return
+        }
+        // Discriminating power: these really are the files that install and
+        // drive the monitors.
+        check(expander.contains("addGlobalMonitorForEvents"),
+              "SnippetExpander.swift should be the file that installs the global monitor", &ok)
+        check(expander.contains("installedWhileTrusted = isAccessibilityTrusted"),
+              "the expander must record the trust it had at install time, "
+              + "or nothing can notice a later grant (B20)", &ok)
+        check(expander.contains("func reassertIfTrustChanged()"),
+              "and must offer the same re-arm ShiftGlobalHotkey does", &ok)
+        check(main.contains("snippetExpander.reassertIfTrustChanged()"),
+              "and main.swift must drive it from didBecomeActiveNotification - "
+              + "an unreachable re-arm is the same bug with more code (B20)", &ok)
+        check(main.range(of: "didBecomeActiveNotification") != nil,
+              "on app activation, which is the first moment a grant can be noticed", &ok)
     }
 
     // MARK: The grammar

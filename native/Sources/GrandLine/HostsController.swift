@@ -125,7 +125,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// really a trusted Accessibility client, and how many saved snippets have
     /// a usable trigger. Wired in `main.swift` to the one `SnippetExpander`.
     /// Absent (the page mounted standalone in a suite), the panel reads off.
-    var snippetExpansionState: (() -> (enabled: Bool, trusted: Bool, triggerCount: Int))?
+    var snippetExpansionState: (() -> (enabled: Bool, trusted: Bool, armed: Bool, triggerCount: Int))?
 
     /// The master switch was flipped. The delegate persists it and starts or
     /// stops the live monitors - a settings write alone would leave them
@@ -599,9 +599,11 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// (gotcha (11)).
     private func refreshExpansionPanel() {
         sideStack.expansion.isHidden = activeTab != .snippets
-        let state = snippetExpansionState?() ?? (enabled: false, trusted: false, triggerCount: 0)
+        let state = snippetExpansionState?()
+            ?? (enabled: false, trusted: false, armed: false, triggerCount: 0)
         sideStack.expansion.setState(enabled: state.enabled,
                                      trusted: state.trusted,
+                                     armed: state.armed,
                                      triggerCount: state.triggerCount)
     }
 

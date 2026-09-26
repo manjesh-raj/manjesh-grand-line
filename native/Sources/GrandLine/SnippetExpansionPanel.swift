@@ -116,10 +116,16 @@ final class SnippetExpansionPanel: NSView {
     /// Every argument is a real reading taken by the page, never a claim this
     /// card makes on its own - the constraint `HostsSidePanels.swift`'s header
     /// states for the three panels beside it.
-    func setState(enabled: Bool, trusted: Bool, triggerCount: Int) {
+    /// `armed` is the expander's own reading of whether its **global monitor
+    /// will actually fire** - trust plus a monitor installed after that trust
+    /// was granted. It is not derivable from `trusted` (B20): on the launch
+    /// that first prompts for Accessibility, the monitor exists before the
+    /// grant does, and macOS never arms an already-registered global monitor
+    /// retroactively.
+    func setState(enabled: Bool, trusted: Bool, armed: Bool, triggerCount: Int) {
         toggleRow.isOn = enabled
         grantButton.isHidden = trusted
-        // GL-14: the three states read differently, and "off" is not drawn as
+        // GL-14: the four states read differently, and "off" is not drawn as
         // "granted but idle". The armed case is the only one that claims the
         // triggers will fire.
         if !enabled {
@@ -128,6 +134,9 @@ final class SnippetExpansionPanel: NSView {
         } else if !trusted {
             statusOK = false
             statusLabel.stringValue = "Accessibility access not granted"
+        } else if !armed {
+            statusOK = false
+            statusLabel.stringValue = "Granted \u{00b7} restart Grand Line to arm the triggers"
         } else {
             statusOK = true
             statusLabel.stringValue = triggerCount == 1

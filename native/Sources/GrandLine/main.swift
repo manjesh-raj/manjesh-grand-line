@@ -563,6 +563,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.shiftHotkey.reassertIfTrustChanged()
+            // B20: the snippet expander's global monitor is armed from the
+            // same one grant and has exactly the same retroactivity problem.
+            self?.snippetExpander.reassertIfTrustChanged()
         }
         tabShortcuts.start()
         // fm/grandline-notification-center: feeds the same due-detection
@@ -649,9 +652,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         snippetStore.observe { [weak self] in self?.snippetExpander.rebuildTable() }
         hostsPanel.snippetExpansionState = { [weak self] in
-            guard let self else { return (enabled: false, trusted: false, triggerCount: 0) }
+            guard let self else { return (enabled: false, trusted: false, armed: false, triggerCount: 0) }
             return (enabled: AppSettings.shared.snippetExpansionEnabled,
                     trusted: self.snippetExpander.isAccessibilityTrusted,
+                    armed: self.snippetExpander.isArmed,
                     triggerCount: self.snippetExpander.armedTriggerCount)
         }
         hostsPanel.onSnippetExpansionToggled = { [weak self] enabled in

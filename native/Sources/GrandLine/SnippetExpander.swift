@@ -151,6 +151,13 @@ final class SnippetExpander {
     private func start() {
         guard !isRunning else { return }
         isRunning = true
+        // AGENTS.md gotcha (21): a global `NSEvent` monitor is armed from the
+        // trust the process held **when it was registered**, and macOS does
+        // not arm one retroactively. Recorded at install time so
+        // `reassertIfTrustChanged()` can notice the transition and so the
+        // Settings card can say "granted, but this monitor predates the
+        // grant" rather than only "granted" (B20).
+        installedWhileTrusted = isAccessibilityTrusted
         buffer = SnippetTypingBuffer()
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handle(event)
@@ -178,6 +185,38 @@ final class SnippetExpander {
         AppLog.lifecycle.info("snippet expander: monitors installed")
     }
 
+    /// Whether the process was a trusted Accessibility client at the moment
+    /// the current monitors were installed. See `start()`.
+    private(set) var installedWhileTrusted = false
+
+    /// True when the feature is on and its monitors were installed **after**
+    /// Accessibility trust was granted - i.e. when a system-wide trigger will
+    /// genuinely fire.
+    ///
+    /// The Settings card reads this rather than `isAccessibilityTrusted`
+    /// alone. B20: on the launch that first prompts for Accessibility, the
+    /// monitors are installed before the captain grants it, so the card said
+    /// "Granted - 4 triggers armed" over a monitor that was permanently deaf
+    /// until the next relaunch, and nothing anywhere said so.
+    var isArmed: Bool { isRunning && installedWhileTrusted && isAccessibilityTrusted }
+
+    /// Reinstalls the monitors if Accessibility trust has been granted since
+    /// they were installed.
+    ///
+    /// `ShiftGlobalHotkey.reassertIfTrustChanged()` verbatim, for the same
+    /// reason and driven from the same `didBecomeActiveNotification`: coming
+    /// back to this app is the first moment the grant can be noticed, and the
+    /// check is one `AXIsProcessTrusted()` read that returns immediately
+    /// unless the answer actually changed.
+    @discardableResult
+    func reassertIfTrustChanged() -> Bool {
+        guard isRunning, !installedWhileTrusted, isAccessibilityTrusted else { return false }
+        AppLog.lifecycle.info("snippet expander: accessibility granted since install - reinstalling monitors")
+        stop()
+        start()
+        return true
+    }
+
     func stop() {
         for monitor in [localKeyMonitor, globalKeyMonitor, localMouseMonitor, globalMouseMonitor] {
             if let monitor { NSEvent.removeMonitor(monitor) }
@@ -193,6 +232,7 @@ final class SnippetExpander {
         // Not merely "stop reading it" - the run is dropped, so turning the
         // feature off leaves nothing of the captain's typing behind.
         buffer = SnippetTypingBuffer()
+        installedWhileTrusted = false
         guard isRunning else { return }
         isRunning = false
         AppLog.lifecycle.info("snippet expander: monitors removed")
