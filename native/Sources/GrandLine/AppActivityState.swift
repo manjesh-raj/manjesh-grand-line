@@ -158,3 +158,72 @@ struct BackgroundedPollGate {
         return false
     }
 }
+
+/// PF14 of the 2026-09-25 full review: the fleet poller spawns one
+/// `fm-crew-state.sh` per tracked task every 30 seconds, and that script is
+/// genuinely expensive - the review measured 423 worker samples in five
+/// seconds **with a single task**, because it shells out to `no-mistakes`,
+/// `git` and the forge on its own account.
+///
+/// **The review's proposed fix - batch every task into one call - is not
+/// available from this repository, and would not help if it were.** The
+/// script takes exactly one id and exits 2 without one, and it lives in the
+/// captain's firstmate home rather than in this tree. Wrapping N invocations
+/// in one `bash -c` would save N-1 pipe setups and give up the bounded
+/// concurrency `parseTasks` already has; the cost the review measured is the
+/// script's own work, once per task, which a batch does not change.
+///
+/// So the lever that is actually available is **how often** the fleet is
+/// asked, not how many processes carry the asking. A fleet whose every task
+/// reported the same state as last time is a fleet nothing is happening on,
+/// and that is the common case for most of a day.
+///
+/// The gate backs the cadence off after a run of identical sweeps and snaps
+/// straight back to every tick the moment anything differs. Nothing is ever
+/// skipped permanently, and the worst case is a transition noticed one
+/// backed-off interval late - the same trade, and the same "at worst two
+/// minutes" number, `BackgroundedPollGate` above already makes for a
+/// backgrounded app.
+struct QuietFleetPollGate {
+    /// How many identical sweeps before the cadence backs off at all.
+    let quietSweepsBeforeBackoff: Int
+    /// How many ticks to skip for each one that runs, once quiet.
+    let skipsPerRun: Int
+
+    private var quietSweeps = 0
+    private var skipped = 0
+
+    init(quietSweepsBeforeBackoff: Int, skipsPerRun: Int) {
+        self.quietSweepsBeforeBackoff = max(0, quietSweepsBeforeBackoff)
+        self.skipsPerRun = max(0, skipsPerRun)
+    }
+
+    /// `true` when this tick should do its real work.
+    mutating func shouldRun() -> Bool {
+        guard quietSweeps >= quietSweepsBeforeBackoff, skipsPerRun > 0 else {
+            skipped = 0
+            return true
+        }
+        if skipped >= skipsPerRun {
+            skipped = 0
+            return true
+        }
+        skipped += 1
+        return false
+    }
+
+    /// Told after every sweep that actually ran, with whether the fleet looked
+    /// any different from the sweep before it.
+    mutating func noteSweep(changed: Bool) {
+        if changed {
+            quietSweeps = 0
+            skipped = 0
+        } else {
+            quietSweeps += 1
+        }
+    }
+
+    #if FM_SELFTESTS
+    var debugQuietSweeps: Int { quietSweeps }
+    #endif
+}

@@ -28,9 +28,70 @@ enum AppActivityStateSelfTest {
         checkThresholdIsNotTrigger(&ok)
         checkGatedPollers(&ok)
         checkUngatedPollersStayUngated(&ok)
+        checkQuietFleetGate(&ok)
         print(ok ? "AppActivityStateSelfTest: all checks passed"
                  : "AppActivityStateSelfTest: FAILED")
         return ok
+    }
+
+    // MARK: PF14 - the quiet-fleet gate
+
+    /// PF14 of the 2026-09-25 full review: the fleet poller spawns one
+    /// `fm-crew-state.sh` per tracked task every 30 seconds, and that script
+    /// is expensive on its own account (423 worker samples in five seconds
+    /// with a single task). Batching is not available from this repository and
+    /// would not help - see `QuietFleetPollGate`'s own note - so what backs
+    /// off is the cadence, and only while the fleet keeps reporting the same
+    /// thing.
+    ///
+    /// Three claims, and the third is the one that makes this safe rather than
+    /// merely cheaper: a change must put the cadence back immediately.
+    private static func checkQuietFleetGate(_ ok: inout Bool) {
+        // 1. A fleet that keeps changing is never gated at all.
+        var busy = QuietFleetPollGate(quietSweepsBeforeBackoff: 4, skipsPerRun: 3)
+        var busyRuns = 0
+        for _ in 0..<40 {
+            if busy.shouldRun() {
+                busyRuns += 1
+                busy.noteSweep(changed: true)
+            }
+        }
+        check(busyRuns == 40,
+              "a fleet that changes every sweep ran \(busyRuns) of 40 ticks - it must never be "
+              + "gated, or a busy day loses transitions", &ok)
+
+        // 2. A quiet fleet backs off to a quarter of the ticks.
+        var quiet = QuietFleetPollGate(quietSweepsBeforeBackoff: 4, skipsPerRun: 3)
+        var quietRuns = 0
+        for _ in 0..<40 {
+            if quiet.shouldRun() {
+                quietRuns += 1
+                quiet.noteSweep(changed: false)
+            }
+        }
+        check(quietRuns > 0, "the gate must not stop polling altogether", &ok)
+        check(quietRuns <= 14,
+              "an idle fleet ran \(quietRuns) of 40 ticks; four warm-up sweeps then one in four "
+              + "is at most 13", &ok)
+
+        // 3. The first change puts it straight back to every tick. This is
+        //    what bounds how late a needs-decision can surface.
+        var recovering = QuietFleetPollGate(quietSweepsBeforeBackoff: 4, skipsPerRun: 3)
+        for _ in 0..<20 where recovering.shouldRun() { recovering.noteSweep(changed: false) }
+        check(recovering.debugQuietSweeps > 0, "the fixture really did go quiet first", &ok)
+        // Run out the skips so the next real sweep lands, then report a change.
+        while !recovering.shouldRun() {}
+        recovering.noteSweep(changed: true)
+        var backToEveryTick = 0
+        for _ in 0..<10 {
+            if recovering.shouldRun() {
+                backToEveryTick += 1
+                recovering.noteSweep(changed: true)
+            }
+        }
+        check(backToEveryTick == 10,
+              "after a change the gate ran \(backToEveryTick) of the next 10 ticks; it must snap "
+              + "straight back to every one", &ok)
     }
 
     private static func fail(_ ok: inout Bool, _ message: String) {
