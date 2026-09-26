@@ -54,6 +54,8 @@ enum TerminalBlockTrackerSelfTest {
             ("repeatedIdenticalCommandStillProducesTwoRealBlocks", test_repeatedIdenticalCommandStillProducesTwoRealBlocks),
             ("blankEnterBetweenTwoRealRepeatsIsDroppedNotTheReals", test_blankEnterBetweenTwoRealRepeatsIsDroppedNotTheReals),
             ("oldStyleThreeFieldDMarkerStillTreatedAsReal", test_oldStyleThreeFieldDMarkerStillTreatedAsReal),
+            ("pf15OneHugeBlockIsClippedAndSaysSo", test_pf15OneHugeBlockIsClippedAndSaysSo),
+            ("pf15TheTrackerIsBoundedByBytesNotOnlyByCount", test_pf15TheTrackerIsBoundedByBytes),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -172,6 +174,84 @@ enum TerminalBlockTrackerSelfTest {
         // after the hook installs.
         feed(terminal, "\u{1b}]133;D;0;\(b64("echo x"))\u{07}")
         guard tracker.blocks.isEmpty else { return "a D with nothing open should be a no-op: \(tracker.blocks)" }
+        return nil
+    }
+
+    // MARK: PF15 - a count is not a bound
+
+    /// PF15 of the 2026-09-25 full review: `maxBlocks` caps how *many* blocks
+    /// are kept and says nothing about how large one is, so one `cat` of a
+    /// large file is a single block holding tens of megabytes and five hundred
+    /// of those slots bounds nothing (GL-35).
+    ///
+    /// A clipped block has to **say** it was clipped (GL-14), and has to keep
+    /// both ends: the head is where a command's first error is and the tail is
+    /// where it ended up.
+    private static func test_pf15OneHugeBlockIsClippedAndSaysSo() -> String? {
+        let cap = TerminalBlockTracker.maxBlockOutputBytes
+        let head = String(repeating: "H", count: 64)
+        let tail = String(repeating: "T", count: 64)
+        let huge = head + String(repeating: "x", count: cap * 2) + tail
+
+        // Discriminating power first: something under the cap is untouched.
+        let small = "a normal amount of output"
+        guard TerminalBlockTracker.clipOutput(small) == small else {
+            return "output under the cap must be returned unchanged"
+        }
+
+        let clipped = TerminalBlockTracker.clipOutput(huge)
+        guard clipped.utf8.count < huge.utf8.count else {
+            return "a \(huge.utf8.count)-byte block was not clipped at all"
+        }
+        guard clipped.utf8.count <= cap + 512 else {
+            return "a clipped block is still \(clipped.utf8.count) bytes, cap is \(cap)"
+        }
+        guard clipped.hasPrefix(head) else { return "the head of the output was not kept" }
+        guard clipped.hasSuffix(tail) else { return "the tail of the output was not kept" }
+        guard clipped.contains("are not kept") else {
+            return "a clipped block must say what was dropped rather than silently losing it (GL-14)"
+        }
+        return nil
+    }
+
+    /// The other half: many merely-large blocks. The tracker as a whole stays
+    /// under `maxTotalOutputBytes` by dropping oldest blocks, and never drops
+    /// the one being written.
+    private static func test_pf15TheTrackerIsBoundedByBytes() -> String? {
+        let terminal = makeTerminal()
+        let tracker = TerminalBlockTracker()
+        tracker.attach(to: terminal)
+
+        // A block's own output is bounded by the terminal's scrollback, so
+        // 32MB of it is not something a headless fixture can produce - the
+        // cap is lowered to a size this terminal can actually reach, and the
+        // trim loop being exercised is the shipped one.
+        TerminalBlockTracker.debugSetMaxTotalOutputBytes(400_000)
+        defer { TerminalBlockTracker.debugResetMaxTotalOutputBytes() }
+
+        // Well under the 500-block count cap, so anything trimmed here was
+        // trimmed by size - which is the whole claim.
+        for i in 0..<300 {
+            feed(terminal, promptCycle(command: "dump \(i)",
+                                       output: String(repeating: "y", count: 200),
+                                       exitCode: 0))
+        }
+        let total = tracker.blocks.reduce(0) { $0 + $1.outputText.utf8.count }
+        guard tracker.blocks.count < 300 else {
+            return "300 blocks were all kept (\(total) bytes) - the count cap is 500, so "
+                + "nothing here was bounded by size at all"
+        }
+        guard tracker.blocks.count > 1 else {
+            return "the size trim emptied the tracker - it must never drop below the block "
+                + "being written"
+        }
+        guard total <= TerminalBlockTracker.maxTotalOutputBytes else {
+            return "the tracker holds \(total) bytes, over the \(TerminalBlockTracker.maxTotalOutputBytes) cap"
+        }
+        guard tracker.blocks.last?.commandText == "dump 299" else {
+            return "the newest block must survive a size trim, last is "
+                + "\(tracker.blocks.last?.commandText ?? "nil")"
+        }
         return nil
     }
 
