@@ -225,6 +225,75 @@ enum FocusTimerViewSelfTest {
 
             _ = timer.stop()
         }
+
+        checkFinishClosesThePopoverAndNotTheApp(store: store, check: check)
+    }
+
+    // MARK: B28 - Finish closes the popover, not the app's last window
+
+    /// The panel is an `NSPopover`'s **assigned** `contentViewController`, so
+    /// `dismiss(_:)` is a no-op for it (AGENTS.md gotcha (6)) - which is
+    /// presumably why something reached for a window close instead. But a
+    /// popover's `view.window` is its own `_NSPopoverWindow`, and *that*
+    /// window's `parent` is the window it is anchored to: the main window.
+    /// So `view.window?.parent?.performClose(nil)` closed the app's last
+    /// window when the captain finished a focus session.
+    ///
+    /// Driven against a real off-screen parent with a real child window
+    /// attached, because the whole defect lives in that relationship - a
+    /// check that only asserted the closure fired would have passed with the
+    /// `performClose` still there.
+    private static func checkFinishClosesThePopoverAndNotTheApp(
+        store: ShiftStore, check: (Bool, String) -> Void) {
+        autoreleasepool {
+            let timer = FocusTimerController(store: store)
+            timer.clock = { Date(timeIntervalSince1970: 1_750_000_000) }
+            var task = ShiftTask.fresh()
+            task.title = "Rotate the bastion keys"
+            store.addTask(task)
+            timer.start(task: task, minutes: 25)
+
+            // The main window, and a child standing in for the popover's own
+            // window - the same parent/child shape `NSPopover` builds.
+            // `.closable` deliberately: AppKit's `performClose` beeps and does
+            // nothing on a window without a close button, so a fixture that
+            // left it out could not see the defect at all.
+            let main = OffScreenProbe.window(width: 1200, height: 800,
+                                             styleMask: [.titled, .closable, .resizable])
+            main.contentView = NSView()
+            main.orderFront(nil)
+            defer { main.orderOut(nil) }
+
+            let panel = FocusTimerPanelController(timer: timer)
+            let popoverWindow = OffScreenProbe.window(width: 260, height: 260, styleMask: [.titled])
+            popoverWindow.contentView = panel.view
+            main.addChildWindow(popoverWindow, ordered: .above)
+            defer {
+                main.removeChildWindow(popoverWindow)
+                popoverWindow.orderOut(nil)
+            }
+            panel.viewWillAppear()
+            panel.view.layoutSubtreeIfNeeded()
+
+            // The fixture's own discriminating power: the panel really can
+            // reach the main window through its own window's parent, which is
+            // exactly what the old line did.
+            check(panel.view.window?.parent === main,
+                  "fixture: the panel's window must really be a child of the main window, or "
+                  + "this check cannot see B28 at all")
+            check(main.isVisible, "fixture: and the main window must start visible")
+
+            var closed = 0
+            panel.onRequestClose = { closed += 1 }
+            panel.debugTapFinish()
+
+            check(closed == 1,
+                  "Finish asks whoever presented the panel to close it, got \(closed) requests")
+            check(main.isVisible,
+                  "and must NOT close the main window - outside compact mode that is the app's "
+                  + "last window, so finishing a focus session shut the app (B28)")
+            check(!timer.isRunning, "and the session really is stopped")
+        }
     }
 
     // MARK: Weekly Review's tile

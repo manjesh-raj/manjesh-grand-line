@@ -376,14 +376,35 @@ final class FocusTimerPanelController: NSViewController {
         // GL-30: "Logged 25m" is used and gone before the pill fades, so it
         // is a toast and nothing more. The *completion* of a full session is
         // the lasting one, and `FocusTimerController` files that itself.
+        //
+        // Reported into the **parent** window's content view deliberately:
+        // this panel is about to go away, and a toast hosted in a view that
+        // is being torn down is a toast nobody sees.
         Feedback.report(logged.map { "Logged \(FocusTimerFormat.total($0)) to the task" }
                             ?? "Focus stopped \u{00B7} too short to log",
                         kind: logged == nil ? .warning : .done,
                         persistence: .transient,
                         in: view.window?.parent?.contentView ?? view)
-        view.window?.parent?.performClose(nil)
-        dismiss(nil)
+        // B28: this used to be `view.window?.parent?.performClose(nil)` plus
+        // `dismiss(nil)`, and both halves were wrong.
+        //
+        // This controller is an `NSPopover`'s *assigned*
+        // `contentViewController`, so `dismiss(_:)` is a no-op (AGENTS.md
+        // gotcha (6)) - which is presumably why something reached for a
+        // window close at all. But a popover's `view.window` is its own
+        // `_NSPopoverWindow` and that window's `parent` is the window it is
+        // anchored to: the **main window**. Finishing a focus session closed
+        // the app's last window.
+        //
+        // The popover belongs to whoever showed it, so that is who closes it.
+        onRequestClose?()
     }
+
+    /// Called when the panel has finished its work and should go away.
+    ///
+    /// Set by whoever presents this controller - the only object that holds
+    /// the `NSPopover` and can legitimately close it. See `finishTapped`.
+    var onRequestClose: (() -> Void)?
 
     // MARK: Probe / self-test surface
 
@@ -392,6 +413,7 @@ final class FocusTimerPanelController: NSViewController {
     var debugTaskTitle: String { taskLabel.stringValue }
     var debugPauseButtonTitle: String { pauseButton.title }
     func debugTapPause() { pauseTapped() }
+    func debugTapFinish() { finishTapped() }
     func debugTapExtend() { extendTapped() }
     #endif
 }
