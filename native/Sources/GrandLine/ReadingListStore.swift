@@ -317,9 +317,14 @@ final class ReadingListStore {
     // MARK: Reading
 
     func reloadAll() {
+        // PF12: a re-read that discarded a pending metadata write would lose
+        // the titles and icons just fetched. Drain first, always - this is the
+        // one place a stale read could quietly undo a coalesced write.
+        flush()
         switch ShiftYaml.readListChecked(path: linksPath, key: "links") {
         case .ok(let items):
             isInFailedLoadState = false
+            iconCache.removeAll()   // PF12: a reload re-reads icons too.
             var decoded: [ReadingLink] = []
             var unreadable: [(sortKey: Date, raw: Yaml)] = []
             for item in items {
@@ -410,12 +415,56 @@ final class ReadingListStore {
         if !metadata.summary.isEmpty { links[index].summary = metadata.summary }
         links[index].metadataState = .resolved
         if let png = metadata.iconPNG { writeIcon(png, forHost: links[index].host) }
-        persist()
+        schedulePersistForMetadata()
     }
 
     func applyMetadataFailure(id: String, reason: String) {
         guard let index = links.firstIndex(where: { $0.id == id }) else { return }
         links[index].metadataState = .failed(reason)
+        schedulePersistForMetadata()
+    }
+
+    // MARK: PF12 - one write for a burst of metadata fetches
+    //
+    // PF12's second half. `persist()` rewrites the **whole** YAML file - it
+    // has to, because a YAML list is not a record store and the merge with
+    // `unreadableRecords` is what keeps a record this build cannot read in its
+    // right place. That is fine for a captain's own edit, which happens once.
+    // It is not fine for the metadata path: opening the page kicks off one
+    // `LinkPresentation` fetch per unresolved link, each landing on the main
+    // thread a few hundred milliseconds apart, and each rewriting every link
+    // in the file.
+    //
+    // So the two metadata appliers coalesce: the model is updated immediately
+    // (the card re-renders from it, not from disk), and the file is written
+    // once shortly after the burst settles.
+    //
+    // **Nothing may be lost**, which is why this is a debounce with a flush
+    // rather than a "write later, probably": `flush()` is called from the
+    // page's `shutdown()`, which `applicationWillTerminate` reaches, and every
+    // captain-initiated mutation still writes immediately and synchronously -
+    // so a metadata result can only ever be as stale as the debounce, and only
+    // until the next edit or the next quit.
+    static let metadataPersistDebounce: TimeInterval = 1.0
+    private var pendingMetadataPersist: DispatchWorkItem?
+
+    private func schedulePersistForMetadata() {
+        pendingMetadataPersist?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingMetadataPersist = nil
+            self.persist()
+        }
+        pendingMetadataPersist = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.metadataPersistDebounce, execute: work)
+    }
+
+    /// Write anything the metadata debounce is still holding. Called from the
+    /// page's `shutdown()`, and by any suite that reads the file back.
+    func flush() {
+        guard let pending = pendingMetadataPersist else { return }
+        pending.cancel()
+        pendingMetadataPersist = nil
         persist()
     }
 
@@ -481,15 +530,39 @@ final class ReadingListStore {
 
     // MARK: Icons
 
+    /// PF12 of the 2026-09-25 full review: every grid rebuild asked this for
+    /// every card, and every call read a file off disk - so a filter
+    /// keystroke, a tag edit or a metadata fetch landing re-read one PNG per
+    /// saved link. The files are small and the OS caches them, but the syscall
+    /// per card per rebuild is not free and is trivially avoidable: an icon is
+    /// keyed by host and only ever changes when `writeIcon` writes one.
+    ///
+    /// `nil` is cached too, and deliberately: "this host has no icon" is the
+    /// common case (it is what makes a card draw its monogram) and re-reading
+    /// a missing file on every rebuild is exactly the cost being removed.
+    private var iconCache: [String: Data?] = [:]
+
     /// The cached icon for a host, or `nil` - which is ordinary, and means the
     /// card draws its monogram tile instead.
     func iconPNG(forHost host: String) -> Data? {
-        guard let name = ReadingListIconCache.filename(forHost: host) else { return nil }
-        return try? Data(contentsOf: iconsRoot.appendingPathComponent(name))
+        if let cached = iconCache[host] { return cached }
+        guard let name = ReadingListIconCache.filename(forHost: host) else {
+            iconCache[host] = Data?.none
+            return nil
+        }
+        #if FM_SELFTESTS
+        debugIconDiskReads += 1
+        #endif
+        let data = try? Data(contentsOf: iconsRoot.appendingPathComponent(name))
+        iconCache[host] = data
+        return data
     }
 
     private func writeIcon(_ png: Data, forHost host: String) {
         guard let name = ReadingListIconCache.filename(forHost: host) else { return }
+        // PF12: this is the only thing that can change a host's icon, so it is
+        // the only place the cache has to be told.
+        iconCache[host] = png
         do {
             try fm.createDirectory(at: iconsRoot, withIntermediateDirectories: true)
             // GL-30: through `AtomicWrite`, like every other store write here.
@@ -511,7 +584,20 @@ final class ReadingListStore {
     /// The one write choke point. Refuses to write a file this store could not
     /// read (GL-01), reports a genuine write failure rather than swallowing it
     /// (GL-10), and arms the git debounce afterwards.
+    #if FM_SELFTESTS
+    /// PF12: how many whole-file writes this store has done, so a suite can
+    /// prove a burst of metadata fetches costs one rather than one each.
+    private(set) var debugPersistCount = 0
+    func debugResetPersistCount() { debugPersistCount = 0 }
+    /// PF12: how many times an icon was actually read off disk.
+    private(set) var debugIconDiskReads = 0
+    func debugResetIconDiskReads() { debugIconDiskReads = 0 }
+    #endif
+
     private func persist() {
+        #if FM_SELFTESTS
+        debugPersistCount += 1
+        #endif
         guard !isInFailedLoadState else {
             AppLog.store.error("""
                 Reading list: refusing to write \(self.linksPath, privacy: .public) - its last read \
