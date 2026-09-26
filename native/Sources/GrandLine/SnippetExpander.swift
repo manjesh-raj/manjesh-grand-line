@@ -377,8 +377,14 @@ final class SnippetExpander {
         // plain string would strip the very markers
         // `CredentialVaultClipboard.isConcealed` exists to find, which would
         // hand it straight to the clipboard history this app also ships.
+        //
+        // B20: this used to capture `string(forType: .string)` alone, so an
+        // expansion silently destroyed a copied image, a copied file, an RTF
+        // run with its formatting, or a URL with its title - everything got
+        // put back as its plain-text shadow, or as nothing at all.
+        // `PasteboardSnapshot` carries every item and every type.
         let restorable = CredentialVaultClipboard.isConcealed()
-            ? nil : NSPasteboard.general.string(forType: .string)
+            ? nil : PasteboardSnapshot.take(.general)
 
         for _ in 0..<injection.deleteCount { Self.postKey(Self.deleteKeyCode) }
 
@@ -391,17 +397,50 @@ final class SnippetExpander {
         // use can confirm.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
             DictationEngine.pasteAtCursor(injection.text)
-            guard injection.caretLeftCount > 0 || restorable != nil else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                for _ in 0..<injection.caretLeftCount { Self.postKey(Self.leftArrowKeyCode) }
-                if let restorable {
-                    let pasteboard = NSPasteboard.general
-                    pasteboard.clearContents()
-                    pasteboard.setString(restorable, forType: .string)
+            // What the pasteboard reads as immediately after *our* write. The
+            // restore below refuses unless it is still this - see
+            // `clipboardRestoreDelay`.
+            let ours = NSPasteboard.general.changeCount
+
+            // The caret arrows do not touch the pasteboard, so they keep the
+            // short hop they always had.
+            if injection.caretLeftCount > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    for _ in 0..<injection.caretLeftCount { Self.postKey(Self.leftArrowKeyCode) }
                 }
+            }
+
+            guard let restorable else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.clipboardRestoreDelay) {
+                // B20: the restore raced the receiver. A synthetic ⌘V is
+                // delivered to another process's run loop, and that process
+                // reads the pasteboard whenever it gets round to it - a slow
+                // or busy receiver read *after* the old contents had been put
+                // back, and pasted the wrong thing. A longer wait makes that
+                // rarer and cannot make it impossible, so the restore is also
+                // **conditional**: if anything has written to the pasteboard
+                // since our own write, that write is newer than this snapshot
+                // and putting the snapshot back would be the destructive
+                // answer.
+                guard NSPasteboard.general.changeCount == ours else {
+                    AppLog.lifecycle.info("snippet expander: pasteboard changed since the expansion - leaving it alone")
+                    return
+                }
+                restorable.restore(to: .general)
             }
         }
     }
+
+    /// How long to leave the expansion on the pasteboard before putting the
+    /// captain's own contents back.
+    ///
+    /// Deliberately much longer than the 0.08s it was: the only thing this
+    /// delay protects is a receiving app that has not yet got round to reading
+    /// the pasteboard for the synthetic ⌘V, and half a second of a stale
+    /// clipboard is a far cheaper failure than a paste that lands empty. The
+    /// `changeCount` guard at the restore site is what makes the wait safe to
+    /// lengthen.
+    static let clipboardRestoreDelay: TimeInterval = 0.6
 
     static let deleteKeyCode: CGKeyCode = 51
     static let leftArrowKeyCode: CGKeyCode = 123
