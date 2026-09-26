@@ -134,6 +134,8 @@ extension TerminalView {
 
     func resetCaches ()
     {
+        // Grand Line patch 7: font/palette state feeds every cached row render.
+        invalidateLineRenderCache()
         self.attributes = [:]
         self.urlAttributes = [:]
         self.colors = Array(repeating: nil, count: 256)
@@ -395,6 +397,8 @@ extension TerminalView {
     // Clears the cached state for colors and triggers a full display
     func colorsChanged ()
     {
+        // Grand Line patch 7: cached row renders hold resolved colours.
+        invalidateLineRenderCache()
         urlAttributes = [:]
         attributes = [:]
         
@@ -698,6 +702,118 @@ extension TerminalView {
         }
     }
     
+    // MARK: - Grand Line patch 7: a per-row render cache for the CoreText path
+    //
+    // See `Vendor/SwiftTerm/README.md`'s "Seventh patch" section. In short:
+    // `draw(_:)` called `buildAttributedString` for every visible row on every
+    // frame, and then built a `CTLine` plus its run array for every segment of
+    // every row, all of it thrown away at the end of the frame. Measured on the
+    // captain's real instance, that was the dominant main-thread cost of an idle
+    // app with one Console tab open - even at the 2 fps background cadence
+    // patch 4's display gating already imposes.
+    //
+    // Nothing about a row's rendering changes between frames unless the line's
+    // own contents change, the selection moves across it, a link highlight
+    // lands on it, or the view's style state (font, palette, selection colours,
+    // glyph policy) changes. `BufferLine.generation` - upstream's own
+    // per-line mutation counter, already used this way by the Metal renderer's
+    // `RowCacheEntry` - covers the first; the rest are captured in the entry
+    // and compared on every lookup, so the cache is self-validating rather than
+    // depending on somebody remembering to invalidate it from a setter.
+    //
+    // The cache is keyed by absolute row, exactly like the Metal renderer's, and
+    // an entry is only reused when it still points at the *same* `BufferLine`
+    // instance: a scroll rotates references through the `CircularList`, so the
+    // identity check is what keeps row N's cached render from being shown for a
+    // different line that later occupies slot N.
+    struct PreparedLineSegment {
+        let segment: ViewLineSegment
+        let ctLine: CTLine
+        let runs: [CTRun]
+    }
+
+    struct CachedLineRender {
+        let line: BufferLine
+        let generation: UInt64
+        let cols: Int
+        let selection: Range<Int>?
+        let linkRanges: [Terminal.LinkMatch.RowRange]?
+        let linkMode: LinkHighlightMode
+        let commandActive: Bool
+        let customBlockGlyphs: Bool
+        let useBrightColors: Bool
+        let selectionBackground: TTColor
+        let selectionForeground: TTColor
+        let styleEpoch: UInt64
+        let info: ViewLineInfo
+        let prepared: [PreparedLineSegment]
+    }
+
+    /// Drops every cached row render. Called from the two places that change
+    /// style state wholesale (`resetCaches`, `colorsChanged`); everything finer
+    /// grained than that is compared per lookup instead.
+    func invalidateLineRenderCache () {
+        lineRenderCache.removeAll(keepingCapacity: true)
+        lineRenderStyleEpoch &+= 1
+    }
+
+    /// The cached equivalent of `buildAttributedString` plus the `CTLine`/run
+    /// preparation the draw loop needs. Rebuilds and re-caches on any mismatch.
+    func preparedLineRender (row: Int, line: BufferLine, cols: Int) -> CachedLineRender {
+        let generation = line.generation
+        let selection = selectedColumnsRange(row: row, cols: cols)
+        if let cached = lineRenderCache[row],
+           cached.line === line,
+           cached.generation == generation,
+           cached.cols == cols,
+           cached.selection == selection,
+           cached.linkRanges == linkHighlightRange,
+           cached.linkMode == linkHighlightMode,
+           cached.commandActive == commandActive,
+           cached.customBlockGlyphs == customBlockGlyphs,
+           cached.useBrightColors == useBrightColors,
+           cached.selectionBackground === selectedTextBackgroundColor,
+           cached.selectionForeground === selectedTextForegroundColor,
+           cached.styleEpoch == lineRenderStyleEpoch {
+            lineRenderCacheHits &+= 1
+            return cached
+        }
+        lineRenderCacheMisses &+= 1
+
+        let info = buildAttributedString(row: row, line: line, cols: cols)
+        let prepared: [PreparedLineSegment] = info.segments.compactMap { segment in
+            guard segment.attributedString.length > 0 else { return nil }
+            let ctLine = CTLineCreateWithAttributedString(segment.attributedString)
+            guard let runs = CTLineGetGlyphRuns(ctLine) as? [CTRun] else { return nil }
+            return PreparedLineSegment(segment: segment, ctLine: ctLine, runs: runs)
+        }
+        let entry = CachedLineRender(line: line,
+                                     generation: generation,
+                                     cols: cols,
+                                     selection: selection,
+                                     linkRanges: linkHighlightRange,
+                                     linkMode: linkHighlightMode,
+                                     commandActive: commandActive,
+                                     customBlockGlyphs: customBlockGlyphs,
+                                     useBrightColors: useBrightColors,
+                                     selectionBackground: selectedTextBackgroundColor,
+                                     selectionForeground: selectedTextForegroundColor,
+                                     styleEpoch: lineRenderStyleEpoch,
+                                     info: info,
+                                     prepared: prepared)
+        lineRenderCache[row] = entry
+        return entry
+    }
+
+    /// Keeps the row-keyed cache from growing with the scrollback. Absolute row
+    /// numbers climb as output scrolls, so entries for rows that have long since
+    /// left the viewport would otherwise accumulate for the life of the tab.
+    func pruneLineRenderCache (keeping visible: ClosedRange<Int>) {
+        let budget = max(256, (visible.upperBound - visible.lowerBound + 1) * 4)
+        guard lineRenderCache.count > budget else { return }
+        lineRenderCache = lineRenderCache.filter { visible.contains($0.key) }
+    }
+
     //
     // Given a line of text with attributes, returns column-aware segments that can be drawn later.
     //
@@ -1317,6 +1433,11 @@ extension TerminalView {
         context.clear(dirtyRect)
         #endif
 
+        // Grand Line patch 7: keep the row-keyed render cache bounded.
+        if firstRow <= lastRow {
+            pruneLineRenderCache(keeping: firstRow...lastRow)
+        }
+
         for row in firstRow...lastRow {
             if row < 0 {
                 continue
@@ -1378,7 +1499,10 @@ extension TerminalView {
             } 
             #endif
             let line = displayBuffer.lines [row]
-            let lineInfo = buildAttributedString(row: row, line: line, cols: displayBuffer.cols)
+            // Grand Line patch 7: cached per-row render (attributed segments +
+            // their CTLines/runs), rebuilt only when this row actually changed.
+            let cachedRender = preparedLineRender(row: row, line: line, cols: displayBuffer.cols)
+            let lineInfo = cachedRender.info
             let rowBase = lineOrigin.y + cellDimension.height
             var underTextImages: [AppleImage] = []
             var overTextKittyImages: [AppleImage] = []
@@ -1410,14 +1534,9 @@ extension TerminalView {
                 overTextKittyImages.sort(by: sortKitty)
             }
 
-            // Pre-create CTLines and runs once per row to avoid duplicate creation
-            let preparedSegments: [(segment: ViewLineSegment, ctLine: CTLine, runs: [CTRun])] =
-                lineInfo.segments.compactMap { segment in
-                    guard segment.attributedString.length > 0 else { return nil }
-                    let ctLine = CTLineCreateWithAttributedString(segment.attributedString)
-                    guard let runs = CTLineGetGlyphRuns(ctLine) as? [CTRun] else { return nil }
-                    return (segment, ctLine, runs)
-                }
+            // Grand Line patch 7: CTLines and runs come from the row cache, so a
+            // row that has not changed since the last frame creates none at all.
+            let preparedSegments = cachedRender.prepared
 
             // Background fill loop — uses cached CTLines
             context.saveGState()

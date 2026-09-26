@@ -67,6 +67,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    // MARK: - Grand Line patch 7: per-row render cache storage
+    //
+    // The iOS mirror of the macOS storage (see `Mac/MacTerminalView.swift` and
+    // `Vendor/SwiftTerm/README.md`'s "Seventh patch"). This app is macOS only;
+    // the properties exist here so the shared `Apple/AppleTerminalView` half
+    // compiles for both.
+    var lineRenderCache: [Int: CachedLineRender] = [:]
+    var lineRenderStyleEpoch: UInt64 = 0
+    /// Counters a suite reads to prove the cache is actually being hit.
+    /// Always compiled: two increments are not worth a conditional, and a
+    /// number nobody can read is a cache nobody can prove works.
+    public internal(set) var lineRenderCacheHits: Int = 0
+    public internal(set) var lineRenderCacheMisses: Int = 0
+
     public func applyMinimumColumnsIfNeeded() {
         guard cellDimension != nil, frame.width > 0, frame.height > 0 else { return }
         _ = processSizeChange(newSize: frame.size)

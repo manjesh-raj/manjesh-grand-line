@@ -3426,6 +3426,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_DISPLAY_GATING_TESTS"] =
     exit(TerminalDisplayGatingSelfTest.run() ? 0 : 1)
 }
 
+// PF1 of the 2026-09-25 full review: the per-row CoreText render cache that
+// closed the background terminal's ~0.1-core repaint cost - see
+// TerminalRowRenderCacheSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_ROW_RENDER_CACHE_TESTS"] == "1" {
+    exit(TerminalRowRenderCacheSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grand-line-shell-selection-investigate-fix`: same convention, for the
 // Shell tab's own text selection measured from real rendered pixels - see
 // TerminalSelectionRenderSelfTest.swift's header.
