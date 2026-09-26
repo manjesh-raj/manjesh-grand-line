@@ -260,10 +260,18 @@ struct GrandLineCopyCredentialIntent: AppIntent {
         // correct here: an intent may be the first thing that touches the
         // vault after a launch, and asking a store that does not exist yet
         // whether it is unlocked would answer "no" for the wrong reason.
+        //
+        // B29: passed as a **closure**, not as a value. Swift evaluates an
+        // argument before the call, so writing `vault: GrandLineServices.shared.vault`
+        // here built the store - starting the vault's git sync, creating its
+        // directory and running `adoptLocalOnlyVaultIfNeeded`, which moves
+        // files - before `copyCredential`'s `AppLockGate` check ever ran. A
+        // Shortcuts or Siri trigger did all of that against the captain's
+        // vault while the app was locked, and only then was refused.
         let name = credentialName
         let result = try await GrandLineIntentBridge.awaitAction { completion in
             GrandLineIntentActions.copyCredential(title: name,
-                                                  vault: GrandLineServices.shared.vault,
+                                                  vault: { GrandLineServices.shared.vault },
                                                   completion: completion)
         }
         return .result(dialog: IntentDialog(stringLiteral: result.message))
