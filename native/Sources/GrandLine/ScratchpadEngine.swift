@@ -316,14 +316,22 @@ struct ScratchpadParser {
             guard case .date(let date) = anchor else {
                 throw ScratchpadError.semantic("\"\(keyword)\" needs a date on its right")
             }
-            return .date(ScratchpadDates.shift(date, by: duration, sign: keyword == "before" ? -1 : 1,
-                                               calendar: context.calendar))
+            guard let shifted = ScratchpadDates.shift(date, by: duration,
+                                                      sign: keyword == "before" ? -1 : 1,
+                                                      calendar: context.calendar) else {
+                throw ScratchpadError.semantic(ScratchpadMath.outOfRange)
+            }
+            return .date(shifted)
         }
         if matchWord(["ago"]) != nil {
             guard let duration = value.quantity, duration.unit?.dimension == .duration else {
                 throw ScratchpadError.semantic("\"ago\" needs a duration on its left")
             }
-            return .date(ScratchpadDates.shift(context.now, by: duration, sign: -1, calendar: context.calendar))
+            guard let shifted = ScratchpadDates.shift(context.now, by: duration, sign: -1,
+                                                      calendar: context.calendar) else {
+                throw ScratchpadError.semantic(ScratchpadMath.outOfRange)
+            }
+            return .date(shifted)
         }
         return value
     }

@@ -94,15 +94,34 @@ enum ScratchpadDates {
         return calendar.date(byAdding: .day, value: delta, to: day) ?? day
     }
 
+    /// The largest whole count of years/months/weeks/days this will hand to
+    /// `Calendar`.
+    ///
+    /// B18: `Int(whole)` **traps** - not returns nil, not overflows - for any
+    /// `Double` past `Int.max`, so `1e30 days from today` killed the process
+    /// from a line the captain typed into a scratchpad. A cap rather than a
+    /// range check on `Int` alone, because `Int(whole) * 7` for the week case
+    /// would then overflow in its own right; a million years is already far
+    /// outside anything `Calendar` has a sensible answer for, so nothing
+    /// legitimate is turned away.
+    private static let maximumWholeUnits = 1_000_000.0
+
     /// Move `date` by a duration, calendar-aware for the units where that
     /// matters. See this file's header for why months and years are not
     /// seconds.
-    static func shift(_ date: Date, by duration: ScratchpadQuantity, sign: Int, calendar: Calendar) -> Date {
+    ///
+    /// `nil` when the duration cannot land on a real date - see
+    /// `maximumWholeUnits`. The caller turns that into a semantic error, so
+    /// an absurd input reads as a refusal rather than as a wrong date or a
+    /// crash.
+    static func shift(_ date: Date, by duration: ScratchpadQuantity, sign: Int, calendar: Calendar) -> Date? {
         guard let unit = duration.unit, unit.dimension == .duration else { return date }
         let amount = duration.amount * Double(sign)
+        guard amount.isFinite else { return nil }
         let whole = amount.rounded()
         let isWhole = abs(amount - whole) < 1e-9
         if isWhole {
+            guard whole.magnitude <= maximumWholeUnits else { return nil }
             switch unit.code {
             case "year": return calendar.date(byAdding: .year, value: Int(whole), to: date) ?? date
             case "month": return calendar.date(byAdding: .month, value: Int(whole), to: date) ?? date
@@ -111,6 +130,18 @@ enum ScratchpadDates {
             default: break
             }
         }
-        return date.addingTimeInterval(duration.base * Double(sign))
+        // The seconds path does not trap, but it does happily produce a Date
+        // a formatter cannot render - so it is bounded too, against
+        // Foundation's own idea of how far a date can be.
+        let seconds = duration.base * Double(sign)
+        guard seconds.isFinite else { return nil }
+        let shifted = date.addingTimeInterval(seconds)
+        guard shifted.isFinite,
+              shifted >= Date.distantPast, shifted <= Date.distantFuture else { return nil }
+        return shifted
     }
+}
+
+private extension Date {
+    var isFinite: Bool { timeIntervalSinceReferenceDate.isFinite }
 }
