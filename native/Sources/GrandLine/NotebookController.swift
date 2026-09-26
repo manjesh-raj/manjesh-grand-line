@@ -707,11 +707,25 @@ final class NotebookController: NSViewController, DaylightDrillActions {
 
     // MARK: Rendering the three panels
 
+    /// PF11 of the 2026-09-25 full review: the daily-notes section was already
+    /// capped (a year of them is 365 rows and a nav column is not an archive,
+    /// GL-35) and the other two were not - so a notebook with three hundred
+    /// top-level pages, or one crowded folder, put three hundred rows into a
+    /// 208pt column and paid to rebuild every one of them on every publish.
+    /// The same cap and the same honest header count apply to all three now.
+    private static func section(header: String,
+                                pages: [NotebookPage],
+                                cap: Int) -> HelmPageSidebar.Section {
+        let shown = Array(pages.prefix(cap))
+        let title = pages.count > cap ? "\(header) (\(pages.count))" : header
+        return .init(header: title, rows: shown.map(Self.row(for:)))
+    }
+
     private func rebuildSidebar() {
         var sections: [HelmPageSidebar.Section] = []
         let topLevel = pages.filter { $0.folder.isEmpty }
         if !topLevel.isEmpty {
-            sections.append(.init(header: "Pages", rows: topLevel.map(Self.row(for:))))
+            sections.append(Self.section(header: "Pages", pages: topLevel, cap: Self.folderRowsShown))
         }
         let daily = pages.filter(\.isDailyNote).sorted { $0.id > $1.id }
         if !daily.isEmpty {
@@ -724,8 +738,9 @@ final class NotebookController: NSViewController, DaylightDrillActions {
         for folder in store.folders(in: pages) where folder != NotebookStore.dailyFolder {
             let inFolder = pages.filter { $0.folder == folder }
             guard !inFolder.isEmpty else { continue }
-            sections.append(.init(header: NotebookStore.humanise(lastComponentOf: folder),
-                                  rows: inFolder.map(Self.row(for:))))
+            sections.append(Self.section(header: NotebookStore.humanise(lastComponentOf: folder),
+                                         pages: inFolder,
+                                         cap: Self.folderRowsShown))
         }
         sidebar.setSections(sections)
         if let currentID { sidebar.select(currentID) }
@@ -734,6 +749,11 @@ final class NotebookController: NSViewController, DaylightDrillActions {
     /// How many dated pages the sidebar lists. Thirty-one is one month, which
     /// is the window a daily note is actually reached backwards through.
     static let dailyRowsShown = 31
+    /// PF11: the same ceiling for the "Pages" run and for each folder. Chosen
+    /// to match `dailyRowsShown`'s own reasoning rather than a second number -
+    /// a 208pt nav column that needs more than this is a search box's job, and
+    /// the header states the real total whenever rows are being held back.
+    static let folderRowsShown = 31
 
     private static func row(for page: NotebookPage) -> HelmPageSidebar.Row {
         .init(id: page.id,

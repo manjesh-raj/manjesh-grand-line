@@ -55,6 +55,7 @@ enum NotebookViewSelfTest {
         checkViewModeGeometry(check)
         checkThemesBothRegisters(check, startingTheme: startingTheme)
         checkEditorHighlightsWikiLinks(check)
+        checkTheSidebarIsCappedAndDoesNotChurn(check)
 
         ThemeManager.shared.setTheme(startingTheme)
 
@@ -116,6 +117,58 @@ enum NotebookViewSelfTest {
             body(controller, store, window)
             window.contentViewController = nil
             window.close()
+        }
+    }
+
+    // MARK: PF11 - the sidebar is capped, and rebuilds only when it changes
+
+    /// PF11 of the 2026-09-25 full review, both halves.
+    ///
+    /// `HelmPageSidebar.setSections` always tore every row down and rebuilt
+    /// it, however little had changed, and Notebook fed it a row per page with
+    /// no cap on the "Pages" run or on any folder - so the rebuild cost grew
+    /// without bound as the notebook grew, and was paid on every publish.
+    /// (The daily-notes run was already capped, which is the shape the other
+    /// two now follow.)
+    ///
+    /// The cap is asserted against a notebook far larger than the ceiling, and
+    /// the churn by row-view identity - the only thing that tells a rebuild
+    /// from a no-op.
+    private static func checkTheSidebarIsCappedAndDoesNotChurn(_ check: (Bool, String) -> Void) {
+        var seed: [(String, String)] = []
+        for i in 0..<120 {
+            seed.append(("page-\(String(format: "%03d", i))", "# Page \(i)\n\nbody\n"))
+        }
+        for i in 0..<40 {
+            seed.append(("migrations/step-\(String(format: "%03d", i))", "# Step \(i)\n\nbody\n"))
+        }
+        withMountedPage(seed: seed) { page, _, _ in
+            check(page.debugPages.count == 160,
+                  "the fixture seeded \(page.debugPages.count) pages, want 160 - fewer than the "
+                  + "cap would make this case vacuous")
+
+            let sidebar = page.debugSidebar
+            let cap = NotebookController.folderRowsShown
+            check(sidebar.debugRowCount <= cap * 2,
+                  "the column drew \(sidebar.debugRowCount) rows for 160 pages; both runs are "
+                  + "capped at \(cap) now (GL-35 - a nav column is not an archive)")
+            check(sidebar.debugHeaders.contains { $0.contains("120") },
+                  "a capped run states its real total, got headers \(sidebar.debugHeaders)")
+
+            // And the churn half: rebuilding from the same pages must touch
+            // no view at all.
+            let before = sidebar.debugRowViews
+            check(!before.isEmpty, "the column drew no rows - the identity check would be vacuous")
+            page.debugReload()
+            let after = sidebar.debugRowViews
+            check(after.count == before.count && zip(before, after).allSatisfy { $0 === $1 },
+                  "an unchanged page list rebuilt every row view - PF11 is exactly this")
+
+            // The other direction: a real change still rebuilds.
+            page.debugNewPage()
+            let changed = sidebar.debugRowViews
+            check(!zip(before, changed).allSatisfy { $0 === $1 },
+                  "adding a page must still rebuild the column")
         }
     }
 
