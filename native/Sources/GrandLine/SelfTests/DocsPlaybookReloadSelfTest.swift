@@ -69,6 +69,7 @@ enum DocsPlaybookReloadSelfTest {
         var ok = true
         checkASecondLoadPicksUpAChangedSubresource(&ok)
         checkTheSyncNotificationPathReloadsToo(&ok)
+        checkThePageIsUnloadedOffScreenAndRestoredOnReturn(&ok)
         print(ok ? "DocsPlaybookReloadSelfTest: all checks passed"
                  : "DocsPlaybookReloadSelfTest: FAILED")
         return ok
@@ -198,6 +199,53 @@ enum DocsPlaybookReloadSelfTest {
             fail("a DocsSyncCenter notification left the page reporting \(after ?? "nil"), not s2 - "
                  + "freshly-synced Playbook content would stay invisible until relaunch", &ok)
         }
+    }
+
+    /// PF5 of the 2026-09-25 full review: Docs is the app's largest web
+    /// surface (roughly 12MB of JavaScript still parsed after one tour), it
+    /// stays mounted for the process's life like every destination (GL-37),
+    /// and unlike the Whiteboard and Code Preview it had no visibility gating
+    /// at all - so everything it parsed stayed resident for as long as the app
+    /// ran.
+    ///
+    /// The gate loads `about:blank` when the page goes off screen, which is
+    /// what actually tears the JavaScript heap and DOM down, and reloads the
+    /// page the captain was on when it comes back. Both halves are asserted
+    /// here, because a gate that unloads and never restores is a worse bug
+    /// than the leak: `window.__playbookVersion` has to be **gone** while
+    /// hidden and **back** afterwards.
+    private static func checkThePageIsUnloadedOffScreenAndRestoredOnReturn(_ ok: inout Bool) {
+        seedPlaybook(scriptVersion: "g1")
+        let docs = DocsController()
+        let window = mount(docs)
+        defer { window.orderOut(nil) }
+
+        guard waitForVersion(docs.debugPlaybookWebView, expected: "g1") == "g1" else {
+            fail("the scratch Playbook never loaded for the gating case - the rest would be vacuous", &ok)
+            return
+        }
+        check(docs.debugUnloadedPlaybookURL == nil,
+              "a visible playbook is not parked", &ok)
+
+        // Off screen: the destination model hides the view, which is what
+        // `viewDidHide` reports. Driven through the gate's own hook so the
+        // suite does not depend on a window-server transition it cannot cause.
+        docs.debugPlaybookWebView.debugReportVisibility(false)
+        check(docs.debugUnloadedPlaybookURL != nil,
+              "going off screen did not park the page - PF5 is exactly this", &ok)
+        let whileHidden = waitForVersion(docs.debugPlaybookWebView, expected: "__never__", timeout: 5)
+        check(whileHidden == nil,
+              "the page still reports \(whileHidden ?? "nil") while hidden - its script heap was "
+              + "never torn down, so nothing was actually released", &ok)
+
+        // And back: the same document, not the index, and not a blank page.
+        docs.debugPlaybookWebView.debugReportVisibility(true)
+        let restored = waitForVersion(docs.debugPlaybookWebView, expected: "g1")
+        check(restored == "g1",
+              "coming back reported \(restored ?? "nil"), not g1 - a gate that unloads and does not "
+              + "restore is worse than the leak it was fixing", &ok)
+        check(docs.debugUnloadedPlaybookURL == nil,
+              "the parked URL is cleared once it has been restored", &ok)
     }
 }
 
