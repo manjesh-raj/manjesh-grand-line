@@ -882,6 +882,7 @@ enum StickyBoardSelfTest {
         checkChecklistLogic(check)
         checkPromotionMapping(check)
         checkChecklistPersistence(scratch, check)
+        checkAChecklistBurstWritesOnceAndLosesNothing(scratch, check)
         checkArchiveLogic(scratch, check)
         checkUnknownKeyPassthrough(scratch, check)
 
@@ -1000,6 +1001,72 @@ enum StickyBoardSelfTest {
 
     /// A checklist survives a real disk round trip, and `text` stays the
     /// authoritative rendering the rest of the app reads.
+    /// PF13 of the 2026-09-25 full review: eight structural mutations wrote
+    /// immediately, bypassing the debounce every other mutation goes through.
+    /// Most of those eight are one deliberate gesture each and are right to
+    /// write at once (see `setChecklist`'s own note, and the corrected comment
+    /// on `updatePosition` that the review read). **The checklist is the one
+    /// place a real burst reaches this store**: ticking through a ten-item
+    /// list, or Return-Return-Return to add rows, was ten whole-file YAML
+    /// rewrites in a couple of seconds, each re-serialising every note on the
+    /// board.
+    ///
+    /// The coalescing is the easy half and losing a tick is the dangerous one,
+    /// so the data comes first: after a burst and a flush, every toggle, every
+    /// added row and every removal has to be on disk, read back through a
+    /// fresh store. Only then the write count.
+    private static func checkAChecklistBurstWritesOnceAndLosesNothing(
+        _ scratch: URL, _ check: (Bool, String) -> Void) {
+        let root = scratch.appendingPathComponent("checklist-burst", isDirectory: true)
+        let store = StickyBoardStore(root: root)
+        let note = store.addNote(title: "Cutover", text: "one\ntwo\nthree\nfour\nfive\nsix",
+                                 color: .blue, x: 0, y: 0, rotationDegrees: 0)
+        guard let converted = store.convertToChecklist(id: note.id),
+              let items = converted.checklist, items.count == 6 else {
+            check(false, "the fixture could not build a six-item checklist")
+            return
+        }
+
+        // The burst: no run loop turn between the mutations, which is what a
+        // captain working down a list produces.
+        store.debugResetPersistCount()
+        for item in items where item.text != "three" {
+            store.toggleChecklistItem(noteID: note.id, itemID: item.id)
+        }
+        _ = store.addChecklistItem(noteID: note.id, text: "seven")
+        _ = store.addChecklistItem(noteID: note.id, text: "eight")
+        if let doomed = store.notes.first(where: { $0.id == note.id })?.checklist?
+            .first(where: { $0.text == "two" }) {
+            store.removeChecklistItem(noteID: note.id, itemID: doomed.id)
+        }
+        let writesDuringBurst = store.debugPersistCount
+
+        check(store.hasPendingWrite,
+              "the burst must leave a debounced write outstanding - without one the count "
+              + "assertion below would be measuring nothing")
+        store.flushPendingWrite()
+
+        let reloaded = StickyBoardStore(root: root)
+        guard let back = reloaded.notes.first(where: { $0.id == note.id }),
+              let backItems = back.checklist else {
+            check(false, "the note did not survive the burst at all")
+            return
+        }
+        check(backItems.map(\.text) == ["one", "three", "four", "five", "six", "seven", "eight"],
+              "the burst's adds and removal did not all reach disk, got \(backItems.map(\.text))")
+        let done = Set(backItems.filter(\.isDone).map(\.text))
+        check(done == ["one", "four", "five", "six"],
+              "the burst's toggles did not all reach disk, done is \(done.sorted())")
+        check(back.text == StickyChecklist.text(fromItems: backItems),
+              "`text` must stay in step with the checklist across a coalesced write")
+
+        check(writesDuringBurst == 0,
+              "the burst itself wrote the whole board \(writesDuringBurst) times; PF13 is "
+              + "exactly this - it must coalesce into the one write the flush then does")
+        check(store.debugPersistCount == 1,
+              "the flush wrote once, got \(store.debugPersistCount)")
+    }
+
     private static func checkChecklistPersistence(_ scratch: URL, _ check: (Bool, String) -> Void) {
         let root = scratch.appendingPathComponent("checklist-store", isDirectory: true)
         let store = StickyBoardStore(root: root)
@@ -1023,6 +1090,10 @@ enum StickyBoardSelfTest {
             return
         }
         store.toggleChecklistItem(noteID: note.id, itemID: firstItem.id)
+        // PF13: checklist mutations come in bursts and are debounced now, so a
+        // read-back has to drain first - exactly as leaving the destination,
+        // a field giving up focus and `applicationWillTerminate` all do.
+        store.flushPendingWrite()
 
         let reloaded = StickyBoardStore(root: root)
         guard let r = reloaded.notes.first(where: { $0.id == note.id }) else {
