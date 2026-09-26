@@ -181,14 +181,67 @@ enum WindowChromeFusion {
         // reject the overwhelming majority of points with one rect test
         // instead of resolving three system buttons - see that method for why
         // the difference is not academic.
-        clusterRects[ObjectIdentifier(window)] = buttons.reduce(NSRect.null) {
+        setClusterRect(buttons.reduce(NSRect.null) {
             $0.union($1.convert($1.bounds, to: nil))
+        }, for: window)
+    }
+
+    // MARK: PF9 - the cluster-rect cache holds windows weakly and prunes
+    //
+    // PF9 of the 2026-09-25 full review. This cache used to be
+    // `[ObjectIdentifier(window): NSRect]` and nothing ever removed an entry,
+    // which is two separate defects wearing one coat:
+    //
+    //   1. **A leak.** Every host page, the host editor, the probe's windows
+    //      and every window a self-test mounts left an entry behind for the
+    //      life of the process. Small individually; unbounded by construction,
+    //      which GL-35 is about.
+    //   2. **An aliasing hazard, which is the one that could actually be
+    //      seen.** `ObjectIdentifier` is the object's address. A deallocated
+    //      window's address is free for reuse, so a *later* window allocated
+    //      there inherits the dead one's cached cluster rect - and
+    //      `trafficLightHitTest` rejects every point outside that rect before
+    //      resolving a button. A window whose inherited rect is in the wrong
+    //      place has dead traffic lights, which is precisely the
+    //      captain-reported bug the forwarding below exists to fix.
+    //
+    // Holding the window **weakly** fixes both at once: an entry whose window
+    // is gone is dropped on the next write, and the lookup compares object
+    // identity (`===`) against a live reference rather than a recycled
+    // address, so an alias cannot be mistaken for a hit.
+    private final class ClusterRectEntry {
+        weak var window: NSWindow?
+        var rect: NSRect
+        init(window: NSWindow, rect: NSRect) {
+            self.window = window
+            self.rect = rect
         }
     }
 
-    /// The cluster's last known window-coordinate rect, per window. Written
-    /// only by `positionTrafficLights`, which is the one thing that moves it.
-    private static var clusterRects: [ObjectIdentifier: NSRect] = [:]
+    private static var clusterRects: [ClusterRectEntry] = []
+
+    private static func setClusterRect(_ rect: NSRect, for window: NSWindow) {
+        // Prune on write: the cache is only ever touched from the main thread
+        // and only by `positionTrafficLights`, so this is the one place an
+        // entry can be created and the natural place to drop the dead ones.
+        clusterRects.removeAll { $0.window == nil }
+        if let existing = clusterRects.first(where: { $0.window === window }) {
+            existing.rect = rect
+            return
+        }
+        clusterRects.append(ClusterRectEntry(window: window, rect: rect))
+    }
+
+    private static func clusterRect(for window: NSWindow) -> NSRect? {
+        clusterRects.first { $0.window === window }?.rect
+    }
+
+    #if FM_SELFTESTS
+    /// How many windows the cache is currently holding a rect for, so a suite
+    /// can assert it shrinks as windows go away.
+    static var debugClusterRectCount: Int { clusterRects.count }
+    static func debugResetClusterRects() { clusterRects.removeAll() }
+    #endif
 
     /// **The half A1 shipped without, and the reason close/minimise/zoom were
     /// dead to the mouse for every captain on every build since it landed.**
@@ -319,7 +372,7 @@ enum WindowChromeFusion {
         // cluster only ever moves in `positionTrafficLights`, so its rect is
         // cached there and this is one containment test for every point that
         // is not on a traffic light.
-        guard let cluster = clusterRects[ObjectIdentifier(window)],
+        guard let cluster = clusterRect(for: window),
               !cluster.isNull,
               cluster.insetBy(dx: -hitSlop, dy: -hitSlop).contains(point) else { return nil }
 

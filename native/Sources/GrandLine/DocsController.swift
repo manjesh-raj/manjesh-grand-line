@@ -41,7 +41,7 @@ final class DocsController: NSViewController, DaylightDrillActions {
     private let pageToolbar = HelmPageToolbar()
     private let playbookActions = NSStackView()
 
-    private var webView: WKWebView!
+    private var webView: DocsWebView!
     private var backButton: HelmButton!
     private var forwardButton: HelmButton!
     private var reloadButton: HelmButton!
@@ -153,9 +153,26 @@ final class DocsController: NSViewController, DaylightDrillActions {
 
     private func buildPlaybookContainer(in root: NSView) {
         let config = WKWebViewConfiguration()
-        webView = WKWebView(frame: .zero, configuration: config)
+        // PF5 of the 2026-09-25 full review also asked for a shared
+        // `WKProcessPool` across this app's four web views. **That is not
+        // actionable and deliberately was not done**: `WKProcessPool` has been
+        // deprecated since macOS 12 with "creating and using multiple
+        // instances of WKProcessPool no longer has any effect" - modern WebKit
+        // decides process sharing itself - so setting one buys nothing and
+        // costs a deprecation warning, which GL-07 fails the build on. This
+        // app targets macOS 13. What is left of PF5 is real and is below.
+        //
+        // PF5: the playbook is a local, synced copy of a repo - every byte it
+        // renders is already a file on this machine. A persistent store meant
+        // WebKit kept its own second copy (disk cache, localStorage) of pages
+        // nothing ever reads back, for the life of the install.
+        config.websiteDataStore = .nonPersistent()
+        webView = DocsWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.translatesAutoresizingMaskIntoConstraints = false
+        webView.onVisibilityChanged = { [weak self] onScreen in
+            self?.playbookVisibilityChanged(onScreen: onScreen)
+        }
 
         buildEmptyState()
 
@@ -285,6 +302,49 @@ final class DocsController: NSViewController, DaylightDrillActions {
         }
     }
 
+    // MARK: PF5 - unload the playbook while it is off screen
+
+    /// PF5 of the 2026-09-25 full review: the Docs page is the app's largest
+    /// web surface (the review measured roughly 12MB of JavaScript still
+    /// parsed after one tour), it stays mounted for the process's life like
+    /// every other destination (GL-37), and unlike the Whiteboard and Code
+    /// Preview it had no gating of any kind - so everything it parsed stayed
+    /// resident for as long as the app ran.
+    ///
+    /// WebKit offers no "purge this view" call, so the only real lever is to
+    /// stop hosting the document: going off screen loads `about:blank`, which
+    /// tears the page's JavaScript heap and DOM down, and coming back loads
+    /// the page the captain was on. Two things make that safe rather than
+    /// merely cheaper. `loadDocsIfAvailable` already **reloads** on every
+    /// sync, so a freshly loaded page is this page's normal state rather than
+    /// a new behaviour. And the URL is remembered, so returning lands where
+    /// you left rather than back at the index.
+    ///
+    /// What is genuinely lost is the web view's own back/forward list, which
+    /// the toolbar's nav triplet reads; it is rebuilt from the restored page
+    /// onwards. That is the deliberate trade.
+    private var unloadedPlaybookURL: URL?
+
+    private func playbookVisibilityChanged(onScreen: Bool) {
+        guard isViewLoaded, DocsStore.isSynced else { return }
+        if onScreen {
+            guard let restore = unloadedPlaybookURL else { return }
+            unloadedPlaybookURL = nil
+            webView.loadFileURL(restore, allowingReadAccessTo: DocsStore.folderURL)
+            updateNavButtons()
+        } else {
+            guard unloadedPlaybookURL == nil,
+                  let current = webView.url, current.isFileURL else { return }
+            unloadedPlaybookURL = current
+            // `about:blank`, not `loadHTMLString("")` - an empty string is a
+            // no-op in WebKit and leaves the old document (and its JavaScript
+            // heap) exactly where it was, which is the whole thing being
+            // released here. Measured: the suite below still read
+            // `window.__playbookVersion` back off the "unloaded" view.
+            webView.load(URLRequest(url: URL(string: "about:blank")!))
+        }
+    }
+
     private func loadDocsIfAvailable() {
         defer { onDrillSubtitleChanged?() }
         guard DocsStore.isSynced else {
@@ -294,7 +354,19 @@ final class DocsController: NSViewController, DaylightDrillActions {
         }
         emptyStateContainer.isHidden = true
         webView.isHidden = false
-        if webView.url == nil {
+        // PF5: a sync can land while the page is parked off screen. Loading
+        // it back in here would undo the parking for a page nobody is looking
+        // at - so record that the restore should land on the freshly synced
+        // index instead, and stay unloaded.
+        if unloadedPlaybookURL != nil, !webView.isOnScreen {
+            unloadedPlaybookURL = DocsStore.indexURL
+            return
+        }
+        // PF5: a page that was unloaded while off screen has a non-nil, non
+        // -file `url`, so `reload()` would reload `about:blank`. Treat it as
+        // "nothing loaded" and load the document again.
+        if webView.url == nil || unloadedPlaybookURL != nil {
+            unloadedPlaybookURL = nil
             webView.loadFileURL(DocsStore.indexURL, allowingReadAccessTo: DocsStore.folderURL)
         } else {
             webView.reload()
@@ -310,7 +382,10 @@ final class DocsController: NSViewController, DaylightDrillActions {
     /// out of the loaded page (`evaluateJavaScript`) rather than only
     /// measuring the view. Used by `DocsPlaybookReloadSelfTest` to prove the
     /// subresource-cache fix in `loadDocsIfAvailable` still holds.
-    var debugPlaybookWebView: WKWebView { webView }
+    var debugPlaybookWebView: DocsWebView { webView }
+    /// PF5: the page the gate parked while off screen, so a suite can tell an
+    /// unloaded playbook from one that merely navigated somewhere.
+    var debugUnloadedPlaybookURL: URL? { unloadedPlaybookURL }
     /// The toolbar's real Reload control, so a suite drives the same
     /// target/action a click does instead of calling the handler directly.
     var debugReloadButton: NSButton { reloadButton }
@@ -353,6 +428,14 @@ extension DocsController: WKNavigationDelegate {
             decisionHandler(.allow)
             return
         }
+        // PF5: the gate parks this view on `about:blank` while the page is off
+        // screen. Without this the refusal below would cancel that navigation
+        // and hand `about:blank` to the *system browser* - so the page would
+        // never be released and a blank tab would open in Safari.
+        if url.absoluteString == "about:blank" {
+            decisionHandler(.allow)
+            return
+        }
         // Unchanged: Docs hosts a browsable site, so anything it refuses is
         // handed to the system browser. (The two vendored-bundle hosts are
         // deliberately stricter - see `WebNavigationPolicy.opensExternally`.)
@@ -367,4 +450,105 @@ extension DocsController: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         updateNavButtons()
     }
+}
+
+// MARK: - The playbook's web view
+
+/// PF5: the Docs playbook's `WKWebView`, with the same effective-visibility
+/// gate `WhiteboardWebView` and `CodePreviewWebView` already carry.
+///
+/// The derivation is deliberately identical to theirs (and to
+/// `CockpitTerminalView.refreshDisplayGating`), including reading occlusion
+/// from the notification rather than live: a process the window server does
+/// not composite reports "not visible" for a perfectly fine window, and a
+/// headless self-test must not be told its page is hidden.
+final class DocsWebView: WKWebView {
+
+    /// Called whenever effective visibility changes, with the new state.
+    var onVisibilityChanged: ((Bool) -> Void)?
+
+    private var occlusionObserver: NSObjectProtocol?
+    private var windowOccluded = false
+    private var lastReportedOnScreen: Bool?
+
+    deinit {
+        if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) }
+    }
+
+    /// Is this view genuinely on screen right now?
+    ///
+    /// Deliberately **not** `window.isVisible`, which the two peers read: a
+    /// window has a content view controller before it is ordered in, so the
+    /// ordinary mounting sequence passes through "has a window, not visible
+    /// yet" and a gate that believed it would unload a page nobody had
+    /// navigated away from. What this gate actually cares about is the
+    /// destination model hiding the view, which is `isHiddenOrHasHiddenAncestor`;
+    /// a minimised or fully covered window arrives through the occlusion
+    /// notification instead, and a view with no window at all has nothing on
+    /// screen by definition.
+    var isOnScreen: Bool {
+        guard window != nil else { return false }
+        return !windowOccluded && !isHiddenOrHasHiddenAncestor
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        registerOcclusionObserver()
+        refreshVisibility()
+    }
+
+    override func viewDidHide() {
+        super.viewDidHide()
+        refreshVisibility()
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        refreshVisibility()
+    }
+
+    private func registerOcclusionObserver() {
+        if let occlusionObserver {
+            NotificationCenter.default.removeObserver(occlusionObserver)
+            self.occlusionObserver = nil
+        }
+        windowOccluded = false
+        guard let window else { return }
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+        ) { [weak self] note in
+            guard let self else { return }
+            if let w = note.object as? NSWindow {
+                self.windowOccluded = !w.occlusionState.contains(.visible)
+            }
+            self.refreshVisibility()
+        }
+    }
+
+    /// Report a *change* only.
+    ///
+    /// A view that has not been on screen yet is recorded silently: the first
+    /// state a freshly built view has is "no window", and treating that as a
+    /// transition to hidden would unload a page that was never shown - which
+    /// is exactly what it did to `DocsPlaybookReloadSelfTest`, a suite that
+    /// drives the controller before mounting it.
+    func refreshVisibility() {
+        let onScreen = isOnScreen
+        guard onScreen != lastReportedOnScreen else { return }
+        let wasNeverOnScreen = lastReportedOnScreen == nil
+        lastReportedOnScreen = onScreen
+        guard onScreen || !wasNeverOnScreen else { return }
+        onVisibilityChanged?(onScreen)
+    }
+
+    #if FM_SELFTESTS
+    /// Drive the gate without a real window-server transition, so a suite can
+    /// assert the unload/restore behaviour rather than only the derivation.
+    func debugReportVisibility(_ onScreen: Bool) {
+        guard onScreen != lastReportedOnScreen else { return }
+        lastReportedOnScreen = onScreen
+        onVisibilityChanged?(onScreen)
+    }
+    var debugIsOnScreen: Bool { isOnScreen }
+    #endif
 }

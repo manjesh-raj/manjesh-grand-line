@@ -58,9 +58,100 @@ enum ReadingListSelfTest {
         checkAIPromptAndParse(check)
         checkCaptureRouterDefault(check)
         checkDestinationWiring(check)
+        checkAMetadataBurstWritesOnceAndLosesNothing(check)
+        checkIconsAreReadFromDiskOnce(check)
 
         print(ok ? "ReadingListSelfTest: OK" : "ReadingListSelfTest: FAILURES")
         return ok
+    }
+
+    // MARK: PF12 - one write for a burst, and one disk read per icon
+
+    /// PF12's second half. `persist()` rewrites the whole YAML file, and the
+    /// metadata path called it once per fetched link - opening the page kicks
+    /// off one `LinkPresentation` fetch per unresolved link, so a list of
+    /// fifty rewrote fifty links fifty times.
+    ///
+    /// The coalescing is the easy half to get right and the dangerous half to
+    /// get wrong, so this asserts the data first: after a burst and a flush,
+    /// every fetched title and every failure reason has to be on disk, read
+    /// back through a genuinely fresh store. Only then the write count.
+    private static func checkAMetadataBurstWritesOnceAndLosesNothing(_ check: (Bool, String) -> Void) {
+        scratchStore { store, root in
+            var ids: [String] = []
+            for i in 0..<20 {
+                guard case .added(let added) = store.add("https://example.com/article-\(i)") else { continue }
+                ids.append(added.id)
+            }
+            check(ids.count == 20,
+                  "the fixture added \(ids.count) links, want 20 - fewer would make the write "
+                  + "count below vacuous")
+
+            // The burst: no run loop turn between the results, which is what a
+            // page full of cached `LinkPresentation` answers looks like.
+            store.debugResetPersistCount()
+            for (i, id) in ids.enumerated() {
+                if i % 5 == 0 {
+                    store.applyMetadataFailure(id: id, reason: "no answer \(i)")
+                } else {
+                    store.applyMetadata(id: id, ReadingListMetadata(title: "Title \(i)"))
+                }
+            }
+            let writesDuringBurst = store.debugPersistCount
+            store.flush()
+
+            let reread = ReadingListStore(root: root)
+            var wrong: [String] = []
+            for (i, id) in ids.enumerated() {
+                guard let link = reread.links.first(where: { $0.id == id }) else {
+                    wrong.append("\(i): missing")
+                    continue
+                }
+                if i % 5 == 0 {
+                    if link.metadataState.failureReason != "no answer \(i)" {
+                        wrong.append("\(i): state is \(link.metadataState)")
+                    }
+                } else if link.title != "Title \(i)" {
+                    wrong.append("\(i): title is \(link.title)")
+                }
+            }
+            check(wrong.isEmpty,
+                  "a metadata burst did not all reach disk: \(wrong.prefix(5))")
+            check(writesDuringBurst == 0,
+                  "the burst itself wrote the whole file \(writesDuringBurst) times; PF12 is "
+                  + "exactly this - it must coalesce into the one write `flush` then does")
+            check(store.debugPersistCount == 1,
+                  "the flush wrote once, got \(store.debugPersistCount)")
+        }
+    }
+
+    /// PF12's first half: every grid rebuild asked the store for every card's
+    /// icon, and every call read a PNG off disk - a filter keystroke, a tag
+    /// edit or a metadata result landing re-read one file per saved link.
+    private static func checkIconsAreReadFromDiskOnce(_ check: (Bool, String) -> Void) {
+        scratchStore { store, _ in
+            guard case .added(let link) = store.add("https://example.com/one") else {
+                check(false, "the fixture could not add a link")
+                return
+            }
+            store.debugResetIconDiskReads()
+            _ = store.iconPNG(forHost: link.host)
+            check(store.debugIconDiskReads == 1,
+                  "the first ask reads the file, got \(store.debugIconDiskReads) - without that "
+                  + "the check below would be vacuous")
+            for _ in 0..<50 { _ = store.iconPNG(forHost: link.host) }
+            check(store.debugIconDiskReads == 1,
+                  "fifty more asks cost \(store.debugIconDiskReads) disk reads; an icon only "
+                  + "changes when `writeIcon` writes one")
+
+            // "This host has no icon" is the common case and must be cached
+            // too - it is what makes a card draw its monogram.
+            store.debugResetIconDiskReads()
+            for _ in 0..<10 { _ = store.iconPNG(forHost: "nothing-here.example.com") }
+            check(store.debugIconDiskReads == 1,
+                  "a missing icon was re-read \(store.debugIconDiskReads) times; the absence is "
+                  + "as cacheable as the file")
+        }
     }
 
     // MARK: Scratch helpers

@@ -69,6 +69,20 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     /// Re-derives the terminal size from the current frame with the floor
     /// applied. Safe to call at any time; a no-op when nothing changes.
+    // MARK: - Grand Line patch 7: per-row render cache storage
+    //
+    // The cache itself and its invalidation live in
+    // `Apple/AppleTerminalView.swift` (see `Vendor/SwiftTerm/README.md`'s
+    // "Seventh patch"); only the storage has to be declared on the concrete
+    // view class, exactly as patch 5's `minimumColumns` is.
+    var lineRenderCache: [Int: CachedLineRender] = [:]
+    var lineRenderStyleEpoch: UInt64 = 0
+    /// Counters a suite reads to prove the cache is actually being hit.
+    /// Always compiled: two increments are not worth a conditional, and a
+    /// number nobody can read is a cache nobody can prove works.
+    public internal(set) var lineRenderCacheHits: Int = 0
+    public internal(set) var lineRenderCacheMisses: Int = 0
+
     public func applyMinimumColumnsIfNeeded() {
         guard cellDimension != nil, frame.width > 0, frame.height > 0 else { return }
         _ = processSizeChange(newSize: frame.size)

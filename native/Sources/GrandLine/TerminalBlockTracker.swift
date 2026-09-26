@@ -76,6 +76,63 @@ final class TerminalBlockTracker {
     /// a long-lived session's block list doesn't grow without bound.
     private let maxBlocks = 500
 
+    // MARK: PF15 - a count is not a bound
+    //
+    // PF15 of the 2026-09-25 full review: `maxBlocks` caps how *many* blocks
+    // are kept and says nothing about how large one is. A block's
+    // `outputText` is a full copy of everything the command printed, so one
+    // `cat` of a large file, one `journalctl` without a limit or one verbose
+    // build is a single block holding tens of megabytes - and five hundred of
+    // those slots is not a bound on anything (GL-35: "nothing unbounded").
+    //
+    // Two caps, because one does not imply the other. A single block is
+    // clipped to `maxBlockOutputBytes`, and the tracker as a whole is held
+    // under `maxTotalOutputBytes` by dropping oldest blocks - so a hundred
+    // merely large blocks are bounded as well as one enormous one.
+    //
+    // **What is clipped says so** (GL-14: unknown is never rendered as
+    // nothing). A clipped block keeps its head *and* its tail with a stated
+    // marker between them: the head is where a command's first error is, the
+    // tail is where it ended up, and the middle of a very long run is the part
+    // nobody scrolls to.
+    /// Calibrated against the count cap rather than guessed: a real block's
+    /// `outputText` measured about 32KB in `BlockViewVolumeSelfTest`'s own
+    /// 400-command fixture (`outputRegion` keeps rather more than the lines
+    /// the command printed), so `maxBlocks` worth of ordinary blocks is
+    /// roughly 16MB. The total is set above that on purpose - **the count cap
+    /// still binds first for an ordinary session**, and this one only binds
+    /// when blocks are unusually large, which is the case it exists for. The
+    /// per-block cap is what stops one `cat` of a large file from being
+    /// half the budget on its own.
+    static let maxBlockOutputBytes = 256 * 1024
+    /// Not a `let` only so a suite can drive the trim loop at a size a
+    /// headless terminal can actually reach: a block's output is itself
+    /// bounded by the terminal's scrollback, so producing 32MB of it through
+    /// a real `Terminal` is not something a self-test can do. The value below
+    /// is what ships; `debugSetMaxTotalOutputBytes` is the only other writer
+    /// and exists only under `FM_SELFTESTS`.
+    private(set) static var maxTotalOutputBytes = 32 * 1024 * 1024
+
+    #if FM_SELFTESTS
+    static func debugSetMaxTotalOutputBytes(_ bytes: Int) { maxTotalOutputBytes = bytes }
+    static func debugResetMaxTotalOutputBytes() { maxTotalOutputBytes = 32 * 1024 * 1024 }
+    #endif
+
+    /// Clip one block's output, keeping its head and tail and saying what was
+    /// dropped. Returns the text unchanged when it is already within the cap.
+    static func clipOutput(_ text: String) -> String {
+        let bytes = text.utf8.count
+        guard bytes > maxBlockOutputBytes else { return text }
+        let keepEachEnd = maxBlockOutputBytes / 2
+        let head = String(decoding: Array(text.utf8.prefix(keepEachEnd)), as: UTF8.self)
+        let tail = String(decoding: Array(text.utf8.suffix(keepEachEnd)), as: UTF8.self)
+        let dropped = bytes - (keepEachEnd * 2)
+        return head
+            + "\n\n[\(dropped) characters of this block's output are not kept - block view caps a "
+            + "single block at \(maxBlockOutputBytes / 1024)KB]\n\n"
+            + tail
+    }
+
     private weak var terminal: Terminal?
     private var openBlockID: UUID?
 
@@ -173,8 +230,12 @@ final class TerminalBlockTracker {
         let outputText = Self.outputRegion(from: startSnapshot, current: Self.bufferLines(terminal))
 
         blocks[idx].commandText = commandText
-        blocks[idx].outputText = outputText
+        // PF15: one command's output is not bounded by a count of commands.
+        blocks[idx].outputText = Self.clipOutput(outputText)
         blocks[idx].status = .finished(exitCode: exitCode)
+        // PF15: the size cap has to run where the *output* lands, not only
+        // where a block is opened - a single enormous block arrives here.
+        trimIfNeeded()
         onChange?()
     }
 
@@ -198,6 +259,15 @@ final class TerminalBlockTracker {
     private func trimIfNeeded() {
         if blocks.count > maxBlocks {
             blocks.removeFirst(blocks.count - maxBlocks)
+        }
+        // PF15: and the same again by size. Oldest first, like the count cap,
+        // and never down to nothing - the block being written right now is
+        // kept whatever it costs, because dropping it would make block view
+        // lose the command the captain just ran.
+        var total = blocks.reduce(0) { $0 + $1.outputText.utf8.count }
+        while total > Self.maxTotalOutputBytes, blocks.count > 1,
+              blocks[0].id != openBlockID {
+            total -= blocks.removeFirst().outputText.utf8.count
         }
     }
 

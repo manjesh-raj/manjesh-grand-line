@@ -55,6 +55,7 @@ enum ClipboardHistorySelfTest {
         checkShelvedFilesAreReported(check)
         checkFilter(check)
         checkTheSharedChangeWatch(check)
+        checkARapidBurstOfCopiesAllReachDisk(check)
 
         print(ok ? "ClipboardHistorySelfTest: OK" : "ClipboardHistorySelfTest: FAILURES")
         return ok
@@ -125,7 +126,9 @@ enum ClipboardHistorySelfTest {
                 // The stronger claim: the bytes on disk. A sealed file cannot
                 // be grepped directly, so this opens it the way the app does
                 // and greps what comes back, and also greps the raw ciphertext
-                // for good measure.
+                // for good measure. PF2 put that write on the store's own
+                // queue, so drain it first.
+                store.flush()
                 guard let raw = try? Data(contentsOf: file) else {
                     check(false, "the store wrote no file at all")
                     return
@@ -341,6 +344,10 @@ enum ClipboardHistorySelfTest {
         check(written.entries.count == 1, "one entry written")
         guard let id = written.entries.first?.id else { return }
         written.setPinned(true, id: id)
+        // PF2: the seal-and-write happens on the store's own queue now, so a
+        // read-back has to drain it first - exactly as
+        // `applicationWillTerminate` does.
+        written.flush()
 
         let reopened = ClipboardHistoryStore(fileURL: file, key: key)
         check(reopened.entries.count == 1, "one entry read back, found \(reopened.entries.count)")
@@ -519,6 +526,7 @@ enum ClipboardHistorySelfTest {
             _ = seeded.record(from: pasteboard)
         }
         check(seeded.entries.count == 1, "the fixture sealed one entry")
+        seeded.flush()   // PF2: the write is off-main now.
         let reopened = ClipboardHistoryStore(fileURL: file, key: adopted)
         check(!reopened.loadFailed && reopened.entries.count == 1,
               "the adopted key opens a history sealed by the pre-rename key")
@@ -554,6 +562,62 @@ enum ClipboardHistorySelfTest {
               + "\(relaunched.shelvedBackups.count)")
         check(!relaunched.loadFailed,
               "with the bad file shelved away, the next launch itself reads clean")
+    }
+
+    // MARK: PF2 - the off-main write must lose nothing
+
+    /// PF2 moved the seal-and-write off the main thread and made bursts
+    /// coalesce. The performance half of that is easy to get right and easy to
+    /// prove; **this is the correctness half**, and it is the one worth a
+    /// permanent guard: a coalescing writer whose "newest snapshot wins"
+    /// bookkeeping is wrong drops whatever landed between two drains, and the
+    /// symptom is a clipboard entry that was in the picker a second ago and is
+    /// gone after a relaunch.
+    ///
+    /// So: a rapid run of copies with no run loop turn between them - exactly
+    /// what the 0.75s pasteboard tick produces when the captain copies
+    /// repeatedly - then one `flush()`, then a reopen from disk. Every one of
+    /// them has to be there, in order, with its pin intact.
+    private static func checkARapidBurstOfCopiesAllReachDisk(_ check: (Bool, String) -> Void) {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("grandline-clipboard-burst-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("clipboard-history.sealed")
+        guard let key = ClipboardHistoryKey.ephemeralKey() else {
+            check(false, "could not build a throwaway key")
+            return
+        }
+
+        let burst = 60
+        var pinnedID: String?
+        let store = ClipboardHistoryStore(fileURL: file, key: key)
+        withPasteboard { pasteboard in
+            for i in 0..<burst {
+                pasteboard.clearContents()
+                pasteboard.setString("burst-entry-\(i)", forType: .string)
+                let outcome = store.record(from: pasteboard, sourceApp: "Burst")
+                if i == 0, case .recorded(let id) = outcome { pinnedID = id }
+            }
+        }
+        // A pin part-way through the burst, so the check covers a mutation
+        // that is not an append as well.
+        if let pinnedID { store.setPinned(true, id: pinnedID) }
+
+        check(store.entries.count == burst,
+              "the fixture recorded \(store.entries.count) of \(burst) copies in memory - "
+              + "without that the disk check below would be vacuous")
+
+        store.flush()
+        let reopened = ClipboardHistoryStore(fileURL: file, key: key)
+        check(!reopened.loadFailed, "the burst left a readable file")
+        check(reopened.entries.count == burst,
+              "\(reopened.entries.count) of \(burst) copies survived the burst - a "
+              + "coalescing writer must drop none of them")
+        let texts = Set(reopened.entries.map(\.text))
+        let missing = (0..<burst).map { "burst-entry-\($0)" }.filter { !texts.contains($0) }
+        check(missing.isEmpty, "these copies never reached disk: \(missing.prefix(5))")
+        check(reopened.entries.first { $0.id == pinnedID }?.isPinned == true,
+              "a pin applied part-way through the burst survived it too")
     }
 
     // MARK: Filtering

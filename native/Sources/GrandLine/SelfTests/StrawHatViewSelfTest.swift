@@ -77,11 +77,78 @@ enum StrawHatViewSelfTest {
         checkConfirmedProposalSurvivesARebuild(&ok)
         checkThemeSweep(&ok)
         checkComposerMatchesTheSearchBar(&ok)
+        checkThemeChangeDoesNotChurnTheTranscript(&ok)
 
         print(ok ? "StrawHatViewSelfTest: all checks passed" : "StrawHatViewSelfTest: FAILED")
         return ok
     }
 
+
+    // MARK: PF10 - a theme call must not churn the transcript
+
+    /// PF10 of the 2026-09-25 full review: `applyTheme` tore the whole
+    /// transcript down and re-rendered it on every call, against GL-24.
+    /// `ThemeManager.observe`'s closure fires synchronously at registration
+    /// and again on anything that re-pushes the same palette, and the crew
+    /// chat is one of twenty-seven destinations that stay mounted for the
+    /// process's life - so most of those rebuilds were for a palette that had
+    /// not moved, on a page nobody was looking at.
+    ///
+    /// Three claims, by block-view identity, which is what separates a
+    /// repaint from a rebuild:
+    ///   1. Re-applying the *same* theme rebuilds nothing.
+    ///   2. A genuinely different theme still rebuilds, on a visible page.
+    ///   3. A theme change while the page is hidden defers, and is paid on
+    ///      the next unhide - so the captain can never see the old palette.
+    private static func checkThemeChangeDoesNotChurnTheTranscript(_ ok: inout Bool) {
+        let m = mount()
+        defer { m.window.close() }
+        showCrew(m)
+        let chat = m.controller.debugChat
+        chat.append(.captain("what is overdue?"))
+        chat.append(.crew(StrawHatSection(
+            speaker: .nami, rawSpeaker: "nami", text: "Two tasks are overdue.",
+            proposals: [], droppedProposalCount: 0, followup: nil)))
+
+        let before = chat.debugTranscriptBlocks
+        check(before.count == 2,
+              "the fixture drew \(before.count) transcript blocks, want 2 - fewer would make the "
+              + "identity comparisons below vacuous", &ok)
+
+        // 1. The same palette again.
+        let current = ThemeManager.shared.theme
+        chat.applyTheme(current)
+        let afterSameTheme = chat.debugTranscriptBlocks
+        check(afterSameTheme.count == before.count
+              && zip(before, afterSameTheme).allSatisfy { $0 === $1 },
+              "re-applying the same theme rebuilt the transcript - PF10 is exactly this", &ok)
+
+        // 2. A genuinely different palette, on a visible page.
+        let other = HelmTheme.allThemes.first { $0.id != current.id } ?? current
+        chat.applyTheme(other)
+        let afterRealChange = chat.debugTranscriptBlocks
+        check(!zip(before, afterRealChange).allSatisfy { $0 === $1 },
+              "a real theme change must still re-render the transcript", &ok)
+        check(!chat.debugTranscriptRebuildIsOwed,
+              "a visible page pays its rebuild immediately rather than owing one", &ok)
+
+        // 3. A theme change while hidden defers, and is paid on unhide.
+        let visibleBlocks = chat.debugTranscriptBlocks
+        chat.isHidden = true
+        let third = HelmTheme.allThemes.first { $0.id != other.id && $0.id != current.id } ?? current
+        chat.applyTheme(third)
+        check(chat.debugTranscriptRebuildIsOwed,
+              "a theme change on a hidden page must be deferred, not paid for a page "
+              + "nobody is looking at (GL-24)", &ok)
+        check(zip(visibleBlocks, chat.debugTranscriptBlocks).allSatisfy { $0 === $1 },
+              "and it must not have rebuilt anything yet", &ok)
+        chat.isHidden = false
+        check(!chat.debugTranscriptRebuildIsOwed,
+              "showing the page again pays the deferred rebuild", &ok)
+        check(!zip(visibleBlocks, chat.debugTranscriptBlocks).allSatisfy { $0 === $1 },
+              "the deferred rebuild really happened - otherwise the page would stay in the "
+              + "old palette", &ok)
+    }
 
     // MARK: Harness
 

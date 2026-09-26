@@ -1158,7 +1158,60 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
 
     // MARK: Theming
 
+    // MARK: PF10 - a theme change repaints; it rebuilds at most once, and never
+    //       for a page nobody is looking at
+    //
+    // PF10 of the 2026-09-25 full review: `applyTheme` tore the whole
+    // transcript down and re-rendered it on every call, against GL-24 ("a
+    // theme observer repaints - it never fetches", and its companion rule that
+    // an observer must not rebuild a page that is not on screen). Two things
+    // made that expensive out of all proportion to a theme change:
+    //
+    //   1. `ThemeManager.observe`'s closure fires **synchronously at
+    //      registration** and again on anything that re-pushes the same
+    //      palette, so most calls here changed nothing at all and rebuilt
+    //      everything anyway.
+    //   2. The crew chat is one of twenty-seven destinations and stays mounted
+    //      for the process's life (GL-37). A theme change rebuilt its entire
+    //      transcript - every markdown block, every confirm card, every
+    //      handoff row - whether or not that page was the one on screen.
+    //
+    // **What this deliberately does not do is repaint each block in place.**
+    // That is the shape GL-24 actually asks for, and it is a bigger change
+    // than it looks: `StrawHatConfirmCard`, `StrawHatHandoffRow`, the
+    // attribution header and every `SRELeadMarkdown` block kind bake their
+    // colours at construction and expose no repaint seam, so giving them one
+    // means touching all of them - and a colour missed on the way is the
+    // "half-themed" defect this project has already shipped four times. What
+    // is here removes the cost for a no-op call and for a hidden page, and
+    // leaves exactly one rebuild for a real theme change on the page the
+    // captain is looking at.
+    private var appliedThemeID: String?
+    private var transcriptNeedsRebuildForTheme = false
+
+    private var isOnScreenForTheme: Bool {
+        window != nil && !isHiddenOrHasHiddenAncestor
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        rebuildTranscriptIfThemeChangedWhileHidden()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        rebuildTranscriptIfThemeChangedWhileHidden()
+    }
+
+    private func rebuildTranscriptIfThemeChangedWhileHidden() {
+        guard transcriptNeedsRebuildForTheme, isOnScreenForTheme else { return }
+        transcriptNeedsRebuildForTheme = false
+        rebuildTranscript()
+    }
+
     func applyTheme(_ theme: HelmTheme) {
+        let themeChanged = appliedThemeID != theme.id
+        appliedThemeID = theme.id
         self.theme = theme
         HelmSelection.apply(to: textView, theme: theme)
         // `chromeBackgroundHex`, not `backgroundHex` - the latter is the
@@ -1198,12 +1251,29 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         // but through `rebuildTranscript()`, never `clearMessages()`, which
         // would also forget which proposals the captain has already confirmed
         // (see `proposalResolutions`).
+        //
+        // PF10: only when the palette actually moved, and only for a page on
+        // screen. A hidden page remembers that it owes one and pays it when it
+        // is next shown, so it can never be seen in the old theme.
+        guard themeChanged else { return }
+        guard isOnScreenForTheme else {
+            transcriptNeedsRebuildForTheme = true
+            return
+        }
+        transcriptNeedsRebuildForTheme = false
         rebuildTranscript()
     }
 
     // MARK: Probe / self-test surface
 
     #if FM_SELFTESTS
+    /// PF10: the transcript's own block views, so a suite can tell a repaint
+    /// from a rebuild by object identity.
+    var debugTranscriptBlocks: [NSView] { stack.arrangedSubviews }
+    /// PF10: whether a theme change landed while this page was off screen and
+    /// is still owed.
+    var debugTranscriptRebuildIsOwed: Bool { transcriptNeedsRebuildForTheme }
+
     /// Every message's rendered text, in order - lets the view suite assert
     /// what the transcript actually holds without reaching into AppKit.
     func debugMessageTexts() -> [String] {

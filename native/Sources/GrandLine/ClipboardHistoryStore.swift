@@ -583,21 +583,87 @@ final class ClipboardHistoryStore {
         entries.removeAll { doomed.contains($0.id) }
     }
 
+    // MARK: Persisting (PF2)
+
+    /// PF2 of the 2026-09-25 full review, measured on the captain's own app:
+    /// `persist()` sealed the **whole** history - up to 200 entries of up to
+    /// 16KB each, plus every pinned one - with AES-GCM and fsynced it, on the
+    /// main thread, for **every system-wide copy**. `record` runs off the
+    /// pasteboard watch's 0.75s tick, so once the history filled up, every
+    /// copy in every app on the machine cost a visible pause in this one.
+    ///
+    /// Nothing about that work needs the main thread. It now happens on a
+    /// serial queue against an immutable snapshot, and bursts coalesce: each
+    /// mutation stamps a sequence number onto the latest snapshot, and a drain
+    /// that finds the newest snapshot already written does nothing. Ten copies
+    /// inside one write therefore cost one further seal, not ten.
+    ///
+    /// **Nothing may be lost, which is what makes this more than a `.async`.**
+    /// The snapshot is taken on the main thread at mutation time, so a later
+    /// edit can never overtake an earlier one (the sequence number is
+    /// monotonic and the queue is serial), and `flush()` - called from
+    /// `applicationWillTerminate` and by every suite that reopens the file -
+    /// drains synchronously before the process goes away.
+    private let writeQueue = DispatchQueue(label: "com.manjesh.grandline.clipboard-history.write",
+                                           qos: .utility)
+    /// Guards the three fields below, which main and `writeQueue` both touch
+    /// (GL-28).
+    private let pendingLock = NSLock()
+    private var pendingEntries: [ClipboardHistoryEntry] = []
+    private var pendingSequence: UInt64 = 0
+    private var writtenSequence: UInt64 = 0
+
     private func persist() {
         defer { onChange?() }
+        guard key != nil else { return }
+        pendingLock.lock()
+        pendingSequence &+= 1
+        pendingEntries = entries
+        pendingLock.unlock()
+        writeQueue.async { [weak self] in self?.drainPendingWrite() }
+    }
+
+    /// Write the newest pending snapshot, if it has not been written already.
+    /// Runs on `writeQueue` (or, from `flush()`, synchronously on it).
+    private func drainPendingWrite() {
         guard let key else { return }
+        pendingLock.lock()
+        let sequence = pendingSequence
+        let snapshot = pendingEntries
+        let alreadyWritten = writtenSequence
+        pendingLock.unlock()
+        guard sequence != alreadyWritten else { return }
+
         do {
-            let box = try CredentialVaultCrypto.seal(entries, vaultKey: key, purpose: Self.sealPurpose)
+            let box = try CredentialVaultCrypto.seal(snapshot, vaultKey: key, purpose: Self.sealPurpose)
             // GL-10: no silent `try?` on a persistence write, and `sensitive:`
             // because this file is a transcript of what the captain copies.
             try AtomicWrite.data(box, to: fileURL, sensitive: true)
-            loadFailed = false
+            pendingLock.lock()
+            writtenSequence = sequence
+            pendingLock.unlock()
+            DispatchQueue.main.async { [weak self] in self?.loadFailed = false }
         } catch {
-            loadFailed = true
-            PersistenceFailureReporter.report(what: "clipboard history",
-                                              path: fileURL.path,
-                                              error: error)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.loadFailed = true
+                PersistenceFailureReporter.report(what: "clipboard history",
+                                                  path: self.fileURL.path,
+                                                  error: error)
+            }
         }
+    }
+
+    /// Block until everything recorded so far is on disk.
+    ///
+    /// Called from `applicationWillTerminate` (⌘Q inside the queue's own
+    /// latency would otherwise lose the last copy) and from any suite that
+    /// reopens the file to read a write back. Safe to call from the main
+    /// thread: the drain's own error path hops back with `async`, never
+    /// `sync`, so there is no direction in which the two can wait on each
+    /// other.
+    func flush() {
+        writeQueue.sync { [weak self] in self?.drainPendingWrite() }
     }
 
     // MARK: Pasting

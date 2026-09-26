@@ -498,7 +498,44 @@ final class HelmPageSidebar: NSView {
     /// while the page is open, and each group's selection is carried across
     /// the rebuild - a re-render that silently dropped the captain's project
     /// filter would be a worse bug than the missing rows this exists for.
+    /// PF11 of the 2026-09-25 full review: this always tore every row, header
+    /// and spacer down and rebuilt them, however little had changed - and the
+    /// pages that feed it call it on every store publish, not only when the
+    /// list moves. Notebook is the worst case because it feeds a row per page
+    /// (see the cap `rebuildSidebar` now applies), but every caller paid it.
+    ///
+    /// The rebuild itself is still the right shape for a column this size, so
+    /// what changed is when one happens: an identical section list returns
+    /// without touching a view. The signature covers everything a row or
+    /// header draws, plus the theme, so any real change still rebuilds.
+    private var lastSectionsSignature: String?
+
+    private func sectionsSignature(_ sections: [Section]) -> String {
+        var parts: [String] = ["theme:\(theme.id)"]
+        for section in sections {
+            parts.append("H\u{1f}\(section.header ?? "-")")
+            for row in section.rows {
+                parts.append([
+                    row.id, row.title, "\(row.kind)", row.group, "\(row.showsCount)",
+                    indicatorKey(row.indicator),
+                ].joined(separator: "\u{1f}"))
+            }
+        }
+        return parts.joined(separator: "\u{1e}")
+    }
+
+    private func indicatorKey(_ indicator: RowIndicator) -> String {
+        switch indicator {
+        case .symbol(let name): return "symbol:\(name)"
+        case .dot(let tint): return "dot:\(tint)"
+        case .tile(let symbol, let tint): return "tile:\(symbol):\(tint)"
+        }
+    }
+
     func setSections(_ sections: [Section]) {
+        let signature = sectionsSignature(sections)
+        if signature == lastSectionsSignature { return }
+        lastSectionsSignature = signature
         let carried = selections
         for view in stack.arrangedSubviews {
             stack.removeArrangedSubview(view)
@@ -806,6 +843,9 @@ final class HelmPageSidebar: NSView {
     }
 
     #if FM_SELFTESTS
+    /// PF11: the row *views*, so a suite can tell a repaint from a rebuild by
+    /// object identity rather than by counting.
+    var debugRowViews: [NSView] { rows.map { $0.button } }
     var debugRowCount: Int { rows.count }
     var debugRowTitles: [String] { rows.map { $0.label.stringValue } }
     var debugRowIDs: [String] { rows.map { $0.id } }

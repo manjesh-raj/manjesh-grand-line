@@ -258,6 +258,86 @@ value that was already being discarded; the generated code is the same.
 presence - a re-apply that fixes one and misses the other is exactly the failure
 a `contains` check would wave through.
 
+## Seventh patch: a per-row render cache for the CoreText path (`fm/grand-line-review-perf-pf1-pf16`)
+
+**Files:** `Apple/AppleTerminalView.swift` (the cache types, `preparedLineRender`,
+`invalidateLineRenderCache`, `pruneLineRenderCache`, the two `draw(_:)` call
+sites and two one-line invalidations), and `Mac/MacTerminalView.swift` /
+`iOS/iOSTerminalView.swift` (the stored `lineRenderCache` /
+`lineRenderStyleEpoch` plus the two hit/miss counters).
+
+**What it fixes.** PF1 of the 2026-09-25 full-application review, measured live
+on the captain's running instance: a single Console tab cost roughly a tenth of
+a CPU core continuously **while the app was backgrounded**. Two 5-second
+`sample` runs put 232-256 of 4000 main-thread samples in `TerminalView.draw` ->
+`buildAttributedString` / `getAttributes`.
+
+Patch 4's display gating was already working - the tab was repainting at 2 fps
+rather than 60 - so this is not a frame-rate problem. It is the cost of a frame.
+`draw(_:)` called `buildAttributedString` for every visible row on every frame,
+then built a `CTLine` and a run array for every segment of every row, and threw
+all of it away at the end of the frame. On BigSur and later AppKit hands the
+view a full-view dirty rect even when one line changed (the code's own comment
+above `isBigSur` says so), so a TUI that updates one status line repaints its
+whole screen from scratch, twice a second, forever.
+
+**What the patch does.** `preparedLineRender(row:line:cols:)` caches the
+`ViewLineInfo` *and* its prepared `CTLine`s per absolute row, and `draw(_:)`
+reads both from it. An entry is reused only when every input that can change a
+row's rendering still matches:
+
+- the same `BufferLine` **instance** at that row, and the same
+  `BufferLine.generation`. `generation` is upstream's own per-line mutation
+  counter - the Metal renderer's `RowCacheEntry` already validates its row cache
+  exactly this way - and the identity check is what stops row N's render being
+  shown for a different line that later rotates into slot N through the
+  `CircularList`;
+- the same column count, selection range for that row, link-highlight ranges,
+  link mode and ⌘-held state;
+- the same glyph policy (`customBlockGlyphs`, `useBrightColors`) and the same
+  selection colours;
+- the same style epoch, which `invalidateLineRenderCache()` bumps from
+  `resetCaches()` (font, palette) and `colorsChanged()` (theme).
+
+Everything but the epoch is compared per lookup rather than pushed from a
+setter, so the cache is self-validating: a future upstream property that changes
+rendering can only ever cause a *stale* render if somebody also forgets to route
+it through one of those two invalidation points, and the two that matter today
+already are.
+
+`pruneLineRenderCache` keeps the row-keyed dictionary bounded - absolute row
+numbers climb with the scrollback, so entries for rows that left the viewport
+would otherwise accumulate for the life of the tab.
+
+**What it deliberately does not touch: the terminal model.** Nothing about
+parsing, the buffer, scrollback or the invalidation geometry changes. Only the
+reuse of already-computed draw state moves.
+
+**Measured, before and after**, on a 1100x700 view with 45 rows of coloured TUI
+output and a status line changing every frame, 60 frames (30 seconds at the 2 fps
+background cadence), CPU seconds from `getrusage(RUSAGE_SELF)`:
+
+| | CPU per frame | rows rebuilt per frame |
+|---|---|---|
+| Before (cache reuse disabled) | 8.88 / 8.88 / 8.95 ms | 47.5 |
+| After | 4.26 / 4.46 / 3.17 ms | 2.5 |
+
+About 55% of the terminal's per-frame main-thread cost, gone. What remains is
+the background fills and the glyph drawing themselves, which a cache of
+*attributed strings* cannot remove.
+
+**Re-applying it after a SwiftTerm upgrade:** re-add the two stored properties
+and the two counters to both `TerminalView` classes, re-add the cache types and
+the three functions to `Apple/AppleTerminalView.swift`, call
+`invalidateLineRenderCache()` at the top of `resetCaches()` and
+`colorsChanged()`, and replace `draw(_:)`'s `buildAttributedString` call and its
+`preparedSegments` computation with `preparedLineRender(...)`.
+`VendoredPatchesSelfTest` names the patch if any of that is missing, and
+`FM_RUN_TERMINAL_ROW_RENDER_CACHE_TESTS` is the behavioural half - it renders a
+real terminal in a real window and asserts a repaint of an unchanged screen
+rebuilds no rows at all, that a single new line rebuilds fewer rows than a first
+render, and that a theme change and a selection both still invalidate.
+
 ## Updating this vendored copy, and the scheduled check
 
 **Pinned:** upstream `1.15.0` (`dd2fb8ac5b861e7bf617c872895e338f38165648`).
@@ -265,7 +345,7 @@ a `contains` check would wave through.
 **Re-check:** every 183 days (six months), or sooner if upstream publishes a
 security fix.
 
-The six patches above are the price of this pin, and the review that filed
+The seven patches above are the price of this pin, and the review that filed
 this section (P9 of full review #3) is right that the cost of a sync is
 re-applying every one of them. So the standing decision is **stay pinned and
 re-check on a schedule**, not "bump when a newer tag exists" - and the check
@@ -285,7 +365,7 @@ the next scheduled check:
 
 A newer tag on its own is **not** a reason. Nothing in this app is waiting on
 an upstream feature, and every release since the pin has to be re-diffed against
-all six patch sites by hand.
+all seven patch sites by hand.
 
 ### The check itself
 
@@ -297,11 +377,11 @@ why it is in `native/MANUAL-CHECKS.md` rather than a suite:
 curl -sS "https://api.github.com/repos/migueldeicaza/SwiftTerm/tags?per_page=5" \
   | python3 -c "import json,sys; [print(t['name']) for t in json.load(sys.stdin)]"
 
-# 2. How big is the gap, and did it touch our six patch sites?
+# 2. How big is the gap, and did it touch our seven patch sites?
 curl -sS "https://api.github.com/repos/migueldeicaza/SwiftTerm/compare/v1.15.0...v<new>" \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['total_commits'], 'commits,', len(d['files']), 'files'); [print('%+6d/-%-5d %s' % (f['additions'], f['deletions'], f['filename'])) for f in d['files'] if any(w in f['filename'] for w in ('MacExtensions','iOSExtensions','AppleTerminalView','MacTerminalView','MetalTerminalRenderer'))]"
 
-# 3. For each of the six patches, read the upstream function and answer one
+# 3. For each of the seven patches, read the upstream function and answer one
 #    question: is the root cause fixed, or is there a hook now?
 curl -sS "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/v<new>/Sources/SwiftTerm/Mac/MacExtensions.swift"
 
@@ -311,7 +391,7 @@ curl -sS "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/v<new>/Sourc
 ```
 
 `VendoredPatchesSelfTest` is the automated half, and it deliberately covers the
-*other* hazard: it asserts all six patches are still present in this tree, so a
+*other* hazard: it asserts all seven patches are still present in this tree, so a
 sync that silently drops one fails by name rather than being found in
 production. It also reads the `Last checked` date above and prints a NOTE (never
 a failure - a date cannot break somebody else's build) once it is older than the
@@ -321,8 +401,10 @@ re-check interval.
 
 *(This check predates the sixth patch, which was added on 2026-09-22 and has no
 upstream question to answer - it is a warning-only edit, not an override of
-upstream behaviour. The five verdicts below are left exactly as they were
-recorded.)*
+upstream behaviour, and the same is true of the seventh, added on 2026-09-26:
+`buildAttributedString` and `draw(_:)` are both still `internal`/non-`open` at
+v1.20.0, so a per-row cache still has nowhere else to live. The five verdicts
+below are left exactly as they were recorded.)*
 
 Upstream is **three releases ahead** of the review that filed this (which said
 1.19.0). The gap is **81 commits across 123 files**, and it is feature work
@@ -352,7 +434,7 @@ scheduled check is the place to ask again.
 
 ### Re-applying the patches, if a sync does happen
 
-Replace `Sources/SwiftTerm` with the new tree, then re-apply all six. Each
+Replace `Sources/SwiftTerm` with the new tree, then re-apply all seven. Each
 patch's own section above ends with the specific hunks; in summary:
 
 | # | Files |
@@ -363,13 +445,15 @@ patch's own section above ends with the specific hunks; in summary:
 | 4 | `Mac/MacTerminalView.swift` (the property block), `Apple/AppleTerminalView.swift` (`queuePendingDisplay`) |
 | 5 | `Mac/MacTerminalView.swift`, `iOS/iOSTerminalView.swift` (the `minimumColumns` property), `Apple/AppleTerminalView.swift` (two `max(minimumColumns, …)` clamps) |
 | 6 | `Apple/Metal/MetalTerminalRenderer.swift` (a `_ = ` on both `vertices.withUnsafeBytes` calls) |
+| 7 | `Mac/MacTerminalView.swift`, `iOS/iOSTerminalView.swift` (the cache storage + counters), `Apple/AppleTerminalView.swift` (the cache types, `preparedLineRender`, the two `draw(_:)` call sites, the two invalidations) |
 
 Then run `FM_RUN_VENDORED_PATCHES_TESTS=1` first - it names any patch that did
 not come back - followed by the terminal suites that prove each one behaves:
 `FM_RUN_CONTRAST_TESTS` (patches 1-2, via `checkVendoredTerminalPairsSelection`),
 `FM_RUN_TERMINAL_WRAP_REDRAW_TESTS` (3),
 `FM_RUN_TERMINAL_DISPLAY_GATING_TESTS` (4), and
-`FM_RUN_KUBE_BRIDGE_TESTS` plus `FM_RUN_KUBERNETES_DESTINATION_TESTS` (5).
+`FM_RUN_KUBE_BRIDGE_TESTS` plus `FM_RUN_KUBERNETES_DESTINATION_TESTS` (5), and
+`FM_RUN_TERMINAL_ROW_RENDER_CACHE_TESTS` (7).
 Patch 6 has no behavioural suite because it has no behaviour - a warning-clean
 `swift build` is the check, and `FM_RUN_VENDORED_PATCHES_TESTS` is what makes a
 dropped re-apply fail by name rather than only in build output nobody reads.

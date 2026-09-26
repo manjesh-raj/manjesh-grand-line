@@ -65,6 +65,28 @@ final class FleetNotifier {
     /// come back".
     private var backgroundedGate = BackgroundedPollGate(skipsPerRun: 3)
 
+    /// PF14: the same idea applied to a fleet that is not doing anything. See
+    /// `QuietFleetPollGate`'s own doc comment for why the review's proposed
+    /// batching is neither available here nor useful, and why the cadence is
+    /// the lever that is. Four identical sweeps before it backs off, then the
+    /// same 4x the backgrounded gate uses - so an idle day costs a quarter of
+    /// the `fm-crew-state.sh` spawns it did, and the very first sweep that
+    /// differs puts it straight back to every tick.
+    private var quietGate = QuietFleetPollGate(quietSweepsBeforeBackoff: 4, skipsPerRun: 3)
+
+    /// What the last sweep that ran reported, so the next one can say whether
+    /// anything moved. Deliberately the full per-task state rather than a
+    /// count: two tasks swapping states is a change the captain must hear
+    /// about and would leave a count identical.
+    private var lastSweepFingerprint: String?
+
+    private static func fingerprint(_ tasks: [FleetTask]) -> String {
+        tasks
+            .map { "\($0.id)\u{1f}\($0.state)\u{1f}\($0.source)\u{1f}\($0.detail)\u{1f}\($0.status)" }
+            .sorted()
+            .joined(separator: "\u{1e}")
+    }
+
     /// Forwarded navigation for the in-app "N tasks finished" entry -
     /// mirrors `ConsoleComposerController.onRunInTerminal`'s own forward-
     /// don't-own convention. Set once at launch in `main.swift`.
@@ -121,6 +143,9 @@ final class FleetNotifier {
 
     private func poll() {
         guard backgroundedGate.shouldRun(backgrounded: AppActivityState.shared.isBackgrounded) else { return }
+        // PF14: a fleet that has reported the same thing four sweeps running
+        // is asked less often, until it says something different.
+        guard quietGate.shouldRun() else { return }
         ServiceHealthRegistry.shared.markRunning(.fleetTasks)
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let tasks = FleetDataSource.parseTasks()
@@ -136,7 +161,13 @@ final class FleetNotifier {
                         .fleetTasks,
                         "Firstmate home is not readable at \(FirstmateHome.root.path) - set it in Setup > Bootstrap.")
                 }
-                self?.reconcile(tasks)
+                guard let self else { return }
+                // PF14: told before `reconcile`, which is what decides whether
+                // the next tick runs at all.
+                let fingerprint = Self.fingerprint(tasks)
+                self.quietGate.noteSweep(changed: fingerprint != self.lastSweepFingerprint)
+                self.lastSweepFingerprint = fingerprint
+                self.reconcile(tasks)
             }
         }
     }

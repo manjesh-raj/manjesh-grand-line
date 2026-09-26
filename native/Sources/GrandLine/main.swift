@@ -1250,6 +1250,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // by explicit scope) - this stops an in-flight `claude -p` child from
         // outliving the app by up to its 300s bound.
         appShell.shutdownStrawHatCrew()
+        // PF2: the clipboard history's seal-and-write is off the main thread
+        // now, so ⌘Q inside its own write latency would lose the last copy -
+        // the same class as the five flushes above it.
+        appShell.shutdownClipboardHistory()
         shiftHotkey.stop()
         tabShortcuts.stop()
         shiftNotifications.stop()
@@ -3424,6 +3428,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_APP_ACTIVITY_STATE_TESTS"] == "1"
 // TerminalDisplayGatingSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_DISPLAY_GATING_TESTS"] == "1" {
     exit(TerminalDisplayGatingSelfTest.run() ? 0 : 1)
+}
+
+// PF1 of the 2026-09-25 full review: the per-row CoreText render cache that
+// closed the background terminal's ~0.1-core repaint cost - see
+// TerminalRowRenderCacheSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_ROW_RENDER_CACHE_TESTS"] == "1" {
+    exit(TerminalRowRenderCacheSelfTest.run() ? 0 : 1)
 }
 
 // `fm/grand-line-shell-selection-investigate-fix`: same convention, for the

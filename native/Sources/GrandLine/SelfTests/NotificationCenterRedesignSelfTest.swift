@@ -54,7 +54,8 @@ enum NotificationCenterRedesignSelfTest {
                       checkFilterCountsAndEmptyStates,
                       checkToastAndUndo,
                       checkKeyboardSelection,
-                      checkRendersInBothThemes] {
+                      checkRendersInBothThemes,
+                      checkARedundantPublishRebuildsNothing] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -62,6 +63,54 @@ enum NotificationCenterRedesignSelfTest {
         print(allOK ? "NotificationCenterRedesignSelfTest: all checks passed"
                     : "NotificationCenterRedesignSelfTest: FAILED")
         return allOK
+    }
+
+    // MARK: - PF3: a publish that changes nothing must not rebuild the list
+
+    /// PF3 of the 2026-09-25 full review. Every source re-publishes its own
+    /// freshly computed truth on every poll, and the store notifies every
+    /// observer on each one - so with the panel open, a list that had not
+    /// changed at all was torn down and rebuilt several times a minute.
+    ///
+    /// Asserted by **view identity**, which is the only thing that can tell a
+    /// rebuild from a repaint: after a redundant `reload()` the row objects
+    /// must be the very same instances, and after a real change they must not
+    /// be. The second half is what stops this passing against a `reload()`
+    /// that simply stopped working.
+    private static func checkARedundantPublishRebuildsNothing(_ ok: inout Bool) {
+        print("\n-- " + "PF3: a publish that changes nothing rebuilds nothing" + " --")
+        seed()
+        let (controller, _) = mount()
+        let content = controller.debugPanelContent
+
+        let before = content.debugRows
+        check(before.count == 4, "fixture drew \(before.count) rows, want 4 - without them "
+              + "the identity comparisons below would be vacuous", &ok)
+
+        // Re-publish the exact same truth, the way a poller does.
+        seed()
+        content.reload()
+        let after = content.debugRows
+        check(after.count == before.count
+              && zip(before, after).allSatisfy { $0 === $1 },
+              "a redundant publish rebuilt the row views - PF3 is exactly this", &ok)
+
+        // And the other direction: a real change still rebuilds.
+        GrandLineNotificationCenter.shared.set(AppNotification(
+            id: "pf3-new-row",
+            title: "Something genuinely new",
+            subtext: "arrived",
+            source: "Tests",
+            kind: .actionNeeded,
+            tint: .warn,
+            date: now,
+            navigate: {}), id: "pf3-new-row")
+        content.reload()
+        let changed = content.debugRows
+        check(changed.count == before.count + 1,
+              "a real publish drew \(changed.count) rows, want \(before.count + 1)", &ok)
+        check(!zip(before, changed).allSatisfy { $0 === $1 },
+              "a real change must still rebuild the list", &ok)
     }
 
     // MARK: - Fixture

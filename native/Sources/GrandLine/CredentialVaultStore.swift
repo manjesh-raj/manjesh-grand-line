@@ -102,7 +102,48 @@ final class CredentialVaultStore {
 
     /// The derived key, or nil when locked. The only place it is held, and it
     /// is cleared by `lock()`.
-    private var vaultKey: CredentialVaultKey?
+    ///
+    /// `didSet` drops PF7's seal cache: every cached ciphertext was produced
+    /// with the key that is being replaced, so carrying one across a re-key
+    /// (or across a lock) would write an item the new key cannot open. The
+    /// cache is therefore invalidated by the one thing that can invalidate it,
+    /// at the one place that thing happens.
+    private var vaultKey: CredentialVaultKey? {
+        didSet { sealedItemCache.removeAll(); sealedSettings = nil }
+    }
+
+    // MARK: PF7 - re-seal only what changed
+    //
+    // PF7 of the 2026-09-25 full review: `persist()` re-sealed **every**
+    // credential on every mutation, and every mutation includes the audit-only
+    // flush that a reveal, a copy or a lock schedules. Adding one credential to
+    // a vault of two hundred did two hundred AES-GCM seals on the main thread;
+    // so did unlocking and locking it again.
+    //
+    // A credential's ciphertext depends on exactly two things: the plaintext
+    // and the key. `VaultCredential` is `Equatable`, so an entry whose
+    // plaintext is byte-identical to the one this cache was built from can
+    // reuse its payload, and the key half is handled by the `didSet` above.
+    // Nothing is cached across a process, so a stale cache cannot outlive the
+    // session that built it.
+    //
+    // **What must not happen is a lost edit**, which is why the cache is keyed
+    // on the credential's whole value rather than on its id or its
+    // `updatedAt`: a mutation that changes any field at all misses, and a miss
+    // re-seals. `checkARapidSequenceOfEditsAllPersist` in
+    // `CredentialVaultSelfTest` is the standing guard.
+    private var sealedItemCache: [String: (credential: VaultCredential, payload: Data)] = [:]
+    /// The same idea for the settings blob, which is re-sealed on every write
+    /// and changes on almost none of them.
+    private var sealedSettings: (settings: VaultSettings, payload: Data)?
+
+    #if FM_SELFTESTS
+    /// How many item seals this store has actually performed, so a suite can
+    /// prove PF7's cache is doing something rather than only that the data
+    /// still round-trips.
+    private(set) var debugItemSealCount = 0
+    func debugResetItemSealCount() { debugItemSealCount = 0 }
+    #endif
     private var file: CredentialVaultFile?
 
     /// The decrypted credentials as of the last successful load or write -
@@ -1422,14 +1463,24 @@ final class CredentialVaultStore {
         let base = adoptingOnDiskChanges
             ? try adoptOnDiskChangesIfNeeded(vaultKey: vaultKey, lastKnown: current)
             : current
-        let entries = try credentials.map { credential in
-            CredentialVaultFile.Entry(
-                id: credential.id,
-                payload: try CredentialVaultCrypto.seal(credential,
-                                                        vaultKey: vaultKey,
-                                                        purpose: CredentialVaultCrypto.itemPurpose(credential.id))
-            )
+        // PF7: re-seal only the credentials whose plaintext actually changed.
+        let entries = try credentials.map { credential -> CredentialVaultFile.Entry in
+            if let cached = sealedItemCache[credential.id], cached.credential == credential {
+                return CredentialVaultFile.Entry(id: credential.id, payload: cached.payload)
+            }
+            let payload = try CredentialVaultCrypto.seal(
+                credential,
+                vaultKey: vaultKey,
+                purpose: CredentialVaultCrypto.itemPurpose(credential.id))
+            #if FM_SELFTESTS
+            debugItemSealCount += 1
+            #endif
+            sealedItemCache[credential.id] = (credential, payload)
+            return CredentialVaultFile.Entry(id: credential.id, payload: payload)
         }
+        // A deleted credential must not keep its ciphertext alive in memory.
+        let liveIDs = Set(credentials.map(\.id))
+        sealedItemCache = sealedItemCache.filter { liveIDs.contains($0.key) }
         var updated = base
         updated.formatVersion = CredentialVaultFile.currentFormatVersion
         // F17: the recovery wrap is neither an item nor a header the merge
@@ -1443,7 +1494,14 @@ final class CredentialVaultStore {
         updated.recovery = current.recovery ?? base.recovery
         updated.items = entries
         updated.auditLog = try CredentialVaultCrypto.seal(auditLog, vaultKey: vaultKey, purpose: Self.auditPurpose)
-        updated.settings = try CredentialVaultCrypto.seal(settings, vaultKey: vaultKey, purpose: Self.settingsPurpose)
+        // PF7 again: the settings blob changes on almost no write.
+        if let cachedSettings = sealedSettings, cachedSettings.settings == settings {
+            updated.settings = cachedSettings.payload
+        } else {
+            let payload = try CredentialVaultCrypto.seal(settings, vaultKey: vaultKey, purpose: Self.settingsPurpose)
+            sealedSettings = (settings, payload)
+            updated.settings = payload
+        }
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]

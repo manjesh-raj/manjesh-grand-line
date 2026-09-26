@@ -42,6 +42,7 @@ enum ClipboardHistoryViewSelfTest {
             checkDigitKeyEquivalentsPaste(check)
             checkPinChord(check)
             checkFilterNarrowsTheRows(check)
+            checkFilteringReusesTheRowViews(check)
             checkEmptyAndUnavailableAreDifferent(check)
             checkTheLockGate(check)
             checkItPaintsInBothRegisters(check)
@@ -229,6 +230,50 @@ enum ClipboardHistoryViewSelfTest {
             check(!content.debugEmptyStateIsHidden, "and shows the empty state")
             content.debugSetFilter("")
             check(content.debugRows().count == 2, "clearing the filter restores both rows")
+        }
+    }
+
+    /// PF4 of the 2026-09-25 full review: the filter field calls `reload()` on
+    /// every keystroke, and `reload()` built a fresh `HelmAccentRow` - five
+    /// subviews, their constraints and a theme pass - for every one of up to
+    /// 200 matching entries, discarding the previous set. Typing four letters
+    /// built and destroyed close to a thousand views.
+    ///
+    /// Asserted by **view identity**, the only thing that separates a re-used
+    /// row from a rebuilt one. Both directions are checked: a row that stays
+    /// on screen across a filter keystroke is the same object, and a row whose
+    /// ⌘-number moved is still correct afterwards - because the easy way to
+    /// get this wrong is to re-use a row and forget to reconfigure it.
+    private static func checkFilteringReusesTheRowViews(_ check: (Bool, String) -> Void) {
+        withPanel(entries: ["kubectl -n raas get pods",
+                            "https://github.com/pull/425",
+                            "kubectl -n raas logs -f api"]) { content, _ in
+            let all = content.debugRows()
+            check(all.count == 3, "fixture drew \(all.count) rows, want 3 - fewer would make "
+                  + "the identity comparisons below vacuous")
+            guard all.count == 3 else { return }
+
+            // Narrow to the two kubectl entries. Both were already on screen,
+            // so both row views must survive.
+            content.debugSetFilter("kubectl")
+            let narrowed = content.debugRows()
+            check(narrowed.count == 2, "the filter narrows to \(narrowed.count) rows, want 2")
+            check(narrowed.allSatisfy { row in all.contains { $0 === row } },
+                  "a filter keystroke rebuilt rows that were already on screen - PF4 is this")
+
+            // The ⌘-number is rank, not identity, so a re-used row has to be
+            // reconfigured when its position changes.
+            content.debugSetFilter("logs")
+            let single = content.debugRows()
+            check(single.count == 1, "one row matches 'logs', found \(single.count)")
+            check(single.first.map { row in all.contains { $0 === row } } == true,
+                  "the surviving row is the same view object")
+
+            content.debugSetFilter("")
+            let restored = content.debugRows()
+            check(restored.count == 3, "clearing restores \(restored.count) rows, want 3")
+            check(restored.allSatisfy { row in all.contains { $0 === row } },
+                  "clearing the filter rebuilt rows it could have re-used")
         }
     }
 

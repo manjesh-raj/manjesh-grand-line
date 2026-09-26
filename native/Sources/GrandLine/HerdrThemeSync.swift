@@ -692,8 +692,29 @@ final class HerdrThemeSync {
     /// Registered once at launch. Idempotent.
     func start() {
         guard themeToken == nil else { return }
+        // PF6 of the 2026-09-25 full review: `ThemeManager.observe`'s closure
+        // fires **synchronously at registration**, and `syncNow` resolves
+        // `herdr` on `PATH` and reads herdr's `config.toml` - so registering
+        // this at launch put a subprocess-free-but-still-synchronous PATH walk
+        // and a file read in front of the first frame (GL-12's rule).
+        //
+        // Only that first, registration-time fire is deferred; every later
+        // theme change still syncs inline, which is what makes a theme swap
+        // reach herdr before the captain looks at it. The deferral is one run
+        // loop turn, not a background queue: `syncNow` writes a file this app
+        // owns the only writer for, and moving it off the main thread would
+        // buy nothing and cost the ordering.
+        var isRegistrationFire = true
         themeToken = ThemeManager.shared.observe { [weak self] theme in
-            self?.syncNow(theme: theme)
+            guard let self else { return }
+            guard !isRegistrationFire else {
+                isRegistrationFire = false
+                DispatchQueue.main.async { [weak self] in
+                    self?.syncNow(theme: ThemeManager.shared.theme)
+                }
+                return
+            }
+            self.syncNow(theme: theme)
         }
     }
 

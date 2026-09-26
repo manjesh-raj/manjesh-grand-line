@@ -588,10 +588,17 @@ final class StickyBoardStore {
         persist()
     }
 
-    /// Called on every drag update as well as on drop - see
-    /// `StickyBoardController`'s own doc comment on why this is fine: writes
-    /// are debounced by `StickyBoardGitSync.markDirty()`, and the in-memory
-    /// array + local YAML write are cheap regardless of how often they run.
+    /// **Persisted on the drag's END only**, not on every drag update - the
+    /// header moves the card's own `frame` directly while the mouse is down
+    /// and calls nothing here until `onDragEnd` (`StickyNoteView`'s own note
+    /// beside `header.onDragEnd` has the mechanism). One YAML write and one
+    /// debounced git commit per drag, not dozens. `updateSize` is the same
+    /// shape for the resize grip.
+    ///
+    /// This comment used to say the opposite, and PF13 of the 2026-09-25
+    /// review read it and filed this call site as a defect - which it is not.
+    /// The one place a real burst reaches this store is the checklist; see
+    /// `setChecklist`.
     func updatePosition(id: String, x: Double, y: Double) {
         guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
         notes[index].x = x
@@ -659,12 +666,34 @@ final class StickyBoardStore {
     /// reading a stale body. Turning a checklist back off leaves `text`
     /// exactly as it was last rendered, which is why the round trip is
     /// lossless and needs no second stored copy.
+    /// PF13 of the 2026-09-25 full review flagged eight structural mutations
+    /// here as bypassing the debounce every other mutation goes through.
+    /// **Most of them are right to**, and the review's own evidence for the
+    /// opposite was a stale doc comment (see `updatePosition`, corrected in
+    /// this change): adding, deleting, archiving, recolouring, moving and
+    /// resizing a note are each one deliberate gesture, happen once, and their
+    /// immediacy is exactly what makes them durable without waiting out a
+    /// 1.5s debounce.
+    ///
+    /// **The checklist mutations are the ones that genuinely come in bursts.**
+    /// Ticking through a ten-item list, or typing Return-Return-Return to add
+    /// rows, is ten whole-file YAML rewrites in a couple of seconds - and
+    /// `persist()` re-serialises every note in the board each time. Those go
+    /// through the debounce now, which they were already safe for: they share
+    /// every flush point the per-keystroke text path uses (a field giving up
+    /// focus, leaving the destination, and `applicationWillTerminate`), and
+    /// any *immediate* write for an unrelated reason carries a pending one
+    /// with it, because `persist()` always writes the whole array.
+    ///
+    /// `debounced` is false for the two structural conversions (turn into a
+    /// checklist / turn back into text), which are context-menu actions rather
+    /// than a burst.
     @discardableResult
-    func setChecklist(id: String, items: [StickyChecklistItem]?) -> StickyNote? {
+    func setChecklist(id: String, items: [StickyChecklistItem]?, debounced: Bool = false) -> StickyNote? {
         guard let index = notes.firstIndex(where: { $0.id == id }) else { return nil }
         notes[index].checklist = items
         if let items { notes[index].text = StickyChecklist.text(fromItems: items) }
-        persist()
+        if debounced { schedulePersist() } else { persist() }
         return notes[index]
     }
 
@@ -689,7 +718,7 @@ final class StickyBoardStore {
     @discardableResult
     func toggleChecklistItem(noteID: String, itemID: String) -> StickyNote? {
         guard let note = notes.first(where: { $0.id == noteID }), let items = note.checklist else { return nil }
-        return setChecklist(id: noteID, items: StickyChecklist.toggling(items, id: itemID))
+        return setChecklist(id: noteID, items: StickyChecklist.toggling(items, id: itemID), debounced: true)
     }
 
     /// Debounced, unlike the structural changes above: this one is called
@@ -712,7 +741,7 @@ final class StickyBoardStore {
     func addChecklistItem(noteID: String, text: String = "") -> StickyChecklistItem? {
         guard let note = notes.first(where: { $0.id == noteID }), let items = note.checklist else { return nil }
         let item = StickyChecklistItem.fresh(text: text)
-        setChecklist(id: noteID, items: items + [item])
+        setChecklist(id: noteID, items: items + [item], debounced: true)
         return item
     }
 
@@ -720,7 +749,7 @@ final class StickyBoardStore {
     func removeChecklistItem(noteID: String, itemID: String) -> StickyNote? {
         guard let note = notes.first(where: { $0.id == noteID }), let items = note.checklist,
               items.contains(where: { $0.id == itemID }) else { return nil }
-        return setChecklist(id: noteID, items: items.filter { $0.id != itemID })
+        return setChecklist(id: noteID, items: items.filter { $0.id != itemID }, debounced: true)
     }
 
     /// The undo half of `deleteNote` - re-inserts a note that was just
@@ -781,7 +810,17 @@ final class StickyBoardStore {
     /// Immediate. A queued debounced write is cancelled first, since this one
     /// writes the same in-memory array and would otherwise fire again for
     /// nothing.
+    #if FM_SELFTESTS
+    /// PF13: how many whole-file writes this store has done, so a suite can
+    /// prove a burst of checklist mutations costs one rather than one each.
+    private(set) var debugPersistCount = 0
+    func debugResetPersistCount() { debugPersistCount = 0 }
+    #endif
+
     private func persist() {
+        #if FM_SELFTESTS
+        debugPersistCount += 1
+        #endif
         pendingPersist?.cancel()
         pendingPersist = nil
         guard !isInFailedLoadState else {

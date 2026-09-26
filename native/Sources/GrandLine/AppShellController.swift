@@ -2713,6 +2713,14 @@ final class AppShellController: NSViewController {
         bar.clipboardHistory.toggle()
     }
 
+    /// PF2: drain the clipboard history's off-main write before the process
+    /// goes away. `AppShellController` owns the bar and the bar owns the
+    /// controller, and the app delegate is where `applicationWillTerminate`
+    /// lives.
+    func shutdownClipboardHistory() {
+        bar.clipboardHistory.shutdown()
+    }
+
     /// Arm the capture loop. Called once, from `main.swift` - never at init;
     /// see `ClipboardHistoryController.startCapturing()` for why.
     func startClipboardHistoryCapture() {

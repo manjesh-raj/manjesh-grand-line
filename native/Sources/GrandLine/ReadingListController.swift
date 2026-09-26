@@ -237,6 +237,11 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
     /// Called by the app delegate on quit, so the last read-marks before ⌘Q are
     /// committed like every other edit.
     func shutdown() {
+        // PF12: a burst of metadata fetches writes once, shortly after it
+        // settles - so quitting inside that window has to drain it first, or
+        // the titles and icons just fetched are lost. Before the git flush,
+        // deliberately: that flush is what pushes what this writes.
+        store.flush()
         store.gitSync?.flushForTerminationNow()
     }
 

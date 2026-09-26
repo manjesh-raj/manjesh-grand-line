@@ -98,6 +98,7 @@ enum CredentialVaultViewSelfTest {
         checkThemeSweep(scratch: scratch, window: window, check)
         checkListBodyFillsItsCard(check)
         checkHeaderlessCardGivesItsBodyTheCard(check)
+        checkTheRecoverySheetUnobservesTheTheme(scratch: scratch, check)
         checkTouchIDIndicatorAlignmentAndOrdering(scratch: scratch, window: window, check)
         checkDragReorderWithinCategory(scratch: scratch, window: window, check)
 
@@ -114,6 +115,58 @@ enum CredentialVaultViewSelfTest {
 
     /// A mounted page over a fresh scratch root. `seed` runs against the store
     /// after the vault is created, before the first render.
+    // MARK: PF16 - a registration nothing can cancel
+
+    /// PF16 of the 2026-09-25 full review. Three `ThemeManager.observe`
+    /// registrations were never unregistered - two discarded tokens on
+    /// app-lifetime objects (`FullScreenMenuBarFill`, `UnifiedSearch`) and
+    /// this one, which is the only one of the three that actually accumulates:
+    /// `CredentialVaultController` builds a **fresh**
+    /// `CredentialVaultRecoverySheetController` every time the recovery kit is
+    /// opened, so every visit left a dead closure in `ThemeManager.observers`
+    /// for the life of the process, and every theme change afterwards called
+    /// one more of them.
+    ///
+    /// Asserted the only way a leak like this can be: by counting the shared
+    /// registry across a construct-and-release loop, exactly as
+    /// `DaylightModuleSelfTest` counts its own. The other two are not
+    /// capturable here and the PR says so - an object that lives as long as
+    /// the process cannot be released for a suite to measure.
+    private static func checkTheRecoverySheetUnobservesTheTheme(
+        scratch: URL, _ check: (Bool, String) -> Void) {
+        let root = scratch.appendingPathComponent("pf16-recovery", isDirectory: true)
+        let store = CredentialVaultStore(root: root)
+        _ = store.createVault(masterPassword: "view-test-password")
+
+        // The fixture's own discriminating power: one sheet really does
+        // register, or "the count did not grow" would pass against a sheet
+        // that observes nothing at all.
+        let baseline = ThemeManager.shared.observerCountForTests
+        var whileAlive = 0
+        autoreleasepool {
+            let sheet = CredentialVaultRecoverySheetController(store: store)
+            sheet.loadView()
+            sheet.viewDidLoad()
+            whileAlive = ThemeManager.shared.observerCountForTests
+        }
+        check(whileAlive > baseline,
+              "a live recovery sheet registers no theme observer at all (\(baseline) -> "
+              + "\(whileAlive)) - the leak check below would be vacuous")
+
+        for _ in 0..<20 {
+            autoreleasepool {
+                let sheet = CredentialVaultRecoverySheetController(store: store)
+                sheet.loadView()
+                sheet.viewDidLoad()
+            }
+        }
+        let after = ThemeManager.shared.observerCountForTests
+        check(after <= baseline,
+              "twenty opens of the recovery sheet left \(after - baseline) theme observers "
+              + "behind; every one of them is called on every theme change for the life of "
+              + "the process")
+    }
+
     private static func mounted(_ scratch: URL,
                                 name: String,
                                 window: NSWindow,

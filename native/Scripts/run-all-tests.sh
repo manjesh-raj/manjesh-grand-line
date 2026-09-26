@@ -405,6 +405,9 @@ NEEDS_SESSION=(
   # Renders a real terminal and reads its pixels back: a SwiftTerm view never
   # draws in a window that was never ordered front.
   "FM_RUN_TERMINAL_SELECTION_RENDER_TESTS"
+  # Same reason: PF1's row render cache is only exercised by a real `draw(_:)`
+  # pass, which a never-ordered-front SwiftTerm view never makes.
+  "FM_RUN_TERMINAL_ROW_RENDER_CACHE_TESTS"
   # Mounts a real WKWebView loading the vendored Excalidraw bundle and measures
   # whether WebKit stops animating it while hidden - needs a window server and a
   # live web content process. FM_RUN_WHITEBOARD_TESTS covers the logic half and

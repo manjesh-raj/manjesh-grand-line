@@ -309,8 +309,40 @@ final class GrandLineNotificationCenter {
             stored[idx] = notification
         } else {
             stored.append(notification)
+            enforceCap()
         }
         notifyObservers()
+    }
+
+    /// PF3: the store was never capped. Every source publishes by id and most
+    /// of them replace their own entry in place, so in practice it stays
+    /// small - but nothing *made* it small, and a source that mints a fresh id
+    /// per event (a crew reply, an SRE Lead answer, a schedule run) grows it
+    /// for the life of the process, taking the panel's own rebuild cost with
+    /// it.
+    ///
+    /// The cap sheds `.informational` entries first, oldest first, because
+    /// those are the ones the captain can dismiss anyway. An `.actionNeeded`
+    /// entry is only ever dropped when there is nothing else left to drop -
+    /// and if a source still considers it true it comes straight back on that
+    /// source's next publish, which is what makes shedding safe here at all.
+    static let maxStoredEntries = 200
+
+    private func enforceCap() {
+        guard stored.count > Self.maxStoredEntries else { return }
+        var overflow = stored.count - Self.maxStoredEntries
+        let byAge = stored.enumerated().sorted { $0.element.date < $1.element.date }
+        var doomed = Set<String>()
+        for (_, entry) in byAge where overflow > 0 && entry.kind == .informational {
+            doomed.insert(entry.id)
+            overflow -= 1
+        }
+        for (_, entry) in byAge where overflow > 0 && !doomed.contains(entry.id) {
+            doomed.insert(entry.id)
+            overflow -= 1
+        }
+        stored.removeAll { doomed.contains($0.id) }
+        for id in doomed { forget(id: id) }
     }
 
     /// Removes an entry outright regardless of kind, with no dismissal
