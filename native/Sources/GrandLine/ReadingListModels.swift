@@ -543,3 +543,50 @@ enum ReadingListHostHue {
         return palette[Int(hash % UInt64(palette.count))]
     }
 }
+
+/// What the reader's `WKNavigationDelegate` should do with one navigation.
+///
+/// A pure function rather than a body inside the delegate, because a
+/// `WKNavigationAction` has no public initialiser - the decision could
+/// otherwise only be asserted by driving a real remote page, which is exactly
+/// how the sub-frame half of this rule shipped wrong (B15).
+enum ReadingListNavigation {
+
+    enum Decision: Equatable {
+        /// Let the web view load it.
+        case allow
+        /// Refuse it, and say nothing - a `file:`/custom-scheme redirect from
+        /// a remote page is not something a reading list follows anywhere.
+        case cancel
+        /// Refuse it and hand it to the system browser instead.
+        case openExternally
+    }
+
+    /// The reader loads the saved link and whatever that page navigates to on
+    /// the same site; anything else is the captain's decision, in a real
+    /// browser.
+    ///
+    /// **The rule is about the top-level page, never about a sub-frame.** A
+    /// modern article embeds YouTube, a comment widget, an analytics pixel and
+    /// a newsletter form, and every one of those is a cross-host navigation in
+    /// a frame the reader owns. Applying the same-host rule to them cancels
+    /// the embed (so the article renders with holes) *and* opens each one as a
+    /// tab in the system browser - a page with three embeds opened three tabs
+    /// the captain never asked for. A sub-frame load is part of rendering the
+    /// page the captain already chose to read, so it is allowed on its own
+    /// scheme check alone.
+    ///
+    /// `isMainFrame` is `navigationAction.targetFrame?.isMainFrame ?? true`:
+    /// a nil target frame is a `target="_blank"`-shaped navigation into a
+    /// frame that does not exist yet, which is a new top-level page and must
+    /// take the strict path.
+    static func decide(url: URL, savedHost: String, isMainFrame: Bool) -> Decision {
+        if url.scheme?.lowercased() == "about" { return .allow }
+        let scheme = url.scheme?.lowercased() ?? ""
+        guard scheme == "http" || scheme == "https" else { return .cancel }
+        if !isMainFrame { return .allow }
+        let targetHost = ReadingListURL.host(of: url.absoluteString)
+        if !savedHost.isEmpty, targetHost == savedHost { return .allow }
+        return .openExternally
+    }
+}

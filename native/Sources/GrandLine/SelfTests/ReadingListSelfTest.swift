@@ -40,6 +40,7 @@ enum ReadingListSelfTest {
         checkURLDetection(check)
         checkNormalisation(check)
         checkHostAndMonogram(check)
+        checkNavigationPolicy(check)
         checkHostHueIsStable(check)
         checkTagNormalisation(check)
         checkTagCounts(check)
@@ -183,6 +184,58 @@ enum ReadingListSelfTest {
         let hues = Set(["a.com", "b.com", "c.io", "d.dev", "e.net", "f.org", "g.co", "h.ai"]
             .map { ReadingListHostHue.hue(for: "https://" + $0) })
         check(hues.count >= 3, "host hue: eight hosts collapsed onto fewer than three hues")
+    }
+
+    // MARK: Navigation policy
+
+    /// B15: the same-host rule is about the *top-level* page.
+    ///
+    /// The discriminating power of the fixture first - a policy that answered
+    /// `.allow` to everything would pass a sweep that only ever asks about
+    /// same-host URLs, so the main-frame cases assert all three outcomes
+    /// before the sub-frame cases assert that they differ.
+    private static func checkNavigationPolicy(_ check: (Bool, String) -> Void) {
+        let saved = "pganalyze.com"
+        func decide(_ url: String, main: Bool) -> ReadingListNavigation.Decision {
+            guard let parsed = URL(string: url) else { return .cancel }
+            return ReadingListNavigation.decide(url: parsed, savedHost: saved, isMainFrame: main)
+        }
+
+        check(decide("https://pganalyze.com/blog/page-2", main: true) == .allow,
+              "navigation: the saved link's own site is reading, and stays in the reader")
+        check(decide("https://www.pganalyze.com/blog/page-2", main: true) == .allow,
+              "navigation: `www.` is folded by `ReadingListURL.host`, so it is the same site")
+        check(decide("https://news.ycombinator.com/item?id=1", main: true) == .openExternally,
+              "navigation: a top-level jump off the site is the captain's decision, in a real browser")
+        check(decide("file:///etc/passwd", main: true) == .cancel,
+              "navigation: a `file:` redirect from a remote page goes nowhere - "
+              + "not the reader, and not `NSWorkspace` either")
+        check(decide("x-apple.systempreferences:root=Privacy", main: true) == .cancel,
+              "navigation: nor a custom scheme")
+        check(decide("about:blank", main: true) == .allow,
+              "navigation: `about:` is the web view's own idle page")
+
+        // The sub-frame half. Every one of these is a real embed shape, and
+        // every one of them was `.openExternally` before B15.
+        check(decide("https://www.youtube.com/embed/abc", main: false) == .allow,
+              "navigation: a YouTube embed is part of rendering the article, not a jump off it")
+        check(decide("https://disqus.com/embed/comments/", main: false) == .allow,
+              "navigation: so is a comment widget")
+        check(decide("https://pganalyze.com/blog/page-2", main: false) == .allow,
+              "navigation: a same-host sub-frame is allowed for the same reason")
+        check(decide("file:///etc/passwd", main: false) == .cancel,
+              "navigation: the scheme check still applies to a sub-frame - "
+              + "a sub-frame is not a licence to load anything")
+
+        check(decide("https://news.ycombinator.com/item?id=1", main: true)
+                != decide("https://news.ycombinator.com/item?id=1", main: false),
+              "navigation: the two frame cases must genuinely differ, or this sweep is vacuous")
+
+        check(ReadingListNavigation.decide(url: URL(string: "https://example.com")!,
+                                           savedHost: "",
+                                           isMainFrame: true) == .openExternally,
+              "navigation: with no saved host to compare against, a top-level load is external - "
+              + "an empty host must never match an empty target host and let everything through")
     }
 
     // MARK: Tags
