@@ -310,9 +310,15 @@ enum DailyReviewComposer {
                 due.append((task, at))
             }
             due.sort { $0.at < $1.at }
-            overdueCount = due.filter { $0.at < startOfToday }.count
+            // B22: one definition of overdue, shared with the task list, the
+            // notifier and the crew's context - `at < startOfToday` was time
+            // blind, so a task due at 09:00 today still read as "due" at 17:00.
+            func taskIsOverdue(_ task: ShiftTask) -> Bool {
+                ShiftDue.isOverdue(date: task.dueDate, time: task.dueTime, now: now)
+            }
+            overdueCount = due.filter { taskIsOverdue($0.task) }.count
             for entry in due.prefix(maxDueTasks) {
-                let isOverdue = entry.at < startOfToday
+                let isOverdue = taskIsOverdue(entry.task)
                 dueTasks.append(DailyReviewTaskRow(
                     id: entry.task.id,
                     title: entry.task.title,
@@ -361,9 +367,12 @@ enum DailyReviewComposer {
                 pending.append((item, at))
             }
             pending.sort { $0.at < $1.at }
-            overdueFollowUps = pending.filter { $0.at < startOfToday }.count
+            func followUpIsOverdue(_ item: ShiftFollowUp) -> Bool {
+                ShiftDue.isOverdue(date: item.followUpAt, time: item.followUpTime, now: now)
+            }
+            overdueFollowUps = pending.filter { followUpIsOverdue($0.item) }.count
             for entry in pending.prefix(maxFollowUps) {
-                let isOverdue = entry.at < startOfToday
+                let isOverdue = followUpIsOverdue(entry.item)
                 followUps.append(DailyReviewFollowUpRow(
                     id: entry.item.id,
                     title: entry.item.title,

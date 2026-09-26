@@ -115,19 +115,29 @@ final class ShiftNotificationScheduler {
 
         var dueTaskCount = 0
         var overdueCount = 0
+        // B22: nothing ever withdrew a delivered banner, so completing or
+        // deleting a task left "Task due now" sitting in Notification Center
+        // for the rest of the day. Collected as the live items are walked and
+        // reconciled against what this poller believes it has posted.
+        var liveTaskIDs: Set<String> = []
+        var liveFollowUpIDs: Set<String> = []
         for task in store.activeTasks {
-            guard let due = ShiftDateFormatting.dateTime(from: task.dueDate, time: task.dueTime) else { continue }
+            guard let due = ShiftDue.reminderInstant(date: task.dueDate, time: task.dueTime) else { continue }
+            liveTaskIDs.insert(task.id)
             // F5's "remind me N minutes before": the per-task offset replaces
             // this scheduler's own `lookahead` for the task that carries one,
             // rather than adding a second mechanism beside it. A task with no
             // offset keeps the exact behaviour it had.
             guard due <= Self.horizon(for: task, now: now, default: horizon) else { continue }
             dueTaskCount += 1
-            if due <= now { overdueCount += 1 }
+            // B22: `due <= now` called a date-only task overdue at local
+            // midnight, while the task list beside it did not until the next
+            // day. One definition now, and it is the list's.
+            if ShiftDue.isOverdue(date: task.dueDate, time: task.dueTime, now: now) { overdueCount += 1 }
             guard notifiedTaskDueAt[task.id] != due else { continue }
             notifiedTaskDueAt[task.id] = due
             notify(
-                title: due <= now ? "Task due now" : "Task due soon",
+                title: ShiftDue.taskTitle(date: task.dueDate, time: task.dueTime, now: now),
                 body: task.title,
                 identifier: "shift.task.\(task.id)",
                 // F4: an "Open task" button routing through the same
@@ -140,14 +150,18 @@ final class ShiftNotificationScheduler {
 
         var dueFollowUpCount = 0
         for followUp in store.followUps where followUp.status == .pending {
-            guard let due = ShiftDateFormatting.dateTime(from: followUp.followUpAt, time: followUp.followUpTime) else { continue }
+            guard let due = ShiftDue.reminderInstant(date: followUp.followUpAt,
+                                                     time: followUp.followUpTime) else { continue }
+            liveFollowUpIDs.insert(followUp.id)
             guard due <= horizon else { continue }
             dueFollowUpCount += 1
-            if due <= now { overdueCount += 1 }
+            if ShiftDue.isOverdue(date: followUp.followUpAt, time: followUp.followUpTime,
+                                  now: now) { overdueCount += 1 }
             guard notifiedFollowUpDueAt[followUp.id] != due else { continue }
             notifiedFollowUpDueAt[followUp.id] = due
             notify(
-                title: due <= now ? "Follow-up due now" : "Follow-up coming up",
+                title: ShiftDue.followUpTitle(date: followUp.followUpAt,
+                                              time: followUp.followUpTime, now: now),
                 body: followUp.title,
                 identifier: "shift.followup.\(followUp.id)",
                 // F4: "Snooze 1h" (the real `ShiftStore.snoozeFollowUp`, the
@@ -160,8 +174,61 @@ final class ShiftNotificationScheduler {
             )
         }
 
+        withdrawStaleNotifications(liveTaskIDs: liveTaskIDs, liveFollowUpIDs: liveFollowUpIDs)
+
         onDueCountsChanged?(dueTaskCount, dueFollowUpCount, overdueCount)
     }
+
+    /// B22: takes back every banner whose item is gone.
+    ///
+    /// "Gone" is deliberately broad: completed, deleted, a follow-up answered,
+    /// or a due date simply cleared - none of those items is in the live set,
+    /// and in every one of them a banner that still says "Task due now" is a
+    /// lie the captain has to dismiss by hand. The memo is dropped with it, so
+    /// re-adding the same due date later notifies again rather than being
+    /// silently deduped against a banner that no longer exists.
+    private func withdrawStaleNotifications(liveTaskIDs: Set<String>,
+                                            liveFollowUpIDs: Set<String>) {
+        var stale: [String] = []
+        for id in notifiedTaskDueAt.keys where !liveTaskIDs.contains(id) {
+            stale.append("shift.task.\(id)")
+            notifiedTaskDueAt[id] = nil
+        }
+        for id in notifiedFollowUpDueAt.keys where !liveFollowUpIDs.contains(id) {
+            stale.append("shift.followup.\(id)")
+            notifiedFollowUpDueAt[id] = nil
+        }
+        guard !stale.isEmpty else { return }
+        withdraw(stale)
+    }
+
+    /// The one place a banner is taken back. Both the delivered copy and any
+    /// still-pending request: a request that has not fired yet would otherwise
+    /// arrive after the task was completed.
+    private func withdraw(_ identifiers: [String]) {
+        #if FM_SELFTESTS
+        if let sink = Self.withdrawSinkForTests {
+            sink(identifiers)
+            return
+        }
+        #endif
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        let center = UNUserNotificationCenter.current()
+        center.removeDeliveredNotifications(withIdentifiers: identifiers)
+        center.removePendingNotificationRequests(withIdentifiers: identifiers)
+    }
+
+    #if FM_SELFTESTS
+    /// GL-27. The same seam shape `SnippetExpander.injectionSinkForTests` uses,
+    /// and for the same reason: `UNUserNotificationCenter` cannot be reached
+    /// at all from the unbundled test binary, so what a suite can assert is
+    /// exactly *which identifiers* would have been withdrawn.
+    static var withdrawSinkForTests: (([String]) -> Void)?
+
+    /// Which items this poller currently believes it has a live banner for.
+    var debugNotifiedTaskIDs: [String] { Array(notifiedTaskDueAt.keys) }
+    var debugNotifiedFollowUpIDs: [String] { Array(notifiedFollowUpDueAt.keys) }
+    #endif
 
     /// How far ahead of `task`'s due time this poll is willing to fire.
     ///

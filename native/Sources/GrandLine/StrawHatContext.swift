@@ -160,7 +160,11 @@ struct StrawHatContextSnapshot {
                   let due = ShiftDateFormatting.dateTime(from: dueDate, time: task.dueTime),
                   due <= horizon else { continue }
             let label = ShiftDateFormatting.friendly(dueDate, time: task.dueTime)
-            dated.append((due, DatedItem(title: task.title, due: label, isOverdue: due <= now)))
+            // B22: `due <= now` reads a date-only task as overdue at local
+            // midnight. One definition, shared with the list and the notifier.
+            dated.append((due, DatedItem(
+                title: task.title, due: label,
+                isOverdue: ShiftDue.isOverdue(date: dueDate, time: task.dueTime, now: now))))
         }
         dated.sort { $0.due < $1.due }
         snapshot.dueTaskCount = dated.count
@@ -174,8 +178,10 @@ struct StrawHatContextSnapshot {
             // task, whose whole due-soon question needs a date to answer.
             if let due, due > horizon { continue }
             let label = followUp.followUpAt.map { ShiftDateFormatting.friendly($0, time: followUp.followUpTime) }
-            followUps.append((due, DatedItem(title: followUp.title, due: label,
-                                             isOverdue: due.map { $0 <= now } ?? false)))
+            followUps.append((due, DatedItem(
+                title: followUp.title, due: label,
+                isOverdue: ShiftDue.isOverdue(date: followUp.followUpAt,
+                                              time: followUp.followUpTime, now: now))))
         }
         followUps.sort { ($0.due ?? .distantFuture) < ($1.due ?? .distantFuture) }
         snapshot.pendingFollowUpCount = followUps.count

@@ -379,10 +379,10 @@ private final class ShiftTaskRowView: NSView {
         self.onToggle = onToggle
         self.onFocus = onFocus
 
-        let isOverdue: Bool = {
-            guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
-            return due < Calendar.current.startOfDay(for: Date())
-        }()
+        // B22: one definition, shared with the notifier - which used to call a
+        // date-only task overdue at local midnight while this row did not
+        // until the next day.
+        let isOverdue = ShiftDue.isOverdue(date: task.dueDate, time: task.dueTime, now: Date())
         let (priorityText, priorityTint): (String, HelmTint) = {
             switch task.priority {
             case .high: return ("High", .critical)

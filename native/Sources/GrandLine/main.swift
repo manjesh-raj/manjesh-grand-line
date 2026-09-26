@@ -2847,6 +2847,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_BOARD_VIEW_TESTS"] == "1" {
 // advance, and the per-task reminder offset's own comparison. Pure logic, so
 // it runs in CI's blocking lane; the calendar's render is its window-backed
 // sibling below.
+// B22: the app's one definition of "overdue" (the task list and the notifier
+// used to disagree about a date-only task all day long), and the withdrawal of
+// a banner whose task is gone. Pure logic - no window, no notification centre.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_DUE_TESTS"] == "1" {
+    exit(ShiftDueSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_RECURRENCE_TESTS"] == "1" {
     exit(ShiftRecurrenceSelfTest.run() ? 0 : 1)
 }
