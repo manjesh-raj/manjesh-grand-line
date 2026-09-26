@@ -213,8 +213,34 @@ enum DictationPermissions {
 /// like `ShiftNotificationScheduler`/`ShiftGlobalHotkey`), driven by
 /// `DictationHotkey`'s onDown/onUp callbacks.
 final class DictationEngine {
-    private let audioEngine = AVAudioEngine()
-    private let recognizer: SFSpeechRecognizer?
+    // PF6 of the 2026-09-25 full review: both of these were built in `init`,
+    // and `AppDelegate` builds the engine at launch - so every launch paid for
+    // an `AVAudioEngine` and an `SFSpeechRecognizer` whether or not the
+    // captain ever held the dictation key. Neither is touched outside a real
+    // recording, so both are built on first use now. (Measured cost on this
+    // machine: 1.4ms for the pair - real, but well under the review's estimate
+    // for it, and worth saying so.)
+    //
+    // The audio engine is deliberately an optional rather than a `lazy var`:
+    // the teardown paths call `stop()` on it, and a `lazy var` would *build*
+    // one in order to stop a recording that never started. `_audioEngine?` is
+    // what keeps those paths free.
+    private var _audioEngine: AVAudioEngine?
+    private var audioEngine: AVAudioEngine {
+        if let existing = _audioEngine { return existing }
+        let engine = AVAudioEngine()
+        _audioEngine = engine
+        return engine
+    }
+    private let locale: Locale
+    private var recognizerBuilt = false
+    private var _recognizer: SFSpeechRecognizer?
+    private var recognizer: SFSpeechRecognizer? {
+        if recognizerBuilt { return _recognizer }
+        recognizerBuilt = true
+        _recognizer = SFSpeechRecognizer(locale: locale) ?? SFSpeechRecognizer()
+        return _recognizer
+    }
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private(set) var isRecording = false
@@ -493,7 +519,7 @@ final class DictationEngine {
     private var recordingStartedAt: Date?
 
     init(locale: Locale = Locale(identifier: "en-US")) {
-        recognizer = SFSpeechRecognizer(locale: locale) ?? SFSpeechRecognizer()
+        self.locale = locale
     }
 
     /// Tracks "the captain still wants to record" across an async permission
@@ -680,7 +706,7 @@ final class DictationEngine {
         isRecording = false
         report(.transcribing)
         removeTapIfInstalled()
-        audioEngine.stop()
+        _audioEngine?.stop()   // PF6: never build one just to stop it.
         recognitionRequest?.endAudio()
 
         // A final result can be delayed indefinitely (or, per the quirk
@@ -729,7 +755,7 @@ final class DictationEngine {
         if isRecording {
             isRecording = false
             removeTapIfInstalled()
-            audioEngine.stop()
+            _audioEngine?.stop()   // PF6: never build one just to stop it.
         }
 
         // No usable transcript is ever possible in this state (recognition

@@ -59,6 +59,28 @@ enum CommandLibraryStoreSelfTest {
         setenv("FM_COMMAND_LIBRARY_DIR", scratchRoot.path, 1)
         defer { unsetenv("FM_COMMAND_LIBRARY_DIR") }
 
+        // MARK: PF6 - nothing is read until something asks
+
+        // PF6 of the 2026-09-25 full review: this store's initialiser seeded
+        // and then scanned the library synchronously, and `AppDelegate` builds
+        // it, so every launch paid for it before the first frame. Measured
+        // against a warm 73-command library: 318-329ms, more than the review
+        // estimated for all fifteen launch loads together - half of it because
+        // the library was scanned **twice** (once to decide whether to seed,
+        // once to load), and all of it because nothing at launch reads it.
+        //
+        // Both halves are asserted here. The first read must still hand back
+        // the whole seeded library, because the point is a timing change and
+        // not a behaviour one: there must be no window in which a caller sees
+        // a library that later fills in.
+        let deferred = CommandLibraryStore()
+        check(!deferred.debugIsLoaded,
+              "building the store must not seed or scan - that is PF6's whole launch cost")
+        check(deferred.commands.count == CommandLibrarySeedData.commands.count,
+              "the first read seeds and scans in full, got \(deferred.commands.count) "
+              + "expected \(CommandLibrarySeedData.commands.count)")
+        check(deferred.debugIsLoaded, "and the store is loaded from then on")
+
         // MARK: Seed on first run
 
         let store = CommandLibraryStore()

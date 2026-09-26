@@ -31,11 +31,68 @@ final class CommandLibraryStore {
     /// as `ShiftStore.gitSync`/`DocsRunbookStore.gitSync`.
     let gitSync: ShiftGitSync?
 
-    private(set) var commands: [DevOpsCommand] = []
-    private(set) var config: CommandLibraryConfig = .empty
-    private(set) var favoriteIDs: Set<String> = []
+    // MARK: PF6 - the library loads on first read, not at launch
+    //
+    // PF6 of the 2026-09-25 full review: this store's initialiser seeded and
+    // then scanned the library, synchronously, before the first frame - and it
+    // is built by `AppDelegate`, so every launch paid it. Measured against a
+    // warm 73-command library on this machine: **318-329ms**, which is more
+    // than the whole 150-300ms the review estimated for all fifteen launch
+    // loads together. Two separate causes, both fixed here:
+    //
+    //   1. **The library was scanned twice.** `seedIfEmpty()` scanned to
+    //      decide whether to seed (GL-21: "could not enumerate" is not
+    //      "empty"), and `reloadAll()` then scanned again for the same files.
+    //      `seedIfEmpty` hands its scan back now, and a library that was not
+    //      seeded reuses it.
+    //   2. **Nothing at launch reads it.** The DevOps Commands tab, the Log
+    //      Analyzer's library matching and the crew's own tool are all reached
+    //      by the captain doing something. So the work happens on the first
+    //      read of any of the four collections below, not in `init`.
+    //
+    // This is a timing change and deliberately not a behaviour one: the first
+    // reader sees exactly what it saw before, because `ensureLoaded()` runs
+    // the same seed-and-scan synchronously before handing anything back. There
+    // is no window in which a caller can observe an empty library that would
+    // later fill in.
+    private var isLoaded = false
+    private var storedCommands: [DevOpsCommand] = []
+    private var storedConfig: CommandLibraryConfig = .empty
+    private var storedFavoriteIDs: Set<String> = []
+    private var storedRecentUsage: [CommandLibraryUsageEntry] = []
+
+    var commands: [DevOpsCommand] {
+        ensureLoaded()
+        return storedCommands
+    }
+    var config: CommandLibraryConfig {
+        ensureLoaded()
+        return storedConfig
+    }
+    var favoriteIDs: Set<String> {
+        get { ensureLoaded(); return storedFavoriteIDs }
+        set { ensureLoaded(); storedFavoriteIDs = newValue }
+    }
     /// Most-recent-first - see `CommandLibraryUsageEntry`'s doc comment.
-    private(set) var recentUsage: [CommandLibraryUsageEntry] = []
+    var recentUsage: [CommandLibraryUsageEntry] {
+        get { ensureLoaded(); return storedRecentUsage }
+        set { ensureLoaded(); storedRecentUsage = newValue }
+    }
+
+    #if FM_SELFTESTS
+    /// PF6: whether the seed-and-scan has happened yet, so a suite can prove
+    /// the launch path does not pay for it.
+    var debugIsLoaded: Bool { isLoaded }
+    #endif
+
+    /// Seed-if-empty plus the first scan, once. Every accessor above goes
+    /// through this, so no caller can see a half-built library.
+    private func ensureLoaded() {
+        guard !isLoaded else { return }
+        isLoaded = true
+        let scanned = seedIfEmpty()
+        reloadAll(reusing: scanned)
+    }
 
     /// Recent-used tracking (Phase 2) keeps at most this many entries -
     /// unbounded growth would mean re-writing an ever-larger file on every
@@ -75,15 +132,23 @@ final class CommandLibraryStore {
             gitSync = sync
         }
         try? fm.createDirectory(at: root, withIntermediateDirectories: true)
-        seedIfEmpty()
-        reloadAll()
+        // PF6: no seed, no scan here. See the block above `isLoaded`.
     }
 
     func reloadAll() {
-        commands = scanCommands()
-        config = CommandLibraryYaml.readConfig(path: configPath)
-        favoriteIDs = CommandLibraryYaml.readFavorites(path: favoritesPath)
-        recentUsage = CommandLibraryYaml.readRecentUsage(path: recentUsagePath)
+        // An explicit reload always re-reads, and implies the library is
+        // loaded from here on.
+        isLoaded = true
+        reloadAll(reusing: nil)
+    }
+
+    /// `reusing` is the scan `seedIfEmpty` already performed, when it did not
+    /// seed - the second cause in PF6's note above.
+    private func reloadAll(reusing scanned: [DevOpsCommand]?) {
+        storedCommands = scanned ?? scanCommands()
+        storedConfig = CommandLibraryYaml.readConfig(path: configPath)
+        storedFavoriteIDs = CommandLibraryYaml.readFavorites(path: favoritesPath)
+        storedRecentUsage = CommandLibraryYaml.readRecentUsage(path: recentUsagePath)
     }
 
     // MARK: Scanning
@@ -372,12 +437,18 @@ final class CommandLibraryStore {
     /// empty Command Library page is a worse first-run experience than
     /// Shift's own deliberately-blank task list - the whole point of this
     /// tab is browsing a pre-populated reference.
-    private func seedIfEmpty() {
+    /// Returns the scan it performed when it did **not** seed, so the caller
+    /// does not have to repeat it (PF6). Returns `nil` when it seeded or when
+    /// the scan failed, both of which need a fresh read.
+    @discardableResult
+    private func seedIfEmpty() -> [DevOpsCommand]? {
         let scan = scanCommandsChecked()
         // GL-21: only seed a library that is *known* to be empty. An
         // enumeration failure looks identical to emptiness from the outside
         // and used to trigger a full 73-file re-seed over real data.
-        guard !scan.enumerationFailed, scan.commands.isEmpty else { return }
+        guard !scan.enumerationFailed, scan.commands.isEmpty else {
+            return scan.enumerationFailed ? nil : scan.commands
+        }
         for command in CommandLibrarySeedData.commands {
             // `command.id` in the seed literals is a bare slug (e.g.
             // "get-pod-logs") - the file's path (category/[subcategory/]slug)
@@ -391,5 +462,6 @@ final class CommandLibraryStore {
         }
         persist(what: "command library config", path: configPath) { try CommandLibraryYaml.writeConfig(CommandLibrarySeedData.config, path: configPath) }
         gitSync?.markDirty()
+        return nil
     }
 }
