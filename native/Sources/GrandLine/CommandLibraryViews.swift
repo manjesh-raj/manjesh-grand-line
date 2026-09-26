@@ -299,8 +299,16 @@ final class CommandLibraryPageView: NSObject {
         detailExplainButton.translatesAutoresizingMaskIntoConstraints = false
 
         detailCopyButton.controlSize = .small
-        detailCopyButton.keyEquivalent = "c"
-        detailCopyButton.keyEquivalentModifierMask = [.command]
+        // B27: no key equivalent. A button's `keyEquivalent` is resolved by
+        // the *window's* `performKeyEquivalent`, so this one claimed ⌘C for
+        // every view on the page - and the collision goes both ways. Where
+        // the Edit menu's Copy is enabled (any field with a selection) the
+        // menu wins and this chord is simply dead; where it is disabled, ⌘C
+        // silently copies the selected command template instead of doing
+        // nothing, which is not what the captain pressed it for. A
+        // page-scoped control cannot own a window-wide chord, and there is no
+        // AppKit mechanism to scope one - so it does not have one.
+        detailCopyButton.toolTip = "Copy this command to the clipboard"
         detailCopyButton.target = self
         detailCopyButton.action = #selector(copyClicked)
         detailCopyButton.translatesAutoresizingMaskIntoConstraints = false

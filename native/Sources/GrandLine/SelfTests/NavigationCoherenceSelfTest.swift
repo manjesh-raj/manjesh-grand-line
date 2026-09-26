@@ -54,6 +54,67 @@ enum NavigationCoherenceSelfTest {
         ok = checkDestinationNamingIsCanonical() && ok
         ok = checkOverviewNamesExactlyOneThing() && ok
         ok = checkWindowTitleComposition() && ok
+        ok = checkNoControlOwnsACharacterChord() && ok
+        return ok
+    }
+
+    // MARK: B27 - a page-scoped control must not own a window-wide chord
+
+    /// `NSControl.keyEquivalent` is resolved by the **window's**
+    /// `performKeyEquivalent`, so a button that sets one claims that chord for
+    /// every view in the window while its page is mounted.
+    ///
+    /// The Command Library's Copy button set ⌘C that way, and the collision
+    /// went both ways: where the Edit menu's Copy is enabled (any field with a
+    /// selection) the menu wins and the button's chord is dead, and where it
+    /// is disabled ⌘C silently copied the selected command template instead of
+    /// doing nothing. AppKit has no way to scope a control's key equivalent to
+    /// a subtree, so the rule is simply that a control may not carry a
+    /// *character* one.
+    ///
+    /// Return and Escape are exempt and are the whole point of the exemption:
+    /// they are AppKit's default/cancel button convention, they are what a
+    /// sheet or popover is expected to honour, and they are not chords a menu
+    /// competes for. Every other key belongs in `NSApp.mainMenu`, where
+    /// `checkMenuBarShape`'s duplicate rule already governs it.
+    private static func checkNoControlOwnsACharacterChord() -> Bool {
+        var ok = true
+        guard let dir = SelfTestSources.appSourceDirectory() else {
+            fail("app sources are not next to this binary - this guard would pass vacuously", &ok)
+            return ok
+        }
+        let allowed = ["\"\\r\"", "\"\\u{1b}\"", "\"\""]
+        var offenders: [String] = []
+        var sawAny = false
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir,
+                                                                  includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.pathExtension == "swift" {
+            // `main.swift` builds the menu bar, where a character key
+            // equivalent is exactly right.
+            guard file.lastPathComponent != "main.swift" else { continue }
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            for (index, line) in text.components(separatedBy: "\n").enumerated() {
+                let code = line.trimmingCharacters(in: .whitespaces)
+                guard !code.hasPrefix("//"), !code.hasPrefix("///") else { continue }
+                guard let range = code.range(of: ".keyEquivalent = ") else { continue }
+                sawAny = true
+                let value = String(code[range.upperBound...])
+                guard !allowed.contains(where: { value.hasPrefix($0) }) else { continue }
+                offenders.append("\(file.lastPathComponent):\(index + 1)")
+            }
+        }
+        // Discriminating power: the exempt Return/Escape assignments still
+        // spell the property, so a grep that stopped matching fails here.
+        check(sawAny,
+              "guard: nothing outside main.swift sets `keyEquivalent` any more - either the "
+              + "default-button convention was removed (then delete this guard) or the grep "
+              + "is broken", &ok)
+        check(offenders.isEmpty,
+              "B27: a control's `keyEquivalent` is window-wide, so a page-scoped button that "
+              + "sets a character chord steals it from every other view (and loses it to any "
+              + "enabled menu item with the same chord). Only Return and Escape - AppKit's "
+              + "default/cancel convention - are allowed here; everything else belongs in "
+              + "`NSApp.mainMenu`. Offenders: " + offenders.joined(separator: ", "), &ok)
         return ok
     }
 
