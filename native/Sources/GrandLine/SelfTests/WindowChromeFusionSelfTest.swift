@@ -80,6 +80,8 @@ enum WindowChromeFusionSelfTest {
             ("A3 the scroll edge reads a real offset", test_a3ScrollEdgeReadsARealOffset),
             ("A3 a real scroll toggles the bar's state", test_a3RealScrollTogglesTheBar),
             ("A3 the bar's elevation actually changes", test_a3ElevationChanges),
+            ("PF9 the cluster-rect cache does not outlive its windows",
+             test_pf9ClusterRectCacheDoesNotLeak),
         ]
         for (name, body) in cases {
             if let failure = body() {
@@ -777,6 +779,67 @@ enum WindowChromeFusionSelfTest {
     /// So this asks the question the geometry cases cannot: hand the
     /// window's *real* content view the point AppKit would dispatch, and
     /// require the button back.
+    /// PF9 of the 2026-09-25 full review: `clusterRects` was keyed by
+    /// `ObjectIdentifier(window)` and nothing ever removed an entry. Two
+    /// defects in one: an unbounded cache (GL-35), and - the one that could
+    /// actually be seen - an aliasing hazard, because `ObjectIdentifier` is
+    /// the object's address and a later window allocated at a dead one's
+    /// address inherits its cached cluster rect. `trafficLightHitTest`
+    /// rejects every point outside that rect before resolving a button, so
+    /// the inherited rect means dead traffic lights, which is exactly the
+    /// captain-reported bug the forwarding exists to fix.
+    ///
+    /// Both halves are assertable. The cache shrinks when a window goes away,
+    /// and a *new* window's own rect is its own rather than a dead
+    /// neighbour's.
+    private static func test_pf9ClusterRectCacheDoesNotLeak() -> String? {
+        WindowChromeFusion.debugResetClusterRects()
+
+        // A window that is never ordered front, so nothing but this scope
+        // holds it and ARC really does release it at the end of the pool.
+        // (`makeWindow` orders its windows front, which keeps them alive in
+        // the app's window list - a fixture that used it would measure
+        // AppKit's retention rather than this cache's.)
+        func makeReleasableWindow() -> NSWindow {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                                  backing: .buffered,
+                                  defer: false)
+            window.isReleasedWhenClosed = false
+            WindowChromeFusion.apply(to: window)
+            return window
+        }
+
+        func positionOnce(_ window: NSWindow) {
+            WindowChromeFusion.positionTrafficLights(
+                in: window,
+                verticalCenter: DaylightBarController.trafficLightCenterY,
+                leadingX: DaylightBarController.trafficLightLeadingX)
+        }
+
+        // Fifty windows, each released at the end of its own pool. A cache keyed
+        // by address with no removal grows to fifty-one; one that holds its
+        // windows weakly and prunes on write stays at one.
+        for _ in 0..<50 {
+            autoreleasepool {
+                let window = makeReleasableWindow()
+                positionOnce(window)
+                window.close()
+            }
+        }
+        let live = makeReleasableWindow()
+        defer { live.close() }
+        positionOnce(live)
+        guard WindowChromeFusion.debugClusterRectCount >= 1 else {
+            return "the cache holds nothing even for a live window - this case would be vacuous"
+        }
+        guard WindowChromeFusion.debugClusterRectCount == 1 else {
+            return "the cache holds \(WindowChromeFusion.debugClusterRectCount) entries after "
+                + "fifty windows were released; it must not outlive the windows it describes"
+        }
+        return nil
+    }
+
     private static func test_a1TrafficLightsAreHitTestable() -> String? {
         let window = makeWindow(fused: true)
         defer { window.close() }
