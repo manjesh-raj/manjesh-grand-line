@@ -430,6 +430,36 @@ enum SnippetExpansionSelfTest {
               "Return abandons the run", &ok)
         check(SnippetExpander.typingEvents(for: keyDown("", keyCode: 123)) == [.abandon],
               "so does an arrow key", &ok)
+
+        // B20: ⌥⌫ deletes a word and ⌘⌫ deletes to the start of the line.
+        // Both used to arrive as one plain backspace, so the buffer dropped
+        // one character while the screen lost several - and the next `;sig`
+        // then expanded against a trigger that was no longer there.
+        check(SnippetExpander.typingEvents(for: keyDown("\u{08}", keyCode: 51, flags: .option))
+                == [.abandon],
+              "⌥⌫ deletes a whole word, so the run is over - it is not one backspace (B20)", &ok)
+        check(SnippetExpander.typingEvents(for: keyDown("\u{08}", keyCode: 51, flags: .command))
+                == [.abandon],
+              "⌘⌫ deletes to the start of the line, likewise", &ok)
+        check(SnippetExpander.typingEvents(for: keyDown("\u{08}", keyCode: 51, flags: .shift))
+                == [.backspace],
+              "but ⇧⌫ is still one character - the rule is about word-wise deletes, "
+              + "not about any modifier at all", &ok)
+
+        // And the consequence, through the real buffer: a word-wise delete
+        // must not leave a trigger armed.
+        var buffer = SnippetTypingBuffer()
+        for event in SnippetExpander.typingEvents(for: keyDown(";")) { _ = buffer.consume(event) }
+        for character in "sig" {
+            for event in SnippetExpander.typingEvents(for: keyDown(String(character))) {
+                _ = buffer.consume(event)
+            }
+        }
+        for event in SnippetExpander.typingEvents(for: keyDown("\u{08}", keyCode: 51, flags: .option)) {
+            _ = buffer.consume(event)
+        }
+        check(buffer.run.isEmpty,
+              "after ⌥⌫ the buffer holds nothing, got \u{201c}\(buffer.run)\u{201d}", &ok)
     }
 
     // MARK: End to end

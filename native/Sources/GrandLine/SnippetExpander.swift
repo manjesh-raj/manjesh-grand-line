@@ -265,7 +265,18 @@ final class SnippetExpander {
         if !event.modifierFlags.intersection(disqualifying).isEmpty { return [.abandon] }
 
         switch event.keyCode {
-        case 51: return [.backspace]                    // delete
+        case 51:
+            // B20: ⌥⌫ deletes a whole **word** and ⌘⌫ deletes to the start of
+            // the line, and both of them arrived here as one plain backspace -
+            // so the buffer dropped a single character while the screen lost
+            // the lot. The run is over either way; guessing how many
+            // characters the receiving app removed is not something this
+            // buffer can do, and guessing wrong is what made a later `;sig`
+            // expand against a trigger that was no longer on screen. (⌘ is
+            // already disqualifying above, so this is really about ⌥ - it is
+            // written for both so the rule survives that list changing.)
+            let wordwise: NSEvent.ModifierFlags = [.option, .command]
+            return event.modifierFlags.intersection(wordwise).isEmpty ? [.backspace] : [.abandon]
         case 36, 76, 48, 53: return [.abandon]          // return, enter, tab, escape
         case 115...121, 123...126: return [.abandon]    // home/end/page, arrows
         default: break
