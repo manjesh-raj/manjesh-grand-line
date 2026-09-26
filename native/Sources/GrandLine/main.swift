@@ -1250,6 +1250,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // by explicit scope) - this stops an in-flight `claude -p` child from
         // outliving the app by up to its 300s bound.
         appShell.shutdownStrawHatCrew()
+        // PF2: the clipboard history's seal-and-write is off the main thread
+        // now, so ⌘Q inside its own write latency would lose the last copy -
+        // the same class as the five flushes above it.
+        appShell.shutdownClipboardHistory()
         shiftHotkey.stop()
         tabShortcuts.stop()
         shiftNotifications.stop()

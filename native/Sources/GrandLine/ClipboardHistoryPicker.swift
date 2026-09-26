@@ -98,6 +98,14 @@ final class ClipboardHistoryController: NSObject {
         if let captureToken { CredentialVaultClipboard.shared.unobserveChanges(captureToken) }
     }
 
+    /// PF2: the history's seal-and-write moved off the main thread, so ⌘Q
+    /// inside that window would otherwise lose the last copy. Called from
+    /// `AppDelegate.applicationWillTerminate`, the same shape as every other
+    /// debounced store's flush there.
+    func shutdown() {
+        store.flush()
+    }
+
     /// Start recording copies.
     ///
     /// **Called explicitly from `main.swift` rather than at init**, and that
