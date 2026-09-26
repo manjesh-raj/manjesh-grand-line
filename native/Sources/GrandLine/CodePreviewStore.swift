@@ -423,7 +423,11 @@ final class CodePreviewStore {
         let saved = savedOrder()
         guard !saved.isEmpty else { return snippets }
 
-        var byName = Dictionary(uniqueKeysWithValues: snippets.map { ($0.id, $0) })
+        // B19: the id is derived from a filename on a git-synced directory,
+        // and a case-insensitive volume can hand back two entries that fold
+        // to one id. First wins rather than a trap.
+        var byName = Dictionary(snippets.map { ($0.id, $0) },
+                                uniquingKeysWith: { first, _ in first })
         var ordered: [CodePreviewSnippet] = []
         for name in saved {
             if let snippet = byName.removeValue(forKey: name) { ordered.append(snippet) }

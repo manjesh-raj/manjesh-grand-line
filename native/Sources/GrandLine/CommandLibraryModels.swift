@@ -177,7 +177,10 @@ struct DevOpsCommand: Identifiable, Equatable {
     /// input for every substitutable spot even if a command's YAML never
     /// declared one explicitly.
     var effectiveParameters: [CommandParameter] {
-        let declared = Dictionary(uniqueKeysWithValues: parameters.map { ($0.name, $0) })
+        // B19: a command's `parameters` come from git-synced YAML, so two
+        // entries can share a name. First declaration wins; a trap does not.
+        let declared = Dictionary(parameters.map { ($0.name, $0) },
+                                  uniquingKeysWith: { first, _ in first })
         return Self.detectTokens(in: commandTemplate).map { token in
             declared[token] ?? CommandParameter(name: token, label: token, required: true)
         }

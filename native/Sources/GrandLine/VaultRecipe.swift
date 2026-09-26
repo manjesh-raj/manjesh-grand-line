@@ -131,7 +131,11 @@ enum VaultRecipeChecklist {
             items.append(VaultRecipeChecklistItem(kind: .secret, name: name, status: status, detail: nil))
         }
 
-        let backupHardenedTools: [String: VaultRecipeTool] = Dictionary(uniqueKeysWithValues: recipe.tools.filter(\.hardened).map { ($0.name, $0) })
+        // B19: the recipe is a file on disk and the snapshot is another
+        // process's JSON; neither guarantees a unique tool name.
+        let backupHardenedTools: [String: VaultRecipeTool] = Dictionary(
+            recipe.tools.filter(\.hardened).map { ($0.name, $0) },
+            uniquingKeysWith: { first, _ in first })
         var currentHardenedTools: [String: VaultTool] = [:]
         for tool in currentSnapshot.tools ?? [] {
             if case .hardened = tool.status { currentHardenedTools[tool.name] = tool }

@@ -30,8 +30,62 @@ enum Phase3PolishSelfTest {
         checkUndoToastShape(&ok)
         checkSuitesRestoreTheTheme(&ok)
         checkTheRealDomainIsNeverWritten(&ok)
+        checkNoTrappingDictionaryInit(&ok)
         print(ok ? "Phase3PolishSelfTest: all checks passed" : "Phase3PolishSelfTest: FAILED")
         return ok
+    }
+
+    // MARK: B19 - no trapping Dictionary init over data this app did not mint
+
+    /// `Dictionary(uniqueKeysWithValues:)` **traps** on a duplicate key.
+    ///
+    /// Not throws, not nil - `Fatal error: Duplicate values for key`, taking
+    /// the whole app down. Seven call sites keyed it on data the app does not
+    /// control: a git-synced `projects.yaml`, a command's declared parameters,
+    /// a snippet filename, a scanned `otpauth://` URI, the vault file and an
+    /// `av` recipe. A duplicate id in any of them is one bad merge away, and
+    /// the app died on the launch path for it (B19).
+    ///
+    /// So the initialiser is banned outright in this app's own sources, with
+    /// one per-line escape hatch for the cases where the keys provably come
+    /// from an existing `Dictionary` and cannot collide. Per-line and with a
+    /// stated reason, deliberately not a file allowlist - same shape as
+    /// `E2ETestingPolicySelfTest`'s `# session-not-window:` marker.
+    private static func checkNoTrappingDictionaryInit(_ ok: inout Bool) {
+        guard let dir = SelfTestSources.appSourceDirectory() else {
+            fail("app sources are not next to this binary - this guard would pass vacuously", &ok)
+            return
+        }
+        let marker = "unique-keys-ok:"
+        var offenders: [String] = []
+        var sawAny = false
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir,
+                                                                  includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.pathExtension == "swift" {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            for (index, line) in text.components(separatedBy: "\n").enumerated() {
+                guard line.contains("uniqueKeysWithValues") else { continue }
+                sawAny = true
+                // A comment *about* the rule is not a use of it.
+                let code = line.trimmingCharacters(in: .whitespaces)
+                if code.hasPrefix("//") { continue }
+                if line.contains(marker) { continue }
+                offenders.append("\(file.lastPathComponent):\(index + 1)")
+            }
+        }
+        // Discriminating power: the exempt sites still spell the initialiser,
+        // so a grep that stopped matching anything at all fails here rather
+        // than reporting a clean sweep.
+        check(sawAny,
+              "guard: nothing in the app's sources mentions `uniqueKeysWithValues` any more - "
+              + "either every site was rewritten (then delete this guard) or the grep is broken",
+              &ok)
+        check(offenders.isEmpty,
+              "B19: `Dictionary(uniqueKeysWithValues:)` traps on a duplicate key. Use "
+              + "`uniquingKeysWith:`, or add a trailing `// \(marker) <why>` on the line when "
+              + "the keys provably come from an existing Dictionary. Offenders: "
+              + offenders.joined(separator: ", "),
+              &ok)
     }
 
     // MARK: Suite hygiene - the theme must be put back

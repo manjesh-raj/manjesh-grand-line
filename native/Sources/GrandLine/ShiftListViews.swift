@@ -199,7 +199,14 @@ final class ShiftTaskListView: NSObject {
 
     func setTasks(_ tasks: [ShiftTask], projects: [ShiftProject]) {
         self.tasks = tasks
-        self.projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
+        // B19: `uniquingKeysWith`, never `uniqueKeysWithValues` - the latter
+        // *traps*, and `projects.yaml` is a git-synced file a bad merge or a
+        // hand edit can leave with two entries sharing an id. Keeping the
+        // first is what the rest of this app already does for a duplicated
+        // id (`main.swift`'s session restore); crashing the app because a
+        // synced file grew a duplicate is never the better answer.
+        self.projectsByID = Dictionary(projects.map { ($0.id, $0) },
+                                       uniquingKeysWith: { first, _ in first })
         tableView.reloadData()
     }
 

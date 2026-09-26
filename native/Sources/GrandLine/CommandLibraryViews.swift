@@ -941,7 +941,9 @@ final class CommandLibraryPageView: NSObject {
         let accent = HelmTheme.nsColor(theme.accentHex)
         let font = ShiftFont.mono(12)
         let result = NSMutableAttributedString()
-        let params = Dictionary(uniqueKeysWithValues: command.effectiveParameters.map { ($0.name, $0) })
+        // B19: same source, same rule as `CommandLibraryCommand.effectiveParameters`.
+        let params = Dictionary(command.effectiveParameters.map { ($0.name, $0) },
+                                uniquingKeysWith: { first, _ in first })
 
         guard let regex = try? NSRegularExpression(pattern: "\\{\\{\\s*([A-Za-z0-9_]+)\\s*\\}\\}") else {
             return NSAttributedString(string: command.commandTemplate, attributes: [.font: font, .foregroundColor: ink])

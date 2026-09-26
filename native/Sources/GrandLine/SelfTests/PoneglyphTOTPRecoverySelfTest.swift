@@ -162,6 +162,19 @@ enum PoneglyphTOTPRecoverySelfTest {
         check(TOTP.parse("otpauth://totp/x?issuer=GitHub") == nil, "a URI with no secret must be refused")
         check(TOTP.parse("hunter2!") == nil, "a pasted password must not be accepted as a base32 seed")
         check(TOTP.parse("   ") == nil, "whitespace is not a seed")
+
+        // B19: a scanned or pasted URI is arbitrary text, and a repeated query
+        // parameter **trapped** - `Fatal error: Duplicate values for key`,
+        // taking the app down from a QR code.
+        let repeated = TOTP.parse(
+            "otpauth://totp/GitHub:manjesh?secret=JBSWY3DPEHPK3PXP&secret=JBSWY3DPEHPK3PXP"
+            + "&issuer=GitHub&issuer=Evil&digits=8&digits=6")
+        check(repeated != nil,
+              "a URI with a repeated parameter must parse rather than kill the process (B19)")
+        check(repeated?.issuer == "GitHub",
+              "and the FIRST occurrence wins, got \(repeated?.issuer ?? "nil")")
+        check(repeated?.digits == 8,
+              "for every repeated parameter, got \(repeated?.digits ?? -1)")
     }
 
     // MARK: - The countdown
