@@ -51,6 +51,7 @@ enum ReadingListSelfTest {
         checkStoreRefusesNonURLsAndDuplicates(check)
         checkStoreRefusesWritingAnUnreadableFile(check)
         checkStorePreservesRecordsThisBuildCannotDecode(check)
+        checkStorePreservesUnknownKeys(check)
         checkLegacyRecordDecode(check)
         checkStoreHonoursShiftDirOverride(check)
         checkIconCacheNaming(check)
@@ -509,6 +510,57 @@ enum ReadingListSelfTest {
         check(after.range(of: "from-a-newer-build")!.lowerBound
               < after.range(of: "ordinary")!.lowerBound,
               "skew: a preserved record keeps its place in the file rather than drifting to the end")
+    }
+
+    /// B23: the *other* half of GL-01's cross-build rule.
+    ///
+    /// `checkStorePreservesRecordsThisBuildCannotDecode` above covers a record
+    /// this build cannot decode at all. This covers a record it decodes
+    /// perfectly well which carries one extra key from a newer build - and
+    /// that is the worse of the two in practice, because the link keeps
+    /// working, nothing looks wrong, and the newer build silently finds its
+    /// own field gone every time the older one rewrites the file.
+    private static func checkStorePreservesUnknownKeys(_ check: (Bool, String) -> Void) {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("fm-reading-list-keys-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = root.appendingPathComponent("links.yaml")
+        try? """
+        links:
+          - id: "https://example.com/a"
+            url: "https://example.com/a"
+            title: "A real link"
+            added_at: "2026-09-01T09:00:00Z"
+            metadata_state: "resolved"
+            reading_time_minutes: 12
+            highlight_count: 3
+
+        """.write(to: path, atomically: true, encoding: .utf8)
+
+        let store = ReadingListStore(root: root)
+        // Both halves of the fixture's discriminating power: the record really
+        // did decode (so this is not the `unreadableRecords` path), and this
+        // build really does regard those two keys as foreign.
+        check(store.links.count == 1,
+              "fixture: the record must decode fine - this is a read that SUCCEEDS, got "
+              + "\(store.links.count) links")
+        check(store.unreadableRecordCount == 0,
+              "fixture: and it is not the unreadable-record path, got "
+              + "\(store.unreadableRecordCount)")
+        check(store.recordsWithUnknownKeys == 1,
+              "fixture: this build must regard the record as carrying unknown keys, got "
+              + "\(store.recordsWithUnknownKeys)")
+
+        store.setRead(id: "https://example.com/a", read: true)
+        let after = (try? String(contentsOf: path, encoding: .utf8)) ?? ""
+        check(after.contains("read_at"), "fixture: the file really was rewritten")
+        check(after.contains("reading_time_minutes"),
+              "B23: a key from a newer build must survive this build's whole-file rewrite")
+        check(after.contains("highlight_count"), "B23: all of them, not just the first")
+        check(after.components(separatedBy: "reading_time_minutes").count == 2,
+              "and must not be written twice - a duplicated key here means a field was added "
+              + "to ReadingLink without adding its key to `ReadingListStore.knownKeys`")
     }
 
     private static func checkLegacyRecordDecode(_ check: (Bool, String) -> Void) {

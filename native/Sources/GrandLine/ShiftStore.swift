@@ -22,6 +22,22 @@ final class ShiftStore {
     private(set) var activeTasks: [ShiftTask] = [] { didSet { noteMutation() } }
     private(set) var followUps: [ShiftFollowUp] = [] { didSet { noteMutation() } }
     private(set) var projects: [ShiftProject] = [] { didSet { noteMutation() } }
+
+    /// B23 / GL-01's second half: the keys on each record that this build does
+    /// not write, captured on read and put back on write. Without these, a
+    /// field a *newer* build added was silently dropped the first time this
+    /// build touched the file - across a git sync whose entire purpose is two
+    /// machines on two builds, with nothing failing and nothing to notice.
+    private var taskPassthrough = ShiftYamlPassthrough()
+    private var followUpPassthrough = ShiftYamlPassthrough()
+    private var projectPassthrough = ShiftYamlPassthrough()
+
+    #if FM_SELFTESTS
+    /// GL-27. How many records carry a key this build does not write - zero
+    /// for a file this build produced, which is what makes a forgotten
+    /// `knownKeys` entry visible.
+    var debugTaskRecordsWithUnknownKeys: Int { taskPassthrough.recordsWithExtras }
+    #endif
     private(set) var settings: ShiftSettings = ShiftSettings() { didSet { noteMutation() } }
 
     // MARK: M2 - the reload staleness guard
@@ -331,22 +347,36 @@ final class ShiftStore {
     struct Loaded<T> {
         let items: [T]
         let failed: Bool
+        /// B23: the keys on each record that this build does not write, kept
+        /// so a whole-file rewrite puts them back. Empty for a file this
+        /// build wrote itself.
+        var passthrough = ShiftYamlPassthrough()
     }
 
     /// Pure: reads and parses, decides nothing, touches no store state. Safe
     /// on any queue.
     private static func parseAll(root: URL) -> LoadedState {
-        func read<T>(_ suffix: String, key: String, map: (Yaml) -> T?) -> Loaded<T> {
+        func read<T>(_ suffix: String, key: String, knownKeys: Set<String>,
+                     map: (Yaml) -> T?) -> Loaded<T> {
             switch ShiftYaml.readListChecked(path: root.appendingPathComponent(suffix).path, key: key) {
-            case .ok(let items): return Loaded(items: items.compactMap(map), failed: false)
+            case .ok(let items):
+                // B23 / GL-01's second half: capture the unknown keys from the
+                // *raw* YAML before it is reduced to structs, because that is
+                // the only moment they exist.
+                var passthrough = ShiftYamlPassthrough()
+                passthrough.capture(items, knownKeys: knownKeys)
+                return Loaded(items: items.compactMap(map), failed: false, passthrough: passthrough)
             case .missing: return Loaded(items: [], failed: false)
             case .parseFailed: return Loaded(items: [], failed: true)
             }
         }
         return LoadedState(
-            activeTasks: read("tasks/active.yaml", key: "tasks", map: ShiftYaml.task(from:)),
-            followUps: read("follow-ups/follow-ups.yaml", key: "follow_ups", map: ShiftYaml.followUp(from:)),
-            projects: read("projects/projects.yaml", key: "projects", map: ShiftYaml.project(from:)),
+            activeTasks: read("tasks/active.yaml", key: "tasks",
+                              knownKeys: ShiftYaml.taskKnownKeys, map: ShiftYaml.task(from:)),
+            followUps: read("follow-ups/follow-ups.yaml", key: "follow_ups",
+                            knownKeys: ShiftYaml.followUpKnownKeys, map: ShiftYaml.followUp(from:)),
+            projects: read("projects/projects.yaml", key: "projects",
+                           knownKeys: ShiftYaml.projectKnownKeys, map: ShiftYaml.project(from:)),
             settings: ShiftYaml.readMappingChecked(path: root.appendingPathComponent("settings.yaml").path)
         )
     }
@@ -364,6 +394,12 @@ final class ShiftStore {
         activeTasks = loaded.activeTasks.items
         followUps = loaded.followUps.items
         projects = loaded.projects.items
+        // B23: rebuilt from disk on every reload, so a record deleted
+        // elsewhere drops out on its own and the map stays the size of the
+        // file rather than growing with the session.
+        taskPassthrough = loaded.activeTasks.passthrough
+        followUpPassthrough = loaded.followUps.passthrough
+        projectPassthrough = loaded.projects.passthrough
         switch loaded.settings {
         case .ok(let doc):
             noteLoadOK(settingsPath)
@@ -630,7 +666,8 @@ final class ShiftStore {
     }
 
     private func persistFollowUps() {
-        writeListGuarded(path: followUpsPath, key: "follow_ups", items: followUps.map(ShiftYaml.toYaml))
+        writeListGuarded(path: followUpsPath, key: "follow_ups",
+                         items: followUps.map { followUpPassthrough.merged(ShiftYaml.toYaml($0), id: $0.id) })
     }
 
     // MARK: Deletion (fm/grandline-tasks-kanban-devops-split)
@@ -878,11 +915,13 @@ final class ShiftStore {
     }
 
     private func persistActiveTasks() {
-        writeListGuarded(path: activeTasksPath, key: "tasks", items: activeTasks.map(ShiftYaml.toYaml))
+        writeListGuarded(path: activeTasksPath, key: "tasks",
+                         items: activeTasks.map { taskPassthrough.merged(ShiftYaml.toYaml($0), id: $0.id) })
     }
 
     private func persistProjects() {
-        writeListGuarded(path: projectsPath, key: "projects", items: projects.map(ShiftYaml.toYaml))
+        writeListGuarded(path: projectsPath, key: "projects",
+                         items: projects.map { projectPassthrough.merged(ShiftYaml.toYaml($0), id: $0.id) })
     }
 
     // MARK: Attachments (grandline-shift-task-image-attachments)

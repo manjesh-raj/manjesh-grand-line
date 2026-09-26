@@ -53,6 +53,32 @@ enum ShiftYaml {
         )
     }
 
+    // MARK: Known keys (B23 / GL-01's second half)
+
+    /// Every key this build writes for a task, follow-up and project.
+    ///
+    /// `ShiftYamlPassthrough` keeps anything *not* in these sets and writes it
+    /// straight back, so a field a newer build added survives this build
+    /// rewriting the whole file. Adding a field to one of those models means
+    /// adding its key here in the same change - otherwise this build treats
+    /// its own output as foreign and writes the key twice.
+    /// `ShiftStoreSelfTest.checkUnknownKeyPassthrough` asserts a round trip
+    /// leaves no duplicated keys, which is what catches that mistake.
+    static let taskKnownKeys: Set<String> = [
+        "id", "title", "description", "status", "priority", "due_date", "due_time",
+        "project_id", "tags", "created_at", "updated_at", "completed_at", "notes",
+        "subtasks", "has_attachment", "recurrence", "reminder_minutes_before",
+    ]
+
+    static let followUpKnownKeys: Set<String> = [
+        "id", "title", "status", "priority", "follow_up_at", "follow_up_time",
+        "related_task_id", "project_id", "notes",
+    ]
+
+    static let projectKnownKeys: Set<String> = [
+        "id", "name", "description", "status", "start_date", "due_date", "created_at",
+    ]
+
     // MARK: Task
 
     static func toYaml(_ t: ShiftTask) -> Yaml {
