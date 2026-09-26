@@ -68,6 +68,7 @@ enum CredentialVaultSelfTest {
         checkOverrideOrder(scratch: scratch, check)
         checkGitPortability(scratch: scratch, check)
         checkSortOrderMigrationAppendAndReorder(scratch: scratch, check)
+        checkARapidSequenceOfEditsAllPersist(scratch: scratch, check)
 
         if failures.isEmpty {
             print("CredentialVaultSelfTest: all checks passed")
@@ -166,6 +167,89 @@ enum CredentialVaultSelfTest {
         // weak master password is the captain's call to make.
         check(CredentialVaultPasswordStrength.minimumLength == 10,
               "the documented length floor should be 10")
+    }
+
+    // MARK: PF7 - re-seal only what changed, and lose nothing doing it
+
+    /// PF7 of the 2026-09-25 full review: `persist()` re-sealed **every**
+    /// credential on every mutation, and every mutation includes the
+    /// audit-only flush a reveal, a copy or a lock schedules. Adding one
+    /// credential to a vault of two hundred did two hundred AES-GCM seals on
+    /// the main thread.
+    ///
+    /// The optimisation is easy to prove and easy to get dangerously wrong,
+    /// so this case asserts the dangerous half first: **a rapid sequence of
+    /// edits must all be on disk afterwards, exactly as made.** A seal cache
+    /// whose invalidation is wrong does not crash or fail to write - it writes
+    /// the *previous* ciphertext for an edited credential, and the captain
+    /// finds out when a password they changed opens nothing. So the
+    /// round-trip is read back through a genuinely fresh store, field by
+    /// field, and only then is the seal count checked.
+    private static func checkARapidSequenceOfEditsAllPersist(scratch: URL, _ check: (Bool, String) -> Void) {
+        let (store, root) = makeVault(scratch, name: "pf7-reseal")
+
+        var ids: [String] = []
+        for i in 0..<20 {
+            let credential = VaultCredential(title: "Service \(i)", category: .other,
+                                             account: "user\(i)@example.com",
+                                             secret: "secret-\(i)-original",
+                                             location: "host\(i).example.com",
+                                             tags: ["seed"], notes: "note \(i)")
+            guard case .success(let added) = store.add(credential) else {
+                check(false, "the fixture could not seed credential \(i)")
+                return
+            }
+            ids.append(added.id)
+        }
+        check(store.credentials.count == 20,
+              "the fixture seeded \(store.credentials.count) credentials, want 20 - fewer would make "
+              + "the seal-count assertion below vacuous")
+
+        // A burst with no run loop turn between the edits, which is what a
+        // paste-and-save run or an import looks like.
+        store.debugResetItemSealCount()
+        for (offset, id) in ids.enumerated() where offset % 4 == 0 {
+            guard var credential = store.credentials.first(where: { $0.id == id }) else { continue }
+            credential.secret = "secret-\(offset)-ROTATED"
+            credential.notes = "rotated \(offset)"
+            guard case .success = store.update(credential) else {
+                check(false, "the burst could not update credential \(offset)")
+                return
+            }
+        }
+        let sealsForFiveEdits = store.debugItemSealCount
+
+        // Every edit, and every untouched neighbour, read back off disk.
+        let reopened = CredentialVaultStore(root: root)
+        var outcome: VaultUnlockOutcome?
+        waitFor(timeout: 30) { done in
+            reopened.unlock(masterPassword: "test-master-password") { result in
+                outcome = result
+                done()
+            }
+        }
+        check(outcome == .unlocked, "the burst left an openable vault, got \(String(describing: outcome))")
+        check(reopened.credentials.count == 20,
+              "\(reopened.credentials.count) credentials survived the burst, want 20")
+        var wrong: [String] = []
+        for (offset, id) in ids.enumerated() {
+            let expectedSecret = offset % 4 == 0 ? "secret-\(offset)-ROTATED" : "secret-\(offset)-original"
+            let expectedNotes = offset % 4 == 0 ? "rotated \(offset)" : "note \(offset)"
+            guard let found = reopened.credentials.first(where: { $0.id == id }) else {
+                wrong.append("\(offset): missing")
+                continue
+            }
+            if found.secret != expectedSecret { wrong.append("\(offset): secret is \(found.secret)") }
+            if found.notes != expectedNotes { wrong.append("\(offset): notes are \(found.notes)") }
+        }
+        check(wrong.isEmpty,
+              "a rapid sequence of edits did not all persist correctly: \(wrong.prefix(5))")
+
+        // Only now the performance half. Five credentials changed, so five
+        // seals - the other fifteen must come from the cache.
+        check(sealsForFiveEdits <= 10,
+              "five edits over twenty credentials cost \(sealsForFiveEdits) item seals; PF7 is "
+              + "exactly this - each `update` used to re-seal all twenty")
     }
 
     // MARK: Store
