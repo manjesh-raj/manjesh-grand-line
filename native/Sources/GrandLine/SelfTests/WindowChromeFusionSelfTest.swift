@@ -795,17 +795,15 @@ enum WindowChromeFusionSelfTest {
     private static func test_pf9ClusterRectCacheDoesNotLeak() -> String? {
         WindowChromeFusion.debugResetClusterRects()
 
-        // A window that is never ordered front, so nothing but this scope
-        // holds it and ARC really does release it at the end of the pool.
-        // (`makeWindow` orders its windows front, which keeps them alive in
-        // the app's window list - a fixture that used it would measure
-        // AppKit's retention rather than this cache's.)
+        // A probe window that is never ordered **front**, so nothing but this
+        // scope holds it and ARC really does release it at the end of the
+        // pool. (`makeWindow` above orders its windows front, which keeps them
+        // alive in the app's window list - a fixture that used it would
+        // measure AppKit's retention rather than this cache's.)
         func makeReleasableWindow() -> NSWindow {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
-                                  styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                                  backing: .buffered,
-                                  defer: false)
-            window.isReleasedWhenClosed = false
+            let window = OffScreenProbe.window(
+                width: 800, height: 600,
+                styleMask: [.titled, .closable, .miniaturizable, .resizable])
             WindowChromeFusion.apply(to: window)
             return window
         }
