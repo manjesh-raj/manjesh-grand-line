@@ -89,7 +89,8 @@ enum WhisperMetalRuntime {
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let shaderURL = dir.appendingPathComponent("ggml-metal.metal")
-            try WhisperMetalShaderSource.text.write(to: shaderURL, atomically: true, encoding: .utf8)
+            // PF8: built on demand and released as soon as it is written.
+            try WhisperMetalShaderSource.make().write(to: shaderURL, atomically: true, encoding: .utf8)
             setenv("GGML_METAL_PATH_RESOURCES", dir.path, 1)
         } catch {
             // Can't write the shader source anywhere real (disk full,
@@ -128,7 +129,7 @@ enum WhisperMetalRuntime {
             guard let fileSource = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
             source = fileSource
         } else {
-            source = WhisperMetalShaderSource.text
+            source = WhisperMetalShaderSource.make()
         }
 
         do {

@@ -22,16 +22,29 @@ import Foundation
 enum WhisperMetalShaderSource {
     /// The merged, self-contained Metal shader source text (ggml-common.h +
     /// ggml-metal-impl.h inlined into ggml-metal.metal, matching upstream's
-    /// own embedded-library merge) - decoded once, lazily, from the base64
-    /// payload below.
-    static let text: String = {
+    /// own embedded-library merge), decoded from the base64 payload below.
+    ///
+    /// **PF8 of the 2026-09-25 full review: a function, deliberately not a
+    /// `static let`.** As a cached static this held roughly 1.6MB of decoded
+    /// shader text resident for the life of the process the first time
+    /// anything touched it, for a string that is used exactly twice and never
+    /// again: `WhisperMetalRuntime.prepareIfNeeded()` writes it to a real
+    /// `ggml-metal.metal` file once per launch (whisper.cpp's Metal backend
+    /// needs a path, not a string), and the pre-flight compile reads it only
+    /// when `GGML_METAL_PATH_RESOURCES` is unset. Both callers use it once and
+    /// drop it, so building it on demand means the 1.6MB lives for the
+    /// duration of a write rather than the duration of the app.
+    ///
+    /// The base64 chunks themselves are string literals in `__TEXT` - mapped,
+    /// shared and pageable - so nothing is copied to make them reachable.
+    static func make() -> String {
         let base64 = base64Chunks.joined()
         guard let data = Data(base64Encoded: base64),
               let decoded = String(data: data, encoding: .utf8) else {
             fatalError("WhisperMetalShaderSource: embedded shader payload failed to base64-decode - this indicates the generated file itself is corrupt, not a runtime condition; re-run build-whisper-metal-shader.py")
         }
         return decoded
-    }()
+    }
 
     private static let base64Chunks: [String] = [
     "I2RlZmluZSBHR01MX0NPTU1PTl9ERUNMX01FVEFMCiNkZWZpbmUgR0dNTF9DT01NT05fSU1QTF9NRVRBTAovLyAtLS0tIGlubGluZWQgZ2dtbC1jb21tb24u",

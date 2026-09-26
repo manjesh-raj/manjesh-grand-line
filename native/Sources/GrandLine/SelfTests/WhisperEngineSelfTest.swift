@@ -54,6 +54,62 @@ enum WhisperEngineSelfTest {
         ok = testVocabularyBecomesInitialPrompt() && ok
         ok = testRealModelIfAvailable() && ok
         ok = testMetalFallbackDoesNotCrash() && ok
+        ok = testTheShaderSourceIsNotHeldResident() && ok
+        return ok
+    }
+
+    /// PF8 of the 2026-09-25 full review: `WhisperMetalShaderSource.text` was
+    /// a `static let`, so roughly 1.6MB of decoded shader text stayed resident
+    /// for the life of the process the first time anything touched it - for a
+    /// string used exactly twice (written to `ggml-metal.metal` once per
+    /// launch, and read by the pre-flight only when
+    /// `GGML_METAL_PATH_RESOURCES` is unset) and never again.
+    ///
+    /// **Two halves, and the first is a source guard on purpose.** Whether a
+    /// Swift string is still resident is not something a suite in the same
+    /// process can assert without measuring its own footprint, which is a
+    /// flaky thing to gate a build on. What *is* assertable, exactly and
+    /// cheaply, is that the generated file exposes a function rather than a
+    /// cached static - which is the whole mechanism. The second half then
+    /// proves the function still produces the real shader, so a guard that
+    /// passes against a `make()` returning `""` is not possible.
+    private static func testTheShaderSourceIsNotHeldResident() -> Bool {
+        var ok = true
+        guard let appSources = SelfTestSources.appSourceDirectory() else {
+            fail("PF8: could not resolve the app's own sources - this guard would pass silently", &ok)
+            return ok
+        }
+        let generated = appSources.appendingPathComponent("WhisperMetalShaderSource.swift")
+        guard let text = try? String(contentsOf: generated, encoding: .utf8) else {
+            fail("PF8: could not read WhisperMetalShaderSource.swift", &ok)
+            return ok
+        }
+        check(text.contains("static func make() -> String"),
+              "PF8: WhisperMetalShaderSource must expose `make()`", &ok)
+        check(!text.contains("static let text"),
+              "PF8: `static let text` caches ~1.6MB of shader source for the life of the "
+              + "process; the payload is used twice and must be built on demand", &ok)
+        // The generator writes this file, so a fix applied only here comes
+        // back on the next regeneration.
+        let generator = appSources
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Scripts/build-whisper-metal-shader.py")
+        if let script = try? String(contentsOf: generator, encoding: .utf8) {
+            check(script.contains("static func make() -> String") && !script.contains("static let text"),
+                  "PF8: the generator still emits the cached `static let text` - the next "
+                  + "regeneration would undo this", &ok)
+        } else {
+            fail("PF8: could not read build-whisper-metal-shader.py", &ok)
+        }
+
+        // Discriminating power: the function really does produce the shader.
+        let produced = WhisperMetalShaderSource.make()
+        check(produced.count > 100_000,
+              "PF8: make() produced \(produced.count) characters - the guards above would be "
+              + "vacuous against an empty payload", &ok)
+        check(produced.contains("GGML_COMMON_DECL_METAL"),
+              "PF8: make() did not produce the merged ggml Metal source", &ok)
         return ok
     }
 
