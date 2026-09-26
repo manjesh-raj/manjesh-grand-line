@@ -48,6 +48,7 @@ enum GoogleAccountsSelfTest {
         checkTheHealthVerdict(check)
         checkTheHealthCheckEndToEnd(check)
         checkTheDailyReviewCardIsUnchanged(check)
+        checkTheKeychainCachesSurviveTheRenameMigration(check)
 
         if failures.isEmpty {
             print("[GoogleAccountsSelfTest] all checks passed")
@@ -660,6 +661,40 @@ enum GoogleAccountsSelfTest {
         check(allBroken.access == .notDetermined, "and reports no access")
         check(CompositeDailyReviewCalendar(sources: [mac, broken]).access == .readable,
               "one readable source makes the column readable")
+    }
+
+    /// B30: neither Keychain cache may treat "absent" as settled while the
+    /// rename's migration can still copy the item across.
+    ///
+    /// A source guard, because the race needs a real legacy Keychain item, a
+    /// real migration pass and a real two-second launch gap.
+    /// `LegacyRenameMigrationSelfTest` asserts the *mechanism* against a
+    /// stand-in store; this asserts that the two real caches use it, which is
+    /// the half a behavioural test on a stand-in cannot give.
+    private static func checkTheKeychainCachesSurviveTheRenameMigration(
+        _ check: (Bool, String) -> Void) {
+        guard let root = SelfTestSources.appSourceDirectory() else {
+            check(false, "app sources are not next to this binary - this guard would pass vacuously")
+            return
+        }
+        for name in ["GoogleAccount.swift", "GoogleOAuth.swift"] {
+            guard let text = try? String(contentsOf: root.appendingPathComponent(name),
+                                         encoding: .utf8) else {
+                check(false, "could not read \(name)")
+                continue
+            }
+            // Discriminating power: the file really does cache, so a cache
+            // that was removed outright fails here rather than passing.
+            check(text.contains("private var cache"),
+                  "\(name) should still hold a Keychain cache for this guard to be about")
+            check(text.contains("LegacyNameMigration.keychainItemsCopiedNotification"),
+                  "\(name)'s cache must drop its absences when the rename migration copies an "
+                  + "item across - otherwise a migrated account reads as \"not connected\" for "
+                  + "the rest of the session (B30)")
+            check(text.contains("LegacyNameMigration.keychainMigrationIsOutstanding()"),
+                  "\(name) must not cache an absence at all while that migration may still "
+                  + "run - the repair above leaves a window, this closes it (B30)")
+        }
     }
 
     /// Read-only, and the assertion is about the **scope**.

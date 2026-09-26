@@ -42,6 +42,8 @@ enum LegacyRenameMigrationSelfTest {
         checkKeychainCopyNeverOverwrites(&ok)
         checkKeychainMigrationGateSkipsOnceComplete(&ok)
         checkKeychainMigrationGateRetriesAFailure(&ok)
+        checkKeychainMigrationGivesUpAfterABoundedNumberOfTries(&ok)
+        checkACachedAbsenceIsDroppedWhenTheMigrationCopiesAnItem(&ok)
         checkKeychainMigrationGatePerItemSurvivesOtherFailures(&ok)
         checkKeychainMigrationPersistsPerItemDuringThePass(&ok)
         checkLaunchPathNeverCallsTheKeychainMigration(&ok)
@@ -337,6 +339,154 @@ enum LegacyRenameMigrationSelfTest {
         let fourth = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, migrate: migrate)
         check(calls == 3, "and every later launch skips the migration entirely (got \(calls) calls)", &ok)
         check(fourth == .alreadyDone, "reporting exactly that (got \(fourth))", &ok)
+    }
+
+    // MARK: - B30: the retry is bounded
+
+    /// An item that can *never* succeed must stop being asked about.
+    ///
+    /// The retry above is the right behaviour for a transient refusal, and it
+    /// was unbounded. A legacy ACL this build cannot satisfy kept
+    /// `keychainMigrationCompleteKey` unset for ever, so every launch
+    /// re-queried the item and re-raised its Keychain dialog at the captain,
+    /// with no way to make it stop but signing out of whatever the item
+    /// belonged to.
+    private static func checkKeychainMigrationGivesUpAfterABoundedNumberOfTries(_ ok: inout Bool) {
+        let domain = "fm.selftest.keychain-migration-bounded.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: domain) else {
+            fail("could not open the scratch defaults suite", &ok)
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: domain) }
+
+        var calls = 0
+        let alwaysFails: ([String], Set<String>, @escaping LegacyNameMigration.ItemSucceeded)
+            -> LegacyNameMigration.KeychainOutcome = { _, _, _ in
+            calls += 1
+            return LegacyNameMigration.KeychainOutcome(
+                copied: [], alreadyPresent: 0,
+                failures: ["legacy/cursed-account: User interaction is not allowed."])
+        }
+
+        let maximum = LegacyNameMigration.keychainMigrationMaxAttempts
+        // The fixture's own discriminating power: a bound of one would make
+        // the "retries at least once" half below meaningless.
+        check(maximum > 1, "fixture: the bound must leave room for a real retry, got \(maximum)", &ok)
+
+        for attempt in 1...maximum {
+            _ = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, migrate: alwaysFails)
+            check(calls == attempt, "pass \(attempt) ran, got \(calls) calls", &ok)
+        }
+        check(defaults.bool(forKey: LegacyNameMigration.keychainMigrationCompleteKey),
+              "after \(maximum) failing passes the migration gives up rather than re-prompting "
+              + "on every launch for ever (B30)", &ok)
+        check((defaults.stringArray(forKey: LegacyNameMigration.keychainMigrationGaveUpReasonsKey) ?? [])
+                .contains(where: { $0.contains("cursed-account") }),
+              "and records why, so giving up is recoverable rather than only logged, got "
+              + "\(defaults.stringArray(forKey: LegacyNameMigration.keychainMigrationGaveUpReasonsKey) ?? [])",
+              &ok)
+
+        let after = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, migrate: alwaysFails)
+        check(calls == maximum,
+              "and no later launch queries it again, got \(calls) calls", &ok)
+        check(after == .alreadyDone, "reporting exactly that (got \(after))", &ok)
+
+        // The discriminating half: a pass that succeeds before the bound
+        // clears the counter, so a machine that hits two transient failures
+        // years apart is never pushed over the edge by them.
+        let cleanDomain = "fm.selftest.keychain-migration-bounded-clean.\(UUID().uuidString)"
+        guard let clean = UserDefaults(suiteName: cleanDomain) else {
+            fail("could not open the second scratch defaults suite", &ok)
+            return
+        }
+        defer { clean.removePersistentDomain(forName: cleanDomain) }
+        _ = LegacyNameMigration.migrateKeychainIfNeeded(into: clean, migrate: alwaysFails)
+        check(clean.integer(forKey: LegacyNameMigration.keychainMigrationAttemptsKey) == 1,
+              "a failing pass counts, got "
+              + "\(clean.integer(forKey: LegacyNameMigration.keychainMigrationAttemptsKey))", &ok)
+        _ = LegacyNameMigration.migrateKeychainIfNeeded(into: clean) { _, _, _ in
+            LegacyNameMigration.KeychainOutcome(copied: ["x/y"], alreadyPresent: 0,
+                                                failures: [], succeededKeys: ["x/y"])
+        }
+        check(clean.integer(forKey: LegacyNameMigration.keychainMigrationAttemptsKey) == 0,
+              "and a clean pass clears the count, got "
+              + "\(clean.integer(forKey: LegacyNameMigration.keychainMigrationAttemptsKey))", &ok)
+    }
+
+    // MARK: - B30: a cached absence does not survive the migration
+
+    /// The Keychain migration runs two seconds after launch, on a background
+    /// queue. By then a card has usually already asked `GoogleAccountStore`
+    /// whether an account is connected - and that read answered "no" from the
+    /// *pre-migration* Keychain and cached it for the session. A captain whose
+    /// token was migrated a moment later still saw "Not connected", with a
+    /// Connect button that would have started a fresh OAuth flow over a token
+    /// that was there all along.
+    ///
+    /// Driven through a stand-in store, because writing a real legacy Keychain
+    /// item and migrating it is what `checkKeychainItemIsCopied` already does
+    /// and what this is not about: the defect is the *cache*, and what has to
+    /// be asserted is that it is dropped.
+    private static func checkACachedAbsenceIsDroppedWhenTheMigrationCopiesAnItem(_ ok: inout Bool) {
+        final class CountingStore: GoogleAccountStoring {
+            var reads = 0
+            var present: GoogleAccountRecord?
+            private var cached: GoogleAccountRecord?
+            private var loaded = false
+            private var observer: NSObjectProtocol?
+            init() {
+                observer = NotificationCenter.default.addObserver(
+                    forName: LegacyNameMigration.keychainItemsCopiedNotification,
+                    object: nil, queue: .main
+                ) { [weak self] _ in
+                    guard let self, self.cached == nil else { return }
+                    self.loaded = false
+                }
+            }
+            deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+            func record(for slot: GoogleAccountSlot) -> GoogleAccountRecord? {
+                if loaded { return cached }
+                reads += 1
+                cached = present
+                loaded = true
+                return cached
+            }
+            func save(_ record: GoogleAccountRecord, for slot: GoogleAccountSlot) throws {}
+            func remove(_ slot: GoogleAccountSlot) {}
+        }
+
+        let store = CountingStore()
+        check(store.record(for: .work) == nil, "nothing is connected before the migration", &ok)
+        check(store.record(for: .work) == nil, "and the absence is cached", &ok)
+        check(store.reads == 1,
+              "fixture: the second read really was served from the cache, or this check cannot "
+              + "see B30 at all - got \(store.reads) reads", &ok)
+
+        // The migration copies the item across and says so.
+        store.present = GoogleAccountRecord(email: "captain@example.com",
+                                            accessToken: "a", refreshToken: "r",
+                                            accessTokenExpiry: Date().addingTimeInterval(3600),
+                                            grantedScopes: [])
+        NotificationCenter.default.post(name: LegacyNameMigration.keychainItemsCopiedNotification,
+                                        object: nil)
+        // The notification is delivered on the main queue; this suite is on it.
+        RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+
+        check(store.record(for: .work) != nil,
+              "a migrated account is visible in the same session, not only after a relaunch (B30)",
+              &ok)
+        check(store.reads == 2, "which means the cache really was dropped, got \(store.reads) reads",
+              &ok)
+
+        // And the prevention half, on the real store's own rule: while the
+        // migration is outstanding an absence is not settled.
+        let pending = UserDefaults(suiteName: "fm.selftest.migration-pending.\(UUID().uuidString)")
+        check(pending.map { LegacyNameMigration.keychainMigrationIsOutstanding($0) } == true,
+              "a defaults domain with no complete flag reports the migration as outstanding", &ok)
+        pending?.set(true, forKey: LegacyNameMigration.keychainMigrationCompleteKey)
+        check(pending.map { LegacyNameMigration.keychainMigrationIsOutstanding($0) } == false,
+              "and a completed one does not", &ok)
+        if let pending { pending.removePersistentDomain(forName: pending.description) }
     }
 
     /// The fix behind this file's second round: PR #471's gate was a single

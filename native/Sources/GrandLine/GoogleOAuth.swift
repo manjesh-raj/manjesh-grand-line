@@ -461,6 +461,31 @@ final class GoogleOAuthClientStore {
     var override: GoogleOAuthConfiguration??
 
     private var cache: GoogleOAuthConfiguration??
+    private var migrationObserver: NSObjectProtocol?
+
+    init() {
+        // B30: same race as `KeychainGoogleAccountStore`'s, same repair. The
+        // rename's Keychain migration runs two seconds after launch, and a
+        // "no client configured" cached from the pre-migration Keychain sends
+        // Settings into offering to set one up over a pair that already
+        // exists - and `setConfiguration` deletes before it adds.
+        migrationObserver = NotificationCenter.default.addObserver(
+            forName: LegacyNameMigration.keychainItemsCopiedNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.forgetCachedAbsence()
+        }
+    }
+
+    deinit {
+        if let migrationObserver { NotificationCenter.default.removeObserver(migrationObserver) }
+    }
+
+    /// Drops a cached "there is no client configured". A configuration that
+    /// really was read is kept - a migration only ever copies items in.
+    func forgetCachedAbsence() {
+        if case .some(.none) = cache { cache = nil }
+    }
 
     func configuration() -> GoogleOAuthConfiguration? {
         if let override { return override }
@@ -469,6 +494,10 @@ final class GoogleOAuthClientStore {
         // Review bug B1: a Keychain error is not "no client configured", so it
         // is not cached either - the next call retries once the Keychain
         // settles, rather than reporting "not set up" for the whole session.
+        //
+        // B30: nor is "absent" settled while the rename's Keychain migration
+        // may still copy the item across.
+        if value == nil, LegacyNameMigration.keychainMigrationIsOutstanding() { return nil }
         if cacheable { cache = .some(value) }
         return value
     }
