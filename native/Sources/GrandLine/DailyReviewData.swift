@@ -57,16 +57,41 @@ enum DailyReviewAvailability<Value: Equatable>: Equatable {
     case available(Value)
     /// Short, captain-facing, and always a reason rather than a status word.
     case unavailable(String)
+    /// Some of the data **and** a stated gap: one source answered and another
+    /// could not be read.
+    ///
+    /// B16: before this case existed, `CompositeDailyReviewCalendar` said that
+    /// by appending the reason as a **fake event row** - an untitled, timeless
+    /// entry carrying the gap text as its title. The composer then counted it
+    /// toward `maxEvents`, so a busy day truncated the gap away entirely and
+    /// reported "+3 more" when two of them were real. A gap is not a row; it
+    /// travels beside the value, and the composer files it under `gaps` where
+    /// every other stated gap already goes.
+    case partial(Value, reason: String)
 
+    /// The rows to render - which a partial answer very much has.
     var value: Value? {
-        if case .available(let value) = self { return value }
-        return nil
+        switch self {
+        case .available(let value), .partial(let value, _): return value
+        case .unavailable: return nil
+        }
     }
 
+    /// Set only when there is *nothing* to show. A partial answer renders its
+    /// rows, so it is not unavailable.
     var unavailableReason: String? {
         if case .unavailable(let reason) = self { return reason }
         return nil
     }
+
+    /// The gap stated alongside a value that was rendered anyway.
+    var partialReason: String? {
+        if case .partial(_, let reason) = self { return reason }
+        return nil
+    }
+
+    /// Either shape of stated gap, for a caller that only wants to say so.
+    var gapReason: String? { unavailableReason ?? partialReason }
 }
 
 // MARK: - The rendered rows
@@ -100,6 +125,10 @@ struct DailyReviewFollowUpRow: Equatable {
 struct DailyReviewEventRow: Equatable {
     let title: String
     /// "10:00", or "all day".
+    ///
+    /// Display only. **Never sort on it** - it is localised, so "1:00 PM"
+    /// sorts before "9:00 AM" and a merged two-source column came out in an
+    /// order nobody could explain (B16). `startsAt` is the sort key.
     let timeText: String
     /// "6 attendees \u{00B7} Meet", or the location, or empty.
     let detail: String
@@ -109,6 +138,36 @@ struct DailyReviewEventRow: Equatable {
     /// and the card falls back to a theme tint.
     let colorHex: String?
     let isAllDay: Bool
+    /// When the event starts, for ordering. Optional because a source may not
+    /// know (and because an all-day row has no meaningful time), and a row
+    /// with none sorts after the rows that do rather than to the top.
+    let startsAt: Date?
+
+    init(title: String,
+         timeText: String,
+         detail: String,
+         colorHex: String?,
+         isAllDay: Bool,
+         startsAt: Date? = nil) {
+        self.title = title
+        self.timeText = timeText
+        self.detail = detail
+        self.colorHex = colorHex
+        self.isAllDay = isAllDay
+        self.startsAt = startsAt
+    }
+
+    /// All-day first, then by real start time, then by title so the order is
+    /// total and a merge is reproducible.
+    static func isOrderedBefore(_ lhs: DailyReviewEventRow, _ rhs: DailyReviewEventRow) -> Bool {
+        if lhs.isAllDay != rhs.isAllDay { return lhs.isAllDay }
+        switch (lhs.startsAt, rhs.startsAt) {
+        case (let l?, let r?) where l != r: return l < r
+        case (nil, _?): return false
+        case (_?, nil): return true
+        default: return lhs.title < rhs.title
+        }
+    }
 }
 
 /// One habit, for the day F8 lands. Defined here rather than waiting for it,
@@ -323,7 +382,10 @@ enum DailyReviewComposer {
         if let all = inputs.calendar.value {
             events = Array(all.prefix(maxEvents))
             hiddenEvents = max(0, all.count - events.count)
-        } else if let reason = inputs.calendar.unavailableReason {
+        }
+        // Either shape of gap, and a *partial* one is filed here rather than
+        // smuggled into `events` as a row (B16).
+        if let reason = inputs.calendar.gapReason {
             gaps.append(DailyReviewGap(section: "Calendar", reason: reason))
         }
 

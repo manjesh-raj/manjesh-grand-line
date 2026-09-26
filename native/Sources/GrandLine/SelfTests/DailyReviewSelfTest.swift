@@ -49,6 +49,7 @@ enum DailyReviewSelfTest {
         checkStickiesAndReading(&ok)
         checkDayKeyMatchesTheBriefing(&ok)
         checkCalendarSourceIsReadOnly(&ok)
+        checkBothHostsRefreshGoogle(&ok)
         checkCalendarGapsAreStated(&ok)
 
         if ok {
@@ -472,6 +473,39 @@ enum DailyReviewSelfTest {
               "white maps to FFFFFF, got \(EventKitDailyReviewCalendar.hex(from: .white))", &ok)
         check(EventKitDailyReviewCalendar.hex(from: .black) == "000000",
               "black maps to 000000, got \(EventKitDailyReviewCalendar.hex(from: .black))", &ok)
+    }
+
+    // MARK: 10 - B16: both hosts of the card refresh Google
+
+    /// A source guard, because the behaviour cannot be asserted without a
+    /// connected Google account and a network.
+    ///
+    /// `DailyReviewCalendarReading.events(on:)` is synchronous and on the main
+    /// thread, so a Google source can only ever serve a **cached snapshot** -
+    /// something has to fetch. Overview always did; Fleet, which hosts the
+    /// same card, never did (B16), so on a machine where Fleet is the page the
+    /// captain opens, the calendar column rendered whatever another page had
+    /// last fetched, or a stated gap forever.
+    private static func checkBothHostsRefreshGoogle(_ ok: inout Bool) {
+        print("\n-- both hosts of the card refresh Google --")
+        guard let root = SelfTestSources.appSourceDirectory() else {
+            check(false, "could not resolve the app's source directory - "
+                  + "this check would pass vacuously", &ok)
+            return
+        }
+        for name in ["DailyOverviewController.swift", "FleetController.swift"] {
+            let path = root.appendingPathComponent(name)
+            guard let text = try? String(contentsOf: path, encoding: .utf8) else {
+                check(false, "could not read \(name)", &ok)
+                continue
+            }
+            // Discriminating power first: this really is a host of the card.
+            check(text.contains("renderDailyReview()"),
+                  "\(name) should be a host of the daily review card", &ok)
+            check(text.contains("DailyReviewCalendarSources.shared.refreshGoogle(for:"),
+                  "\(name) hosts the daily review card and must refresh the Google source - "
+                  + "`events(on:)` only ever reads a cached snapshot (B16)", &ok)
+        }
     }
 }
 

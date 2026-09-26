@@ -467,7 +467,7 @@ enum GoogleAccountsSelfTest {
         switch GoogleDailyReviewCalendar.parse(Data(json.utf8), day: day) {
         case .unavailable(let reason):
             check(false, "a well-formed events list should parse, got \(reason)")
-        case .available(let rows):
+        case .available(let rows), .partial(let rows, _):
             check(rows.count == 3,
                   "a cancelled event must be dropped - a briefing that lists a meeting the "
                   + "captain is no longer expected at is worse than one that omits it, got \(rows.count)")
@@ -490,7 +490,7 @@ enum GoogleAccountsSelfTest {
         // Google's error shape.
         switch GoogleDailyReviewCalendar.parse(
             Data(#"{"error":{"code":403,"message":"Insufficient Permission"}}"#.utf8), day: day) {
-        case .available: check(false, "an error body must not parse as an empty day (GL-14)")
+        case .available, .partial: check(false, "an error body must not parse as an empty day (GL-14)")
         case .unavailable(let reason):
             check(reason.contains("Insufficient Permission"),
                   "Google's own message should reach the captain, got \(reason)")
@@ -532,7 +532,7 @@ enum GoogleAccountsSelfTest {
         // snapshot - and no snapshot is not an empty day.
         try? store.save(record(), for: .work)
         switch source.events(on: day) {
-        case .available(let rows):
+        case .available(let rows), .partial(let rows, _):
             check(false, "an unread calendar must NOT report \(rows.count) events - "
                   + "\"not read yet\" and \"nothing on\" are different sentences (GL-14)")
         case .unavailable(let reason):
@@ -570,35 +570,86 @@ enum GoogleAccountsSelfTest {
     }
 
     private static func checkTheTwoSourceMerge(_ check: (Bool, String) -> Void) {
-        let day = Date()
+        let day = Date(timeIntervalSince1970: 1_790_000_000)
+        let dayStart = Calendar.current.startOfDay(for: day)
+        func at(_ hour: Int, _ minute: Int = 0) -> Date {
+            dayStart.addingTimeInterval(TimeInterval(hour * 3600 + minute * 60))
+        }
+        // B16: the *localised* strings deliberately, because that is what the
+        // merge used to sort on - "1:00 PM" < "9:00 AM" in every 12-hour
+        // locale, so the afternoon meeting came out first. The fixture's own
+        // discriminating power, asserted before the merge is: if these two
+        // strings did not order the wrong way round, the check below could
+        // not fail however the merge sorted.
+        let afternoonText = "1:00 PM"
+        let morningText = "9:00 AM"
+        check(afternoonText < morningText,
+              "fixture: the two time strings must sort the WRONG way round as strings, "
+              + "or this check cannot see a string sort at all")
+
         let mac = StubCalendar(result: .available([
-            DailyReviewEventRow(title: "Mac event", timeText: "09:00", detail: "",
-                                colorHex: "FF0000", isAllDay: false),
+            DailyReviewEventRow(title: "Mac event", timeText: afternoonText, detail: "",
+                                colorHex: "FF0000", isAllDay: false, startsAt: at(13)),
         ]))
         let google = StubCalendar(result: .available([
-            DailyReviewEventRow(title: "Google event", timeText: "08:00", detail: "",
-                                colorHex: nil, isAllDay: false),
+            DailyReviewEventRow(title: "Google event", timeText: morningText, detail: "",
+                                colorHex: nil, isAllDay: false, startsAt: at(9)),
         ]))
         let both = CompositeDailyReviewCalendar(sources: [mac, google])
         let rows = both.events(on: day).value ?? []
         check(rows.count == 2, "both sources contribute, got \(rows.count)")
         check(rows.first?.title == "Google event",
-              "and the merged list is re-sorted - two sorted lists concatenated are not "
-              + "a sorted list, got \(rows.map(\.title))")
+              "and the merged list is re-sorted by real start time - two sorted lists "
+              + "concatenated are not a sorted list, and the display string is localised "
+              + "(B16), got \(rows.map(\.title))")
 
-        // One source fails. Its reason must survive.
+        // All-day still leads, whatever the times say.
+        let allDay = StubCalendar(result: .available([
+            DailyReviewEventRow(title: "Offsite", timeText: "all day", detail: "",
+                                colorHex: nil, isAllDay: true, startsAt: at(0)),
+        ]))
+        let withAllDay = CompositeDailyReviewCalendar(sources: [mac, allDay, google])
+        check((withAllDay.events(on: day).value ?? []).map(\.title)
+                == ["Offsite", "Google event", "Mac event"],
+              "all-day first, then by start time, got "
+              + "\((withAllDay.events(on: day).value ?? []).map(\.title))")
+
+        // One source fails. Its reason must survive - as a *gap*, never as a
+        // row (B16: it used to be appended as a fake untitled event, which the
+        // composer then counted toward `maxEvents` and truncated away).
         let broken = StubCalendar(result: .unavailable("work mail could not be read"))
         let mixed = CompositeDailyReviewCalendar(sources: [mac, broken])
         switch mixed.events(on: day) {
         case .unavailable(let reason):
             check(false, "one working source should still show its events, got \(reason)")
-        case .available(let merged):
+        case .available:
+            check(false, "a source that could not be read must not read as a clean answer (GL-14)")
+        case .partial(let merged, let reason):
             check(merged.contains { $0.title == "Mac event" }, "the working source's events show")
-            check(merged.contains { $0.title.contains("could not be read") },
+            check(merged.count == 1,
+                  "and the gap is NOT one of the rows - the captain's event count must be "
+                  + "the number of events, got \(merged.map(\.title))")
+            check(reason == "work mail could not be read",
                   "and the broken one's REASON is not swallowed - the captain must be able "
                   + "to tell \"nothing on\" from \"one of your two calendars failed\" (GL-14), "
-                  + "got \(merged.map(\.title))")
+                  + "got \(reason)")
         }
+
+        // And the composer files that gap where every other stated gap goes,
+        // rather than rendering it as an event.
+        var inputs = DailyReviewInputs()
+        inputs.now = day
+        inputs.calendar = mixed.events(on: day)
+        let digest = DailyReviewComposer.digest(from: inputs)
+        let composedTitles = digest.events.map { $0.title }
+        check(composedTitles == ["Mac event"],
+              "composer: a partial calendar renders its real events only, got \(composedTitles)")
+        check(digest.gaps.contains { $0.section == "Calendar"
+                && $0.reason == "work mail could not be read" },
+              "composer: and states the gap in the gaps list, got "
+              + "\(digest.gaps.map { $0.section + ": " + $0.reason })")
+        check(digest.hiddenEventCount == 0,
+              "composer: a gap must not inflate the \"+N more\" count, got \(digest.hiddenEventCount)")
 
         // Everything off.
         let allBroken = CompositeDailyReviewCalendar(sources: [

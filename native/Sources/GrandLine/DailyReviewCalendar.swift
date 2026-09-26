@@ -173,11 +173,8 @@ final class EventKitDailyReviewCalendar: DailyReviewCalendarReading {
         // The one EventKit read in the app.
         let found = store.events(matching: predicate)
         let rows = found
-            .sorted { lhs, rhs in
-                if lhs.isAllDay != rhs.isAllDay { return lhs.isAllDay }
-                return (lhs.startDate ?? start) < (rhs.startDate ?? start)
-            }
             .map { Self.row(for: $0, dayStart: start) }
+            .sorted(by: DailyReviewEventRow.isOrderedBefore)
         return .available(rows)
     }
 
@@ -192,7 +189,8 @@ final class EventKitDailyReviewCalendar: DailyReviewCalendarReading {
             timeText: event.isAllDay ? "all day" : timeFormatter.string(from: event.startDate ?? dayStart),
             detail: detail(for: event),
             colorHex: event.calendar?.color.map(hex(from:)),
-            isAllDay: event.isAllDay)
+            isAllDay: event.isAllDay,
+            startsAt: event.startDate ?? dayStart)
     }
 
     /// "6 attendees \u{00B7} Zoom", either half alone, or empty. The location

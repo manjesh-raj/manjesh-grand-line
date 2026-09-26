@@ -167,7 +167,7 @@ final class GoogleDailyReviewCalendar: DailyReviewCalendarReading {
                                 self.lastFailure = "\(self.slot.title)\u{2019}s calendar could not "
                                     + "be read - \(reason)"
                                 completion(true)
-                            case .available(let rows):
+                            case .available(let rows), .partial(let rows, _):
                                 let changed = self.snapshot?.rows != rows
                                     || self.snapshot?.dayKey != key
                                 self.snapshot = (key, rows)
@@ -227,16 +227,11 @@ final class GoogleDailyReviewCalendar: DailyReviewCalendarReading {
         let rows = items
             .filter { ($0["status"] as? String) != "cancelled" }
             .map { row(for: $0, dayStart: dayStart) }
-            .sorted { lhs, rhs in
-                if lhs.isAllDay != rhs.isAllDay { return lhs.isAllDay }
-                return lhs.sortKey < rhs.sortKey
-            }
-            .map(\.row)
+            .sorted(by: DailyReviewEventRow.isOrderedBefore)
         return .available(rows)
     }
 
-    private static func row(for item: [String: Any], dayStart: Date)
-        -> (row: DailyReviewEventRow, isAllDay: Bool, sortKey: Date) {
+    private static func row(for item: [String: Any], dayStart: Date) -> DailyReviewEventRow {
         let title = ((item["summary"] as? String) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let start = item["start"] as? [String: Any] ?? [:]
@@ -247,7 +242,7 @@ final class GoogleDailyReviewCalendar: DailyReviewCalendarReading {
         let startDate = (start["dateTime"] as? String).flatMap { iso8601.date(from: $0) }
             ?? (start["date"] as? String).flatMap { dayOnly.date(from: $0) }
             ?? dayStart
-        return (DailyReviewEventRow(
+        return DailyReviewEventRow(
             title: title.isEmpty ? "Untitled event" : title,
             timeText: isAllDay ? "all day" : timeFormatter.string(from: startDate),
             detail: detail(for: item),
@@ -256,7 +251,8 @@ final class GoogleDailyReviewCalendar: DailyReviewCalendarReading {
             // the card falls back to its theme tint - which is what
             // `DailyReviewEventRow.colorHex`'s own `nil` case is for.
             colorHex: nil,
-            isAllDay: isAllDay), isAllDay, startDate)
+            isAllDay: isAllDay,
+            startsAt: startDate)
     }
 
     /// "6 attendees \u{00B7} Meet" - the same sentence shape the EventKit
@@ -336,6 +332,12 @@ final class CompositeDailyReviewCalendar: DailyReviewCalendarReading {
             case .available(let found):
                 anyAvailable = true
                 rows.append(contentsOf: found)
+            case .partial(let found, let reason):
+                // A nested composite, or a source that answered with a gap of
+                // its own: both halves travel on.
+                anyAvailable = true
+                rows.append(contentsOf: found)
+                reasons.append(reason)
             case .unavailable(let reason):
                 reasons.append(reason)
             }
@@ -345,20 +347,17 @@ final class CompositeDailyReviewCalendar: DailyReviewCalendarReading {
                 ? "no calendar is connected"
                 : reasons.joined(separator: "; "))
         }
-        // All-day first, then by time - the same order each source already
-        // uses, applied again because two sorted lists concatenated are not a
-        // sorted list.
-        rows.sort { lhs, rhs in
-            if lhs.isAllDay != rhs.isAllDay { return lhs.isAllDay }
-            return lhs.timeText < rhs.timeText
-        }
+        // All-day first, then by real start time - the same order each source
+        // already uses, applied again because two sorted lists concatenated
+        // are not a sorted list. On `startsAt` and never on `timeText`: that
+        // string is localised, so a 12-hour locale sorts "1:00 PM" above
+        // "9:00 AM" (B16).
+        rows.sort(by: DailyReviewEventRow.isOrderedBefore)
         guard reasons.isEmpty else {
             // Some events **and** a source that could not be read. The rows
-            // are shown, and the gap is stated rather than swallowed - see
-            // this class's own doc comment.
-            return .available(rows + [DailyReviewEventRow(
-                title: reasons.joined(separator: "; "),
-                timeText: "", detail: "", colorHex: nil, isAllDay: false)])
+            // are shown, and the gap travels beside them as a gap rather than
+            // as a fake row - see this class's own doc comment and B16.
+            return .partial(rows, reason: reasons.joined(separator: "; "))
         }
         return .available(rows)
     }
@@ -563,7 +562,7 @@ final class GoogleCalendarHealthCheck {
         switch GoogleDailyReviewCalendar.parse(payload, day: day) {
         case .unavailable(let reason):
             return .failed(message: failure?.message ?? reason, fixURL: failure?.fixURL)
-        case .available(let rows):
+        case .available(let rows), .partial(let rows, _):
             return .healthy(eventCount: rows.count)
         }
     }
