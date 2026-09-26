@@ -302,11 +302,25 @@ final class ClipboardHistoryPanelViewController: NSViewController {
         view.window?.makeFirstResponder(filterField)
     }
 
-    /// Rebuild every row from the store's current entries.
+    /// PF4 of the 2026-09-25 full review: `filterField.onTextChanged` calls
+    /// straight into here, so every keystroke in the filter box built a fresh
+    /// `HelmAccentRow` - a five-subview component with its own constraints and
+    /// its own theme pass - for every one of up to 200 matching entries, and
+    /// threw the previous 200 away. Typing a four-letter filter built and
+    /// destroyed the better part of a thousand views.
     ///
-    /// A full rebuild rather than a diff, matching
-    /// `RecentDestinationsPanelViewController.reload()`'s own reasoning: the
-    /// list is capped and the panel is only ever open for a few seconds.
+    /// The rows are cached by entry id now and re-used across reloads.
+    /// `configure` only runs when what the row *shows* actually differs (its
+    /// text, its hue or its ⌘-number, which moves as the filter narrows), so a
+    /// keystroke that merely hides some rows costs the stack re-parenting and
+    /// nothing else.
+    private var rowCache: [String: HelmAccentRow] = [:]
+    /// What each cached row was last configured with, so an unchanged row is
+    /// not reconfigured. Keyed by the same entry id as `rowCache`.
+    private var rowContentKeys: [String: String] = [:]
+
+    /// Rebuild the list from the store's current entries, re-using the row
+    /// views a previous reload already built (PF4).
     func reload() {
         for stack in [pinnedStack, recentStack] {
             for view in stack.arrangedSubviews {
@@ -341,7 +355,7 @@ final class ClipboardHistoryPanelViewController: NSViewController {
         var number = 0
         for entry in matches {
             number += 1
-            let row = makeRow(for: entry, number: number)
+            let row = row(for: entry, number: number)
             let stack = entry.isPinned ? pinnedStack : recentStack
             stack.addArrangedSubview(row)
             NSLayoutConstraint.activate([
@@ -349,6 +363,11 @@ final class ClipboardHistoryPanelViewController: NSViewController {
                 row.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
             ])
         }
+        // Keep the cache to what the store still holds, so a cleared history
+        // does not leave 200 detached rows alive behind the panel.
+        let liveIDs = Set(store.entries.map(\.id))
+        rowCache = rowCache.filter { liveIDs.contains($0.key) }
+        rowContentKeys = rowContentKeys.filter { liveIDs.contains($0.key) }
 
         countLabel.stringValue = unavailable
             ? "unavailable"
@@ -371,9 +390,43 @@ final class ClipboardHistoryPanelViewController: NSViewController {
             + store.fileURL.deletingLastPathComponent().lastPathComponent + "."
     }
 
-    private func makeRow(for entry: ClipboardHistoryEntry, number: Int) -> HelmAccentRow {
+    /// The cached row for `entry`, built on first sight and reconfigured only
+    /// when what it shows has changed (PF4).
+    private func row(for entry: ClipboardHistoryEntry, number: Int) -> HelmAccentRow {
+        let key = [
+            entry.preview,
+            Self.metaLine(for: entry),
+            entry.symbol,
+            number <= Self.numberedRows ? "\u{2318}\(number)" : "-",
+            "\(entry.isPinned)",
+            "\(entry.kind)",
+            theme.id,
+        ].joined(separator: "\u{1f}")
+
+        if let cached = rowCache[entry.id] {
+            if rowContentKeys[entry.id] != key {
+                configure(cached, with: entry, number: number)
+                rowContentKeys[entry.id] = key
+            }
+            // The closure captures the entry, whose `capturedAt`/`isPinned`
+            // move without changing what the row draws - so it is re-bound
+            // every time rather than only on a content change.
+            cached.onClick = entry.kind == .text ? { [weak self] in self?.onPaste?(entry) } : nil
+            return cached
+        }
+
         let row = HelmAccentRow(chipPlacement: .trailing)
         row.translatesAutoresizingMaskIntoConstraints = false
+        configure(row, with: entry, number: number)
+        // A skipped marker is a statement, not a clipping: clicking it can
+        // paste nothing, so it is not clickable at all.
+        row.onClick = entry.kind == .text ? { [weak self] in self?.onPaste?(entry) } : nil
+        rowCache[entry.id] = row
+        rowContentKeys[entry.id] = key
+        return row
+    }
+
+    private func configure(_ row: HelmAccentRow, with entry: ClipboardHistoryEntry, number: Int) {
         row.configure(HelmAccentRow.Content(
             // A clipping is an identity, not a state - so the hue carries it
             // and the tint stays neutral (`HelmDomainHue.fallbackTint` would
@@ -387,10 +440,6 @@ final class ClipboardHistoryPanelViewController: NSViewController {
             badgeSymbol: entry.symbol,
             chipText: number <= Self.numberedRows ? "\u{2318}\(number)" : nil
         ), theme: theme)
-        // A skipped marker is a statement, not a clipping: clicking it can
-        // paste nothing, so it is not clickable at all.
-        row.onClick = entry.kind == .text ? { [weak self] in self?.onPaste?(entry) } : nil
-        return row
     }
 
     static func metaLine(for entry: ClipboardHistoryEntry) -> String {
