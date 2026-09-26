@@ -48,6 +48,7 @@
 
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 
 /// What an expansion would do to the frontmost app, as one value. The real
 /// path carries it out; a suite reads it.
@@ -346,8 +347,23 @@ final class SnippetExpander {
             isGrandLineFrontmost: frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
             isConsoleFocused: isConsoleFocusedProvider?() ?? false,
             frontmostBundleID: frontmost?.bundleIdentifier,
-            frontmostAppName: frontmost?.localizedName
+            frontmostAppName: frontmost?.localizedName,
+            secureInputActive: Self.isSecureInputActive()
         )
+    }
+
+    /// Whether a password field has focus anywhere on the machine.
+    ///
+    /// `IsSecureEventInputEnabled()` is a system-wide flag macOS raises while
+    /// a secure text field is focused - which is precisely the condition
+    /// under which this app must not type, and must not put the snippet's
+    /// text on the general pasteboard on its way in (B20). Overridable so a
+    /// suite can drive both answers without a real password field.
+    static var secureInputOverrideForTests: Bool?
+
+    static func isSecureInputActive() -> Bool {
+        if let secureInputOverrideForTests { return secureInputOverrideForTests }
+        return IsSecureEventInputEnabled()
     }
 
     /// `nil` rather than the string whenever the pasteboard is carrying vault

@@ -104,6 +104,11 @@ enum SnippetExpansionSelfTest {
               "and must refuse to restore over a pasteboard something else has written "
               + "since - a longer wait makes the race rarer, only this makes losing "
               + "the newer write impossible (B20)", &ok)
+        check(expander.contains("IsSecureEventInputEnabled()"),
+              "the secure-field refusal must be a real system reading, not a constant (B20)", &ok)
+        check(expander.contains("secureInputActive: Self.isSecureInputActive()"),
+              "and the live context must carry it - a policy nothing populates refuses "
+              + "nothing (B20)", &ok)
         check(SnippetExpander.clipboardRestoreDelay >= 0.3,
               "and must leave the expansion on the pasteboard long enough for a slow "
               + "receiver to read it, got \(SnippetExpander.clipboardRestoreDelay)s", &ok)
@@ -427,6 +432,35 @@ enum SnippetExpansionSelfTest {
             $0.accessibilityTrusted = false
         }) == .appLocked, "the lock is reported before the permission", &ok)
 
+        // B20: a password field. Nothing asked before this, so a system-wide
+        // trigger expanded into the vault's own master-password field and into
+        // every login sheet on the machine - and since the expansion path is a
+        // synthetic ⌘V, the snippet's text landed on the general pasteboard on
+        // its way in.
+        check(SnippetExpansionPolicy.refusal(for: wide, in: base { $0.secureInputActive = true })
+                == .secureField,
+              "a system-wide snippet must not expand into a password field (B20)", &ok)
+        check(SnippetExpansionPolicy.refusal(for: shell, in: base {
+            $0.secureInputActive = true
+            $0.isGrandLineFrontmost = true
+            $0.isConsoleFocused = true
+        }) == .secureField,
+              "nor a console-scoped one into a password prompt in a terminal (B20)", &ok)
+        // The refusal is about where the caret is, so it must not depend on
+        // the permission or on the snippet's own rules being satisfied first.
+        check(SnippetExpansionPolicy.refusal(for: wide, in: base {
+            $0.secureInputActive = true
+            $0.accessibilityTrusted = false
+        }) == .secureField, "and it is reported ahead of the permission", &ok)
+        // The discriminating half: the very same snippet and context expand
+        // when the field is not secure, so this is not a check that refuses
+        // everything.
+        check(SnippetExpansionPolicy.refusal(for: wide, in: base { $0.secureInputActive = false })
+                == nil,
+              "and an ordinary field still expands", &ok)
+        check(!SnippetExpansionRefusal.secureField.explanation.isEmpty,
+              "a refusal the captain can see needs a sentence", &ok)
+
         let untriggered = Snippet(label: "Plain", command: "echo", scope: .systemWide)
         check(SnippetExpansionPolicy.refusal(for: untriggered, in: base()) == .noTrigger,
               "a snippet with no trigger cannot expand however it is scoped", &ok)
@@ -566,6 +600,37 @@ enum SnippetExpansionSelfTest {
         expander.contextOverrideForTests = base()
         var injections: [SnippetInjection] = []
         expander.injectionSinkForTests = { injections.append($0) }
+
+        // B20 end to end: the same store, the same typing, one field secure
+        // and one not - through `attemptExpansion`, not just the policy.
+        func injectionsWhenSecure(_ secure: Bool) -> [SnippetInjection] {
+            let probe = SnippetExpander(store: store)
+            probe.clock = { t0 }
+            probe.contextOverrideForTests = base { $0.secureInputActive = secure }
+            var caught: [SnippetInjection] = []
+            probe.injectionSinkForTests = { caught.append($0) }
+            probe.debugType("Thanks - will confirm. ;sig ")
+            return caught
+        }
+        // The control first, so the refusal below cannot pass because the
+        // fixture never expanded at all.
+        check(injectionsWhenSecure(false).count == 1,
+              "fixture: this typing really does expand in an ordinary field, got "
+              + "\(injectionsWhenSecure(false).count) injections", &ok)
+        check(injectionsWhenSecure(true).isEmpty,
+              "typing ;sig into a password field must inject nothing - it would also put the "
+              + "snippet on the general pasteboard on its way in (B20), got "
+              + "\(injectionsWhenSecure(true).count) injections", &ok)
+
+        // And the live context really is what reads the system flag, so the
+        // policy is not being handed a constant.
+        SnippetExpander.secureInputOverrideForTests = true
+        check(SnippetExpander(store: store).currentContext().secureInputActive,
+              "the live context reads the secure-input flag (B20)", &ok)
+        SnippetExpander.secureInputOverrideForTests = false
+        check(!SnippetExpander(store: store).currentContext().secureInputActive,
+              "and reads it as false when it is false, so the check above is not vacuous", &ok)
+        SnippetExpander.secureInputOverrideForTests = nil
 
         check(expander.armedTriggerCount == 3,
               "three saved triggers are armed, got \(expander.armedTriggerCount)", &ok)
