@@ -207,6 +207,39 @@ enum GrandLineNotificationCenterSelfTest {
 
         center.resetForTesting()
 
+        // MARK: PF3 - the store is capped, and sheds informational rows first
+
+        // Every source publishes by id and most replace in place, so in
+        // practice the store stays small. Nothing *made* it small, though, and
+        // a source that mints a fresh id per event grows it for the life of
+        // the process - taking the panel's own rebuild cost with it.
+        let cap = GrandLineNotificationCenter.maxStoredEntries
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        for i in 0..<20 {
+            center.set(AppNotification(id: "keep-\(i)", title: "Needs you", subtext: "\(i)",
+                                       kind: .actionNeeded, tint: .warn,
+                                       date: base.addingTimeInterval(Double(i)),
+                                       navigate: {}), id: "keep-\(i)")
+        }
+        check("the fixture seeded 20 action-needed entries", center.entries.count == 20)
+        for i in 0..<(cap + 50) {
+            center.set(AppNotification(id: "chatter-\(i)", title: "FYI", subtext: "\(i)",
+                                       kind: .informational, tint: .info,
+                                       date: base.addingTimeInterval(Double(1000 + i)),
+                                       navigate: {}), id: "chatter-\(i)")
+        }
+        check("the store is capped rather than unbounded", center.entries.count <= cap)
+        check("the cap sheds informational entries, not the ones that need the captain",
+              center.entries.filter { $0.kind == .actionNeeded }.count == 20)
+        // Oldest-first, so what survives is the recent chatter rather than a
+        // random slice of it.
+        check("the newest informational entry survived the cap",
+              center.entries.contains { $0.id == "chatter-\(cap + 49)" })
+        check("the oldest informational entry was the one shed",
+              !center.entries.contains { $0.id == "chatter-0" })
+
+        center.resetForTesting()
+
         if failures.isEmpty {
             print("GrandLineNotificationCenterSelfTest: all checks passed")
             return true

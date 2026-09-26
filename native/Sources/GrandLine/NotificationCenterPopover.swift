@@ -666,8 +666,72 @@ final class NotificationPanelViewController: NSViewController {
     /// simpler and cheaper than an incremental diff - what the redesign added
     /// is that selection and expansion survive it, because both live in this
     /// controller rather than in the views being thrown away.
+    /// PF3 of the 2026-09-25 full review: the store re-notifies every observer
+    /// on **every** publish - and every source re-publishes its own freshly
+    /// computed truth on every poll - so with the panel open this tore down and
+    /// rebuilt every row, every group header, every separator and every
+    /// expanded child view several times a minute, almost always to draw
+    /// exactly the same list again.
+    ///
+    /// A full rebuild is still the right shape for a list this small (see the
+    /// note on `reload()`), so what changed is *when* one happens: `reload()`
+    /// now computes a signature of everything it would draw and returns
+    /// without touching a view when it matches the last one. Anything that
+    /// genuinely alters the rendered list - an entry's text, its read or
+    /// expanded or selected state, the filter, the counts in the tabs and the
+    /// footer, the relative timestamp ticking over, the theme - is in the
+    /// signature, so a real change still rebuilds exactly as before.
+    private var lastRenderSignature: String?
+
+    /// What `reload()` would draw, as one comparable value.
+    private func renderSignature(all: [AppNotification],
+                                 visible: [AppNotification],
+                                 center: GrandLineNotificationCenter) -> String {
+        var parts: [String] = [
+            "theme:\(theme.id)",
+            "filter:\(filter)",
+            "all:\(all.count)",
+            "action:\(all.filter { $0.kind == .actionNeeded }.count)",
+            "unread:\(center.unreadCount)",
+            "snoozed:\(center.snoozedCount)",
+            "selected:\(selectedID ?? "-")",
+        ]
+        let now = clock()
+        for entry in visible {
+            let children = entry.children
+                .map { "\($0.id)/\($0.name)/\($0.meta)/\($0.actionLabel ?? "-")/\($0.isMonospaced)" }
+                .joined(separator: ",")
+            parts.append([
+                entry.id, entry.title, entry.subtext, entry.source, entry.clearCondition,
+                "\(entry.kind)", "\(entry.tint)",
+                entry.timeText ?? NotificationTimeText.relative(entry.date, now: now),
+                "\(entry.isWarning)",
+                "\(center.isRead(entry))",
+                "\(expandedIDs.contains(entry.id))",
+                "\(entry.primaryAction?.label ?? "-")",
+                children,
+            ].joined(separator: "\u{1f}"))
+        }
+        return parts.joined(separator: "\u{1e}")
+    }
+
     func reload() {
         guard isViewLoaded else { return }
+
+        // PF3: decide whether anything changed *before* tearing the list down.
+        // The pruning below mutates `expandedIDs`/`selectedID`, so it has to
+        // run first - it is pure bookkeeping over ids and costs nothing.
+        let center = GrandLineNotificationCenter.shared
+        let all = center.entries
+        let visible = all.filter { filter.admits($0) }
+        let liveIDs = Set(all.map(\.id))
+        expandedIDs.formIntersection(liveIDs)
+        if let selectedID, !visible.contains(where: { $0.id == selectedID }) { self.selectedID = nil }
+
+        let signature = renderSignature(all: all, visible: visible, center: center)
+        if signature == lastRenderSignature { return }
+        lastRenderSignature = signature
+
         for view in listStack.arrangedSubviews {
             listStack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -675,16 +739,6 @@ final class NotificationPanelViewController: NSViewController {
         groupHeaders.removeAll()
         separators.removeAll()
         clearsLabels.removeAll()
-
-        let center = GrandLineNotificationCenter.shared
-        let all = center.entries
-        let visible = all.filter { filter.admits($0) }
-
-        // Prune state that no longer names anything, so a resolved row cannot
-        // leave the selection pointing at a gap or an expansion pinned open.
-        let liveIDs = Set(all.map(\.id))
-        expandedIDs.formIntersection(liveIDs)
-        if let selectedID, !visible.contains(where: { $0.id == selectedID }) { self.selectedID = nil }
 
         markAllReadButton.isEnabled = center.unreadCount > 0
         updateFilterTabs(all: all.count, action: all.filter { $0.kind == .actionNeeded }.count)
