@@ -50,6 +50,7 @@ enum ReviewUIUXSelfTest {
             ("U8_runRebuildIsAPillNotAFullWidthBar", test_u8RebuildButtonWidth),
             ("U9_emptyNavColumnSaysWhatItIsForAndOffersAnAction", test_u9EmptySidebar),
             ("U9_notebookStatesOneStorageLocation", test_u9StorageWording),
+            ("U10_updatesRowsCarryAnActionOnlyWhenOneIsNeeded", test_u10CheckButton),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -720,6 +721,87 @@ enum ReviewUIUXSelfTest {
                  + "are free to drift apart again"
         }
         return nil
+    }
+
+    // MARK: U10 - an action on every Updates row
+
+    private static func test_u10CheckButton() -> String? {
+        // The rule, stated once: Check is the row's next step only when
+        // nothing else is, and never beside an Update button.
+        let expected: [(DependencyStatus, Bool)] = [
+            (.unknown, true),
+            (.checkFailed, true),
+            (.upToDate, false),
+            (.updateAvailable, false),
+            (.notInstalled, false),
+            (.updateFailed, false),
+            (.checking, false),
+            (.updating, false),
+        ]
+        for (status, shows) in expected where status.showsCheckButton != shows {
+            return "\(status) \(status.showsCheckButton ? "offers" : "hides") Check, expected the "
+                 + "opposite (review U10)"
+        }
+        // Discriminating power: a predicate that is always false would pass
+        // every "hides it" line above.
+        guard expected.contains(where: { $0.1 }) , DependencyStatus.unknown.showsCheckButton else {
+            return "no status offers Check at all, so a row that has never been checked has no way "
+                 + "to be checked"
+        }
+        // No row may end up with no action *and* nothing to say: every
+        // status either shows Check, shows Update, or is a settled state.
+        for status in [DependencyStatus.unknown, .upToDate, .updateAvailable, .notInstalled,
+                       .checkFailed, .updateFailed] {
+            let settled = status == .upToDate
+            guard settled || status.showsCheckButton || status.showsUpdateButton else {
+                return "\(status) offers no action at all and is not a settled state"
+            }
+        }
+
+        return autoreleasepool { () -> String? in
+            let controller = UpdatesController()
+            controller.view.frame = NSRect(x: 0, y: 0, width: 1200, height: 900)
+            controller.view.layoutSubtreeIfNeeded()
+            let states = controller.debugRowActionStates
+            guard states.count > 5 else {
+                return "the page rendered \(states.count) rows, so this case could not tell a gated "
+                     + "button from an empty page"
+            }
+            // Unchecked on first render, so every row legitimately offers
+            // Check - the state the review saw, and the one this fix keeps.
+            guard states.allSatisfy({ !$0.checkHidden }) else {
+                return "an unchecked row hides its own Check button, which is the only thing that "
+                     + "can change it"
+            }
+            for index in 0 ..< states.count { controller.debugSetStatus(.upToDate, atRow: index) }
+            let settled = controller.debugRowActionStates
+            guard settled.allSatisfy({ $0.checkHidden && $0.updateHidden }) else {
+                let offenders = settled.filter { !$0.checkHidden || !$0.updateHidden }.map(\.name)
+                return "an up-to-date row still carries an action: \(offenders) (review U10)"
+            }
+            controller.debugSetStatus(.updateAvailable, atRow: 0)
+            let withUpdate = controller.debugRowActionStates[0]
+            guard withUpdate.checkHidden, !withUpdate.updateHidden else {
+                return "a row with an update available shows Check=\(!withUpdate.checkHidden), "
+                     + "Update=\(!withUpdate.updateHidden) - it should carry Update alone"
+            }
+
+            // The toast's own band. A page whose content runs to the window's
+            // bottom edge is what put "Checked 13 tools" on top of the
+            // "Other tools" header.
+            guard Toast.reservedBottomSpace > Toast.bottomInset + 20 else {
+                return "the reserved band (\(Toast.reservedBottomSpace)) is no bigger than the old "
+                     + "20pt padding plus the toast's own inset, so it reserves nothing"
+            }
+            guard let sources = SelfTestSources.appSourceFiles(),
+                  let updates = sources.first(where: { $0.lastPathComponent == "UpdatesController.swift" }),
+                  let text = try? String(contentsOf: updates, encoding: .utf8),
+                  codeOnly(text).contains("Toast.reservedBottomSpace") else {
+                return "the Updates page no longer reserves the toast's band, so a completion toast "
+                     + "lands on its last section header again (review U10)"
+            }
+            return nil
+        }
     }
 }
 

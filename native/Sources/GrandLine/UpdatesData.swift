@@ -105,6 +105,31 @@ enum DependencyStatus: Equatable {
         case .updateAvailable, .notInstalled, .checkFailed, .updateFailed: return true
         }
     }
+
+    /// **Review defect U10.** Every row carried a "Check" button in every
+    /// state, so a page where all thirteen tools were up to date still
+    /// invited thirteen clicks that would each re-confirm what the row
+    /// already said - and the review's own rule is that "rows that need
+    /// nothing should carry no action".
+    ///
+    /// Check is offered in exactly the two states where it is the row's own
+    /// next step:
+    ///
+    /// - `.unknown`, the row has never been checked, so Check is the only
+    ///   thing that can change it;
+    /// - `.checkFailed`, where it is a retry.
+    ///
+    /// It is deliberately **not** offered beside an Update button. A row with
+    /// an update available already has its action, and a second control that
+    /// re-asks the question the row has just answered is noise next to it.
+    /// Nothing is lost: the page-level Refresh re-checks every row, which is
+    /// the affordance for "ask again" and is where it belongs.
+    var showsCheckButton: Bool {
+        switch self {
+        case .unknown, .checkFailed: return true
+        case .checking, .upToDate, .updating, .updateAvailable, .notInstalled, .updateFailed: return false
+        }
+    }
 }
 
 struct CheckOutcome {
