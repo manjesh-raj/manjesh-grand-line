@@ -3496,6 +3496,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_CREDENTIAL_PATH_TESTS"] == "1" {
     exit(CredentialPathSelfTest.run() ? 0 : 1)
 }
 
+// S11: a saved host's startup snippet is staged at the prompt rather than
+// executed 1.5 seconds after `ssh` starts. Pure logic plus a source guard.
+if ProcessInfo.processInfo.environment["FM_RUN_STARTUP_SNIPPET_GATE_TESTS"] == "1" {
+    exit(StartupSnippetGateSelfTest.run() ? 0 : 1)
+}
+
 // GL-29 (Phase 3): `FleetDataSource`/`OpenPRsSource` - the pair behind Overview
 // and Review, including the merge action's argv. See
 // `FleetDataSelfTest.swift`'s header.

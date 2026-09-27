@@ -238,17 +238,38 @@ extension ConsoleController {
     }
 
     /// Best-effort startup snippet (B2/B5): "attach tmux, cd to the
-    /// project" style commands a host wants run once its shell prompt is up.
-    /// There is no reliable, protocol-level "the remote shell is now ready"
-    /// signal to hook - the report is explicit that best-effort timing is
-    /// fine for v1 - so this sends the snippet text after a fixed delay from
-    /// process start, long enough for `ssh` to authenticate and the remote
-    /// shell to print its prompt on a typical connection.
+    /// project" style commands a host wants ready once its shell prompt is
+    /// up. There is no reliable, protocol-level "the remote shell is now
+    /// ready" signal to hook - the report is explicit that best-effort timing
+    /// is fine for v1 - so this acts after a fixed delay from process start,
+    /// long enough for `ssh` to authenticate and the remote shell to print
+    /// its prompt on a typical connection.
+    ///
+    /// S11 (review security finding): it used to append `"\n"`, which made
+    /// that timing guess load-bearing - a wrong guess *submitted* the text
+    /// into whatever prompt was up. It stages the command instead, without
+    /// the newline: the captain sees the exact text at the exact prompt and
+    /// presses Return, which is a confirmation costing one keystroke and no
+    /// modal. `StartupSnippetGate`'s header has the rest of the reasoning,
+    /// including why a host's startup command is not automatically something
+    /// the captain typed on this machine.
     func runStartupSnippet(_ id: UUID, in tab: TabModel) {
         guard let snippet = snippetStore.snippet(id: id) else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + ConsoleController.remoteShellReadyDelay) { [weak tab] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + ConsoleController.remoteShellReadyDelay) { [weak self, weak tab] in
             guard let tab, !tab.isClosing else { return }
-            tab.terminal.send(txt: snippet.command + "\n")
+            switch StartupSnippetGate.decide(command: snippet.command,
+                                             viewportLines: tab.currentViewportLines()) {
+            case .refuse(let reason):
+                AppLog.ui.error("startup snippet held back: \(reason, privacy: .public)")
+                if let view = self?.view {
+                    Toast.show(in: view, message: "Startup command held back - \(reason).")
+                }
+            case .stage:
+                tab.terminal.send(txt: snippet.command)
+                if let view = self?.view {
+                    Toast.show(in: view, message: "Startup command ready - press Return to run it.")
+                }
+            }
         }
     }
 
