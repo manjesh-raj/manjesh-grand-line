@@ -43,6 +43,7 @@ enum ReviewUIUXSelfTest {
             ("U13_searchPaletteOverflowLineIsGrammatical", test_u13OverflowGrammar),
             ("U3_emptyStateWatermarkTouchesNoText", test_u3WatermarkClearsTheCopy),
             ("U5_healthRingFractionAgreesWithItsSentence", test_u5HealthRing),
+            ("U6_commandLibraryOpensWithACommandListOnScreen", test_u6CommandListOnOpen),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -331,6 +332,62 @@ enum ReviewUIUXSelfTest {
             return "the no-services state changed: \(empty)"
         }
         return nil
+    }
+
+    // MARK: U6 - DevOps Commands opens to a visible list
+
+    /// A scratch `FM_COMMAND_LIBRARY_DIR`, so the seeded library is built
+    /// fresh rather than read out of the captain's own `~/.dotfiles` copy.
+    private static func withScratchCommandLibrary<T>(_ body: () -> T) -> T {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("review-ui-ux-commands-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let previous = ProcessInfo.processInfo.environment["FM_COMMAND_LIBRARY_DIR"]
+        setenv("FM_COMMAND_LIBRARY_DIR", dir.path, 1)
+        defer {
+            if let previous { setenv("FM_COMMAND_LIBRARY_DIR", previous, 1) }
+            else { unsetenv("FM_COMMAND_LIBRARY_DIR") }
+        }
+        return body()
+    }
+
+    private static func test_u6CommandListOnOpen() -> String? {
+        withScratchCommandLibrary {
+            autoreleasepool {
+                let store = CommandLibraryStore()
+                let page = CommandLibraryPageView(store: store)
+                page.view.frame = NSRect(x: 0, y: 0, width: 1200, height: 900)
+                page.view.layoutSubtreeIfNeeded()
+                let contents = page.debugLeftPanelContents()
+
+                // Discriminating power: a library with no commands in it
+                // would make "the list is on screen" unfalsifiable.
+                guard store.commands.count > 10 else {
+                    return "the scratch library seeded only \(store.commands.count) commands, so "
+                         + "this case could not tell a rendered list from an empty one"
+                }
+                // The defect itself: the detail pane says "Pick a command
+                // from the list", so a command row has to be on screen when
+                // it says it.
+                guard page.debugEmptyDetailIsShowing else {
+                    return "the detail pane no longer shows its \"pick a command\" state on open, so "
+                         + "this case is measuring something else"
+                }
+                guard contents.commandRowCount == store.commands.count else {
+                    return "DevOps Commands opens with \(contents.commandRowCount) command rows on "
+                         + "screen out of \(store.commands.count) - the detail pane asks the captain "
+                         + "to pick from a list that is not there (review U6)"
+                }
+                guard contents.categoryRowIDs.first == CommandLibraryPageView.allCategoryID else {
+                    return "\"All\" is not the first category row: \(contents.categoryRowIDs.prefix(3))"
+                }
+                guard contents.lines.contains("ALL COMMANDS") else {
+                    return "the command list carries no heading: \(contents.lines.prefix(6))"
+                }
+                return nil
+            }
+        }
     }
 }
 
