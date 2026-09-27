@@ -30,12 +30,49 @@
 import AppKit
 
 final class AllDestinationsOverlayController: NSWindowController {
-    /// Four columns of 150pt tiles plus gutters. Wide enough that the two
-    /// large spaces (Stores, Operations) do not wrap to five rows, narrow
-    /// enough to sit inside a 1100pt window with room around it.
-    static let panelWidth: CGFloat = 720
-    static let tileWidth: CGFloat = 156
     static let columns = 4
+
+    /// **Review defect U14.** The tile was a hard-coded 156pt and the panel
+    /// a hard-coded 720, so the two longest destination names in the app -
+    /// "Straw Hat Pirates" and "DevOps Commands" - rendered as "Straw Hat
+    /// Pira..." and "DevOps Com...". Every other surface that names a
+    /// destination gives it its full title; this is the one place the app
+    /// shows *all* of them, which is exactly where a reader is most likely
+    /// to be looking one up by name.
+    ///
+    /// Both numbers are derived from the widest real title now, so a longer
+    /// destination added later widens the panel instead of truncating.
+    /// Deliberately functions rather than `static let`s: `HelmType.rowTitle`
+    /// follows the captain's chrome text-scale preference (GL-32), and a
+    /// value resolved once at process start would be measured against
+    /// whatever size happened to be set at launch.
+    ///
+    /// The floor keeps the previous 156pt, so no tile gets *narrower* than
+    /// it used to be and the four-column grid keeps its proportions on a
+    /// machine with short titles.
+    static let minimumTileWidth: CGFloat = 156
+
+    /// Everything in a tile that is not the label: the leading inset, the
+    /// gradient tile, the gap, and the trailing inset.
+    static var tileChromeWidth: CGFloat {
+        HelmMetrics.s2 + HelmGradientTile.Size.module.side + HelmMetrics.s2 + HelmMetrics.s2
+    }
+
+    static var tileWidth: CGFloat {
+        let font = HelmType.rowTitle()
+        let widest = RailDestination.allCases
+            .map { ($0.title as NSString).size(withAttributes: [.font: font]).width }
+            .max() ?? 0
+        // A point of slack: `NSTextField` rounds its own intrinsic width up,
+        // and a label given exactly its measured width still truncates.
+        return max(minimumTileWidth, (widest + 1).rounded(.up) + tileChromeWidth)
+    }
+
+    /// Four columns of tiles, the gutters between them, and the panel's own
+    /// padding on each side.
+    static var panelWidth: CGFloat {
+        CGFloat(columns) * tileWidth + CGFloat(columns - 1) * HelmMetrics.s2 + 2 * HelmMetrics.s5
+    }
 
     /// Raised with the destination the captain picked. The shell navigates;
     /// this overlay has no idea what navigation means, matching
@@ -372,6 +409,12 @@ final class DestinationTileView: HoverHighlightView {
         menu.addItem(item)
         return menu
     }
+
+    #if FM_SELFTESTS
+    /// Review defect U14: the label itself, so a check can compare what it
+    /// needs against what it was given rather than assert a pixel count.
+    var debugTitleLabel: NSTextField { label }
+    #endif
 
     @objc private func clicked() { onClick?() }
 

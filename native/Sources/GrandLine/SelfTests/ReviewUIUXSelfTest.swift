@@ -51,6 +51,7 @@ enum ReviewUIUXSelfTest {
             ("U9_emptyNavColumnSaysWhatItIsForAndOffersAnAction", test_u9EmptySidebar),
             ("U9_notebookStatesOneStorageLocation", test_u9StorageWording),
             ("U10_updatesRowsCarryAnActionOnlyWhenOneIsNeeded", test_u10CheckButton),
+            ("U14_allDestinationsOverlayFitsEveryName", test_u14OverlayWidth),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -799,6 +800,60 @@ enum ReviewUIUXSelfTest {
                   codeOnly(text).contains("Toast.reservedBottomSpace") else {
                 return "the Updates page no longer reserves the toast's band, so a completion toast "
                      + "lands on its last section header again (review U10)"
+            }
+            return nil
+        }
+    }
+
+    // MARK: U14 - the all-destinations overlay's truncated names
+
+    private static func test_u14OverlayWidth() -> String? {
+        autoreleasepool {
+            let tileWidth = AllDestinationsOverlayController.tileWidth
+            var offenders: [String] = []
+            var longest = ""
+            var longestNeeded: CGFloat = 0
+            for destination in RailDestination.allCases {
+                let tile = DestinationTileView(destination: destination)
+                let host = NSView(frame: NSRect(x: 0, y: 0, width: tileWidth + 40, height: 80))
+                tile.translatesAutoresizingMaskIntoConstraints = false
+                host.addSubview(tile)
+                NSLayoutConstraint.activate([
+                    tile.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                    tile.centerYAnchor.constraint(equalTo: host.centerYAnchor),
+                ])
+                host.layoutSubtreeIfNeeded()
+                let label = tile.debugTitleLabel
+                let needed = label.intrinsicContentSize.width
+                if needed > longestNeeded { longestNeeded = needed; longest = destination.title }
+                // `intrinsicContentSize` recomputes from the field's current
+                // string and font every call, so comparing it against the
+                // resolved frame catches a truncated-but-otherwise-correct
+                // label without knowing any pixel count - the same shape
+                // `AppShellDrillHeaderTitleSelfTest` uses.
+                if needed > label.frame.width + 0.5 {
+                    offenders.append("\(destination.title) needs \(needed)pt, given \(label.frame.width)pt")
+                }
+            }
+            guard longestNeeded > 0 else {
+                return "no destination title measured above zero, so this case proves nothing"
+            }
+            guard offenders.isEmpty else {
+                return "the all-destinations overlay still truncates: \(offenders.joined(separator: "; "))"
+            }
+            // Discriminating power: the widest title must be the thing
+            // driving the width, or the tile is merely wide by luck.
+            guard tileWidth > AllDestinationsOverlayController.minimumTileWidth
+                    || longestNeeded + AllDestinationsOverlayController.tileChromeWidth
+                        <= AllDestinationsOverlayController.minimumTileWidth else {
+                return "the tile is still at its floor (\(tileWidth)pt) while \(longest.debugDescription) "
+                     + "needs \(longestNeeded)pt plus chrome"
+            }
+            // And the panel still fits the window the overlay is opened over.
+            // 1100pt is the narrow width this repo's own layout suites use.
+            guard AllDestinationsOverlayController.panelWidth <= 1100 - 80 else {
+                return "the panel is \(AllDestinationsOverlayController.panelWidth)pt wide, which no "
+                     + "longer sits inside a 1100pt window with room around it"
             }
             return nil
         }
