@@ -510,8 +510,49 @@ final class HelmPageSidebar: NSView {
     /// header draws, plus the theme, so any real change still rebuilds.
     private var lastSectionsSignature: String?
 
+    // MARK: Empty state
+
+    /// What the column shows when `setSections(_:)` is handed nothing.
+    ///
+    /// **Review defect U9.** Notebook's column with no pages in it rendered
+    /// as a blank 275pt card: no heading, no sentence, no affordance, just an
+    /// empty rectangle beside the editor. An empty *nav column* is a state
+    /// every page with one eventually reaches, so it belongs to the component
+    /// rather than to whichever page noticed first.
+    struct EmptyState {
+        let header: String
+        let body: String
+        let actionTitle: String?
+        let onAction: (() -> Void)?
+
+        init(header: String, body: String, actionTitle: String? = nil, onAction: (() -> Void)? = nil) {
+            self.header = header
+            self.body = body
+            self.actionTitle = actionTitle
+            self.onAction = onAction
+        }
+    }
+
+    private var emptyState: EmptyState?
+    private var emptyBodyLabel: NSTextField?
+
+    /// Sets (or with `nil` removes) what an empty column draws. Takes effect
+    /// on the next `setSections(_:)`, and forces one immediately so a page
+    /// that is already empty does not have to re-publish.
+    func setEmptyState(_ state: EmptyState?) {
+        emptyState = state
+        lastSectionsSignature = nil
+        if rows.isEmpty { setSections([]) }
+    }
+
+    @objc private func emptyStateActionClicked() { emptyState?.onAction?() }
+
     private func sectionsSignature(_ sections: [Section]) -> String {
-        var parts: [String] = ["theme:\(theme.id)"]
+        // U9: the empty state is part of what this column draws, so a change
+        // to it has to invalidate the cache the same way a row does -
+        // otherwise `setEmptyState` on an already-empty column is a no-op.
+        var parts: [String] = ["theme:\(theme.id)",
+                               "empty:\(emptyState.map { "\($0.header)\u{1f}\($0.body)\u{1f}\($0.actionTitle ?? "-")" } ?? "-")"]
         for section in sections {
             parts.append("H\u{1f}\(section.header ?? "-")")
             for row in section.rows {
@@ -543,6 +584,46 @@ final class HelmPageSidebar: NSView {
         }
         rows.removeAll()
         headers.removeAll()
+        emptyBodyLabel = nil
+
+        if sections.allSatisfy({ $0.rows.isEmpty }), let empty = emptyState {
+            appendHeader(empty.header)
+            let body = NSTextField(wrappingLabelWithString: empty.body)
+            body.font = HelmType.caption()
+            emptyBodyLabel = body
+            let bodyRow = NSView()
+            bodyRow.translatesAutoresizingMaskIntoConstraints = false
+            body.translatesAutoresizingMaskIntoConstraints = false
+            bodyRow.addSubview(body)
+            NSLayoutConstraint.activate([
+                body.leadingAnchor.constraint(equalTo: bodyRow.leadingAnchor, constant: Metrics.rowInset),
+                body.trailingAnchor.constraint(equalTo: bodyRow.trailingAnchor, constant: -Metrics.rowInset),
+                body.topAnchor.constraint(equalTo: bodyRow.topAnchor, constant: HelmMetrics.s1),
+                body.bottomAnchor.constraint(equalTo: bodyRow.bottomAnchor),
+            ])
+            appendFullWidth(bodyRow)
+            if let title = empty.actionTitle {
+                let button = HelmButton(title: title, variant: .secondary,
+                                        target: self, action: #selector(emptyStateActionClicked))
+                button.controlSize = .small
+                let actionRow = NSView()
+                actionRow.translatesAutoresizingMaskIntoConstraints = false
+                button.translatesAutoresizingMaskIntoConstraints = false
+                actionRow.addSubview(button)
+                NSLayoutConstraint.activate([
+                    button.leadingAnchor.constraint(equalTo: actionRow.leadingAnchor,
+                                                    constant: Metrics.rowInset),
+                    button.trailingAnchor.constraint(lessThanOrEqualTo: actionRow.trailingAnchor,
+                                                     constant: -Metrics.rowInset),
+                    button.topAnchor.constraint(equalTo: actionRow.topAnchor, constant: HelmMetrics.s2),
+                    button.bottomAnchor.constraint(equalTo: actionRow.bottomAnchor),
+                ])
+                appendFullWidth(actionRow)
+            }
+            selections = [:]
+            applyTheme(theme)
+            return
+        }
 
         for (index, section) in sections.enumerated() {
             if index > 0 { appendSpacer() }
@@ -775,6 +856,7 @@ final class HelmPageSidebar: NSView {
         let selectedFill = surfaceColor.blended(withFraction: HelmAccentRow.selectionWash, of: accent) ?? surfaceColor
         let hoverFill = surfaceColor.blended(withFraction: HelmAccentRow.selectionWash / 2.5, of: accent) ?? surfaceColor
 
+        emptyBodyLabel?.textColor = muted
         for header in headers {
             header.attributedStringValue = NSAttributedString(
                 string: (header.placeholderString ?? "").uppercased(),

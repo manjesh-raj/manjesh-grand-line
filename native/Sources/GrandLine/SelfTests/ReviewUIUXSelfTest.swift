@@ -48,6 +48,8 @@ enum ReviewUIUXSelfTest {
             ("U11_syncAllIsOfferedOnlyWhenSomethingIsBehind", test_u11SyncAll),
             ("U7_X4_bootstrapAndAutomationReportOneProgress", test_u7x4SharedProgress),
             ("U8_runRebuildIsAPillNotAFullWidthBar", test_u8RebuildButtonWidth),
+            ("U9_emptyNavColumnSaysWhatItIsForAndOffersAnAction", test_u9EmptySidebar),
+            ("U9_notebookStatesOneStorageLocation", test_u9StorageWording),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -619,6 +621,105 @@ enum ReviewUIUXSelfTest {
             }
             return nil
         }
+    }
+
+    // MARK: U9 - the Notebook's blank sidebar and contradictory copy
+
+    private static func test_u9EmptySidebar() -> String? {
+        autoreleasepool {
+            let sidebar = HelmPageSidebar(surface: .panel, countStyle: .badge)
+            sidebar.frame = NSRect(x: 0, y: 0, width: 275, height: 900)
+
+            // The defect: nothing at all.
+            sidebar.setSections([])
+            sidebar.layoutSubtreeIfNeeded()
+            let bare = descendants(of: sidebar).compactMap { ($0 as? NSTextField)?.stringValue }
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            guard bare.isEmpty else {
+                return "a column with no empty state set already draws \(bare) - this case can no "
+                     + "longer tell the fix from the defect"
+            }
+
+            var pressed = 0
+            sidebar.setEmptyState(.init(header: "Pages",
+                                        body: "No pages yet. Every page you add shows up here.",
+                                        actionTitle: "New page",
+                                        onAction: { pressed += 1 }))
+            sidebar.layoutSubtreeIfNeeded()
+            let labels = descendants(of: sidebar).compactMap { ($0 as? NSTextField)?.stringValue }
+            guard labels.contains(where: { $0.caseInsensitiveCompare("Pages") == .orderedSame }) else {
+                return "the empty column still has no heading: \(labels)"
+            }
+            guard labels.contains(where: { $0.hasPrefix("No pages yet") }) else {
+                return "the empty column still says nothing about itself: \(labels)"
+            }
+            guard let button = descendants(of: sidebar).compactMap({ $0 as? NSButton })
+                .first(where: { $0.title == "New page" }) else {
+                return "the empty column offers no action"
+            }
+            // The affordance has to reach the page, not merely exist - a
+            // button wired to nothing is the defect with a nicer face on it.
+            button.performClick(nil)
+            guard pressed == 1 else {
+                return "the empty column's action fired \(pressed) times, not once"
+            }
+
+            // And it gets out of the way once there is something to list.
+            let row = HelmPageSidebar.Row(id: "a", indicator: .symbol("doc.text"), title: "A page")
+            sidebar.setSections([HelmPageSidebar.Section(header: "Pages", rows: [row])])
+            sidebar.layoutSubtreeIfNeeded()
+            guard descendants(of: sidebar).compactMap({ $0 as? NSButton })
+                .allSatisfy({ $0.title != "New page" }) else {
+                return "the empty-state action is still drawn over a column that has rows"
+            }
+
+            // The component can be right while the page that needed it never
+            // asks. A behavioural check of Notebook's own column would have
+            // to stand up a `WKWebView`-backed controller, so this half is a
+            // source guard and says so.
+            guard let files = SelfTestSources.appSourceFiles(),
+                  let notebook = files.first(where: { $0.lastPathComponent == "NotebookController.swift" }),
+                  let text = try? String(contentsOf: notebook, encoding: .utf8) else {
+                return "SKIP-AS-FAILURE: NotebookController.swift is not next to this binary"
+            }
+            guard codeOnly(text).contains("sidebar.setEmptyState(") else {
+                return "Notebook's page column sets no empty state, so it is still a blank card "
+                     + "with no pages in it (review U9)"
+            }
+            return nil
+        }
+    }
+
+    private static func test_u9StorageWording() -> String? {
+        let local = NotebookController.storageWording(isGitSynced: false)
+        let synced = NotebookController.storageWording(isGitSynced: true)
+        guard local != synced else {
+            return "both storage locations read the same, so this case proves nothing"
+        }
+        // The contradiction itself: the empty state claimed a config repo on
+        // a Mac that has none, while the header said "saved on this machine".
+        guard !local.localizedCaseInsensitiveContains("repo") else {
+            return "a Mac with no config repo is still told its pages are in one: \(local.debugDescription)"
+        }
+        guard synced.localizedCaseInsensitiveContains("repo") else {
+            return "a Mac with a config repo is not told its pages are in it: \(synced.debugDescription)"
+        }
+        // And that the empty state really is built from it rather than
+        // spelling its own sentence again.
+        guard let files = SelfTestSources.appSourceFiles(),
+              let notebook = files.first(where: { $0.lastPathComponent == "NotebookController.swift" }),
+              let text = try? String(contentsOf: notebook, encoding: .utf8) else {
+            return "SKIP-AS-FAILURE: NotebookController.swift is not next to this binary"
+        }
+        let code = codeOnly(text)
+        guard !code.contains("markdown file in your config repo") else {
+            return "the empty state still hard-codes \"a markdown file in your config repo\" (review U9)"
+        }
+        guard code.contains("markdown file \\(whereItGoes)") else {
+            return "the empty state no longer interpolates the shared wording, so the two sentences "
+                 + "are free to drift apart again"
+        }
+        return nil
     }
 }
 

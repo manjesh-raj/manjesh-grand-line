@@ -187,9 +187,26 @@ final class NotebookController: NSViewController, DaylightDrillActions {
     /// One wording for the sync state, read by both the drill subtitle and
     /// the page's own status line - so the two can never disagree about
     /// whether the captain's writing has reached GitHub.
+    /// Where a page's markdown actually ends up, in words.
+    ///
+    /// **Review defect U9's second half.** The empty state said "a markdown
+    /// file in your config repo" while the drill subtitle two lines above
+    /// said "saved on this machine" - and on a Mac with no config repo the
+    /// subtitle was the true one. Both sentences are built from this now, so
+    /// they state one fact; `syncSummary` adds the *status* on top of it
+    /// ("synced to", "saving..."), which is a different thing from the
+    /// location and may legitimately read differently.
+    ///
+    /// Pure and static, so a test can assert both branches without a store.
+    static func storageWording(isGitSynced: Bool) -> String {
+        isGitSynced ? "in your manjesh-config repo" : "saved on this machine"
+    }
+
+    private var whereItGoes: String { Self.storageWording(isGitSynced: store.gitSync != nil) }
+
     private var syncSummary: String {
         switch syncStatus {
-        case .synced: return store.gitSync == nil ? "saved on this machine" : "synced to manjesh-config"
+        case .synced: return store.gitSync == nil ? whereItGoes : "synced to manjesh-config"
         case .localChanges: return "saving\u{2026}"
         case .syncing: return "syncing\u{2026}"
         case .failed(let why): return "sync failed: \(why)"
@@ -348,6 +365,13 @@ final class NotebookController: NSViewController, DaylightDrillActions {
 
     private func buildBody(in root: NSView) {
         sidebar.onSelect = { [weak self] id in self?.open(pageID: id) }
+        // **Review defect U9.** With no pages the column rendered as a blank
+        // 275pt card - no heading, no sentence, no affordance. It says what
+        // it is for and offers the one action that fills it.
+        sidebar.setEmptyState(.init(header: "Pages",
+                                    body: "No pages yet. Every page you add shows up here.",
+                                    actionTitle: "New page",
+                                    onAction: { [weak self] in self?.newPageFromMenu() }))
         root.addSubview(sidebar)
 
         buildEditorCard()
@@ -584,8 +608,17 @@ final class NotebookController: NSViewController, DaylightDrillActions {
         refreshRail()
         showEditorOverlay(symbol: "book.pages",
                           title: "Your notebook is empty",
+                          // **Review defect U9's second half.** This said
+                          // "a markdown file in your config repo" while the
+                          // header two lines above said "saved on this
+                          // machine" - and on a Mac with no config repo the
+                          // header was the true one. It asks `whereItGoes`
+                          // now, which is derived from the same
+                          // `store.gitSync` the header's own `syncSummary`
+                          // reads, so the two cannot contradict each other
+                          // again.
                           body: "Start with today's note, or add a page. "
-                              + "Everything you write here is a markdown file in your config repo.")
+                              + "Everything you write here is a markdown file \(whereItGoes).")
     }
 
     private func open(pageID: String) {
