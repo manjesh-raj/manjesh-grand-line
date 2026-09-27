@@ -43,6 +43,7 @@ enum GmailSettingsViewSelfTest {
         checkTheCategoryExistsAndCarriesTheCard(check)
         checkTheTwoSlotsAreIndependent(check)
         checkTheFourStates(check)
+        checkS17AnUnreadableSlotOffersNoConnectButton(check)
         checkTheClientIDFieldAndItsStatusLine(check)
         checkPastingAndClickingAwayCommits(check)
         checkBothFieldsAreMaskedUntilRevealed(check)
@@ -223,10 +224,58 @@ enum GmailSettingsViewSelfTest {
 
         // The in-flight state, which is where a second click has to be
         // ignored rather than opening a second consent window.
-        let busy = GmailAccountRow.state(record: nil, isConfigured: true, isBusy: true)
+        let busy = GmailAccountRow.state(outcome: .notConnected, isConfigured: true, isBusy: true)
         check(busy == .connecting, "a sign-in in flight has its own state")
         check(GmailAccountRow.statusLine(for: busy, slot: .work).contains("Waiting"),
               "and says what it is waiting for")
+
+        // S17 (review security finding): "the Keychain would not answer" used
+        // to arrive here as the same `nil` as "no account in this slot", so
+        // the row rendered **Not connected** with a live **Connect** button
+        // over an account whose token was there all along - and pressing it
+        // starts a fresh OAuth flow that overwrites the item. GL-14: unknown
+        // is never rendered as zero.
+        let unreadable = GmailAccountRow.state(outcome: .unavailable(errSecInteractionNotAllowed),
+                                               isConfigured: true, isBusy: false)
+        check(unreadable == .unreadable(errSecInteractionNotAllowed),
+              "S17: a Keychain refusal is its own state, got \(unreadable)")
+        // And it must not be mistaken for the configuration gap either - a
+        // wrong instruction is worse than a vague one.
+        check(GmailAccountRow.state(outcome: .unavailable(errSecInteractionNotAllowed),
+                                    isConfigured: false, isBusy: false)
+                == .unreadable(errSecInteractionNotAllowed),
+              "S17: a Keychain refusal is not 'fill in a client id' either")
+        let line = GmailAccountRow.statusLine(for: unreadable, slot: .work)
+        check(line.contains("Couldn\u{2019}t read"),
+              "S17: the row says it could not read the account, got \(line)")
+        check(!line.contains("Not connected"),
+              "S17: and must not claim it is not connected, got \(line)")
+        // The discriminating half: the *settled* absence still reads as
+        // "Not connected", or this would be a row that never says anything.
+        let absent = GmailAccountRow.state(outcome: .notConnected, isConfigured: true, isBusy: false)
+        check(absent == .notConnected, "S17: a settled absence is still .notConnected")
+        check(GmailAccountRow.statusLine(for: absent, slot: .work).contains("Not connected"),
+              "S17: and still says so")
+    }
+
+    /// S17, the live half: a store that answers "unavailable" must produce a
+    /// row with a **disabled** button, because the one action that would make
+    /// this worse is the one the old row offered.
+    private static func checkS17AnUnreadableSlotOffersNoConnectButton(_ check: (Bool, String) -> Void) {
+        GoogleOAuthClientStore.shared.override = .some(
+            GoogleOAuthConfiguration(clientID: clientID, clientSecret: nil))
+        withMountedSettings { settings, _, store in
+            store.unavailableSlots = [.work]
+            settings.debugRefreshGmail()
+            let row = settings.debugGmailRows[0]
+            check(row.debugState == .unreadable(errSecInteractionNotAllowed),
+                  "S17: the mounted row should be in the unreadable state, got \(row.debugState)")
+            check(row.debugStatusText.contains("Couldn\u{2019}t read"),
+                  "S17: and say so, got \(row.debugStatusText)")
+            check(!row.debugActionIsEnabled,
+                  "S17: Connect must be disabled - it would overwrite a token that is there")
+            store.unavailableSlots = []
+        }
     }
 
     // MARK: 4 - the client-id field

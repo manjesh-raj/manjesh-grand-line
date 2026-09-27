@@ -436,10 +436,20 @@ extension DocsController: WKNavigationDelegate {
             decisionHandler(.allow)
             return
         }
-        // Unchanged: Docs hosts a browsable site, so anything it refuses is
-        // handed to the system browser. (The two vendored-bundle hosts are
-        // deliberately stricter - see `WebNavigationPolicy.opensExternally`.)
+        // S4 (review security finding): Docs used to hand *any* refused URL of
+        // *any* scheme to `NSWorkspace`, opting out of
+        // `WebNavigationPolicy.opensExternally` by comment. The content here
+        // is a synced copy of a remote repository, so the page is not this
+        // app's own: a `<meta http-equiv="refresh"
+        // content="0;url=x-apple.systempreferences:...">` or a `shortcuts://`
+        // link fired a system action on the document's say-so, just by being
+        // viewed. Docs still hands out `http`/`https`, which is the whole
+        // point of a browsable site - it no longer hands out anything else.
         decisionHandler(.cancel)
+        guard WebNavigationPolicy.opensExternally(url) else {
+            AppLog.ui.error("Docs refused to open a \(url.scheme ?? "scheme-less", privacy: .public) URL from the synced site")
+            return
+        }
         NSWorkspace.shared.open(url)
     }
 

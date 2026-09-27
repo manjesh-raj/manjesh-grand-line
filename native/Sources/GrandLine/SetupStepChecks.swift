@@ -95,7 +95,18 @@ enum SetupStepChecks {
 /// wrapper for the live-verified `--ff-only` behavior this relies on).
 enum DotfilesRunCommand {
     static func rebuildCommand(repoPath: String) -> String {
-        "cd \"\(repoPath)\" && git pull --ff-only && ./rebuild.sh"
+        // S12: single quotes, via `ShellQuote` - this string is parsed by a
+        // real shell, and a double-quoted path still expands `$(...)`.
+        "cd \(ShellQuote.posix(repoPath)) && git pull --ff-only && ./rebuild.sh"
+    }
+
+    /// Clone-and-bootstrap into `expandedPath`. S12: the path is a
+    /// `ShellQuote.posix` token, so shell metacharacters in it are literal
+    /// path characters rather than a second command. `BootstrapController`
+    /// calls this too, so there is one copy of the string.
+    static func cloneCommand(expandedPath: String) -> String {
+        let quoted = ShellQuote.posix(expandedPath)
+        return "git clone \(DotfilesSource.cloneURL) \(quoted) && cd \(quoted) && ./bootstrap.sh"
     }
 
     /// Picks clone-and-bootstrap vs. rebuild depending on whether `~/.dotfiles`
@@ -107,6 +118,6 @@ enum DotfilesRunCommand {
         let raw = clonePathFieldValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let destination = raw.isEmpty ? DotfilesSource.defaultClonePath : raw
         let expanded = (destination as NSString).expandingTildeInPath
-        return ("Bootstrap", "git clone \(DotfilesSource.cloneURL) \"\(expanded)\" && cd \"\(expanded)\" && ./bootstrap.sh")
+        return ("Bootstrap", cloneCommand(expandedPath: expanded))
     }
 }

@@ -346,14 +346,39 @@ enum SubprocessSelfTest {
             print("    (no gh token available here - the https branch is not exercised)")
             check(true, "no token means no header, which is the offline-still-works path")
         } else {
-            check(https["GIT_CONFIG_KEY_0"] == "http.extraheader",
-                  "the token is delivered as an http.extraheader config value")
+            // S7 (review security finding): a bare `http.extraheader` applies
+            // to *every* https request in that git invocation - a submodule
+            // on another host, or a redirect git follows, got the captain's
+            // GitHub token. The key is scoped to the remote's own origin now.
+            check(https["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader",
+                  "the token is scoped to the remote's own origin, got "
+                  + "\(https["GIT_CONFIG_KEY_0"] ?? "nothing")")
             check(https["GIT_CONFIG_COUNT"] == "1", "GIT_CONFIG_COUNT is set alongside it")
             check((https["GIT_CONFIG_VALUE_0"] ?? "").hasPrefix("Authorization: Basic "),
                   "in GitHub's documented Basic-auth shape")
             check(https["GIT_TERMINAL_PROMPT"] == "0",
                   "and git is told never to prompt, so a bad token fails fast instead of hanging")
         }
+
+        // S7's own table. `originScope` is what decides which host the token
+        // is sent to, so its edge cases are asserted directly rather than
+        // only through a run that may have no token at all.
+        check(Subprocess.originScope(of: "https://github.com/example/repo.git") == "https://github.com/",
+              "a plain GitHub remote scopes to https://github.com/")
+        check(Subprocess.originScope(of: "https://ghe.example.com/team/repo.git") == "https://ghe.example.com/",
+              "a GitHub Enterprise remote scopes to its own host, rather than being refused")
+        check(Subprocess.originScope(of: "https://github.com:8443/example/repo.git") == "https://github.com:8443/",
+              "a non-default port is part of the origin")
+        check(Subprocess.originScope(of: "https://GitHub.COM/example/repo.git") == "https://github.com/",
+              "the host is lowercased, because git matches it case-insensitively and the key must be canonical")
+        check(Subprocess.originScope(of: "https://user@github.com/example/repo.git") == "https://github.com/",
+              "userinfo is not part of the scope")
+        // The trailing slash is the discriminating detail: without it, git
+        // would also match `https://github.com.attacker.example/`.
+        check(Subprocess.originScope(of: "https://github.com/x")?.hasSuffix("/") == true,
+              "the scope ends in a slash, so a longer sibling host cannot match it")
+        check(Subprocess.originScope(of: "/tmp/bare.git") == nil, "a local path has no origin to scope to")
+        check(Subprocess.originScope(of: "not a url at all") == nil, "and neither does nonsense")
     }
 }
 

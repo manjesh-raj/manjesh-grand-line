@@ -524,6 +524,7 @@ enum CodeSandbox {
             "(deny network*)",
             "(deny file-write*)",
         ]
+        lines.append(contentsOf: escapeDenials)
         if trust == .untrustedCode {
             lines.append("(deny file-read* (subpath \(quote(home))))")
         }
@@ -540,6 +541,78 @@ enum CodeSandbox {
             """)
         return lines.joined(separator: "\n") + "\n"
     }
+
+    /// S3 (review security finding): the denials that close the three things
+    /// `(allow default)` left open, every one of them measured under a real
+    /// `sandbox-exec` rather than read about.
+    ///
+    /// Before these, a snippet could:
+    ///
+    ///   * `pbpaste` the captain's clipboard - including a vault credential
+    ///     inside `CredentialVaultClipboard`'s auto-clear window, which is
+    ///     the whole point of that window;
+    ///   * `open -a Terminal <file in the writable directory>`, which asks
+    ///     **LaunchServices** to start a process. A child this snippet execs
+    ///     itself inherits the sandbox; one launchd starts on its behalf does
+    ///     not, so that was a complete escape;
+    ///   * `kill -9` the app's own pid. Measured: under the old profile a
+    ///     snippet killed an unrelated process of the captain's outright,
+    ///     and under this one the same call returns EPERM.
+    ///
+    /// **Why this is a denylist and not `(deny mach-lookup)` plus an
+    /// allowlist.** The stronger shape was built and measured too, and it
+    /// costs the Swift runner: `swift <file>` reaches
+    /// `com.apple.bsd.dirhelper` for `DARWIN_USER_TEMP_DIR` and then a
+    /// further set through `xcodebuild`, and the services each interpreter
+    /// needs differ per tool, per version and per machine - the same reason
+    /// the file-read rules above are not an allowlist either. A denylist that
+    /// names the front doors is what can be shipped without failing closed on
+    /// the captain's own machine. It is therefore not a jail, and
+    /// `docs/history/22-code-preview.md` says so in those words.
+    ///
+    /// The exec denials are belt and braces on top of the mach denials rather
+    /// than the control itself: a snippet may copy `open` into its writable
+    /// directory and exec the copy, and the copy is still confined by this
+    /// same profile and still cannot reach `launchservicesd`.
+    static let escapeDenials: [String] = [
+        // AppleScript/Automation: the other way to drive another process.
+        "(deny appleevent-send)",
+        // Signals to anything outside this run. `same-sandbox` keeps a
+        // snippet able to manage its own children, which is ordinary code.
+        "(deny signal)",
+        "(allow signal (target same-sandbox))",
+        """
+        (deny mach-lookup \
+          (global-name "com.apple.pasteboard.1") \
+          (global-name "com.apple.pbs.fetch_services") \
+          (global-name "com.apple.coreservices.launchservicesd") \
+          (global-name "com.apple.lsd.mapdb") \
+          (global-name "com.apple.lsd.modifydb") \
+          (global-name "com.apple.lsd.openurl") \
+          (global-name "com.apple.CoreServices.coreservicesd") \
+          (global-name "com.apple.SecurityServer") \
+          (global-name "com.apple.securityd.xpc") \
+          (global-name "com.apple.ocspd") \
+          (global-name "com.apple.tccd") \
+          (global-name "com.apple.tccd.system"))
+        """,
+        """
+        (deny process-exec* \
+          (literal "/usr/bin/open") \
+          (literal "/usr/bin/osascript") \
+          (literal "/usr/bin/pbpaste") \
+          (literal "/usr/bin/pbcopy") \
+          (literal "/usr/bin/security") \
+          (literal "/usr/bin/shortcuts") \
+          (literal "/usr/bin/automator") \
+          (literal "/usr/bin/sudo") \
+          (literal "/usr/bin/screencapture") \
+          (literal "/usr/bin/crontab") \
+          (literal "/usr/bin/defaults") \
+          (literal "/bin/launchctl") \
+          (subpath "/System/Library/CoreServices"))
+        """,
+    ]
 
     /// Scheme-style string quoting for a path inside a profile.
     ///

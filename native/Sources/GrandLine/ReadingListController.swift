@@ -383,6 +383,20 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
         root.addSubview(readerCard)
 
         let config = WKWebViewConfiguration()
+        // S13 (review security finding). This reader loads **arbitrary
+        // external pages** - whatever the captain saved a link to - and it
+        // used the process-wide default data store, which is the same
+        // cookie jar, localStorage and disk cache the app's other web
+        // surfaces share and which outlives the launch.
+        //
+        // It is the one web view here that has a real reason to be isolated:
+        // the other three render a fixed local bundle and set this for a
+        // storage-cost reason (PF5). Here it is a boundary. A saved article
+        // gets no session that persists, nothing it writes is readable by a
+        // later page, and nothing about the captain's other browsing is
+        // visible to it. Reading an article does not need a session, so
+        // nothing is lost.
+        config.websiteDataStore = .nonPersistent()
         readerWebView = WKWebView(frame: .zero, configuration: config)
         readerWebView.navigationDelegate = self
         readerWebView.translatesAutoresizingMaskIntoConstraints = false
@@ -894,6 +908,10 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
     var debugSidebar: HelmPageSidebar { sidebar }
     var debugFilter: ReadingListFilter { filter }
     var debugReaderIsShowing: Bool { !readerCard.isHidden }
+
+    /// S13: the reader's own data store, so a suite can assert the isolation
+    /// rather than the source line that sets it.
+    var debugReaderDataStore: WKWebsiteDataStore { readerWebView.configuration.websiteDataStore }
     var debugEmptyStateTitle: String? { emptyState == nil ? nil : emptyStateTitle }
     var debugGridDocument: NSView { gridDocument }
     var debugDropHint: ReadingListDropHintView { dropHintCard }

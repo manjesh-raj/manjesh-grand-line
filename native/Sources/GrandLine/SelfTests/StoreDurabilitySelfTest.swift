@@ -65,6 +65,7 @@ enum StoreDurabilitySelfTest {
         sensitiveStoresAreOwnerOnly(scratch: scratch)
         benignStoresAreLeftAlone(scratch: scratch)
         aCorruptBackupOfASensitiveStoreIsOwnerOnly(scratch: scratch)
+        s10PersonalStoresAreOwnerOnly(scratch: scratch)
 
         print(failures.isEmpty
             ? "== PASS (store durability) =="
@@ -413,6 +414,89 @@ enum StoreDurabilitySelfTest {
         }
     }
 
+
+    /// S10 (review security finding): dictation transcripts, notebook pages,
+    /// log-analyzer evidence and incident records were written 0644 while
+    /// eight other stores already used `SensitiveFile` for exactly this.
+    ///
+    /// Each store is driven through its **real** write path with its own
+    /// `FM_*` override, and every file that lands under the scratch root is
+    /// then read back. A recursive sweep rather than a list of expected
+    /// filenames, deliberately: `LogAnalyzerStore` writes an `evidence/`
+    /// directory whose members are named after the evidence, and a list would
+    /// quietly stop covering a file a later change adds.
+    private static func s10PersonalStoresAreOwnerOnly(scratch: URL) {
+        print("- S10: dictation, notebook, log-analyzer and incident records land 0600")
+
+        func sweep(_ root: URL, _ label: String) {
+            let files = filesUnder(root)
+            check(!files.isEmpty, "S10: \(label) wrote nothing - this sweep would be vacuous")
+            for url in files {
+                check(mode(of: url) == SensitiveFile.fileMode,
+                      "S10: \(label) left \(url.lastPathComponent) at "
+                      + "\(modeString(mode(of: url))), not 0600")
+            }
+        }
+
+        // Dictation: history and vocabulary.
+        let dictationRoot = scratch.appendingPathComponent("s10-dictation", isDirectory: true)
+        withEnv(["FM_DICTATION_DIR": dictationRoot.path]) {
+            let store = DictationStore()
+            store.recordHistory(text: "the captain said something private", durationSeconds: 3, date: Date())
+            store.addVocabularyWord("Poneglyph")
+            sweep(dictationRoot, "dictation")
+        }
+
+        // Notebook: a page in a folder, which is the git-synced shape.
+        let notebookRoot = scratch.appendingPathComponent("s10-notebook", isDirectory: true)
+        let notebook = NotebookStore(root: notebookRoot)
+        _ = notebook.createPage(title: "Private note", folder: "journal",
+                                content: "something worth not sharing with every local account")
+        sweep(notebookRoot, "notebook")
+
+        // Log analyzer: the `.complete` storage choice, which is the one that
+        // writes the evidence text rather than metadata alone.
+        let analyzerRoot = scratch.appendingPathComponent("s10-analyzer", isDirectory: true)
+        withEnv(["FM_LOG_ANALYZER_DIR": analyzerRoot.path]) {
+            let store = LogAnalyzerStore()
+            var investigation = LogInvestigation(title: "S10 probe failure")
+            investigation.evidence = [LogEvidenceItem(label: "kubectl describe", origin: .terminal,
+                                                      sourceDetail: "bastion",
+                                                      text: "Bearer eyJhbGciOi... 10.0.0.4 db-prod",
+                                                      detection: LogAnalyzerController.buildLocalAnalysis(
+                                                          text: "Bearer eyJhbGciOi... 10.0.0.4 db-prod",
+                                                          override: nil).detection,
+                                                      redactionCount: 0)]
+            investigation.storage = .complete
+            check(store.save(investigation) != nil, "S10: the investigation should have been saved")
+            sweep(analyzerRoot, "log analyzer")
+        }
+
+        // Incidents: the record, its artifact and its RCA.
+        let incidentRoot = scratch.appendingPathComponent("s10-incidents", isDirectory: true)
+        let incidents = IncidentStore(root: incidentRoot)
+        switch incidents.start(title: "S10", hostID: "h1", hostLabel: "Bastion") {
+        case .failure(let error):
+            check(false, "S10: could not start an incident: \(error)")
+        case .success(let incident):
+            _ = incidents.append(IncidentTimelineEntry(at: Date(), kind: .note, title: "turn",
+                                                       detail: "what happened"),
+                                 to: incident.id,
+                                 artifactText: "a transcript of a production terminal")
+            _ = incidents.setRCA(id: incident.id, markdown: "# Root cause\n\nsomething")
+            sweep(incidentRoot, "incidents")
+        }
+    }
+
+    /// Every regular file under `root`, recursively.
+    private static func filesUnder(_ root: URL) -> [URL] {
+        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) else {
+            return []
+        }
+        return walker.compactMap { $0 as? URL }.filter {
+            (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+        }
+    }
 }
 
 #endif

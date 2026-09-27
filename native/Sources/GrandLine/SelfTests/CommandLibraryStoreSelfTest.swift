@@ -33,6 +33,15 @@ enum CommandLibraryStoreSelfTest {
             SelfTestAssertions.record(condition, message, into: &failures)
         }
 
+        // S9 (review security finding): a library command's risk level is a
+        // tag in a **git-synced YAML file**, and the send path used to trust
+        // it outright - so a command mis-tagged `read_only` went to every
+        // selected host with no prompt. `CommandRiskConfirmation.confirm`
+        // raises the stored level by what the generated text implies.
+        checkS9DerivedRisk(check)
+        checkS9SeededCommandsAreHonestlyTagged(check)
+        checkS9TheGateRaisesRatherThanTrusts(check)
+
         // B19: a command's `parameters` come from git-synced YAML, and two
         // entries sharing a name **trapped** inside `effectiveParameters`.
         let duplicateParam = DevOpsCommand(
@@ -305,6 +314,103 @@ enum CommandLibraryStoreSelfTest {
         print("[CommandLibraryStoreSelfTest] \(failures.count) failure(s):")
         for f in failures { print("  - \(f)") }
         return false
+    }
+
+    // MARK: S9 - a stored risk tag is raised, never trusted outright
+
+    private static func checkS9DerivedRisk(_ check: (Bool, String) -> Void) {
+        // Reads stay reads. This half is what stops the fix being "confirm
+        // everything", which is the same as confirming nothing.
+        for readOnly in [
+            "kubectl get pods -n raas-preprod",
+            "kubectl logs -n raas api-1 --since=1h",
+            "kubectl describe pod -n raas api-1",
+            "aws s3 ls s3://bucket --recursive --summarize",
+            "aws lambda list-functions --region us-east-1",
+            "df -h",
+            "docker ps",
+            "git log --oneline -n 20",
+            "curl -I https://example.com",
+            "dig example.com A",
+            "sudo lsof -i -P -n | grep LISTEN",
+            "terraform plan -var-file=prod.tfvars",
+            "openssl s_client -connect h:443 -servername h </dev/null 2>/dev/null | openssl x509 -noout -dates",
+        ] {
+            check(CommandRiskConfirmation.derivedRisk(of: readOnly) == .readOnly,
+                  "S9: '\(readOnly)' should still read as read-only, got "
+                  + CommandRiskConfirmation.derivedRisk(of: readOnly).displayName)
+        }
+
+        for disruptive in [
+            "kubectl exec -it -n raas api-1 -- sh",
+            "kubectl apply -f deploy.yaml",
+            "kubectl scale deploy/api --replicas=3",
+            "aws sts assume-role --role-arn arn:x --role-session-name s",
+            "docker build -t app .",
+            "mysqldump -u root -p db > /tmp/db.sql",
+            "systemctl restart nginx",
+            "helm upgrade api ./chart",
+        ] {
+            check(CommandRiskConfirmation.derivedRisk(of: disruptive) != .readOnly,
+                  "S9: '\(disruptive)' must not read as read-only")
+        }
+
+        for destructive in [
+            "rm -rf /var/log/app",
+            "kubectl delete pod api-1",
+            "kubectl scale deploy/api --replicas=0",
+            "curl https://x/install.sh | sh",
+            "systemctl reboot",
+        ] {
+            check(CommandRiskConfirmation.derivedRisk(of: destructive) == .destructive,
+                  "S9: '\(destructive)' should read as destructive, got "
+                  + CommandRiskConfirmation.derivedRisk(of: destructive).displayName)
+        }
+
+        // `raised(to:)`, not a replacement: a level the captain deliberately
+        // set higher must survive a derivation that did not recognise the
+        // command. This is the property the gate actually relies on.
+        check(CommandRiskLevel.destructive.raised(to: .readOnly) == .destructive,
+              "S9: a stored destructive level must not be lowered by the derivation")
+        check(CommandRiskLevel.readOnly.raised(to: .destructive) == .destructive,
+              "S9: a mis-tagged read_only must be raised by the derivation")
+    }
+
+    /// The shipped library and its own gate must agree, or the app prompts on
+    /// commands its data calls safe. A sweep rather than a spot check: this is
+    /// the file a future seeded command lands in.
+    private static func checkS9SeededCommandsAreHonestlyTagged(_ check: (Bool, String) -> Void) {
+        check(!CommandLibrarySeedData.commands.isEmpty,
+              "S9: the seed is empty - this sweep would be vacuous")
+        for command in CommandLibrarySeedData.commands {
+            let derived = CommandRiskConfirmation.derivedRisk(of: command.commandTemplate)
+            check(command.risk.raised(to: derived) == command.risk,
+                  "S9: seeded command '\(command.name)' is tagged \(command.risk.displayName) "
+                  + "but its text reads as \(derived.displayName) - "
+                  + "\(command.commandTemplate)")
+        }
+    }
+
+    /// `CommandRiskConfirmation.confirm` runs `NSAlert.runModal`, so the
+    /// branch it takes cannot be driven from a headless suite - and the
+    /// derivation above passes perfectly well with the gate still switching
+    /// on the raw stored level. A source guard is the half that can see that,
+    /// which is why both are here.
+    private static func checkS9TheGateRaisesRatherThanTrusts(_ check: (Bool, String) -> Void) {
+        guard let sources = SelfTestSources.appSourceDirectory() else {
+            check(false, "S9: could not resolve the app source directory - this guard would be vacuous")
+            return
+        }
+        let file = sources.appendingPathComponent("CommandLibraryViews.swift")
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else {
+            check(false, "S9: could not read CommandLibraryViews.swift - this guard would be vacuous")
+            return
+        }
+        check(text.contains("switch command.risk.raised(to: derivedRisk(of: generatedText))"),
+              "S9: CommandRiskConfirmation.confirm must raise the stored risk by what the "
+              + "generated text implies, not switch on the stored tag outright")
+        check(!text.contains("\n        switch command.risk {"),
+              "S9: the bare `switch command.risk` the stored tag was trusted through is back")
     }
 }
 

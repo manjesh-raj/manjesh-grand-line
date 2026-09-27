@@ -60,7 +60,7 @@ enum CommandLibrarySeedData {
                 CommandParameter(name: "pod", label: "Pod"),
                 CommandParameter(name: "shell", label: "Shell", defaultValue: "/bin/sh"),
             ],
-            tags: ["kubectl", "shell", "debug"], risk: .readOnly
+            tags: ["kubectl", "shell", "debug"], risk: .potentiallyDisruptive
         ),
         DevOpsCommand(
             id: "get-pods-by-label", name: "Get Pods by Label",
@@ -113,7 +113,7 @@ enum CommandLibrarySeedData {
                 CommandParameter(name: "local_port", label: "Local port", kind: .number, defaultValue: "8080"),
                 CommandParameter(name: "remote_port", label: "Remote port", kind: .number, defaultValue: "80"),
             ],
-            tags: ["kubectl", "networking", "debug"], risk: .readOnly
+            tags: ["kubectl", "networking", "debug"], risk: .potentiallyDisruptive
         ),
     ]
 
@@ -169,7 +169,7 @@ enum CommandLibrarySeedData {
                 CommandParameter(name: "role_arn", label: "Role ARN"),
                 CommandParameter(name: "session_name", label: "Session name", defaultValue: "grandline-session"),
             ],
-            tags: ["aws", "iam", "sts"], risk: .readOnly
+            tags: ["aws", "iam", "sts"], risk: .potentiallyDisruptive
         ),
     ]
 
@@ -190,7 +190,7 @@ enum CommandLibrarySeedData {
                 CommandParameter(name: "path", label: "Path", defaultValue: "/var/log"),
                 CommandParameter(name: "size", label: "Size (e.g. 100M)", defaultValue: "100M"),
             ],
-            tags: ["disk", "find"], risk: .readOnly
+            tags: ["disk", "find"], risk: .potentiallyDisruptive
         ),
         DevOpsCommand(
             id: "top-processes-by-memory", name: "Top Processes by Memory",
@@ -250,7 +250,7 @@ enum CommandLibrarySeedData {
                 CommandParameter(name: "container", label: "Container"),
                 CommandParameter(name: "shell", label: "Shell", defaultValue: "/bin/sh"),
             ],
-            tags: ["docker", "shell", "debug"], risk: .readOnly
+            tags: ["docker", "shell", "debug"], risk: .potentiallyDisruptive
         ),
         DevOpsCommand(
             id: "remove-stopped-containers", name: "Remove Stopped Containers",
@@ -273,7 +273,7 @@ enum CommandLibrarySeedData {
                 CommandParameter(name: "tag", label: "Tag", defaultValue: "myapp:latest"),
                 CommandParameter(name: "context", label: "Build context", defaultValue: "."),
             ],
-            tags: ["docker", "build"], risk: .readOnly
+            tags: ["docker", "build"], risk: .potentiallyDisruptive
         ),
     ]
 
@@ -344,7 +344,7 @@ enum CommandLibrarySeedData {
                 CommandParameter(name: "database", label: "Database"),
                 CommandParameter(name: "output_file", label: "Output file", defaultValue: "dump.sql"),
             ],
-            tags: ["mysql", "backup"], risk: .readOnly
+            tags: ["mysql", "backup"], risk: .potentiallyDisruptive
         ),
         DevOpsCommand(
             id: "check-table-size", name: "Check Table Size",
@@ -364,7 +364,7 @@ enum CommandLibrarySeedData {
                 CommandParameter(name: "user", label: "User", defaultValue: "root"),
                 CommandParameter(name: "process_id", label: "Process ID", kind: .number),
             ],
-            tags: ["mysql", "kill"], risk: .potentiallyDisruptive
+            tags: ["mysql", "kill"], risk: .destructive
         ),
         DevOpsCommand(
             id: "show-slow-queries", name: "Show Slow Queries",
@@ -478,7 +478,7 @@ enum CommandLibrarySeedData {
                 CommandParameter(name: "key_file", label: "Key file"),
                 CommandParameter(name: "cert_file", label: "Certificate file"),
             ],
-            tags: ["openssl", "certificate", "convert"], risk: .readOnly
+            tags: ["openssl", "certificate", "convert"], risk: .potentiallyDisruptive
         ),
     ]
 

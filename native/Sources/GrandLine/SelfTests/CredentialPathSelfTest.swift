@@ -118,6 +118,74 @@ enum CredentialPathSelfTest {
             fail("passphrase round trip threw: \(error)", &ok)
         }
 
+        // S6 (review security finding) / GL-15: the passphrase used to be
+        // `-N <passphrase>` / `-P <passphrase>` in argv, visible in `ps` to
+        // every other process on the machine. Neither the generated key nor
+        // the public line can see the difference, so the hook records the
+        // real argv and the real child environment at the point they go to
+        // `Subprocess`.
+        do {
+            let secret = "S6-THIS-MUST-NEVER-APPEAR-IN-ARGV"
+            let variable = SSHKeyGenerator.debugPassphraseVariable
+
+            SSHKeyGenerator.debugInvocations = []
+            let generated = try SSHKeyGenerator.generate(type: .ed25519, label: "s6", passphrase: secret)
+            let onGenerate = SSHKeyGenerator.debugInvocations
+            if onGenerate.isEmpty {
+                fail("S6: no invocation was recorded for generate - the check would be vacuous", &ok)
+            }
+            for run in onGenerate where run.arguments.contains(where: { $0.contains(secret) }) {
+                fail("S6: the passphrase is still in ssh-keygen's argv on generate: \(run.arguments)", &ok)
+            }
+            for run in onGenerate where run.arguments.contains("-N") {
+                fail("S6: generate still passes -N when there is a real passphrase: \(run.arguments)", &ok)
+            }
+            guard let keygenRun = onGenerate.first(where: { $0.environment[variable] != nil }) else {
+                fail("S6: the passphrase did not travel in \(variable) on generate", &ok)
+                return
+            }
+            if keygenRun.environment[variable] != secret {
+                fail("S6: \(variable) did not carry the real passphrase", &ok)
+            }
+            if keygenRun.environment["SSH_ASKPASS_REQUIRE"] != "force" {
+                fail("S6: SSH_ASKPASS_REQUIRE=force is missing - ssh-keygen would ignore the helper", &ok)
+            }
+            if (keygenRun.environment["SSH_ASKPASS"] ?? "").isEmpty {
+                fail("S6: no askpass helper was pointed at", &ok)
+            }
+
+            SSHKeyGenerator.debugInvocations = []
+            _ = try SSHKeyGenerator.inspect(privateKey: generated.privateKey, passphrase: secret)
+            let onInspect = SSHKeyGenerator.debugInvocations
+            if onInspect.isEmpty {
+                fail("S6: no invocation was recorded for inspect - the check would be vacuous", &ok)
+            }
+            for run in onInspect where run.arguments.contains(where: { $0.contains(secret) }) {
+                fail("S6: the passphrase is still in ssh-keygen's argv on inspect: \(run.arguments)", &ok)
+            }
+            for run in onInspect where run.arguments.contains("-P") {
+                fail("S6: inspect still passes -P: \(run.arguments)", &ok)
+            }
+            if !onInspect.contains(where: { $0.environment[variable] == secret }) {
+                fail("S6: the passphrase did not travel in \(variable) on inspect", &ok)
+            }
+
+            // The discriminating half: with no passphrase there is nothing to
+            // hide, `-N ""` must stay (it is what stops an interactive
+            // prompt), and no helper may be installed.
+            SSHKeyGenerator.debugInvocations = []
+            _ = try SSHKeyGenerator.generate(type: .ed25519, label: "s6-none", passphrase: "")
+            let plain = SSHKeyGenerator.debugInvocations
+            if !plain.contains(where: { $0.arguments.contains("-N") }) {
+                fail("S6: a no-passphrase generate must still pass -N so ssh-keygen never prompts", &ok)
+            }
+            if plain.contains(where: { $0.environment[variable] != nil }) {
+                fail("S6: an askpass environment was installed for a key with no passphrase", &ok)
+            }
+        } catch {
+            fail("S6 argv/environment check threw: \(error)", &ok)
+        }
+
         // An unsupported type must be refused before any process runs.
         do {
             _ = try SSHKeyGenerator.generate(type: .from(publicKeyLine: "ecdsa-sha2-nistp256 AAAA"), label: "x", passphrase: "")

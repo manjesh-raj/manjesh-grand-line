@@ -134,8 +134,36 @@ struct GoogleAccountRecord: Codable, Equatable {
 }
 
 /// Read and write one slot's record. The seam the suites replace.
+/// S17 (review security finding): the three answers a slot read can give.
+///
+/// `record(for:)` returns `GoogleAccountRecord?`, so "there is no account in
+/// this slot" and "the Keychain would not answer" arrive at every caller as
+/// the same `nil`. `KeychainGoogleAccountStore` already tells them apart
+/// internally (B30/B1's distinction - it does not cache a failure, and it
+/// does not mint or delete on one), and then throws the distinction away at
+/// the return.
+///
+/// The cost is GL-14's: the Settings row renders "Not connected" with a
+/// **Connect** button over an account whose token is there all along, and
+/// pressing it starts a fresh OAuth flow. Unknown is never rendered as zero.
+enum GoogleAccountReadOutcome: Equatable {
+    case connected(GoogleAccountRecord)
+    /// Settled: there is genuinely nothing in this slot.
+    case notConnected
+    /// The Keychain refused to answer. Nothing may be concluded from it, and
+    /// the next read retries.
+    case unavailable(OSStatus)
+
+    var record: GoogleAccountRecord? {
+        if case .connected(let record) = self { return record }
+        return nil
+    }
+}
+
 protocol GoogleAccountStoring: AnyObject {
-    func record(for slot: GoogleAccountSlot) -> GoogleAccountRecord?
+    /// The full answer. `record(for:)` below is the convenience over it, for
+    /// the callers that genuinely only need "is there a token to use".
+    func outcome(for slot: GoogleAccountSlot) -> GoogleAccountReadOutcome
     /// Stores (or replaces) a slot's record. Throws rather than swallowing:
     /// GL-10, no silent `try?` on a persistence write.
     func save(_ record: GoogleAccountRecord, for slot: GoogleAccountSlot) throws
@@ -143,6 +171,10 @@ protocol GoogleAccountStoring: AnyObject {
 }
 
 extension GoogleAccountStoring {
+    func record(for slot: GoogleAccountSlot) -> GoogleAccountRecord? {
+        outcome(for: slot).record
+    }
+
     var connectedSlots: [GoogleAccountSlot] {
         GoogleAccountSlot.allCases.filter { record(for: $0) != nil }
     }
@@ -188,8 +220,10 @@ final class KeychainGoogleAccountStore: GoogleAccountStoring {
         for slot in loaded where cache[slot] == nil { loaded.remove(slot) }
     }
 
-    func record(for slot: GoogleAccountSlot) -> GoogleAccountRecord? {
-        if loaded.contains(slot) { return cache[slot] }
+    func outcome(for slot: GoogleAccountSlot) -> GoogleAccountReadOutcome {
+        if loaded.contains(slot) {
+            return cache[slot].map { .connected($0) } ?? .notConnected
+        }
         let data: Data
         switch ClipboardHistoryKey.read(service: Self.service, account: slot.keychainAccount) {
         case .found(let raw):
@@ -205,9 +239,9 @@ final class KeychainGoogleAccountStore: GoogleAccountStoring {
             // whole session otherwise.
             guard LegacyNameMigration.keychainMigrationIsOutstanding() else {
                 loaded.insert(slot)
-                return nil
+                return .notConnected
             }
-            return nil
+            return .notConnected
         case .failed(let status):
             // Review bug B1's distinction, applied here for the same reason.
             // "The Keychain would not answer" is not "this slot is not
@@ -217,12 +251,16 @@ final class KeychainGoogleAccountStore: GoogleAccountStoring {
             // token that was there all along. Deliberately NOT marked loaded,
             // so the next read retries once the Keychain settles.
             AppLog.keychain.error("google \(slot.rawValue, privacy: .public): the Keychain would not answer (\(status))")
-            return nil
+            // S17: the distinction was already drawn here and then thrown
+            // away at the return. It is the caller's now, so the Settings row
+            // can say "couldn't read" instead of offering Connect over a
+            // token that is there.
+            return .unavailable(status)
         }
         do {
             let record = try JSONDecoder.googleAccounts.decode(GoogleAccountRecord.self, from: data)
             cache[slot] = record
-            return record
+            return .connected(record)
         } catch {
             // GL-01: "missing" and "present but unreadable" are different
             // states, and this one is loud. The item is left alone - a
@@ -230,7 +268,11 @@ final class KeychainGoogleAccountStore: GoogleAccountStoring {
             // deleting it would sign the captain out for good.
             AppLog.keychain.error("google \(slot.rawValue, privacy: .public) record could not be decoded: \(error.localizedDescription, privacy: .public)")
             cache[slot] = nil
-            return nil
+            // S17/GL-01: an item that is *there* and undecodable is not an
+            // empty slot either. `errSecDecode` is the closest honest status,
+            // and it keeps the row off the Connect button - signing in again
+            // would overwrite an item a later build may well be able to read.
+            return .unavailable(errSecDecode)
         }
     }
 
@@ -275,10 +317,17 @@ final class InMemoryGoogleAccountStore: GoogleAccountStoring {
     private var records: [GoogleAccountSlot: GoogleAccountRecord] = [:]
     /// Set by a suite that wants to prove the UI's own failure path.
     var saveError: Error?
+    /// S17: slots this fake should answer "the Keychain would not answer"
+    /// for, so the unavailable path is drivable at all - `securityd` cannot
+    /// be made to return `errSecInteractionNotAllowed` on demand.
+    var unavailableSlots: Set<GoogleAccountSlot> = []
 
     init() {}
 
-    func record(for slot: GoogleAccountSlot) -> GoogleAccountRecord? { records[slot] }
+    func outcome(for slot: GoogleAccountSlot) -> GoogleAccountReadOutcome {
+        if unavailableSlots.contains(slot) { return .unavailable(errSecInteractionNotAllowed) }
+        return records[slot].map { .connected($0) } ?? .notConnected
+    }
 
     func save(_ record: GoogleAccountRecord, for slot: GoogleAccountSlot) throws {
         if let saveError { throw saveError }

@@ -516,10 +516,27 @@ enum StrawHatProposalExecutor {
     /// is the same "the enum is the security mechanism" property
     /// `ScheduledActionKind` was written with, borrowed rather than re-argued.
     ///
-    /// The new schedule is created **enabled**, exactly as the Schedule
-    /// Editor's own Save does, and `ScheduleStore.add` seeds its
-    /// `lastFiredOccurrence` so a nightly job confirmed at 15:00 means
-    /// "starting tonight" rather than "and also right now".
+    /// S14 (review security finding): the new schedule is created
+    /// **disabled**, which is where this differs from the Schedule Editor's
+    /// own Save.
+    ///
+    /// The editor's Save is the captain filling in a form: they chose the
+    /// action, they chose the cadence, and enabling it is what they came to
+    /// do. A crew proposal is a model's suggestion accepted from a card, and
+    /// the two are not the same act however similar the resulting row looks.
+    /// `ScheduledActionKind` includes `.toolUpdateInstall`, which installs
+    /// software on this machine on a timer - "the enum is the security
+    /// mechanism" bounds *what* can be scheduled and says nothing about
+    /// whether the captain meant it to start running.
+    ///
+    /// So it lands as a draft the captain turns on in Automation, and the
+    /// confirmation message says so rather than leaving them to notice. That
+    /// is one switch, once, against a recurring action nobody has to
+    /// remember agreeing to.
+    ///
+    /// `ScheduleStore.add` still seeds `lastFiredOccurrence` so a nightly job
+    /// enabled at 15:00 means "starting tonight" rather than "and also right
+    /// now".
     private static func createScheduleDraft(_ proposal: StrawHatProposal,
                                             schedules: ScheduleStore?,
                                             now: Date) -> StrawHatProposalOutcome {
@@ -533,11 +550,13 @@ enum StrawHatProposalExecutor {
         // "quiet until it matters" principle - and it is the app's choice
         // rather than the model's, because how loudly the captain's own
         // machine talks to them is not a crew decision.
-        let schedule = AutomationSchedule(action: action, cadence: cadence, notifyOn: .changeOnly)
+        let schedule = AutomationSchedule(action: action, cadence: cadence,
+                                          notifyOn: .changeOnly, isEnabled: false)
         schedules.add(schedule, now: now)
-        AppLog.ai.info("straw hat: captain confirmed a schedule draft for \(action.rawValue, privacy: .public)")
+        AppLog.ai.info("straw hat: captain confirmed a schedule draft for \(action.rawValue, privacy: .public), added disabled")
         return .written(
-            message: "Added \u{201C}\(action.pickerTitle)\u{201D} \u{00B7} \(cadence.displayString)",
+            message: "Added \u{201C}\(action.pickerTitle)\u{201D} \u{00B7} \(cadence.displayString)"
+                + " \u{00B7} off until you turn it on in Automation",
             undo: { schedules.delete(id: schedule.id) })
     }
 }

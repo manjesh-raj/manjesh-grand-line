@@ -1256,7 +1256,19 @@ enum CommandRiskConfirmation {
     static func confirm(command: DevOpsCommand, generatedText: String, actionVerb: String,
                         context: String? = nil, proceed: () -> Void) {
         let suffix = context.map { "\n\n\($0)" } ?? ""
-        switch command.risk {
+        // S9 (review security finding): the stored risk level is a tag in a
+        // **git-synced YAML file**, and this path used to trust it outright -
+        // so a command mis-tagged `read_only`, by a bad edit or by a file
+        // arriving from another machine, went to every selected host with no
+        // prompt at all. The AI path already re-derives and takes
+        // `raised(to:)`; this one does the same now, against the *generated*
+        // text rather than the template, so a parameter value that turns a
+        // read into a write is seen too.
+        //
+        // `raised(to:)`, never a replacement: the derivation is coarse, and a
+        // level the captain deliberately set to `destructive` must not be
+        // downgraded by a heuristic that did not recognise the command.
+        switch command.risk.raised(to: derivedRisk(of: generatedText)) {
         case .readOnly:
             proceed()
         case .potentiallyDisruptive:
@@ -1308,6 +1320,100 @@ enum CommandRiskConfirmation {
         // cluster, so `trimmed.contains("\n")` is false for "a\r\nb" - which
         // would have let exactly the S3 payload through.
         return !trimmed.unicodeScalars.contains { CharacterSet.newlines.contains($0) }
+    }
+
+    /// S9: the risk level a **library** command's text implies on its own,
+    /// used to raise - never lower - the level stored beside it.
+    ///
+    /// This is a second derivation rather than a reuse of `heuristicRisk`
+    /// below, and the difference is the one thing that matters about it:
+    /// `heuristicRisk` exists for text a *model* wrote, so its floor is
+    /// `.potentiallyDisruptive` and it can never clear anything. Applying
+    /// that floor here would put a confirmation on every `kubectl get pods`
+    /// in the library, which is not a stricter app, it is an app whose
+    /// confirmations nobody reads. So this one can answer `.readOnly`, and it
+    /// is the markers that carry the weight.
+    ///
+    /// Two deliberate omissions, because a false positive here is a
+    /// confirmation on a genuinely read-only command and those are the ones
+    /// that erode the gate:
+    ///
+    ///   * a bare `sudo`, which elevates without mutating anything - `sudo
+    ///     lsof -i -P -n` is in the seeded library and really is a read. What
+    ///     it is `sudo`-ing is caught by the markers on its own merits.
+    ///   * `curl`/`wget`, which `heuristicRisk` treats as destructive because
+    ///     a model writing them is usually piping them somewhere. `curl -I`
+    ///     is a seeded read. The pipe-to-shell shapes are matched directly
+    ///     instead.
+    static func derivedRisk(of command: String) -> CommandRiskLevel {
+        let lowered = command.lowercased()
+        let tokens = shellishTokens(lowered)
+
+        // Phrases are matched as substrings, so every one of them is long
+        // enough to be unambiguous. This is where the first draft of this
+        // function went wrong and the seed sweep caught it: `"rm "` as a
+        // substring matches **terrafo`rm `**, which classified every
+        // `terraform` command in the shipped library as destructive.
+        let destructivePhrases = [
+            "rollout undo", "--replicas=0", ":(){", "chmod 777",
+            "| sh", "|sh ", "| bash", "|bash", "--force", " -rf ", " -fr ",
+            "mkfs", "dd if=", "> /dev/sd", ">/dev/sd",
+        ]
+        for phrase in destructivePhrases where lowered.contains(phrase) {
+            return .destructive
+        }
+        let destructiveTokens: Set<String> = [
+            "rm", "dd", "shred", "delete", "destroy", "drop", "truncate",
+            "terminate", "reboot", "shutdown", "kill", "killall", "rmdir",
+        ]
+        if !tokens.isDisjoint(with: destructiveTokens) { return .destructive }
+
+        let mutatingPhrases = [
+            "assume-role", "port-forward", "-exec ", "mysqldump", "pg_dump",
+            "-export", "--export", "systemctl", "launchctl",
+        ]
+        for phrase in mutatingPhrases where lowered.contains(phrase) {
+            return .potentiallyDisruptive
+        }
+        let mutatingTokens: Set<String> = [
+            "apply", "create", "patch", "edit", "replace", "scale", "restart",
+            "cordon", "drain", "exec", "attach", "install", "uninstall",
+            "upgrade", "rollout", "rollback", "chown", "chmod", "cp", "mv",
+            "tee", "set", "annotate", "label", "push", "build", "import",
+            "write", "taint", "evict", "service",
+        ]
+        if !tokens.isDisjoint(with: mutatingTokens) { return .potentiallyDisruptive }
+
+        // An output redirect to a real path writes a file on the far host.
+        // `2>/dev/null`, `>/dev/null` and `>&1`-style duplications do not.
+        if redirectsToAFile(lowered) { return .potentiallyDisruptive }
+        return .readOnly
+    }
+
+    /// `command` split into whitespace-separated tokens, with surrounding
+    /// shell punctuation removed, so a marker can be matched against a whole
+    /// word rather than as a substring.
+    private static func shellishTokens(_ lowered: String) -> Set<String> {
+        let separators = CharacterSet(charactersIn: " \t\n|&;()")
+        let trim = CharacterSet(charactersIn: "\"'`,.:\\")
+        return Set(lowered.components(separatedBy: separators)
+            .map { $0.trimmingCharacters(in: trim) }
+            .filter { !$0.isEmpty })
+    }
+
+    /// `true` when `command` redirects output somewhere other than
+    /// `/dev/null` or another descriptor. Split out so the marker lists above
+    /// stay lists.
+    private static func redirectsToAFile(_ lowered: String) -> Bool {
+        var remainder = Substring(lowered)
+        while let angle = remainder.firstIndex(of: ">") {
+            let after = remainder[remainder.index(after: angle)...]
+                .drop(while: { $0 == ">" })
+                .drop(while: { $0 == " " })
+            if !after.hasPrefix("/dev/null"), !after.hasPrefix("&") { return true }
+            remainder = after
+        }
+        return false
     }
 
     /// A conservative "how loud should this confirmation be" heuristic. It
