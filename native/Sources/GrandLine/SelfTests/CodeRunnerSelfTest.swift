@@ -599,6 +599,7 @@ enum CodeRunnerSelfTest {
               "reading the home directory must be denied, got \(reads?.output ?? "")")
 
         checkNetworkDenial(check)
+        checkEscapeDenials(check)
 
         checkWallClockKillsARunawayScript(check)
         checkCancelStopsARun(check)
@@ -643,6 +644,87 @@ enum CodeRunnerSelfTest {
         check(sandboxed?.output.contains("network denied") == true,
               "the same lookup that succeeds unsandboxed must be denied inside the sandbox, "
               + "got \(sandboxed?.output ?? "nothing")")
+    }
+
+    /// S3 (review security finding). `(allow default)` left three doors open
+    /// that this feature's own documentation said were shut, and each is
+    /// asserted here against a **real** sandboxed run rather than against the
+    /// profile text - the profile check above can pass while the rule means
+    /// something other than what it reads like.
+    ///
+    /// Each half is paired with its own discriminating check, for the same
+    /// reason `checkNetworkDenial` runs its probe unsandboxed first: "pbpaste
+    /// printed nothing" is also what an empty clipboard looks like.
+    private static func checkEscapeDenials(_ check: (Bool, String) -> Void) {
+        guard Subprocess.resolveExecutable("python3") != nil, CodeSandbox.isAvailable else { return }
+        let runner = CodeRunner()
+
+        // 1. The clipboard. A vault credential lives on it for
+        //    `CredentialVaultClipboard`'s auto-clear window, which is exactly
+        //    the window a snippet had to hit.
+        let clipboard = waitForRun(runner, """
+            import subprocess
+            try:
+                out = subprocess.run(['/usr/bin/pbpaste'], capture_output=True, timeout=10)
+                print('PBPASTE RAN', out.returncode)
+            except OSError as error:
+                print('pbpaste denied')
+            """, "python")
+        check(clipboard?.output.contains("pbpaste denied") == true,
+              "a snippet must not be able to exec pbpaste, got \(clipboard?.output ?? "nothing")")
+
+        // 2. LaunchServices. A child a snippet execs itself inherits this
+        //    sandbox; one launchd starts on its behalf does not, so `open`
+        //    was a complete escape rather than one more confined process.
+        let launch = waitForRun(runner, """
+            import subprocess
+            try:
+                subprocess.run(['/usr/bin/open', '-a', 'Terminal'], capture_output=True, timeout=10)
+                print('OPEN RAN')
+            except OSError as error:
+                print('open denied')
+            """, "python")
+        check(launch?.output.contains("open denied") == true,
+              "a snippet must not be able to exec /usr/bin/open, got \(launch?.output ?? "nothing")")
+
+        let script = waitForRun(runner, """
+            import subprocess
+            try:
+                subprocess.run(['/usr/bin/osascript', '-e', 'return 1'], capture_output=True, timeout=10)
+                print('OSASCRIPT RAN')
+            except OSError as error:
+                print('osascript denied')
+            """, "python")
+        check(script?.output.contains("osascript denied") == true,
+              "a snippet must not be able to exec osascript, got \(script?.output ?? "nothing")")
+
+        // 3. Signals. Measured against a real process this suite owns, so the
+        //    check cannot pass because there was nothing to kill: the victim
+        //    is started unsandboxed, confirmed alive, and confirmed *still*
+        //    alive afterwards. Under the old profile the same call killed it.
+        guard let sleepPath = Subprocess.resolveExecutable("sleep") else { return }
+        let victim = Process()
+        victim.executableURL = URL(fileURLWithPath: sleepPath)
+        victim.arguments = ["30"]
+        do { try victim.run() } catch {
+            print("  SKIP could not start a victim process for the signal check: \(error)")
+            return
+        }
+        defer { if victim.isRunning { victim.terminate() } }
+        check(victim.isRunning, "the victim process should be running - the signal check is vacuous otherwise")
+        let signals = waitForRun(runner, """
+            import os, signal
+            try:
+                os.kill(\(victim.processIdentifier), signal.SIGKILL)
+                print('SIGNAL SENT')
+            except OSError as error:
+                print('signal denied')
+            """, "python")
+        check(signals?.output.contains("signal denied") == true,
+              "a snippet must not be able to signal a process outside its own run, "
+              + "got \(signals?.output ?? "nothing")")
+        check(victim.isRunning,
+              "the victim process was killed from inside the sandbox - the signal denial did not hold")
     }
 
     /// The claim that makes this feature safe to have at all: a runaway script

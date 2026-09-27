@@ -99,13 +99,48 @@ directory, with:
 - **stdin on `/dev/null`** and **output capped at 256 KB**, with the cap stated in the pane when it bites.
 
 **What it is not, stated because the difference is the whole point.** The profile is `(allow default)`
-with three denials layered on top, not an allowlist. Reads outside the home directory - `/usr`, `/etc`,
+with denials layered on top, not an allowlist. Reads outside the home directory - `/usr`, `/etc`,
 `/tmp`, another mounted volume - still succeed, and the interpreter runs as the captain with the
 captain's own privileges. It stops a snippet destroying or leaking the captain's data. It is not a
 virtual machine, and a local exploit of `sandbox-exec` itself is out of scope. An allowlist was
 considered and rejected: the set of paths a working interpreter touches differs per tool, per version
 and per machine, so it would fail closed on the captain's machine in ways this repo cannot reproduce.
 If `sandbox-exec` is ever absent the run is **refused**, never quietly downgraded to an unconfined one.
+
+### S3: the three denials this section used to claim without having
+
+The 2026-09-25 full-app review read the profile text and found the paragraph above overstated what
+was enforced. `(allow default)` plus the network, write and home-read denials left three doors open,
+all three measured under a real `sandbox-exec` rather than argued about:
+
+- **`pbpaste` read the real clipboard**, which for `CredentialVaultClipboard`'s auto-clear window is a
+  vault credential. A snippet that ran during that window got it.
+- **`open -a Terminal <file in the writable directory>` launched an unsandboxed process.** This is the
+  one that mattered most, and it is worth being precise about why: a child a snippet `exec`s itself
+  *inherits* this sandbox, so spawning processes was never the hole. Asking **LaunchServices** to
+  start one is, because launchd's child is not this profile's child. That was a complete escape.
+- **`kill -9` reached any process the captain owns**, including the app itself. Measured: a snippet
+  killed an unrelated `sleep` outright under the old profile, and gets `EPERM` under the new one.
+
+What was added: `(deny appleevent-send)`, `(deny signal)` with `(allow signal (target same-sandbox))`
+so a snippet can still manage its own children, a `(deny mach-lookup ...)` naming the pasteboard,
+LaunchServices, securityd/TCC and ocspd global names, and a `(deny process-exec* ...)` naming
+`open`, `osascript`, `pbpaste`, `pbcopy`, `security`, `shortcuts`, `automator`, `sudo`,
+`screencapture`, `crontab`, `defaults`, `launchctl` and `/System/Library/CoreServices`.
+
+**These are denylists, and that is a deliberate, measured choice rather than laziness.** The stronger
+`(deny mach-lookup)` plus an allowlist was built and run: it works for python, node and bash, and it
+breaks the Swift runner, which reaches `com.apple.bsd.dirhelper` for `DARWIN_USER_TEMP_DIR` and then
+a further set through `xcodebuild`. The services each interpreter needs differ per tool, per version
+and per machine - the same reason the file-read rules are not an allowlist either. So the denials name
+the front doors. The `process-exec*` half is belt and braces on top of the `mach-lookup` half rather
+than the control itself: a snippet may copy `open` into its own writable directory and exec the copy,
+and the copy is still confined by this same profile and still cannot reach `launchservicesd`.
+
+`CodeRunnerSelfTest.checkEscapeDenials` asserts all four against real sandboxed runs, each paired
+with its own discriminating check - the signal case starts a real victim process, confirms it alive
+first, and confirms it still alive afterwards, because "nothing was killed" is also what "there was
+nothing to kill" looks like. Removing the denials from the profile fails four of them.
 
 ### Four things that were measured rather than reasoned
 
