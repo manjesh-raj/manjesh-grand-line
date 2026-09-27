@@ -911,28 +911,26 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     // MARK: Daylight §6.4 - the drill header's live line
 
-    /// Read off `setupSteps` - the in-memory stepper state this page already
-    /// renders - so the header agrees with the progress track beside it and
-    /// costs nothing to read. `.checking` is a step whose own `stepIsDone`
-    /// answered "not known yet"; reporting it as pending would be a confident
-    /// claim the page has not earned.
+    /// **Review defect U7 / X4.** This used to count `setupSteps`, which is
+    /// the four steps "Run full setup" *runs* - while the list below it
+    /// renders all five - and it composed its own sentence. Automation
+    /// composed a different sentence over a different denominator from a
+    /// different source, and the two pages disagreed out loud about one
+    /// machine. Both build the line through `SetupPipelineProgress` now; see
+    /// that type for what each of the three disagreements was.
+    ///
+    /// `.failed` still comes from this page's own sequencer, because a run
+    /// stopping on a step is something only the page that owns the run can
+    /// know.
     var drillHeaderSubtitle: String? {
-        let total = setupSteps.count
-        guard total > 0 else { return "No setup steps" }
         if isRunningFullSetup { return fullSetupSubtitle }
-        var done = 0, failed = 0, checking = 0
-        for step in setupSteps {
-            switch step.status {
-            case .done, .skipped: done += 1
-            case .failed: failed += 1
-            case .checking: checking += 1
-            default: break
-            }
-        }
-        if failed > 0 { return "\(done) of \(total) steps done \u{00B7} \(failed) failed" }
-        if checking > 0 { return "\(done) of \(total) steps done \u{00B7} checking\u{2026}" }
-        if done == total { return "\(total) of \(total) steps done" }
-        return "\(done) of \(total) steps done"
+        var verdicts: [SetupStepKind: Bool?] = [:]
+        for kind in SetupStepKind.allCases { verdicts[kind] = stepIsDone(kind) }
+        let failed = setupSteps.filter {
+            if case .failed = $0.status { return true }
+            return false
+        }.count
+        return SetupPipelineProgress.of(verdicts, failedSteps: failed).summary
     }
 
     var onDrillSubtitleChanged: (() -> Void)?

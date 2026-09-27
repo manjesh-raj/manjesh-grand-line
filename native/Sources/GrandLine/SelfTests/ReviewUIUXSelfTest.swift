@@ -46,6 +46,7 @@ enum ReviewUIUXSelfTest {
             ("U6_commandLibraryOpensWithACommandListOnScreen", test_u6CommandListOnOpen),
             ("U11_kubernetesRefreshIsOfferedOnlyWhenItCanAct", test_u11KubernetesRefresh),
             ("U11_syncAllIsOfferedOnlyWhenSomethingIsBehind", test_u11SyncAll),
+            ("U7_X4_bootstrapAndAutomationReportOneProgress", test_u7x4SharedProgress),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -475,6 +476,93 @@ enum ReviewUIUXSelfTest {
             }
             return nil
         }
+    }
+
+    // MARK: U7 / X4 - two pages, one setup checklist
+
+    private static func test_u7x4SharedProgress() -> String? {
+        let all = SetupStepKind.allCases
+        guard all.count == 5 else {
+            return "the canonical checklist is \(all.count) steps, not 5 - this case's expected "
+                 + "sentences below were written against five"
+        }
+
+        // The review's own machine: Firstmate home verified, the rest still
+        // being checked. Bootstrap said "1 of 4", Automation said "0 of 5".
+        var verdicts: [SetupStepKind: Bool?] = [:]
+        for kind in all { verdicts[kind] = Bool?.none }
+        verdicts[.firstmateHome] = true
+        let checking = SetupPipelineProgress.of(verdicts)
+        guard checking.summary == "1 of 5 steps done \u{00B7} checking\u{2026}" else {
+            return "a partly-checked machine reads \(checking.summary.debugDescription)"
+        }
+
+        // The denominator is the whole checklist, including the step
+        // Bootstrap's own "Run full setup" does not run - the list shows
+        // five, so the count says five.
+        guard checking.total == all.count else {
+            return "the progress line counts \(checking.total) steps while the checklist has \(all.count)"
+        }
+        guard all.contains(.restoreConfig), !SetupStepKind.restoreConfig.isPartOfFullSetupSequence else {
+            return "restoreConfig is no longer the step outside the run sequence, so this case is "
+                 + "no longer covering the denominator disagreement it was written for"
+        }
+
+        // A fully set-up machine, which is the case Automation used to
+        // report as "0 of 5" however set up the Mac actually was.
+        var allDone: [SetupStepKind: Bool?] = [:]
+        for kind in all { allDone[kind] = true }
+        guard SetupPipelineProgress.of(allDone).summary == "5 of 5 steps done" else {
+            return "a fully set-up machine reads \(SetupPipelineProgress.of(allDone).summary.debugDescription)"
+        }
+
+        // A run that stopped is still reported, and it is the only thing
+        // either page passes in from its own sequencer.
+        var oneLeft: [SetupStepKind: Bool?] = allDone
+        oneLeft[.software] = false
+        guard SetupPipelineProgress.of(oneLeft, failedSteps: 1).summary
+                == "4 of 5 steps done \u{00B7} 1 failed" else {
+            return "a failed run is not reported: "
+                 + "\(SetupPipelineProgress.of(oneLeft, failedSteps: 1).summary.debugDescription)"
+        }
+
+        // GL-14: a step nobody asked about is "still checking", never "not
+        // done" - the two read differently and must keep doing so.
+        guard SetupPipelineProgress.of([:]).summary == "0 of 5 steps done \u{00B7} checking\u{2026}" else {
+            return "an unmeasured checklist claims to have been measured: "
+                 + "\(SetupPipelineProgress.of([:]).summary.debugDescription)"
+        }
+
+        // The source guard: neither page may compose its own sentence again.
+        // A behavioural check cannot see a *third* page doing it, and the
+        // whole defect was two spellings of one fact.
+        guard let files = SelfTestSources.appSourceFiles() else {
+            return "SKIP-AS-FAILURE: the app's sources are not next to this binary, so the "
+                 + "one-sentence guard would have checked nothing"
+        }
+        var offenders: [String] = []
+        for file in files {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let code = codeOnly(text)
+            for phrase in ["steps ready", "steps done"] where code.contains(phrase) {
+                guard file.lastPathComponent != "SetupStepChecks.swift" else { continue }
+                offenders.append("\(file.lastPathComponent) spells out \(phrase.debugDescription)")
+            }
+        }
+        guard offenders.isEmpty else {
+            return "the setup checklist's progress sentence is written in more than one place "
+                 + "(review U7/X4): \(offenders.joined(separator: "; "))"
+        }
+        // And that the one place really does still contain it, so the guard
+        // above cannot pass by the sentence having moved somewhere it cannot
+        // see.
+        let home = files.first { $0.lastPathComponent == "SetupStepChecks.swift" }
+        guard let home, let text = try? String(contentsOf: home, encoding: .utf8),
+              codeOnly(text).contains("steps done") else {
+            return "SetupStepChecks.swift no longer composes the progress sentence, so the guard "
+                 + "above is checking nothing"
+        }
+        return nil
     }
 }
 

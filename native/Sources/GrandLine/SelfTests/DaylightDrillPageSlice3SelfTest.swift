@@ -354,8 +354,28 @@ enum DaylightDrillPageSlice3SelfTest {
 
         // The lines have to actually *differ*. Four identical ones would pass
         // every "has a subtitle" check while telling the captain nothing.
-        if Set(seen.values).count < seen.count {
-            print("  FAIL two pages render the identical subtitle: \(Array(seen.values))")
+        //
+        // **One pair is now deliberately identical, and the captain decided
+        // it.** Bootstrap and Automation are two views of one setup
+        // checklist, and the 2026-09-27 review's U7/X4 is precisely that
+        // they used to disagree out loud about it - "3 of 4 steps done"
+        // against "0 of 5 steps ready" on the same machine. They read one
+        // `SetupPipelineProgress` now, so agreeing is the property worth
+        // pinning and it is asserted below rather than merely tolerated.
+        let sharedChecklist: Set<RailDestination> = [.bootstrap, .automation]
+        let independentLines = seen.filter { !sharedChecklist.contains($0.key) }.values
+        if Set(independentLines).count < independentLines.count {
+            print("  FAIL two pages render the identical subtitle: \(Array(independentLines))")
+            ok = false
+        }
+        let checklistLines = Set(seen.filter { sharedChecklist.contains($0.key) }.values)
+        if checklistLines.count != 1 {
+            print("  FAIL Bootstrap and Automation describe one checklist differently: \(checklistLines)")
+            ok = false
+        }
+        if let checklistLine = checklistLines.first,
+           Set(independentLines).contains(checklistLine) {
+            print("  FAIL a page outside the setup checklist renders its line: \"\(checklistLine)\"")
             ok = false
         }
 
@@ -369,7 +389,10 @@ enum DaylightDrillPageSlice3SelfTest {
             }
         }
 
-        if ok { print("  OK - four pages, four distinct honest lines, no sibling tab pills") }
+        if ok {
+            print("  OK - four pages, three distinct honest lines (Bootstrap and Automation share "
+                  + "one checklist, X4), no sibling tab pills")
+        }
     }
 
     private static func textFieldValues(in view: NSView) -> [String] {

@@ -897,19 +897,26 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     /// detail/dot state into an existing view afterward.
     // MARK: Daylight §6.4 - the drill header's live line
 
-    /// This page already composes exactly the line the header wants -
-    /// `progressSummary` is what the pipeline's own subtitle renders - so the
-    /// header shows that rather than a second, differently-worded count of
-    /// the same five steps. While idle it prefixes the resolved-step count,
-    /// which the long idle sentence does not carry.
+    /// **Review defect U7 / X4.** While idle this used to count its own
+    /// sequencer's pill state, which is `.pending` for every step until a
+    /// "Run Automation" pass touches it - so a fully set-up machine reported
+    /// "0 of 5 steps ready" next to Bootstrap's "3 of 4 steps done" about
+    /// the same checklist. Idle progress is a statement about the machine,
+    /// not about whether this page has been used, so it reads the same live
+    /// checks Bootstrap does through the same `SetupPipelineProgress`.
+    ///
+    /// The pills below stay sequencer state, and deliberately: they answer
+    /// "what did the last run do", which is a different and still useful
+    /// question. What is no longer allowed is for them to be the source of
+    /// a *progress* line that another page contradicts.
+    ///
+    /// A run still shows `progressSummary`, which is this page's own live
+    /// commentary on the run and has no counterpart on Bootstrap.
     var drillHeaderSubtitle: String? {
         if isRunning { return progressSummary }
-        let resolved = steps.filter {
-            if case .done = $0.status { return true }
-            if case .skipped = $0.status { return true }
-            return false
-        }.count
-        return "\(resolved) of \(steps.count) steps ready"
+        var verdicts: [SetupStepKind: Bool?] = [:]
+        for kind in SetupStepKind.allCases { verdicts[kind] = stepIsDone(kind) }
+        return SetupPipelineProgress.of(verdicts).summary
     }
 
     var onDrillSubtitleChanged: (() -> Void)?

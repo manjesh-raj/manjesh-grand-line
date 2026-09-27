@@ -89,6 +89,75 @@ enum SetupStepChecks {
     }
 }
 
+/// How far through the setup checklist this machine is, as both pages report
+/// it.
+///
+/// **Review defect U7, UX issue X4.** Bootstrap's drill header said "1 of 4
+/// steps done - checking..." while Automation's said "0 of 5 steps ready",
+/// on the same machine, about the same checklist, at the same moment. Two
+/// pages describing one state machine in two numbers and two vocabularies.
+///
+/// Three separate disagreements were behind that one line:
+///
+/// - **The denominator.** Bootstrap counted `isPartOfFullSetupSequence`, the
+///   four steps its "Run full setup" button actually runs, while rendering
+///   all five in the list below. Automation counted all five. The checklist
+///   is five steps on both pages, so the number is five on both; Bootstrap's
+///   *run* still covers four, which is a property of the run and is stated
+///   by the button, not by the checklist's own progress.
+/// - **The verdict.** Bootstrap read live checks; Automation read its own
+///   sequencer's pill state, which is `.pending` for every step until a "Run
+///   Automation" pass touches it - so a fully set-up machine still reported
+///   "0 of 5". Both read the live checks now, which is the only one of the
+///   two that is a statement about the machine.
+/// - **The word.** "done" and "ready" are the same fact. It is "done"
+///   everywhere.
+///
+/// The steps themselves were already shared (`SetupStepKind`, and every
+/// predicate in `SetupStepChecks`); what was not shared was the sentence.
+/// Both pages build it here now, so a change to the wording or the counting
+/// rule cannot land on one page and not the other.
+struct SetupPipelineProgress: Equatable {
+    let done: Int
+    let checking: Int
+    let failed: Int
+    let total: Int
+
+    /// The one sentence both drill headers show while idle.
+    ///
+    /// `checking` is deliberately not folded into "not done": a step whose
+    /// own predicate answered `nil` has not been measured yet, and reporting
+    /// it as pending would be a confident claim neither page has earned
+    /// (GL-14).
+    var summary: String {
+        guard total > 0 else { return "No setup steps" }
+        if failed > 0 { return "\(done) of \(total) steps done \u{00B7} \(failed) failed" }
+        if checking > 0 { return "\(done) of \(total) steps done \u{00B7} checking\u{2026}" }
+        return "\(done) of \(total) steps done"
+    }
+
+    /// - Parameters:
+    ///   - verdicts: one live verdict per canonical step - `true` done,
+    ///     `false` not done, `nil` still being checked. A step missing from
+    ///     the dictionary counts as still being checked, which is the honest
+    ///     reading of "this page did not ask".
+    ///   - failedSteps: how many steps a *run* stopped on. Sequencer state,
+    ///     which only a page that owns a run can know, so it is passed in
+    ///     rather than derived.
+    static func of(_ verdicts: [SetupStepKind: Bool?], failedSteps: Int = 0) -> SetupPipelineProgress {
+        var done = 0, checking = 0
+        for kind in SetupStepKind.allCases {
+            switch verdicts[kind] ?? nil {
+            case true?: done += 1
+            case false?: break
+            case nil: checking += 1
+            }
+        }
+        return SetupPipelineProgress(done: done, checking: checking,
+                                     failed: failedSteps, total: SetupStepKind.allCases.count)
+    }
+}
+
 /// The one command Bootstrap's dotfiles step and Automation's own dotfiles
 /// step both run - fetches first, fast-forwards only, never a forced
 /// overwrite (see `BootstrapController`'s own doc comment on the equivalent
