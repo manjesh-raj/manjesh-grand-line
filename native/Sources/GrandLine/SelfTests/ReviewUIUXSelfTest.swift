@@ -32,6 +32,7 @@
 // editing a suite - `Phase3PolishSelfTest` asserts every file here carries it.
 #if FM_SELFTESTS
 
+import AppKit
 import Foundation
 
 enum ReviewUIUXSelfTest {
@@ -40,6 +41,7 @@ enum ReviewUIUXSelfTest {
         let cases: [(String, () -> String?)] = [
             ("U12_noEmDashIsUsedAsAProseSeparatorInAppCopy", test_u12NoProseEmDash),
             ("U13_searchPaletteOverflowLineIsGrammatical", test_u13OverflowGrammar),
+            ("U3_emptyStateWatermarkTouchesNoText", test_u3WatermarkClearsTheCopy),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -155,6 +157,79 @@ enum ReviewUIUXSelfTest {
         }
         guard !UnifiedSearchKind.groupOrder.isEmpty else {
             return "there are no group titles to check, so this case would have passed vacuously"
+        }
+        return nil
+    }
+
+    // MARK: U3 - the empty-state watermark
+
+    /// The four pages the review rendered the collision on, plus the two
+    /// other destinations that pass artwork - so a caller added later is
+    /// swept too rather than only the four that were photographed.
+    private static let watermarkDestinations: [RailDestination] =
+        [.kubernetes, .stickyBoard, .docs, .postmortems, .codePreview, .whiteboard]
+
+    private static func test_u3WatermarkClearsTheCopy() -> String? {
+        // Every size the page-filling callers use, at a page-sized container
+        // and at a deliberately cramped one - the cramped case is what the
+        // required `top >= top` backstop exists for, and a check that only
+        // ever saw a roomy container could not see it fail.
+        let containers: [NSSize] = [NSSize(width: 1400, height: 760), NSSize(width: 700, height: 420)]
+        for dest in watermarkDestinations {
+            guard let artwork = dest.drillHeaderArtwork else {
+                return "\(dest.rawValue) no longer carries drill-header artwork, so this case "
+                     + "would have checked nothing for it"
+            }
+            for size in containers {
+                let result: String? = autoreleasepool {
+                    let state = HelmEmptyState(symbol: "bolt.horizontal.circle",
+                                               title: "No live host session",
+                                               body: "Every kubectl command runs inside a bastion session "
+                                                   + "you have already logged into - that session is the only "
+                                                   + "cluster credential there is. Connect a host first.",
+                                               size: .standard,
+                                               hue: dest.domainHue,
+                                               artwork: artwork)
+                    let host = NSView(frame: NSRect(origin: .zero, size: size))
+                    state.translatesAutoresizingMaskIntoConstraints = false
+                    host.addSubview(state)
+                    NSLayoutConstraint.activate([
+                        state.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                        state.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+                        state.topAnchor.constraint(equalTo: host.topAnchor),
+                        state.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+                    ])
+                    host.layoutSubtreeIfNeeded()
+                    let layout = state.debugWatermarkLayout()
+                    let where_ = "\(dest.rawValue) at \(Int(size.width))x\(Int(size.height))"
+                    // Discriminating power: a zero-sized mark, or a hidden
+                    // title, would make every assertion below vacuous.
+                    guard layout.watermarkFrame.width > 1, layout.watermarkFrame.height > 1 else {
+                        return "\(where_): the watermark has no frame, so this case proves nothing"
+                    }
+                    guard layout.titleIsVisible, layout.titleFrame.height > 1,
+                          layout.bodyFrame.height > 1 else {
+                        return "\(where_): the title or body did not lay out, so this case proves nothing"
+                    }
+                    if layout.watermarkFrame.intersects(layout.titleFrame) {
+                        return "\(where_): the watermark \(layout.watermarkFrame) still overlaps the "
+                             + "title \(layout.titleFrame) (review U3)"
+                    }
+                    if layout.watermarkFrame.intersects(layout.bodyFrame) {
+                        return "\(where_): the watermark \(layout.watermarkFrame) still overlaps the "
+                             + "body copy \(layout.bodyFrame) (review U3)"
+                    }
+                    // The other half of the backstop: the mark must stay
+                    // inside the state it decorates rather than painting over
+                    // whatever sits above it.
+                    if layout.watermarkFrame.minY < -0.5 || layout.watermarkFrame.maxY > size.height + 0.5 {
+                        return "\(where_): the watermark \(layout.watermarkFrame) escapes the empty "
+                             + "state's own bounds (height \(size.height))"
+                    }
+                    return nil
+                }
+                if let result { return result }
+            }
         }
         return nil
     }
