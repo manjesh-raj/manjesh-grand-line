@@ -483,6 +483,21 @@ final class DotfilesAutoSync {
         }
 
         if !dirty.isEmpty {
+            // S15 (review security finding). This defaults to **on**, watches
+            // the file system and stages the equivalent of `git add -A` over
+            // `home/`, so a file that happens to hold a secret was pushed
+            // within seconds of appearing with no step where anyone looked at
+            // it. Refuse the whole pass rather than commit part of it: a
+            // partial commit would leave the captain reasoning about which
+            // half went out. See `DotfilesSecretScan`'s header for what this
+            // is and is not.
+            let findings = scanForSecrets(dirty)
+            if !findings.isEmpty {
+                let reason = DotfilesSecretScan.refusalMessage(findings)
+                AppLog.gitSync.error("dotfiles auto-sync held back: \(reason, privacy: .public)")
+                setStatus(.failed(reason))
+                return .failed(reason)
+            }
             let add = runGit(["add", "-A", "--", Self.autoCommitSubpath], authenticated: false)
             guard add.status == 0 else {
                 let reason = "git add failed: \(add.stderr)"
@@ -530,6 +545,29 @@ final class DotfilesAutoSync {
         return .pushed(fileCount: dirty.count)
     }
 
+    /// S15: every dirty path under `home/`, read and inspected.
+    ///
+    /// `internal` so `DotfilesAutoSyncSelfTest` can drive it against a real
+    /// working tree rather than only asserting the pure scanner - the shape
+    /// that actually broke here is a *reading* mistake, not a matching one
+    /// (`statusLinePath`'s own doc comment is about exactly that).
+    func scanForSecrets(_ statusLines: [String]) -> [DotfilesSecretScan.Finding] {
+        statusLines.compactMap { line in
+            guard let path = BootstrapController.statusLinePath(line) else {
+                // A status line this cannot parse is not a reason to push it.
+                return DotfilesSecretScan.Finding(
+                    path: line, reason: "its git status line could not be parsed, so it was not scanned")
+            }
+            let url = workingTree.appendingPathComponent(path)
+            // A deletion has no file to read, and deleting a secret is the
+            // one change to one that should never be held back.
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            let data = try? FileHandle(forReadingFrom: url).read(upToCount: DotfilesSecretScan.bytesInspected)
+            let text = data.flatMap { String(data: $0, encoding: .utf8) }
+            return DotfilesSecretScan.inspect(path: path, contents: text)
+        }
+    }
+
     // MARK: Git reads
 
     private func hasCheckout() -> Bool {
@@ -549,7 +587,14 @@ final class DotfilesAutoSync {
     /// anything worth committing, and what `.localChanges` actually means -
     /// never a timer-driven guess.
     func uncommittedHomeFiles() -> [String] {
-        let result = runGit(["status", "--short", "--", Self.autoCommitSubpath], authenticated: false)
+        // S15: `--untracked-files=all`. Git's default collapses a new
+        // *directory* to one `?? home/.aws/` line, so a secret inside a
+        // folder that did not exist before was never a path the scan could
+        // see - measured, `home/.aws/credentials` sailed through while a
+        // sibling `home/.npmrc` was held. It also makes the commit message's
+        // file count the real one.
+        let result = runGit(["status", "--short", "--untracked-files=all", "--", Self.autoCommitSubpath],
+                            authenticated: false)
         return result.stdout.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
     }
 

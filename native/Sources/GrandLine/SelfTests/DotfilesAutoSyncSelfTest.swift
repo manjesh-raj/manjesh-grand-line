@@ -582,6 +582,113 @@ enum DotfilesAutoSyncSelfTest {
                   + "`.git/index.lock` (B25). Offenders: " + offenders.joined(separator: ", "))
         }
 
+        // MARK: 14 - S15: a secret dropped under `home/` holds the whole pass
+
+        do {
+            let remote = makeBareRemote("case14.git")
+            let tree = makeClone(of: remote, named: "case14", seed: true)
+            let sync = makeSync(tree, remote: remote)
+            let baseline = commitCount(tree)
+
+            // Each of these is a file a package manager, a cloud CLI or a
+            // tidy-up could really put there. Driven one at a time through
+            // the *real* `syncNow()` against a *real* working tree, because
+            // the mistake this class has actually made is a reading one (see
+            // `statusLinePath`), not a matching one.
+            let leaks: [(String, String)] = [
+                ("home/.npmrc", "//registry.npmjs.org/:_authToken=npm_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345\n"),
+                ("home/.aws/credentials", "[default]\naws_access_key_id = AKIAIOSFODNN7EXAMPLE\n"),
+                ("home/.config/app/notes.txt", "remember: AKIAIOSFODNN7EXAMPLE is the prod key\n"),
+                ("home/.ssh/id_ed25519", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1r\n"),
+                ("home/certs/prod.pem", "-----BEGIN CERTIFICATE-----\nMIIB\n"),
+                ("home/.env.production", "DATABASE_URL=postgres://x\n"),
+                ("home/.config/ci/env.sh", "export GITHUB_TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n"),
+                ("home/.config/svc/conf.yaml", "client_secret: 8f3b9c0d1e2a4b5c6d7e8f90\n"),
+            ]
+            for (path, contents) in leaks {
+                let url = tree.appendingPathComponent(path)
+                write(url, contents)
+                let outcome = sync.syncNow()
+                guard case .failed(let reason) = outcome else {
+                    check(false, "case 14: \(path) must hold the pass back, got \(outcome)")
+                    try? fm.removeItem(at: url)
+                    continue
+                }
+                check(reason.contains("held back"),
+                      "case 14: the refusal for \(path) should say it was held back, got \(reason)")
+                check(reason.contains(path),
+                      "case 14: the refusal should name \(path), got \(reason)")
+                check(commitCount(tree) == baseline,
+                      "case 14: nothing may be committed while \(path) is present")
+                check(commitCount(remote, ref: "main") == baseline,
+                      "case 14: and nothing may reach the remote")
+                // Left staged would be almost as bad as committed - the next
+                // pass, or the captain's own commit, would carry it.
+                check(!dirtyPaths(tree).isEmpty,
+                      "case 14: the file is still there, uncommitted, for the captain to deal with")
+                try? fm.removeItem(at: url)
+            }
+
+            // The discriminating half, and the whole reason the list above is
+            // safe to make long: an ordinary dotfile still goes out. A scan
+            // that refused everything would pass every check above and make
+            // the feature dead.
+            write(tree.appendingPathComponent("home/.config/herdr/config.toml"),
+                  "[theme.custom]\naccent = \"#222222\"\n")
+            let clean = sync.syncNow()
+            check(clean == .pushed(fileCount: 1),
+                  "case 14: an ordinary dotfile edit must still be committed and pushed, got \(clean)")
+            check(commitCount(remote, ref: "main") == baseline + 1,
+                  "case 14: and it must really be on the remote")
+
+            // A *deletion* of a secret must not be held back - it is the one
+            // change to such a file that should always go through.
+            let key = tree.appendingPathComponent("home/.ssh/id_ed25519")
+            write(key, "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n")
+            _ = shell(["-C", tree.path, "add", "-A"])
+            _ = shell(["-C", tree.path, "commit", "-m", "captain added this by hand"])
+            try? fm.removeItem(at: key)
+            let deletion = sync.syncNow()
+            check(deletion != .failed(DotfilesSecretScan.refusalMessage(
+                    [DotfilesSecretScan.Finding(path: "home/.ssh/id_ed25519", reason: "x")])),
+                  "case 14: deleting a secret must not be held back")
+            if case .failed(let reason) = deletion {
+                check(!reason.contains("held back"),
+                      "case 14: deleting a secret must not be held back, got \(reason)")
+            }
+        }
+
+        // MARK: 15 - S15: the scanner's own table
+
+        do {
+            // Placeholders and templates are not secrets, and treating one as
+            // a secret is how a gate gets routed around.
+            for benign in [
+                ("home/.zshrc", "export EDITOR=nvim\nalias g=git\n"),
+                ("home/.config/app/conf.yaml", "# password: set this yourself\nhost: localhost\n"),
+                ("home/.env.example", "API_KEY=\n"),
+                ("home/.config/x", "token: $GITHUB_TOKEN\n"),
+                ("home/.config/y", "password: {{vault.pw}}\n"),
+                ("home/.config/z", "secret: changeme\n"),
+                ("home/README.md", "Store your api_key in 1Password, never here.\n"),
+            ] {
+                check(DotfilesSecretScan.inspect(path: benign.0, contents: benign.1) == nil,
+                      "case 15: \(benign.0) should not be a finding, got "
+                      + (DotfilesSecretScan.inspect(path: benign.0, contents: benign.1)?.reason ?? ""))
+            }
+            // `.env.example` is benign by *content*; `.env` is a finding by
+            // name whatever is in it.
+            check(DotfilesSecretScan.inspect(path: "home/.env", contents: "") != nil,
+                  "case 15: .env is a finding by name")
+            check(DotfilesSecretScan.inspect(path: "home/x.pem", contents: nil) != nil,
+                  "case 15: a .pem is a finding by name even when it cannot be read as text")
+            // A binary reads back as nil contents, and a wallpaper is not a
+            // credential - refusing everything unreadable would make the gate
+            // one the captain routes around.
+            check(DotfilesSecretScan.inspect(path: "home/wallpaper.png", contents: nil) == nil,
+                  "case 15: an unreadable, innocuously-named file is not a finding")
+        }
+
         return finish(failures)
     }
 
