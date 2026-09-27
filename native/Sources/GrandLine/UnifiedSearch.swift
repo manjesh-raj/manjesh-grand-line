@@ -446,7 +446,7 @@ final class UnifiedSearchController: NSWindowController {
             // "No silent caps" - say what was left out rather than letting a
             // capped group look complete.
             if group.overflow > 0 {
-                addPaddedLabel("\(group.overflow) more \(group.title.lowercased()) match\(group.overflow == 1 ? "" : "es") - keep typing to narrow it down",
+                addPaddedLabel(group.overflowText,
                                font: .systemFont(ofSize: 11), leading: 24, vertical: 5, muted: true)
             }
         }

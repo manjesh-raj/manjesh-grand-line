@@ -39,6 +39,7 @@ enum ReviewUIUXSelfTest {
     static func run() -> Bool {
         let cases: [(String, () -> String?)] = [
             ("U12_noEmDashIsUsedAsAProseSeparatorInAppCopy", test_u12NoProseEmDash),
+            ("U13_searchPaletteOverflowLineIsGrammatical", test_u13OverflowGrammar),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -128,6 +129,32 @@ enum ReviewUIUXSelfTest {
         guard offenders.isEmpty else {
             return "UI copy must use a plain dash, not an em dash (review U12): "
                  + offenders.joined(separator: "; ")
+        }
+        return nil
+    }
+
+    // MARK: U13 - the search palette's overflow line
+
+    private static func test_u13OverflowGrammar() -> String? {
+        // Every real group title, so a new plural title cannot reintroduce
+        // the defect through a form this case never sees.
+        for title in UnifiedSearchKind.groupOrder {
+            let many = UnifiedSearchGroup(title: title, items: [], overflow: 45).overflowText
+            let one = UnifiedSearchGroup(title: title, items: [], overflow: 1).overflowText
+            // The defect itself: the group title used as an adjective in
+            // front of a noun it does not agree with.
+            if many.contains("\(title.lowercased()) match") || one.contains("\(title.lowercased()) match") {
+                return "the overflow line still reads the group title as an adjective: \(many.debugDescription)"
+            }
+            guard many.hasPrefix("45 more matches in \(title)") else {
+                return "the plural form is not grammatical: \(many.debugDescription)"
+            }
+            guard one.hasPrefix("1 more match in \(title)") else {
+                return "the singular form is not grammatical: \(one.debugDescription)"
+            }
+        }
+        guard !UnifiedSearchKind.groupOrder.isEmpty else {
+            return "there are no group titles to check, so this case would have passed vacuously"
         }
         return nil
     }
