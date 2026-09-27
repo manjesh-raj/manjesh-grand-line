@@ -43,6 +43,7 @@
 #if FM_SELFTESTS
 
 import AppKit
+import WebKit
 import Foundation
 
 enum ReadingListViewSelfTest {
@@ -66,6 +67,7 @@ enum ReadingListViewSelfTest {
         checkFiltersDriveTheGrid(check)
         checkEmptyStates(check)
         checkDropTargetDecision(check)
+        checkS13ReaderUsesAnIsolatedDataStore(check)
         checkReaderOpensAndMarksRead(check)
         checkCardIsLegibleInBothRegisters(check)
         checkSummaryWellIsActuallyPainted(check)
@@ -528,6 +530,26 @@ enum ReadingListViewSelfTest {
                 minItemWidth: ReadingListCardView.minimumWidth)
             check(wideColumns >= 2,
                   "grid: a 1500pt window should fit at least two columns, got \(wideColumns)")
+        }
+    }
+
+    /// S13 (review security finding): the reader loads **arbitrary external
+    /// pages**, and it used the process-wide default `WKWebsiteDataStore` -
+    /// the same cookie jar, localStorage and disk cache the app's other web
+    /// surfaces share, outliving the launch.
+    ///
+    /// Asserted against the live web view's own configuration rather than
+    /// against the source line, and paired with the default store's own
+    /// `isPersistent` so a WebKit change that made every store report `false`
+    /// could not turn this into a check that cannot fail.
+    private static func checkS13ReaderUsesAnIsolatedDataStore(_ check: (Bool, String) -> Void) {
+        check(WKWebsiteDataStore.default().isPersistent,
+              "S13: the default data store should be persistent - this check is vacuous otherwise")
+        mounted { controller, _, _, _ in
+            check(!controller.debugReaderDataStore.isPersistent,
+                  "S13: the reader must use a non-persistent data store for arbitrary external pages")
+            check(controller.debugReaderDataStore !== WKWebsiteDataStore.default(),
+                  "S13: the reader must not share the app's default data store")
         }
     }
 }
