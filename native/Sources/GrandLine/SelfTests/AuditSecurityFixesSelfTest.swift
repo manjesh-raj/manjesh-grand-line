@@ -182,8 +182,17 @@ enum AuditSecurityFixesSelfTest {
               "https is handed to the browser")
         check(WebNavigationPolicy.opensExternally(URL(string: "HTTP://example.com")!),
               "scheme comparison is case-insensitive")
+        // S4 added the schemes a *synced document* can reach on its own -
+        // Docs used to hand every one of these to `NSWorkspace`.
         for kept in ["file:///etc/passwd", "data:text/html,x", "javascript:alert(1)",
-                     "about:blank", "blob:null/abcd", "ftp://example.com"] {
+                     "about:blank", "blob:null/abcd", "ftp://example.com",
+                     "x-apple.systempreferences:com.apple.preference.security",
+                     "shortcuts://run-shortcut?name=Wipe",
+                     "mailto:someone@example.com", "tel:+15550100",
+                     "ssh://root@example.com", "vnc://example.com",
+                     "itms-services://?action=download-manifest",
+                     "smb://example.com/share", "afp://example.com",
+                     "facetime://+15550100", "x-man-page://1/ls"] {
             check(!WebNavigationPolicy.opensExternally(URL(string: kept)!),
                   "a `\(kept.split(separator: ":").first.map(String.init) ?? "?")` refusal is dropped, never opened externally")
         }
@@ -222,6 +231,19 @@ enum AuditSecurityFixesSelfTest {
                   "\(file) decides containment through the shared policy")
             check(!source.contains(".hasPrefix(docsPath)"),
                   "\(file) no longer uses the string-prefix containment check (§5.4)")
+            // S4: every host that hands a refused URL to `NSWorkspace` has to
+            // ask the scheme gate first. Docs used to opt out by comment, so
+            // an `x-apple.systempreferences:` or `shortcuts://` URL in a
+            // synced doc fired a system action just by the page being viewed.
+            // This is a source guard because the behaviour is inside a
+            // `WKNavigationDelegate` callback that needs a real web view and
+            // a real navigation to reach - `opensExternally`'s own table is
+            // asserted behaviourally above.
+            if source.contains("NSWorkspace.shared.open(url)") {
+                check(source.contains("WebNavigationPolicy.opensExternally(url)"),
+                      "\(file) hands a refused navigation to NSWorkspace without asking "
+                      + "WebNavigationPolicy.opensExternally first (S4)")
+            }
         }
 
         // The cancel/reload loop guard: a navigation this app *cancels*

@@ -63,9 +63,14 @@ enum WebNavigationPolicy {
     /// handed to `NSWorkspace`, which would otherwise open an arbitrary local
     /// path in Finder or a helper app on the page's say-so.
     ///
-    /// Docs deliberately does not use this: it hosts a browsable site where
-    /// any outbound link may be legitimate, and it has always opened whatever
-    /// it cancelled. That difference is the point - see each call site.
+    /// All three hosts use this now. Docs used to opt out - it hosts a
+    /// browsable site, so any outbound *web* link may be legitimate - but S4
+    /// of the 2026-09-25 review pointed out that "any outbound link" was
+    /// being read as "any URL of any scheme", against content that is a
+    /// synced copy of a remote repository. A `shortcuts://` or
+    /// `x-apple.systempreferences:` URL in a doc fired a system action just
+    /// by the page being viewed. `http`/`https` is what a browsable site
+    /// needs; nothing else is.
     static func opensExternally(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased() else { return false }
         return scheme == "http" || scheme == "https"
