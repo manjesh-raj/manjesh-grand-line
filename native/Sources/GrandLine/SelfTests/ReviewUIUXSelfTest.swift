@@ -42,6 +42,7 @@ enum ReviewUIUXSelfTest {
             ("U12_noEmDashIsUsedAsAProseSeparatorInAppCopy", test_u12NoProseEmDash),
             ("U13_searchPaletteOverflowLineIsGrammatical", test_u13OverflowGrammar),
             ("U3_emptyStateWatermarkTouchesNoText", test_u3WatermarkClearsTheCopy),
+            ("U5_healthRingFractionAgreesWithItsSentence", test_u5HealthRing),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -230,6 +231,104 @@ enum ReviewUIUXSelfTest {
                 }
                 if let result { return result }
             }
+        }
+        return nil
+    }
+
+    // MARK: U5 - the Health card's fraction
+
+    private typealias HealthReading = HomeCanvasController.HealthServiceReading
+
+    private static func reading(_ title: String,
+                                _ verdict: ServiceHealthState.Verdict,
+                                reported: Bool) -> HealthReading {
+        HealthReading(title: title, verdict: verdict, hasReported: reported)
+    }
+
+    private static func test_u5HealthRing() -> String? {
+        // The review's own state: six services, two reported and healthy,
+        // four never run. The defect was "2/6" beside "All reporting services
+        // healthy" - the fraction counting all six, the sentence counting the
+        // two.
+        let partial = [
+            reading("Background signals", .healthy, reported: true),
+            reading("Persistence", .healthy, reported: true),
+            reading("Fleet tasks", .unknown, reported: false),
+            reading("Shift git sync", .unknown, reported: false),
+            reading("Docs sync", .unknown, reported: false),
+            reading("Scheduled automations", .unknown, reported: false),
+        ]
+        let summary = HomeCanvasController.healthRingSummary(partial)
+        guard summary.value == 2, summary.total == 6 else {
+            return "a partly-reported fleet should count reporting over total, got "
+                 + "\(summary.value)/\(summary.total)"
+        }
+        guard summary.title == "Reporting" else {
+            return "the ring still claims to be counting \(summary.title.debugDescription) while "
+                 + "four of six services have never run"
+        }
+        guard summary.note == "2 of 6 reporting so far." else {
+            return "the sentence does not name the same set as the fraction: \(summary.note.debugDescription)"
+        }
+
+        // GL-14's half: a service mid-pass that has never finished one is not
+        // evidence of health. `.running` used to sit in the healthy bucket
+        // whatever it had reported.
+        let neverFinished = [
+            reading("Background signals", .running, reported: false),
+            reading("Persistence", .healthy, reported: true),
+        ]
+        let running = HomeCanvasController.healthRingSummary(neverFinished)
+        guard running.value == 1, running.title == "Reporting" else {
+            return "a service that is mid-pass and has never reported is being counted as healthy: "
+                 + "\(running.value)/\(running.total) \(running.title)"
+        }
+
+        // Singular: "All 1 services healthy." is what a bare count reads as
+        // on a machine where only one service has registered, which is the
+        // probe's own state.
+        let lone = HomeCanvasController.healthRingSummary([reading("Persistence", .healthy, reported: true)])
+        guard lone.note == "The only service is healthy." else {
+            return "the one-service sentence is not grammatical: \(lone.note.debugDescription)"
+        }
+
+        // Everything reported and well: the fraction and the word agree, and
+        // the sentence no longer hedges with "reporting".
+        let allWell = (1...3).map { reading("Service \($0)", .healthy, reported: true) }
+        let well = HomeCanvasController.healthRingSummary(allWell)
+        guard well.value == 3, well.total == 3, well.title == "Healthy",
+              well.note == "All 3 services healthy." else {
+            return "a fully healthy fleet reads \(well.value)/\(well.total) \(well.title) - "
+                 + "\(well.note.debugDescription)"
+        }
+
+        // A degraded service is no longer swept into "all healthy": the old
+        // sentence only ever looked at `.failing`.
+        let oneDegraded = [
+            reading("Docs sync", .degraded, reported: true),
+            reading("Persistence", .healthy, reported: true),
+        ]
+        let degraded = HomeCanvasController.healthRingSummary(oneDegraded)
+        guard degraded.value == 1, degraded.note == "Docs sync degraded." else {
+            return "a degraded service still reads as healthy: \(degraded.value)/\(degraded.total) - "
+                 + "\(degraded.note.debugDescription)"
+        }
+
+        // A failing service is named, in both the outstanding and the
+        // complete case.
+        let failingWhileIncomplete = [
+            reading("Docs sync", .failing, reported: true),
+            reading("Persistence", .unknown, reported: false),
+        ]
+        guard HomeCanvasController.healthRingSummary(failingWhileIncomplete).note
+                == "Docs sync needs a look." else {
+            return "a failing service is not named while others are still outstanding"
+        }
+
+        // And the empty case B9 established, unchanged.
+        let empty = HomeCanvasController.healthRingSummary([])
+        guard empty.total == 0, empty.note == "Nothing has reported yet." else {
+            return "the no-services state changed: \(empty)"
         }
         return nil
     }
