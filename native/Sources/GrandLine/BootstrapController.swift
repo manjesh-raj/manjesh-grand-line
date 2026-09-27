@@ -2824,8 +2824,10 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         let raw = clonePathField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let destination = raw.isEmpty ? DotfilesSource.defaultClonePath : raw
         let expanded = (destination as NSString).expandingTildeInPath
-        let command = "git clone \(DotfilesSource.cloneURL) \"\(expanded)\" && cd \"\(expanded)\" && ./bootstrap.sh"
-        onRunCommand?("Bootstrap", command)
+        // S12: one copy of the command, with the path as a single-quoted
+        // shell token - it used to be double-quoted, which a shell still
+        // expands.
+        onRunCommand?("Bootstrap", DotfilesRunCommand.cloneCommand(expandedPath: expanded))
     }
 
     @objc private func runRebuildClicked() {
