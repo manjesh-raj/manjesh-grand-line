@@ -220,13 +220,26 @@ final class ScheduleStore {
     /// explicit, production-only call - `AppDelegate` (and therefore this
     /// property) is never constructed while a self-test runs, see GL-05's
     /// note in `main.swift` - closes that off entirely.
+    /// **S16 (review security finding): seeded *disabled*.**
+    ///
+    /// It used to arrive enabled, so a fresh install silently acquired a
+    /// daily 11:00 job that installs software on the captain's machine with
+    /// no confirmation, across thirteen tools, before anybody had seen the
+    /// Automation page. That is a decision worth someone making rather than
+    /// inheriting - and it is the same decision S14 makes for a
+    /// crew-proposed schedule, for the same reason.
+    ///
+    /// The row is still seeded, because a disabled row on the Automation page
+    /// *teaches the feature*: it names the action, names the cadence, and is
+    /// one switch away. An unseeded feature nobody discovers would be a worse
+    /// answer than either.
     func seedDailyUpdatesScheduleIfNeeded(now: Date = Date()) {
         guard !hadExistingFileBeforeInit else { return }
         add(AutomationSchedule(
             action: .toolUpdateInstall,
             cadence: .daily(hour: 11, minute: 0),
             notifyOn: .changeOnly,
-            isEnabled: true
+            isEnabled: false
         ), now: now)
     }
 

@@ -479,8 +479,20 @@ enum ScheduleRunnerSelfTest {
         if seeded.cadence != .daily(hour: 11, minute: 0) {
             fail("the seeded schedule's cadence should be daily at 11:00, got \(seeded.cadence)", &ok)
         }
-        if !seeded.isEnabled {
-            fail("the seeded schedule should start enabled", &ok)
+        // S16 (review security finding): it used to start **enabled**, so a
+        // fresh install silently acquired a daily job that installs software
+        // across thirteen tools with no confirmation, before anybody had seen
+        // the Automation page. The row is still seeded - a disabled row
+        // teaches the feature and is one switch away - but the switch is the
+        // captain's.
+        if seeded.isEnabled {
+            fail("S16: the seeded tool-install schedule must start disabled - it installs "
+                 + "software with no confirmation and nothing asked", &ok)
+        }
+        // Discriminating: a seed that produced nothing at all would also
+        // satisfy "not enabled", and would be a different (worse) answer.
+        if seeded.action != .toolUpdateInstall || first.schedules.count != 1 {
+            fail("S16: the row must still be seeded so the feature is discoverable", &ok)
         }
         if seeded.notifyOn != .changeOnly {
             fail("the seeded schedule should default to notifyOn = .changeOnly", &ok)
@@ -532,10 +544,15 @@ enum ScheduleRunnerSelfTest {
         }
         let fresh = ScheduleStore(calendar: utc)
         fresh.seedDailyUpdatesScheduleIfNeeded(now: at(2026, 3, 10, 8, 0))
-        guard let seededForCadence = fresh.schedules.first else {
+        guard var seededForCadence = fresh.schedules.first else {
             fail("expected the seed to have produced a schedule to check cadence against", &ok)
             return
         }
+        // S16: the seed is disabled now, and `verdict` answers "not due" for
+        // a disabled schedule whatever its cadence - which would make every
+        // assertion below pass for the wrong reason. The cadence is what is
+        // under test here, so turn it on locally.
+        seededForCadence.isEnabled = true
         let beforeEleven = ScheduleDueCalculator.verdict(for: seededForCadence, now: at(2026, 3, 10, 10, 59), calendar: utc)
         if beforeEleven.isDue {
             fail("a schedule seeded this morning at 08:00 should not read as due again at 10:59 the same day", &ok)
