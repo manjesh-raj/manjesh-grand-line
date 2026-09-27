@@ -2018,7 +2018,16 @@ enum StrawHatSelfTest {
             return
         }
         check(written.action == .driftCheck, "with its action", &ok)
-        check(written.isEnabled, "enabled, exactly as the Schedule Editor's own Save leaves it", &ok)
+        // S14 (review security finding): this used to land **enabled**, like
+        // the Schedule Editor's own Save. The editor's Save is the captain
+        // filling in a form; this is a model's suggestion accepted from a
+        // card, and `ScheduledActionKind` includes `.toolUpdateInstall`,
+        // which installs software on this machine on a timer.
+        check(!written.isEnabled,
+              "S14: a crew-proposed schedule must land disabled, not running", &ok)
+        check(scheduleMessage.lowercased().contains("off until you turn it on"),
+              "S14: and the confirmation must say so rather than leaving the captain to notice, "
+              + "got \(scheduleMessage)", &ok)
         check(written.notifyOn == .changeOnly,
               "and quiet-until-it-matters, which is the app's default rather than the model's choice", &ok)
         // `ScheduleStore.add` seeds this so a nightly job confirmed at 15:00
