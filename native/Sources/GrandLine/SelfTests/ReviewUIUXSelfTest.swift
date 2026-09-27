@@ -44,6 +44,8 @@ enum ReviewUIUXSelfTest {
             ("U3_emptyStateWatermarkTouchesNoText", test_u3WatermarkClearsTheCopy),
             ("U5_healthRingFractionAgreesWithItsSentence", test_u5HealthRing),
             ("U6_commandLibraryOpensWithACommandListOnScreen", test_u6CommandListOnOpen),
+            ("U11_kubernetesRefreshIsOfferedOnlyWhenItCanAct", test_u11KubernetesRefresh),
+            ("U11_syncAllIsOfferedOnlyWhenSomethingIsBehind", test_u11SyncAll),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -387,6 +389,91 @@ enum ReviewUIUXSelfTest {
                 }
                 return nil
             }
+        }
+    }
+
+    // MARK: U11 - a primary action that cannot act
+
+    private static func test_u11KubernetesRefresh() -> String? {
+        autoreleasepool {
+            let sessions = HostSessionRegistry()
+            let controller = KubernetesController(sessions: sessions)
+            let hostID = UUID()
+            let feedTab = KubeFeedTab(id: UUID(), name: "EKS Bastion \u{00B7} k8s feed",
+                                      terminal: FakeBridgeTerminal())
+            var access = KubeSessionAccess()
+            access.tabs = { _ in [feedTab] }
+            controller.configure(access: access)
+            controller.view.frame = NSRect(x: 0, y: 0, width: 1200, height: 780)
+            controller.view.layoutSubtreeIfNeeded()
+
+            // The review's own state: no live host session at all.
+            guard controller.debugEmptyStateVisible else {
+                return "the page is not in its no-session state, so this case is measuring something else"
+            }
+            guard !controller.debugRefreshEnabled else {
+                return "Refresh is offered as a filled accent pill on a page that says \"No live host "
+                     + "session\" and cannot act (review U11)"
+            }
+            guard let reason = controller.debugRefreshTooltip, reason.contains("Connect a host") else {
+                return "the disabled Refresh says nothing about why: "
+                     + "\(String(describing: controller.debugRefreshTooltip))"
+            }
+
+            // And the other direction, so this is not just an assertion that
+            // the button is always dead: once there is a session, a scope
+            // and a feed tab, it comes back.
+            sessions.register(hostID: hostID, label: "EKS Preprod Bastion",
+                              accentHex: "6cd7e3", state: .connected)
+            controller.debugAdoptFeedTab(feedTab)
+            controller.view.layoutSubtreeIfNeeded()
+            guard controller.debugRefreshEnabled else {
+                return "Refresh stays disabled with a live session, a scope and a feed tab - the fix "
+                     + "has turned it off permanently rather than gating it"
+            }
+            return nil
+        }
+    }
+
+    private static func test_u11SyncAll() -> String? {
+        autoreleasepool {
+            let controller = GitHubSyncController()
+            controller.view.frame = NSRect(x: 0, y: 0, width: 1100, height: 900)
+            controller.view.layoutSubtreeIfNeeded()
+
+            guard controller.debugRowCount > 1 else {
+                return "the page rendered \(controller.debugRowCount) repo rows, so this case could "
+                     + "not tell a gated button from an empty page"
+            }
+            // The review's own state: every row still unchecked.
+            guard !controller.debugSyncAllEnabled else {
+                return "\"Sync All\" is offered as an enabled primary button while no fork has been "
+                     + "checked yet (review U11)"
+            }
+            guard let reason = controller.debugSyncAllTooltip, reason.contains("press Refresh") else {
+                return "the disabled \"Sync All\" says nothing about why: "
+                     + "\(String(describing: controller.debugSyncAllTooltip))"
+            }
+
+            // Checked and everything in sync is still nothing to do.
+            for index in 0 ..< controller.debugRowCount {
+                controller.debugSetStatus(.inSync, atRow: index)
+            }
+            guard !controller.debugSyncAllEnabled else {
+                return "\"Sync All\" is offered with every fork already in sync"
+            }
+
+            // One fork behind is the state it exists for.
+            controller.debugSetStatus(.behind(3), atRow: 0)
+            guard controller.debugSyncAllEnabled else {
+                return "\"Sync All\" stays disabled with a fork 3 commits behind - the fix has "
+                     + "turned it off permanently rather than gating it"
+            }
+            guard controller.debugSyncAllTooltip?.contains("1 fork") == true else {
+                return "the enabled \"Sync All\" does not say what it would do: "
+                     + "\(String(describing: controller.debugSyncAllTooltip))"
+            }
+            return nil
         }
     }
 }

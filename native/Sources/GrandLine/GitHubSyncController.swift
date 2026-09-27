@@ -286,6 +286,9 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         syncAllButton.target = self
         syncAllButton.action = #selector(syncAllTapped)
         syncAllButton.setContentHuggingPriority(.required, for: .horizontal)
+        // U11: the page opens with every row `.unknown`, so the button starts
+        // disabled rather than waiting for the first `render(_:)` to notice.
+        updateSyncAllEnablement()
 
         syncAllSummaryLabel.font = .systemFont(ofSize: 11.5)
         syncAllSummaryLabel.preferredMaxLayoutWidth = 500
@@ -316,8 +319,8 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         let targets = rows.filter { $0.status.showsSyncButton }
         guard !targets.isEmpty else {
             isSyncingAll = false
-            syncAllButton.isEnabled = true
             setSyncAllSummary("Nothing behind upstream right now.")
+            updateSyncAllEnablement()
             return
         }
         var synced = 0
@@ -327,7 +330,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         func runNext(_ index: Int) {
             guard index < targets.count else {
                 isSyncingAll = false
-                syncAllButton.isEnabled = true
+                updateSyncAllEnablement()
                 var parts: [String] = []
                 if synced > 0 { parts.append("\(synced) synced") }
                 if alreadyInSync > 0 { parts.append("\(alreadyInSync) already in sync") }
@@ -642,11 +645,43 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         }
     }
 
+    /// **Review defect U11.** "Sync All" rendered as an enabled, filled
+    /// primary button on a page where every row still said "Not Checked" -
+    /// so the loudest control on the page advertised work that did not exist
+    /// yet, and pressing it wrote "Nothing behind upstream right now." It
+    /// already filtered on `showsSyncButton`; what it did not do was *say*
+    /// so before being pressed.
+    ///
+    /// It is enabled only while at least one row is genuinely behind (or
+    /// failed a sync and deserves a retry) - the same predicate `syncAll()`
+    /// itself targets, read from one place so the button and the run can
+    /// never disagree. The tooltip carries the reason, because a disabled
+    /// control with no explanation is its own defect.
+    private func updateSyncAllEnablement() {
+        guard !isSyncingAll else { return }
+        let targets = rows.filter { $0.status.showsSyncButton }
+        let checking = rows.contains { $0.status == .checking }
+        syncAllButton.isEnabled = !targets.isEmpty
+        if !targets.isEmpty {
+            syncAllButton.toolTip = "Sync the \(targets.count) fork\(targets.count == 1 ? "" : "s") "
+                + "behind upstream."
+        } else if checking {
+            syncAllButton.toolTip = "Still checking which forks are behind upstream."
+        } else if rows.allSatisfy({ $0.status == .unknown }) {
+            syncAllButton.toolTip = "Nothing has been checked yet - press Refresh first."
+        } else {
+            syncAllButton.toolTip = "Nothing is behind upstream right now."
+        }
+    }
+
     private func render(_ row: GitHubSyncRow) {
         // Every status change for every row lands here, so this is the one
         // place the header's line has to be re-read from.
         defer { onDrillSubtitleChanged?() }
         defer { publishForkDriftSignal() }
+        // U11: and the one place the page-level action's enablement is
+        // re-derived from, for the same reason.
+        defer { updateSyncAllEnablement() }
         row.detailLabel.stringValue = row.detail
         row.logField.stringValue = row.log.isEmpty ? "No output yet." : row.log
 
@@ -740,6 +775,13 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     // MARK: Probe surface (debug builds only, GL-27)
 
     var debugRowCount: Int { rows.count }
+
+    /// Review defect U11: whether the page's one loud action is offered, and
+    /// what it says about why. Read off the button rather than re-derived -
+    /// the defect was a button that was enabled while the predicate behind
+    /// it had nothing to act on.
+    var debugSyncAllEnabled: Bool { isViewLoaded && syncAllButton.isEnabled }
+    var debugSyncAllTooltip: String? { isViewLoaded ? syncAllButton.toolTip : nil }
 
     /// Drives the real status-change path a completed check takes.
     func debugSetStatus(_ status: GitHubSyncStatus, atRow index: Int) {

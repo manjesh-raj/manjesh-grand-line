@@ -24,6 +24,31 @@ extension KubernetesController {
         clusterContainer.isHidden = !(ready && pageTab == .cluster)
         tailContainer.isHidden = !(ready && pageTab == .logTail)
 
+        // **Review defect U11.** The drill header's "Refresh" is a filled
+        // accent pill - the loudest control on the page - and it rendered
+        // enabled on a page whose whole content area said "No live host
+        // session". `refreshTapped` needs a scoped host *and* a feed tab to
+        // do anything at all (it types into that tab), so with neither it
+        // was an invitation to press a button that cannot act.
+        //
+        // `ready` is the same predicate the work area itself is shown on, so
+        // the button and the thing it refreshes can never disagree. The
+        // tooltip carries the reason: a disabled control with no explanation
+        // is its own defect.
+        refreshButton.isEnabled = ready
+        if ready {
+            refreshButton.toolTip = pageTab == .cluster
+                ? "Re-read the cluster through the scoped session."
+                : "Poll the tailed pods again."
+        } else if !hasSession {
+            refreshButton.toolTip = "Connect a host first - every kubectl command runs inside a "
+                + "bastion session you have already logged into."
+        } else if !hasScope {
+            refreshButton.toolTip = "Pick which session these commands run in first."
+        } else {
+            refreshButton.toolTip = "Pick which of the session's tabs this page types into first."
+        }
+
         renderFeedPicker()
         renderFeedStatus()
         renderNamespacePicker()
@@ -407,6 +432,11 @@ extension KubernetesController {
 // debug configuration, so none of this reaches the shipped `.app`.
 extension KubernetesController {
     var debugEmptyStateVisible: Bool { isViewLoaded && !scopeEmptyState.isHidden }
+
+    /// Review defect U11: whether the drill header's filled accent pill is
+    /// offered, and what it says about why not.
+    var debugRefreshEnabled: Bool { isViewLoaded && refreshButton.isEnabled }
+    var debugRefreshTooltip: String? { isViewLoaded ? refreshButton.toolTip : nil }
     var debugScopeStripVisible: Bool { isViewLoaded && !scopeTabsHost.isHidden && scopeTabs != nil }
     var debugFeedCardVisible: Bool { isViewLoaded && !feedSection.isHidden }
     var debugWorkAreaVisible: Bool { isViewLoaded && !workArea.isHidden }
