@@ -493,16 +493,41 @@ enum Subprocess {
     /// authenticate against, and offline must still be able to work locally.
     static func gitAuthEnvironment(remoteURL: String) -> [String: String] {
         guard remoteURL.hasPrefix("https://"), let token = DocsSyncSource.ghAuthToken() else { return [:] }
+        // S7 (review security finding): the key used to be a bare
+        // `http.extraheader`, which git applies to **every** https request in
+        // that invocation - a submodule on another host, or a redirect git
+        // follows, received the captain's GitHub token. Scoping it to the
+        // remote's own origin is git's own mechanism for exactly this
+        // (`http.<url>.<key>`), and deriving the scope from the remote rather
+        // than hardcoding `github.com` keeps a GitHub Enterprise remote
+        // working while still sending the token to one host.
+        guard let scope = originScope(of: remoteURL) else { return [:] }
         let basic = Data("x-access-token:\(token)".utf8).base64EncodedString()
         return [
             "GIT_CONFIG_COUNT": "1",
-            "GIT_CONFIG_KEY_0": "http.extraheader",
+            "GIT_CONFIG_KEY_0": "http.\(scope).extraheader",
             "GIT_CONFIG_VALUE_0": "Authorization: Basic \(basic)",
             // A git that decides to prompt for credentials in a GUI-launched
             // process would otherwise hang until the timeout; failing fast is
             // strictly better feedback.
             "GIT_TERMINAL_PROMPT": "0",
         ]
+    }
+
+    /// The `https://host[:port]/` prefix a `http.<url>.<key>` config entry is
+    /// keyed on, or `nil` when `remoteURL` has no host to key on.
+    ///
+    /// S7. Git matches such an entry against the request URL by origin and
+    /// then by longest path prefix, so the trailing slash is not decoration:
+    /// `http.https://github.com.extraheader` would also match
+    /// `https://github.com.attacker.example/`, and `https://github.com/`
+    /// cannot.
+    static func originScope(of remoteURL: String) -> String? {
+        guard let components = URLComponents(string: remoteURL),
+              let scheme = components.scheme?.lowercased(),
+              let host = components.host?.lowercased(), !host.isEmpty else { return nil }
+        if let port = components.port { return "\(scheme)://\(host):\(port)/" }
+        return "\(scheme)://\(host)/"
     }
 
     /// `/usr/bin/git` is the one executable this app hardcodes rather than
