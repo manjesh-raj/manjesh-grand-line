@@ -73,6 +73,12 @@ final class GmailAccountRow: NSView {
         case connectedWithoutCalendar(email: String)
         case connected(email: String)
         case connecting
+        /// S17 (review security finding): the Keychain would not answer, so
+        /// whether this slot holds an account is **unknown**. GL-14: it is
+        /// not "Not connected", and the row must not offer Connect - that
+        /// button starts a fresh OAuth flow over a token that is very
+        /// probably still there, and signing in again overwrites it.
+        case unreadable(OSStatus)
     }
 
     init(slot: GoogleAccountSlot) {
@@ -200,7 +206,11 @@ final class GmailAccountRow: NSView {
         switch state {
         case .connected, .connectedWithoutCalendar: onDisconnect?()
         case .notConnected, .notConfigured: onConnect?()
-        case .connecting: break
+        // S17: the button is disabled in this state, so this is unreachable -
+        // and it does nothing rather than falling into `onConnect`, because
+        // an overwriting OAuth flow is exactly what must not happen over a
+        // token the Keychain merely could not read this moment.
+        case .connecting, .unreadable: break
         }
     }
 
@@ -210,10 +220,10 @@ final class GmailAccountRow: NSView {
     /// - Parameter health: the verdict of the last real read, which is a
     ///   different question from everything else here - the other arguments
     ///   describe what is *stored*, and this one describes what *happened*.
-    func render(record: GoogleAccountRecord?, isConfigured: Bool, isBusy: Bool,
+    func render(outcome: GoogleAccountReadOutcome, isConfigured: Bool, isBusy: Bool,
                 health: GoogleCalendarHealth = .notChecked, theme: HelmTheme) {
         self.theme = theme
-        state = Self.state(record: record, isConfigured: isConfigured, isBusy: isBusy)
+        state = Self.state(outcome: outcome, isConfigured: isConfigured, isBusy: isBusy)
         statusLabel.stringValue = Self.statusLine(for: state, slot: slot, health: health)
         renderHealth(health)
         switch state {
@@ -228,6 +238,13 @@ final class GmailAccountRow: NSView {
             actionButton.title = "Connect"
             actionButton.variant = .primary
             actionButton.isEnabled = true
+        case .unreadable:
+            // Deliberately disabled, and deliberately not "Connect": the one
+            // action that would make this worse is the one the old row
+            // offered.
+            actionButton.title = "Connect"
+            actionButton.variant = .secondary
+            actionButton.isEnabled = false
         case .notConfigured:
             actionButton.title = "Connect"
             actionButton.variant = .secondary
@@ -252,7 +269,7 @@ final class GmailAccountRow: NSView {
         let isConnected: Bool
         switch state {
         case .connected, .connectedWithoutCalendar: isConnected = true
-        case .notConnected, .notConfigured, .connecting: isConnected = false
+        case .notConnected, .notConfigured, .connecting, .unreadable: isConnected = false
         }
         testButton.isHidden = !isConnected
         testButton.title = health == .checking ? "Checking\u{2026}" : "Test connection"
@@ -308,9 +325,14 @@ final class GmailAccountRow: NSView {
         }
     }
 
-    static func state(record: GoogleAccountRecord?, isConfigured: Bool, isBusy: Bool) -> State {
+    static func state(outcome: GoogleAccountReadOutcome, isConfigured: Bool, isBusy: Bool) -> State {
         if isBusy { return .connecting }
-        guard let record else { return isConfigured ? .notConnected : .notConfigured }
+        // S17: before the configuration question, because "we could not read
+        // the Keychain" is true whether or not an OAuth client id is set, and
+        // telling the captain to fill in a field would be a wrong
+        // instruction rather than a vague one.
+        if case .unavailable(let status) = outcome { return .unreadable(status) }
+        guard let record = outcome.record else { return isConfigured ? .notConnected : .notConfigured }
         let email = record.email.isEmpty ? "signed in" : record.email
         return record.canReadCalendar ? .connected(email: email)
             : .connectedWithoutCalendar(email: email)
@@ -332,6 +354,9 @@ final class GmailAccountRow: NSView {
             return "Add an OAuth client ID below before connecting. " + slot.caption
         case .notConnected:
             return "Not connected. " + slot.caption
+        case .unreadable(let status):
+            return "Couldn\u{2019}t read this account from the Keychain (\(status)). "
+                + "It may still be connected - this retries on its own."
         case .connecting:
             return "Waiting for Google\u{2019}s sign-in window\u{2026}"
         case .connectedWithoutCalendar(let email):
@@ -356,7 +381,10 @@ final class GmailAccountRow: NSView {
             // contrast correction rather than using the raw hue.
             statusLabel.textColor = HelmContrast.legibleTintedText(
                 tintHex: HelmTint.good.hex(in: theme), over: surface, theme: theme)
-        case .connectedWithoutCalendar, .notConfigured:
+        // S17 is a warn, not a neutral: "we could not read this" is a state
+        // the captain should notice, and `.notConnected`'s muted grey would
+        // make it look settled.
+        case .connectedWithoutCalendar, .notConfigured, .unreadable:
             statusLabel.textColor = HelmContrast.legibleTintedText(
                 tintHex: HelmTint.warn.hex(in: theme), over: surface, theme: theme)
         case .notConnected, .connecting:

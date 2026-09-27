@@ -444,12 +444,12 @@ enum LegacyRenameMigrationSelfTest {
                 }
             }
             deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
-            func record(for slot: GoogleAccountSlot) -> GoogleAccountRecord? {
-                if loaded { return cached }
+            func outcome(for slot: GoogleAccountSlot) -> GoogleAccountReadOutcome {
+                if loaded { return cached.map { .connected($0) } ?? .notConnected }
                 reads += 1
                 cached = present
                 loaded = true
-                return cached
+                return cached.map { .connected($0) } ?? .notConnected
             }
             func save(_ record: GoogleAccountRecord, for slot: GoogleAccountSlot) throws {}
             func remove(_ slot: GoogleAccountSlot) {}

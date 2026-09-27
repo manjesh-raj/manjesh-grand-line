@@ -1871,7 +1871,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     private func refreshGmailSection() {
         let configuration = GoogleOAuth.configuration()
         for (slot, row) in gmailRows {
-            row.render(record: GoogleAccountStore.shared.record(for: slot),
+            row.render(outcome: GoogleAccountStore.shared.outcome(for: slot),
                        isConfigured: configuration != nil,
                        isBusy: GoogleSignInController.shared.inFlight.contains(slot),
                        health: GoogleCalendarHealthCheck.shared.result(for: slot),
