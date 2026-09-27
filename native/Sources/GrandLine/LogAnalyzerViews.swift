@@ -606,7 +606,7 @@ final class LogTimelineListView: NSView {
             unavailableReason = reason
         case .events(let list):
             events = list
-            unavailableReason = list.isEmpty ? "Timeline unavailable — no events found." : nil
+            unavailableReason = list.isEmpty ? "Timeline unavailable - no events found." : nil
         }
         recomputeHeight()
         tableView.reloadData()

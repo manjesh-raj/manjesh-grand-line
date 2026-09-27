@@ -159,7 +159,7 @@ final class ScheduleEditorController: NSViewController {
         remoteWriteCard = form.addInfoCard(
             symbol: "arrow.up.circle",
             text: "This action pushes to GitHub on its own, with no confirmation at the time. "
-                + "It is the same push the button on its own page performs \u{2014} never a force-push, "
+                + "It is the same push the button on its own page performs - never a force-push, "
                 + "and a diverged repository is always left alone."
         )
         remoteWriteCard?.isHidden = !action.writesRemotely

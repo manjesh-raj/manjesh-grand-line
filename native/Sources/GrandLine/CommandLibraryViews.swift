@@ -1166,7 +1166,7 @@ final class CommandLibraryPageView: NSObject {
         render()
         let reclassified = risk == existing.risk
             ? ""
-            : " \u{2014} now marked \(risk.displayName), since nobody has vouched for the new text"
+            : " - now marked \(risk.displayName), since nobody has vouched for the new text"
         Toast.show(in: view,
                    message: "Saved the suggested template for \u{201C}\(existing.name)\u{201D}\(reclassified)")
     }

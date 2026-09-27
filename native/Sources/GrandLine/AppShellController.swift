@@ -2726,7 +2726,7 @@ final class AppShellController: NSViewController {
     func startClipboardHistoryCapture() {
         bar.clipboardHistory.startCapturing()
         bar.clipboardHistory.onPasted = { [weak self] _ in
-            self?.showToast("Copied \u{2014} \u{2318}V to paste it")
+            self?.showToast("Copied - \u{2318}V to paste it")
         }
     }
 

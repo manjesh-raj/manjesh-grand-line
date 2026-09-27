@@ -844,7 +844,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             if case .running = $0.status { return true }
             return false
         }) {
-            return "Step \(runningIndex + 1) of \(setupSteps.count) \u{2014} \(setupSteps[runningIndex].kind.title)"
+            return "Step \(runningIndex + 1) of \(setupSteps.count) - \(setupSteps[runningIndex].kind.title)"
         }
         if let failedIndex = setupSteps.firstIndex(where: {
             if case .failed = $0.status { return true }

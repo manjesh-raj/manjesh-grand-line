@@ -251,7 +251,7 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
             return DocGridItem(
                 title: postmortem.title,
                 subtitle: subtitle,
-                tooltip: subtitle == updated ? postmortem.title : "\(postmortem.title) \u{2014} \(updated)",
+                tooltip: subtitle == updated ? postmortem.title : "\(postmortem.title) - \(updated)",
                 icon: "exclamationmark.triangle",
                 tint: .warn,
                 onOpen: { [weak self] in self?.showPostmortem(postmortem.id) },

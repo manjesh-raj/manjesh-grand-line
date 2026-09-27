@@ -483,7 +483,7 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         guard let runner else {
             // Not a crash and not a silent no-op: the one thing this feature
             // needs that the app cannot install for the captain.
-            let message = "I can't find the `claude` command on this Mac. Install Claude Code and sign in, then try again \u{2014} Grand Line uses your own CLI login, so there's no API key to set up."
+            let message = "I can't find the `claude` command on this Mac. Install Claude Code and sign in, then try again - Grand Line uses your own CLI login, so there's no API key to set up."
             chat.append(.error(message))
             completion?(.failure(StrawHatError(message: message)))
             return

@@ -118,7 +118,7 @@ struct ClipboardHistoryEntry: Codable, Equatable, Identifiable {
     /// The row's one-line preview. Newlines become a visible return glyph
     /// rather than being dropped, so a multi-line copy reads as multi-line.
     var preview: String {
-        guard kind == .text else { return "Not recorded \u{2014} copied from Poneglyph" }
+        guard kind == .text else { return "Not recorded - copied from Poneglyph" }
         let flattened = text
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\n", with: " \u{23ce} ")

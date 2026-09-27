@@ -580,9 +580,9 @@ enum LogStorageChoice: String, CaseIterable, Equatable {
         case .doNotSave:
             return "This investigation exists only for this session and disappears when you navigate away"
         case .metadataOnly:
-            return "Title, timestamp, source and root-cause summary — no log content is kept"
+            return "Title, timestamp, source and root-cause summary - no log content is kept"
         case .complete:
-            return "Redacted input, findings, timeline and correlation — visible in History below"
+            return "Redacted input, findings, timeline and correlation - visible in History below"
         }
     }
 }

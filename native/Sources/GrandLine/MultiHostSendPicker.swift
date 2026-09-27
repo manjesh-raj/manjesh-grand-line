@@ -169,7 +169,7 @@ final class MultiHostSendPickerController: NSViewController {
             confirmTitle: selection.sendButtonTitle,
             confirm: #selector(sendClicked),
             cancel: #selector(cancelClicked),
-            hint: "Never preselects all hosts \u{2014} the risk gate applies once per host, per selection."
+            hint: "Never preselects all hosts - the risk gate applies once per host, per selection."
         )
         sendButton = footer.confirm
 

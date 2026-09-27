@@ -85,7 +85,7 @@ enum LogAnalyzerArtifacts {
         if let groups = investigation.analysis?.local.groups, !groups.isEmpty {
             out += "\nCounted patterns:\n"
             for group in groups {
-                out += "- [\(group.severity.displayName)] \(group.label) — \(group.occurrenceText)"
+                out += "- [\(group.severity.displayName)] \(group.label) - \(group.occurrenceText)"
                 if let range = group.timeRange { out += " (\(range))" }
                 out += "\n"
             }
@@ -142,7 +142,7 @@ enum LogAnalyzerArtifacts {
             out += "\nTimeline\n--------\n\(reason)\n"
         case .events(let events):
             out += "\nTimeline\n--------\n"
-            for event in events { out += "\(event.timestamp)  \(event.title) — \(event.detail)\n" }
+            for event in events { out += "\(event.timestamp)  \(event.title) - \(event.detail)\n" }
         }
 
         if !analysis.correlation.isEmpty {
@@ -177,14 +177,14 @@ enum LogAnalyzerArtifacts {
         if topFindings.isEmpty {
             out += "_Impact not established from the provided output._\n\n"
         } else {
-            out += topFindings.map { "- \($0.title)\($0.detail.isEmpty ? "" : " — \($0.detail)")\n" }.joined() + "\n"
+            out += topFindings.map { "- \($0.title)\($0.detail.isEmpty ? "" : " - \($0.detail)")\n" }.joined() + "\n"
         }
 
         out += "## Start time\n\n"
         if case .events(let events) = analysis?.local.timeline ?? .unavailable(reason: ""), let first = events.first {
-            out += "First event in the provided output: **\(first.timestamp)** — \(first.title)\n\n"
+            out += "First event in the provided output: **\(first.timestamp)** - \(first.title)\n\n"
         } else {
-            out += "_Not established — the provided output contains no usable timestamps._\n\n"
+            out += "_Not established - the provided output contains no usable timestamps._\n\n"
         }
 
         out += "## Timeline\n\n"
@@ -192,7 +192,7 @@ enum LogAnalyzerArtifacts {
         case .unavailable(let reason):
             out += "_\(reason)_\n\n"
         case .events(let events):
-            for event in events { out += "- **\(event.timestamp)** \(event.title) — \(event.detail)\n" }
+            for event in events { out += "- **\(event.timestamp)** \(event.title) - \(event.detail)\n" }
             out += "\n"
         }
 
@@ -202,7 +202,7 @@ enum LogAnalyzerArtifacts {
             out += "_No repeated error patterns were found in the provided output._\n\n"
         } else {
             for group in groups {
-                out += "- \(group.label) — \(group.occurrenceText)"
+                out += "- \(group.label) - \(group.occurrenceText)"
                 if let range = group.timeRange { out += " (\(range))" }
                 out += "\n"
             }
@@ -211,7 +211,7 @@ enum LogAnalyzerArtifacts {
 
         out += "## Evidence\n\n"
         for item in investigation.evidence {
-            out += "- **\(item.label)** — \(item.origin.displayName)"
+            out += "- **\(item.label)** - \(item.origin.displayName)"
             if let detail = item.sourceDetail { out += " (\(detail))" }
             out += ", \(item.lineCount) lines, detected as \(item.detection.kind.displayName)"
             if item.redactionCount > 0 { out += ", \(item.redactionCount) secret(s) redacted" }
@@ -318,7 +318,7 @@ enum LogAnalyzerArtifacts {
         out += (analysis?.ai?.summary.isEmpty == false ? analysis!.ai!.summary : "See findings below.") + "\n\n"
         for finding in analysis?.findings ?? [] {
             out += "- **[\(finding.severity.displayName)]** \(finding.title)"
-            if !finding.detail.isEmpty { out += " — \(finding.detail)" }
+            if !finding.detail.isEmpty { out += " - \(finding.detail)" }
             out += "\n"
         }
         out += "\n"
@@ -340,7 +340,7 @@ enum LogAnalyzerArtifacts {
 
         out += "## Evidence\n\n"
         for group in analysis?.local.groups ?? [] {
-            out += "- \(group.label) — \(group.occurrenceText)"
+            out += "- \(group.label) - \(group.occurrenceText)"
             if let range = group.timeRange { out += " (\(range))" }
             out += "\n"
         }
@@ -359,7 +359,7 @@ enum LogAnalyzerArtifacts {
 
         out += "## Preventive actions\n\n"
         out += numberedList(analysis?.ai?.nextSteps ?? [], emptyText: "To be filled in.")
-        out += "\n---\n_Drafted by Grand Line's Log Analyzer. Nothing was filed automatically — "
+        out += "\n---\n_Drafted by Grand Line's Log Analyzer. Nothing was filed automatically - "
         out += "copy this into your tracker if it is correct._\n"
         return out
     }

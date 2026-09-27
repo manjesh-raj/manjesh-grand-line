@@ -243,7 +243,7 @@ enum IncidentSources {
     /// already wrote for the captain) - never the captured text itself.
     static func logCapture(tabName: String, lineCount: Int, scopeDescription: String) -> IncidentTimelineEntry {
         IncidentTimelineEntry(kind: .logCapture,
-                              title: "Log Analyzer capture \u{2014} \(tabName)",
+                              title: "Log Analyzer capture - \(tabName)",
                               detail: "\(lineCount) line\(lineCount == 1 ? "" : "s") · \(scopeDescription)")
     }
 
@@ -264,7 +264,7 @@ enum IncidentSources {
     static func runbookRun(name: String, ran: Int, total: Int, ok: Bool, refused: Bool) -> IncidentTimelineEntry {
         let detail: String
         if refused {
-            detail = "Refused before running \u{2014} a step is not an allowed read-only command"
+            detail = "Refused before running - a step is not an allowed read-only command"
         } else if ok {
             detail = "\(total) step\(total == 1 ? "" : "s") · all green"
         } else {

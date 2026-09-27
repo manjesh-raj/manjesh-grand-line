@@ -322,13 +322,13 @@ enum LogErrorExtractor {
         let omitted = lines.count - headLines - tailLines
 
         var out = head
-        out += "\n\n… [\(omitted) lines omitted from the middle of this input — the distinct patterns they contain are listed below] …\n\n"
+        out += "\n\n… [\(omitted) lines omitted from the middle of this input - the distinct patterns they contain are listed below] …\n\n"
         out += tail
 
         if !groups.isEmpty {
             out += "\n\n----- COUNTED PATTERNS (computed locally over all \(lines.count) lines; these counts are exact) -----\n"
             for group in groups {
-                var line = "- [\(group.severity.rawValue)] \(group.label) — \(group.occurrences) occurrence\(group.occurrences == 1 ? "" : "s")"
+                var line = "- [\(group.severity.rawValue)] \(group.label) - \(group.occurrences) occurrence\(group.occurrences == 1 ? "" : "s")"
                 if let range = group.timeRange { line += " (\(range))" }
                 out += line + "\n"
             }

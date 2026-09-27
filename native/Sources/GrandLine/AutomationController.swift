@@ -354,7 +354,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
 
     private var progressSummary: String {
         if let runningIndex = steps.firstIndex(where: { if case .checking = $0.status { return true }; if case .running = $0.status { return true }; return false }) {
-            var line = "Step \(runningIndex + 1) of \(steps.count) \u{2014} \(steps[runningIndex].kind.title)"
+            var line = "Step \(runningIndex + 1) of \(steps.count) - \(steps[runningIndex].kind.title)"
             if steps[runningIndex].kind == .software {
                 let checked = toolRows.filter { $0.status != .unknown && $0.status != .checking }.count
                 line += " (\(checked)/\(toolRows.count) tools checked)"
@@ -362,7 +362,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
             return line
         }
         if let waitingIndex = steps.firstIndex(where: { if case .waitingForCaptain = $0.status { return true }; return false }) {
-            return "Step \(waitingIndex + 1) of \(steps.count) \u{2014} \(steps[waitingIndex].kind.title): choose a backup file or skip to continue."
+            return "Step \(waitingIndex + 1) of \(steps.count) - \(steps[waitingIndex].kind.title): choose a backup file or skip to continue."
         }
         if let failedIndex = steps.firstIndex(where: { if case .failed = $0.status { return true }; return false }) {
             return "Stopped at \(steps[failedIndex].kind.title) - see below for the reason."

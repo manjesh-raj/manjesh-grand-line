@@ -125,7 +125,7 @@ enum LogTerminalCaptureBuilder {
             }
             var description = "Captured your last completed command"
             if !last.commandText.isEmpty { description += " (`\(last.commandText)`)" }
-            description += " and its output — not the whole scrollback."
+            description += " and its output - not the whole scrollback."
             return LogTerminalCapture(
                 text: text,
                 scope: .lastCommandBlock(command: last.commandText),
@@ -160,7 +160,7 @@ enum LogTerminalCaptureBuilder {
             text: lines.joined(separator: "\n"),
             scope: .recentOutputFallback(lines: lines.count),
             scopeDescription: "Captured the most recent \(lines.count) line\(lines.count == 1 ? "" : "s") "
-                + "of this tab's output — not the whole scrollback.",
+                + "of this tab's output - not the whole scrollback.",
             fallbackNotice: notice
         )
     }

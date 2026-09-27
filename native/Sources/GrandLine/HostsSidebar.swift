@@ -290,7 +290,7 @@ final class HostsUserRow: NSView {
 
         hover.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(rowClicked)))
         hover.accessibilityLabelOverride = "\(name) - account actions"
-        hover.toolTip = "\(name) \u{2014} Settings and Log Out"
+        hover.toolTip = "\(name) - Settings and Log Out"
     }
 
     @objc private func rowClicked() { presentMenu() }

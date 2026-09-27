@@ -806,7 +806,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         CredentialVaultClipboard.shared.copy(credential.secret,
                                              clearAfter: store.settings.clipboardClearSeconds)
         store.recordCopy(id: id)
-        Toast.show(in: view, message: "Copied \u{2014} clears in \(store.settings.clipboardClearSeconds)s")
+        Toast.show(in: view, message: "Copied - clears in \(store.settings.clipboardClearSeconds)s")
     }
 
     /// F16: copy the current 2FA code.
@@ -827,13 +827,13 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         guard let credential = store.credential(id: id), let config = credential.totp else { return }
         let now = TOTPTicker.shared.now
         guard let code = TOTP.code(config, at: now) else {
-            Toast.show(in: view, message: "That credential's 2FA seed is not readable \u{2014} edit it to fix")
+            Toast.show(in: view, message: "That credential's 2FA seed is not readable - edit it to fix")
             return
         }
         let remaining = TOTP.secondsRemaining(config, at: now)
         CredentialVaultClipboard.shared.copy(code, clearAfter: min(store.settings.clipboardClearSeconds, remaining))
         store.recordCopy(id: id)
-        Toast.show(in: view, message: "Copied the 2FA code \u{2014} it changes in \(remaining)s")
+        Toast.show(in: view, message: "Copied the 2FA code - it changes in \(remaining)s")
     }
 
     /// F16's menu-bar popover asks the page for its rows rather than
@@ -903,7 +903,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
             // The gate cannot be satisfied on this Mac. Refusing outright would
             // make the item unreachable; saying so and proceeding is the honest
             // behaviour, and the vault password has already been entered.
-            Toast.show(in: view, message: "No biometry on this Mac \u{2014} revealing without it")
+            Toast.show(in: view, message: "No biometry on this Mac - revealing without it")
             completion(true)
             return
         }
@@ -981,7 +981,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
             guard let self else { return }
             CredentialVaultClipboard.shared.copy(value, clearAfter: self.store.settings.clipboardClearSeconds)
             Toast.show(in: self.view,
-                       message: "Copied the generated password \u{2014} clears in \(self.store.settings.clipboardClearSeconds)s")
+                       message: "Copied the generated password - clears in \(self.store.settings.clipboardClearSeconds)s")
         }
         presentAsSheet(editor)
     }
@@ -1040,7 +1040,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
             // string worth losing fastest.
             CredentialVaultClipboard.shared.copy(code, clearAfter: self.store.settings.clipboardClearSeconds)
             Toast.show(in: self.view,
-                       message: "Copied \u{2014} paste it somewhere you trust, then print it")
+                       message: "Copied - paste it somewhere you trust, then print it")
         }
         sheet.onChanged = { [weak self] in self?.render() }
         presentAsSheet(sheet)

@@ -2110,7 +2110,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         }
         let metadata = resources.appendingPathComponent("Metadata.appintents")
         if FileManager.default.fileExists(atPath: metadata.path) {
-            return "Registered with the system \u{2014} these appear in Shortcuts, Spotlight and Siri."
+            return "Registered with the system - these appear in Shortcuts, Spotlight and Siri."
         }
         return "Not registered on this copy: the app bundle carries no Metadata.appintents. native/build_native_app.sh writes it only when Xcode's appintentsmetadataprocessor is present - rebuild the app on a Mac with Xcode installed to publish them."
     }

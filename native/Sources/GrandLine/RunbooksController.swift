@@ -353,7 +353,7 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
             return DocGridItem(
                 title: runbook.title,
                 subtitle: subtitle,
-                tooltip: subtitle == updated ? runbook.title : "\(runbook.title) \u{2014} \(updated)",
+                tooltip: subtitle == updated ? runbook.title : "\(runbook.title) - \(updated)",
                 icon: "doc.text",
                 tint: .info,
                 onOpen: { [weak self] in self?.beginEditRunbook(runbook.id) },

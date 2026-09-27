@@ -59,7 +59,7 @@ enum LogTimelineBuilder {
     /// about the same patterns and the same counted timestamps.
     static func build(text: String, groups: [LogErrorGroup]) -> LogTimeline {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return .unavailable(reason: "Timeline unavailable — no input provided.")
+            return .unavailable(reason: "Timeline unavailable - no input provided.")
         }
 
         let lines = text.components(separatedBy: "\n")
@@ -112,10 +112,10 @@ enum LogTimelineBuilder {
         }
 
         guard sawAnyTimestamp else {
-            return .unavailable(reason: "Timeline unavailable — input does not contain usable timestamps.")
+            return .unavailable(reason: "Timeline unavailable - input does not contain usable timestamps.")
         }
         guard !candidates.isEmpty else {
-            return .unavailable(reason: "Timeline unavailable — no significant timestamped events found in this input.")
+            return .unavailable(reason: "Timeline unavailable - no significant timestamped events found in this input.")
         }
 
         // De-duplicate exact (timestamp, title) repeats - a lifecycle phrase

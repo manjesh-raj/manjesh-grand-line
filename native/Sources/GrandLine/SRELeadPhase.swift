@@ -68,9 +68,9 @@ enum SRELeadPhase: Equatable {
     var text: String {
         switch self {
         case .notStarted: return "SRE Lead"
-        case .starting: return "SRE Lead \u{2014} starting\u{2026}"
+        case .starting: return "SRE Lead - starting\u{2026}"
         case .ready: return "SRE Lead"
-        case .failed: return "SRE Lead \u{2014} failed"
+        case .failed: return "SRE Lead - failed"
         }
     }
 

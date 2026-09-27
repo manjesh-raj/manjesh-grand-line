@@ -114,17 +114,17 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
     var title: String {
         switch self {
         case .driftCheck:
-            return "Drift check \u{2014} dotfiles & agent instructions"
+            return "Drift check - dotfiles & agent instructions"
         case .toolUpdateCheck:
-            return "Tool update check \u{2014} \(DependencyCatalog.items.count) tools"
+            return "Tool update check - \(DependencyCatalog.items.count) tools"
         case .forkSync:
-            return "Fork sync \u{2014} all \(GitHubSyncCatalog.repos.count) forks"
+            return "Fork sync - all \(GitHubSyncCatalog.repos.count) forks"
         case .vaultRecipeExport:
             return "Vault recipe export"
         case .configBackupExport:
             return "Grand Line config backup to GitHub"
         case .toolUpdateInstall:
-            return "Tool update check + install \u{2014} \(DependencyCatalog.items.count) tools"
+            return "Tool update check + install - \(DependencyCatalog.items.count) tools"
         }
     }
 

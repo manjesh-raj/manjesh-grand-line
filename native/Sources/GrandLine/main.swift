@@ -3380,6 +3380,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_FULL_APP_AUDIT_UI_TESTS"] == "1" 
     exit(FullAppAuditUISelfTest.run() ? 0 : 1)
 }
 
+// The UI and UX findings of the 2026-09-27 full-application review: the 17
+// rendered UI defects and X1..X7 - see ReviewUIUXSelfTest.swift's header.
+// Pure logic and source guards, so it runs in CI's blocking lane.
+if ProcessInfo.processInfo.environment["FM_RUN_REVIEW_UI_UX_TESTS"] == "1" {
+    exit(ReviewUIUXSelfTest.run() ? 0 : 1)
+}
+
 // Section 5 of `data/grandline-full-app-audit/report.md`: the security
 // findings, one case per finding id - see AuditSecurityFixesSelfTest.swift's
 // header. Pure logic, so it runs in CI; §5.1's window-backed half is the

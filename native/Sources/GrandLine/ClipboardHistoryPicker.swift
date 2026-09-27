@@ -195,7 +195,7 @@ final class ClipboardHistoryPanelViewController: NSViewController {
                                             body: "Nothing copied yet.")
     private let unavailableState = HelmEmptyState(
         symbol: "exclamationmark.triangle",
-        body: "Clipboard history is unavailable \u{2014} its Keychain key could not be read.")
+        body: "Clipboard history is unavailable - its Keychain key could not be read.")
     private let hintLabel = NSTextField(labelWithString: "")
     private let headerSeparator = NSView()
     private let footerSeparator = NSView()
@@ -381,8 +381,8 @@ final class ClipboardHistoryPanelViewController: NSViewController {
     private func unavailableMessage() -> String {
         let shelved = store.shelvedBackups.count
         let cause = store.isAvailable
-            ? "Clipboard history could not be opened \u{2014} the file is there, but this key does not read it."
-            : "Clipboard history is unavailable \u{2014} its Keychain key could not be read."
+            ? "Clipboard history could not be opened - the file is there, but this key does not read it."
+            : "Clipboard history is unavailable - its Keychain key could not be read."
         guard shelved > 0 else { return cause }
         let noun = shelved == 1 ? "copy" : "copies"
         return cause
