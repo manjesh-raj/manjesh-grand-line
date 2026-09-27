@@ -51,9 +51,18 @@ enum SSHKeyGenerator {
         defer { try? FileManager.default.removeItem(at: dir) }
         let keyPath = dir.appendingPathComponent("key")
 
-        var args = ["-f", keyPath.path, "-C", label, "-N", passphrase, "-q"]
+        // S6 (review security finding) / GL-15. The passphrase used to be
+        // `-N <passphrase>` in argv, which `ps` shows to every other process
+        // on the machine for as long as `ssh-keygen` runs. It travels in the
+        // environment now, through the askpass helper below.
+        //
+        // `-N ""` is kept for the no-passphrase case: an empty string is not
+        // a secret, and it is what stops `ssh-keygen` falling back to an
+        // interactive prompt when there is nothing to hand it.
+        var args = ["-f", keyPath.path, "-C", label, "-q"]
+        if passphrase.isEmpty { args += ["-N", ""] }
         args = (type == .ed25519 ? ["-t", "ed25519"] : ["-t", "rsa", "-b", "3072"]) + args
-        try run(sshKeygen, args)
+        try run(sshKeygen, args, passphrase: passphrase, in: dir)
 
         let privateKey = try Data(contentsOf: keyPath)
         let pubPath = keyPath.appendingPathExtension("pub")
@@ -91,9 +100,10 @@ enum SSHKeyGenerator {
         try privateKey.write(to: keyPath, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyPath.path)
 
-        var args = ["-y", "-f", keyPath.path]
-        if !passphrase.isEmpty { args += ["-P", passphrase] }
-        let publicKeyLine = try run(sshKeygen, args).trimmingCharacters(in: .whitespacesAndNewlines)
+        // S6: `-P <passphrase>` was argv too. Same treatment.
+        let args = ["-y", "-f", keyPath.path]
+        let publicKeyLine = try run(sshKeygen, args, passphrase: passphrase, in: dir)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !publicKeyLine.isEmpty else {
             throw SSHKeyOperationError.invalidInput("Incorrect passphrase, or an unsupported key format.")
         }
@@ -124,8 +134,40 @@ enum SSHKeyGenerator {
         return parts.count > 1 ? String(parts[1]) : out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The environment variable the askpass helper reads the passphrase out
+    /// of. Named here rather than spelled at three call sites.
+    private static let passphraseVariable = "GRAND_LINE_SSH_PASSPHRASE"
+
+    /// Writes a tiny askpass helper into `dir` and returns the environment
+    /// that points `ssh-keygen` at it.
+    ///
+    /// S6/GL-15: OpenSSH's own supported way to answer a passphrase prompt
+    /// without a tty and without argv. `SSH_ASKPASS_REQUIRE=force` is what
+    /// makes it work with no `DISPLAY` and no controlling terminal - without
+    /// it `ssh-keygen` only consults the helper when it has no tty *and* an
+    /// X11 display, which is not this app.
+    ///
+    /// The helper script holds **no secret**: it echoes an environment
+    /// variable this process sets on the child. The script lands in the same
+    /// 0700 scratch directory the key material already uses, and is removed
+    /// with it.
+    private static func askpassEnvironment(passphrase: String, in dir: URL) throws -> [String: String] {
+        let helper = dir.appendingPathComponent("askpass.sh")
+        let script = "#!/bin/sh\nprintf '%s' \"$\(passphraseVariable)\"\n"
+        try Data(script.utf8).write(to: helper, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+        return [
+            "SSH_ASKPASS": helper.path,
+            "SSH_ASKPASS_REQUIRE": "force",
+            passphraseVariable: passphrase,
+        ]
+    }
+
     @discardableResult
-    private static func run(_ executable: String, _ args: [String]) throws -> String {
+    private static func run(_ executable: String,
+                            _ args: [String],
+                            passphrase: String = "",
+                            in dir: URL? = nil) throws -> String {
         // GL-15: `Subprocess` owns the concurrent drain Phase 1 hand-rolled
         // here, plus a bound this call never had. That bound matters more here
         // than almost anywhere else in the app, because this runs on the main
@@ -137,7 +179,19 @@ enum SSHKeyGenerator {
         // for the same reason as before: with no controlling tty, a `-P`/`-N`
         // that somehow fails to suppress the prompt makes `readpassphrase()`
         // fail fast rather than hang.
+        var extraEnv: [String: String] = [:]
+        if !passphrase.isEmpty, let dir {
+            extraEnv = try askpassEnvironment(passphrase: passphrase, in: dir)
+        }
+        #if FM_SELFTESTS
+        // S6's whole claim is about *where* the secret travels, and neither
+        // the generated key nor the public line can see the difference. The
+        // hook records the real argv and the real child environment at the
+        // point they are handed to `Subprocess` - not one call inside it.
+        debugInvocations.append(Invocation(arguments: args, environment: extraEnv))
+        #endif
         let result = Subprocess.run(executable: executable, arguments: args,
+                                    extraEnv: extraEnv,
                                     timeout: keygenTimeout, log: AppLog.keychain)
         guard result.ok else {
             if result.timedOut {
@@ -148,6 +202,24 @@ enum SSHKeyGenerator {
         }
         return String(data: result.stdoutData, encoding: .utf8) ?? ""
     }
+
+    #if FM_SELFTESTS
+    /// GL-27: debug builds only. See the note at the assignment site.
+    struct Invocation {
+        let arguments: [String]
+        let environment: [String: String]
+    }
+
+    /// Every `ssh-keygen` run since a suite last cleared it. An array rather
+    /// than a single slot because one `generate` is three runs (keygen, then
+    /// `-lf` for the fingerprint), and "the passphrase is in no argv" is a
+    /// claim about all of them.
+    static var debugInvocations: [Invocation] = []
+
+    /// The variable name, so a suite asserts the real one rather than a
+    /// second copy of the string.
+    static var debugPassphraseVariable: String { passphraseVariable }
+    #endif
 
     /// Generating an RSA-4096 key is a second or two of real CPU work; this is
     /// far above that and still a bound on a main-thread call.
