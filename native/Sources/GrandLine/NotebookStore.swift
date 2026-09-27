@@ -531,7 +531,9 @@ final class NotebookStore {
             return
         }
         do {
-            try AtomicWrite.text(content, to: url)
+            // S10: a notebook page is personal writing, and this went out
+            // 0644 into a git-synced folder.
+            try AtomicWrite.text(content, to: url, sensitive: true)
             PersistenceFailureReporter.reportSuccess()
             gitSync?.markDirty()
         } catch {

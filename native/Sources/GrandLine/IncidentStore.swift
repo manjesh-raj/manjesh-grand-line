@@ -209,8 +209,10 @@ final class IncidentStore {
             let relative = "artifacts/\(entry.id).md"
             let url = dir.appendingPathComponent(relative)
             do {
-                try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try redacted.write(to: url, atomically: true, encoding: .utf8)
+                // S10: redacted, but redaction is a filter and a filter
+                // misses things - an incident artifact is a transcript of a
+                // production terminal.
+                try AtomicWrite.text(redacted, to: url, sensitive: true)
                 stored = IncidentTimelineEntry(id: entry.id, at: entry.at, kind: entry.kind,
                                                title: entry.title, detail: entry.detail,
                                                reference: entry.reference, artifact: relative)
@@ -248,7 +250,8 @@ final class IncidentStore {
     func setRCA(id: String, markdown: String) -> Bool {
         guard var incident = load(id: id), let dir = directory(forID: id) else { return false }
         do {
-            try markdown.write(to: dir.appendingPathComponent("rca.md"), atomically: true, encoding: .utf8)
+            // S10.
+            try AtomicWrite.text(markdown, to: dir.appendingPathComponent("rca.md"), sensitive: true)
         } catch {
             PersistenceFailureReporter.report(what: "incident RCA", path: dir.path, error: error)
             return false

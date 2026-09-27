@@ -170,15 +170,18 @@ final class LogAnalyzerStore {
                                              doc: metadataYaml(investigation))
 
             if investigation.storage == .complete {
+                // S10: an investigation quotes production log text, which is
+                // the most likely place in this app for a leaked token or a
+                // customer identifier to be sitting in plain sight.
                 let analysis = LogAnalyzerArtifacts.fullAnalysisText(investigation)
-                try analysis.write(to: dir.appendingPathComponent("analysis.md"), atomically: true, encoding: .utf8)
+                try AtomicWrite.text(analysis, to: dir.appendingPathComponent("analysis.md"), sensitive: true)
 
                 let evidenceDir = dir.appendingPathComponent("evidence", isDirectory: true)
                 try fm.createDirectory(at: evidenceDir, withIntermediateDirectories: true)
                 for (index, item) in investigation.evidence.enumerated() {
                     let name = String(format: "%02d-%@.log", index + 1, Self.slugify(item.label))
-                    try item.text.write(to: evidenceDir.appendingPathComponent(name),
-                                        atomically: true, encoding: .utf8)
+                    try AtomicWrite.text(item.text, to: evidenceDir.appendingPathComponent(name),
+                                         sensitive: true)
                 }
             }
         } catch {
@@ -487,10 +490,12 @@ enum ShiftYamlBridge {
         return try? Yaml.load(text)
     }
 
-    static func writeMapping(path: String, doc: Yaml) throws {
+    /// S10: `sensitive` defaults to true because both callers
+    /// (`LogAnalyzerStore`, `IncidentStore`) write records that quote
+    /// production log text. A future caller that genuinely wants 0644 has to
+    /// say so.
+    static func writeMapping(path: String, doc: Yaml, sensitive: Bool = true) throws {
         let text = YamlBeautify.dump([doc])
-        let url = URL(fileURLWithPath: path)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try (text + "\n").write(to: url, atomically: true, encoding: .utf8)
+        try AtomicWrite.text(text + "\n", to: URL(fileURLWithPath: path), sensitive: sensitive)
     }
 }

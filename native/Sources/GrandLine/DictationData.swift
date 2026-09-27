@@ -212,9 +212,11 @@ final class DictationStore {
 
     private func persist<T: Encodable>(_ value: T, to url: URL, encoder: JSONEncoder) {
         do {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try encoder.encode(value)
-            try data.write(to: url, options: .atomic)
+            // S10 (review security finding): a dictation transcript is
+            // whatever the captain said, which is as sensitive as anything
+            // this app stores. It was written 0644 while eight other stores
+            // already used `SensitiveFile` for exactly this.
+            try AtomicWrite.data(try encoder.encode(value), to: url, sensitive: true)
         } catch {
             PersistenceFailureReporter.report(what: url.lastPathComponent == "vocabulary.json" ? "dictation vocabulary" : "dictation history", path: url.path, error: error)
         }
