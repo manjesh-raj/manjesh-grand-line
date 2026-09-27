@@ -749,8 +749,29 @@ enum DestinationMountingSelfTest {
                 }
             }
 
-            guard Set(subtitles).count == subtitles.count else {
-                return "two of the four setup pages render the identical header line: \(subtitles)"
+            // **Bootstrap and Automation are now deliberately identical**, and
+            // the captain decided it: the 2026-09-27 review's U7/X4 is that
+            // they used to disagree out loud about one setup checklist ("3 of
+            // 4 steps done" against "0 of 5 steps ready" on the same
+            // machine). They read one `SetupPipelineProgress` now, so the
+            // property worth pinning for that pair is agreement, and it is
+            // asserted rather than merely tolerated.
+            let sharedChecklist: Set<RailDestination> = [.bootstrap, .automation]
+            var independent: [String] = []
+            var checklist: Set<String> = []
+            for (dest, subtitle) in zip(group, subtitles) {
+                if sharedChecklist.contains(dest) { checklist.insert(subtitle) }
+                else { independent.append(subtitle) }
+            }
+            guard Set(independent).count == independent.count else {
+                return "two setup pages that describe different things render the identical header "
+                    + "line: \(independent)"
+            }
+            guard checklist.count == 1 else {
+                return "Bootstrap and Automation describe one setup checklist differently: \(checklist)"
+            }
+            guard let shared = checklist.first, !independent.contains(shared) else {
+                return "a page outside the setup checklist renders its line: \(checklist)"
             }
             return nil
         }
