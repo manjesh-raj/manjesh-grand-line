@@ -529,6 +529,23 @@ final class SRELeadBridge {
     // MARK: Starting a command
 
     private func beginProcessing(_ request: PendingRequest) {
+        // S8: the bridge's own check, independent of the Python script's.
+        // Anything running as the captain can drop a file into a 0700
+        // directory owned by the captain, and the script that used to be the
+        // only gate is itself a subprocess of `claude` - inside the trust
+        // boundary it was being asked to enforce. See
+        // `SRELeadBridgeCommandPolicy`'s header.
+        do {
+            try SRELeadBridgeCommandPolicy.validate(request.command)
+        } catch let refusal as SRELeadBridgeCommandPolicy.Refusal {
+            AppLog.ui.error("SRELeadBridge refused a request: \(refusal.reason, privacy: .public)")
+            writeResponse(id: request.id, ok: false,
+                          error: "The bridge refused this command - \(refusal.reason).")
+            return
+        } catch {
+            writeResponse(id: request.id, ok: false, error: "The bridge refused this command.")
+            return
+        }
         guard let target else {
             writeResponse(id: request.id, ok: false, error: "The connected host's interactive terminal tab is no longer available - reconnect the host first.")
             return
