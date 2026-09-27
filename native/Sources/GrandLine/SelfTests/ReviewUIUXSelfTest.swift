@@ -47,6 +47,7 @@ enum ReviewUIUXSelfTest {
             ("U11_kubernetesRefreshIsOfferedOnlyWhenItCanAct", test_u11KubernetesRefresh),
             ("U11_syncAllIsOfferedOnlyWhenSomethingIsBehind", test_u11SyncAll),
             ("U7_X4_bootstrapAndAutomationReportOneProgress", test_u7x4SharedProgress),
+            ("U8_runRebuildIsAPillNotAFullWidthBar", test_u8RebuildButtonWidth),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -563,6 +564,61 @@ enum ReviewUIUXSelfTest {
                  + "above is checking nothing"
         }
         return nil
+    }
+
+    // MARK: U8 - Bootstrap's "Run rebuild.sh"
+
+    private static func descendants(of view: NSView) -> [NSView] {
+        view.subviews + view.subviews.flatMap(descendants(of:))
+    }
+
+    private static func test_u8RebuildButtonWidth() -> String? {
+        autoreleasepool {
+            let controller = BootstrapController(hostStore: HostStore(), keyStore: SSHKeyStore(),
+                                                 snippetStore: SnippetStore(),
+                                                 dictationStore: DictationStore())
+            let state = DotfilesRepoState(repoPath: "/tmp/dotfiles", remoteURL: nil, branch: "main",
+                                          dirtyFiles: [], flakeUsername: nil,
+                                          commitsBehindOrigin: nil, commitsBehindOriginList: nil)
+            let section = controller.debugDotfilesPresentSection(repoPath: "/tmp/dotfiles", state: state)
+
+            let width: CGFloat = 900
+            let host = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 900))
+            section.translatesAutoresizingMaskIntoConstraints = false
+            host.addSubview(section)
+            NSLayoutConstraint.activate([
+                section.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                section.widthAnchor.constraint(equalToConstant: width),
+                section.topAnchor.constraint(equalTo: host.topAnchor),
+            ])
+            host.layoutSubtreeIfNeeded()
+
+            guard let button = descendants(of: section).compactMap({ $0 as? NSButton })
+                .first(where: { $0.title == "Run rebuild.sh" }) else {
+                return "the dotfiles section no longer renders a \"Run rebuild.sh\" button, so this "
+                     + "case is measuring nothing"
+            }
+            let frame = section.convert(button.bounds, from: button)
+            // Discriminating power: a section that did not lay out would
+            // report a zero-width button and pass the "not full width" test
+            // for the wrong reason.
+            guard frame.width > 40, section.bounds.width >= width - 1 else {
+                return "the section did not lay out (button \(frame), section \(section.bounds))"
+            }
+            // The defect: the row loop pins every row's width to the
+            // section's, and the button was one of those rows.
+            guard frame.width < section.bounds.width * 0.5 else {
+                return "\"Run rebuild.sh\" is \(frame.width)pt wide in a \(section.bounds.width)pt "
+                     + "section - it is still a full-width bar rather than a pill (review U8)"
+            }
+            // And it sits at the trailing edge, where this page's other
+            // actions are.
+            guard abs(frame.maxX - section.bounds.width) < 2 else {
+                return "\"Run rebuild.sh\" ends at \(frame.maxX) in a \(section.bounds.width)pt "
+                     + "section - it is not trailing-aligned"
+            }
+            return nil
+        }
     }
 }
 

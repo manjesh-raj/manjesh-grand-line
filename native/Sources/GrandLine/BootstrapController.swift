@@ -1724,8 +1724,35 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
         rows.append(buildUsernameRow(repoPath: repoPath))
 
+        // **Review defect U8.** The row loop at the bottom of this method
+        // pins every row's width to the section's, which is right for a
+        // label and wrong for a button: "Run rebuild.sh" rendered as a
+        // full-width filled bar across the whole card, the single loudest
+        // object on a page whose other actions are all trailing pills.
+        //
+        // The button goes in a trailing-aligned row of its own, so the
+        // *row* takes the full width and the button keeps its natural one.
+        // `.required` hugging is what stops the stack handing it the slack
+        // anyway (gotcha (10) - a `.gravityAreas` stack honours no hugging
+        // priority at all, so the distribution has to be `.fill`).
         let rebuildButton = HelmButton(title: "Run rebuild.sh", variant: .primary, target: self, action: #selector(runRebuildClicked))
-        rows.append(rebuildButton)
+        rebuildButton.setContentHuggingPriority(.required, for: .horizontal)
+        rebuildButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let rebuildSpacer = NSView()
+        rebuildSpacer.translatesAutoresizingMaskIntoConstraints = false
+        rebuildSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // Gotcha (12): a bare `NSView()` has no intrinsic size, so a hugging
+        // priority alone says nothing about how wide it wants to be. A real
+        // low-priority `width == 0` is what lets it collapse.
+        let spacerWidth = rebuildSpacer.widthAnchor.constraint(equalToConstant: 0)
+        spacerWidth.priority = .defaultLow
+        spacerWidth.isActive = true
+        let rebuildRow = NSStackView(views: [rebuildSpacer, rebuildButton])
+        rebuildRow.orientation = .horizontal
+        rebuildRow.alignment = .centerY
+        rebuildRow.distribution = .fill
+        rebuildRow.spacing = 0
+        rows.append(rebuildRow)
 
         let managedTitle = NSTextField(labelWithString: "Managed items")
         managedTitle.font = .systemFont(ofSize: 12, weight: .semibold)
@@ -1738,7 +1765,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         section.orientation = .vertical
         section.alignment = .leading
         section.spacing = 8
-        section.setCustomSpacing(14, after: rebuildButton)
+        section.setCustomSpacing(14, after: rebuildRow)
         for row in rows { row.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true }
         return section
     }
@@ -2773,6 +2800,14 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     /// drives the same label directly instead. Deliberately the *label*, not a
     /// string setter, so the test measures whatever the page really renders.
     var debugHomePathLabel: NSTextField { currentPathLabel }
+
+    /// Review defect U8: the real dotfiles section, built from a stated repo
+    /// state, so a check can measure what "Run rebuild.sh" is actually given
+    /// rather than assert against the constructor call.
+    func debugDotfilesPresentSection(repoPath: String, state: DotfilesRepoState) -> NSView {
+        _ = view   // the builder reads `theme` and `managedItems`, both set up by `loadView`
+        return buildDotfilesPresentSection(repoPath: repoPath, state: state)
+    }
     #endif
 
     private func track(_ labels: NSTextField...) {
