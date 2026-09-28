@@ -254,7 +254,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     private let subtitleLabel = NSTextField(labelWithString: "Every tool in the fleet, checked against its real source - npm, Homebrew, herdr, no-mistakes, and firstmate's own upstream.")
 
     private func buildHeader() -> NSView {
-        subtitleLabel.font = .systemFont(ofSize: 12)
+        subtitleLabel.setScaledFont(ofSize: 12)
         subtitleLabel.preferredMaxLayoutWidth = 560
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         return subtitleLabel
@@ -328,7 +328,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         checkAllProgressBar.setContentHuggingPriority(.required, for: .horizontal)
         checkAllProgressBar.widthAnchor.constraint(equalToConstant: 90).isActive = true
 
-        checkAllProgressLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        checkAllProgressLabel.setScaledFont(ofSize: 11, weight: .medium)
         checkAllProgressLabel.isHidden = true
         checkAllProgressLabel.translatesAutoresizingMaskIntoConstraints = false
         for v: NSView in [checkAllProgressLabel, checkAllProgressBar] {
@@ -716,7 +716,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         row.installInBootstrapButton.isHidden = true
 
         // Busy state
-        row.progressLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        row.progressLabel.setScaledFont(ofSize: 11, weight: .medium)
 
         let view = ToolRowLayout.build(
             row.toolRowViews,

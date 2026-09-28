@@ -443,7 +443,7 @@ final class FleetController: NSViewController {
         greetingLabel.font = HelmType.heroTitle()
         greetingLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        subtitleLabel.font = .systemFont(ofSize: 12)
+        subtitleLabel.setScaledFont(ofSize: 12)
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         refreshButton.target = self

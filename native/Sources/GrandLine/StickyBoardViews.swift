@@ -1250,7 +1250,7 @@ final class StickyChecklistRowView: NSView {
     func setDone(_ done: Bool) {
         guard done != isDone else { return }
         isDone = done
-        applyInk(ink, font: field.font ?? .systemFont(ofSize: 11))
+        applyInk(ink, font: field.font ?? .systemFont(ofSize: HelmType.scaled(11)))
     }
 
     /// A done item is struck through and dimmed, matching the mockup. Both

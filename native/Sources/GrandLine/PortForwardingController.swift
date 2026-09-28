@@ -61,13 +61,13 @@ final class PortForwardingController: NSViewController {
         }
 
         let title = NSTextField(labelWithString: "Port Forwarding")
-        title.font = .systemFont(ofSize: 15, weight: .semibold)
+        title.setScaledFont(ofSize: 15, weight: .semibold)
 
         let caption = NSTextField(wrappingLabelWithString:
             "Local (-L) reaches a remote service from this Mac. Remote (-R) exposes a local "
             + "service to the remote host. Dynamic (-D) opens a SOCKS proxy on the listen port."
         )
-        caption.font = .systemFont(ofSize: 11)
+        caption.setScaledFont(ofSize: 11)
         mutedLabels.add(caption)
         caption.translatesAutoresizingMaskIntoConstraints = false
 

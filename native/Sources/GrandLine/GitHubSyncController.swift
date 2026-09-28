@@ -257,7 +257,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     private func buildToolbarControls() {
         refreshPill.setAction(target: self, action: #selector(refreshTapped))
 
-        refreshProgressLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        refreshProgressLabel.setScaledFont(ofSize: 11, weight: .medium)
         refreshProgressLabel.isHidden = true
         refreshProgressLabel.lineBreakMode = .byTruncatingTail
         refreshProgressLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -290,7 +290,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         // disabled rather than waiting for the first `render(_:)` to notice.
         updateSyncAllEnablement()
 
-        syncAllSummaryLabel.font = .systemFont(ofSize: 11.5)
+        syncAllSummaryLabel.setScaledFont(ofSize: 11.5)
         syncAllSummaryLabel.preferredMaxLayoutWidth = 500
         syncAllSummaryLabel.isHidden = syncAllSummaryLabel.stringValue.isEmpty
         syncAllSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -367,7 +367,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         row.syncButton.action = #selector(syncTapped(_:))
         row.syncButton.identifier = NSUserInterfaceItemIdentifier(row.repo.fullName)
 
-        row.progressLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        row.progressLabel.setScaledFont(ofSize: 11, weight: .medium)
 
         let view = ToolRowLayout.build(
             row.toolRowViews,

@@ -241,9 +241,9 @@ private final class ShiftMenuBarPopoverController: NSViewController {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 230, height: 140))
         view = root
 
-        headerLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        headerLabel.setScaledFont(ofSize: 13, weight: .semibold)
 
-        nextFollowUpTitle.font = .systemFont(ofSize: 11)
+        nextFollowUpTitle.setScaledFont(ofSize: 11)
         // Re-derived from the active theme on every popover refresh (see
         // `update(tasksToday:nextFollowUp:nextFollowUpDate:)`), not a fixed
         // system grey - audit §5.3.
@@ -326,8 +326,8 @@ private final class ShiftMenuBarStatRow: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         nameLabel.stringValue = label
-        nameLabel.font = .systemFont(ofSize: 12)
-        valueLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        nameLabel.setScaledFont(ofSize: 12)
+        valueLabel.setScaledFont(ofSize: 12, weight: .semibold)
         valueLabel.alignment = .right
 
         let row = NSStackView(views: [nameLabel, valueLabel])

@@ -121,7 +121,7 @@ extension ConsoleController {
         sreLeadEmptyStateView.isHidden = true
         sreLeadCard.addSubview(sreLeadEmptyStateView)
 
-        sreLeadEmptyStateLabel.font = .systemFont(ofSize: 12)
+        sreLeadEmptyStateLabel.setScaledFont(ofSize: 12)
         sreLeadEmptyStateLabel.alignment = .center
         sreLeadEmptyStateLabel.lineBreakMode = .byWordWrapping
         sreLeadEmptyStateLabel.maximumNumberOfLines = 0

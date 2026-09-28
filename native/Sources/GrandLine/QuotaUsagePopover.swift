@@ -172,10 +172,10 @@ private final class QuotaUsageViewController: NSViewController {
 
         iconTile.configure(symbol: quotaUsageGaugeSymbol, tint: .violet)
 
-        titleLabel.font = .systemFont(ofSize: 13.5, weight: .semibold)
+        titleLabel.setScaledFont(ofSize: 13.5, weight: .semibold)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        subtitleLabel.font = .systemFont(ofSize: 10.5)
+        subtitleLabel.setScaledFont(ofSize: 10.5)
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let titleTextStack = NSStackView(views: [titleLabel, subtitleLabel])
@@ -190,7 +190,7 @@ private final class QuotaUsageViewController: NSViewController {
         titleRow.spacing = 10
         titleRow.translatesAutoresizingMaskIntoConstraints = false
 
-        statusLabel.font = .systemFont(ofSize: 11)
+        statusLabel.setScaledFont(ofSize: 11)
         statusLabel.lineBreakMode = .byWordWrapping
         statusLabel.maximumNumberOfLines = 3
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -203,13 +203,13 @@ private final class QuotaUsageViewController: NSViewController {
         rowsStack.addArrangedSubview(weeklyRow)
         rowsStack.isHidden = true
 
-        warningLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        warningLabel.setScaledFont(ofSize: 11, weight: .semibold)
         warningLabel.lineBreakMode = .byWordWrapping
         warningLabel.maximumNumberOfLines = 2
         warningLabel.translatesAutoresizingMaskIntoConstraints = false
         warningLabel.isHidden = true
 
-        footerLabel.font = .systemFont(ofSize: 9.5)
+        footerLabel.setScaledFont(ofSize: 9.5)
         footerLabel.translatesAutoresizingMaskIntoConstraints = false
 
         copyButton.target = self
@@ -428,11 +428,11 @@ private final class QuotaWindowRowView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     private func build() {
-        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        titleLabel.setScaledFont(ofSize: 12, weight: .semibold)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        percentLabel.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
+        percentLabel.setScaledFont(ofSize: 12, weight: .semibold, voice: .monospaced)
         percentLabel.alignment = .right
         percentLabel.translatesAutoresizingMaskIntoConstraints = false
         percentLabel.setContentHuggingPriority(.required, for: .horizontal)
@@ -459,11 +459,11 @@ private final class QuotaWindowRowView: NSView {
             barFillWidthConstraint,
         ])
 
-        resetLabel.font = .systemFont(ofSize: 10)
+        resetLabel.setScaledFont(ofSize: 10)
         resetLabel.translatesAutoresizingMaskIntoConstraints = false
         resetLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        paceChipLabel.font = .systemFont(ofSize: 9.5, weight: .semibold)
+        paceChipLabel.setScaledFont(ofSize: 9.5, weight: .semibold)
         paceChipLabel.translatesAutoresizingMaskIntoConstraints = false
         paceChip.wantsLayer = true
         paceChip.layer?.cornerRadius = 7

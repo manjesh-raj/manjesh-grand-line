@@ -416,7 +416,7 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
 
     private func userBlock(for text: String) -> NSView {
         let body = NSTextField(wrappingLabelWithString: text)
-        body.font = .systemFont(ofSize: 12.5, weight: .medium)
+        body.setScaledFont(ofSize: 12.5, weight: .medium)
         body.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         body.isSelectable = true
         body.lineBreakMode = .byWordWrapping
@@ -440,7 +440,7 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
         }
 
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 11)
+        label.setScaledFont(ofSize: 11)
         label.textColor = HelmTheme.mutedInk(theme)
         label.lineBreakMode = .byWordWrapping
         label.maximumNumberOfLines = 0
@@ -459,7 +459,7 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
 
     private func errorBlock(for text: String) -> NSView {
         let body = NSTextField(wrappingLabelWithString: text)
-        body.font = .systemFont(ofSize: 12.5)
+        body.setScaledFont(ofSize: 12.5)
         body.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         body.isSelectable = true
         body.lineBreakMode = .byWordWrapping
@@ -484,7 +484,7 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
         icon.configure(symbol: "sparkles", tint: .accent, pointSize: 11)
 
         let title = NSTextField(labelWithString: "SRE Lead")
-        title.font = .systemFont(ofSize: 11.5, weight: .semibold)
+        title.setScaledFont(ofSize: 11.5, weight: .semibold)
         title.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         title.translatesAutoresizingMaskIntoConstraints = false
 
@@ -582,7 +582,10 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
     /// background (`theme.chromeLineHex`, the same "line/border" token every
     /// other themed view already uses for subtle chrome - not a new literal
     /// color), everything else the base ink color at the base weight.
-    private func attributedInline(_ runs: [SRELeadInlineRun], baseSize: CGFloat = 12.5) -> NSAttributedString {
+    private func attributedInline(_ runs: [SRELeadInlineRun], designedSize: CGFloat = 12.5) -> NSAttributedString {
+        // B33/GL-32: the designed size, scaled and floored, the same way
+        // `StrawHatChatView`'s own transcript already does it.
+        let baseSize = HelmType.scaled(designedSize)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         // A soft accent tint (rather than the previous flat neutral gray)
         // reads as a deliberate "chip," closer to the reference mockup's
@@ -619,7 +622,7 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
             // reference mockup's colored NEXT ACTIONS dots, using this app's
             // own accent hue rather than a fixed literal color.
             let bullet = NSTextField(labelWithString: "\u{25CF}")
-            bullet.font = .systemFont(ofSize: 7)
+            bullet.setScaledFont(ofSize: 7)
             bullet.textColor = HelmTheme.nsColor(theme.accentHex)
             bullet.translatesAutoresizingMaskIntoConstraints = false
             bullet.setContentHuggingPriority(.required, for: .horizontal)
@@ -649,7 +652,7 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
     /// bordered-card treatment.
     private func codeBlockView(_ code: String) -> NSView {
         let label = NSTextField(wrappingLabelWithString: code)
-        label.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        label.setScaledFont(ofSize: 11, weight: .regular, voice: .monospaced)
         label.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         label.translatesAutoresizingMaskIntoConstraints = false
         label.lineBreakMode = .byWordWrapping

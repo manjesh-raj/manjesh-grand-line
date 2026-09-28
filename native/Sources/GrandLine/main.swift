@@ -4013,6 +4013,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_TEXT_SCALE_ROW_HEIGHT_TESTS"] == 
     exit(TextScaleRowHeightSelfTest.run() ? 0 : 1)
 }
 
+// GL-32's font half (review bug B33) and the raw log pane's row fit (B38).
+// Builds plain `NSView`s and one `LogRawPaneView` off-screen - no window - so
+// it runs in CI alongside the row-height suite next door.
+if ProcessInfo.processInfo.environment["FM_RUN_TEXT_SCALE_FONT_TESTS"] == "1" {
+    exit(TextScaleFontSelfTest.run() ? 0 : 1)
+}
+
 // Audit §6.10's P3 leftovers. Pure logic - runs in CI.
 if ProcessInfo.processInfo.environment["FM_RUN_P3_LEFTOVERS_TESTS"] == "1" {
     exit(Phase4P3LeftoversSelfTest.run() ? 0 : 1)

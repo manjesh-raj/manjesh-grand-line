@@ -1142,7 +1142,7 @@ final class HelmRefreshPill: HoverHighlightView {
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
         titleLabel.stringValue = title
-        titleLabel.font = .systemFont(ofSize: Metrics.labelPointSize, weight: .semibold)
+        titleLabel.setScaledFont(ofSize: Metrics.labelPointSize, weight: .semibold)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let content = NSStackView(views: [iconView, titleLabel])
@@ -1633,11 +1633,11 @@ enum ToolRowLayout {
         views.iconTile.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         views.nameLabel.stringValue = name
-        views.nameLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        views.nameLabel.setScaledFont(ofSize: 13, weight: .semibold)
         views.nameLabel.lineBreakMode = .byTruncatingTail
         views.nameLabel.maximumNumberOfLines = 1
 
-        views.detailLabel.font = .systemFont(ofSize: 10.5)
+        views.detailLabel.setScaledFont(ofSize: 10.5)
         views.detailLabel.lineBreakMode = .byTruncatingTail
         views.detailLabel.maximumNumberOfLines = 1
 
@@ -1872,7 +1872,7 @@ enum ToolRowLayout {
 
         var columnViews: [NSView] = [topRow]
         if showDetails {
-            views.logField.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+            views.logField.setScaledFont(ofSize: 10, weight: .regular, voice: .monospaced)
             views.logField.preferredMaxLayoutWidth = 560
             views.logField.translatesAutoresizingMaskIntoConstraints = false
             views.logContainer.wantsLayer = true
@@ -1993,7 +1993,7 @@ enum ToolRowLayout {
         // after it, and §6.7's 3/10 is one point off what is already here -
         // not worth a mutable-constraint mechanism to express.
         let daylight = theme.isDaylight
-        label.font = daylight ? HelmType.chip() : .systemFont(ofSize: 10.5, weight: .semibold)
+        label.font = daylight ? HelmType.chip() : .systemFont(ofSize: HelmType.scaled(10.5), weight: .semibold)
         label.textColor = resolved.foreground
         label.translatesAutoresizingMaskIntoConstraints = false
         pill.wantsLayer = true

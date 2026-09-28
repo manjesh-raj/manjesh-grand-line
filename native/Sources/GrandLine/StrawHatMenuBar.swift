@@ -310,7 +310,7 @@ final class StrawHatMenuBarPopoverController: NSViewController {
         view = root
 
         iconTile.configure(symbol: StrawHatCrew.speaker.symbol, tint: StrawHatCrew.speaker.tint)
-        titleLabel.font = .systemFont(ofSize: 13.5, weight: .semibold)
+        titleLabel.setScaledFont(ofSize: 13.5, weight: .semibold)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let headerRow = NSStackView(views: [iconTile, titleLabel])
@@ -420,7 +420,7 @@ final class StrawHatMenuBarPopoverController: NSViewController {
             replyPortraitSlot.widthAnchor.constraint(equalToConstant: 22),
             replyPortraitSlot.heightAnchor.constraint(equalToConstant: 22),
         ])
-        replyNameLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        replyNameLabel.setScaledFont(ofSize: 12, weight: .semibold)
         replyNameLabel.translatesAutoresizingMaskIntoConstraints = false
         replyNameLabel.setContentHuggingPriority(.required, for: .horizontal)
 

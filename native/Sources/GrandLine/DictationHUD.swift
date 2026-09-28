@@ -389,7 +389,7 @@ final class DictationHUDController {
         self.iconView = icon
 
         let label = NSTextField(labelWithString: "")
-        label.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        label.setScaledFont(ofSize: 12.5, weight: .semibold)
         label.textColor = .white
         label.translatesAutoresizingMaskIntoConstraints = false
         self.titleLabel = label

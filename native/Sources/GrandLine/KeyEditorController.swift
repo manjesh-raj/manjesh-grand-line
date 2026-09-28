@@ -308,7 +308,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         importDropZone.translatesAutoresizingMaskIntoConstraints = false
 
         let hint = NSTextField(labelWithString: "Drop a private key file here")
-        hint.font = .systemFont(ofSize: 12)
+        hint.setScaledFont(ofSize: 12)
         mutedLabels.add(hint)
         hint.translatesAutoresizingMaskIntoConstraints = false
         importDropZone.addSubview(hint)

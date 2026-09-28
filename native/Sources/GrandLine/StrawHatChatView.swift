@@ -1064,7 +1064,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
 
         for item in items {
             let bullet = NSTextField(labelWithString: "\u{25CF}")
-            bullet.font = .systemFont(ofSize: 7)
+            bullet.setScaledFont(ofSize: 7)
             bullet.textColor = HelmTheme.nsColor(theme.accentHex)
             bullet.translatesAutoresizingMaskIntoConstraints = false
             bullet.setContentHuggingPriority(.required, for: .horizontal)

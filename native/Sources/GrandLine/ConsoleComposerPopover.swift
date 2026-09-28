@@ -251,7 +251,7 @@ private final class ConsoleComposerViewController: NSViewController, NSTextViewD
 
         iconTile.configure(symbol: "sparkles", tint: .violet)
 
-        titleLabel.font = .systemFont(ofSize: 13.5, weight: .semibold)
+        titleLabel.setScaledFont(ofSize: 13.5, weight: .semibold)
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -281,7 +281,7 @@ private final class ConsoleComposerViewController: NSViewController, NSTextViewD
         generateButton.keyEquivalent = "\r"
         generateButton.keyEquivalentModifierMask = [.command]
 
-        shortcutHintLabel.font = .systemFont(ofSize: 10)
+        shortcutHintLabel.setScaledFont(ofSize: 10)
         shortcutHintLabel.textColor = HelmTheme.mutedInk(theme)
         shortcutHintLabel.translatesAutoresizingMaskIntoConstraints = false
         shortcutHintLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
@@ -325,7 +325,7 @@ private final class ConsoleComposerViewController: NSViewController, NSTextViewD
         examplesFlow.translatesAutoresizingMaskIntoConstraints = false
         examplesFlow.setChips(exampleButtons)
 
-        statusLabel.font = .systemFont(ofSize: 11)
+        statusLabel.setScaledFont(ofSize: 11)
         statusLabel.textColor = HelmTheme.mutedInk(theme)
         statusLabel.lineBreakMode = .byWordWrapping
         statusLabel.maximumNumberOfLines = 3
@@ -407,7 +407,7 @@ private final class ConsoleComposerViewController: NSViewController, NSTextViewD
         intentTextView.isRichText = false
         intentTextView.isEditable = true
         intentTextView.isSelectable = true
-        intentTextView.font = .systemFont(ofSize: 12)
+        intentTextView.setScaledFont(ofSize: 12)
         intentTextView.textContainerInset = NSSize(width: 4, height: 6)
         intentTextView.isVerticallyResizable = true
         intentTextView.isHorizontallyResizable = false
@@ -471,7 +471,7 @@ private final class ConsoleComposerViewController: NSViewController, NSTextViewD
         codeTextView.isEditable = false
         codeTextView.isSelectable = true
         codeTextView.isRichText = false
-        codeTextView.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        codeTextView.setScaledFont(ofSize: 11.5, weight: .regular, voice: .monospaced)
         codeTextView.textContainerInset = NSSize(width: 8, height: 8)
         codeTextView.isVerticallyResizable = true
         codeTextView.isHorizontallyResizable = false
@@ -538,7 +538,7 @@ private final class ConsoleComposerViewController: NSViewController, NSTextViewD
     /// `minWidth` so a short/empty state never leaves an oversized box.
     private func computeWidth(for command: String?) -> CGFloat {
         guard let command, !command.isEmpty else { return Self.minWidth }
-        let font = codeTextView.font ?? .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        let font = codeTextView.font ?? .monospacedSystemFont(ofSize: HelmType.scaled(11.5), weight: .regular)
         let longestLine = command.components(separatedBy: "\n").max(by: { $0.count < $1.count }) ?? command
         let textWidth = (longestLine as NSString).size(withAttributes: [.font: font]).width
         // Stack leading/trailing insets (14pt each side) + the code block's

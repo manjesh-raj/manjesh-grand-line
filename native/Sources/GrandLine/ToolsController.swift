@@ -533,7 +533,7 @@ final class ToolsController: NSViewController, DaylightDrillActions, TabShortcut
         cardIconTiles.append(tile)
 
         let titleLabel = NSTextField(labelWithString: kind.title)
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.setScaledFont(ofSize: 13, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
         // `fm/grandline-body-width-regression-recur`: this label's own
         // `.byTruncatingTail` mode is meaningless without this - an
@@ -554,7 +554,7 @@ final class ToolsController: NSViewController, DaylightDrillActions, TabShortcut
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let descLabel = NSTextField(wrappingLabelWithString: kind.description)
-        descLabel.font = .systemFont(ofSize: 11)
+        descLabel.setScaledFont(ofSize: 11)
         // Card width varies with the container (see `rebuildGrid`), so this is
         // recomputed on every rebuild rather than a fixed guess - a stale
         // `preferredMaxLayoutWidth` from a previous, differently-sized layout

@@ -125,7 +125,7 @@ enum HelmField {
     /// The label above a field. Same size as the label *inside* a
     /// `HelmFieldCard`, which is what makes the two shapes read as one system
     /// despite one label sitting above its control and the other inside it.
-    static func labelFont() -> NSFont { .systemFont(ofSize: 10.5) }
+    static func labelFont() -> NSFont { .systemFont(ofSize: HelmType.scaled(10.5)) }
 
     /// The single definition of the sunken fill (audit §3.2, "Sunken form
     /// field - 3 byte-identical copies"). Phase 2 landed it as
@@ -1487,7 +1487,7 @@ final class HelmToggleRow: NSView {
         toggle.setContentHuggingPriority(.required, for: .horizontal)
         toggle.translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        titleLabel.setScaledFont(ofSize: 12.5, weight: .semibold)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel?.font = HelmField.labelFont()
         subtitleLabel?.translatesAutoresizingMaskIntoConstraints = false
@@ -2048,7 +2048,7 @@ final class HelmFormSheet: NSView {
         chip.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let numberLabel = NSTextField(labelWithString: number)
-        numberLabel.font = .systemFont(ofSize: 9.5, weight: .heavy)
+        numberLabel.setScaledFont(ofSize: 9.5, weight: .heavy)
         numberLabel.alignment = .center
         numberLabel.translatesAutoresizingMaskIntoConstraints = false
         chip.addSubview(numberLabel)

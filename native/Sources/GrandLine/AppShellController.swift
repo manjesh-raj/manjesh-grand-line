@@ -685,6 +685,15 @@ final class AppShellController: NSViewController {
         chromeTextScaleObservation = ChromeTextScale.shared.observe { [weak self] _ in
             guard let self, self.isViewLoaded else { return }
             ThemeManager.shared.reapplyCurrentTheme()
+            // B33: the theme re-fire above reaches every font a page derives
+            // inside its own `applyTheme`. This second pass reaches the ones
+            // it cannot - a label built once in `loadView` and only ever
+            // re-coloured afterwards - by re-deriving from the recipe the
+            // label itself carries. It runs *after* the re-fire so a page
+            // that rebuilt its rows is not walked twice over stale views.
+            // See `HelmTextScale.swift` for why the recipe travels with the
+            // label rather than being re-written at 150 call sites.
+            HelmTextScale.reapply(in: self.view)
             self.view.layoutSubtreeIfNeeded()
         }
 

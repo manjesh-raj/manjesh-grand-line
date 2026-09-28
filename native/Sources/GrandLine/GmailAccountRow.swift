@@ -95,11 +95,11 @@ final class GmailAccountRow: NSView {
         tile.translatesAutoresizingMaskIntoConstraints = false
 
         titleLabel.stringValue = slot.title
-        titleLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        titleLabel.setScaledFont(ofSize: 12.5, weight: .medium)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.lineBreakMode = .byTruncatingTail
 
-        statusLabel.font = .systemFont(ofSize: 11)
+        statusLabel.setScaledFont(ofSize: 11)
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         // gotcha (5): the text column is the one thing in the row allowed to
         // shrink, so the tile and the button keep their natural size and the
@@ -133,7 +133,7 @@ final class GmailAccountRow: NSView {
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
 
-        healthLabel.font = .systemFont(ofSize: 11)
+        healthLabel.setScaledFont(ofSize: 11)
         healthLabel.translatesAutoresizingMaskIntoConstraints = false
         healthLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         // Google's API-disabled sentence runs to about 240 characters and

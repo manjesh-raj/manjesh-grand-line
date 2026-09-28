@@ -105,7 +105,7 @@ final class SchedulesCardView: NSObject {
     }
 
     private func buildCard() {
-        countBadge.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+        countBadge.setScaledFont(ofSize: 11, weight: .medium, voice: .monospaced)
         countBadge.translatesAutoresizingMaskIntoConstraints = false
 
         addButton.controlSize = .small

@@ -59,7 +59,7 @@ final class ShiftImageAttachmentWell: NSView {
         placeholderIcon.symbolConfiguration = .init(pointSize: 20, weight: .regular)
         placeholderIcon.translatesAutoresizingMaskIntoConstraints = false
 
-        placeholderLabel.font = .systemFont(ofSize: 11)
+        placeholderLabel.setScaledFont(ofSize: 11)
         placeholderLabel.alignment = .center
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
 

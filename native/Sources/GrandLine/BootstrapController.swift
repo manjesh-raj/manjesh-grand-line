@@ -119,7 +119,7 @@ private final class StepDotView: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         layer?.cornerRadius = diameter / 2
 
-        numberLabel.font = .systemFont(ofSize: 12.5, weight: .bold)
+        numberLabel.setScaledFont(ofSize: 12.5, weight: .bold)
         numberLabel.alignment = .center
         numberLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -635,7 +635,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         refreshIcon.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
         refreshIcon.translatesAutoresizingMaskIntoConstraints = false
-        refreshLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        refreshLabel.setScaledFont(ofSize: 12, weight: .semibold)
         refreshLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let pillContent = NSStackView(views: [refreshIcon, refreshLabel])
@@ -664,7 +664,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         refreshPill.setContentHuggingPriority(.required, for: .horizontal)
         refreshPill.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        refreshBusyLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        refreshBusyLabel.setScaledFont(ofSize: 11, weight: .medium)
         refreshBusyLabel.isHidden = true
         refreshBusyLabel.translatesAutoresizingMaskIntoConstraints = false
         refreshBusyLabel.setContentHuggingPriority(.required, for: .horizontal)
@@ -735,16 +735,16 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     private func buildHomeSection() -> NSView {
         let currentLabel = NSTextField(labelWithString: "Currently active")
-        currentLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        currentLabel.setScaledFont(ofSize: 12.5, weight: .medium)
         Self.yieldsToWindowWidth(currentLabel)
 
-        currentPathLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        currentPathLabel.setScaledFont(ofSize: 11.5, weight: .regular, voice: .monospaced)
         currentPathLabel.lineBreakMode = .byTruncatingMiddle
         // The measured offender - see `yieldsToWindowWidth`.
         Self.yieldsToWindowWidth(currentPathLabel)
 
         let desc = NSTextField(wrappingLabelWithString: "The directory firstmate reads projects, backlog, and crew state from. Checked after the FM_HOME / FIRSTMATE_HOME environment variables. Changing it here requires a restart to take effect.")
-        desc.font = .systemFont(ofSize: 11)
+        desc.setScaledFont(ofSize: 11)
         // `dynamicLabels` is this file's own muted-text re-theming list -
         // `.secondaryLabelColor` was a fixed system grey that knows nothing
         // about the active palette (audit §5.3).
@@ -773,7 +773,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         actionRow.orientation = .horizontal
         actionRow.spacing = 8
 
-        statusLabel.font = .systemFont(ofSize: 11.5)
+        statusLabel.setScaledFont(ofSize: 11.5)
         statusLabel.preferredMaxLayoutWidth = 520
         statusLabel.isHidden = true
 
@@ -1241,10 +1241,10 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
         let titleLabel = NSTextField(labelWithString: kind.title)
         Self.yieldsToWindowWidth(titleLabel)
-        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.setScaledFont(ofSize: 14, weight: .semibold)
 
         let chipLabel = NSTextField(labelWithString: "")
-        chipLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+        chipLabel.setScaledFont(ofSize: 10, weight: .semibold)
         chipLabel.translatesAutoresizingMaskIntoConstraints = false
         let chipContainer = NSView()
         chipContainer.wantsLayer = true
@@ -1266,7 +1266,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         titleRow.spacing = 8
 
         let detailLabel = NSTextField(wrappingLabelWithString: "")
-        detailLabel.font = .systemFont(ofSize: 11.5)
+        detailLabel.setScaledFont(ofSize: 11.5)
         detailLabel.preferredMaxLayoutWidth = 500
 
         let contentBox = stepContentBox(content)
@@ -1438,7 +1438,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         clearStack(restoreStack)
 
         let desc = NSTextField(wrappingLabelWithString: "Bring in saved hosts, snippets, and preferences exported from another machine. SSH private keys never leave the Keychain - a restored host referencing a key not on this machine needs that key re-added from the Keys screen.")
-        desc.font = .systemFont(ofSize: 11)
+        desc.setScaledFont(ofSize: 11)
         desc.textColor = HelmTheme.mutedInk(theme)
         desc.preferredMaxLayoutWidth = 520
         track(desc)
@@ -1446,7 +1446,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         let hostCount = hostStore.hosts.count
         let snippetCount = snippetStore.snippets.count
         restoreStatusLabel.stringValue = "Currently saved here: \(hostCount) host\(hostCount == 1 ? "" : "s"), \(snippetCount) snippet\(snippetCount == 1 ? "" : "s")."
-        restoreStatusLabel.font = .systemFont(ofSize: 11)
+        restoreStatusLabel.setScaledFont(ofSize: 11)
         restoreStatusLabel.textColor = HelmTheme.mutedInk(theme)
         track(restoreStatusLabel)
 
@@ -1469,15 +1469,15 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     // MARK: Drift check (fm/cockpit-bootstrap-drift-check)
 
     private func buildDriftSection() -> NSView {
-        driftDescLabel.font = .systemFont(ofSize: 11)
+        driftDescLabel.setScaledFont(ofSize: 11)
         driftDescLabel.preferredMaxLayoutWidth = 520
 
-        driftStatusLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        driftStatusLabel.setScaledFont(ofSize: 12.5, weight: .medium)
         Self.yieldsToWindowWidth(driftStatusLabel)
         driftStatusLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         driftStatusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        driftLastCheckedLabel.font = .systemFont(ofSize: 11)
+        driftLastCheckedLabel.setScaledFont(ofSize: 11)
         Self.yieldsToWindowWidth(driftLastCheckedLabel)
 
         driftRecheckButton.title = "Re-check now"
@@ -1677,7 +1677,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     private func buildDotfilesAbsentSection() -> NSView {
         let desc = NSTextField(wrappingLabelWithString: "~/.dotfiles was not found on this machine. Clone the captain's dotfiles repo and run its bootstrap script to set one up.")
-        desc.font = .systemFont(ofSize: 11)
+        desc.setScaledFont(ofSize: 11)
         desc.textColor = HelmTheme.mutedInk(theme)
         desc.preferredMaxLayoutWidth = 520
         track(desc)
@@ -1701,7 +1701,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         var rows: [NSView] = []
 
         let repoLabel = NSTextField(labelWithString: repoPath)
-        repoLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        repoLabel.setScaledFont(ofSize: 11.5, weight: .regular, voice: .monospaced)
         track(repoLabel)
         rows.append(repoLabel)
 
@@ -1710,7 +1710,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         if let remote = state.remoteURL { metaBits.append(remote) }
         if !metaBits.isEmpty {
             let metaLabel = NSTextField(labelWithString: metaBits.joined(separator: " \u{00B7} "))
-            metaLabel.font = .systemFont(ofSize: 11)
+            metaLabel.setScaledFont(ofSize: 11)
             metaLabel.textColor = HelmTheme.mutedInk(theme)
             track(metaLabel)
             rows.append(metaLabel)
@@ -1755,7 +1755,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         rows.append(rebuildRow)
 
         let managedTitle = NSTextField(labelWithString: "Managed items")
-        managedTitle.font = .systemFont(ofSize: 12, weight: .semibold)
+        managedTitle.setScaledFont(ofSize: 12, weight: .semibold)
         rows.append(managedTitle)
         for item in managedItems {
             rows.append(managedItemRow(item))
@@ -1778,7 +1778,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     private func buildBehindOriginBanner(_ count: Int, commits: [DotfilesBehindCommit]) -> NSView {
         let title = NSTextField(labelWithString: "\(count) commit\(count == 1 ? "" : "s") behind origin")
-        title.font = .systemFont(ofSize: 11.5, weight: .semibold)
+        title.setScaledFont(ofSize: 11.5, weight: .semibold)
         title.textColor = HelmTheme.nsColor(theme.ansiHex[3])
 
         var innerViews: [NSView] = [title]
@@ -1787,7 +1787,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         let shown = commits.prefix(Self.behindOriginCommitDisplayCap)
         for commit in shown {
             let row = NSTextField(wrappingLabelWithString: "\(commit.shortHash)  \(commit.subject)")
-            row.font = .monospacedSystemFont(ofSize: 10.5, weight: .regular)
+            row.setScaledFont(ofSize: 10.5, weight: .regular, voice: .monospaced)
             row.textColor = HelmTheme.mutedInk(theme)
             row.preferredMaxLayoutWidth = 500
             track(row)
@@ -1796,7 +1796,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         }
         if commits.count > Self.behindOriginCommitDisplayCap {
             let more = NSTextField(labelWithString: "+\(commits.count - Self.behindOriginCommitDisplayCap) more")
-            more.font = .systemFont(ofSize: 10.5, weight: .regular)
+            more.setScaledFont(ofSize: 10.5, weight: .regular)
             more.textColor = HelmTheme.mutedInk(theme)
             track(more)
             innerViews.append(more)
@@ -1804,7 +1804,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         }
 
         let body = NSTextField(wrappingLabelWithString: "Run rebuild.sh will pull these from GitHub first.")
-        body.font = .systemFont(ofSize: 10.5, weight: .regular)
+        body.setScaledFont(ofSize: 10.5, weight: .regular)
         body.textColor = HelmTheme.mutedInk(theme)
         body.preferredMaxLayoutWidth = 500
         innerViews.append(body)
@@ -1902,11 +1902,11 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         let text = autoSyncBannerText(split: split)
 
         let title = NSTextField(labelWithString: text.headline)
-        title.font = .systemFont(ofSize: 11.5, weight: .semibold)
+        title.setScaledFont(ofSize: 11.5, weight: .semibold)
         title.textColor = HelmTheme.nsColor(text.hueHex)
 
         let body = NSTextField(wrappingLabelWithString: text.detail)
-        body.font = .systemFont(ofSize: 10.5, weight: .regular)
+        body.setScaledFont(ofSize: 10.5, weight: .regular)
         body.textColor = HelmTheme.mutedInk(theme)
         body.preferredMaxLayoutWidth = 500
 
@@ -1918,7 +1918,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         if !split.flaggedOnly.isEmpty {
             let note = NSTextField(wrappingLabelWithString:
                 "\(split.flaggedOnly.count) file(s) outside \(DotfilesAutoSync.autoCommitSubpath)/ are flagged only - the backup and export folders in this repo keep their own write semantics and are never auto-committed. Commit these by hand if you want them:")
-            note.font = .systemFont(ofSize: 10.5, weight: .regular)
+            note.setScaledFont(ofSize: 10.5, weight: .regular)
             note.textColor = HelmTheme.mutedInk(theme)
             note.preferredMaxLayoutWidth = 500
             track(note)
@@ -1927,7 +1927,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         }
 
         let toggleLabel = NSTextField(labelWithString: "Commit and push \(DotfilesAutoSync.autoCommitSubpath)/ changes automatically")
-        toggleLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        toggleLabel.setScaledFont(ofSize: 11, weight: .regular)
         track(toggleLabel)
         let toggle = HelmToggle()
         toggle.isOn = AppSettings.shared.dotfilesAutoCommitEnabled
@@ -1988,7 +1988,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     private func fileListLabel(_ files: [String]) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: files.joined(separator: "\n"))
-        label.font = .monospacedSystemFont(ofSize: 10.5, weight: .regular)
+        label.setScaledFont(ofSize: 10.5, weight: .regular, voice: .monospaced)
         label.textColor = HelmTheme.mutedInk(theme)
         label.preferredMaxLayoutWidth = 500
         track(label)
@@ -2050,7 +2050,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     private func buildUsernameRow(repoPath: String) -> NSView {
         let label = NSTextField(labelWithString: "macOS username")
-        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.setScaledFont(ofSize: 12, weight: .medium)
 
         let save = HelmButton(title: "Save", variant: .primary, target: self, action: #selector(saveUsernameClicked))
 
@@ -2059,7 +2059,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         row.spacing = 8
         usernameField.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        dotfilesStatusLabel.font = .systemFont(ofSize: 11)
+        dotfilesStatusLabel.setScaledFont(ofSize: 11)
         dotfilesStatusLabel.preferredMaxLayoutWidth = 500
         dotfilesStatusLabel.isHidden = true
         track(dotfilesStatusLabel)
@@ -2121,7 +2121,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             return
         }
         let desc = NSTextField(wrappingLabelWithString: "Three harness-expected filenames home-manager symlinks to the same shared AGENTS.md in the dotfiles repo.")
-        desc.font = .systemFont(ofSize: 11)
+        desc.setScaledFont(ofSize: 11)
         desc.textColor = HelmTheme.mutedInk(theme)
         desc.preferredMaxLayoutWidth = 520
         track(desc)
@@ -2252,7 +2252,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             guard !categoryRows.isEmpty else { continue }
 
             let categoryLabel = NSTextField(labelWithString: category)
-            categoryLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+            categoryLabel.setScaledFont(ofSize: 12, weight: .semibold)
             track(categoryLabel)
             softwareStack.addArrangedSubview(categoryLabel)
             categoryLabel.widthAnchor.constraint(equalTo: softwareStack.widthAnchor).isActive = true
@@ -2427,7 +2427,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         clearStack(notSyncedStack)
 
         let intro = NSTextField(wrappingLabelWithString: "This page automates machine setup, but deliberately stops short of syncing credentials between machines. What's static here is static by design, not an oversight.")
-        intro.font = .systemFont(ofSize: 11)
+        intro.setScaledFont(ofSize: 11)
         intro.textColor = HelmTheme.mutedInk(theme)
         intro.preferredMaxLayoutWidth = 520
         track(intro)
@@ -2467,11 +2467,11 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     private func notSyncedStaticRow(title: String, body: String) -> NSView {
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        titleLabel.setScaledFont(ofSize: 12.5, weight: .medium)
         track(titleLabel)
 
         let bodyLabel = NSTextField(wrappingLabelWithString: body)
-        bodyLabel.font = .systemFont(ofSize: 11)
+        bodyLabel.setScaledFont(ofSize: 11)
         bodyLabel.textColor = HelmTheme.mutedInk(theme)
         bodyLabel.preferredMaxLayoutWidth = 520
         track(bodyLabel)
@@ -2490,11 +2490,11 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     /// and the trailing controls row.
     private func notSyncedHardenerRow(title: String, body: String, extra: [NSView] = [], trailing: [NSView] = []) -> NSView {
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        titleLabel.setScaledFont(ofSize: 12.5, weight: .medium)
         track(titleLabel)
 
         let bodyLabel = NSTextField(wrappingLabelWithString: body)
-        bodyLabel.font = .systemFont(ofSize: 11)
+        bodyLabel.setScaledFont(ofSize: 11)
         bodyLabel.textColor = HelmTheme.mutedInk(theme)
         bodyLabel.preferredMaxLayoutWidth = 520
         track(bodyLabel)
@@ -2604,7 +2604,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         case .notHardened:
             bodyText = "Homebrew is not yet hardened. This is far more disruptive than the other rows on this card: shell completions become unavailable, most Homebrew casks become categorically incompatible (only CLI-only casks from homebrew/cask with a `binary` artifact still work), and it requires reordering PATH plus adding `eval \"$(/usr/local/bin/brew shellenv)\"` to your shell startup."
             let warning = NSTextField(wrappingLabelWithString: "Review that disruption before continuing - it changes how every `brew` command on this machine behaves.")
-            warning.font = .systemFont(ofSize: 11, weight: .semibold)
+            warning.setScaledFont(ofSize: 11, weight: .semibold)
             warning.textColor = HelmTheme.nsColor(theme.ansiHex[3])
             warning.preferredMaxLayoutWidth = 520
             track(warning)
@@ -2825,7 +2825,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     private func loadingLabel(_ text: String) -> NSView {
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 12)
+        label.setScaledFont(ofSize: 12)
         label.textColor = HelmTheme.mutedInk(theme)
         track(label)
         return label
@@ -2833,7 +2833,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     private func statusPill(text: String, colorHex: String) -> NSView {
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 10, weight: .semibold)
+        label.setScaledFont(ofSize: 10, weight: .semibold)
         label.textColor = HelmTheme.nsColor(colorHex)
         label.translatesAutoresizingMaskIntoConstraints = false
         let container = NSView()
