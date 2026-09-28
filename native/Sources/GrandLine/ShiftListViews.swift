@@ -681,6 +681,12 @@ enum ShiftDateFormatting {
 
     static func date(from yyyyMMdd: String) -> Date? { iso.date(from: yyyyMMdd) }
 
+    /// A wall-clock time in the captain's own locale ("1:11 PM", "13:11") -
+    /// the same formatter the task rows already use for a due time, so a
+    /// capture's timestamp and a task's due time are written the same way
+    /// (review X6).
+    static func clockTime(_ date: Date) -> String { friendlyTime.string(from: date) }
+
     /// "Today" / "Tomorrow" / "Aug 12" - never a raw ISO string in the UI.
     static func friendly(_ yyyyMMdd: String) -> String {
         guard let date = date(from: yyyyMMdd) else { return yyyyMMdd }

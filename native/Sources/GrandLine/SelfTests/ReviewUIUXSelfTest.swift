@@ -58,6 +58,7 @@ enum ReviewUIUXSelfTest {
             ("X1_lockScreenOffersALocalFallbackWhenTheVaultIsUnreachable", test_x1LocalFallback),
             ("X3_theGoMenuNamesEachDestinationOnce", test_x3GoMenu),
             ("X5_emptyPagesOfferAnExampleToStartFrom", test_x5SeedExamples),
+            ("X6_everythingCapturedTodayIsInOnePlace", test_x6CaptureInbox),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -1316,6 +1317,123 @@ enum ReviewUIUXSelfTest {
             }
             guard welcome.content.contains("[[") else {
                 return "the written Welcome page lost its wiki-link"
+            }
+            return nil
+        }
+    }
+
+    // MARK: X6 - capture in, triage out
+
+    private static func test_x6CaptureInbox() -> String? {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("review-ui-ux-capture-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("capture-inbox.json")
+        let env = [CaptureInboxStore.fileVariable: file.path]
+
+        let now = Date()
+        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now) ?? now
+
+        let store = CaptureInboxStore(environment: env)
+        guard store.entries(on: now).isEmpty else {
+            return "a fresh log already has entries, so this case cannot tell a recorded capture "
+                 + "from a pre-existing one"
+        }
+        store.record(destination: .task, title: "Rotate the bastion keys", at: now)
+        store.record(destination: .link, title: "example.com/graceful-shutdown", at: now)
+        store.record(destination: .sticky, title: "Old news", at: yesterday)
+        // A capture with nothing in it is not a capture.
+        store.record(destination: .note, title: "   ", at: now)
+
+        let today = store.entries(on: now)
+        guard today.count == 2 else {
+            return "today's log holds \(today.count) entries, expected 2: \(today.map(\.title))"
+        }
+        guard today.first?.title == "example.com/graceful-shutdown" else {
+            return "today's log is not newest-first: \(today.map(\.title))"
+        }
+        guard store.entries(on: yesterday).map(\.title) == ["Old news"] else {
+            return "yesterday's capture leaked into today, or was lost"
+        }
+
+        // It survives a reopen - a log that only exists in memory answers
+        // "what did I capture this morning" with nothing after a relaunch.
+        let reopened = CaptureInboxStore(environment: env)
+        guard reopened.entries(on: now).count == 2, !reopened.loadFailed else {
+            return "the log did not round-trip through its file "
+                 + "(loadFailed=\(reopened.loadFailed), \(reopened.entries(on: now).count) entries)"
+        }
+
+        // GL-01: an unreadable log is its own state, and it is never
+        // overwritten by the process that could not read it.
+        try? Data("not json".utf8).write(to: file)
+        let broken = CaptureInboxStore(environment: env)
+        guard broken.loadFailed else {
+            return "an unparseable log reports as readable, so the card would draw an empty day "
+                 + "over a file full of captures (GL-01/GL-14)"
+        }
+        broken.record(destination: .task, title: "should not be written", at: now)
+        guard let raw = try? String(contentsOf: file, encoding: .utf8), raw == "not json" else {
+            return "the store overwrote a log it could not read (GL-01)"
+        }
+
+        return autoreleasepool { () -> String? in
+            // The card, against a stated day.
+            let good = CaptureInboxStore(environment: [CaptureInboxStore.fileVariable:
+                dir.appendingPathComponent("card.json").path])
+            good.record(destination: .task, title: "Rotate the bastion keys", at: now)
+            good.record(destination: .sticky, title: "Ask Ravi about peering", at: now)
+            let card = CaptureInboxCard(store: good)
+            card.frame = NSRect(x: 0, y: 0, width: 900, height: 300)
+            var opened: [RailDestination] = []
+            card.onOpenDestination = { opened.append($0) }
+            card.render(now: now, theme: ThemeManager.shared.theme)
+            card.layoutSubtreeIfNeeded()
+
+            guard card.debugRowTitles == ["Ask Ravi about peering", "Rotate the bastion keys"] else {
+                return "the card is not showing today's captures newest-first: \(card.debugRowTitles)"
+            }
+            // The row has to say *where* it went, which is the whole point -
+            // a list of titles with no destinations is the scatter the
+            // review is complaining about, written down.
+            guard card.debugRowDetails.contains(where: { $0.contains(RailDestination.stickyBoard.title) }),
+                  card.debugRowDetails.contains(where: { $0.contains(RailDestination.shift.title) }) else {
+                return "a row does not name the page its capture landed in: \(card.debugRowDetails)"
+            }
+            // And following one gets there, through the real recognizer.
+            card.debugClickRow(0)
+            guard opened == [.stickyBoard] else {
+                return "clicking the first row opened \(opened), expected the Sticky Board"
+            }
+
+            // An empty day says so, and says how to capture - it is the
+            // first thing a new captain sees on this card.
+            let emptyStore = CaptureInboxStore(environment: [CaptureInboxStore.fileVariable:
+                dir.appendingPathComponent("empty.json").path])
+            let emptyCard = CaptureInboxCard(store: emptyStore)
+            emptyCard.render(now: now, theme: ThemeManager.shared.theme)
+            guard emptyCard.debugRowTitles.isEmpty,
+                  emptyCard.debugEmptyText?.contains("Nothing captured today") == true else {
+                return "an empty day does not say so: \(String(describing: emptyCard.debugEmptyText))"
+            }
+
+            // The page hosts it. A source guard, because standing up the
+            // Today page's own stores here would duplicate
+            // `DailyReviewViewSelfTest`'s whole harness for one question.
+            guard let sources = SelfTestSources.appSourceFiles(),
+                  let page = sources.first(where: { $0.lastPathComponent == "DailyOverviewController.swift" }),
+                  let text = try? String(contentsOf: page, encoding: .utf8),
+                  codeOnly(text).contains("CaptureInboxCard()") else {
+                return "the Today page does not host the capture log, so there is still nowhere "
+                     + "showing everything captured today (review X6)"
+            }
+            // And the shell records into it from the one filer every capture
+            // entry point goes through.
+            guard let shell = sources.first(where: { $0.lastPathComponent == "AppShellController.swift" }),
+                  let shellText = try? String(contentsOf: shell, encoding: .utf8),
+                  codeOnly(shellText).contains("CaptureInboxStore.shared.record(") else {
+                return "nothing records a capture, so the log is always empty (review X6)"
             }
             return nil
         }

@@ -2603,6 +2603,14 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     if (ProcessInfo.processInfo.environment["FM_NOTEBOOK_DIR"] ?? "").isEmpty {
         setenv("FM_NOTEBOOK_DIR", scratchRoot.appendingPathComponent("notebook", isDirectory: true).path, 1)
     }
+    // X6's capture log (`CaptureInboxStore`), for the same reason as every
+    // entry around it: it is reachable from a bare production constructor
+    // *and* from a `shared` singleton, so a suite that files one capture
+    // would otherwise append a row to the captain's own log.
+    if (ProcessInfo.processInfo.environment[CaptureInboxStore.fileVariable] ?? "").isEmpty {
+        setenv(CaptureInboxStore.fileVariable,
+               scratchRoot.appendingPathComponent("capture-inbox.json").path, 1)
+    }
     // F4's reading list (`fm/grandline-feature-f4-reading-list`), for exactly
     // the reason the entry above spells out: `ReadingListStore()` is reachable
     // from a bare, no-argument production constructor, and with no override it

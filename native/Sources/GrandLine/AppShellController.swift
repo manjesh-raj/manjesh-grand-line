@@ -2770,58 +2770,75 @@ final class AppShellController: NSViewController {
     func makeCaptureFiler() -> CaptureFiler {
         CaptureFiler { [weak self] destination, draft in
             guard let self else { return .refused("The app shell went away.") }
-            switch destination {
-            case .task:
-                var task = ShiftTask.fresh()
-                task.title = draft.title
-                task.description = draft.body
-                if let due = draft.dueDate {
-                    let (dateStr, timeStr) = ShiftDateFormatting.components(from: due)
-                    task.dueDate = dateStr
-                    task.dueTime = draft.dueHasTime ? timeStr : nil
-                }
-                self.shiftStore.addTask(task)
-                return .filed(.task)
-
-            case .sticky:
-                self.stickyBoard.addCapturedNote(title: draft.title, text: draft.body)
-                return .filed(.sticky)
-
-            case .note:
-                _ = self.notebookStore.createPage(
-                    title: CaptureRouter.notebookTitle(for: draft),
-                    content: draft.text)
-                return .filed(.note)
-
-            case .codeSnippet:
-                _ = self.codePreviewStore.create(name: CaptureRouter.snippetName(for: draft),
-                                                 content: draft.text)
-                return .filed(.codeSnippet)
-
-            case .link:
-                // The one destination whose store decides whether the capture
-                // is even a link, so the panel is told what actually happened
-                // rather than being told "filed" unconditionally. A duplicate
-                // and a non-URL are both `.refused`, and the panel keeps the
-                // captain in the loop - the same posture ⌘4 takes below for a
-                // different reason.
-                switch self.readingListStore.add(draft.text) {
-                case .added:
-                    // The page may never have been mounted, so the card it
-                    // will show is built on first visit from the store this
-                    // just wrote - nothing here has to reach into a view.
-                    return .filed(.link)
-                case .duplicate(let existing):
-                    return .refused("\(existing.host) is already on the reading list.")
-                case .rejected(let why):
-                    return .refused(why)
-                }
-
-            case .credential:
-                self.show(.poneglyph)
-                self.poneglyph.presentCapturedCredential(secret: draft.text)
-                return .handedOff(.credential)
+            // **UX issue X6.** This closure is the one place every capture
+            // entry point lands - ⌥Space's panel, the compact popover, the
+            // crew's own answer - so it is the one place a capture can be
+            // logged without a second copy of the routing. A refusal is not
+            // logged: nothing was captured.
+            let outcome = self.fileCapture(destination, draft)
+            switch outcome {
+            case .filed, .handedOff:
+                CaptureInboxStore.shared.record(destination: destination, title: draft.title)
+            case .refused:
+                break
             }
+            return outcome
+        }
+    }
+
+    private func fileCapture(_ destination: CaptureDestination,
+                             _ draft: CaptureDraft) -> CaptureFilingOutcome {
+        switch destination {
+        case .task:
+            var task = ShiftTask.fresh()
+            task.title = draft.title
+            task.description = draft.body
+            if let due = draft.dueDate {
+                let (dateStr, timeStr) = ShiftDateFormatting.components(from: due)
+                task.dueDate = dateStr
+                task.dueTime = draft.dueHasTime ? timeStr : nil
+            }
+            self.shiftStore.addTask(task)
+            return .filed(.task)
+
+        case .sticky:
+            self.stickyBoard.addCapturedNote(title: draft.title, text: draft.body)
+            return .filed(.sticky)
+
+        case .note:
+            _ = self.notebookStore.createPage(
+                title: CaptureRouter.notebookTitle(for: draft),
+                content: draft.text)
+            return .filed(.note)
+
+        case .codeSnippet:
+            _ = self.codePreviewStore.create(name: CaptureRouter.snippetName(for: draft),
+                                             content: draft.text)
+            return .filed(.codeSnippet)
+
+        case .link:
+            // The one destination whose store decides whether the capture
+            // is even a link, so the panel is told what actually happened
+            // rather than being told "filed" unconditionally. A duplicate
+            // and a non-URL are both `.refused`, and the panel keeps the
+            // captain in the loop - the same posture ⌘4 takes below for a
+            // different reason.
+            switch self.readingListStore.add(draft.text) {
+            case .added:
+                // The page may never have been mounted, so the card it
+                // will show is built on first visit from the store this
+                // just wrote - nothing here has to reach into a view.
+                return .filed(.link)
+            case .duplicate(let existing):
+                return .refused("\(existing.host) is already on the reading list.")
+            case .rejected(let why):
+                return .refused(why)
+            }
+
+        case .credential:
+            self.show(.poneglyph)
+            self.poneglyph.presentCapturedCredential(secret: draft.text)
+            return .handedOff(.credential)
         }
     }
 
