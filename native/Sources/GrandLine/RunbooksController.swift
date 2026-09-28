@@ -370,10 +370,21 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         runbookListStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         runbookRowCards.removeAll()
         if runbookGridItems.isEmpty {
+            // **UX issue X5.** This page opened on one sentence and nothing
+            // to press. The seeded example is opt-in rather than shipped
+            // (see `SeedExamples`' header for why a runbook is not the
+            // Command Library), and it sits beside the page's own "New
+            // Runbook" rather than replacing it.
+            let seed = HelmButton(title: "Add an example runbook", variant: .secondary,
+                                  target: self, action: #selector(seedExampleRunbookTapped))
+            seed.controlSize = .small
+            seed.toolTip = "Writes one short example runbook you can edit or delete."
             let empty = HelmEmptyState(symbol: "list.bullet.rectangle",
-                                       body: "No runbooks yet. Create one to get started.",
+                                       body: "No runbooks yet. Create one, or start from an example.",
+                                       size: .standard,
+                                       accessory: seed,
                                        hue: RailDestination.runbooks.domainHue)
-            empty.heightAnchor.constraint(equalToConstant: 110).isActive = true
+            empty.heightAnchor.constraint(greaterThanOrEqualToConstant: 110).isActive = true
             runbookGridEmptyState = empty
             runbookListStack.addArrangedSubview(empty)
             empty.widthAnchor.constraint(equalTo: runbookListStack.widthAnchor).isActive = true
@@ -388,6 +399,15 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         }
         runbookRowCards = cards
         applyTheme()
+    }
+
+    /// X5: writes the one example and opens it, so the affordance ends
+    /// somewhere rather than silently changing a list behind the captain.
+    @objc private func seedExampleRunbookTapped() {
+        let created = runbookStore.createRunbook(title: SeedExamples.runbookTitle,
+                                                 content: SeedExamples.runbookContent)
+        reloadRunbooksList()
+        openRunbook(id: created.id)
     }
 
     private func beginNewRunbook() {
@@ -512,6 +532,9 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
     func debugBeginNewRunbook() { beginNewRunbook() }
     func debugCancelRunbookEditor() { cancelRunbookEditor() }
     func debugReloadRunbooks() { reloadRunbooksList() }
+    /// X5: the real button's action, so a check drives what a click drives.
+    func debugSeedExampleRunbook() { seedExampleRunbookTapped() }
+    var debugRunbookEmptyState: HelmEmptyState? { runbookGridEmptyState }
     #endif
 
     // MARK: Theme

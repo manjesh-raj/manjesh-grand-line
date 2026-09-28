@@ -57,6 +57,7 @@ enum ReviewUIUXSelfTest {
             ("U17_lockScreenPasswordFieldDoesNotLookPreFilled", test_u17LockPlaceholder),
             ("X1_lockScreenOffersALocalFallbackWhenTheVaultIsUnreachable", test_x1LocalFallback),
             ("X3_theGoMenuNamesEachDestinationOnce", test_x3GoMenu),
+            ("X5_emptyPagesOfferAnExampleToStartFrom", test_x5SeedExamples),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -1215,6 +1216,109 @@ enum ReviewUIUXSelfTest {
             if !item.isSeparatorItem { previousWasHeader = isHeader }
         }
         return nil
+    }
+
+    // MARK: X5 - empty pages should teach
+
+    private static func buttonTitles(in view: NSView) -> [String] {
+        descendants(of: view).compactMap { ($0 as? NSButton)?.title }
+    }
+
+    private static func test_x5SeedExamples() -> String? {
+        // The content itself, first. Each example has to demonstrate the
+        // mechanic its own page reads, or it teaches nothing - a runbook
+        // with no fenced blocks reports "0 steps", a postmortem with no
+        // root-cause line renders the page's emptiest row, and a Welcome
+        // page with no wiki-link does not show the one thing the notebook
+        // gives no other clue about.
+        guard DocsRunbookMetadata.stepCount(in: SeedExamples.runbookContent) >= 3 else {
+            return "the example runbook has \(DocsRunbookMetadata.stepCount(in: SeedExamples.runbookContent)) "
+                 + "command steps, so the page would show it as an empty checklist"
+        }
+        guard DocsRunbookMetadata.rootCause(in: SeedExamples.postmortemContent) != nil else {
+            return "the example postmortem carries no root-cause line, which is what its own row "
+                 + "subtitle reads"
+        }
+        guard SeedExamples.notebookContent.contains("[["),
+              SeedExamples.notebookContent.contains("]]") else {
+            return "the Welcome page does not demonstrate [[links]], which is the review's own "
+                 + "stated reason for it (review X5)"
+        }
+        guard !SeedExamples.stickyText.isEmpty, !SeedExamples.stickyTitle.isEmpty else {
+            return "the example sticky note is blank"
+        }
+
+        return autoreleasepool { () -> String? in
+            // Every store here is redirected to this process's own scratch
+            // root by `main.swift`'s `#if FM_SELFTESTS` block, so nothing
+            // below reaches the captain's real records.
+            let runbooks = RunbooksController()
+            _ = runbooks.view
+            runbooks.debugReloadRunbooks()
+            guard let runbookEmpty = runbooks.debugRunbookEmptyState else {
+                return "Runbooks is not showing its empty state, so this case is measuring something else"
+            }
+            guard buttonTitles(in: runbookEmpty).contains("Add an example runbook") else {
+                return "Runbooks' empty page still offers nothing to press (review X5): "
+                     + "\(buttonTitles(in: runbookEmpty))"
+            }
+            let runbookStore = DocsRunbookStore()
+            let runbooksBefore = runbookStore.listRunbooks().count
+            runbooks.debugSeedExampleRunbook()
+            let runbooksAfter = DocsRunbookStore().listRunbooks()
+            guard runbooksAfter.count == runbooksBefore + 1,
+                  runbooksAfter.contains(where: { $0.title == SeedExamples.runbookTitle }) else {
+                return "seeding wrote no runbook: \(runbooksAfter.map(\.title))"
+            }
+
+            let postmortems = PostmortemsController()
+            _ = postmortems.view
+            guard buttonTitles(in: postmortems.debugPostmortemEmptyState).contains("Add an example") else {
+                return "Postmortems' empty page offers no example: "
+                     + "\(buttonTitles(in: postmortems.debugPostmortemEmptyState))"
+            }
+            let postmortemsBefore = DocsRunbookStore().listPostmortems().count
+            postmortems.debugSeedExamplePostmortem()
+            let postmortemsAfter = DocsRunbookStore().listPostmortems()
+            guard postmortemsAfter.count == postmortemsBefore + 1,
+                  postmortemsAfter.contains(where: { $0.title == SeedExamples.postmortemTitle }) else {
+                return "seeding wrote no postmortem: \(postmortemsAfter.map(\.title))"
+            }
+
+            let sticky = StickyBoardController()
+            _ = sticky.view
+            let stickyStore = sticky.store
+            let notesBefore = stickyStore.activeNotes.count
+            guard buttonTitles(in: sticky.view).contains("Add an example note") else {
+                return "the Sticky Board's empty state offers no example note"
+            }
+            sticky.debugSeedExampleNote()
+            guard stickyStore.activeNotes.count == notesBefore + 1,
+                  stickyStore.activeNotes.contains(where: { $0.title == SeedExamples.stickyTitle }) else {
+                return "seeding pinned no note: \(stickyStore.activeNotes.map(\.title))"
+            }
+
+            let notebookStore = NotebookStore()
+            let notebook = NotebookController(store: notebookStore)
+            _ = notebook.view
+            guard let overlay = notebook.debugEditorOverlayState else {
+                return "the Notebook is not showing its empty overlay"
+            }
+            guard buttonTitles(in: overlay).contains("Add a Welcome page") else {
+                return "the Notebook's empty editor offers no Welcome page: \(buttonTitles(in: overlay))"
+            }
+            let pagesBefore = notebookStore.listPages().count
+            notebook.debugSeedWelcomePage()
+            let pagesAfter = notebookStore.listPages()
+            guard pagesAfter.count == pagesBefore + 1,
+                  let welcome = pagesAfter.first(where: { $0.title == SeedExamples.notebookTitle }) else {
+                return "seeding wrote no Welcome page: \(pagesAfter.map(\.title))"
+            }
+            guard welcome.content.contains("[[") else {
+                return "the written Welcome page lost its wiki-link"
+            }
+            return nil
+        }
     }
 }
 

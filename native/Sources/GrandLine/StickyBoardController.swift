@@ -638,6 +638,18 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
                     ? "Right-click a note (or use its \u{22EF} menu) to archive it, and it waits here instead of crowding the board."
                     : "Click \u{201C}New Note\u{201D} above to add your first sticky note.",
                 size: .standard, boxed: false,
+                // **UX issue X5.** The board's empty state pointed at a
+                // button somewhere else on the page and offered nothing
+                // itself. The archive copy keeps none: an empty archive is
+                // reached by archiving a note, and seeding one there would
+                // be theatre.
+                accessory: wantsArchiveCopy ? nil : {
+                    let seed = HelmButton(title: "Add an example note", variant: .secondary,
+                                          target: self, action: #selector(seedExampleNoteTapped))
+                    seed.controlSize = .small
+                    seed.toolTip = "Pins one example note you can drag, recolour or delete."
+                    return seed
+                }(),
                 hue: RailDestination.stickyBoard.domainHue,
                 artwork: RailDestination.stickyBoard.drillHeaderArtwork)
             state.translatesAutoresizingMaskIntoConstraints = false
@@ -677,6 +689,23 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         if let noteView = noteViews[note.id] {
             view.window?.makeFirstResponder(noteView.titleFieldForFocus)
         }
+    }
+
+    /// X5: the example note. Everything `newNoteTapped` does, with real
+    /// content and without stealing focus into a title field the captain did
+    /// not ask to edit.
+    @objc private func seedExampleNoteTapped() {
+        let position = nextPosition()
+        let note = store.addNote(
+            title: SeedExamples.stickyTitle,
+            text: SeedExamples.stickyText,
+            color: StickyNoteColor.allCases.randomElement() ?? .yellow,
+            x: Double(position.x), y: Double(position.y),
+            rotationDegrees: Double.random(in: -4...4))
+        addNoteView(for: note)
+        updateFooter()
+        updateOverlay()
+        onDrillSubtitleChanged?()
     }
 
     /// F2: file a captured line as a note, without opening the board first.
@@ -830,6 +859,8 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     var debugStatusDot: NSView { statusDot }
     var debugScrollView: NSScrollView { scrollView }
     func debugNewNote() { newNoteTapped() }
+    /// X5: the real button's action, so a check drives what a click drives.
+    func debugSeedExampleNote() { seedExampleNoteTapped() }
     func debugDeleteNote(id: String) { deleteNote(id: id) }
     /// Drives the real toolbar action, so a suite exercises the archive
     /// drawer the way the button does rather than setting the flag itself.

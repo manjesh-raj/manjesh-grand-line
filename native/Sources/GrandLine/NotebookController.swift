@@ -372,6 +372,7 @@ final class NotebookController: NSViewController, DaylightDrillActions {
                                     body: "No pages yet. Every page you add shows up here.",
                                     actionTitle: "New page",
                                     onAction: { [weak self] in self?.newPageFromMenu() }))
+
         root.addSubview(sidebar)
 
         buildEditorCard()
@@ -618,7 +619,10 @@ final class NotebookController: NSViewController, DaylightDrillActions {
                           // reads, so the two cannot contradict each other
                           // again.
                           body: "Start with today's note, or add a page. "
-                              + "Everything you write here is a markdown file \(whereItGoes).")
+                              + "Everything you write here is a markdown file \(whereItGoes).",
+                          // X5: the Welcome page, offered where the captain
+                          // is actually looking.
+                          action: ("Add a Welcome page", #selector(seedWelcomePageTapped)))
     }
 
     private func open(pageID: String) {
@@ -1048,6 +1052,14 @@ final class NotebookController: NSViewController, DaylightDrillActions {
         webView.call("focusEditor")
     }
 
+    /// X5: writes the Welcome page and opens it.
+    @objc private func seedWelcomePageTapped() {
+        let created = store.createPage(title: SeedExamples.notebookTitle,
+                                       content: SeedExamples.notebookContent)
+        reload()
+        open(pageID: created.id)
+    }
+
     @objc private func todayTapped() {
         let note = store.openDailyNote()
         reload()
@@ -1132,10 +1144,25 @@ final class NotebookController: NSViewController, DaylightDrillActions {
         AppLog.lifecycle.error("notebook: \(error, privacy: .public)")
     }
 
-    private func showEditorOverlay(symbol: String, title: String, body: String) {
+    /// - Parameter action: an optional call to action under the copy.
+    ///   **UX issue X5**: a blank editor gives no clue that `[[two
+    ///   brackets]]` makes a link, or that the Backlinks panel on the right
+    ///   will then have something in it - which is the one mechanic here
+    ///   that nothing else in the app hints at. The review asked for a
+    ///   Welcome page demonstrating exactly that, and it is opt-in rather
+    ///   than seeded on first launch (see `SeedExamples`' header).
+    private func showEditorOverlay(symbol: String, title: String, body: String,
+                                   action: (title: String, selector: Selector)? = nil) {
         editorOverlayState?.removeFromSuperview()
+        let accessory: NSView? = action.map { spec in
+            let button = HelmButton(title: spec.title, variant: .secondary,
+                                    target: self, action: spec.selector)
+            button.controlSize = .small
+            return button
+        }
         let state = HelmEmptyState(symbol: symbol, title: title, body: body,
-                                   size: .standard, hue: RailDestination.notebook.domainHue)
+                                   size: .standard, accessory: accessory,
+                                   hue: RailDestination.notebook.domainHue)
         state.translatesAutoresizingMaskIntoConstraints = false
         editorOverlay.addSubview(state)
         NSLayoutConstraint.activate([
@@ -1202,6 +1229,9 @@ final class NotebookController: NSViewController, DaylightDrillActions {
     func debugOpen(pageID: String) { open(pageID: pageID) }
     func debugReload() { reload() }
     func debugNewPage() { newPageTapped() }
+    /// X5: the real button's action, so a check drives what a click drives.
+    func debugSeedWelcomePage() { seedWelcomePageTapped() }
+    var debugEditorOverlayState: HelmEmptyState? { editorOverlayState }
     func debugToday() { todayTapped() }
     /// Drives the same path the editor's own debounce does, so a suite can
     /// assert the write/rename/index behaviour without a live web page.
