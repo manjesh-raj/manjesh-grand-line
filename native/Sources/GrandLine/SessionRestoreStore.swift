@@ -84,7 +84,8 @@ enum SessionRestoreStore {
             // like a first launch and then be overwritten by the next save.
             var backup: String?
             return StoreLoadFailure.decodeJSON(
-                SessionRestoreState.self, at: url, label: "session-restore.json", didBackUp: &backup
+                SessionRestoreState.self, at: url, label: "session-restore.json",
+                sensitive: true, didBackUp: &backup
             )
         }
         guard let legacy = defaults.data(forKey: legacyDefaultsKey),

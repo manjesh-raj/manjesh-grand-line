@@ -94,7 +94,7 @@ final class SSHKeyStore {
     private func load() {
         var backup: String?
         keys = StoreLoadFailure.decodeJSON(
-            [SSHKey].self, at: fileURL, label: "keys.json", didBackUp: &backup
+            [SSHKey].self, at: fileURL, label: "keys.json", sensitive: true, didBackUp: &backup
         ) ?? []
         loadFailureBackupPath = backup
     }

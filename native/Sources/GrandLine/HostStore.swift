@@ -99,6 +99,13 @@ final class HostStore {
     // MARK: Disk
 
     private func load() {
+        // M3's read half (review bug B37): a file this store writes at 0600
+        // can come back 0644 from anything that recreates it outside this app
+        // - a restore, a migration, a `git checkout` on a synced copy - and
+        // nothing rewrites it until the captain's next host edit. Same
+        // contract as `StoreLoadFailure.decodeJSON(sensitive:)`, which this
+        // store's own hand-rolled load path predates.
+        SensitiveFile.restrict(fileURL)
         guard let data = try? Data(contentsOf: fileURL) else {
             hosts = []
             return

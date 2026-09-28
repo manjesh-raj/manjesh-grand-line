@@ -87,13 +87,38 @@ enum StoreLoadFailure {
     /// `didBackUp` is set to the backup path when one was written, so a store
     /// that surfaces the failure to the captain (as `HostStore` does through
     /// `loadFailureBackupPath`) can keep doing that.
+    /// `sensitive: true` additionally tightens the file to
+    /// `SensitiveFile.fileMode` **before** reading it - the read half of M3,
+    /// and the gap that finding recorded rather than closed (review bug B37).
+    /// It is the exact mirror of `AtomicWrite.data(_:to:sensitive:)`, and a
+    /// store that writes with that flag should read with this one.
+    ///
+    /// **Why a write-side chmod is not enough.** A `git checkout` or `pull`
+    /// that updates a synced store *recreates* the file, honouring the
+    /// process umask, so a copy arriving from another machine lands at 0644.
+    /// Git tracks only the executable bit, so it neither preserves 0600 nor
+    /// reports the file as modified - which is what makes tightening a
+    /// tracked file safe, and equally what makes nothing notice that it was
+    /// loosened. The vault is the case that matters: its payload is AES-GCM
+    /// ciphertext, but the KDF salt and round count sit in cleartext beside
+    /// it, and the whole file stays world-readable until this app's next
+    /// write - which for a vault nobody edits on this machine may be never.
+    ///
+    /// Before the read, not after: the point is that no other account gets a
+    /// readable window, and the bytes are already on disk, so there is
+    /// nothing to lose by hardening first. `SensitiveFile.restrict` is
+    /// best-effort and non-throwing (see its own note), so a mode that cannot
+    /// be changed logs and the load proceeds - refusing to read a vault over
+    /// a `chmod` would be a worse outcome than the posture it protects.
     static func decodeJSON<T: Decodable>(
         _ type: T.Type,
         at url: URL,
         decoder: JSONDecoder = JSONDecoder(),
         label: String? = nil,
+        sensitive: Bool = false,
         didBackUp: inout String?
     ) -> T? {
+        if sensitive { SensitiveFile.restrict(url) }
         guard let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
         if let decoded = try? decoder.decode(type, from: data) { return decoded }
         didBackUp = backUp(url, label: label)
@@ -105,9 +130,11 @@ enum StoreLoadFailure {
         _ type: T.Type,
         at url: URL,
         decoder: JSONDecoder = JSONDecoder(),
-        label: String? = nil
+        label: String? = nil,
+        sensitive: Bool = false
     ) -> T? {
         var ignored: String?
-        return decodeJSON(type, at: url, decoder: decoder, label: label, didBackUp: &ignored)
+        return decodeJSON(type, at: url, decoder: decoder, label: label,
+                          sensitive: sensitive, didBackUp: &ignored)
     }
 }

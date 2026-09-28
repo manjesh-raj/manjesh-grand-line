@@ -379,6 +379,7 @@ final class CredentialVaultStore {
         guard let decoded = StoreLoadFailure.decodeJSON(CredentialVaultFile.self,
                                                         at: url,
                                                         label: "credential vault",
+                                                        sensitive: true,
                                                         didBackUp: &backup) else {
             loadFailureBackupPath = backup
             return .unreadable(reason: "The vault file could not be read.", backupPath: backup)
@@ -449,6 +450,7 @@ final class CredentialVaultStore {
         guard let onDisk = StoreLoadFailure.decodeJSON(CredentialVaultFile.self,
                                                        at: url,
                                                        label: "credential vault",
+                                                       sensitive: true,
                                                        didBackUp: &backup) else {
             loadFailureBackupPath = backup
             completion(.unreadable("The vault file could not be read."))
@@ -490,6 +492,7 @@ final class CredentialVaultStore {
         guard let onDisk = StoreLoadFailure.decodeJSON(CredentialVaultFile.self,
                                                        at: fileURL,
                                                        label: "credential vault",
+                                                       sensitive: true,
                                                        didBackUp: &backup) else {
             loadFailureBackupPath = backup
             completion(.unreadable("The vault file could not be read."))
@@ -1125,6 +1128,11 @@ final class CredentialVaultStore {
     /// on any hot path. It reads only the cleartext header - no key is
     /// involved and nothing is decrypted.
     var recoveryKeyExistsOnDisk: Bool {
+        // B37: one of the two vault reads that do not go through
+        // `StoreLoadFailure.decodeJSON`, and the earliest one on the locked
+        // screen - so it is a realistic first look at a file a `git pull`
+        // just recreated at 0644.
+        SensitiveFile.restrict(fileURL)
         guard let data = try? Data(contentsOf: fileURL),
               let onDisk = try? JSONDecoder().decode(CredentialVaultFile.self, from: data) else { return false }
         return onDisk.recovery != nil
@@ -1218,6 +1226,7 @@ final class CredentialVaultStore {
         guard let onDisk = StoreLoadFailure.decodeJSON(CredentialVaultFile.self,
                                                        at: fileURL,
                                                        label: "credential vault",
+                                                       sensitive: true,
                                                        didBackUp: &backup) else {
             loadFailureBackupPath = backup
             completion(.unreadable("The vault file could not be read."))
@@ -1557,6 +1566,10 @@ final class CredentialVaultStore {
     /// A re-key elsewhere is **not** merged - see the `verifier` guard.
     private func adoptOnDiskChangesIfNeeded(vaultKey: CredentialVaultKey,
                                             lastKnown: CredentialVaultFile) throws -> CredentialVaultFile {
+        // B37: the other direct read. This one exists precisely because a
+        // pull can have changed the file underneath us, which is the same
+        // event that can have loosened its mode.
+        SensitiveFile.restrict(fileURL)
         guard let data = try? Data(contentsOf: fileURL),
               let onDisk = try? JSONDecoder().decode(CredentialVaultFile.self, from: data) else {
             // No file, or one this build cannot decode. Neither is this
