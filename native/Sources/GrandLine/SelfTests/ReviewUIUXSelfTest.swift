@@ -54,6 +54,7 @@ enum ReviewUIUXSelfTest {
             ("U14_allDestinationsOverlayFitsEveryName", test_u14OverlayWidth),
             ("U15_cardsHugTheContentTheyActuallyHold", test_u15CardHeights),
             ("U16_taskEditorLiftsTheDatePhraseAndEnablesTheRepeatPickers", test_u16TaskEditor),
+            ("U17_lockScreenPasswordFieldDoesNotLookPreFilled", test_u17LockPlaceholder),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -1025,6 +1026,33 @@ enum ReviewUIUXSelfTest {
             guard keptTask?.title == "Buy milk tomorrow at 5pm" else {
                 return "dismissing the detection still stripped the title: "
                      + "\(String(describing: keptTask?.title))"
+            }
+            return nil
+        }
+    }
+
+    // MARK: U17 - the lock screen's pre-filled-looking password field
+
+    private static func test_u17LockPlaceholder() -> String? {
+        autoreleasepool {
+            let controller = LockScreenController()
+            _ = controller.view
+            let placeholder = controller.debugPasswordPlaceholder
+            guard !placeholder.isEmpty else {
+                return "the password field has no placeholder at all, so the empty field says "
+                     + "nothing about what it is for"
+            }
+            // The defect: a secure field showing dots is a secure field with
+            // something in it.
+            guard !placeholder.contains("\u{2022}") else {
+                return "the empty password field still renders masked dots (\(placeholder.debugDescription)), "
+                     + "which reads as a pre-filled password (review U17)"
+            }
+            // Any masking glyph, not just the one that shipped - a bullet
+            // swapped for a middle dot or an asterisk run is the same defect.
+            for glyph in ["*", "\u{00B7}", "\u{25CF}", "\u{2219}"] where placeholder.contains(glyph) {
+                return "the empty password field renders \(glyph.debugDescription) as a mask, which "
+                     + "reads as a pre-filled password (review U17)"
             }
             return nil
         }

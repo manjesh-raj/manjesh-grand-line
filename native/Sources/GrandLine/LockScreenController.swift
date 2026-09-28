@@ -228,12 +228,17 @@ final class LockScreenController: NSViewController {
 
     private let titleLabel = NSTextField(labelWithString: "Welcome back, Manjesh")
     private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
-    /// The empty-state placeholder reads as masked dots rather than the word
-    /// "Password" - it's rendered by `SunkenFieldTheming.applyPlaceholder` as a
-    /// plain string in `HelmField.mutedInk`, so a literal bullet run is all
-    /// that's needed; it's still only shown while empty and still replaced the
-    /// instant typing starts, same as any other placeholder in this app.
-    private let passwordField = HelmSecureTextField(placeholder: "•••••••••")
+    /// **Review defect U17.** The placeholder used to be a run of nine
+    /// bullets, on the theory that masked dots are what a password field
+    /// looks like. They are - which is the problem: a secure field showing
+    /// dots is a secure field with something *in* it, so the first thing the
+    /// app shows on launch read as a pre-filled password sitting behind an
+    /// Unlock button, and the natural first move is to clear a field that is
+    /// already empty.
+    ///
+    /// A placeholder's job is to say what the empty field is for, and the
+    /// one thing dots cannot say is "empty". The word can.
+    private let passwordField = HelmSecureTextField(placeholder: "Password")
     /// H4's un-clipped host for the field's focus glow - see where it is wired.
     private let passwordWell = NSView()
     private let unlockButton = HelmButton(title: "Unlock", variant: .primary)
@@ -1007,6 +1012,17 @@ final class LockScreenController: NSViewController {
     }
 
     var debugPasswordFieldHasGlowHost: Bool { passwordField.glowHost != nil }
+
+    /// Review defect U17: what the empty password field actually shows.
+    /// Read off the control so a check cannot pass against a constant that
+    /// is no longer the one the field was built with.
+    /// `SunkenFieldTheming` writes a `placeholderAttributedString` (it has
+    /// to, to carry the theme's muted ink), which leaves `placeholderString`
+    /// nil - so a check reading only the plain property would see "no
+    /// placeholder" whatever the field shows.
+    var debugPasswordPlaceholder: String {
+        passwordField.placeholderAttributedString?.string ?? passwordField.placeholderString ?? ""
+    }
     #endif
 
     deinit {
