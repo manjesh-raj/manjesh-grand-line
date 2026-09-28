@@ -53,6 +53,7 @@ enum ReviewUIUXSelfTest {
             ("U10_updatesRowsCarryAnActionOnlyWhenOneIsNeeded", test_u10CheckButton),
             ("U14_allDestinationsOverlayFitsEveryName", test_u14OverlayWidth),
             ("U15_cardsHugTheContentTheyActuallyHold", test_u15CardHeights),
+            ("U16_taskEditorLiftsTheDatePhraseAndEnablesTheRepeatPickers", test_u16TaskEditor),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -945,6 +946,88 @@ enum ReviewUIUXSelfTest {
             if let previous { setenv("FM_SHIFT_DIR", previous, 1) } else { unsetenv("FM_SHIFT_DIR") }
         }
         return body(ShiftStore())
+    }
+
+    // MARK: U16 - the task editor
+
+    private static func test_u16TaskEditor() -> String? {
+        // The pure half first: what the title should read once the date has
+        // been lifted out of it.
+        let cases: [(String, String)] = [
+            ("Buy milk tomorrow at 5pm", "Buy milk"),
+            ("Review deploy notes tomorrow 3pm", "Review deploy notes"),
+            ("Call Bob on monday", "Call Bob"),
+            ("3pm standup", "standup"),
+            ("Ship the release next week", "Ship the release"),
+        ]
+        for (typed, expected) in cases {
+            guard let parsed = ShiftDateParser.parse(typed) else {
+                return "\(typed.debugDescription) no longer parses as a date at all, so this case is "
+                     + "measuring something else"
+            }
+            let stripped = ShiftDateParser.titleWithoutDatePhrase(typed, parsed: parsed)
+            guard stripped == expected else {
+                return "\(typed.debugDescription) strips to \(stripped.debugDescription), expected "
+                     + "\(expected.debugDescription) (review U16)"
+            }
+        }
+        // A title that *is* the date keeps its words - blanking it would
+        // lose the only thing typed.
+        if let parsed = ShiftDateParser.parse("tomorrow") {
+            guard ShiftDateParser.titleWithoutDatePhrase("tomorrow", parsed: parsed) == "tomorrow" else {
+                return "a title that is nothing but the date phrase was emptied"
+            }
+        }
+
+        return autoreleasepool { () -> String? in
+            let editor = ShiftTaskEditorController(task: nil, projects: [])
+            _ = editor.view
+
+            // The review's own second half: the pickers stay dimmed after a
+            // detected due date.
+            guard !editor.debugRepeatEnabled, !editor.debugReminderEnabled else {
+                return "Repeat/Remind are live before any due date exists, so this case cannot tell "
+                     + "the fix from the defect"
+            }
+            editor.debugTypeTitle("Buy milk tomorrow at 5pm")
+            guard editor.debugDueRowIsOn else {
+                return "typing a date phrase no longer turns the due switch on"
+            }
+            guard editor.debugRepeatEnabled, editor.debugReminderEnabled else {
+                return "a due date arrived by detection and the Repeat/Remind pickers are still "
+                     + "dimmed (review U16)"
+            }
+
+            // And the first half, through the real Save the footer button
+            // fires.
+            var saved: ShiftTask?
+            editor.onSave = { task, _ in saved = task }
+            editor.debugTriggerSave()
+            guard let saved else { return "Save produced no task" }
+            guard saved.title == "Buy milk" else {
+                return "the saved task is still called \(saved.title.debugDescription) - the detected "
+                     + "phrase was not lifted out of the title (review U16)"
+            }
+            guard saved.dueDate != nil else {
+                return "the phrase was taken out of the title without the due date being set, which "
+                     + "would lose it entirely"
+            }
+
+            // Dismissing the detection is the captain saying "those words
+            // are not a date", so they stay.
+            let kept = ShiftTaskEditorController(task: nil, projects: [])
+            _ = kept.view
+            kept.debugTypeTitle("Buy milk tomorrow at 5pm")
+            kept.debugDismissDetected()
+            var keptTask: ShiftTask?
+            kept.onSave = { task, _ in keptTask = task }
+            kept.debugTriggerSave()
+            guard keptTask?.title == "Buy milk tomorrow at 5pm" else {
+                return "dismissing the detection still stripped the title: "
+                     + "\(String(describing: keptTask?.title))"
+            }
+            return nil
+        }
     }
 }
 

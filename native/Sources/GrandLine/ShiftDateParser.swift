@@ -21,6 +21,17 @@ struct ShiftParsedDate {
     /// The substring that was recognized - shown in the inline confirmation
     /// label so the person typing can see what was detected.
     let matchedText: String
+
+    /// The individual phrases the scan matched, each an exact (lowercased)
+    /// substring of the title - the day phrase and the time phrase are
+    /// separate entries because the title may have a connector between them
+    /// ("tomorrow **at** 5pm") that `matchedText` joins over.
+    ///
+    /// Review defect U16 needs these rather than `matchedText`: to take the
+    /// detected phrase back out of the title you have to know where it
+    /// really was, and "tomorrow 5pm" is not a substring of "Buy milk
+    /// tomorrow at 5pm".
+    let matchedPhrases: [String]
 }
 
 enum ShiftDateParser {
@@ -78,10 +89,13 @@ enum ShiftDateParser {
             comps.hour = hour
             comps.minute = minute
             guard let combined = cal.date(from: comps) else { return nil }
-            let matched = [dayMatch, timeMatch].compactMap { $0 }.joined(separator: " ")
-            return ShiftParsedDate(date: combined, hasTime: true, matchedText: matched)
+            let phrases = [dayMatch, timeMatch].compactMap { $0 }
+            return ShiftParsedDate(date: combined, hasTime: true,
+                                   matchedText: phrases.joined(separator: " "),
+                                   matchedPhrases: phrases)
         case (.some(let day), .none):
-            return ShiftParsedDate(date: day, hasTime: false, matchedText: dayMatch ?? "")
+            return ShiftParsedDate(date: day, hasTime: false, matchedText: dayMatch ?? "",
+                                   matchedPhrases: [dayMatch].compactMap { $0 })
         case (.none, .some((let hour, let minute))):
             // A bare time with no day phrase: today if that time hasn't
             // passed yet, otherwise tomorrow - matches how a person would
@@ -93,10 +107,49 @@ enum ShiftDateParser {
             if combined < now {
                 combined = cal.date(byAdding: .day, value: 1, to: combined) ?? combined
             }
-            return ShiftParsedDate(date: combined, hasTime: true, matchedText: timeMatch ?? "")
+            return ShiftParsedDate(date: combined, hasTime: true, matchedText: timeMatch ?? "",
+                                   matchedPhrases: [timeMatch].compactMap { $0 })
         case (.none, .none):
             return nil
         }
+    }
+
+    /// **Review defect U16.** What the title should read once the date it
+    /// carried has been lifted out of it into the due-date field.
+    ///
+    /// The review's own example: typing "Buy milk tomorrow at 5pm" detects
+    /// the date, fills the picker - and leaves the task called "Buy milk
+    /// tomorrow at 5pm" forever, so a list of tasks reads as a list of
+    /// stale dates. The phrase has been turned into structured data; leaving
+    /// a copy of it in the prose is the duplication.
+    ///
+    /// Each matched phrase is removed once, case-insensitively, and then any
+    /// connector word left dangling where it used to be ("at", "on", "by",
+    /// "due", "@", "-") is dropped, because "Buy milk at" is not an
+    /// improvement on the original.
+    ///
+    /// **Returns the title unchanged when the result would be empty.** A
+    /// task called just "tomorrow" is a task whose whole title is the date,
+    /// and silently blanking it would lose the only thing the captain typed.
+    static func titleWithoutDatePhrase(_ title: String, parsed: ShiftParsedDate) -> String {
+        var working = title
+        for phrase in parsed.matchedPhrases where !phrase.isEmpty {
+            guard let range = working.range(of: phrase, options: .caseInsensitive) else { continue }
+            working.replaceSubrange(range, with: " ")
+        }
+        var words = working.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+        while let last = words.last, isConnector(last) { words.removeLast() }
+        while let first = words.first, isConnector(first) { words.removeFirst() }
+        let stripped = words.joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return stripped.isEmpty ? title : stripped
+    }
+
+    /// A word that only made sense as glue in front of the date phrase that
+    /// is no longer there.
+    private static func isConnector(_ word: String) -> Bool {
+        let bare = word.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ",.;:"))
+        return ["at", "on", "by", "due", "@", "-", "\u{2013}", "\u{2014}"].contains(bare)
     }
 
     /// Finds the first weekday-name keyword in `text`, optionally requiring

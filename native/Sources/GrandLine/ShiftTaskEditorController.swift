@@ -94,6 +94,19 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
                                                                weight: HelmSymbol.weight(for: .medium)) ?? NSImage())
     private let detectedLabel = NSTextField(labelWithString: "")
 
+    /// **Review defect U16.** The live detection behind the "Detected: ..."
+    /// row, kept so Save can take those words back out of the title.
+    ///
+    /// Held rather than re-parsed at Save time on purpose: the captain may
+    /// have dismissed the row or driven the due switch by hand since, and
+    /// in both of those cases the phrase stays in the title. Re-parsing
+    /// would have no way to know that happened.
+    ///
+    /// The title is **not** rewritten while typing. Editing the field out
+    /// from under someone mid-sentence is worse than the defect; the lift
+    /// happens once, on Save.
+    private var detectedPhrase: ShiftParsedDate?
+
     private var selectedPriority: ShiftPriority
     private let priorityDot = HelmDotAccessory()
     private lazy var priorityCard = HelmFieldCard(label: "Priority", accessory: priorityDot)
@@ -423,17 +436,28 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
             comps.minute = existingTime.minute
             dueDatePicker.dateValue = Calendar.current.date(from: comps) ?? parsed.date
         }
+        // **Review defect U16's second half.** Turning the due switch on
+        // above is exactly the state `syncRepeatControls` gates Repeat and
+        // Remind on, but only `hasDueToggled()` ever called it - so a due
+        // date that arrived by detection left both pickers dimmed over a
+        // task that now had the anchor they need. The switch and the
+        // detection are two ways into one state, and both re-sync it.
+        syncRepeatControls()
         let (dateStr, timeStr) = ShiftDateFormatting.components(from: dueDatePicker.dateValue)
         detectedLabel.stringValue = "Detected: \(ShiftDateFormatting.friendly(dateStr, time: parsed.hasTime ? timeStr : nil))"
         let wasHidden = detectedRow.isHidden
         detectedRow.isHidden = false
         if wasHidden { form.sizeToFitContent() }
+        detectedPhrase = parsed
     }
 
     @objc private func dismissDetected() {
         let wasHidden = detectedRow.isHidden
         detectedRow.isHidden = true
         dueManuallyEdited = true
+        // U16: the captain has said "that is not a date" - so the title
+        // keeps the words, and Save must not lift them out of it.
+        detectedPhrase = nil
         if !wasHidden { form.sizeToFitContent() }
     }
 
@@ -443,6 +467,9 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         dueDatePicker.isEnabled = on
         dueDatePicker.isHidden = !on
         detectedRow.isHidden = true
+        // U16: whatever the captain does to the switch by hand supersedes
+        // the detection, including keeping the phrase in the title.
+        detectedPhrase = nil
         // F5: the repeat and reminder controls have no meaning without an
         // anchor, so they follow this switch rather than sitting enabled
         // over a task that can never recur.
@@ -629,7 +656,14 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     // MARK: Save
 
     @objc private func save() {
-        let titleText = titleField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        var titleText = titleField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        // U16: the detected phrase has become structured data in the due
+        // field, so it comes out of the prose. `titleWithoutDatePhrase`
+        // returns the title unchanged when the phrase *was* the whole title.
+        if dueRow.isOn, let detectedPhrase {
+            titleText = ShiftDateParser.titleWithoutDatePhrase(titleText, parsed: detectedPhrase)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         guard !titleText.isEmpty else {
             view.window?.makeFirstResponder(titleField)
             NSSound.beep()
@@ -660,11 +694,26 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         task.recurrence = dueRow.isOn ? recurrence : nil
         task.reminderMinutesBefore = dueRow.isOn ? reminderMinutes : nil
         onSave?(task, attachmentChange ?? .unchanged)
-        dismiss(self)
+        dismissIfPresented()
+    }
+
+    /// AGENTS.md gotcha (6) has the other half of this: `dismiss(_:)` is a
+    /// no-op for a controller whose window took it as `contentViewController`.
+    /// For one that was never presented *at all* it is worse than a no-op -
+    /// AppKit raises `NSInternalInconsistencyException` ("maybe this view
+    /// controller was not presented?") and the process dies. A window-backed
+    /// suite that drives the real Save button hits exactly that, so the
+    /// check is here rather than in each caller.
+    private func dismissIfPresented() {
+        if presentingViewController != nil {
+            dismiss(self)
+        } else {
+            view.window?.close()
+        }
     }
 
     @objc private func cancel() {
-        dismiss(self)
+        dismissIfPresented()
     }
 
     /// Asks; never deletes. The confirmation and the store call both belong
@@ -674,7 +723,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     @objc private func deleteTask() {
         guard let id = editing?.id else { return }
         onDelete?(id)
-        dismiss(self)
+        dismissIfPresented()
     }
 
     #if FM_SELFTESTS
@@ -689,5 +738,24 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     /// Triggers the real `save()` - the same method the footer's own Save
     /// button target/action calls.
     func debugTriggerSave() { save() }
+
+    /// Review defect U16: whether the Repeat and Remind pickers are live.
+    /// Read off the controls, not re-derived from `dueRow.isOn` - the whole
+    /// defect was that the two had drifted apart.
+    var debugRepeatEnabled: Bool { repeatCard.isEnabled }
+    var debugReminderEnabled: Bool { reminderCard.isEnabled }
+
+    /// Drives the real `controlTextDidChange` path a keystroke in the title
+    /// field takes - never the private helper behind it, which would leave
+    /// the wiring free to be deleted with this check still green
+    /// (AGENTS.md's `debug*` hook rule).
+    func debugTypeTitle(_ text: String) {
+        titleField.stringValue = text
+        controlTextDidChange(Notification(name: NSControl.textDidChangeNotification,
+                                          object: titleField))
+    }
+
+    /// Drives the real "that is not a date" button's action.
+    func debugDismissDetected() { dismissDetected() }
     #endif
 }
