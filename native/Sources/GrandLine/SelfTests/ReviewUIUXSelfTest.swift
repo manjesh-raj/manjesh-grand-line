@@ -55,6 +55,7 @@ enum ReviewUIUXSelfTest {
             ("U15_cardsHugTheContentTheyActuallyHold", test_u15CardHeights),
             ("U16_taskEditorLiftsTheDatePhraseAndEnablesTheRepeatPickers", test_u16TaskEditor),
             ("U17_lockScreenPasswordFieldDoesNotLookPreFilled", test_u17LockPlaceholder),
+            ("X1_lockScreenOffersALocalFallbackWhenTheVaultIsUnreachable", test_x1LocalFallback),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -1053,6 +1054,117 @@ enum ReviewUIUXSelfTest {
             for glyph in ["*", "\u{00B7}", "\u{25CF}", "\u{2219}"] where placeholder.contains(glyph) {
                 return "the empty password field renders \(glyph.debugDescription) as a mask, which "
                      + "reads as a pre-filled password (review U17)"
+            }
+            return nil
+        }
+    }
+
+    // MARK: X1 - the lock screen's dependence on the vault helper
+
+    private static func test_x1LocalFallback() -> String? {
+        autoreleasepool {
+            let controller = LockScreenController()
+            _ = controller.view
+
+            // Simulating "the helper is unreachable" is exactly what the two
+            // waiting states *are* - `AppShellController` applies them when
+            // `av list` does not answer, and retries behind them forever.
+            let waiting: [LockScreenController.ContentState] = [.serviceNotRunning, .transientFailure]
+            let settled: [LockScreenController.ContentState] = [
+                .locked(subtitle: "Grand Line is locked."), .noPasswordConfigured, .avUnavailable,
+            ]
+
+            // Discriminating power first: with no fallback wired, the two
+            // waiting states are still the dead end the review found.
+            controller.localAuthAvailable = { true }
+            controller.onLocalAuthAttempt = nil
+            for state in waiting {
+                controller.apply(state)
+                guard controller.debugLocalAuthStack.isHidden else {
+                    return "the fallback is offered with nothing wired to it, so this case cannot "
+                         + "tell the fix from the defect"
+                }
+            }
+
+            var challenges = 0
+            var answer = true
+            controller.onLocalAuthAttempt = { completion in
+                challenges += 1
+                completion(answer)
+            }
+
+            // A Mac that cannot authenticate its owner keeps the retry loop
+            // rather than being shown a button that cannot work.
+            controller.localAuthAvailable = { false }
+            for state in waiting {
+                controller.apply(state)
+                guard controller.debugLocalAuthStack.isHidden else {
+                    return "the fallback is offered on a Mac that cannot authenticate its owner"
+                }
+            }
+
+            controller.localAuthAvailable = { true }
+            for state in waiting {
+                controller.apply(state)
+                guard !controller.debugLocalAuthStack.isHidden else {
+                    return "the vault is unreachable and there is still no way past the lock screen "
+                         + "but waiting (UX issue X1)"
+                }
+            }
+
+            // **GL-09.** The fallback is an extra door, not a wider one. It
+            // must not appear on a state that either has a working password
+            // field or has never had an app password set at all - a machine
+            // with no app secret must not be unlockable by anyone who can
+            // wake its screen.
+            for state in settled {
+                controller.apply(state)
+                guard controller.debugLocalAuthStack.isHidden else {
+                    return "the local fallback is offered on a settled state, which would let a Mac "
+                         + "with no app password configured be unlocked anyway (GL-09)"
+                }
+            }
+
+            // A real press, through the real button's target/action - not
+            // the handler behind it (AGENTS.md's `debug*` hook rule).
+            var unlocked = 0
+            controller.onUnlockAnimationFinished = { unlocked += 1 }
+            controller.apply(.transientFailure)
+            answer = false
+            controller.debugLocalAuthButton.performClick(nil)
+            guard challenges == 1 else {
+                return "pressing the fallback ran \(challenges) challenges, not one - the button is "
+                     + "not wired to the real handler"
+            }
+            // GL-25: a cancel aborts. It must not unlock, and it must not
+            // read as a wrong password the captain never typed.
+            guard unlocked == 0 else {
+                return "a refused challenge unlocked the app anyway (GL-09/GL-25)"
+            }
+            guard !controller.debugErrorLabel.isHidden,
+                  !controller.debugErrorLabel.stringValue.localizedCaseInsensitiveContains("password didn't match") else {
+                return "a cancelled challenge reports \(controller.debugErrorLabel.stringValue.debugDescription), "
+                     + "which is either silent or blames a password nobody typed"
+            }
+            guard controller.debugLocalAuthButton.isEnabled else {
+                return "a cancelled challenge left the fallback button dead, so the captain is stuck "
+                     + "again"
+            }
+
+            // And the door actually opens.
+            answer = true
+            controller.debugLocalAuthButton.performClick(nil)
+            guard challenges == 2 else { return "the second press ran no challenge" }
+            // The success animation is what fires `onUnlockAnimationFinished`
+            // (never the callback directly - `submitTapped`'s own rule), and
+            // Reduce Motion is on in CI, so give the real `CATransaction`
+            // completion a run-loop turn to land.
+            let deadline = Date().addingTimeInterval(3)
+            while unlocked == 0, Date() < deadline {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            }
+            guard unlocked == 1 else {
+                return "a successful device-owner challenge did not unlock the app (UX issue X1)"
             }
             return nil
         }

@@ -141,6 +141,23 @@ final class LockScreenController: NSViewController {
     /// background queue and calls `completion` back on the main thread.
     var onAttempt: ((String, @escaping (Bool) -> Void) -> Void)?
 
+    /// **UX issue X1.** Fired when the captain uses the local fallback on a
+    /// screen where Automic Vault cannot be reached. The caller runs the
+    /// real `LAContext` challenge off the main thread (GL-25) and calls back
+    /// on main with whether the device owner actually authenticated.
+    ///
+    /// A separate callback from `onAttempt` rather than a magic password,
+    /// because they are different authentications with different failure
+    /// text - and because a cancel here must read as "you cancelled", not
+    /// as "that password didn't match".
+    var onLocalAuthAttempt: ((@escaping (Bool) -> Void) -> Void)?
+
+    /// Whether this Mac can authenticate its owner at all. Injected rather
+    /// than read here so a suite can drive both branches without a Mac that
+    /// has (or lacks) Touch ID, and so this controller keeps knowing nothing
+    /// about `LocalAuthentication`.
+    var localAuthAvailable: () -> Bool = { false }
+
     /// Fired when the captain clicks "Install Automic Vault" on the
     /// `.avUnavailable` state - the caller runs the real Homebrew-cask
     /// install (`VaultSource.updateInstall()`, the same mechanism the
@@ -267,6 +284,16 @@ final class LockScreenController: NSViewController {
     private let waitingSpinner = HelmProgressBar.inlineActivity(hue: RailDestination.poneglyph.domainHue)
     private let waitingStack = NSStackView()
     private let waitingLabel = NSTextField(labelWithString: "")
+
+    /// X1: the way out of the retry loop. Shown only in the two states that
+    /// are waiting on Automic Vault, and only when this Mac can actually
+    /// answer the challenge.
+    private let localAuthStack = NSStackView()
+    private let localAuthButton = HelmButton(title: "Unlock with Touch ID or your Mac password",
+                                             variant: .secondary)
+    private let localAuthNote = NSTextField(wrappingLabelWithString:
+        "Automic Vault holds this app's own password. While it is unreachable, "
+        + "macOS can vouch for you instead.")
 
     // §6.10's footer: a hairline, then a caption line.
     private let footerDivider = NSView()
@@ -539,6 +566,22 @@ final class LockScreenController: NSViewController {
         waitingStack.addArrangedSubview(waitingLabel)
         waitingStack.isHidden = true
 
+        // X1: the escape from the retry loop.
+        localAuthButton.target = self
+        localAuthButton.action = #selector(localAuthTapped)
+        localAuthButton.translatesAutoresizingMaskIntoConstraints = false
+        localAuthNote.font = HelmType.caption()
+        localAuthNote.alignment = .center
+        localAuthNote.preferredMaxLayoutWidth = 320
+        localAuthNote.translatesAutoresizingMaskIntoConstraints = false
+        localAuthStack.orientation = .vertical
+        localAuthStack.alignment = .centerX
+        localAuthStack.spacing = HelmMetrics.s2
+        localAuthStack.translatesAutoresizingMaskIntoConstraints = false
+        localAuthStack.addArrangedSubview(localAuthNote)
+        localAuthStack.addArrangedSubview(localAuthButton)
+        localAuthStack.isHidden = true
+
         footerDivider.wantsLayer = true
         footerDivider.translatesAutoresizingMaskIntoConstraints = false
         footerDivider.heightAnchor.constraint(equalToConstant: 1).isActive = true
@@ -562,7 +605,7 @@ final class LockScreenController: NSViewController {
 
         let body = NSStackView(views: [
             markTile, titleLabel, subtitleLabel, formStack, errorLabel,
-            messageLabel, setupCommandStack, avUnavailableStack, waitingStack, footerStack,
+            messageLabel, setupCommandStack, avUnavailableStack, waitingStack, localAuthStack, footerStack,
         ])
         body.orientation = .vertical
         body.alignment = .centerX
@@ -746,6 +789,7 @@ final class LockScreenController: NSViewController {
         avMessageLabel.textColor = muted
         installStatusLabel.textColor = muted
         waitingLabel.textColor = muted
+        localAuthNote.textColor = muted
         footerLeftLabel.textColor = muted
         footerRightLabel.textColor = muted
         setupCommandLabel.textColor = HelmField.ink(theme)
@@ -1045,6 +1089,8 @@ final class LockScreenController: NSViewController {
         avUnavailableStack.isHidden = true
         waitingStack.isHidden = true
         waitingSpinner.stopAnimation()
+        localAuthStack.isHidden = true
+        localAuthButton.isEnabled = true
         footerLeftLabel.stringValue = ""
         footerRightLabel.stringValue = ""
 
@@ -1093,6 +1139,7 @@ final class LockScreenController: NSViewController {
             waitingStack.isHidden = false
             waitingLabel.stringValue = "Checking\u{2026}"
             waitingSpinner.startAnimation()
+            showLocalAuthIfAvailable()
 
         case .transientFailure:
             titleLabel.stringValue = "Couldn't reach the vault"
@@ -1100,6 +1147,7 @@ final class LockScreenController: NSViewController {
             waitingStack.isHidden = false
             waitingLabel.stringValue = "Retrying\u{2026}"
             waitingSpinner.startAnimation()
+            showLocalAuthIfAvailable()
         }
 
         // The footer only earns its divider when it has something to say.
@@ -1139,6 +1187,56 @@ final class LockScreenController: NSViewController {
                 self.errorLabel.isHidden = false
                 self.playUnlockFailureAnimation()
                 self.view.window?.makeFirstResponder(self.passwordField)
+            }
+        }
+    }
+
+    /// **UX issue X1.** The two states above are the retry loop the review
+    /// got stuck in: Automic Vault is unreachable, the password check cannot
+    /// run, and every other surface in the app is behind this screen. The
+    /// backoff's own comment admitted it - "the lock screen has nothing else
+    /// useful to show and the captain cannot get past it any other way".
+    ///
+    /// There is something else useful to show. macOS can authenticate the
+    /// device owner without Automic Vault, and that is a real second door
+    /// rather than a weaker one: Touch ID, or failing that the login
+    /// password the Mac itself is protected by.
+    ///
+    /// **Shown only when the challenge can actually be answered.** A dead
+    /// button on the one screen nothing else is reachable from is worse than
+    /// no button, so a Mac that cannot authenticate its owner keeps the
+    /// retry loop and this stays hidden.
+    ///
+    /// **Not offered on the other three states**, and that is the GL-09
+    /// line: `.locked` has a working password field (no dead end to escape),
+    /// and `.noPasswordConfigured`/`.avUnavailable` are setup instructions
+    /// rather than failures - a machine that has never had an app password
+    /// set must not be unlockable by anyone who can wake its screen, because
+    /// there is no app-level secret to have known in the first place.
+    private func showLocalAuthIfAvailable() {
+        guard onLocalAuthAttempt != nil, localAuthAvailable() else { return }
+        localAuthStack.isHidden = false
+    }
+
+    @objc private func localAuthTapped() {
+        guard let onLocalAuthAttempt else { return }
+        errorLabel.isHidden = true
+        localAuthButton.isEnabled = false
+        onLocalAuthAttempt { [weak self] success in
+            guard let self else { return }
+            if success {
+                // The same path a correct password takes - the animation
+                // plays out and `onUnlockAnimationFinished` is what lifts
+                // the overlay, never this callback (see `submitTapped`).
+                self.playUnlockSuccessAnimation()
+            } else {
+                // GL-25's rule in its own words: a cancel aborts, it never
+                // falls through to something weaker. It also must not read
+                // as a wrong password - the captain typed nothing.
+                self.localAuthButton.isEnabled = true
+                self.errorLabel.stringValue = "macOS didn't confirm it was you. Grand Line is still locked."
+                self.errorLabel.isHidden = false
+                self.playUnlockFailureAnimation()
             }
         }
     }
@@ -1254,6 +1352,10 @@ extension LockScreenController {
     var debugFormStack: NSStackView { formStack }
     var debugAvStack: NSStackView { avUnavailableStack }
     var debugWaitingStack: NSStackView { waitingStack }
+    /// X1: the local fallback's own chrome and button, so a suite can assert
+    /// which states offer it and drive the real control.
+    var debugLocalAuthStack: NSStackView { localAuthStack }
+    var debugLocalAuthButton: HelmButton { localAuthButton }
     var debugFooterStack: NSStackView { footerStack }
     var debugBoat: NSImageView { boatImageView }
     var debugStarLayers: [CALayer] { starLayers }

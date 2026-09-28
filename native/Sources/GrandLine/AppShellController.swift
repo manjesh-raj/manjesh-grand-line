@@ -68,6 +68,7 @@
 // back button.
 
 import AppKit
+import LocalAuthentication
 
 final class AppShellController: NSViewController {
 
@@ -1270,6 +1271,25 @@ final class AppShellController: NSViewController {
         lockScreen.onUnlockAnimationFinished = { [weak self] in
             self?.hideLock()
             self?.onUnlocked?()
+        }
+        // **UX issue X1.** The local fallback, for the two states where
+        // Automic Vault cannot answer and the retry loop had nothing else
+        // to offer. `.deviceOwnerAuthentication` explicitly rather than the
+        // per-item reveal gate's biometrics-first choice: a Mac with no
+        // Touch ID still has a login password, and on this screen that is a
+        // wanted second door rather than a weakening.
+        //
+        // Off the main thread, because `evaluatePolicy` blocks behind a
+        // system panel (GL-25, and `LAContextFactory.evaluate`'s own
+        // `dispatchPrecondition` enforces it).
+        lockScreen.localAuthAvailable = { LAContextFactory.deviceOwnerAuthAvailable }
+        lockScreen.onLocalAuthAttempt = { completion in
+            let context = LAContextFactory.make(
+                reason: "unlock Grand Line while Automic Vault is unreachable")
+            DispatchQueue.global(qos: .userInitiated).async {
+                let allowed = LAContextFactory.evaluate(context, policy: .deviceOwnerAuthentication)
+                DispatchQueue.main.async { completion(allowed) }
+            }
         }
         // fm/grandline-vault-bootstrap-fix: "Install Automic Vault" on the
         // `.avUnavailable` state - a plain Homebrew-cask install

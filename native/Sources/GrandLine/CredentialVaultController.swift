@@ -1335,17 +1335,40 @@ enum LAContextFactory {
         return context
     }
 
+    /// Whether this Mac can authenticate its owner at all - Touch ID, Apple
+    /// Watch, or the login password.
+    ///
+    /// **UX issue X1** needs this and the per-item reveal gate does not:
+    /// the gate is offered on an already-unlocked vault, where refusing is
+    /// the safe answer, whereas the app lock's fallback must not be *shown*
+    /// unless it can actually be used - a dead button on the one screen
+    /// nothing else is reachable from is worse than no button.
+    ///
+    /// `.deviceOwnerAuthentication` rather than the biometrics-only policy,
+    /// deliberately: a Mac with no Touch ID still has a login password, and
+    /// that is a real authentication of the device owner.
+    static var deviceOwnerAuthAvailable: Bool {
+        var error: NSError?
+        return LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: &error)
+    }
+
     /// Blocks, so callers dispatch it off the main thread - the same
     /// `dispatchPrecondition` reasoning `KeychainKeyStore.authenticate` records
     /// (GL-25: on the main thread this freezes every window in the app).
-    static func evaluate(_ context: LAContext) -> Bool {
+    ///
+    /// - Parameter policy: defaults to the per-item reveal gate's own choice
+    ///   (biometrics when this Mac has them). X1's app-lock fallback passes
+    ///   `.deviceOwnerAuthentication` explicitly, because there the login
+    ///   password is a wanted second door rather than a weakening - see
+    ///   `deviceOwnerAuthAvailable`.
+    static func evaluate(_ context: LAContext, policy: LAPolicy? = nil) -> Bool {
         dispatchPrecondition(condition: .notOnQueue(.main))
-        let policy: LAPolicy = CredentialVaultKeyStore.biometryAvailable
+        let resolved = policy ?? (CredentialVaultKeyStore.biometryAvailable
             ? .deviceOwnerAuthenticationWithBiometrics
-            : .deviceOwnerAuthentication
+            : .deviceOwnerAuthentication)
         var allowed = false
         let semaphore = DispatchSemaphore(value: 0)
-        context.evaluatePolicy(policy, localizedReason: context.localizedReason) { success, _ in
+        context.evaluatePolicy(resolved, localizedReason: context.localizedReason) { success, _ in
             allowed = success
             semaphore.signal()
         }
