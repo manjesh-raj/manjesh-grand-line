@@ -16,14 +16,16 @@
 // Daylight rename had already turned into the *Fleet dashboard*, while the
 // landing page the captain calls Overview is `.homeCanvas` / "Home". The
 // captain then asked for a genuine sixth top-level tab rather than a move, so
-// this page is that tab's destination and Fleet keeps its own copy of the
-// card. `data/grandline-daily-review-card-not-showing/report.md` is the scout
+// this page is that tab's destination.
+// `data/grandline-daily-review-card-not-showing/report.md` is the scout
 // investigation, and `docs/history/39-daily-review.md` carries the decision.
 //
-// **The duplication is deliberate and bounded**: two hosts, one card, one
-// composer, one dismissal key - dismissing on either page dismisses the day on
-// both, because both read `AppSettings.shared.dailyReviewDismissedDay`. If
-// Fleet's copy is ever dropped, this file changes not at all.
+// **This is the card's only host, and the page is called Today.** Fleet kept
+// a second copy of it for one release, which is exactly the duplication the
+// 2026-09-27 review's X3 found while untangling "Overview"/"Home"/"Fleet";
+// that copy is gone and this page's own name is "Today". The same review's
+// X6 gave the page a second card - everything captured today - which is why
+// this file is no longer a one-card host.
 
 import AppKit
 
@@ -49,6 +51,21 @@ final class DailyOverviewController: NSViewController {
     private let scroll = NSScrollView()
     private let contentStack = NSStackView()
     private let card = DailyReviewCard()
+
+    /// **UX issue X6.** Everything captured today, under the review.
+    ///
+    /// This page rather than a new destination: the review's ask is "one
+    /// place showing everything captured today", and Today is already the
+    /// page that means the captain's own day - X3 has just finished making
+    /// it the only page that does. A 27th destination for one list would be
+    /// a second answer to the same question.
+    ///
+    /// Shown even when the daily review itself is dismissed or turned off,
+    /// because "I put the review away" is not "I do not want to see what I
+    /// captured" - and a page whose only content can be switched off is the
+    /// dead end `buildEmptyState` exists to avoid.
+    private let captureInbox = CaptureInboxCard()
+    private var captureInboxToken: UUID?
     private var emptyState: HelmEmptyState!
     private var theme: HelmTheme = ThemeManager.shared.theme
 
@@ -97,6 +114,10 @@ final class DailyOverviewController: NSViewController {
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(card)
         contentStack.addArrangedSubview(emptyState)
+        captureInbox.onOpenDestination = { [weak self] destination in
+            self?.onNavigateToDestination?(destination)
+        }
+        contentStack.addArrangedSubview(captureInbox)
 
         content.addSubview(contentStack)
         NSLayoutConstraint.activate([
@@ -124,7 +145,20 @@ final class DailyOverviewController: NSViewController {
             // floating in an empty page.
             card.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             emptyState.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            captureInbox.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
         ])
+        // X6: the log is written by the app shell's capture filer, which may
+        // fire while this page is mounted but not visible - so the card
+        // re-renders on a real store change rather than only on appearance.
+        captureInboxToken = CaptureInboxStore.shared.observe { [weak self] in
+            guard let self, self.isViewLoaded else { return }
+            self.captureInbox.render(theme: self.theme)
+        }
+        // Drawn once here as well as on every render: a page that is mounted
+        // but has not appeared yet (GL-37 mounts lazily, and the off-screen
+        // render probe never sends `viewWillAppear`) would otherwise show
+        // this card as an empty strip with no header at all.
+        captureInbox.render(theme: theme)
 
         // Gotcha (4): the document view pins to the **clip** view, never to
         // the scroll view - a non-overlay scroller reserves a real track.
@@ -255,6 +289,11 @@ final class DailyOverviewController: NSViewController {
     }
 
     func renderDailyReview() {
+        // X6: the capture log is drawn on every render of this page and is
+        // deliberately *before* the daily review's own gates - it is shown
+        // whether or not the review is dismissed or turned off. "I put the
+        // review away" is not "I do not want to see what I captured".
+        captureInbox.render(theme: theme)
         guard AppSettings.shared.dailyReviewEnabled else {
             showEmptyState(title: "The daily review is turned off",
                            body: "Turn it back on in Settings to see your day - what is due, who you are "
@@ -304,8 +343,6 @@ final class DailyOverviewController: NSViewController {
             inputs.reading = .unavailable("the reading list is not connected to this page")
         }
 
-        // Habits: F8 has not shipped. A stated gap, not a hidden section.
-        inputs.habits = DailyReviewHabits.read()
 
         // The calendar. Two sources now - this Mac's own through EventKit,
         // and any connected Google account - each behind its own switch, and
@@ -380,6 +417,7 @@ final class DailyOverviewController: NSViewController {
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         card.applyTheme(theme)
         emptyState?.applyTheme(theme)
+        captureInbox.applyTheme(theme)
     }
 
     #if FM_SELFTESTS
@@ -390,6 +428,8 @@ final class DailyOverviewController: NSViewController {
     var debugDocumentFrame: NSRect { scroll.documentView?.frame ?? .zero }
     var debugContentStackFrame: NSRect { contentStack.frame }
     var debugEmptyStateIsShowing: Bool { !(emptyState?.isHidden ?? true) }
+    /// X6: the capture log's card, so a suite can drive the real rows.
+    var debugCaptureInbox: CaptureInboxCard { captureInbox }
     func debugRenderDailyReview() { renderDailyReview() }
     func debugAttachDailyReviewStores(sticky: StickyBoardStore, reading: ReadingListStore) {
         attachDailyReviewSources(stickyBoardStore: sticky, readingListStore: reading)

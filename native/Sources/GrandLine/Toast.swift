@@ -247,6 +247,17 @@ enum Toast {
 
     /// How far above the container's bottom edge the lowest pill sits.
     static let bottomInset: CGFloat = 24
+
+    /// How much room a page should leave under its own content so a toast
+    /// never lands on top of it (review U10).
+    ///
+    /// `bottomInset` plus a pill's own height plus a gap. The height is a
+    /// constant rather than measured, because a page's layout is decided
+    /// before any toast exists - and it is stated here rather than at the
+    /// call site so a change to the pill's padding or font moves every page
+    /// that reserves space, not just the one somebody remembered.
+    static let pillHeight: CGFloat = 34
+    static let reservedBottomSpace: CGFloat = bottomInset + pillHeight + 12
     /// The gap between two stacked pills.
     static let stackSpacing: CGFloat = 8
     /// How far a pill rises as it fades in (G1's "translate 12pt").

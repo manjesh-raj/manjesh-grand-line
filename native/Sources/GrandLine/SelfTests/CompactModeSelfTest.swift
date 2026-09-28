@@ -141,8 +141,13 @@ enum CompactModeSelfTest {
         defaults.removePersistentDomain(forName: name)
     }
 
-    private static func policy(_ enabled: Bool, _ dock: Bool, _ badge: Bool) -> CompactModePolicy {
-        CompactModePolicy(isEnabled: enabled, hidesDockIcon: dock, badgesOverdueCount: badge)
+    /// - Parameter separate: **UX issue X2**'s switch. Defaults to `false`,
+    ///   which is the shipped default, so every case that does not care
+    ///   about menu-bar consolidation reads exactly as it did.
+    private static func policy(_ enabled: Bool, _ dock: Bool, _ badge: Bool,
+                               separate: Bool = false) -> CompactModePolicy {
+        CompactModePolicy(isEnabled: enabled, hidesDockIcon: dock, badgesOverdueCount: badge,
+                          separateMenuBarItems: separate)
     }
 
     // MARK: Cases
@@ -164,23 +169,47 @@ enum CompactModeSelfTest {
               "the fixture must produce all three urgencies, or the ordering check cannot fail")
     }
 
+    /// **UX issue X2 changed what "off" means here.** The merged item used
+    /// to exist only in compact mode, so this case asserted that turning the
+    /// mode off put the three per-feature items back. The review found what
+    /// that produced in practice - three icons in the menu bar for one app,
+    /// with the merged one behind a switch that also hides the main window -
+    /// and the merge is now the default, with
+    /// `AppSettings.menuBarSeparateItems` as the way back.
+    ///
+    /// The invariant this case really exists for is unchanged and is now
+    /// swept over both switches: **exactly one of the two, always.** Four
+    /// items where one contains the other three is the state F22's mockup
+    /// rules out, and so is a menu bar with none at all.
     private static func checkTheStatusItemsAreNeverBothShown(_ check: (Bool, String) -> Void) {
         for dock in [false, true] {
             for badge in [false, true] {
-                let on = policy(true, dock, badge)
-                let off = policy(false, dock, badge)
-                check(on.showsCompactStatusItem && !on.showsPerFeatureStatusItems,
-                      "compact mode on: the merged status item shows and the three it merges do not "
-                          + "(dock=\(dock) badge=\(badge))")
-                check(!off.showsCompactStatusItem && off.showsPerFeatureStatusItems,
-                      "compact mode off: the three per-feature status items show and the merged one "
-                          + "does not (dock=\(dock) badge=\(badge))")
-                check(on.showsCompactStatusItem != on.showsPerFeatureStatusItems
-                          && off.showsCompactStatusItem != off.showsPerFeatureStatusItems,
-                      "the two status-item decisions must be exact inverses - four items where one "
-                          + "contains the other three is the state the mockup rules out")
+                for separate in [false, true] {
+                    let on = policy(true, dock, badge, separate: separate)
+                    let off = policy(false, dock, badge, separate: separate)
+                    let where_ = "(dock=\(dock) badge=\(badge) separate=\(separate))"
+                    check(on.showsCompactStatusItem && !on.showsPerFeatureStatusItems,
+                          "compact mode on: the merged status item shows and the three it merges do "
+                              + "not \(where_)")
+                    check(off.showsCompactStatusItem != separate,
+                          "compact mode off: the merged item should follow the separate-icons "
+                              + "switch \(where_)")
+                    check(off.showsPerFeatureStatusItems == separate,
+                          "compact mode off: the three per-feature items should follow the "
+                              + "separate-icons switch \(where_)")
+                    check(on.showsCompactStatusItem != on.showsPerFeatureStatusItems
+                              && off.showsCompactStatusItem != off.showsPerFeatureStatusItems,
+                          "the two status-item decisions must stay exact inverses - four items where "
+                              + "one contains the other three is the state the mockup rules out, and "
+                              + "so is none at all \(where_)")
+                }
             }
         }
+        // The shipped default, stated once rather than left implicit in the
+        // sweep above: one icon, and it is the merged one.
+        let fresh = policy(false, false, false)
+        check(fresh.showsCompactStatusItem && !fresh.showsPerFeatureStatusItems,
+              "a fresh install should carry one menu-bar icon, the merged one (review X2)")
     }
 
     private static func checkTheDockIconCannotOutliveTheMode(_ check: (Bool, String) -> Void) {

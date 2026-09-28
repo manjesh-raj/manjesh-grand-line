@@ -353,7 +353,7 @@ final class CredentialVaultRecoverySheetController: NSViewController {
             guard let host = self?.view else { return }
             do {
                 try kit.pdfData().write(to: url, options: [.atomic])
-                Toast.show(in: host, message: "Saved \u{2014} print it and delete the file")
+                Toast.show(in: host, message: "Saved - print it and delete the file")
             } catch {
                 Toast.show(in: host, message: "Could not save the PDF: \(error.localizedDescription)")
             }

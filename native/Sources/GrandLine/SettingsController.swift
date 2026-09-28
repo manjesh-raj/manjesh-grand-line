@@ -477,6 +477,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     private let compactModeSwitch = HelmToggle()
     private let compactDockSwitch = HelmToggle()
     private let compactBadgeSwitch = HelmToggle()
+    /// X2: the way back to three separate menu-bar icons.
+    private let separateMenuBarItemsSwitch = HelmToggle()
 
     private var gmailRows: [GoogleAccountSlot: GmailAccountRow] = [:]
     /// Both masked by default with their own Show toggle, through the one
@@ -1678,11 +1680,24 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     // MARK: - Menu Bar (F22)
 
     private func buildMenuBarSections() -> [SettingsSection] {
-        for toggle in [compactModeSwitch, compactDockSwitch, compactBadgeSwitch] {
+        for toggle in [compactModeSwitch, compactDockSwitch, compactBadgeSwitch,
+                       separateMenuBarItemsSwitch] {
             toggle.onToggle = { [weak self] in self?.compactModeToggled() }
         }
 
         return [
+            // **UX issue X2.** Four features each owned a status item, and
+            // the merged one existed only inside compact mode - so the menu
+            // bar carried three icons for one app unless the captain also
+            // accepted a windowless one. The merge is the default now, and
+            // this is the row the review asked for: "a Settings row to
+            // re-add individual icons for anyone who wants them back".
+            SettingsSection(heading: "Menu bar", group: SettingsGroup(rows: [
+                SettingsRow(title: "Separate icons for Tasks, the vault and the crew",
+                            description: "Off by default: Grand Line keeps one menu-bar icon, and those three are its Today, Vault and Crew tabs. Turn this on for one icon each, the way it used to be. Compact mode always uses the single icon - with the window hidden it is the only surface there is.",
+                            control: separateMenuBarItemsSwitch),
+            ]), foot: "Whichever you pick, the same popovers do the work - the vault's countdown rings and the crew's reply states are one implementation, hosted in both places."),
+
             SettingsSection(heading: "Compact mode", group: SettingsGroup(rows: [
                 SettingsRow(title: "Live in the menu bar",
                             description: "The main window stays closed. Tasks, notes, the vault and the crew are all reachable from the status item, which also takes a capture line.",
@@ -1725,6 +1740,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         AppSettings.shared.compactModeEnabled = compactModeSwitch.isOn
         AppSettings.shared.compactModeHidesDockIcon = compactDockSwitch.isOn
         AppSettings.shared.compactModeBadgesOverdueCount = compactBadgeSwitch.isOn
+        AppSettings.shared.menuBarSeparateItems = separateMenuBarItemsSwitch.isOn
         syncDependentRows()
         // One callback for all three rather than three: everything that
         // follows is `CompactModeController.refresh()`, which re-reads all of
@@ -1751,7 +1767,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
 
             SettingsSection(heading: "Daily review", group: SettingsGroup(rows: [
                 SettingsRow(title: "Show the daily review on Fleet",
-                            description: "What is due today, the follow-ups waiting on you, today's calendar, your habits, the top notes on your sticky board and what is unread in your reading list.",
+                            description: "What is due today, the follow-ups waiting on you, today's calendar, the top notes on your sticky board and what is unread in your reading list.",
                             control: dailyReviewSwitch),
                 register(SettingsRow(
                     title: "Mac calendars",
@@ -2110,7 +2126,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         }
         let metadata = resources.appendingPathComponent("Metadata.appintents")
         if FileManager.default.fileExists(atPath: metadata.path) {
-            return "Registered with the system \u{2014} these appear in Shortcuts, Spotlight and Siri."
+            return "Registered with the system - these appear in Shortcuts, Spotlight and Siri."
         }
         return "Not registered on this copy: the app bundle carries no Metadata.appintents. native/build_native_app.sh writes it only when Xcode's appintentsmetadataprocessor is present - rebuild the app on a Mac with Xcode installed to publish them."
     }
@@ -2649,6 +2665,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         compactModeSwitch.isOn = AppSettings.shared.compactModeEnabled
         compactDockSwitch.isOn = AppSettings.shared.compactModeHidesDockIcon
         compactBadgeSwitch.isOn = AppSettings.shared.compactModeBadgesOverdueCount
+        separateMenuBarItemsSwitch.isOn = AppSettings.shared.menuBarSeparateItems
         followSystemSwitch.isOn = AppSettings.shared.followSystemAppearance
         refreshSystemPairPopUps()
         refreshGmailSection()

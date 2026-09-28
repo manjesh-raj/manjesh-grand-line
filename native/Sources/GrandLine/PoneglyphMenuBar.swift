@@ -78,6 +78,15 @@ final class PoneglyphMenuBarController: NSObject, NSPopoverDelegate {
             button.action = #selector(iconClicked)
         }
 
+        // **UX issue X2.** Starts hidden, and `CompactModeController.refresh()`
+        // is the single place that decides whether it appears - the same
+        // shape that controller's own item already used. Before X2 the
+        // merged item was the exception and these three were visible from
+        // construction; now that the merge is the default, an item that
+        // showed itself at launch and was hidden a few lines later would
+        // flash on every ordinary start.
+        statusItem.isVisible = false
+
         popover.contentViewController = content
         popover.behavior = .transient
         popover.delegate = self

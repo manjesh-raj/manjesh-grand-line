@@ -459,7 +459,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     private func buildInputCard() -> NSView {
         inputCard = HelmCard()
         _ = inputCard.setHeader(symbol: "text.magnifyingglass", tint: .accent, title: "Analyze output",
-                                subtitle: "Paste logs, terminal output, stack traces or errors — or drop a .log/.txt/.json/.yaml file here.")
+                                subtitle: "Paste logs, terminal output, stack traces or errors - or drop a .log/.txt/.json/.yaml file here.")
 
         inputTextView.textView.delegate = self
 
@@ -485,7 +485,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         }
         modePopup.target = self
         modePopup.action = #selector(modeChanged)
-        modePopup.toolTip = "Analysis mode — changes what the analysis emphasises (spec §22)"
+        modePopup.toolTip = "Analysis mode - changes what the analysis emphasises (spec §22)"
 
         analyzeButton = HelmButton(title: "Analyze", variant: .primary, symbol: "sparkles",
                                    target: self, action: #selector(analyzeTapped))
@@ -685,7 +685,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         case "groups":
             tabView = buildSimpleTab(symbol: "list.bullet.rectangle", tint: .critical,
                                      title: "Grouped patterns",
-                                     subtitle: "Repeated lines collapsed into one pattern — click a pattern to see its matching lines.",
+                                     subtitle: "Repeated lines collapsed into one pattern - click a pattern to see its matching lines.",
                                      body: groupsList)
         case "timeline":
             tabView = buildSimpleTab(symbol: "clock", tint: .info,
@@ -940,10 +940,10 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     private func legendChip(for kind: LogCorrelationKind) -> NSView {
         let pill = NSView()
         pill.translatesAutoresizingMaskIntoConstraints = false
-        let label = NSTextField(labelWithString: "\(kind.displayName) — \(kind.detail)")
+        let label = NSTextField(labelWithString: "\(kind.displayName) - \(kind.detail)")
         label.font = HelmType.caption()
         label.translatesAutoresizingMaskIntoConstraints = false
-        ToolRowLayout.pill(text: "\(kind.displayName) — \(kind.detail)",
+        ToolRowLayout.pill(text: "\(kind.displayName) - \(kind.detail)",
                            colorHex: kind.tint.hex(in: theme),
                            into: pill, label: label, theme: theme)
         legendChips.append((pill, label, kind))
@@ -956,7 +956,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     private func buildCompareTab() -> NSView {
         let card = HelmCard()
         _ = card.setHeader(symbol: "arrow.left.arrow.right", tint: .info, title: "Compare two outputs",
-                           subtitle: "Before vs. after a deploy, healthy vs. unhealthy pod, prod vs. UAT — the analyzer reports which errors are new, resolved, or worse.")
+                           subtitle: "Before vs. after a deploy, healthy vs. unhealthy pod, prod vs. UAT - the analyzer reports which errors are new, resolved, or worse.")
 
         comparePopupBefore = HelmPopUpButton()
         comparePopupAfter = HelmPopUpButton()
@@ -1105,7 +1105,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
                                        target: self, action: #selector(addClipboardAsEvidence))
         let fromTerminal = HelmButton(title: "Send Terminal Output", variant: .secondary, size: .small,
                                       target: self, action: #selector(goToConsole))
-        fromTerminal.toolTip = "Open the Console — its \u{201C}Analyze Logs\u{201D} button sends output back here"
+        fromTerminal.toolTip = "Open the Console - its \u{201C}Analyze Logs\u{201D} button sends output back here"
         for button in [pasteMore, addFile, fromClipboard, fromTerminal] {
             button.setContentHuggingPriority(.required, for: .horizontal)
         }
@@ -1392,7 +1392,7 @@ extension LogAnalyzerController: NSTextViewDelegate {
         // same as pressing "Add pasted text" and then Analyze.
         let pending = inputTextView.string
         if !pending.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let label = importSourceLabel.map { "Terminal output — \($0)" } ?? "Pasted output"
+            let label = importSourceLabel.map { "Terminal output - \($0)" } ?? "Pasted output"
             let origin: LogEvidenceOrigin = importSourceLabel == nil ? .pasted : .terminal
             addEvidence(raw: pending, label: label, origin: origin, sourceDetail: importSourceLabel)
             inputTextView.string = ""
@@ -1571,7 +1571,7 @@ extension LogAnalyzerController: NSTextViewDelegate {
         // was also the half that froze the window. Only the `claude` call was
         // ever off-main.
         let override = sourceOverride
-        setAnalyzing(true, message: "Analyzing output — grouping errors, checking correlation…")
+        setAnalyzing(true, message: "Analyzing output - grouping errors, checking correlation…")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let local = Self.buildLocalAnalysis(text: combined, override: override)
             DispatchQueue.main.async {
@@ -1817,7 +1817,7 @@ extension LogAnalyzerController {
         }
         let body = LogAnalyzerArtifacts.ticketMarkdown(investigation)
         presentArtifact(title: "Ticket",
-                        explanation: "Nothing has been filed anywhere. This is a draft body — copy it into "
+                        explanation: "Nothing has been filed anywhere. This is a draft body - copy it into "
                             + "your tracker yourself if it's correct.",
                         body: body,
                         saveTitle: nil,
@@ -1955,7 +1955,7 @@ extension LogAnalyzerController {
                 if !ai.summary.isEmpty { text += "\n\(ai.summary)" }
                 for finding in ai.findings {
                     text += "\n• [\(finding.severity.displayName)] \(finding.title)"
-                    if !finding.detail.isEmpty { text += " — \(finding.detail)" }
+                    if !finding.detail.isEmpty { text += " - \(finding.detail)" }
                 }
                 self.compareSummaryLabel.stringValue = text
             }
@@ -2065,11 +2065,11 @@ extension LogAnalyzerController {
         // to re-analyze - say so rather than showing an empty raw pane with
         // no explanation.
         if loaded.evidence.allSatisfy({ $0.text.isEmpty }) {
-            Toast.show(in: view, message: "Metadata only — the log content wasn't saved")
+            Toast.show(in: view, message: "Metadata only - the log content wasn't saved")
         } else {
             investigation.analysis = LogAnalysis(
                 local: Self.buildLocalAnalysis(text: loaded.combinedText, override: sourceOverride),
-                ai: nil, aiFailure: "Reopened from history — press Analyze to run the AI layer again.",
+                ai: nil, aiFailure: "Reopened from history - press Analyze to run the AI layer again.",
                 mode: mode, analyzedAt: loaded.updatedAt)
         }
         renderInvestigation()
@@ -2498,7 +2498,7 @@ extension LogAnalyzerController {
 
     private func renderTimeline() {
         timelineList.setTimeline(investigation.analysis?.local.timeline
-            ?? .unavailable(reason: "Timeline unavailable — nothing has been analyzed yet."), theme: theme)
+            ?? .unavailable(reason: "Timeline unavailable - nothing has been analyzed yet."), theme: theme)
         timelineList.onRevealLine = { [weak self] line in
             guard let self else { return }
             self.tabs.select("analysis")
@@ -2603,7 +2603,7 @@ extension LogAnalyzerController {
             summaryLabel.stringValue = summary
             summaryCard.isHidden = false
         } else if investigation.analysis != nil {
-            summaryLabel.stringValue = "Local analysis only — see the findings and grouped patterns below."
+            summaryLabel.stringValue = "Local analysis only - see the findings and grouped patterns below."
             summaryCard.isHidden = false
         } else {
             summaryCard.isHidden = true
@@ -2667,7 +2667,7 @@ extension LogAnalyzerController {
                            theme: theme)
 
         for chip in legendChips {
-            ToolRowLayout.pill(text: "\(chip.kind.displayName) — \(chip.kind.detail)",
+            ToolRowLayout.pill(text: "\(chip.kind.displayName) - \(chip.kind.detail)",
                                colorHex: chip.kind.tint.hex(in: theme),
                                into: chip.pill, label: chip.label, theme: theme)
         }
@@ -2716,7 +2716,7 @@ extension LogAnalyzerController {
         importBadge.isHidden = false
 
         addEvidence(raw: capture.text,
-                    label: "\(capture.scope.shortLabel) — \(hostLabel)",
+                    label: "\(capture.scope.shortLabel) - \(hostLabel)",
                     origin: .terminal,
                     sourceDetail: hostLabel)
         scrollToTop()

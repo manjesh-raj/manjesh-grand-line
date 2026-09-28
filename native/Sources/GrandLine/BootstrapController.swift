@@ -844,7 +844,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             if case .running = $0.status { return true }
             return false
         }) {
-            return "Step \(runningIndex + 1) of \(setupSteps.count) \u{2014} \(setupSteps[runningIndex].kind.title)"
+            return "Step \(runningIndex + 1) of \(setupSteps.count) - \(setupSteps[runningIndex].kind.title)"
         }
         if let failedIndex = setupSteps.firstIndex(where: {
             if case .failed = $0.status { return true }
@@ -911,28 +911,26 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     // MARK: Daylight §6.4 - the drill header's live line
 
-    /// Read off `setupSteps` - the in-memory stepper state this page already
-    /// renders - so the header agrees with the progress track beside it and
-    /// costs nothing to read. `.checking` is a step whose own `stepIsDone`
-    /// answered "not known yet"; reporting it as pending would be a confident
-    /// claim the page has not earned.
+    /// **Review defect U7 / X4.** This used to count `setupSteps`, which is
+    /// the four steps "Run full setup" *runs* - while the list below it
+    /// renders all five - and it composed its own sentence. Automation
+    /// composed a different sentence over a different denominator from a
+    /// different source, and the two pages disagreed out loud about one
+    /// machine. Both build the line through `SetupPipelineProgress` now; see
+    /// that type for what each of the three disagreements was.
+    ///
+    /// `.failed` still comes from this page's own sequencer, because a run
+    /// stopping on a step is something only the page that owns the run can
+    /// know.
     var drillHeaderSubtitle: String? {
-        let total = setupSteps.count
-        guard total > 0 else { return "No setup steps" }
         if isRunningFullSetup { return fullSetupSubtitle }
-        var done = 0, failed = 0, checking = 0
-        for step in setupSteps {
-            switch step.status {
-            case .done, .skipped: done += 1
-            case .failed: failed += 1
-            case .checking: checking += 1
-            default: break
-            }
-        }
-        if failed > 0 { return "\(done) of \(total) steps done \u{00B7} \(failed) failed" }
-        if checking > 0 { return "\(done) of \(total) steps done \u{00B7} checking\u{2026}" }
-        if done == total { return "\(total) of \(total) steps done" }
-        return "\(done) of \(total) steps done"
+        var verdicts: [SetupStepKind: Bool?] = [:]
+        for kind in SetupStepKind.allCases { verdicts[kind] = stepIsDone(kind) }
+        let failed = setupSteps.filter {
+            if case .failed = $0.status { return true }
+            return false
+        }.count
+        return SetupPipelineProgress.of(verdicts, failedSteps: failed).summary
     }
 
     var onDrillSubtitleChanged: (() -> Void)?
@@ -1726,8 +1724,35 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
         rows.append(buildUsernameRow(repoPath: repoPath))
 
+        // **Review defect U8.** The row loop at the bottom of this method
+        // pins every row's width to the section's, which is right for a
+        // label and wrong for a button: "Run rebuild.sh" rendered as a
+        // full-width filled bar across the whole card, the single loudest
+        // object on a page whose other actions are all trailing pills.
+        //
+        // The button goes in a trailing-aligned row of its own, so the
+        // *row* takes the full width and the button keeps its natural one.
+        // `.required` hugging is what stops the stack handing it the slack
+        // anyway (gotcha (10) - a `.gravityAreas` stack honours no hugging
+        // priority at all, so the distribution has to be `.fill`).
         let rebuildButton = HelmButton(title: "Run rebuild.sh", variant: .primary, target: self, action: #selector(runRebuildClicked))
-        rows.append(rebuildButton)
+        rebuildButton.setContentHuggingPriority(.required, for: .horizontal)
+        rebuildButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let rebuildSpacer = NSView()
+        rebuildSpacer.translatesAutoresizingMaskIntoConstraints = false
+        rebuildSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // Gotcha (12): a bare `NSView()` has no intrinsic size, so a hugging
+        // priority alone says nothing about how wide it wants to be. A real
+        // low-priority `width == 0` is what lets it collapse.
+        let spacerWidth = rebuildSpacer.widthAnchor.constraint(equalToConstant: 0)
+        spacerWidth.priority = .defaultLow
+        spacerWidth.isActive = true
+        let rebuildRow = NSStackView(views: [rebuildSpacer, rebuildButton])
+        rebuildRow.orientation = .horizontal
+        rebuildRow.alignment = .centerY
+        rebuildRow.distribution = .fill
+        rebuildRow.spacing = 0
+        rows.append(rebuildRow)
 
         let managedTitle = NSTextField(labelWithString: "Managed items")
         managedTitle.font = .systemFont(ofSize: 12, weight: .semibold)
@@ -1740,7 +1765,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         section.orientation = .vertical
         section.alignment = .leading
         section.spacing = 8
-        section.setCustomSpacing(14, after: rebuildButton)
+        section.setCustomSpacing(14, after: rebuildRow)
         for row in rows { row.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true }
         return section
     }
@@ -2775,6 +2800,14 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     /// drives the same label directly instead. Deliberately the *label*, not a
     /// string setter, so the test measures whatever the page really renders.
     var debugHomePathLabel: NSTextField { currentPathLabel }
+
+    /// Review defect U8: the real dotfiles section, built from a stated repo
+    /// state, so a check can measure what "Run rebuild.sh" is actually given
+    /// rather than assert against the constructor call.
+    func debugDotfilesPresentSection(repoPath: String, state: DotfilesRepoState) -> NSView {
+        _ = view   // the builder reads `theme` and `managedItems`, both set up by `loadView`
+        return buildDotfilesPresentSection(repoPath: repoPath, state: state)
+    }
     #endif
 
     private func track(_ labels: NSTextField...) {

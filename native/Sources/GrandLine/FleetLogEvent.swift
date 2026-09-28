@@ -149,7 +149,7 @@ enum FleetLogSources {
                                      recordID: String, keptLocal: Bool) -> FleetLogEvent {
         let side = keptLocal ? "kept this machine's edit" : "kept GitHub's edit"
         return FleetLogEvent(kind: .sync,
-                             title: "Shift sync conflict resolved \u{2014} \(side) to \(recordKind) \u{201C}\(recordTitle)\u{201D}",
+                             title: "Shift sync conflict resolved - \(side) to \(recordKind) \u{201C}\(recordTitle)\u{201D}",
                              reference: recordID)
     }
 
@@ -163,7 +163,7 @@ enum FleetLogSources {
     /// record genuinely reached disk.
     static func incidentStarted(id: String, title: String, hostLabel: String) -> FleetLogEvent {
         FleetLogEvent(kind: .incident,
-                      title: "Started incident \(id) \u{2014} \u{201C}\(title)\u{201D} on \(hostLabel)",
+                      title: "Started incident \(id) - \u{201C}\(title)\u{201D} on \(hostLabel)",
                       reference: id)
     }
 
@@ -174,7 +174,7 @@ enum FleetLogSources {
         let duration = Incident.elapsedText(from: startedAt, to: endedAt)
             .replacingOccurrences(of: " ago", with: "")
         return FleetLogEvent(kind: .incident,
-                             title: "Ended incident \(id) \u{2014} \u{201C}\(title)\u{201D} on \(hostLabel) after \(duration)",
+                             title: "Ended incident \(id) - \u{201C}\(title)\u{201D} on \(hostLabel) after \(duration)",
                              reference: id)
     }
 }

@@ -247,7 +247,7 @@ final class IncidentCardView: NSView {
             return
         }
 
-        titleLabel.stringValue = "\(incident.id) \u{2014} \(incident.title)"
+        titleLabel.stringValue = "\(incident.id) - \(incident.title)"
         subtitleLabel.stringValue = incident.subtitle()
         statusPill.isHidden = false
         ToolRowLayout.pill(text: incident.status.displayName.uppercased(),

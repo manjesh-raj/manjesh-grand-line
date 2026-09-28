@@ -981,7 +981,7 @@ final class NotificationPanelViewController: NSViewController {
             self?.reload()
         })
         menu.addItem(menuItem("Copy details") { [weak self] in
-            let text = entry.subtext.isEmpty ? entry.title : "\(entry.title) \u{2014} \(entry.subtext)"
+            let text = entry.subtext.isEmpty ? entry.title : "\(entry.title) - \(entry.subtext)"
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
             self?.showToast("Copied details", undo: nil)

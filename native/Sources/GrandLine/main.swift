@@ -2118,8 +2118,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Go menu - UX3's "a 'Go' menu listing every destination with its
         // shortcut", and UX4's "give ⌘1-⌘5 to the spaces (the original
         // Daylight spec)". Six of them since
-        // `fm/grandline-overview-page-daily-review` added the Overview pill,
-        // so the range is ⌘1-⌘6 and Home sits at ⌘2 (it keeps ⌘0 above).
+        // `fm/grandline-overview-page-daily-review` added a sixth pill, so
+        // the range is ⌘1-⌘6 and Home sits at ⌘2.
+        //
+        // **UX issue X3 removed Home's separate ⌘0 row.** The menu used to
+        // open with "Home ⌘0" and then list "Home ⌘2" three rows later -
+        // one destination, two rows, the same word twice, which is half of
+        // what the review read off this menu. One of the two chords had to
+        // go, and ⌘0 is the one that does not fit a model: ⌘1-⌘6 mirrors
+        // the bar's pills left to right and is what `DaylightSpace
+        // .shortcutIndex` already means, while ⌘0 was a leftover from
+        // before the pills were numbered at all. ⌘2 reaches the same page
+        // (`selectSpace` on the Home space shows the canvas), so nothing is
+        // unreachable - only the second spelling of it is gone.
         //
         // ⌘1-⌘9 have been genuinely free since the Tab menu's removal (see
         // the Hosts menu's own session-switcher comment, which records that
@@ -2137,10 +2148,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainMenu.addItem(goMenuItem)
         let goMenu = NSMenu(title: "Go")
         goMenuItem.submenu = goMenu
-        let homeItem = NSMenuItem(title: "Home", action: #selector(AppShellController.showHomeCanvas), keyEquivalent: "0").withSymbol("sailboat.fill")
-        homeItem.target = menuTarget
-        goMenu.addItem(homeItem)
-        goMenu.addItem(NSMenuItem.separator())
         for space in DaylightSpace.allCases {
             let item = NSMenuItem(title: space.title,
                                   action: #selector(AppShellController.selectSpaceByShortcut(_:)),
@@ -2162,7 +2169,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         allDestinationsItem.keyEquivalentModifierMask = [.command, .shift]
         allDestinationsItem.target = self
         goMenu.addItem(allDestinationsItem)
+        // **UX issue X3.** Everything above this point already has its own
+        // item: Home at Cmd-0, and every space pill at Cmd-1..Cmd-6. The
+        // groups below are the complete destination map (the same one the
+        // All Destinations overlay draws, where completeness is the whole
+        // point), so without this a destination that *is* a space - the
+        // daily review - appeared twice in one menu: once as its pill, and
+        // again as the only item under a header carrying its own name. Home
+        // appeared a third time, under "Elsewhere".
+        //
+        // Filtered here rather than in `groups()` because the overlay is a
+        // map and must stay complete; a menu that already listed something
+        // ten rows up must not list it again.
+        var alreadyListed: Set<RailDestination> = [.homeCanvas]
+        for space in DaylightSpace.allCases {
+            if let destination = space.destination { alreadyListed.insert(destination) }
+        }
         for group in AllDestinationsOverlayController.groups() {
+            let remaining = group.destinations.filter { !alreadyListed.contains($0) }
+            guard !remaining.isEmpty else { continue }
             goMenu.addItem(NSMenuItem.separator())
             // A disabled header row, the standard Mac way to caption a run of
             // items inside one menu - the alternative (a submenu per space)
@@ -2171,7 +2196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let header = NSMenuItem(title: group.title, action: nil, keyEquivalent: "")
             header.isEnabled = false
             goMenu.addItem(header)
-            for destination in group.destinations {
+            for destination in remaining {
                 let item = NSMenuItem(title: destination.title,
                                       action: #selector(AppShellController.selectDestinationFromMenu(_:)),
                                       keyEquivalent: "")
@@ -2577,6 +2602,14 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     // too (see its `init`), so this is the belt to that brace.
     if (ProcessInfo.processInfo.environment["FM_NOTEBOOK_DIR"] ?? "").isEmpty {
         setenv("FM_NOTEBOOK_DIR", scratchRoot.appendingPathComponent("notebook", isDirectory: true).path, 1)
+    }
+    // X6's capture log (`CaptureInboxStore`), for the same reason as every
+    // entry around it: it is reachable from a bare production constructor
+    // *and* from a `shared` singleton, so a suite that files one capture
+    // would otherwise append a row to the captain's own log.
+    if (ProcessInfo.processInfo.environment[CaptureInboxStore.fileVariable] ?? "").isEmpty {
+        setenv(CaptureInboxStore.fileVariable,
+               scratchRoot.appendingPathComponent("capture-inbox.json").path, 1)
     }
     // F4's reading list (`fm/grandline-feature-f4-reading-list`), for exactly
     // the reason the entry above spells out: `ReadingListStore()` is reachable
@@ -3378,6 +3411,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_UI_FIXES_TESTS"] == "1" {
 // FullAppAuditUISelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_FULL_APP_AUDIT_UI_TESTS"] == "1" {
     exit(FullAppAuditUISelfTest.run() ? 0 : 1)
+}
+
+// The UI and UX findings of the 2026-09-27 full-application review: the 17
+// rendered UI defects and X1..X7 - see ReviewUIUXSelfTest.swift's header.
+// Pure logic and source guards, so it runs in CI's blocking lane.
+if ProcessInfo.processInfo.environment["FM_RUN_REVIEW_UI_UX_TESTS"] == "1" {
+    exit(ReviewUIUXSelfTest.run() ? 0 : 1)
 }
 
 // Section 5 of `data/grandline-full-app-audit/report.md`: the security

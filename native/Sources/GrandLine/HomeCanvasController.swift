@@ -1653,33 +1653,98 @@ final class HomeCanvasController: NSViewController {
             : .peekRows(Array(rows.prefix(HelmModuleCard.maxPeekRows)))
     }
 
+    /// One service as the Health ring's summary needs to see it.
+    struct HealthServiceReading {
+        let title: String
+        let verdict: ServiceHealthState.Verdict
+        let hasReported: Bool
+    }
+
+    /// What the Health card's ring and its sentence both say.
+    struct HealthRingSummary: Equatable {
+        let value: Int
+        let total: Int
+        let title: String
+        let note: String
+    }
+
+    /// **Review defect U5.** The ring counted healthy-or-running services over
+    /// *every* known service while the sentence beside it described only the
+    /// ones that had reported, so the card rendered "2/6" next to "Healthy -
+    /// All reporting services healthy." and later "4/6" next to the same
+    /// words. The numbers and the words disagreed about which set they were
+    /// talking about, and neither said what the other four were doing.
+    ///
+    /// Two things are wrong there and both are fixed here. The fraction and
+    /// the sentence now count the *same* set; and a service that is mid-pass
+    /// but has never reported anything is no longer counted as healthy, which
+    /// is GL-14's "unknown is never rendered as good" in its usual disguise -
+    /// `.running` was in the healthy bucket regardless of whether the service
+    /// had ever finished a pass.
+    ///
+    /// While anything is still outstanding the ring counts *reporting* over
+    /// total and says so ("4 of 6 reporting"), which is the finding's own
+    /// first suggestion. Once every service has reported it goes back to
+    /// counting healthy over total, where the fraction and the word "Healthy"
+    /// genuinely agree.
+    ///
+    /// Pure, and separate from the registry, so it can be asserted against
+    /// fabricated readings rather than against whatever this Mac's own
+    /// services happen to be doing.
+    static func healthRingSummary(_ services: [HealthServiceReading]) -> HealthRingSummary {
+        guard !services.isEmpty else {
+            // B9: shorter copy as well as a third line - the note column
+            // beside a 66pt gauge is genuinely narrow, and a summary that
+            // needs three lines to say "fine" is not a summary.
+            return HealthRingSummary(value: 0, total: 0, title: "Healthy",
+                                     note: "Nothing has reported yet.")
+        }
+        let total = services.count
+        let reported = services.filter(\.hasReported)
+        let failing = services.filter { $0.verdict == .failing }
+        let degraded = services.filter { $0.verdict == .degraded }
+        let names = { (list: [HealthServiceReading]) in
+            list.map(\.title).joined(separator: ", ")
+        }
+        guard reported.count == total else {
+            let note = failing.isEmpty
+                ? "\(reported.count) of \(total) reporting so far."
+                : "\(names(failing)) needs a look."
+            return HealthRingSummary(value: reported.count, total: total,
+                                     title: "Reporting", note: note)
+        }
+        let healthy = services.filter { $0.verdict == .healthy }
+        let note: String
+        if !failing.isEmpty {
+            note = "\(names(failing)) needs a look."
+        } else if !degraded.isEmpty {
+            note = "\(names(degraded)) degraded."
+        } else {
+            // "All 1 services healthy." is what a bare count reads as on a
+            // machine where only one service has registered - measured in
+            // the probe.
+            note = total == 1 ? "The only service is healthy." : "All \(total) services healthy."
+        }
+        return HealthRingSummary(value: healthy.count, total: total, title: "Healthy", note: note)
+    }
+
     private func fillHealth(_ content: inout HelmModuleCard.Content) {
         // `fm/grandline-rail-icons-batch2`: the captain's own health
         // artwork, replacing the plain `waveform.path.ecg` glyph - matches
         // `RailDestination.drillHeaderArtwork`'s `.health` case.
         content.artwork = HealthIcon.image
-        let services = ServiceHealthRegistry.shared.knownServices()
-        let healthy = services.filter { service in
-            switch ServiceHealthRegistry.shared.state(service).verdict {
-            case .healthy, .running: return true
-            case .unknown, .degraded, .failing: return false
-            }
+        let readings = ServiceHealthRegistry.shared.knownServices().map { service -> HealthServiceReading in
+            let state = ServiceHealthRegistry.shared.state(service)
+            return HealthServiceReading(title: service.title,
+                                        verdict: state.verdict,
+                                        hasReported: state.hasReported)
         }
         content.subtitle = "background services"
-        let failing = services.filter { ServiceHealthRegistry.shared.state($0).verdict == .failing }
-        if !failing.isEmpty { content.chip = .bad("\(failing.count) failing") }
-        let note: String
-        if services.isEmpty {
-            // B9: shorter copy as well as a third line - the note column
-            // beside a 66pt gauge is genuinely narrow, and a summary that
-            // needs three lines to say "fine" is not a summary.
-            note = "Nothing has reported yet."
-        } else if failing.isEmpty {
-            note = "All reporting services healthy."
-        } else {
-            note = "\(failing.map { $0.title }.joined(separator: ", ")) needs a look."
-        }
-        content.body = .ring(value: healthy.count, total: services.count, title: "Healthy", note: note)
+        let failingCount = readings.filter { $0.verdict == .failing }.count
+        if failingCount > 0 { content.chip = .bad("\(failingCount) failing") }
+        let summary = Self.healthRingSummary(readings)
+        content.body = .ring(value: summary.value, total: summary.total,
+                             title: summary.title, note: summary.note)
     }
 
     private func fillHosts(_ content: inout HelmModuleCard.Content) {

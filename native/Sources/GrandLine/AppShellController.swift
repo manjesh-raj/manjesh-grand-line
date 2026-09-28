@@ -68,6 +68,7 @@
 // back button.
 
 import AppKit
+import LocalAuthentication
 
 final class AppShellController: NSViewController {
 
@@ -602,16 +603,15 @@ final class AppShellController: NSViewController {
                                           codePreviewStore: codePreviewStore,
                                           focusTimer: focusTimer)
         super.init(nibName: nil, bundle: nil)
-        // F20: Overview's daily review reads the sticky board and the reading
-        // list, both of which are built above - after `overview` itself, which
-        // is why this is an attach rather than two more `init` parameters.
-        // GL-23: the shared instances, the same ones the canvas and the two
+        // F20: the daily review reads the sticky board and the reading list,
+        // both of which are built above - after the page itself, which is why
+        // this is an attach rather than two more `init` parameters. GL-23:
+        // the shared instances, the same ones the canvas and the other
         // destinations use.
-        overview.attachDailyReviewSources(stickyBoardStore: stickyBoard.store,
-                                          readingListStore: readingListStore)
-        // The Overview page hosts the same card, over the same two shared
-        // stores. One attach each rather than one store each - see
-        // `DailyOverviewController`'s header for why both hosts exist.
+        //
+        // **One host, since X3.** Fleet used to take the same attach for its
+        // own copy of the card; the review's navigation-naming fix made Today
+        // the daily review's only home.
         dailyOverview.attachDailyReviewSources(stickyBoardStore: stickyBoard.store,
                                                readingListStore: readingListStore)
     }
@@ -976,13 +976,12 @@ final class AppShellController: NSViewController {
         settings.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // `fm/grandline-overview-layout-fix-gmail-settings`: a Google account
         // connected (or disconnected, or its calendar switch flipped) changes
-        // what the daily review's calendar column can read, on both hosts.
+        // what the daily review's calendar column can read.
         // Pushed from Settings rather than polled, and the pages re-read the
         // source rather than being handed one.
         settings.onGoogleAccountsChanged = { [weak self] in
             guard let self else { return }
             self.dailyOverview.renderDailyReviewIfMounted()
-            self.overview.renderDailyReviewIfMounted()
         }
         settings.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
         settings.onRunCommandTracked = { [weak self] label, command, completion in
@@ -1270,6 +1269,25 @@ final class AppShellController: NSViewController {
         lockScreen.onUnlockAnimationFinished = { [weak self] in
             self?.hideLock()
             self?.onUnlocked?()
+        }
+        // **UX issue X1.** The local fallback, for the two states where
+        // Automic Vault cannot answer and the retry loop had nothing else
+        // to offer. `.deviceOwnerAuthentication` explicitly rather than the
+        // per-item reveal gate's biometrics-first choice: a Mac with no
+        // Touch ID still has a login password, and on this screen that is a
+        // wanted second door rather than a weakening.
+        //
+        // Off the main thread, because `evaluatePolicy` blocks behind a
+        // system panel (GL-25, and `LAContextFactory.evaluate`'s own
+        // `dispatchPrecondition` enforces it).
+        lockScreen.localAuthAvailable = { LAContextFactory.deviceOwnerAuthAvailable }
+        lockScreen.onLocalAuthAttempt = { completion in
+            let context = LAContextFactory.make(
+                reason: "unlock Grand Line while Automic Vault is unreachable")
+            DispatchQueue.global(qos: .userInitiated).async {
+                let allowed = LAContextFactory.evaluate(context, policy: .deviceOwnerAuthentication)
+                DispatchQueue.main.async { completion(allowed) }
+            }
         }
         // fm/grandline-vault-bootstrap-fix: "Install Automic Vault" on the
         // `.avUnavailable` state - a plain Homebrew-cask install
@@ -2726,7 +2744,7 @@ final class AppShellController: NSViewController {
     func startClipboardHistoryCapture() {
         bar.clipboardHistory.startCapturing()
         bar.clipboardHistory.onPasted = { [weak self] _ in
-            self?.showToast("Copied \u{2014} \u{2318}V to paste it")
+            self?.showToast("Copied - \u{2318}V to paste it")
         }
     }
 
@@ -2752,58 +2770,75 @@ final class AppShellController: NSViewController {
     func makeCaptureFiler() -> CaptureFiler {
         CaptureFiler { [weak self] destination, draft in
             guard let self else { return .refused("The app shell went away.") }
-            switch destination {
-            case .task:
-                var task = ShiftTask.fresh()
-                task.title = draft.title
-                task.description = draft.body
-                if let due = draft.dueDate {
-                    let (dateStr, timeStr) = ShiftDateFormatting.components(from: due)
-                    task.dueDate = dateStr
-                    task.dueTime = draft.dueHasTime ? timeStr : nil
-                }
-                self.shiftStore.addTask(task)
-                return .filed(.task)
-
-            case .sticky:
-                self.stickyBoard.addCapturedNote(title: draft.title, text: draft.body)
-                return .filed(.sticky)
-
-            case .note:
-                _ = self.notebookStore.createPage(
-                    title: CaptureRouter.notebookTitle(for: draft),
-                    content: draft.text)
-                return .filed(.note)
-
-            case .codeSnippet:
-                _ = self.codePreviewStore.create(name: CaptureRouter.snippetName(for: draft),
-                                                 content: draft.text)
-                return .filed(.codeSnippet)
-
-            case .link:
-                // The one destination whose store decides whether the capture
-                // is even a link, so the panel is told what actually happened
-                // rather than being told "filed" unconditionally. A duplicate
-                // and a non-URL are both `.refused`, and the panel keeps the
-                // captain in the loop - the same posture ⌘4 takes below for a
-                // different reason.
-                switch self.readingListStore.add(draft.text) {
-                case .added:
-                    // The page may never have been mounted, so the card it
-                    // will show is built on first visit from the store this
-                    // just wrote - nothing here has to reach into a view.
-                    return .filed(.link)
-                case .duplicate(let existing):
-                    return .refused("\(existing.host) is already on the reading list.")
-                case .rejected(let why):
-                    return .refused(why)
-                }
-
-            case .credential:
-                self.show(.poneglyph)
-                self.poneglyph.presentCapturedCredential(secret: draft.text)
-                return .handedOff(.credential)
+            // **UX issue X6.** This closure is the one place every capture
+            // entry point lands - ⌥Space's panel, the compact popover, the
+            // crew's own answer - so it is the one place a capture can be
+            // logged without a second copy of the routing. A refusal is not
+            // logged: nothing was captured.
+            let outcome = self.fileCapture(destination, draft)
+            switch outcome {
+            case .filed, .handedOff:
+                CaptureInboxStore.shared.record(destination: destination, title: draft.title)
+            case .refused:
+                break
             }
+            return outcome
+        }
+    }
+
+    private func fileCapture(_ destination: CaptureDestination,
+                             _ draft: CaptureDraft) -> CaptureFilingOutcome {
+        switch destination {
+        case .task:
+            var task = ShiftTask.fresh()
+            task.title = draft.title
+            task.description = draft.body
+            if let due = draft.dueDate {
+                let (dateStr, timeStr) = ShiftDateFormatting.components(from: due)
+                task.dueDate = dateStr
+                task.dueTime = draft.dueHasTime ? timeStr : nil
+            }
+            self.shiftStore.addTask(task)
+            return .filed(.task)
+
+        case .sticky:
+            self.stickyBoard.addCapturedNote(title: draft.title, text: draft.body)
+            return .filed(.sticky)
+
+        case .note:
+            _ = self.notebookStore.createPage(
+                title: CaptureRouter.notebookTitle(for: draft),
+                content: draft.text)
+            return .filed(.note)
+
+        case .codeSnippet:
+            _ = self.codePreviewStore.create(name: CaptureRouter.snippetName(for: draft),
+                                             content: draft.text)
+            return .filed(.codeSnippet)
+
+        case .link:
+            // The one destination whose store decides whether the capture
+            // is even a link, so the panel is told what actually happened
+            // rather than being told "filed" unconditionally. A duplicate
+            // and a non-URL are both `.refused`, and the panel keeps the
+            // captain in the loop - the same posture ⌘4 takes below for a
+            // different reason.
+            switch self.readingListStore.add(draft.text) {
+            case .added:
+                // The page may never have been mounted, so the card it
+                // will show is built on first visit from the store this
+                // just wrote - nothing here has to reach into a view.
+                return .filed(.link)
+            case .duplicate(let existing):
+                return .refused("\(existing.host) is already on the reading list.")
+            case .rejected(let why):
+                return .refused(why)
+            }
+
+        case .credential:
+            self.show(.poneglyph)
+            self.poneglyph.presentCapturedCredential(secret: draft.text)
+            return .handedOff(.credential)
         }
     }
 

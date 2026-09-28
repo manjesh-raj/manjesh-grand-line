@@ -48,6 +48,12 @@ final class AppSettings {
         static let compactModeEnabled = "fm.compactModeEnabled"
         static let compactModeHidesDockIcon = "fm.compactModeHidesDockIcon"
         static let compactModeBadgesOverdueCount = "fm.compactModeBadgesOverdueCount"
+        /// X2. Stored inverted ("separate", default false) rather than as
+        /// "merged" so the shipped default is the value `UserDefaults`
+        /// already returns for a key nobody has written - a `bool(forKey:)`
+        /// default of `false` that has to mean `true` is how a preference
+        /// silently reverts on the machine that has never opened Settings.
+        static let menuBarSeparateItems = "fm.menuBarSeparateItems"
         static let followSystemAppearance = "fm.followSystemAppearance"
         static let systemLightThemeID = "fm.systemLightThemeID"
         static let systemDarkThemeID = "fm.systemDarkThemeID"
@@ -291,6 +297,31 @@ final class AppSettings {
     var compactModeBadgesOverdueCount: Bool {
         get { defaults.bool(forKey: Keys.compactModeBadgesOverdueCount) }
         set { defaults.set(newValue, forKey: Keys.compactModeBadgesOverdueCount) }
+    }
+
+    /// **UX issue X2 of the 2026-09-27 review.** Whether Tasks, the crew
+    /// and Poneglyph each keep a status item of their own, instead of being
+    /// reached through the one merged item's tabs.
+    ///
+    /// > `CompactMode`, `PoneglyphMenuBar`, `ShiftMenuBar` and
+    /// > `StrawHatMenuBar` each create an `NSStatusItem`; the probe put
+    /// > three in the menu bar at once.
+    ///
+    /// **Off by default, which is the change.** The merging already existed
+    /// - F22's popover hosts Poneglyph's and the crew's own controllers as
+    /// two of its four tabs - but it was reachable only by turning compact
+    /// *mode* on, and that also hides the main window. So a captain who just
+    /// wanted one icon had to accept a windowless app, and nobody did, and
+    /// the menu bar carried three.
+    ///
+    /// The merged item is now independent of the mode: one "Grand Line" item
+    /// with four tabs, always, and this switch is the way back to the old
+    /// three for anyone who preferred them.
+    ///
+    /// Stored inverted - see `Keys.menuBarSeparateItems`.
+    var menuBarSeparateItems: Bool {
+        get { defaults.bool(forKey: Keys.menuBarSeparateItems) }
+        set { defaults.set(newValue, forKey: Keys.menuBarSeparateItems) }
     }
 
     /// `fm/grandline-settings-page-redesign`: whether the app switches

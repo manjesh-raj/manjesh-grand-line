@@ -49,31 +49,52 @@ struct CompactModePolicy: Equatable {
     let hidesDockIcon: Bool
     /// Whether the status item carries the overdue count as a title.
     let badgesOverdueCount: Bool
+    /// **UX issue X2.** Whether Tasks, the crew and Poneglyph each keep a
+    /// status item of their own instead of being reached through the merged
+    /// item's tabs - see `AppSettings.menuBarSeparateItems`.
+    let separateMenuBarItems: Bool
 
-    init(isEnabled: Bool, hidesDockIcon: Bool, badgesOverdueCount: Bool) {
+    init(isEnabled: Bool, hidesDockIcon: Bool, badgesOverdueCount: Bool,
+         separateMenuBarItems: Bool = false) {
         self.isEnabled = isEnabled
         self.hidesDockIcon = hidesDockIcon
         self.badgesOverdueCount = badgesOverdueCount
+        self.separateMenuBarItems = separateMenuBarItems
     }
 
-    /// Read straight off the shared settings - the one place the three keys
-    /// are turned into a policy, so no call site assembles a partial one.
+    /// Read straight off the shared settings - the one place the keys are
+    /// turned into a policy, so no call site assembles a partial one.
     static func current(_ settings: AppSettings = .shared) -> CompactModePolicy {
         CompactModePolicy(isEnabled: settings.compactModeEnabled,
                           hidesDockIcon: settings.compactModeHidesDockIcon,
-                          badgesOverdueCount: settings.compactModeBadgesOverdueCount)
+                          badgesOverdueCount: settings.compactModeBadgesOverdueCount,
+                          separateMenuBarItems: settings.menuBarSeparateItems)
     }
 
     /// Whether the one merged "Grand Line" status item is in the menu bar.
-    var showsCompactStatusItem: Bool { isEnabled }
+    ///
+    /// **X2 separated this from the mode.** It used to be `isEnabled`, so
+    /// the merged item only existed in compact mode - and compact mode also
+    /// hides the main window, which is a much larger thing to ask of
+    /// somebody who only wanted one icon. The result was the review's own
+    /// finding: three items in the menu bar, and a fourth that contains all
+    /// three sitting behind a switch nobody would reasonably flip.
+    ///
+    /// The merged item is now the default, and compact mode still forces it
+    /// on regardless of the switch below - with the window hidden it is the
+    /// only surface there is.
+    var showsCompactStatusItem: Bool { isEnabled || !separateMenuBarItems }
 
     /// Whether Tasks', the crew's and Poneglyph's own three status items are.
     ///
-    /// The exact inverse of the above rather than an independent setting:
-    /// three items plus a fourth that contains all three is the state the
-    /// mockup's judgment note rules out, and making it unreachable here is
-    /// cheaper than making it unreachable in Settings.
-    var showsPerFeatureStatusItems: Bool { !isEnabled }
+    /// **Never at the same time as the merged one**, which is the invariant
+    /// the old "exact inverse of `isEnabled`" comment was really protecting:
+    /// three items plus a fourth containing all three is the state F22's
+    /// mockup rules out, and it stays unreachable here rather than in
+    /// Settings. Compact mode wins over the switch, because in that mode the
+    /// per-feature popovers' own "open the full window" actions lead to a
+    /// window that is deliberately hidden.
+    var showsPerFeatureStatusItems: Bool { !isEnabled && separateMenuBarItems }
 
     /// `AppDelegate.applicationShouldTerminateAfterLastWindowClosed`.
     ///

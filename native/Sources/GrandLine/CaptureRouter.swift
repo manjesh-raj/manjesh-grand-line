@@ -114,12 +114,12 @@ enum CaptureDestination: String, CaseIterable {
     /// other four follow its shape.
     var confirmation: String {
         switch self {
-        case .task: return "Captured \u{2014} landed straight in My Tasks."
-        case .sticky: return "Captured \u{2014} pinned to the Sticky Board."
-        case .note: return "Captured \u{2014} filed as a Notebook page."
+        case .task: return "Captured - landed straight in My Tasks."
+        case .sticky: return "Captured - pinned to the Sticky Board."
+        case .note: return "Captured - filed as a Notebook page."
         case .credential: return "Opening Poneglyph with it filled in\u{2026}"
-        case .codeSnippet: return "Captured \u{2014} saved as a code snippet."
-        case .link: return "Saved \u{2014} it is on the reading list."
+        case .codeSnippet: return "Captured - saved as a code snippet."
+        case .link: return "Saved - it is on the reading list."
         }
     }
 

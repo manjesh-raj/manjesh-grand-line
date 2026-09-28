@@ -318,7 +318,7 @@ final class SchedulesCardView: NSObject {
             addFullWidth(HelmEmptyState(
                 symbol: "calendar.badge.plus",
                 body: "No schedules yet. Pick one of the app's existing actions and a cadence, "
-                    + "and it will run on its own \u{2014} reporting to Health, and telling you only when it matters."
+                    + "and it will run on its own - reporting to Health, and telling you only when it matters."
             ))
             return
         }
@@ -521,7 +521,7 @@ final class SchedulesCardView: NSObject {
            schedule.isEnabled {
             row.toolTip = "Next run: \(Self.tooltipFormatter.string(from: next))"
         } else if !schedule.isEnabled {
-            row.toolTip = "Paused \u{2014} the toggle resumes it without losing the schedule."
+            row.toolTip = "Paused - the toggle resumes it without losing the schedule."
         }
         return row
     }

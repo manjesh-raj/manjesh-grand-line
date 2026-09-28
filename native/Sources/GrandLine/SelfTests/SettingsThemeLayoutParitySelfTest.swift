@@ -412,8 +412,11 @@ enum SettingsThemeLayoutParitySelfTest {
         // a page - so the honest response to a card genuinely being added is
         // to move the literal and say which change moved it, not to relax it
         // into a `>=`.
-        guard daylightFP.cardCount == 24 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 24")
+        // Twenty-five since the 2026-09-27 review's X2 added the Menu bar
+        // page's own card - moved and named here rather than relaxed, which
+        // is what the note above asks of whoever adds one.
+        guard daylightFP.cardCount == 25 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 25")
             ok = false
             return
         }

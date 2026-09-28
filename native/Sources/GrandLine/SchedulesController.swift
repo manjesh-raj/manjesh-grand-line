@@ -481,7 +481,7 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         // the six shown are all there is.
         if history.count > Self.activityRowLimit {
             let more = history.count - Self.activityRowLimit
-            let note = NSTextField(labelWithString: "+\(more) more in the past 7 days \u{2014} open a schedule\u{2019}s \u{201C}View History\u{2026}\u{201D} for its own log")
+            let note = NSTextField(labelWithString: "+\(more) more in the past 7 days - open a schedule\u{2019}s \u{201C}View History\u{2026}\u{201D} for its own log")
             note.font = HelmType.captionSmall()
             note.textColor = HelmTheme.mutedInk(theme)
             note.lineBreakMode = .byTruncatingTail

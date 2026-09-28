@@ -3136,6 +3136,13 @@ final class HelmEmptyState: NSView {
     static let watermarkOpacity: CGFloat = 0.26
     static let watermarkSide: CGFloat = 116
 
+    /// U3: how far the watermark's bottom edge reaches *past* the top of the
+    /// content stack. A few points, so the mark reads as rising out of the
+    /// glyph rather than floating unattached above it, while staying clear of
+    /// the title - the glyph row is 40pt tall at `.standard`, so this never
+    /// comes near the first word.
+    static let watermarkGlyphOverlap: CGFloat = 10
+
     /// Whether the watermark is drawing the destination's SF Symbol rather
     /// than the raster it was handed - see `artworkIsOpaqueSlab`.
     private var watermarkUsesSymbol = false
@@ -3267,6 +3274,15 @@ final class HelmEmptyState: NSView {
         // of it. Kept faint enough that it reads as the page's own identity
         // rather than as content - `watermarkOpacity` is the finding's own
         // 25-30% band.
+        //
+        // **Review defect U3.** It used to be centred on this view, which is
+        // where the stack is centred too - so a 116pt mark sat directly
+        // behind the title and the first lines of body copy. Rendered on
+        // Kubernetes, Sticky Board, Docs and Postmortems it reads as a
+        // rendering glitch rather than as decoration: faint outline strokes
+        // crossing live text. It sits **above** the glyph now (the finding's
+        // own first suggestion), so it overlaps nothing but the top of the
+        // icon row and never reaches a word.
         if let artwork {
             // B4: a raster that is really a solid tile is swapped for the
             // destination's own glyph; `applyTheme` is what renders and tints
@@ -3279,16 +3295,44 @@ final class HelmEmptyState: NSView {
             // Decoration: the copy beside it already says everything this
             // says, so announcing it again would only be noise.
             watermark.setAccessibilityElement(false)
-            addSubview(watermark)
+        }
+
+        addSubview(stack)
+        if artwork != nil {
+            // Below the stack in z-order, so the copy always renders on top
+            // of the mark - the property the old "added first" ordering gave
+            // for free, kept explicitly now that the mark is added after the
+            // stack it constrains against.
+            addSubview(watermark, positioned: .below, relativeTo: stack)
+            // U3: the mark's *bottom* is tied just inside the glyph row's
+            // top, so it rises out of the icon rather than sitting behind the
+            // copy. It is backed by a `top >= top` so a short container keeps
+            // the mark inside its own bounds instead of painting over
+            // whatever sits above it - containment therefore has to outrank
+            // the lift.
+            //
+            // **Both sit in gotcha (13)'s 251-499 band, and neither may be
+            // required.** A window holds its own size at priority 500, so a
+            // required containment constraint on a 116pt decoration is a
+            // content-driven window resize: measured, it drove Kubernetes'
+            // page to a 743pt content height against the window's 718 and
+            // failed `AppShellBodyWidthSelfTest.
+            // bodyHeightTracksWindowAcrossAllDestinations` by name. A
+            // watermark must never be the reason a page is taller.
+            let watermarkLift = watermark.bottomAnchor.constraint(
+                equalTo: stack.topAnchor, constant: Self.watermarkGlyphOverlap)
+            watermarkLift.priority = NSLayoutConstraint.Priority(450)
+            let watermarkContainment = watermark.topAnchor.constraint(greaterThanOrEqualTo: topAnchor)
+            watermarkContainment.priority = NSLayoutConstraint.Priority(499)
             NSLayoutConstraint.activate([
                 watermark.centerXAnchor.constraint(equalTo: centerXAnchor),
-                watermark.centerYAnchor.constraint(equalTo: centerYAnchor),
+                watermarkLift,
+                watermarkContainment,
                 watermark.widthAnchor.constraint(equalToConstant: Self.watermarkSide),
                 watermark.heightAnchor.constraint(equalToConstant: Self.watermarkSide),
             ])
         }
 
-        addSubview(stack)
         NSLayoutConstraint.activate([
             stack.centerXAnchor.constraint(equalTo: centerXAnchor),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -3310,6 +3354,26 @@ final class HelmEmptyState: NSView {
     /// asked whether artwork was passed in would pass against the slab being
     /// drawn, which is the defect.
     var debugWatermarkImage: NSImage? { watermark.image }
+
+    /// Review defect U3: the resolved frames the collision was measured
+    /// between. Deliberately the *rendered* frames rather than the
+    /// constraints - the defect was what the window showed, and a constraint
+    /// can be right while a stale frame is not (gotcha (14)).
+    struct WatermarkLayout {
+        let watermarkFrame: NSRect
+        let titleFrame: NSRect
+        let bodyFrame: NSRect
+        let titleIsVisible: Bool
+    }
+
+    func debugWatermarkLayout() -> WatermarkLayout {
+        layoutSubtreeIfNeeded()
+        return WatermarkLayout(
+            watermarkFrame: watermark.superview == nil ? .zero : watermark.frame,
+            titleFrame: convert(titleLabel.bounds, from: titleLabel),
+            bodyFrame: convert(bodyLabel.bounds, from: bodyLabel),
+            titleIsVisible: !titleLabel.isHidden)
+    }
     #endif
 
     /// Rewrites the copy on an already-built instance - for a reused table

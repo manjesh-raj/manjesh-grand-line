@@ -965,7 +965,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
             ? "1 suggestion in this reply couldn't be offered as a card"
             : "\(count) suggestions in this reply couldn't be offered as cards"
         let note = NSTextField(wrappingLabelWithString:
-            "\u{26A0} \(plural) \u{2014} the crew isn't allowed to do that yet.")
+            "\u{26A0} \(plural) - the crew isn't allowed to do that yet.")
         note.font = HelmType.captionSmall()
         note.textColor = HelmTheme.mutedInk(theme)
         note.lineBreakMode = .byWordWrapping

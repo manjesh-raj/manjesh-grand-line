@@ -305,10 +305,14 @@ enum DaylightModuleSelfTest {
         // Review #3 §7 renamed the first pill "Overview" -> "Home"; the
         // literal list is restated here rather than derived, exactly as
         // `checkSpaceTable`'s own header requires.
-        // `fm/grandline-overview-page-daily-review` put the new Overview pill
-        // leftmost on the captain's own ask, which moved Home to the second
-        // slot and its shortcut from \u{2318}1 to \u{2318}2.
-        let expectedTitles = ["Overview", "Home", "Command", "Operations", "Stores", "Engineering"]
+        // `fm/grandline-overview-page-daily-review` put the new daily-review
+        // pill leftmost on the captain's own ask, which moved Home to the
+        // second slot and its shortcut from \u{2318}1 to \u{2318}2. The 2026-09-27
+        // review's X3 then renamed that pill "Overview" -> **"Today"**: the
+        // app had "Overview" and "Home" pills side by side, and "Overview"
+        // does not say what the page is, which is why it kept attaching
+        // itself to whichever landing page somebody was looking at.
+        let expectedTitles = ["Today", "Home", "Command", "Operations", "Stores", "Engineering"]
         let actualTitles = DaylightSpace.allCases.map(\.title)
         if actualTitles != expectedTitles {
             fail("space pill order/copy should be \(expectedTitles), got \(actualTitles)", &ok)

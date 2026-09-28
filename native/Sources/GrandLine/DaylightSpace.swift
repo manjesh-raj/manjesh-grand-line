@@ -71,11 +71,10 @@ enum DaylightSpace: String, CaseIterable {
     /// renamed without touching data code.
     var title: String {
         switch self {
-        // The only user-facing "Overview" in the app, and deliberately so -
-        // see `NavigationCoherenceSelfTest.checkOverviewNamesExactlyOneThing`,
-        // which allows the word here and in `RailDestination.title` and
-        // nowhere else.
-        case .dailyOverview: return "Overview"
+        // X3: "Today", not "Overview" - see `RailDestination.title`'s own
+        // note. The pill and the page it opens have to agree, and
+        // `NavigationCoherenceSelfTest` asserts they do.
+        case .dailyOverview: return "Today"
         case .overview: return "Home"
         case .command: return "Command"
         case .operations: return "Operations"

@@ -510,8 +510,49 @@ final class HelmPageSidebar: NSView {
     /// header draws, plus the theme, so any real change still rebuilds.
     private var lastSectionsSignature: String?
 
+    // MARK: Empty state
+
+    /// What the column shows when `setSections(_:)` is handed nothing.
+    ///
+    /// **Review defect U9.** Notebook's column with no pages in it rendered
+    /// as a blank 275pt card: no heading, no sentence, no affordance, just an
+    /// empty rectangle beside the editor. An empty *nav column* is a state
+    /// every page with one eventually reaches, so it belongs to the component
+    /// rather than to whichever page noticed first.
+    struct EmptyState {
+        let header: String
+        let body: String
+        let actionTitle: String?
+        let onAction: (() -> Void)?
+
+        init(header: String, body: String, actionTitle: String? = nil, onAction: (() -> Void)? = nil) {
+            self.header = header
+            self.body = body
+            self.actionTitle = actionTitle
+            self.onAction = onAction
+        }
+    }
+
+    private var emptyState: EmptyState?
+    private var emptyBodyLabel: NSTextField?
+
+    /// Sets (or with `nil` removes) what an empty column draws. Takes effect
+    /// on the next `setSections(_:)`, and forces one immediately so a page
+    /// that is already empty does not have to re-publish.
+    func setEmptyState(_ state: EmptyState?) {
+        emptyState = state
+        lastSectionsSignature = nil
+        if rows.isEmpty { setSections([]) }
+    }
+
+    @objc private func emptyStateActionClicked() { emptyState?.onAction?() }
+
     private func sectionsSignature(_ sections: [Section]) -> String {
-        var parts: [String] = ["theme:\(theme.id)"]
+        // U9: the empty state is part of what this column draws, so a change
+        // to it has to invalidate the cache the same way a row does -
+        // otherwise `setEmptyState` on an already-empty column is a no-op.
+        var parts: [String] = ["theme:\(theme.id)",
+                               "empty:\(emptyState.map { "\($0.header)\u{1f}\($0.body)\u{1f}\($0.actionTitle ?? "-")" } ?? "-")"]
         for section in sections {
             parts.append("H\u{1f}\(section.header ?? "-")")
             for row in section.rows {
@@ -543,6 +584,89 @@ final class HelmPageSidebar: NSView {
         }
         rows.removeAll()
         headers.removeAll()
+        emptyBodyLabel = nil
+
+        if sections.allSatisfy({ $0.rows.isEmpty }), let empty = emptyState {
+            let inset = surface == .panel ? Metrics.panelInset : 0
+            appendHeader(empty.header)
+            let body = NSTextField(wrappingLabelWithString: empty.body)
+            body.font = HelmType.caption()
+            // A wrapping label's intrinsic width is its whole string on one
+            // line until something tells it otherwise, and this column is
+            // inside a page whose width the *window* decides - so leaving
+            // it at the default `.defaultHigh` compression resistance makes
+            // the sentence a floor on the page, and the page a floor on the
+            // window. Measured: Notebook's body container came back 9.5pt
+            // wider than a 1100pt window and failed
+            // `AppShellBodyWidthSelfTest` by name. The real width arrives in
+            // `layout()` below, from the column rather than from the label
+            // (gotcha (22) - a label must never decide its own wrap width).
+            body.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            // **Gotcha (22), and the reason this is a constant rather than
+            // `bounds.width`.** Deriving the wrap width in `layout()` from
+            // the column's own resolved width is circular - the column is
+            // only held at `Self.width` by a 499 constraint, so the label's
+            // intrinsic width is one of the things deciding how wide the
+            // column is, and reading it back to decide the label's wrap
+            // width is the loop that gotcha describes. Measured: it settled
+            // with Notebook's body container 9.5pt wider than a 1100pt
+            // window and failed `AppShellBodyWidthSelfTest` by name.
+            //
+            // `Self.width` is the column's *declared* width, which the label
+            // does not decide, so this is the non-circular derivation.
+            body.preferredMaxLayoutWidth = Self.width - 2 * inset - 2 * Metrics.rowInset
+            emptyBodyLabel = body
+            let bodyRow = NSView()
+            bodyRow.translatesAutoresizingMaskIntoConstraints = false
+            body.translatesAutoresizingMaskIntoConstraints = false
+            bodyRow.addSubview(body)
+            NSLayoutConstraint.activate([
+                body.leadingAnchor.constraint(equalTo: bodyRow.leadingAnchor, constant: Metrics.rowInset),
+                body.trailingAnchor.constraint(equalTo: bodyRow.trailingAnchor, constant: -Metrics.rowInset),
+                body.topAnchor.constraint(equalTo: bodyRow.topAnchor, constant: HelmMetrics.s1),
+                body.bottomAnchor.constraint(equalTo: bodyRow.bottomAnchor),
+            ])
+            appendFullWidth(bodyRow)
+            if let title = empty.actionTitle {
+                let button = HelmButton(title: title, variant: .secondary,
+                                        target: self, action: #selector(emptyStateActionClicked))
+                button.controlSize = .small
+                // **Nothing in this column may be a floor on the window.**
+                // `columnWidth` is deliberately 499 (gotcha (13)) so the
+                // column yields before the window has to - which means any
+                // *required* minimum inside it outranks the column's own
+                // width and propagates straight out to `bodyContainer`.
+                // Measured: with this button unconstrained, Notebook's body
+                // container came back 9.5pt wider than a 1100pt window and
+                // failed `AppShellBodyWidthSelfTest` by name.
+                //
+                // A hard cap plus low compression resistance is the shape:
+                // the button truncates rather than widening the page, and
+                // the cap is the column's *declared* width rather than its
+                // resolved one, so this is not gotcha (22)'s circular
+                // derivation.
+                button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                button.widthAnchor.constraint(
+                    lessThanOrEqualToConstant: Self.width - 2 * inset - 2 * Metrics.rowInset
+                ).isActive = true
+                let actionRow = NSView()
+                actionRow.translatesAutoresizingMaskIntoConstraints = false
+                button.translatesAutoresizingMaskIntoConstraints = false
+                actionRow.addSubview(button)
+                NSLayoutConstraint.activate([
+                    button.leadingAnchor.constraint(equalTo: actionRow.leadingAnchor,
+                                                    constant: Metrics.rowInset),
+                    button.trailingAnchor.constraint(lessThanOrEqualTo: actionRow.trailingAnchor,
+                                                     constant: -Metrics.rowInset),
+                    button.topAnchor.constraint(equalTo: actionRow.topAnchor, constant: HelmMetrics.s2),
+                    button.bottomAnchor.constraint(equalTo: actionRow.bottomAnchor),
+                ])
+                appendFullWidth(actionRow)
+            }
+            selections = [:]
+            applyTheme(theme)
+            return
+        }
 
         for (index, section) in sections.enumerated() {
             if index > 0 { appendSpacer() }
@@ -775,6 +899,7 @@ final class HelmPageSidebar: NSView {
         let selectedFill = surfaceColor.blended(withFraction: HelmAccentRow.selectionWash, of: accent) ?? surfaceColor
         let hoverFill = surfaceColor.blended(withFraction: HelmAccentRow.selectionWash / 2.5, of: accent) ?? surfaceColor
 
+        emptyBodyLabel?.textColor = muted
         for header in headers {
             header.attributedStringValue = NSAttributedString(
                 string: (header.placeholderString ?? "").uppercased(),

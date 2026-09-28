@@ -734,6 +734,12 @@ enum CompactModeViewSelfTest {
             AppSettings.shared.compactModeEnabled = false
             AppSettings.shared.compactModeHidesDockIcon = false
             AppSettings.shared.compactModeBadgesOverdueCount = false
+            // **UX issue X2.** The merged item is the default now, so a case
+            // that wants to watch it appear *with* the mode has to start
+            // from the state where it is absent - which is the
+            // separate-icons switch on. Set here rather than in each case,
+            // and restored by `withController`'s own scratch domain.
+            AppSettings.shared.menuBarSeparateItems = true
 
             let content = CompactModePopoverController()
             content.todayProvider = { todayFixture }
@@ -757,7 +763,8 @@ enum CompactModeViewSelfTest {
 
             setMode(false, false)
             check(!controller.debugStatusItemIsVisible,
-                  "with the mode off, the merged status item is not in the menu bar")
+                  "with the mode off and the separate-icons switch on, the merged status item is "
+                      + "not in the menu bar")
             check(perFeatureVisible.last == true,
                   "and the three items it merges are - got \(String(describing: perFeatureVisible.last))")
             check(!controller.debugHotkeyIsInstalled,
@@ -780,12 +787,26 @@ enum CompactModeViewSelfTest {
 
             setMode(false, true)
             check(!controller.debugStatusItemIsVisible && perFeatureVisible.last == true,
-                  "turning the mode off puts the three items back and hides the merged one")
+                  "turning the mode off puts the three items back and hides the merged one - with "
+                      + "the separate-icons switch on, which is what this fixture sets")
             check(!controller.debugHotkeyIsInstalled,
                   "and tears the hotkey monitor down rather than leaving it installed")
             check(NSApplication.shared.activationPolicy() == .regular,
                   "and restores the Dock icon even though the Dock switch is still on - which is "
                       + "the thing that stops the captain being left with no way back to the window")
+
+            // X2's default, driven through the same real `refresh()`: with
+            // the separate-icons switch off and the mode off, the menu bar
+            // carries the merged item and nothing else. This is what a fresh
+            // install looks like, and it is the state the review found three
+            // icons in.
+            AppSettings.shared.menuBarSeparateItems = false
+            controller.refresh()
+            check(controller.debugStatusItemIsVisible,
+                  "by default the merged status item is in the menu bar with the mode off (X2)")
+            check(perFeatureVisible.last == false,
+                  "and the three per-feature items are not - got "
+                      + "\(String(describing: perFeatureVisible.last))")
         }
     }
 

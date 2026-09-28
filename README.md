@@ -157,6 +157,7 @@ These tables are **complete in both directions**, and that is a check rather tha
 | `FM_SCRATCHPAD_FILE` | `scratchpad.json` (the Tools > Scratchpad tabs' saved pads, keyed by tab name) |
 | `FM_WIDGET_DIR` | Where the app publishes `widget-snapshot.json` and reads the widgets' queued taps from. Defaults to the App Group container the WidgetKit extension reads (`~/Library/Group Containers/group.com.manjesh.grandline.native/GrandLineWidgets/`) - see `native/Widgets/README.md` |
 | `FM_CLIPBOARD_HISTORY_FILE` | The encrypted clipboard history (`clipboard-history.sealed`) |
+| `FM_CAPTURE_INBOX_FILE` | The capture log behind Today's "Captured today" card (`capture-inbox.json`) - one row per filed ⌥Space capture, never the captured content's own store |
 | `FM_GOOGLE_OAUTH_CLIENT_ID` | The Google OAuth client ID the Gmail settings sign-in uses, overriding the one stored in the Keychain. There is no built-in default - a client ID comes from your own Google Cloud project (see `docs/history/43-google-accounts.md`) |
 | `FM_GOOGLE_OAUTH_CLIENT_SECRET` | The matching client secret, when the Google Cloud client has one. Only read alongside `FM_GOOGLE_OAUTH_CLIENT_ID` |
 | `FM_CLIPBOARD_HISTORY_EPHEMERAL` | `1` seals the clipboard history with a per-process random key instead of the Keychain item - what the self-test process sets, so a suite never creates or reads a real Keychain entry |

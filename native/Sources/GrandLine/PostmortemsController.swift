@@ -57,7 +57,20 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
             button.target = self
             button.action = #selector(openLogAnalyzerTapped)
             button.toolTip = "Analyze captured output and turn it into an RCA."
-            return button
+            // **UX issue X5.** The button above sends the captain somewhere
+            // else to *earn* a postmortem, which is right but is not an
+            // answer to "what does a postmortem look like". The seeded
+            // example is, and it is opt-in - see `SeedExamples`' header.
+            let seed = HelmButton(title: "Add an example", variant: .quiet)
+            seed.target = self
+            seed.action = #selector(seedExamplePostmortemTapped)
+            seed.toolTip = "Writes one short example postmortem you can read, edit or delete."
+            let row = NSStackView(views: [button, seed])
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.distribution = .fill
+            row.spacing = HelmMetrics.s2
+            return row
         }(),
         hue: RailDestination.postmortems.domainHue,
         // D4: this is the whole content area of a full-width page - the "big
@@ -69,6 +82,15 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
     var onNavigateToDestination: ((RailDestination) -> Void)?
 
     @objc private func openLogAnalyzerTapped() { onNavigateToDestination?(.logAnalyzer) }
+
+    /// X5: writes the one example and opens it, so the affordance ends
+    /// somewhere rather than silently changing a list behind the captain.
+    @objc private func seedExamplePostmortemTapped() {
+        let created = runbookStore.createPostmortem(title: SeedExamples.postmortemTitle,
+                                                    content: SeedExamples.postmortemContent)
+        reloadPostmortemsList()
+        openPostmortem(id: created.id)
+    }
     private var selectedPostmortemID: String?
     private var postmortemGridItems: [DocGridItem] = []
 
@@ -251,7 +273,7 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
             return DocGridItem(
                 title: postmortem.title,
                 subtitle: subtitle,
-                tooltip: subtitle == updated ? postmortem.title : "\(postmortem.title) \u{2014} \(updated)",
+                tooltip: subtitle == updated ? postmortem.title : "\(postmortem.title) - \(updated)",
                 icon: "exclamationmark.triangle",
                 tint: .warn,
                 onOpen: { [weak self] in self?.showPostmortem(postmortem.id) },
@@ -301,6 +323,9 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
     #if FM_SELFTESTS
     var debugPostmortemPlates: [HelmPlateCard] { postmortemRowCards }
     func debugReloadPostmortems() { reloadPostmortemsList() }
+    /// X5: the real button's action, so a check drives what a click drives.
+    func debugSeedExamplePostmortem() { seedExamplePostmortemTapped() }
+    var debugPostmortemEmptyState: HelmEmptyState { postmortemEmptyState }
     #endif
 
     // MARK: Theme

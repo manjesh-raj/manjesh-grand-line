@@ -331,7 +331,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
     var classifier: ((String, @escaping (CaptureDestination?) -> Void) -> Void)?
 
     private let inputField = HelmTextField(
-        placeholder: "Capture anything \u{2014} try \u{201C}tomorrow 3pm review deploy notes\u{201D}",
+        placeholder: "Capture anything - try \u{201C}tomorrow 3pm review deploy notes\u{201D}",
         style: .prominent)
     private let titleLabel = NSTextField(labelWithString: "Capture")
     private let hotkeyChip = NSTextField(labelWithString: "\u{2325}Space")
@@ -697,7 +697,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
             guard let destination else {
                 // GL-14's shape: "the crew could not say" is not "file it as a
                 // task". The captain stays in the loop with the text intact.
-                self.show(status: "The crew couldn\u{2019}t place it \u{2014} pick a destination.",
+                self.show(status: "The crew couldn\u{2019}t place it - pick a destination.",
                           isError: true)
                 return
             }

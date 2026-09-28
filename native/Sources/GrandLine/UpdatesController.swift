@@ -183,7 +183,15 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
             stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
             stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
+            // U10's second half: a completion toast is a floating pill at the
+            // bottom of the window, and this page's last card used to end
+            // 20pt above that edge - so "Checked 13 tools" landed on top of
+            // the "Other tools" section header and read as a collision
+            // rather than as chrome. The page reserves the pill's own band
+            // instead; `Toast.reservedBottomSpace` is the one number, so a
+            // change to the pill's size or inset moves both together.
+            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor,
+                                          constant: -Toast.reservedBottomSpace),
         ])
         for section in sections {
             section.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -985,7 +993,8 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // the theme pass has to be the single owner of it.
         let busy = row.status == .checking || row.status == .updating
         row.pill.isHidden = busy
-        row.checkButton.isHidden = busy
+        // U10: not in every state - see `DependencyStatus.showsCheckButton`.
+        row.checkButton.isHidden = busy || !row.status.showsCheckButton
         // `.notInstalled` shows the distinct "Install in Bootstrap ->" link
         // instead of Update - every other status that `showsUpdateButton`
         // keeps its existing Update button unchanged.

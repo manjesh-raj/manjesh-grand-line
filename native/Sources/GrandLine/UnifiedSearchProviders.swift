@@ -217,6 +217,20 @@ struct UnifiedSearchGroup {
     /// explicit "N more…" line rather than silently dropped - AGENTS.md's own
     /// "no silent caps" rule.
     let overflow: Int
+
+    /// The "N more…" line's own sentence.
+    ///
+    /// **Review defect U13.** This used to read
+    /// `"\(overflow) more \(title.lowercased()) match\(es)"`, and every
+    /// group title is already plural ("Actions", "Commands", "Hosts") - so
+    /// the palette said "45 more actions matches - keep typing to narrow it
+    /// down". The count now governs the noun it actually modifies ("45 more
+    /// matches", "1 more match") and the group is named as a place rather
+    /// than as an adjective, which is grammatical in both numbers without
+    /// needing a singular form of every group title.
+    var overflowText: String {
+        "\(overflow) more match\(overflow == 1 ? "" : "es") in \(title) - keep typing to narrow it down"
+    }
 }
 
 // MARK: - The seam

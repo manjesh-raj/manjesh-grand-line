@@ -41,10 +41,23 @@ final class CommandLibraryPageView: NSObject {
     // MARK: Navigation state
 
     private enum LeftPanelState: Equatable {
+        /// Categories only, no command list under them. **No longer the
+        /// state this page opens in** - see `allCategoryID`.
         case browse
+        /// Every command, in one list, under the Categories panel.
+        case all
         case category(String)
     }
-    private var leftPanelState: LeftPanelState = .browse
+    /// **Review defect U6.** This used to be `.browse`, so the page opened
+    /// with a category list on the left, no command list anywhere, and a
+    /// detail pane reading "Pick a command from the list to see its details
+    /// here." - about a list that was not on screen. Nothing was broken; the
+    /// first instruction the page gives simply could not be followed until
+    /// the captain guessed that a category had to be picked first.
+    ///
+    /// It opens on "All" now, which is the finding's own suggestion and is
+    /// also what makes the detail pane's sentence true.
+    private var leftPanelState: LeftPanelState = .all
     private var selectedCommandID: String?
     private var searchQuery: String = ""
     /// Reset every time `selectedCommandID` changes - see `selectCommand`.
@@ -427,7 +440,12 @@ final class CommandLibraryPageView: NSObject {
     func openCommand(id: String) {
         store.reloadAll()
         guard let command = store.command(id: id) else { return }
-        if !command.category.isEmpty { leftPanelState = .category(command.category) }
+        // U6: "All" already shows this command's row, so opening its
+        // category would collapse the list the captain is looking at in
+        // order to reveal a row that is on screen.
+        if leftPanelState != .all, !command.category.isEmpty {
+            leftPanelState = .category(command.category)
+        }
         // `selectCommand` early-returns when the id is already selected, in
         // which case only the left panel's newly-opened category needs a
         // render.
@@ -501,6 +519,48 @@ final class CommandLibraryPageView: NSObject {
     /// round throws AppKit's "no common ancestor" exception, since the two
     /// views share no ancestor yet at that point. See AGENTS.md's AppKit
     /// gotcha catalogue for the general rule this is an instance of.
+    #if FM_SELFTESTS
+    /// Review defect U6: what the left column is *actually showing*, in the
+    /// order it shows it.
+    ///
+    /// Deliberately walks the rendered stack rather than reporting the
+    /// controller's own state - the defect was that the state said "browse"
+    /// and the detail pane said "pick from the list", and a check that asked
+    /// the state would have agreed with both while the list was missing.
+    struct LeftPanelContents {
+        /// Every label in the column, headers and rows alike.
+        let lines: [String]
+        /// How many of those rows actually carry a command id, i.e. how many
+        /// are selectable commands rather than headers or category rows.
+        let commandRowCount: Int
+        /// The ids the category rows carry, "All" included.
+        let categoryRowIDs: [String]
+    }
+
+    func debugLeftPanelContents() -> LeftPanelContents {
+        var lines: [String] = []
+        var categoryIDs: [String] = []
+        for row in leftPanelStack.arrangedSubviews {
+            if let id = rowCategoryIDs[ObjectIdentifier(row)] { categoryIDs.append(id) }
+            var fields: [NSTextField] = []
+            var queue: [NSView] = [row]
+            while let next = queue.popLast() {
+                if let field = next as? NSTextField { fields.append(field) }
+                queue.append(contentsOf: next.subviews)
+            }
+            let text = fields.map(\.stringValue).filter { !$0.isEmpty }.joined(separator: " ")
+            if !text.isEmpty { lines.append(text) }
+        }
+        return LeftPanelContents(lines: lines,
+                                 commandRowCount: rowCommandIDs.count,
+                                 categoryRowIDs: categoryIDs)
+    }
+
+    /// The detail pane's own instruction, so a check can assert the sentence
+    /// and the list agree rather than assuming the sentence never changes.
+    var debugEmptyDetailIsShowing: Bool { !emptyDetailState.isHidden && emptyDetailState.superview != nil }
+    #endif
+
     private func appendToLeftPanel(_ view: NSView) {
         leftPanelStack.addArrangedSubview(view)
         view.widthAnchor.constraint(equalTo: leftPanelStack.widthAnchor).isActive = true
@@ -707,6 +767,16 @@ final class CommandLibraryPageView: NSObject {
         if case .category(let id) = leftPanelState { selectedCategoryID = id }
 
         appendToLeftPanel(mutedHeaderLabel("CATEGORIES"))
+        // U6: "All" is a category row like any other, sitting above the real
+        // ones and reusing the same click handler through `allCategoryID` -
+        // so the selection highlight, the count column and the
+        // click-again-to-close behaviour are the ones this column already
+        // has, rather than a second row shape that has to be kept in step.
+        let allRow = leftPanelRow(text: "All", trailing: "\(store.commands.count)",
+                                  isSelected: leftPanelState == .all,
+                                  action: #selector(categoryRowClicked(_:)))
+        rowCategoryIDs[ObjectIdentifier(allRow)] = Self.allCategoryID
+        appendToLeftPanel(allRow)
         for (info, commands) in store.commandsByCategory() where !commands.isEmpty {
             let row = leftPanelRow(text: info.displayName, trailing: "\(commands.count)",
                                    isSelected: info.id == selectedCategoryID,
@@ -715,7 +785,10 @@ final class CommandLibraryPageView: NSObject {
             appendToLeftPanel(row)
         }
 
-        if let selectedCategoryID {
+        if leftPanelState == .all {
+            appendDividerToLeftPanel()
+            renderAllCommandsList()
+        } else if let selectedCategoryID {
             appendDividerToLeftPanel()
             renderCategoryCommandList(selectedCategoryID)
         }
@@ -754,6 +827,27 @@ final class CommandLibraryPageView: NSObject {
         appendToLeftPanel(workflowsRow)
     }
 
+    /// U6: the id the "All" row carries. A reserved sentinel rather than a
+    /// real category - `CommandLibraryCategory.info(for:)` never produces it,
+    /// and `categoryRowClicked` reads it before anything else does.
+    static let allCategoryID = "__all__"
+
+    /// U6: every command, in the order `commandsByCategory()` groups them, so
+    /// the one list a new captain sees is the same ordering the categories
+    /// above it describe rather than a second sort nobody asked for.
+    private func renderAllCommandsList() {
+        appendToLeftPanel(mutedHeaderLabel("ALL COMMANDS"))
+        for (_, commands) in store.commandsByCategory() {
+            for command in commands {
+                let row = leftPanelRow(text: command.name,
+                                       isSelected: command.id == selectedCommandID,
+                                       action: #selector(categoryCommandRowClicked(_:)))
+                rowCommandIDs[ObjectIdentifier(row)] = command.id
+                appendToLeftPanel(row)
+            }
+        }
+    }
+
     /// The selected category's own command list, rendered *below* the
     /// Categories panel (see `renderBrowseList`). Headed by the category's
     /// name, the same way the prototype's second left-hand card is - not by a
@@ -785,7 +879,9 @@ final class CommandLibraryPageView: NSObject {
         // Clicking the already-open category closes it again, so the column
         // can be collapsed back to just the Categories overview without a
         // separate back row.
-        if case .category(categoryID) = leftPanelState {
+        if categoryID == Self.allCategoryID {
+            leftPanelState = leftPanelState == .all ? .browse : .all
+        } else if case .category(categoryID) = leftPanelState {
             leftPanelState = .browse
         } else {
             leftPanelState = .category(categoryID)
@@ -1166,7 +1262,7 @@ final class CommandLibraryPageView: NSObject {
         render()
         let reclassified = risk == existing.risk
             ? ""
-            : " \u{2014} now marked \(risk.displayName), since nobody has vouched for the new text"
+            : " - now marked \(risk.displayName), since nobody has vouched for the new text"
         Toast.show(in: view,
                    message: "Saved the suggested template for \u{201C}\(existing.name)\u{201D}\(reclassified)")
     }

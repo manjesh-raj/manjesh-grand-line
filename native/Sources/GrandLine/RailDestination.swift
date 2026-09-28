@@ -231,8 +231,8 @@ enum RailDestination: String, CaseIterable {
     /// second concept.
     case homeCanvas
     /// `fm/grandline-overview-page-daily-review`: F20's daily review, as a
-    /// page of its own. Titled "Overview", opened by the leftmost space pill
-    /// (`DaylightSpace.dailyOverview`).
+    /// page of its own. Titled **"Today"** since the 2026-09-27 review's X3,
+    /// opened by the leftmost space pill (`DaylightSpace.dailyOverview`).
     ///
     /// **Not `overview`** - that case is the Fleet dashboard and has been
     /// since the Daylight rename. See `DaylightSpace.dailyOverview` for the
@@ -428,10 +428,16 @@ enum RailDestination: String, CaseIterable {
     var title: String {
         switch self {
         case .homeCanvas: return "Home"
-        // The app's one user-facing "Overview", and the only other place the
-        // word is allowed to appear as a literal - see
-        // `NavigationCoherenceSelfTest.checkOverviewNamesExactlyOneThing`.
-        case .dailyOverview: return "Overview"
+        // **UX issue X3.** This was "Overview", which by then named the
+        // daily review page here, the leftmost space pill, a group header
+        // in the Go menu and an item inside that header - while "Home" and
+        // "Fleet" were each also in use for something adjacent. The review
+        // asked for the three distinct things to be named once each: Home
+        // is the canvas, **Today** is the daily review, Fleet is the crew
+        // dashboard. "Overview" now names nothing, which is what
+        // `NavigationCoherenceSelfTest.checkNavigationNamesAreDistinct`
+        // enforces.
+        case .dailyOverview: return "Today"
         case .overview: return "Fleet"
         case .strawHat: return "Straw Hat Pirates"
         case .shift: return "Tasks"
