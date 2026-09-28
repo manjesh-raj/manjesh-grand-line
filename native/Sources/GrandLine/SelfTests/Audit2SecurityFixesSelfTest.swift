@@ -82,7 +82,14 @@ enum Audit2SecurityFixesSelfTest {
     /// genuinely distinct cases and not aliases of each other or of anything
     /// already there.
     private static func test_gateCasesAreDistinct() -> String? {
-        let added: [AppLockedSurface] = [.terminalSession, .terminalFocus, .incidentCard, .tabShortcuts]
+        // `.terminalAutoReconnect` joined them with review bug B36 - the one
+        // path §5.1 named and deliberately left ungated, for want of a resume
+        // story. It is swept here rather than in a suite of its own because
+        // the mistake it could make is this suite's subject: it is the
+        // closest possible neighbour of `.terminalSession`, so reusing that
+        // case would have been the easiest thing in the app to get wrong.
+        let added: [AppLockedSurface] = [.terminalSession, .terminalFocus, .incidentCard,
+                                         .tabShortcuts, .terminalAutoReconnect]
         let existing: [AppLockedSurface] = [.menuBarContent, .menuBarPopover, .quickCapture,
                                             .unifiedSearch, .dictation, .notificationAction, .crewReply]
         for (i, a) in added.enumerated() {
@@ -121,6 +128,10 @@ enum Audit2SecurityFixesSelfTest {
             ("ConsoleController+Incident.swift", "allows(.incidentCard)", "§5.1(b) opening the incident card"),
             ("ConsoleController+Incident.swift", "registerSecondaryWindow", "§5.1(b) the already-open case"),
             ("TabKeyboardShortcuts.swift", "allows(.tabShortcuts)", "§5.2 the tab keystrokes"),
+            ("ConsoleController+Tabs.swift", "allows(.terminalAutoReconnect)",
+             "B36 the auto-reconnect timer, §5.1's recorded leftover"),
+            ("ConsoleController.swift", "resumeDeferredReconnects",
+             "B36 the resume story the gate is only safe with"),
             ("AppShellController.swift", "resumeAfterUnlock", "§5.1 replaying what the lock deferred"),
             ("AppShellController.swift", "closeLockSensitiveSurfaces", "§5.1(b) dismissing on the way into the lock"),
         ]

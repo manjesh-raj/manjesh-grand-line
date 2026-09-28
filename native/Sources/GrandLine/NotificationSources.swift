@@ -268,10 +268,23 @@ enum NotificationSources {
                     : "Due today",
                 source: "Tasks",
                 clearCondition: "Clears when you mark them complete.",
-                // Overdue work is not an FYI. The panel's own two-tier
-                // grouping is what makes this distinction visible, so a source
-                // that knows something is late has to say so here.
-                kind: overdueCount > 0 ? .actionNeeded : .informational,
+                // X12 (review UX): work that is due is what the panel's own
+                // title, "Waiting for you", is about - so it belongs under
+                // "Needs action", not under "Available".
+                //
+                // This used to split on `overdueCount > 0`, which read
+                // sensibly on its own and produced the thing the review
+                // actually found: the one entry naming the captain's due work
+                // sat in the FYI half of a list called "Waiting for you", and
+                // the "Needs action" filter - the panel's own answer to "what
+                // is left today" - excluded it until the deadline had already
+                // passed. Nothing else changes with it: `isWarning` and
+                // `timeText` still key off `overdueCount`, so overdue still
+                // reads louder than due, inside the same group.
+                //
+                // The guard above has already returned for `total == 0`, so
+                // this is never "nothing is due, and it needs action".
+                kind: .actionNeeded,
                 tint: .warn,
                 timeText: overdueCount > 0 ? "overdue" : nil,
                 isWarning: overdueCount > 0,

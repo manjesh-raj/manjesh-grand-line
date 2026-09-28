@@ -660,14 +660,23 @@ enum HostsRedesignSelfTest {
         let bar = DaylightBarController()
         _ = bar.view
         // **Review #3's UX2 capped the *drawn* row at six**, and Hosts is the
-        // seventh - so the captain's placement now lives in the pinned order
+        // seventh - so the captain's placement lives in the pinned order
         // rather than in the drawn buttons, and Hosts reaches the bar through
         // the overflow menu. The placement claim is unchanged and still
         // asserted; what changed is which of the two lists carries it.
         //
-        // Asserting the pinned list rather than quietly dropping this case is
+        // Asserting the pinned order rather than quietly dropping this case is
         // the point: "Hosts is last, immediately after Console" is a captain
         // decision, and it is exactly as breakable now as it was before.
+        //
+        // **Review U2 cut the *default* row to four**, which no longer
+        // carries either of these two, so the fixture is explicit now. That
+        // is the right shape regardless: this case is about the order a row
+        // holding both preserves, not about which destinations ship pinned -
+        // a captain who pins Hosts today gets exactly this row.
+        bar.setQuickAccess(QuickAccessConfiguration(pinned: [
+            .stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts,
+        ]))
         let pinned = bar.quickAccessConfiguration.pinned
         guard let consoleIndex = pinned.firstIndex(of: .console),
               let hostsIndex = pinned.firstIndex(of: .hosts) else {

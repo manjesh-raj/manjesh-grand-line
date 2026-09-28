@@ -75,7 +75,7 @@ final class ShiftConflictController: NSViewController {
             subtitleText = "\(conflictSet.totalConflictCount) records were edited differently on this machine and on GitHub. Choose which version to keep for each."
         }
         let subtitle = NSTextField(wrappingLabelWithString: subtitleText)
-        subtitle.font = .systemFont(ofSize: 12)
+        subtitle.setScaledFont(ofSize: 12)
         subtitle.textColor = HelmTheme.mutedInk(theme)
 
         let headerStack = NSStackView(views: [title, subtitle])
@@ -119,7 +119,7 @@ final class ShiftConflictController: NSViewController {
         scroll.documentView = document
         NSLayoutConstraint.activate([document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)])
 
-        statusLabel.font = .systemFont(ofSize: 11.5)
+        statusLabel.setScaledFont(ofSize: 11.5)
         statusLabel.textColor = HelmTheme.nsColor(theme.ansiHex[1])
         statusLabel.isHidden = true
 
@@ -171,7 +171,7 @@ final class ShiftConflictController: NSViewController {
         list.translatesAutoresizingMaskIntoConstraints = false
         for note in conflictSet.autoMergeNotes {
             let line = NSTextField(wrappingLabelWithString: "\(note.kind.rawValue) \u{201c}\(note.title)\u{201d} \u{2013} \(note.action)")
-            line.font = .systemFont(ofSize: 11.5)
+            line.setScaledFont(ofSize: 11.5)
             line.textColor = HelmTheme.mutedInk(theme)
             list.addArrangedSubview(line)
             line.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
@@ -209,7 +209,7 @@ final class ShiftConflictController: NSViewController {
 
     private func buildConflictRow<T: ShiftConflictRecordType>(_ conflict: ShiftRecordConflict<T>, theme: HelmTheme) -> NSView {
         let titleLabel = NSTextField(labelWithString: conflict.title)
-        titleLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        titleLabel.setScaledFont(ofSize: 12.5, weight: .semibold)
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
 
         let diffStack = NSStackView()
@@ -221,14 +221,14 @@ final class ShiftConflictController: NSViewController {
         if conflict.local == nil || conflict.remote == nil {
             let text = conflict.local == nil ? "Deleted on this machine, but edited on GitHub." : "Edited on this machine, but deleted on GitHub."
             let line = NSTextField(wrappingLabelWithString: text)
-            line.font = .systemFont(ofSize: 11)
+            line.setScaledFont(ofSize: 11)
             line.textColor = HelmTheme.mutedInk(theme)
             diffStack.addArrangedSubview(line)
             line.widthAnchor.constraint(equalTo: diffStack.widthAnchor).isActive = true
         } else {
             for diff in conflict.fieldDiffs {
                 let line = NSTextField(wrappingLabelWithString: "\(diff.field): \u{201c}\(diff.local)\u{201d} here \u{2192} \u{201c}\(diff.remote)\u{201d} on GitHub")
-                line.font = .monospacedSystemFont(ofSize: 10.5, weight: .regular)
+                line.setScaledFont(ofSize: 10.5, weight: .regular, voice: .monospaced)
                 line.textColor = HelmTheme.mutedInk(theme)
                 diffStack.addArrangedSubview(line)
                 line.widthAnchor.constraint(equalTo: diffStack.widthAnchor).isActive = true

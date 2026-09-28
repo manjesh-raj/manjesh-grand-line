@@ -45,16 +45,19 @@ final class LogRawPaneView: NSView {
     /// driven. Wiring the terminal size in here would be a new capability
     /// rather than adopting an existing mechanism.
     ///
-    /// **What this does and does not buy today**, because that finding's
-    /// stated premise for this one site is wrong: `LogRawLineCell` renders raw
-    /// `.monospacedSystemFont(ofSize: 9.5 / 10.5)` literals, *not*
-    /// `HelmType.code()` - that call is in `LogErrorGroupListView`'s sample
-    /// cell, a different class further down this file. So this pane cannot
-    /// clip at "Larger" today: nothing inside it grows. Those two literals are
-    /// pre-existing sub-11pt GL-32 debt, deliberately out of this pass's
-    /// scope. Scaling the row height now is what makes the height already
-    /// correct when that debt is paid, instead of the fix for it landing as a
-    /// clipping bug.
+    /// **The debt this height was waiting for is paid (review bug B38).**
+    /// `LogRawLineCell` used to render raw `.monospacedSystemFont(ofSize:
+    /// 9.5 / 10.5)` literals - below GL-32's own 11pt floor, and following no
+    /// setting at all. It goes through `setScaledFont` now, so the text in
+    /// this pane really does grow, and the scaled height above is what it
+    /// grows inside. Measured by `TextScaleFontSelfTest`: the taller label
+    /// needs 14.0 / 15.0 / 18.0pt against the 15 / 17.25 / 19.5pt this hands
+    /// it at Default / Large / Larger.
+    ///
+    /// Note for anyone following a review's citation here: the unscaled
+    /// literals were in *this* class, not in `LogErrorGroupListView`, whose
+    /// sample cell has always used `HelmType.code()`. Two separate audits
+    /// named the wrong one - see `docs/history/28-full-app-audit-2.md`.
     static let baseRowHeight: CGFloat = 15
     static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
 
@@ -187,14 +190,14 @@ private final class LogRawLineCell: NSTableCellView {
         wash.translatesAutoresizingMaskIntoConstraints = false
         addSubview(wash)
 
-        numberLabel.font = .monospacedSystemFont(ofSize: 9.5, weight: .regular)
+        numberLabel.setScaledFont(ofSize: 9.5, weight: .regular, voice: .monospaced)
         numberLabel.alignment = .right
         numberLabel.translatesAutoresizingMaskIntoConstraints = false
         numberLabel.setContentHuggingPriority(.required, for: .horizontal)
         numberLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         addSubview(numberLabel)
 
-        textLabel.font = .monospacedSystemFont(ofSize: 10.5, weight: .regular)
+        textLabel.setScaledFont(ofSize: 10.5, weight: .regular, voice: .monospaced)
         textLabel.lineBreakMode = .byTruncatingTail
         textLabel.translatesAutoresizingMaskIntoConstraints = false
         textLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -695,7 +698,7 @@ private final class LogTimelineCell: NSTableCellView {
         dot.translatesAutoresizingMaskIntoConstraints = false
         addSubview(dot)
 
-        timeLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+        timeLabel.setScaledFont(ofSize: 11, weight: .medium, voice: .monospaced)
         timeLabel.alignment = .right
         timeLabel.translatesAutoresizingMaskIntoConstraints = false
         timeLabel.setContentHuggingPriority(.required, for: .horizontal)

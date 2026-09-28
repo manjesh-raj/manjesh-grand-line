@@ -267,13 +267,21 @@ enum Audit3BugFixesSelfTest {
         check(expanded.count == bar.debugDestinationButtons().count,
               "every shortcut shows at 1512pt (\(expanded.count))", &ok)
         // **Review #3's UX2 capped the drawn row at six**, so the overflow
-        // button is now present even on a wide bar - it carries the seventh
-        // pinned shortcut. This assertion is inverted rather than deleted:
-        // what B6 was really about is that a *narrow* bar gives the row's
-        // width back to the title, which is still checked below.
+        // button is present on a wide bar whenever more than six are pinned.
+        // This assertion is inverted rather than deleted: what B6 was really
+        // about is that a *narrow* bar gives the row's width back to the
+        // title, which is still checked below.
+        //
+        // Driven from an explicit over-cap row since review U2 cut the
+        // default to four: the default no longer overflows, and a case about
+        // the overflow button has to pin more than six to mean anything.
+        bar.setQuickAccess(QuickAccessConfiguration(pinned: [
+            .stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts,
+        ]))
+        bar.view.layoutSubtreeIfNeeded()
         let pinned = bar.quickAccessConfiguration.pinned
         check(pinned.count > QuickAccessConfiguration.visibleLimit,
-              "the default row (\(pinned.count)) no longer exceeds UX2's cap - this case's "
+              "the fixture row (\(pinned.count)) no longer exceeds UX2's cap - this case's "
               + "overflow checks would be vacuous", &ok)
         check(!bar.debugQuickAccessOverflowButton().isHidden,
               "the overflow button should carry the shortcuts past UX2's cap", &ok)
@@ -379,17 +387,25 @@ enum Audit3BugFixesSelfTest {
         check(picked == overflowed,
               "the overflow menu should reach \(overflowed.map(\.title)) (reached \(picked.map(\.title)))", &ok)
 
-        // 3. One overflowing destination navigates straight to it. This is the
-        //    captain's own configuration - the shipped default pins seven
-        //    against UX2's cap of six - so it is asserted on the default row
-        //    rather than only on a fixture.
-        let shipped = QuickAccessConfiguration()
+        // 3. One overflowing destination navigates straight to it.
+        //
+        //    This used to be asserted on `QuickAccessConfiguration()` itself,
+        //    because the shipped default pinned seven against UX2's cap of
+        //    six and therefore overflowed by exactly one for free. Review U2
+        //    cut the default to four, so that row no longer overflows at all
+        //    and the fixture is explicit - the seven that used to ship, which
+        //    is still a row a captain can build in the overlay in three
+        //    clicks. What is being measured here is the single-overflow
+        //    *branch*, not which destinations happen to ship pinned.
+        let shipped = QuickAccessConfiguration(pinned: [
+            .stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts,
+        ])
         bar.setQuickAccess(shipped)
         bar.view.layoutSubtreeIfNeeded()
         check(shipped.overflow.count == 1,
-              "the shipped row should overflow exactly one destination (it overflows "
+              "the fixture row should overflow exactly one destination (it overflows "
               + "\(shipped.overflow.count)) - otherwise this case no longer measures the "
-              + "captain's own configuration", &ok)
+              + "single-overflow branch at all", &ok)
         check(!bar.debugQuickAccessOverflowButton().isHidden,
               "the overflow button should still be showing for a single overflow", &ok)
         check(bar.debugQuickAccessOverflowClickTarget() == shipped.overflow.first,
@@ -456,16 +472,21 @@ enum Audit3BugFixesSelfTest {
             DaylightBarController.height + DaylightBarController.topMargin)
         container.addSubview(bar.view)
 
-        let shipped = QuickAccessConfiguration()
+        // Explicit since review U2 cut the default row to four: this case is
+        // about how the overflow button draws a *single* overflowing
+        // destination, so it needs a row that produces one.
+        let shipped = QuickAccessConfiguration(pinned: [
+            .stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts,
+        ])
         bar.setQuickAccess(shipped)
         container.layoutSubtreeIfNeeded()
 
-        // Discriminating power first: if the shipped row stopped overflowing
+        // Discriminating power first: if the fixture row stopped overflowing
         // exactly one destination, or that destination's own symbol were the
         // ellipsis, every comparison below would pass vacuously.
         guard shipped.overflow.count == 1, let only = shipped.overflow.first else {
-            fail("the shipped row overflows \(shipped.overflow.count) destinations, not 1 - "
-                 + "this case no longer measures the captain's own configuration", &ok)
+            fail("the fixture row overflows \(shipped.overflow.count) destinations, not 1 - "
+                 + "this case no longer measures the single-overflow branch", &ok)
             return
         }
         check(only.symbol != "ellipsis",

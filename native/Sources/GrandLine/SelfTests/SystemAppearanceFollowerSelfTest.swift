@@ -34,7 +34,8 @@ enum SystemAppearanceFollowerSelfTest {
         for check in [checkThePairIsHonouredInBothDirections,
                       checkAnUnknownIDFallsBackToTheRightMode,
                       checkAMiscastPairIsCorrected,
-                      checkTheSettingsDefaultsAreARealPair] {
+                      checkTheSettingsDefaultsAreARealPair,
+                      checkTheFirstRunDefaultFollowsTheSystem] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -159,16 +160,14 @@ enum SystemAppearanceFollowerSelfTest {
             print("  FAIL the dark slot holds \(dark.id), which is a light theme")
             ok = false
         }
-        // And following is off by default. On by default would silently
-        // discard a stored `fm.themeID` the first time the sun set, which is
-        // the one thing `AppSettings.followSystemAppearance`'s own note
-        // refuses to do.
-        if UserDefaults.standard.object(forKey: "fm.followSystemAppearance") == nil,
-           defaults.followSystemAppearance {
-            print("  FAIL following the system is on with nothing stored")
-            ok = false
-        }
-        if ok { print("  ok   \(light.id) / \(dark.id), and following is opt-in") }
+        // Whether following is *on* by default is X10's question now, and it
+        // is asserted in `checkTheFirstRunDefaultFollowsTheSystem` below
+        // against `AppDefaults.store`. This case used to assert "off with
+        // nothing stored" and read the real `UserDefaults.standard` domain to
+        // do it, so on a machine that had ever stored the key it short-
+        // circuited and asserted nothing - which is why it kept passing
+        // through the change rather than catching it.
+        if ok { print("  ok   \(light.id) / \(dark.id) is a real pair") }
     }
 
     /// A one-line alias so the cases above read as sentences rather than as
@@ -179,6 +178,84 @@ enum SystemAppearanceFollowerSelfTest {
                                                    lightID: lightID, darkID: darkID)
         }
     }
+    // MARK: 5. X10 - the first-run default
+
+    /// X10 (review UX): "Follow system appearance" was off by default, and an
+    /// app shipping thirteen light/dark pairs is expected to follow the
+    /// system. The default is now on for a **fresh install** and off for a
+    /// captain who already picked a palette - overriding a stored `fm.themeID`
+    /// would be a real defect, and is what kept this off before.
+    ///
+    /// Driven against the real `AppDefaults.store` (a per-process suite domain
+    /// in an `FM_RUN_*` process - AGENTS.md's hermeticity rule), with the two
+    /// keys saved and put back, because the whole behaviour is "what does an
+    /// absent key mean".
+    private static func checkTheFirstRunDefaultFollowsTheSystem(_ ok: inout Bool) {
+        print("\n-- X10: following is on for a fresh install and off once a palette was picked --")
+        let followKey = "fm.followSystemAppearance"
+        let themeKey = "fm.themeID"
+        let store = AppDefaults.store
+        let savedFollow = store.object(forKey: followKey)
+        let savedTheme = store.object(forKey: themeKey)
+        defer {
+            if let savedFollow { store.set(savedFollow, forKey: followKey) }
+            else { store.removeObject(forKey: followKey) }
+            if let savedTheme { store.set(savedTheme, forKey: themeKey) }
+            else { store.removeObject(forKey: themeKey) }
+        }
+
+        // A fresh install: neither key has ever been written.
+        store.removeObject(forKey: followKey)
+        store.removeObject(forKey: themeKey)
+        store.removeObject(forKey: "fm.themeMode")
+        if !AppSettings.shared.followSystemAppearance {
+            print("  FAIL a fresh install does not follow the system")
+            ok = false
+        } else {
+            print("  ok   a fresh install follows the system")
+        }
+        // And the answer was *materialised*, not re-derived - otherwise the
+        // follower's own first `setTheme` (which writes `fm.themeID`) would
+        // flip the setting off behind the captain's back an hour later.
+        if store.object(forKey: followKey) == nil {
+            print("  FAIL the first read did not store the resolved default - it would flip "
+                  + "to off as soon as the follower switched a theme")
+            ok = false
+        }
+
+        // A captain who has chosen: the stored palette wins, as before.
+        store.removeObject(forKey: followKey)
+        store.set(HelmTheme.dusk.id, forKey: themeKey)
+        if AppSettings.shared.followSystemAppearance {
+            print("  FAIL an install with a stored palette follows the system - it would discard "
+                  + "that choice the first time the sun set")
+            ok = false
+        } else {
+            print("  ok   a stored palette choice is left alone")
+        }
+
+        // An explicit setting always wins over either default, in both
+        // directions - without this the two cases above could both pass
+        // against a getter that ignored the stored value entirely.
+        for (theme, explicit) in [(HelmTheme.dusk.id, true), (HelmTheme.dusk.id, false)] as [(String, Bool)] {
+            store.set(theme, forKey: themeKey)
+            AppSettings.shared.followSystemAppearance = explicit
+            if AppSettings.shared.followSystemAppearance != explicit {
+                print("  FAIL an explicit \(explicit) was not honoured")
+                ok = false
+            }
+        }
+        store.removeObject(forKey: followKey)
+        store.removeObject(forKey: themeKey)
+        AppSettings.shared.followSystemAppearance = false
+        if AppSettings.shared.followSystemAppearance {
+            print("  FAIL an explicit false on a fresh install was overridden by the default")
+            ok = false
+        } else {
+            print("  ok   an explicit choice beats the first-run default in both directions")
+        }
+    }
+
 }
 
 #endif

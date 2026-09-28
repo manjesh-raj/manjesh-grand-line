@@ -328,17 +328,40 @@ final class AppSettings {
     /// between `systemLightThemeID` and `systemDarkThemeID` when macOS
     /// switches between light and dark.
     ///
-    /// **Off by default, and that is not caution.** A captain who has picked
-    /// one of the twenty-six palettes has expressed a preference for that
-    /// palette, not for a mode - turning this on by default would silently
-    /// discard the stored `fm.themeID` the first time the sun set, which is
-    /// the same "overriding a stored preference" defect `ThemeManager.
-    /// fallbackTheme`'s own note refuses to commit in the other direction.
-    /// Switching it on is what asks for a pair to be honoured instead.
+    /// **On for a fresh install, off for a captain who has already picked a
+    /// palette** (X10 of the review). The two halves of that are the same
+    /// rule, not a compromise:
+    ///
+    ///   - The review's point is that most people expect an app shipping
+    ///     thirteen light/dark pairs to follow the system, and a fresh
+    ///     install has expressed no preference to override.
+    ///   - The reason this used to be off unconditionally still holds
+    ///     exactly where it applied: a captain who has chosen one of the
+    ///     twenty-six palettes has expressed a preference for *that palette*,
+    ///     not for a mode, and turning this on for them would silently
+    ///     discard their stored `fm.themeID` the first time the sun set -
+    ///     the same "overriding a stored preference" defect
+    ///     `ThemeManager.fallbackTheme`'s own note refuses to commit in the
+    ///     other direction.
+    ///
+    /// So the default is read from `ThemeManager.hasStoredThemeChoice`, and
+    /// **materialised on the first read**. That write is deliberate and is
+    /// what makes the rule stable: `SystemAppearanceFollower` itself stores
+    /// `fm.themeID` the first time it switches, so a default re-derived on
+    /// every read would answer "on" at launch and "off" an hour later. The
+    /// first read happens in `SystemAppearanceFollower.start()` at launch,
+    /// before anything can have moved that key.
     ///
     /// `SystemAppearanceFollower` is the only reader.
     var followSystemAppearance: Bool {
-        get { defaults.bool(forKey: Keys.followSystemAppearance) }
+        get {
+            if let stored = defaults.object(forKey: Keys.followSystemAppearance) as? Bool {
+                return stored
+            }
+            let fresh = !ThemeManager.hasStoredThemeChoice
+            defaults.set(fresh, forKey: Keys.followSystemAppearance)
+            return fresh
+        }
         set { defaults.set(newValue, forKey: Keys.followSystemAppearance) }
     }
 

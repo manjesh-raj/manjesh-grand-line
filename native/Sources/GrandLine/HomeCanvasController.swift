@@ -1325,7 +1325,10 @@ final class HomeCanvasController: NSViewController {
         sections.append(HelmModuleUsageSection(title: "Extra usage",
                                                status: claudeSpendStatus(for: snapshot),
                                                content: claudeSpendContent(for: snapshot)))
-        return sections
+        // U4: one alarm colour per card. The thresholds above are untouched -
+        // this only stops a card spending two hues on one situation. See
+        // `keepingOnlyTheWorstAlarm`.
+        return sections.keepingOnlyTheWorstAlarm()
     }
 
     /// The extra-usage section's body. Three genuinely different states, and

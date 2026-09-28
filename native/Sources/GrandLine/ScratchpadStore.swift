@@ -117,7 +117,8 @@ final class ScratchpadStore {
     private func load() {
         var backup: String?
         pads = StoreLoadFailure.decodeJSON(
-            [String: ScratchpadDocument].self, at: fileURL, label: "scratchpad.json", didBackUp: &backup
+            [String: ScratchpadDocument].self, at: fileURL, label: "scratchpad.json",
+            sensitive: true, didBackUp: &backup
         ) ?? [:]
         loadFailureBackupPath = backup
     }

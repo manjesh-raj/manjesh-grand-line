@@ -197,11 +197,11 @@ private final class ShiftProjectTaskRowView: NSView {
         checkbox.translatesAutoresizingMaskIntoConstraints = false
         checkbox.setContentHuggingPriority(.required, for: .horizontal)
 
-        titleLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        titleLabel.setScaledFont(ofSize: 12.5, weight: .medium)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.maximumNumberOfLines = 1
 
-        subLabel.font = .systemFont(ofSize: 10.5)
+        subLabel.setScaledFont(ofSize: 10.5)
         subLabel.lineBreakMode = .byTruncatingTail
         subLabel.maximumNumberOfLines = 1
 
@@ -312,7 +312,7 @@ private final class ShiftProjectSubtaskRowView: NSView {
         checkbox.translatesAutoresizingMaskIntoConstraints = false
         checkbox.setContentHuggingPriority(.required, for: .horizontal)
 
-        titleLabel.font = .systemFont(ofSize: 11.5)
+        titleLabel.setScaledFont(ofSize: 11.5)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.maximumNumberOfLines = 1
         titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -358,7 +358,7 @@ private final class ShiftProjectNoSubtasksRowView: NSView {
     init() {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 10.5)
+        label.setScaledFont(ofSize: 10.5)
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
         NSLayoutConstraint.activate([

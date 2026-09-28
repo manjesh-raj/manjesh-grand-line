@@ -254,7 +254,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     private let subtitleLabel = NSTextField(labelWithString: "Every tool in the fleet, checked against its real source - npm, Homebrew, herdr, no-mistakes, and firstmate's own upstream.")
 
     private func buildHeader() -> NSView {
-        subtitleLabel.font = .systemFont(ofSize: 12)
+        subtitleLabel.setScaledFont(ofSize: 12)
         subtitleLabel.preferredMaxLayoutWidth = 560
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         return subtitleLabel
@@ -274,8 +274,22 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// `fm/grand-line-github-sync-page-refresh-cleanup`. This page renders
     /// exactly as it did before that extraction; every metric moved rather
     /// than being re-chosen.
+    /// X8 (review UX): titled "Check all", not "Refresh".
+    ///
+    /// The review asked for "a single Check all plus per-row actions only
+    /// when something is available". U10 did the second half - a row that is
+    /// up to date now carries no button at all - and this is the first. On a
+    /// page where most rows deliberately offer nothing, the one bulk control
+    /// has to say what it does on its face: "Refresh" named the gesture
+    /// (re-draw this page) rather than the work (go and ask thirteen tools),
+    /// and the only thing that said so was a tooltip nobody hovers when every
+    /// row already looks settled.
+    ///
+    /// `HelmRefreshPill` is unchanged and GitHub Sync's own pill keeps
+    /// "Refresh" - there the rows *are* the thing being refreshed, and this
+    /// is a label decision per page rather than a component one.
     private let checkAllPill = HelmRefreshPill(
-        title: "Refresh", tooltip: "Check all tools for updates")
+        title: "Check all", tooltip: "Check every tool for updates")
     private let checkAllProgressBar = HelmProgressBar()
     private let checkAllProgressLabel = NSTextField(labelWithString: "")
     private var isCheckingAll = false
@@ -286,6 +300,10 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// without loosening any of this file's own access levels for
     /// production callers.
     var checkAllPillForTests: HoverHighlightView { checkAllPill }
+
+    /// X8: the page's one bulk control, by the label it wears.
+    var debugCheckAllTitle: String { checkAllPill.debugTitle }
+    var debugCheckAllIsVisible: Bool { !checkAllPill.isHidden }
 
     /// Set every row's status to `statuses` (by catalog order) and run the
     /// page's **real** `renderStats()` choke point.
@@ -328,7 +346,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         checkAllProgressBar.setContentHuggingPriority(.required, for: .horizontal)
         checkAllProgressBar.widthAnchor.constraint(equalToConstant: 90).isActive = true
 
-        checkAllProgressLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        checkAllProgressLabel.setScaledFont(ofSize: 11, weight: .medium)
         checkAllProgressLabel.isHidden = true
         checkAllProgressLabel.translatesAutoresizingMaskIntoConstraints = false
         for v: NSView in [checkAllProgressLabel, checkAllProgressBar] {
@@ -716,7 +734,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         row.installInBootstrapButton.isHidden = true
 
         // Busy state
-        row.progressLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        row.progressLabel.setScaledFont(ofSize: 11, weight: .medium)
 
         let view = ToolRowLayout.build(
             row.toolRowViews,

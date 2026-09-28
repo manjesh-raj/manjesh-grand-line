@@ -158,6 +158,17 @@ final class ThemeManager {
         }
     }
 
+    /// Whether this install has ever stored a palette choice.
+    ///
+    /// X10 (review UX): `AppSettings.followSystemAppearance` resolves its own
+    /// first-run default from this, and the legacy key is part of the
+    /// question for the same reason `init` consults it - a pre-`fm.themeID`
+    /// captain expressed a preference too, in an older vocabulary.
+    static var hasStoredThemeChoice: Bool {
+        AppDefaults.store.string(forKey: defaultsKey) != nil
+            || AppDefaults.store.string(forKey: legacyModeKey) != nil
+    }
+
     /// Change the active theme and notify every observer (including the one
     /// just registering, via `observe`, so callers don't need a separate
     /// "apply once" step).

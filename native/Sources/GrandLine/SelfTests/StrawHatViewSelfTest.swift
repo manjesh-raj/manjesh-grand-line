@@ -70,6 +70,7 @@ enum StrawHatViewSelfTest {
         checkToolNarrationRendersNeutralNote(&ok)
         checkContributingGlow(&ok)
         checkUnwiredCardFailsVisibly(&ok)
+        checkTheCrewSaysWhereTheDataGoes(&ok)
         checkHandoffRendersAsALink(&ok)
         checkHandoffWritesNothing(&ok)
         checkDashboardHasNoSecondComposer(&ok)
@@ -1995,6 +1996,48 @@ enum StrawHatViewSelfTest {
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
         return path
     }
+    /// X11 (review UX): the crew sends what the captain types, and what it
+    /// reads from their stores, to Claude - and said nothing about it while
+    /// the daily review card was busy saying "no data left this Mac".
+    ///
+    /// Geometry as well as text, because the interesting failure is not a
+    /// missing string: it is a line that exists, reads correctly in the
+    /// source, and is clipped off the bottom of the composer where nobody
+    /// ever sees it. Measured after a real layout pass on a real frame.
+    private static func checkTheCrewSaysWhereTheDataGoes(_ ok: inout Bool) {
+        let chat = StrawHatChatView()
+        chat.frame = NSRect(x: 0, y: 0, width: 760, height: 520)
+        chat.applyTheme(ThemeManager.shared.theme)
+        chat.layoutSubtreeIfNeeded()
+
+        let (text, frame, isMounted) = chat.debugDataFootnote
+        check(text == AITransparency.sentToClaude(
+                "what you type, and what the crew reads from your stores,"),
+              "the crew's data line reads \"\(text)\"", &ok)
+        check(isMounted,
+              "the crew's data line is not in the chat view's tree - it exists as an object and "
+              + "nobody can read it", &ok)
+        check(frame.height > 0 && frame.width > 0, "the crew's data line has no size (\(frame))", &ok)
+
+        // Below the composer and inside its wrap: the two ways a footnote
+        // pinned to the wrong edge would still "exist".
+        let composer = chat.debugComposerFrame
+        let wrap = chat.debugComposerWrapFrame
+        check(frame.maxY <= composer.minY + 0.5,
+              "the data line (maxY \(frame.maxY)) is not below the composer (minY \(composer.minY))", &ok)
+        check(frame.minY >= -0.5,
+              "the data line starts at y \(frame.minY), i.e. below its wrap's bottom edge - clipped", &ok)
+        check(frame.maxY <= wrap.height + 0.5,
+              "the data line runs past the top of its own wrap (\(frame.maxY) > \(wrap.height))", &ok)
+
+        // It must fit the width it was given, or a truncating label silently
+        // eats the half of the sentence that names the data.
+        let needed = chat.debugDataFootnoteFittingWidth
+        check(needed <= frame.width + 0.5,
+              "the data line needs \(needed)pt and has \(frame.width)pt - it is truncated, and "
+              + "what truncates is the end of the sentence, which is the part that names the data", &ok)
+    }
+
 }
 
 #endif

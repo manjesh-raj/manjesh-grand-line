@@ -59,6 +59,7 @@ enum ReviewUIUXSelfTest {
             ("X3_theGoMenuNamesEachDestinationOnce", test_x3GoMenu),
             ("X5_emptyPagesOfferAnExampleToStartFrom", test_x5SeedExamples),
             ("X6_everythingCapturedTodayIsInOnePlace", test_x6CaptureInbox),
+            ("X8_updatesOffersOneCheckAllNamedAfterTheWork", test_x8CheckAllIsNamedAfterTheWork),
             ("X2_oneMenuBarIconByDefaultWithAWayBack", test_x2OneStatusItem),
         ]
         var failures = 0
@@ -1547,6 +1548,54 @@ enum ReviewUIUXSelfTest {
         }
         return nil
     }
+    // MARK: X8 - one bulk control on Updates, and it says what it does
+
+    /// X8 (review UX): "a single Check all plus per-row actions only when
+    /// something is available".
+    ///
+    /// The second half is U10's, asserted in `test_u10CheckButton` above and
+    /// deliberately not re-asserted here. What is left is the first: on a page
+    /// where most rows correctly offer nothing at all, the one bulk control
+    /// has to say what it does on its face. "Refresh" named the gesture
+    /// rather than the work, and the only thing that said otherwise was a
+    /// tooltip nobody hovers when every row already looks settled.
+    private static func test_x8CheckAllIsNamedAfterTheWork() -> String? {
+        autoreleasepool { () -> String? in
+            let controller = UpdatesController()
+            controller.view.frame = NSRect(x: 0, y: 0, width: 1200, height: 900)
+            controller.view.layoutSubtreeIfNeeded()
+
+            guard controller.debugCheckAllTitle == "Check all" else {
+                return "the page's bulk control reads \"\(controller.debugCheckAllTitle)\" - X8 asks "
+                     + "for \"Check all\", because it is the only thing on a settled page that does "
+                     + "anything"
+            }
+            guard controller.debugCheckAllIsVisible else {
+                return "the bulk control is hidden on a freshly built page"
+            }
+
+            // The state X8 is actually about: everything up to date, every
+            // row correctly actionless, and this one control left. Without
+            // this the label check above would pass on a page that still
+            // invited thirteen clicks.
+            let rowCount = controller.debugRowActionStates.count
+            guard rowCount > 5 else {
+                return "the page rendered \(rowCount) rows - this case could not tell a settled page "
+                     + "from an empty one"
+            }
+            for index in 0 ..< rowCount { controller.debugSetStatus(.upToDate, atRow: index) }
+            let settled = controller.debugRowActionStates
+            guard settled.allSatisfy({ $0.checkHidden && $0.updateHidden }) else {
+                return "a settled page still offers per-row actions, so \"Check all\" is not the "
+                     + "single affordance X8 asks for"
+            }
+            guard controller.debugCheckAllIsVisible else {
+                return "a settled page has no action at all - X8 asks for one, not none"
+            }
+            return nil
+        }
+    }
+
 }
 
 #endif

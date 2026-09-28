@@ -180,7 +180,8 @@ final class DictationStore {
         var backup: String?
         history = StoreLoadFailure.decodeJSON(
             [DictationHistoryEntry].self, at: historyURL,
-            decoder: Self.dateFormatDecoder, label: "history.json", didBackUp: &backup
+            decoder: Self.dateFormatDecoder, label: "history.json",
+            sensitive: true, didBackUp: &backup
         ) ?? []
         if let backup { loadFailureBackupPaths.append(backup) }
         // GL-35: an already-oversized file (written before the cap existed) is
@@ -195,7 +196,8 @@ final class DictationStore {
     private func loadVocabulary() {
         var backup: String?
         vocabulary = StoreLoadFailure.decodeJSON(
-            [String].self, at: vocabularyURL, label: "vocabulary.json", didBackUp: &backup
+            [String].self, at: vocabularyURL, label: "vocabulary.json",
+            sensitive: true, didBackUp: &backup
         ) ?? []
         if let backup { loadFailureBackupPaths.append(backup) }
     }

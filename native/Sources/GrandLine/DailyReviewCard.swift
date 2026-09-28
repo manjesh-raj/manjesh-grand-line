@@ -311,7 +311,9 @@ final class DailyReviewCard: NSView {
         guard let digest else { return }
         headlineLabel.stringValue = digest.headline
         kickerLabel.stringValue = digest.kicker
-        footnote.stringValue = "Generated locally \u{00B7} no data left this Mac"
+        // X11: the sentence itself lives in `AITransparency` now, so this
+        // card and the two that have to claim the opposite read as one voice.
+        footnote.stringValue = AITransparency.local
 
         for column in [dueColumn, middleColumn, boardColumn] {
             for view in column.arrangedSubviews {

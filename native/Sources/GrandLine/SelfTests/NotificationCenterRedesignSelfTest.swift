@@ -54,6 +54,8 @@ enum NotificationCenterRedesignSelfTest {
                       checkFilterCountsAndEmptyStates,
                       checkToastAndUndo,
                       checkKeyboardSelection,
+                      checkTheKeyboardHintIsShownAndTrue,
+                      checkDueTasksSitUnderNeedsAction,
                       checkRendersInBothThemes,
                       checkARedundantPublishRebuildsNothing] {
             var ok = true
@@ -596,6 +598,115 @@ enum NotificationCenterRedesignSelfTest {
     private static func fmt(_ value: CGFloat) -> String {
         String(format: "%.1f", Double(value))
     }
+    // MARK: - X9: the keyboard bindings are stated, not just implemented
+
+    /// X9 (review UX): "the clipboard picker's ⌘1-⌘9 hint is great; the
+    /// notification panel has no keyboard hints at all". It has had four
+    /// bindings since it was rebuilt to the reference and said nothing about
+    /// any of them.
+    ///
+    /// Asserted against the panel's **real** key handling rather than against
+    /// the string alone: every chord the hint names has to actually do
+    /// something, or the line is a lie the moment a binding is removed. That
+    /// is the half a copy check cannot make, and the reason this case lives
+    /// beside `checkKeyboardSelection` rather than in a source guard.
+    private static func checkTheKeyboardHintIsShownAndTrue(_ ok: inout Bool) {
+        print("\n-- " + "X9: the panel states its key bindings, and they all work" + " --")
+        seed()
+        let (controller, _) = mount()
+        let content = controller.debugPanelContent
+        content.view.layoutSubtreeIfNeeded()
+
+        let hint = content.debugKeyHint
+        check(!hint.text.isEmpty, "the panel shows no keyboard hint at all", &ok)
+        check(hint.isOnScreen,
+              "the keyboard hint is not in the panel's mounted view tree - it exists as an object "
+              + "and nobody can read it", &ok)
+        check(hint.frame.height > 0 && hint.frame.width > 0,
+              "the keyboard hint has no size (\(hint.frame))", &ok)
+        check(hint.fittingWidth <= hint.frame.width + 0.5,
+              "the hint needs \(hint.fittingWidth)pt and has \(hint.frame.width)pt, so it is "
+              + "truncated - and what truncates is the end of the list of chords", &ok)
+
+        // It sits inside the panel, below the list. A hint pinned to the
+        // wrong edge still has a size.
+        check(hint.inPanel.minY >= -0.5 && hint.inPanel.maxY <= content.view.frame.height + 0.5,
+              "the hint (\(hint.inPanel) in panel coordinates) is outside the panel "
+              + "(\(content.view.frame))", &ok)
+
+        // Every named chord does something. 126/125 are up/down, 124/123 are
+        // right/left, 36 is Return; Escape belongs to `HelmBarPanel` and is
+        // named in the hint for the captain's sake, not this handler's, so it
+        // is deliberately not driven here.
+        for symbol in ["\u{2191}", "\u{2193}", "\u{2192}", "\u{2190}", "\u{23CE}", "Esc"] {
+            check(hint.text.contains(symbol),
+                  "the hint does not name \(symbol), which the panel accepts", &ok)
+        }
+        check(content.debugSendKey(125), "the hint names down, which the panel ignored", &ok)
+        check(content.debugSendKey(126), "the hint names up, which the panel ignored", &ok)
+        check(content.debugSendKey(125), "down did not move a second time", &ok)
+        check(content.debugSendKey(124), "the hint names right/expand, which the panel ignored", &ok)
+        check(content.debugSendKey(123), "the hint names left/collapse, which the panel ignored", &ok)
+    }
+
+    // MARK: X12 - the bell's own title includes due tasks
+
+    /// X12 (review UX): "Task reminders and fleet events arrive through two
+    /// different centres... One 'Waiting for you' list that includes due
+    /// tasks would match the bell's own title."
+    ///
+    /// The plumbing was already there - `ShiftNotifications.poll` feeds the
+    /// same due counts to the in-app bell as to the OS banner. What did not
+    /// match was the classification: a task due **today** was published
+    /// `.informational`, so the single entry naming the captain's due work
+    /// sat under "Available" in a panel titled "Waiting for you", and the
+    /// panel's own "Needs action" filter excluded it until the deadline had
+    /// already passed.
+    ///
+    /// Asserted through the real panel rather than against the enum, because
+    /// the enum is not what the review saw: what it saw was which header the
+    /// row sits under. Overdue is checked in the same case so the change is
+    /// visibly a widening rather than a swap.
+    private static func checkDueTasksSitUnderNeedsAction(_ ok: inout Bool) {
+        print("\n-- " + "X12: a task due today is waiting for you, not an FYI" + " --")
+        GrandLineNotificationCenter.shared.resetForTesting()
+        let (controller, _) = mount()
+        let content = controller.debugPanelContent
+
+        // Due today, nothing overdue - the exact state the review found.
+        NotificationSources.setShiftDue(taskCount: 2, followUpCount: 0, overdueCount: 0, navigate: {})
+        content.reload()
+        check(content.debugRowTitles.contains { $0.contains("due or overdue") },
+              "the bell carries no due-task row at all, so this case would be vacuous "
+              + "(rows: \(content.debugRowTitles))", &ok)
+
+        content.debugSetFilter(.needsAction)
+        check(content.debugRowTitles.contains { $0.contains("due or overdue") },
+              "a task due today is missing from \"Needs action\" - the panel is titled "
+              + "\"Waiting for you\" and this is the thing waiting (rows: \(content.debugRowTitles))",
+              &ok)
+
+        // Overdue still belongs there, and still reads louder inside it.
+        NotificationSources.setShiftDue(taskCount: 2, followUpCount: 0, overdueCount: 1, navigate: {})
+        content.reload()
+        check(content.debugRowTitles.contains { $0.contains("due or overdue") },
+              "an overdue task fell out of \"Needs action\" - this change was meant to widen that "
+              + "group, not swap what is in it", &ok)
+
+        // And the filter still discriminates: a genuinely informational
+        // source must not have been swept in with it.
+        NotificationSources.setToolUpdates(count: 3, navigate: {})
+        content.reload()
+        check(!content.debugRowTitles.contains { $0.lowercased().contains("update") },
+              "an informational tool-update row is now under \"Needs action\" too, so the filter "
+              + "no longer means anything (rows: \(content.debugRowTitles))", &ok)
+
+        content.debugSetFilter(.all)
+        NotificationSources.setShiftDue(taskCount: 0, followUpCount: 0, overdueCount: 0, navigate: {})
+        NotificationSources.setToolUpdates(count: 0, navigate: {})
+        GrandLineNotificationCenter.shared.resetForTesting()
+    }
+
 }
 
 #endif

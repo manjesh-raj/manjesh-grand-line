@@ -1391,7 +1391,7 @@ enum DaylightModuleSelfTest {
     // icon the captain has muscle memory for.
 
     private static func checkBarDestinationIcons(_ ok: inout Bool) {
-        print("\n-- bar quick-access: six icons drawn, the seventh in the overflow menu (UX2) --")
+        print("\n-- bar quick-access: the default row, drawn in order (UX2 cap, U2 default) --")
         let bar = DaylightBarController()
         bar.loadView()
         // 1512, the captain's own screen width, deliberately above
@@ -1416,9 +1416,16 @@ enum DaylightModuleSelfTest {
         // `addSubview` traps on "no common ancestor". The other five render a
         // pixel-identical bar, and each was confirmed to fail here by name.
         // **Review #3's UX2 capped the drawn row at six**, so the expectation
-        // is now in two halves: the captain's whole *pinned* list (which is
-        // still the seven that shipped, in their shipped order - that default
-        // is the migration, not a redesign) and the *drawn* prefix of it.
+        // is in two halves: the captain's whole *pinned* list and the *drawn*
+        // prefix of it. **Review U2 then cut the default to four**, the first
+        // four of the shipped seven in their shipped order (eight tiles read
+        // as a second navigation; `QuickAccessConfiguration.defaultPinned`
+        // carries the reasoning), so those two halves are the same list today
+        // and the overflow sweep below has nothing to sweep. Both are kept:
+        // the cap's own behaviour is covered against explicit over-cap rows
+        // in `NavigationCoherenceSelfTest` and `Audit3BugFixesSelfTest`, and
+        // what *this* case is for is the deliberate two-place edit on the
+        // default itself.
         //
         // Both are typed out as literals rather than read back from
         // `debugDestinationButtons()` / `QuickAccessConfiguration`, for the
@@ -1427,7 +1434,7 @@ enum DaylightModuleSelfTest {
         // icons in any order, including an accidental duplicate or a
         // reordering that moves an icon the captain has muscle memory for.
         // Adding a shortcut stays a deliberate two-place edit.
-        let pinned: [RailDestination] = [.stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts]
+        let pinned: [RailDestination] = [.stickyBoard, .codePreview, .shift, .strawHat]
         if bar.quickAccessConfiguration.pinned != pinned {
             fail("the default pinned row is \(bar.quickAccessConfiguration.pinned.map(\.title)), expected \(pinned.map(\.title))", &ok)
         }
@@ -1480,20 +1487,26 @@ enum DaylightModuleSelfTest {
         // layout is search -> Recents -> Sticky Board -> Code Preview ->
         // Tasks -> Straw Hat Pirates -> Poneglyph -> Console -> theme toggle
         // -> bell -> avatar.
-        let searchMaxX = bar.debugSearchPill().frame.maxX
-        let toggleMinX = bar.debugThemeToggleButton().frame.minX
-        let bellMinX = bar.notificationCenter.bell.frame.minX
-        // UX2 moved these buttons inside an `NSStackView`, so their own
-        // `frame` is in that row's coordinate space rather than the bar's -
-        // comparing it against the search pill's bar-space frame directly
-        // would be comparing two different origins, which is a check that
-        // fails for a reason that is not the one it names. Converted into the
-        // bar's space, which is the space every other number here is in.
+        // UX2 moved the shortcut buttons inside an `NSStackView`, so their
+        // own `frame` is in that row's coordinate space rather than the
+        // bar's. **Every** number in this block is converted into one space
+        // for that reason, the reference views included - the first version
+        // of this converted only the buttons and compared them against the
+        // search pill's and the theme toggle's raw frames, which are offset
+        // from the bar by the floating bar's own inset. It happened to pass
+        // while the row was seven icons wide and started failing the moment
+        // review U2 made it four, naming an overlap that does not exist: the
+        // real gap between the last icon and the toggle is a clean 8pt
+        // (measured 1352 -> 1360). A check that fails for a reason that is
+        // not the one it names is worse than no check.
         //
         // Asserted rather than assumed: the row must actually be somewhere,
         // or every comparison below is against a zero rect and vacuous.
         let barView = bar.view
         func barFrame(_ view: NSView) -> NSRect { view.convert(view.bounds, to: barView) }
+        let searchMaxX = barFrame(bar.debugSearchPill()).maxX
+        let toggleMinX = barFrame(bar.debugThemeToggleButton()).minX
+        let bellMinX = barFrame(bar.notificationCenter.bell).minX
         if buttons.contains(where: { barFrame($0).width <= 0 }) {
             fail("a quick-access button has no laid-out width - the order checks below would be vacuous", &ok)
         }

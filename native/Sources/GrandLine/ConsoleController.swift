@@ -743,14 +743,14 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// under the overlay. `ScheduleRunner`'s action set is a closed enum with
     /// nothing that opens a tab.
     ///
-    /// The one genuinely ungated path left is `processTerminated`'s
-    /// auto-reconnect timer, which would re-establish a dropped `ssh` - and
-    /// re-prompt for Touch ID - behind the overlay. That is the same harm
-    /// class, but it is not what audit #2 §5.1 found (it is a session the
-    /// captain deliberately opened, being restored, rather than one created
-    /// from nothing by F2), and gating it needs a resume story of its own for
-    /// the tab left dead afterwards. Left as recorded scope rather than
-    /// silently widened.
+    /// `processTerminated`'s auto-reconnect timer used to be the one
+    /// genuinely ungated path, and review bug B36 closed it. It consults
+    /// `.terminalAutoReconnect` (its own case, not this one's - they are
+    /// gated at different moments and only one of them has anything to
+    /// resume) and, when refused, records the debt on the tab rather than
+    /// letting a live session die silently. `resumeAfterUnlock` drains it
+    /// below. That deferral *is* the resume story this comment used to say
+    /// the gate was waiting on.
     func runAppearanceWorkIfUnlocked() {
         guard AppLockGate.shared.allows(.terminalSession) else {
             appearanceWorkDeferredByLock = true
@@ -777,6 +777,12 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// leak this controller already keeps theme/font/activity *tokens* to
     /// avoid.
     func resumeAfterUnlock() {
+        // B36: two independent debts, and only one of them is the appearance
+        // one. A page that appeared while *unlocked* and then had a session
+        // drop behind the lock has `appearanceWorkDeferredByLock == false`
+        // and a deferred reconnect - so an early return on the first flag
+        // would skip exactly the case B36 is about.
+        resumeDeferredReconnects()
         guard appearanceWorkDeferredByLock else { return }
         runAppearanceWorkIfUnlocked()
     }

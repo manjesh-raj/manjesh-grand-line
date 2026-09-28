@@ -175,14 +175,17 @@ enum AtomicWrite {
 /// loosens the umbrella later. It is not, and cannot be, protection against a
 /// process running as this same user: an app cannot hide a file from itself.
 ///
-/// **What this cannot do.** A `git checkout`/`pull` that updates the vault
-/// file recreates it honouring the umask, so a synced copy arriving from
-/// another machine is 0644 again until this app next writes it. Git tracks
+/// **The read half is here too now (review bug B37).** A `git checkout`/`pull`
+/// that updates a synced file recreates it honouring the umask, so a copy
+/// arriving from another machine was 0644 again until this app next wrote it -
+/// which for a vault nobody edits on this machine may be never. Git tracks
 /// only the executable bit, so it neither preserves 0600 nor reports the file
-/// as modified when the mode changes - which is also why tightening a tracked
-/// file is safe to do at all. Closing that gap properly means chmod-ing on
-/// read as well as write, which is a broader change than this finding asks
-/// for and is called out here rather than half-done.
+/// as modified when the mode changes, which is both why tightening a tracked
+/// file is safe and why nothing noticed it had been loosened. Every store that
+/// writes through `AtomicWrite.data(..., sensitive: true)` now also reads
+/// through `StoreLoadFailure.decodeJSON(..., sensitive: true)`, which chmods
+/// before the read; `HostStore` keeps its own hand-rolled load path and calls
+/// `SensitiveFile.restrict` there directly.
 enum SensitiveFile {
 
     /// Owner read/write only.

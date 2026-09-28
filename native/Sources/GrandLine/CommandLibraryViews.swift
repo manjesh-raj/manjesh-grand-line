@@ -282,7 +282,7 @@ final class CommandLibraryPageView: NSObject {
         titleRow.spacing = 10
         titleRow.translatesAutoresizingMaskIntoConstraints = false
 
-        detailMetaLabel.font = .systemFont(ofSize: 11)
+        detailMetaLabel.setScaledFont(ofSize: 11)
         detailMetaLabel.lineBreakMode = .byWordWrapping
 
         detailCommandLabel.font = ShiftFont.mono(12)
@@ -639,7 +639,7 @@ final class CommandLibraryPageView: NSObject {
         container.cornerRadius = 6
 
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 12, weight: isSelected ? .semibold : .regular)
+        label.setScaledFont(ofSize: 12, weight: isSelected ? .semibold : .regular)
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
@@ -714,7 +714,7 @@ final class CommandLibraryPageView: NSObject {
         let results = store.search(query: searchQuery)
         if results.isEmpty {
             let empty = NSTextField(labelWithString: "No matching commands.")
-            empty.font = .systemFont(ofSize: 11.5)
+            empty.setScaledFont(ofSize: 11.5)
             empty.textColor = HelmTheme.mutedInk(theme)
             appendToLeftPanel(empty)
             return
@@ -798,7 +798,7 @@ final class CommandLibraryPageView: NSObject {
         // the tooltip are unchanged; only the glyph is, and it is now built
         // the same way every other icon on this page is.
         let workflowsLabel = NSTextField(labelWithString: "Workflows (Docs \u{2192} Runbooks)")
-        workflowsLabel.font = .systemFont(ofSize: 11.5)
+        workflowsLabel.setScaledFont(ofSize: 11.5)
         workflowsLabel.textColor = HelmTheme.mutedInk(theme)
         workflowsLabel.lineBreakMode = .byTruncatingTail
         workflowsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1063,7 +1063,7 @@ final class CommandLibraryPageView: NSObject {
             let token = String(full[tokenRange])
             let param = params[token]
             let replacement = values[token]?.isEmpty == false ? values[token]! : (param?.defaultValue ?? "{{\(token)}}")
-            result.append(NSAttributedString(string: replacement, attributes: [.font: NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold), .foregroundColor: accent]))
+            result.append(NSAttributedString(string: replacement, attributes: [.font: NSFont.monospacedSystemFont(ofSize: HelmType.scaled(12), weight: .semibold), .foregroundColor: accent]))
             lastEnd = wholeRange.upperBound
         }
         if lastEnd < full.endIndex {

@@ -65,6 +65,7 @@ enum StoreDurabilitySelfTest {
         sensitiveStoresAreOwnerOnly(scratch: scratch)
         benignStoresAreLeftAlone(scratch: scratch)
         aCorruptBackupOfASensitiveStoreIsOwnerOnly(scratch: scratch)
+        aLoosenedSensitiveFileIsTightenedOnRead(scratch: scratch)
         s10PersonalStoresAreOwnerOnly(scratch: scratch)
 
         print(failures.isEmpty
@@ -414,6 +415,122 @@ enum StoreDurabilitySelfTest {
         }
     }
 
+
+    /// B37: M3's umask residue - the read half.
+    ///
+    /// M3 hardened every sensitive *write*, and recorded what it could not
+    /// do: a `git checkout`/`pull` that updates a synced file **recreates**
+    /// it honouring the process umask, so a copy arriving from another
+    /// machine is 0644 until this app next writes it - which for a vault
+    /// nobody edits on this machine may be never. Git tracks only the
+    /// executable bit, so nothing reports the file as modified either.
+    ///
+    /// Each store below is driven through its **real** load path against a
+    /// file deliberately loosened behind its back, and the mode is read back
+    /// off disk afterwards. Two things make it a real test rather than a
+    /// tautology: the 0644 is asserted first (so a fixture that failed to
+    /// loosen fails loudly instead of passing), and the store is asserted to
+    /// have actually *read* the data - a load path that hardened the file and
+    /// then returned nothing would otherwise look identical.
+    private static func aLoosenedSensitiveFileIsTightenedOnRead(scratch: URL) {
+        print("- B37: a sensitive file loosened to 0644 outside this app is tightened on the next read")
+
+        // --- the three flat JSON stores
+        let dir = scratch.appendingPathComponent("b37-stores", isDirectory: true)
+        let hosts = dir.appendingPathComponent("hosts.json")
+        let keys = dir.appendingPathComponent("keys.json")
+        let snippets = dir.appendingPathComponent("snippets.json")
+
+        withEnv([
+            "FM_HOSTS_FILE": hosts.path,
+            "FM_KEYS_FILE": keys.path,
+            "FM_SNIPPETS_FILE": snippets.path,
+        ]) {
+            HostStore().add(Host(label: "b37-host", address: "bastion.example.internal", username: "ops"))
+            SnippetStore().add(Snippet(label: "b37-snippet", command: "echo hello"))
+            SSHKeyStore().add(SSHKey(label: "b37-key", type: .ed25519,
+                                     publicKey: "ssh-ed25519 AAAA", fingerprint: "SHA256:abc",
+                                     certificate: nil))
+
+            // What a `git checkout` leaves behind.
+            for url in [hosts, keys, snippets] {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o644],
+                                                       ofItemAtPath: url.path)
+            }
+            for (label, url) in [("hosts.json", hosts), ("keys.json", keys), ("snippets.json", snippets)] {
+                check(mode(of: url) == 0o644,
+                      "B37: \(label) really starts 0644, so the assertion below is a real question")
+            }
+
+            // A fresh store: the load path, and nothing else.
+            check(!HostStore().hosts.isEmpty, "B37: the reloaded host store still read its file")
+            check(!SnippetStore().snippets.isEmpty, "B37: the reloaded snippet store still read its file")
+            check(!SSHKeyStore().keys.isEmpty, "B37: the reloaded key store still read its file")
+
+            for (label, url) in [("hosts.json", hosts), ("keys.json", keys), ("snippets.json", snippets)] {
+                check(mode(of: url) == SensitiveFile.fileMode,
+                      "B37: \(label) is 0600 again after a read (was \(modeString(mode(of: url))))")
+            }
+        }
+
+        // --- the vault, which is the case the finding was written about
+        let vaultRoot = scratch.appendingPathComponent("b37-vault", isDirectory: true)
+        let store = CredentialVaultStore(root: vaultRoot)
+        guard case .success = store.createVault(masterPassword: "b37-correct-horse-battery") else {
+            check(false, "B37: could not create the vault for the read-permission case")
+            return
+        }
+        _ = store.add(VaultCredential(title: "b37", account: "ops", secret: "s3cr3t"))
+        let vaultFile = vaultRoot.appendingPathComponent(CredentialVaultGitSync.vaultFileName)
+
+        try? FileManager.default.setAttributes([.posixPermissions: 0o644],
+                                               ofItemAtPath: vaultFile.path)
+        check(mode(of: vaultFile) == 0o644,
+              "B37: the vault file really starts 0644, so the assertion below is a real question")
+
+        // A fresh store, so nothing is served from `loadState`'s memo.
+        let reopened = CredentialVaultStore(root: vaultRoot)
+        check(reopened.loadState() == .present,
+              "B37: the reopened vault still reads as present")
+        check(mode(of: vaultFile) == SensitiveFile.fileMode,
+              "B37: the vault file is 0600 again after a read "
+              + "(was \(modeString(mode(of: vaultFile))))")
+
+        // And the unlock path on its own, which is a different read: loosen
+        // again and go straight there without calling `loadState` first.
+        //
+        // Be honest about what the last assertion here proves: a *successful*
+        // unlock ends in `persistAuditOnly("unlock record")`, which writes -
+        // so the 0600 at the end of this block is reachable through the write
+        // half too. Measured, by removing the read-side chmod and watching
+        // this one case stay green while the three above it went red. It is
+        // kept as an end-state assertion (an unlock must never leave the file
+        // loose) rather than as the read-path's own cover; the read-path
+        // coverage is the `loadState` case above it, which runs on the locked
+        // screen, before any unlock, which is exactly the window a pulled
+        // 0644 file sits in.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o644],
+                                               ofItemAtPath: vaultFile.path)
+        check(mode(of: vaultFile) == 0o644, "B37: the vault file was loosened again for the unlock case")
+        let unlocked = CredentialVaultStore(root: vaultRoot)
+        var outcome: VaultUnlockOutcome?
+        unlocked.unlock(masterPassword: "b37-correct-horse-battery") { outcome = $0 }
+        // `unlock` derives off the main thread and delivers on it; this suite
+        // is headless, so turn the run loop until the completion lands rather
+        // than sleeping for a guessed interval.
+        let deadline = Date().addingTimeInterval(20)
+        while outcome == nil, Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        if case .unlocked = outcome {
+            check(true, "B37: the vault unlocked from a 0644 file")
+        } else {
+            check(false, "B37: the vault did not unlock (outcome: \(String(describing: outcome)))")
+        }
+        check(mode(of: vaultFile) == SensitiveFile.fileMode,
+              "B37: the unlock path also tightened the vault file "
+              + "(was \(modeString(mode(of: vaultFile))))")
+    }
 
     /// S10 (review security finding): dictation transcripts, notebook pages,
     /// log-analyzer evidence and incident records were written 0644 while

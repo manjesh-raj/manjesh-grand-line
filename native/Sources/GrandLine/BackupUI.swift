@@ -448,7 +448,7 @@ enum BackupUI {
         textView.string = lines.joined(separator: "\n")
         textView.isEditable = false
         textView.isSelectable = true
-        textView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        textView.setScaledFont(ofSize: 11, weight: .regular, voice: .monospaced)
         textView.textContainerInset = NSSize(width: 6, height: 6)
         HelmSelection.apply(to: textView, theme: ThemeManager.shared.theme)
 

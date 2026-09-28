@@ -371,7 +371,7 @@ final class CompactModePopoverController: NSViewController {
 
     private func buildHeader() {
         iconTile.configure(symbol: "sailboat", tint: .accent, pointSize: 12)
-        titleLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        titleLabel.setScaledFont(ofSize: 12.5, weight: .semibold)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         modeLabel.font = HelmType.captionSmall()
         modeLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1051,7 +1051,7 @@ final class CompactLockPane: NSView {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.setScaledFont(ofSize: 13, weight: .semibold)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         subtitleLabel.font = HelmType.captionSmall()

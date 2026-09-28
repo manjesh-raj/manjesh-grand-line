@@ -100,14 +100,14 @@ final class BlockRowView: NSView {
         addSubview(container)
 
         iconTile.configure(symbol: "circle.dotted", tint: .neutral)
-        commandLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        commandLabel.setScaledFont(ofSize: 12, weight: .medium, voice: .monospaced)
         commandLabel.lineBreakMode = .byTruncatingTail
         commandLabel.isSelectable = true
         commandLabel.translatesAutoresizingMaskIntoConstraints = false
         commandLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         commandLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        exitPill.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)
+        exitPill.setScaledFont(ofSize: 10, weight: .semibold, voice: .monospaced)
         exitPill.translatesAutoresizingMaskIntoConstraints = false
         exitPill.setContentCompressionResistancePriority(.required, for: .horizontal)
         exitPill.setContentHuggingPriority(.required, for: .horizontal)
@@ -132,7 +132,7 @@ final class BlockRowView: NSView {
         header.distribution = .fill
         header.translatesAutoresizingMaskIntoConstraints = false
 
-        outputLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        outputLabel.setScaledFont(ofSize: 11.5, weight: .regular, voice: .monospaced)
         outputLabel.isSelectable = true
         outputLabel.isEditable = false
         outputLabel.drawsBackground = false

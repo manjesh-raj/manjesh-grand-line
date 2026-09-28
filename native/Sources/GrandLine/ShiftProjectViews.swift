@@ -51,15 +51,15 @@ final class ShiftProjectCardView: NSView {
         layer?.cornerRadius = 10
         translatesAutoresizingMaskIntoConstraints = false
 
-        nameLabel.font = .systemFont(ofSize: 13.5, weight: .semibold)
+        nameLabel.setScaledFont(ofSize: 13.5, weight: .semibold)
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.maximumNumberOfLines = 1
 
-        descriptionLabel.font = .systemFont(ofSize: 11)
+        descriptionLabel.setScaledFont(ofSize: 11)
         descriptionLabel.lineBreakMode = .byTruncatingTail
         descriptionLabel.maximumNumberOfLines = 2
 
-        progressLabel.font = .systemFont(ofSize: 10.5)
+        progressLabel.setScaledFont(ofSize: 10.5)
 
         // Daylight §6.8's shared bar, in place of this card's own hand-rolled
         // 5pt track (radius 2.5, a flat accent fill). It was the one instance

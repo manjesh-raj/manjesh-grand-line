@@ -90,11 +90,13 @@ final class ChromeTextScaleObservation {}
 ///     its fonts inside `applyTheme` (the four shared components, and any page
 ///     that follows them) pick the new scale up live.
 ///
-/// What is deliberately *not* covered: text whose font is set once in a page's
-/// own `loadView` and never re-derived. That keeps its size until the view is
-/// rebuilt or the app relaunches. Closing that gap means routing every
-/// remaining hand-set font through a re-derivable path, which is the "High"
-/// half of GL-32 and its own scheduled work - not something to half-do here.
+/// The gap this header used to record - text whose font was set once in a
+/// page's own `loadView` and never re-derived - is closed (review bug B33).
+/// `HelmTextScale` records the designed size on the label itself and the
+/// shell re-derives the whole subtree from the same observer that fires the
+/// theme re-fire, so a label no page re-themes still follows the setting. See
+/// that file for why one mechanism rather than ~150 hand-written
+/// re-derivations.
 final class ChromeTextScale {
     static let shared = ChromeTextScale()
 

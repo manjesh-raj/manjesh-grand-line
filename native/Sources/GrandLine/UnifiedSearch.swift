@@ -423,7 +423,7 @@ final class UnifiedSearchController: NSWindowController {
         rowViews.removeAll()
         groupHeaderLabels.removeAll()
         guard !items.isEmpty else {
-            addPaddedLabel("No matches.", font: .systemFont(ofSize: 13))
+            addPaddedLabel("No matches.", font: .systemFont(ofSize: HelmType.scaled(13)))
             return
         }
         var flatIndex = 0
@@ -447,7 +447,7 @@ final class UnifiedSearchController: NSWindowController {
             // capped group look complete.
             if group.overflow > 0 {
                 addPaddedLabel(group.overflowText,
-                               font: .systemFont(ofSize: 11), leading: 24, vertical: 5, muted: true)
+                               font: .systemFont(ofSize: HelmType.scaled(11)), leading: 24, vertical: 5, muted: true)
             }
         }
     }

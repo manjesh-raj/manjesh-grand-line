@@ -81,7 +81,7 @@ final class SnippetStore {
     private func load() {
         var backup: String?
         snippets = StoreLoadFailure.decodeJSON(
-            [Snippet].self, at: fileURL, label: "snippets.json", didBackUp: &backup
+            [Snippet].self, at: fileURL, label: "snippets.json", sensitive: true, didBackUp: &backup
         ) ?? []
         loadFailureBackupPath = backup
     }

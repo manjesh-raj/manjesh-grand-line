@@ -171,6 +171,19 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     /// the send button for attention.
     private static let keybindingHint = "\u{21B5} to send  \u{00B7}  \u{21E7}\u{21B5} for a new line"
 
+    /// X11: the crew's answers come from Claude, and so does everything the
+    /// crew read to write them.
+    ///
+    /// A permanent line rather than a tooltip, unlike the keybinding hint
+    /// above - and for the opposite reason to the one that demoted that hint.
+    /// A shortcut is a convenience a captain discovers once; where their
+    /// notes, tasks and hosts go is a claim the app owes them every time,
+    /// and the daily review states its own version permanently on the card.
+    /// It is `captionSmall` and muted, below the composer, so it sits under
+    /// the surface rather than beside the send button.
+    private let dataFootnote = NSTextField(labelWithString:
+        AITransparency.sentToClaude("what you type, and what the crew reads from your stores,"))
+
     // The composer's chrome is the ⌘K palette's own query well
     // (`HelmSearchField(size: .prominent)`), reached through the same tokens
     // rather than by copying its numbers - the captain compared the two side
@@ -361,6 +374,11 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         composerCard.translatesAutoresizingMaskIntoConstraints = false
         composerWrap.addSubview(composerCard)
 
+        dataFootnote.font = HelmType.captionSmall()
+        dataFootnote.lineBreakMode = .byTruncatingTail
+        dataFootnote.translatesAutoresizingMaskIntoConstraints = false
+        composerWrap.addSubview(dataFootnote)
+
         buildTextView()
         buildSendButton()
 
@@ -416,7 +434,13 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
             composerCard.leadingAnchor.constraint(equalTo: composerWrap.leadingAnchor, constant: Self.contentInset),
             composerCard.trailingAnchor.constraint(equalTo: composerWrap.trailingAnchor, constant: -Self.contentInset),
             composerCard.topAnchor.constraint(equalTo: composerWrap.topAnchor, constant: HelmMetrics.s2),
-            composerCard.bottomAnchor.constraint(equalTo: composerWrap.bottomAnchor, constant: -Self.contentInset),
+            composerCard.bottomAnchor.constraint(equalTo: dataFootnote.topAnchor, constant: -4),
+
+            dataFootnote.leadingAnchor.constraint(equalTo: composerCard.leadingAnchor,
+                                                  constant: HelmField.prominentInset),
+            dataFootnote.trailingAnchor.constraint(lessThanOrEqualTo: composerCard.trailingAnchor),
+            dataFootnote.bottomAnchor.constraint(equalTo: composerWrap.bottomAnchor,
+                                                 constant: -Self.contentInset),
 
             // The row - and therefore the whole rounded surface - is sized
             // bottom-up from `textScroll`'s own dynamic height; nothing here
@@ -1064,7 +1088,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
 
         for item in items {
             let bullet = NSTextField(labelWithString: "\u{25CF}")
-            bullet.font = .systemFont(ofSize: 7)
+            bullet.setScaledFont(ofSize: 7)
             bullet.textColor = HelmTheme.nsColor(theme.accentHex)
             bullet.translatesAutoresizingMaskIntoConstraints = false
             bullet.setContentHuggingPriority(.required, for: .horizontal)
@@ -1214,6 +1238,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         appliedThemeID = theme.id
         self.theme = theme
         HelmSelection.apply(to: textView, theme: theme)
+        dataFootnote.textColor = HelmTheme.mutedInk(theme)
         // `chromeBackgroundHex`, not `backgroundHex` - the latter is the
         // *terminal's* token. `SRELeadChatView` shipped that exact mix-up once
         // and it rendered as "a large black empty area"; see its `applyTheme`.
@@ -1267,6 +1292,19 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     // MARK: Probe / self-test surface
 
     #if FM_SELFTESTS
+    /// X11: the data-transparency line under the composer, and where it sits.
+    ///
+    /// `isMounted` rather than a size check, and the reason is measured (X9
+    /// hit it in the notification panel): `NSTextField(labelWithString:)`
+    /// sizes itself at init, so a label built and never added to the tree
+    /// still reports a perfectly good non-zero `frame`.
+    var debugDataFootnote: (text: String, frame: NSRect, isMounted: Bool) {
+        (dataFootnote.stringValue, dataFootnote.frame, dataFootnote.isDescendant(of: self))
+    }
+    var debugComposerFrame: NSRect { composerCard.frame }
+    var debugComposerWrapFrame: NSRect { composerWrap.frame }
+    var debugDataFootnoteFittingWidth: CGFloat { dataFootnote.fittingSize.width }
+
     /// PF10: the transcript's own block views, so a suite can tell a repaint
     /// from a rebuild by object identity.
     var debugTranscriptBlocks: [NSView] { stack.arrangedSubviews }

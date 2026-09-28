@@ -85,7 +85,7 @@ final class KeyChordRecorderView: NSView {
         layer?.cornerRadius = 7
         translatesAutoresizingMaskIntoConstraints = false
 
-        label.font = .monospacedSystemFont(ofSize: 12.5, weight: .medium)
+        label.setScaledFont(ofSize: 12.5, weight: .medium, voice: .monospaced)
         label.alignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)

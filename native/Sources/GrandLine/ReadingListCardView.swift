@@ -82,6 +82,11 @@ final class ReadingListCardView: HoverHighlightView {
     private let summaryWell = NSView()
     private let summaryKicker = NSTextField(labelWithString: "")
     private let summaryBody = NSTextField(labelWithString: "")
+    /// X11: where this paragraph came from, and what left the machine to get
+    /// it. Only ever shown under an **AI** summary - a page's own blurb was
+    /// read locally by `LinkPresentation` and sends nothing.
+    private let summaryFootnote = NSTextField(labelWithString: "")
+    private var summaryFootnoteCollapse: NSLayoutConstraint?
 
     private let noteLabel = NSTextField(labelWithString: "")
     private let tagRow = NSStackView()
@@ -168,7 +173,7 @@ final class ReadingListCardView: HoverHighlightView {
         summaryWell.wantsLayer = true
         summaryWell.layer?.cornerRadius = HelmMetrics.rChip
         summaryWell.layer?.borderWidth = 1
-        for label in [summaryKicker, summaryBody] {
+        for label in [summaryKicker, summaryBody, summaryFootnote] {
             label.translatesAutoresizingMaskIntoConstraints = false
             summaryWell.addSubview(label)
         }
@@ -177,6 +182,8 @@ final class ReadingListCardView: HoverHighlightView {
         summaryBody.lineBreakMode = .byWordWrapping
         summaryBody.maximumNumberOfLines = 6
         summaryBody.cell?.usesSingleLineMode = false
+        summaryFootnote.font = HelmType.captionSmall()
+        summaryFootnote.lineBreakMode = .byTruncatingTail
 
         noteLabel.font = HelmType.caption()
         noteLabel.lineBreakMode = .byWordWrapping
@@ -252,7 +259,10 @@ final class ReadingListCardView: HoverHighlightView {
             summaryBody.leadingAnchor.constraint(equalTo: summaryKicker.leadingAnchor),
             summaryBody.trailingAnchor.constraint(equalTo: summaryKicker.trailingAnchor),
             summaryBody.topAnchor.constraint(equalTo: summaryKicker.bottomAnchor, constant: 3),
-            summaryBody.bottomAnchor.constraint(equalTo: summaryWell.bottomAnchor, constant: -7),
+            summaryFootnote.leadingAnchor.constraint(equalTo: summaryKicker.leadingAnchor),
+            summaryFootnote.trailingAnchor.constraint(equalTo: summaryKicker.trailingAnchor),
+            summaryFootnote.topAnchor.constraint(equalTo: summaryBody.bottomAnchor, constant: 4),
+            summaryFootnote.bottomAnchor.constraint(equalTo: summaryWell.bottomAnchor, constant: -7),
 
             noteLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             noteLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
@@ -323,6 +333,11 @@ final class ReadingListCardView: HoverHighlightView {
             summaryWell.isHidden = false
             summaryKicker.stringValue = "SUMMARY"
             summaryBody.stringValue = text
+            // X11: the daily review says "no data left this Mac"; this one
+            // has to say the opposite, in the same voice and from the same
+            // definition.
+            summaryFootnote.stringValue = AITransparency.sentToClaude("this page's text")
+            summaryFootnote.isHidden = false
         case .page(let text):
             summaryWell.isHidden = false
             // Labelled differently on purpose: the page's own blurb and a
@@ -331,15 +346,22 @@ final class ReadingListCardView: HoverHighlightView {
             // things.
             summaryKicker.stringValue = "FROM THE PAGE"
             summaryBody.stringValue = text
+            // `LinkPresentation` read this blurb on this machine, so there is
+            // no claim to make and an empty footnote would be noise.
+            summaryFootnote.stringValue = ""
+            summaryFootnote.isHidden = true
         case .none:
             summaryWell.isHidden = true
             summaryKicker.stringValue = ""
             summaryBody.stringValue = ""
+            summaryFootnote.stringValue = ""
+            summaryFootnote.isHidden = true
         }
         // Gotcha (11) again, from the other direction: a hidden plain `NSView`
         // still has its constraints, so a hidden well would still charge the
         // card its own height plus both gaps. Collapsing it is what makes the
         // mockup's short third card actually short.
+        collapseIfHidden(summaryFootnote, stored: &summaryFootnoteCollapse)
         collapseIfHidden(summaryWell, stored: &summaryWellCollapse)
 
         noteLabel.stringValue = secondLine(for: link)
@@ -366,6 +388,9 @@ final class ReadingListCardView: HoverHighlightView {
         // menu, because it is the one state where doing nothing leaves the
         // card permanently less useful than it should be.
         summariseButton.title = isSummarising ? "Summarising\u{2026}" : "Summarise"
+        // X11 again, in the future tense: the captain can still decline here,
+        // which is the moment saying so is worth most.
+        summariseButton.toolTip = AITransparency.willSendToClaude("this page's text")
 
         alphaValue = link.isRead ? 0.82 : 1.0
         applyTheme(theme)
@@ -526,6 +551,7 @@ final class ReadingListCardView: HoverHighlightView {
             .withAlphaComponent(wellIsAI ? 0.35 : 0.5).cgColor
         summaryKicker.textColor = well.foreground
         summaryBody.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        summaryFootnote.textColor = HelmTheme.mutedInk(theme)
 
         let chipSurface = HelmContrast.tintedSurface(tintHex: theme.chromeInkHex,
                                                     theme: theme,
@@ -604,6 +630,8 @@ final class ReadingListCardView: HoverHighlightView {
         (statePill.layer?.backgroundColor.map { NSColor(cgColor: $0) } ?? nil, statePillLabel.textColor)
     }
     var debugSummaryWellFrame: NSRect { summaryWell.frame }
+    var debugSummaryFootnote: String? { summaryFootnote.isHidden ? nil : summaryFootnote.stringValue }
+    var debugSummariseTooltip: String? { summariseButton.toolTip }
     var debugSummaryKickerColor: NSColor? { summaryWell.isHidden ? nil : summaryKicker.textColor }
     var debugSummaryWellFill: NSColor? {
         summaryWell.layer?.backgroundColor.map { NSColor(cgColor: $0) } ?? nil

@@ -336,7 +336,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     private func hintAttributedString(muted: NSColor, emphasis: NSColor) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let base: [NSAttributedString.Key: Any] = [.font: HelmType.caption(), .foregroundColor: muted]
-        let bold: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11.5, weight: .semibold), .foregroundColor: emphasis]
+        let bold: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: HelmType.scaled(11.5), weight: .semibold), .foregroundColor: emphasis]
         result.append(NSAttributedString(string: "Tip: type natural dates like ", attributes: base))
         result.append(NSAttributedString(string: "tomorrow 3pm", attributes: bold))
         result.append(NSAttributedString(string: " or ", attributes: base))

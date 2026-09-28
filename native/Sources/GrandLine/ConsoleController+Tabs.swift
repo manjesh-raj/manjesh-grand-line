@@ -254,6 +254,10 @@ extension ConsoleController {
             connectSSH(tab, executable: exe, hostArgs: hostArgs, keyID: keyID, startupSnippetID: startupSnippetID)
         }
         tab.started = true
+        // B36: any start settles a reconnect the lock deferred - including a
+        // manual right-click one the captain does first - so the drain on
+        // unlock cannot start the same tab twice.
+        tab.reconnectDeferredByLock = false
         // Audit 2 §4.6: this is the moment a registered session stops being a
         // restored page and becomes a real connection. The one place
         // `started` is ever set, so the one place this has to be reported.
@@ -946,14 +950,76 @@ extension ConsoleController {
             return
         }
 
-        let hint = AppSettings.shared.autoReconnect ? "reconnecting…" : "right-click this tab to reconnect"
+        // B36: what the hint says depends on whether the reconnect can
+        // actually happen now. Read the gate here as well as in the timer:
+        // the captain reads this line, and promising "reconnecting…" behind a
+        // lock overlay they cannot see would be a lie by the time they look.
+        let locked = !AppLockGate.shared.allows(.terminalAutoReconnect)
+        let hint: String
+        if !AppSettings.shared.autoReconnect {
+            hint = "right-click this tab to reconnect"
+        } else if locked {
+            hint = "reconnecting when you unlock"
+        } else {
+            hint = "reconnecting…"
+        }
         source.feed(text: "\r\n  \u{1b}[2m[process ended\(code) - \(hint)]\u{1b}[0m\r\n")
 
         if AppSettings.shared.autoReconnect {
+            if locked {
+                deferReconnectUntilUnlock(tab)
+                return
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self, weak tab] in
                 guard let self, let tab, !tab.isClosing, self.tabs.contains(where: { $0 === tab }) else { return }
+                // The lock can engage inside the two seconds, which is the
+                // window the gate at the top of this function cannot see. A
+                // second read here is what makes the gate a property of the
+                // moment the process would actually start.
+                guard AppLockGate.shared.allows(.terminalAutoReconnect) else {
+                    self.deferReconnectUntilUnlock(tab)
+                    return
+                }
                 self.startTab(tab)
             }
+        }
+    }
+
+    /// B36's resume story: refuse the reconnect, record the debt, and say so
+    /// in the tab the captain will come back to.
+    ///
+    /// Audit #2 §5.1 left this path ungated for a stated reason - "gating it
+    /// needs a resume story of its own for the tab left dead afterwards" -
+    /// and this is that story. A refusal alone would turn one harm (an `ssh`
+    /// re-established, and a Touch ID prompt raised, above a lock screen) into
+    /// another (a tab the captain deliberately opened, silently dead with no
+    /// hint that anything is owed).
+    ///
+    /// Deferring rather than offering a button is what matches this app's
+    /// existing shape: `runAppearanceWorkIfUnlocked` already defers a page's
+    /// whole start-up to `resumeAfterUnlock`, and a captain who has just
+    /// typed the vault password is exactly the person who should see their
+    /// session come back - including its Touch ID prompt, which is now
+    /// visible, expected and attached to something they just did.
+    func deferReconnectUntilUnlock(_ tab: TabModel) {
+        guard !tab.isClosing, tabs.contains(where: { $0 === tab }) else { return }
+        guard !tab.reconnectDeferredByLock else { return }
+        tab.reconnectDeferredByLock = true
+        AppLog.lifecycle.info("console: auto-reconnect deferred - app is locked")
+    }
+
+    /// Reconnect every tab whose automatic reconnect the lock refused.
+    ///
+    /// Called from `resumeAfterUnlock`, after `AppLockGate` has been told the
+    /// app is unlocked, so `startTab` passes its own `.terminalSession` gate.
+    func resumeDeferredReconnects() {
+        for tab in tabs where tab.reconnectDeferredByLock {
+            guard !tab.isClosing else {
+                tab.reconnectDeferredByLock = false
+                continue
+            }
+            tab.terminal.feed(text: "\r\n  \u{1b}[2m[unlocked - reconnecting…]\u{1b}[0m\r\n")
+            startTab(tab)
         }
     }
 }

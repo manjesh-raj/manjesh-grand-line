@@ -243,7 +243,7 @@ final class ToolInstance: NSObject {
 
     private func sectionLabel(_ text: String) -> NSTextField {
         let l = NSTextField(labelWithString: text)
-        l.font = .systemFont(ofSize: 11, weight: .semibold)
+        l.setScaledFont(ofSize: 11, weight: .semibold)
         mutedLabels.append(l)
         return l
     }
@@ -256,7 +256,7 @@ final class ToolInstance: NSObject {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
-        textView.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        textView.setScaledFont(ofSize: 11.5, weight: .regular, voice: .monospaced)
         textView.textContainerInset = NSSize(width: 8, height: 8)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -366,13 +366,13 @@ final class ToolInstance: NSObject {
         // GL-14: the currency table is static, and the pad says how old it is
         // rather than letting a year-old rate look like a live one.
         let footer = NSTextField(wrappingLabelWithString: ScratchpadRates.footerLine)
-        footer.font = .systemFont(ofSize: 10.5)
+        footer.setScaledFont(ofSize: 10.5)
         mutedLabels.append(footer)
 
         let hint = NSTextField(wrappingLabelWithString:
             "\u{2318}\u{21A9} copies the line your caret is on \u{00B7} \"that\" is the previous result \u{00B7} "
             + "Understands " + ScratchpadEngine.examples.joined(separator: " \u{00B7} "))
-        hint.font = .systemFont(ofSize: 10.5)
+        hint.setScaledFont(ofSize: 10.5)
         mutedLabels.append(hint)
 
         let content = NSStackView(views: [headerRow, pad, footer, hint])
@@ -446,11 +446,11 @@ final class ToolInstance: NSObject {
         yamlOutput = outputView
 
         let sLabel = NSTextField(wrappingLabelWithString: "")
-        sLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        sLabel.setScaledFont(ofSize: 11.5, weight: .medium)
         statusLabel = sLabel
 
         let note = NSTextField(wrappingLabelWithString: "Beautify preserves each mapping's original key order.")
-        note.font = .systemFont(ofSize: 10.5)
+        note.setScaledFont(ofSize: 10.5)
         note.preferredMaxLayoutWidth = 640
         mutedLabels.append(note)
 
@@ -521,7 +521,7 @@ final class ToolInstance: NSObject {
         jsonOutput = outputView
 
         let sLabel = NSTextField(wrappingLabelWithString: "")
-        sLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        sLabel.setScaledFont(ofSize: 11.5, weight: .medium)
         statusLabel = sLabel
 
         let validateButton = HelmButton(title: "Validate", variant: .secondary, target: self, action: #selector(jsonValidateClicked))
@@ -593,7 +593,7 @@ final class ToolInstance: NSObject {
         base64Output = outputView
 
         let sLabel = NSTextField(wrappingLabelWithString: "")
-        sLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        sLabel.setScaledFont(ofSize: 11.5, weight: .medium)
         statusLabel = sLabel
 
         let encodeButton = HelmButton(title: "Encode", variant: .primary, target: self, action: #selector(base64EncodeClicked))
@@ -660,11 +660,11 @@ final class ToolInstance: NSObject {
         jwtOutput = outputView
 
         let sLabel = NSTextField(wrappingLabelWithString: "")
-        sLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        sLabel.setScaledFont(ofSize: 11.5, weight: .medium)
         statusLabel = sLabel
 
         let note = NSTextField(wrappingLabelWithString: "This is a local inspector only - the signature is never checked, so a decoded token should never be treated as verified or trusted.")
-        note.font = .systemFont(ofSize: 10.5, weight: .medium)
+        note.setScaledFont(ofSize: 10.5, weight: .medium)
         note.preferredMaxLayoutWidth = 640
         mutedLabels.append(note)
 
@@ -789,7 +789,7 @@ final class ToolInstance: NSObject {
         tsHumanField.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         tsEpochOutput = NSTextField(labelWithString: "")
-        tsEpochOutput.font = .monospacedSystemFont(ofSize: 13, weight: .medium)
+        tsEpochOutput.setScaledFont(ofSize: 13, weight: .medium, voice: .monospaced)
         tsEpochOutput.translatesAutoresizingMaskIntoConstraints = false
         tsEpochCopyButton = copyButton(action: #selector(tsCopyEpochClicked))
         let epochOutputRow = NSStackView(views: [tsEpochOutput, tsEpochCopyButton])
@@ -797,7 +797,7 @@ final class ToolInstance: NSObject {
         epochOutputRow.spacing = 8
 
         let sLabel = NSTextField(wrappingLabelWithString: "")
-        sLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        sLabel.setScaledFont(ofSize: 11.5, weight: .medium)
         statusLabel = sLabel
 
         let humanOutputHeaderRow = NSStackView(views: [sectionLabel("Epoch \u{2192} Human"), tsHumanCopyButton])
@@ -906,7 +906,7 @@ final class ToolInstance: NSObject {
         diffShowOnlyDifferences = NSButton(checkboxWithTitle: "Show only differences", target: self, action: #selector(diffShowOnlyDifferencesToggled))
 
         let sLabel = NSTextField(wrappingLabelWithString: "")
-        sLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        sLabel.setScaledFont(ofSize: 11.5, weight: .medium)
         statusLabel = sLabel
 
         let buttonRow = NSStackView(views: [compareButton, diffShowOnlyDifferences, sLabel])
@@ -974,7 +974,7 @@ final class ToolInstance: NSObject {
         certOutput = outputView
 
         let sLabel = NSTextField(wrappingLabelWithString: "")
-        sLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        sLabel.setScaledFont(ofSize: 11.5, weight: .medium)
         statusLabel = sLabel
 
         let inspectButton = HelmButton(title: "Inspect", variant: .primary, target: self, action: #selector(certInspectClicked))
@@ -1052,11 +1052,11 @@ final class ToolInstance: NSObject {
         inputRow.spacing = 8
 
         cronHeadlineLabel = NSTextField(wrappingLabelWithString: "")
-        cronHeadlineLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        cronHeadlineLabel.setScaledFont(ofSize: 15, weight: .semibold)
         cronHeadlineLabel.preferredMaxLayoutWidth = 640
 
         let sLabel = NSTextField(wrappingLabelWithString: "")
-        sLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        sLabel.setScaledFont(ofSize: 11.5, weight: .medium)
         statusLabel = sLabel
 
         let (outputScroll, outputView) = codeEditor(height: 110, readOnly: true)
@@ -1070,7 +1070,7 @@ final class ToolInstance: NSObject {
             "*  any value        ,  a list (1,3,5)        -  a range (1-5)        /  a step (*/15 = every 15)\n"
             + "@yearly / @annually  (0 0 1 1 *)     @monthly  (0 0 1 * *)     @weekly  (0 0 * * 0)\n"
             + "@daily / @midnight  (0 0 * * *)     @hourly  (0 * * * *)     @reboot  - runs at startup, not on a schedule")
-        legend.font = .systemFont(ofSize: 10.5)
+        legend.setScaledFont(ofSize: 10.5)
         legend.preferredMaxLayoutWidth = 640
         mutedLabels.append(legend)
 
@@ -1143,7 +1143,7 @@ final class ToolInstance: NSObject {
         millicoresRow.spacing = 8
 
         cpuCoresOutput = NSTextField(labelWithString: "")
-        cpuCoresOutput.font = .monospacedSystemFont(ofSize: 13, weight: .medium)
+        cpuCoresOutput.setScaledFont(ofSize: 13, weight: .medium, voice: .monospaced)
         cpuCoresCopyButton = copyButton(action: #selector(cpuCoresCopyClicked))
         let coresOutputRow = NSStackView(views: [sectionLabel("Millicores \u{2192} Cores"), cpuCoresCopyButton])
         coresOutputRow.orientation = .horizontal
@@ -1159,7 +1159,7 @@ final class ToolInstance: NSObject {
         coresRow.spacing = 8
 
         cpuMillicoresOutput = NSTextField(labelWithString: "")
-        cpuMillicoresOutput.font = .monospacedSystemFont(ofSize: 13, weight: .medium)
+        cpuMillicoresOutput.setScaledFont(ofSize: 13, weight: .medium, voice: .monospaced)
         cpuMillicoresCopyButton = copyButton(action: #selector(cpuMillicoresCopyClicked))
         let millicoresOutputRow = NSStackView(views: [sectionLabel("Cores \u{2192} Millicores"), cpuMillicoresCopyButton])
         millicoresOutputRow.orientation = .horizontal
@@ -1168,7 +1168,7 @@ final class ToolInstance: NSObject {
         millicoresResultRow.orientation = .horizontal
 
         let sLabel = NSTextField(wrappingLabelWithString: "")
-        sLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        sLabel.setScaledFont(ofSize: 11.5, weight: .medium)
         statusLabel = sLabel
 
         memoryQuantityField = HelmTextField(placeholder: "e.g. 256Mi, 1.5Gi, 500M, or a plain byte count")

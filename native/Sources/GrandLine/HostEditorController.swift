@@ -758,7 +758,7 @@ final class HostEnvironmentPicker: NSView {
             dot.translatesAutoresizingMaskIntoConstraints = false
 
             let label = NSTextField(labelWithString: option.title)
-            label.font = .systemFont(ofSize: 10.5, weight: .bold)
+            label.setScaledFont(ofSize: 10.5, weight: .bold)
             label.translatesAutoresizingMaskIntoConstraints = false
 
             let row = NSStackView(views: [dot, label])

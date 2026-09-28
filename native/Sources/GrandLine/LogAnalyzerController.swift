@@ -854,7 +854,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         _ = card.setHeader(symbol: "target", tint: .accent, title: "Probable root cause",
                            actions: [rootCauseConfidencePill, copyButton])
 
-        rootCauseSummaryLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        rootCauseSummaryLabel.setScaledFont(ofSize: 13, weight: .semibold)
         rootCauseSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
         rootCauseExplanationLabel.font = HelmType.body()
         rootCauseExplanationLabel.translatesAutoresizingMaskIntoConstraints = false

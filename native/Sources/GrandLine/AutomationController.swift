@@ -62,7 +62,7 @@ private final class AutomationStepDotView: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         layer?.cornerRadius = diameter / 2
 
-        numberLabel.font = .systemFont(ofSize: 12, weight: .bold)
+        numberLabel.setScaledFont(ofSize: 12, weight: .bold)
         numberLabel.alignment = .center
         numberLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -341,7 +341,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         runButton.action = #selector(runAutomationClicked)
         runButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        progressSummaryLabel.font = .systemFont(ofSize: 11.5)
+        progressSummaryLabel.setScaledFont(ofSize: 11.5)
         progressSummaryLabel.preferredMaxLayoutWidth = 500
 
         let section = NSStackView(views: [runButton, progressSummaryLabel])
@@ -655,11 +655,11 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         ])
 
         let titleLabel = NSTextField(labelWithString: kind.title)
-        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.setScaledFont(ofSize: 14, weight: .semibold)
         dynamicLabels.append(titleLabel)
 
         let pillLabel = NSTextField(labelWithString: "")
-        pillLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+        pillLabel.setScaledFont(ofSize: 10, weight: .semibold)
         pillLabel.translatesAutoresizingMaskIntoConstraints = false
         let pillContainer = NSView()
         pillContainer.wantsLayer = true
@@ -686,7 +686,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         titleRow.spacing = 8
 
         let detailLabel = NSTextField(wrappingLabelWithString: stepDetail(for: kind))
-        detailLabel.font = .systemFont(ofSize: 11.5)
+        detailLabel.setScaledFont(ofSize: 11.5)
         detailLabel.preferredMaxLayoutWidth = 500
         detailLabel.textColor = HelmTheme.mutedInk(theme)
         dynamicLabels.append(detailLabel)
@@ -802,7 +802,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         ])
 
         let label = NSTextField(labelWithString: row.item.name)
-        label.font = .systemFont(ofSize: 11, weight: .medium)
+        label.setScaledFont(ofSize: 11, weight: .medium)
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         dynamicLabels.append(label)

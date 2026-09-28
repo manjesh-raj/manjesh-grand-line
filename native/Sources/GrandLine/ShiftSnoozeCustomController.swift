@@ -39,7 +39,7 @@ final class ShiftSnoozeCustomController: NSViewController {
         }
 
         let title = NSTextField(labelWithString: "Snooze until\u{2026}")
-        title.font = .systemFont(ofSize: 14, weight: .semibold)
+        title.setScaledFont(ofSize: 14, weight: .semibold)
 
         // E6: style and elements are fixed at init now - see `HelmDateField`.
         picker.dateValue = initial
