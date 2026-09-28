@@ -1417,15 +1417,15 @@ enum DaylightModuleSelfTest {
         // pixel-identical bar, and each was confirmed to fail here by name.
         // **Review #3's UX2 capped the drawn row at six**, so the expectation
         // is in two halves: the captain's whole *pinned* list and the *drawn*
-        // prefix of it. **Review U2 then cut the default to four**, the first
-        // four of the shipped seven in their shipped order (eight tiles read
-        // as a second navigation; `QuickAccessConfiguration.defaultPinned`
-        // carries the reasoning), so those two halves are the same list today
-        // and the overflow sweep below has nothing to sweep. Both are kept:
-        // the cap's own behaviour is covered against explicit over-cap rows
-        // in `NavigationCoherenceSelfTest` and `Audit3BugFixesSelfTest`, and
-        // what *this* case is for is the deliberate two-place edit on the
-        // default itself.
+        // prefix of it. Review U2 briefly cut the default to four, which is
+        // what removed Console, Hosts and Poneglyph from the row; that cut is
+        // reverted (`QuickAccessConfiguration.defaultPinned` carries the
+        // reasoning), so the default is the shipped seven again and the
+        // overflow sweep below has a real seventh icon to sweep. Both halves
+        // are kept: the cap's own behaviour is covered against explicit
+        // over-cap rows in `NavigationCoherenceSelfTest` and
+        // `Audit3BugFixesSelfTest`, and what *this* case is for is the
+        // deliberate two-place edit on the default itself.
         //
         // Both are typed out as literals rather than read back from
         // `debugDestinationButtons()` / `QuickAccessConfiguration`, for the
@@ -1434,7 +1434,9 @@ enum DaylightModuleSelfTest {
         // icons in any order, including an accidental duplicate or a
         // reordering that moves an icon the captain has muscle memory for.
         // Adding a shortcut stays a deliberate two-place edit.
-        let pinned: [RailDestination] = [.stickyBoard, .codePreview, .shift, .strawHat]
+        let pinned: [RailDestination] = [
+            .stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts,
+        ]
         if bar.quickAccessConfiguration.pinned != pinned {
             fail("the default pinned row is \(bar.quickAccessConfiguration.pinned.map(\.title)), expected \(pinned.map(\.title))", &ok)
         }

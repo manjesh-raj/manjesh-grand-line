@@ -399,21 +399,18 @@ enum NavigationCoherenceSelfTest {
         check(small.overflow.isEmpty, "UX2: a three-icon row produced an overflow tail", &ok)
         check(small.visible.count == 3, "UX2: a three-icon row drew \(small.visible.count) icons", &ok)
 
-        // U2 of the review: four pins by default, so the bar's tiles read as
-        // shortcuts rather than as a second navigation. Asserted here because
-        // it is a product decision with no other home, and because the
-        // fixture above no longer states it by accident.
+        // A fresh install pins the shipped seven, in the shipped order - U2's
+        // brief cut to four (which removed Console, Hosts and Poneglyph) is
+        // reverted, so the fixture above states the real default again
+        // rather than an explicit over-cap row standing in for it.
         let fresh = QuickAccessConfiguration()
-        check(fresh.pinned.count == 4,
-              "U2: a fresh install pins \(fresh.pinned.count) destinations, expected 4", &ok)
-        check(fresh.overflow.isEmpty,
-              "U2: the default row overflows, so a fresh install opens with an overflow button", &ok)
-        // The order is the shipped order's own prefix - U2 removed icons, it
-        // did not re-rank them, and re-ranking is what would cost the muscle
-        // memory `QuickAccessConfiguration`'s header protects.
+        check(fresh.pinned.count == 7,
+              "a fresh install pins \(fresh.pinned.count) destinations, expected the shipped 7", &ok)
+        check(fresh.overflow.count == 1,
+              "the default row's overflow tail is \(fresh.overflow.count), expected the one icon past the cap of \(QuickAccessConfiguration.visibleLimit)", &ok)
         check(Array(QuickAccessConfiguration.defaultPinned)
-              == [.stickyBoard, .codePreview, .shift, .strawHat],
-              "U2: the default row was re-ordered rather than shortened "
+              == [.stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts],
+              "the default row was re-ordered rather than restored "
               + "(\(QuickAccessConfiguration.defaultPinned.map(\.rawValue)))", &ok)
         return ok
     }
