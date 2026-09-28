@@ -430,15 +430,26 @@ enum NotificationSources {
         let tint: HelmTint
         switch verdict {
         case .failed:
-            title = "\(action.title) failed"
+            title = "\(action.title) didn\u{2019}t finish"
             kind = .actionNeeded
             tint = .critical
-        case .changed:
-            title = action.title
+        case .partial:
+            title = "\(action.title) couldn\u{2019}t check everything"
             kind = .actionNeeded
             tint = .warn
+        case .foundSomething:
+            // Was a bare `action.title` with no verb at all, flagged
+            // `.actionNeeded` - a notification that named a schedule and left
+            // the captain to guess what it wanted.
+            title = "\(action.title) found something"
+            kind = .informational
+            tint = .info
+        case .didWork:
+            title = "\(action.title): done"
+            kind = .informational
+            tint = .good
         case .clean:
-            title = "\(action.title): clean"
+            title = "\(action.title): all clear"
             kind = .informational
             tint = .good
         }
@@ -448,7 +459,7 @@ enum NotificationSources {
                 subtext: shortDetail(summary),
                 source: "Schedules",
                 clearCondition: "Clears when this schedule next runs.",
-                kind: kind, tint: tint, isWarning: verdict == .failed,
+                kind: kind, tint: tint, isWarning: !verdict.succeeded,
                 primaryAction: AppNotificationAction(label: "Open", doneMessage: "Opened Schedules",
                                                     perform: navigate),
                 navigate: navigate
@@ -462,7 +473,12 @@ enum NotificationSources {
         switch notifyOn {
         case .always: return true
         case .failureOnly: return verdict == .failed
-        case .changeOnly: return verdict != .clean
+        // Explicit set, never `verdict != .clean`. Under the five-state
+        // split that shorthand would notify on `.didWork` - a nightly backup
+        // pushing successfully - which is exactly the noise this whole
+        // change exists to stop. "On change" means the run wants something
+        // from the captain, or could not establish its own result.
+        case .changeOnly: return verdict == .foundSomething || verdict == .partial || verdict == .failed
         }
     }
 

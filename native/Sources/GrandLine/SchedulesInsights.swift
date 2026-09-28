@@ -47,10 +47,19 @@ enum ScheduleRunStats {
     struct DayBucket: Equatable {
         let day: Date
         let total: Int
-        /// Runs that came back `.changed` or `.failed` - i.e. the half that
-        /// wanted the captain. Deliberately *not* folded into `total`: the
-        /// chart draws both, so it needs them apart.
+        /// Runs that genuinely wanted the captain - `.partial` or `.failed`.
+        /// Deliberately *not* folded into `total`: the chart draws both, so
+        /// it needs them apart.
+        ///
+        /// **This was `verdict != .clean`**, which under the five-state split
+        /// would paint a nightly config backup doing its job (`.didWork`) as
+        /// an attention bar every night. `verdict.needsCaptain` is the one
+        /// definition of that question, and every surface asks it rather than
+        /// re-deriving a set of its own.
         let needsAttention: Int
+        /// Successful runs that found something worth the captain's eye.
+        /// Neither clean nor a problem, so the chart keeps it apart from both.
+        let foundSomething: Int
         let isToday: Bool
     }
 
@@ -76,7 +85,8 @@ enum ScheduleRunStats {
             let runs = entries.filter { calendar.isDate($0.at, inSameDayAs: day) }
             return DayBucket(day: day,
                              total: runs.count,
-                             needsAttention: runs.filter { $0.verdict != .clean }.count,
+                             needsAttention: runs.filter { $0.verdict.needsCaptain }.count,
+                             foundSomething: runs.filter { $0.verdict == .foundSomething }.count,
                              isToday: offset == 0)
         }
     }
@@ -287,8 +297,11 @@ final class ScheduleRunOverviewChart: NSView {
         let date = dayFormatter.string(from: bucket.day)
         guard bucket.total > 0 else { return "\(date): no runs" }
         let runs = bucket.total == 1 ? "1 run" : "\(bucket.total) runs"
-        guard bucket.needsAttention > 0 else { return "\(date): \(runs), all clean" }
-        return "\(date): \(runs), \(bucket.needsAttention) needing you"
+        var bits: [String] = []
+        if bucket.needsAttention > 0 { bits.append("\(bucket.needsAttention) needing you") }
+        if bucket.foundSomething > 0 { bits.append("\(bucket.foundSomething) found something") }
+        guard !bits.isEmpty else { return "\(date): \(runs), all clean" }
+        return "\(date): \(runs), " + bits.joined(separator: ", ")
     }
 
     private static let dayFormatter: DateFormatter = {
@@ -330,6 +343,9 @@ final class ScheduleRunOverviewChart: NSView {
                 }
                 let height = max(Self.floorHeight,
                                  bounds.height * CGFloat(bucket.total) / CGFloat(peak))
+                // An FYI stacks with the clean share rather than the
+                // attention share: it succeeded, and colouring it as a
+                // problem is the exact confusion this change removes.
                 let cleanCount = bucket.total - bucket.needsAttention
                 let cleanHeight = height * CGFloat(cleanCount) / CGFloat(bucket.total)
 

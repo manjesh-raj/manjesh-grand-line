@@ -31,7 +31,8 @@ enum ScheduleRunHistoryStatusAndLogSelfTest {
 
     static func run() -> Bool {
         let cases: [(String, () -> String?)] = [
-            ("outcomeChipText_isUnambiguousAndDistinctFromTheSharedLabel", test_outcomeChipText),
+            ("outcomeChipText_isUnambiguousAndNoSuccessReadsAsAnAlarm", test_outcomeChipText),
+            ("oldChangedVerdictStillDecodesToFoundSomething", test_oldChangedVerdictStillDecodes),
             ("scheduleActionResult_logDefaultsToSummaryWhenNotGiven", test_logDefaultsToSummary),
             ("historyEntry_logPersistsAcrossARealDiskReload", test_logPersists),
             ("historyEntry_logIsTruncatedAtAGenerousBound", test_logTruncation),
@@ -58,15 +59,28 @@ enum ScheduleRunHistoryStatusAndLogSelfTest {
     // MARK: Status clarity (pure logic)
 
     /// The whole point of this fix: a captain scanning Run History has to be
-    /// able to answer "did this succeed?" without knowing that `.changed`'s
-    /// kicker ("Needs you") is itself a success. And it must not be the
-    /// *same* vocabulary `SchedulesCardView`'s row already renders on the
-    /// main Schedules list - this file's own "no regression to existing
-    /// Schedules list behavior" bar depends on `.label` staying untouched.
+    /// able to answer "did this succeed?" at a glance.
+    ///
+    /// **This case used to pin `.label` to "Clean"/"Needs you"/"Failed" and
+    /// fail the build on any change**, on the stated grounds that it was
+    /// "the exact vocabulary SchedulesCardView's row already renders on the
+    /// main Schedules list". `fm/grandline-schedule-status-clarity`
+    /// deliberately overturns that, and the reason the guard is *replaced*
+    /// rather than deleted is worth writing down: the rule was protecting
+    /// **consistency between the two surfaces**, not those particular words.
+    /// The captain reported that a successful run reading "Needs you" /
+    /// "Needs Attention" told him nothing about what, if anything, he had to
+    /// do - and that same task's own notes had already recorded the wording
+    /// as ambiguous. So the vocabulary changed in both places at once, and
+    /// what this case guards now is the property that actually matters: the
+    /// two surfaces agree, and no *success* is labelled as if it were a
+    /// problem.
     private static func test_outcomeChipText() -> String? {
         let expected: [(ScheduleRunVerdict, String)] = [
             (.clean, "Succeeded"),
-            (.changed, "Needs Attention"),
+            (.didWork, "Succeeded"),
+            (.foundSomething, "Succeeded - found something"),
+            (.partial, "Partly failed"),
             (.failed, "Failed"),
         ]
         for (verdict, want) in expected {
@@ -74,23 +88,78 @@ enum ScheduleRunHistoryStatusAndLogSelfTest {
                 return "\(verdict) chip text was \(verdict.outcomeChipText.debugDescription), expected \(want.debugDescription)"
             }
         }
-        // The shared main-list vocabulary must be untouched by this addition.
-        let sharedLabels: [ScheduleRunVerdict: String] = [.clean: "Clean", .changed: "Needs you", .failed: "Failed"]
-        for (verdict, label) in sharedLabels {
-            guard verdict.label == label else {
-                return "\(verdict).label changed to \(verdict.label.debugDescription) - this is the exact vocabulary SchedulesCardView's row already renders on the main Schedules list"
+        let expectedLabels: [(ScheduleRunVerdict, String)] = [
+            (.clean, "All clear"),
+            (.didWork, "Done"),
+            (.foundSomething, "Found something"),
+            (.partial, "Couldn\u{2019}t check everything"),
+            (.failed, "Didn\u{2019}t finish"),
+        ]
+        for (verdict, want) in expectedLabels {
+            guard verdict.label == want else {
+                return "\(verdict).label was \(verdict.label.debugDescription), expected \(want.debugDescription) - this is the vocabulary SchedulesCardView's row and this sheet both render, and they must not drift apart"
             }
         }
-        // `.clean`/`.changed` genuinely need the second, blunter chip word -
-        // their kicker alone does not answer "did this succeed?". `.failed`
-        // is the one verdict where "Failed" is already unambiguous, so its
-        // chip and kicker legitimately share the same word - that is not a
-        // regression, only `.clean`/`.changed` would be.
-        guard ScheduleRunVerdict.clean.outcomeChipText != ScheduleRunVerdict.clean.label else {
-            return "clean's chip text is still just its kicker word - it does not answer 'did this succeed?' on its own"
+        // The property the old pin was really defending: a run that succeeded
+        // must never be labelled with alarm words. This is what the captain
+        // actually reported, so it is asserted directly rather than implied
+        // by a list of strings.
+        let alarmWords = ["needs you", "needs attention", "attention", "failed", "error", "problem"]
+        for verdict in [ScheduleRunVerdict.clean, .didWork, .foundSomething] {
+            let text = (verdict.label + " " + verdict.outcomeChipText).lowercased()
+            for word in alarmWords where text.contains(word) {
+                return "\(verdict) succeeded but its wording (\(verdict.label.debugDescription) / \(verdict.outcomeChipText.debugDescription)) contains the alarm word \(word.debugDescription)"
+            }
         }
-        guard ScheduleRunVerdict.changed.outcomeChipText != ScheduleRunVerdict.changed.label else {
-            return "changed's chip text is still just its kicker word ('Needs you') - a captain still has to know that means success"
+        // And the converse: a verdict that did NOT succeed must not read as a
+        // clean success, which is the shape of the two logic defects this
+        // change fixes.
+        for verdict in [ScheduleRunVerdict.partial, .failed] {
+            guard !verdict.succeeded, verdict.needsCaptain else {
+                return "\(verdict) should both not-succeed and need the captain"
+            }
+            guard verdict.outcomeChipText.lowercased().contains("fail") else {
+                return "\(verdict)'s chip (\(verdict.outcomeChipText.debugDescription)) does not say it failed"
+            }
+        }
+        // `.foundSomething` is the one success allowed to ask for attention at
+        // all, and its chip has to say more than a bare "Succeeded" or the
+        // distinction the row exists to draw is lost.
+        guard ScheduleRunVerdict.foundSomething.outcomeChipText != ScheduleRunVerdict.clean.outcomeChipText else {
+            return "foundSomething's chip is identical to clean's - the sheet no longer distinguishes a run that found something"
+        }
+        return nil
+    }
+
+    /// GL-01: a run recorded before the five-state split carries the raw
+    /// string `"changed"`, which is not a case any more. It must still
+    /// decode, and it must land on `.foundSomething` - see
+    /// `ScheduleRunVerdict.init(from:)` for why that is the safer of the two
+    /// candidate meanings.
+    private static func test_oldChangedVerdictStillDecodes() -> String? {
+        // Assert the fixture's own discriminating power first: if `"changed"`
+        // were somehow a live raw value again, this case would be vacuous.
+        guard ScheduleRunVerdict(rawValue: "changed") == nil else {
+            return "\"changed\" is a live raw value again - this check cannot fail and proves nothing"
+        }
+        let decoder = JSONDecoder()
+        guard let decoded = try? decoder.decode(ScheduleRunVerdict.self, from: Data("\"changed\"".utf8)) else {
+            return "an old on-disk \"changed\" verdict no longer decodes - every existing schedules.json and runs.jsonl is now unreadable"
+        }
+        guard decoded == .foundSomething else {
+            return "an old \"changed\" decoded to \(decoded), expected .foundSomething"
+        }
+        // Every current case must still round-trip through its own raw value.
+        for verdict in [ScheduleRunVerdict.clean, .didWork, .foundSomething, .partial, .failed] {
+            let json = Data("\"\(verdict.rawValue)\"".utf8)
+            guard let back = try? decoder.decode(ScheduleRunVerdict.self, from: json), back == verdict else {
+                return "\(verdict) did not round-trip through its raw value"
+            }
+        }
+        // And an genuinely unknown value must still be refused rather than
+        // silently becoming some default.
+        guard (try? decoder.decode(ScheduleRunVerdict.self, from: Data("\"nonsense\"".utf8))) == nil else {
+            return "an unknown verdict string decoded instead of throwing"
         }
         return nil
     }
@@ -102,11 +171,25 @@ enum ScheduleRunHistoryStatusAndLogSelfTest {
     /// example) must still leave "View Log" with something real to show,
     /// never a blank pane.
     private static func test_logDefaultsToSummary() -> String? {
-        let result = ScheduleActionResult(verdict: .failed, summary: "No local manjesh-config clone found.")
+        // The failing initializer, which is the one an early-return guard
+        // uses - it must still leave "View Log" something real to show.
+        let result = ScheduleActionResult(failing: .failed,
+                                          summary: "No local manjesh-config clone found.",
+                                          whatFailed: "The vault recipe couldn\u{2019}t be exported.",
+                                          why: "There is no local clone of manjesh-config on this Mac.",
+                                          whatToDo: "Set up the dotfiles card in Bootstrap, then run it again.")
         guard result.log == result.summary else {
             return "log defaulted to \(result.log.debugDescription), expected it to fall back to the summary (\(result.summary.debugDescription))"
         }
-        let withLog = ScheduleActionResult(verdict: .changed, summary: "short summary", log: "a real, longer transcript")
+        // And that initializer is the only way to build a failing result, so
+        // a failure can never reach the sheet with nothing to explain it.
+        guard result.failure != nil else {
+            return "a failing result carried no explanation - the Run Report would have nothing to lead with"
+        }
+        guard ScheduleActionResult(verdict: .clean, summary: "fine").failure == nil else {
+            return "a succeeding result carried a failure explanation"
+        }
+        let withLog = ScheduleActionResult(verdict: .foundSomething, summary: "short summary", log: "a real, longer transcript")
         guard withLog.log == "a real, longer transcript" else {
             return "an explicitly-provided log was overwritten by the summary fallback"
         }
@@ -250,20 +333,21 @@ enum ScheduleRunHistoryStatusAndLogSelfTest {
     }
 
     /// The chip states the plain succeeded/failed/needs-attention answer;
-    /// the kicker keeps rendering the shared "Clean"/"Needs you"/"Failed"
-    /// vocabulary unchanged, so the two are never confused for one signal.
+    /// the kicker renders `ScheduleRunVerdict.label`, the same vocabulary
+    /// `SchedulesCardView`'s own row uses on the main Schedules list, so the
+    /// two surfaces never drift into two different words for one state.
     private static func test_rowsShowChipAndKicker() -> String? {
         let (sheet, window) = mountSheetWithEntries([
             (.clean, "All good.", nil),
-            (.changed, "3 tools have an update available.", nil),
+            (.foundSomething, "3 tools have an update available.", nil),
             (.failed, "network unreachable.", nil),
         ])
         defer { window.contentView = nil }
-        let expectedChip = ["Succeeded", "Needs Attention", "Failed"]
+        let expectedChip = ["Succeeded", "Succeeded - found something", "Failed"]
         // `HelmAccentRow` renders the kicker uppercase (see its own doc
-        // comment) - the underlying string this test must not see change is
-        // still `ScheduleRunVerdict.label`, just as it is actually painted.
-        let expectedKicker = ["Clean", "Needs you", "Failed"].map { $0.uppercased() }
+        // comment), so this asserts `ScheduleRunVerdict.label` exactly as it
+        // is actually painted.
+        let expectedKicker = ["All clear", "Found something", "Didn\u{2019}t finish"].map { $0.uppercased() }
         for row in 0..<3 {
             guard let rowView = sheet.debugRowView(at: row) as? HelmAccentRow else {
                 return "row \(row) did not produce a HelmAccentRow"
@@ -312,7 +396,11 @@ enum ScheduleRunHistoryStatusAndLogSelfTest {
         let entry = ScheduleRunHistoryEntry(
             scheduleID: schedule.id, at: Date(timeIntervalSince1970: 1_700_000_000), verdict: .failed,
             summary: "2 forks failed.", actionTitle: schedule.action.title,
-            log: "repo-a: some real detail\nrepo-b: another line")
+            log: "repo-a: some real detail\nrepo-b: another line",
+            failure: ScheduleFailureExplanation(
+                whatFailed: "2 of your 8 forks couldn\u{2019}t be brought up to date.",
+                why: "GitHub refused the fast-forward for repo-a and repo-b.",
+                whatToDo: "Open GitHub Sync and try those two by hand. Nothing was force-pushed."))
 
         let controller = ScheduleRunLogController(entry: entry)
         let window = OffScreenProbe.window(width: 560, height: 460)
@@ -320,11 +408,34 @@ enum ScheduleRunHistoryStatusAndLogSelfTest {
         controller.view.layoutSubtreeIfNeeded()
         defer { window.contentView = nil }
 
-        guard controller.debugTitle == "Run Log" else {
-            return "expected the title 'Run Log', got \(controller.debugTitle.debugDescription)"
+        // **The sheet leads with a sentence, not with raw output.** This is
+        // the captain's own report turned into an assertion: the headline has
+        // to be the plain-English "what failed", and the raw log has to be
+        // out of the way until asked for.
+        guard controller.debugHeadline == "2 of your 8 forks couldn\u{2019}t be brought up to date." else {
+            return "the sheet did not lead with the plain-English headline, got \(controller.debugHeadline.debugDescription)"
         }
         guard controller.debugSubtitle.contains(schedule.action.title), controller.debugSubtitle.contains(entry.verdict.label) else {
             return "the subtitle did not name the action/verdict, got \(controller.debugSubtitle.debugDescription)"
+        }
+        let fields = controller.debugExplainFields
+        guard fields.map(\.caption) == ["What failed", "Why", "What to do"] else {
+            return "a failure must explain all three of what/why/what-to-do, got \(fields.map(\.caption))"
+        }
+        guard fields[2].body.contains("GitHub Sync") else {
+            return "the 'what to do' field did not carry the run's own advice, got \(fields[2].body.debugDescription)"
+        }
+        // The raw log is kept verbatim and is still reachable - collapsed,
+        // with its own size stated so it never reads as an empty section.
+        guard controller.debugRawIsVisible == false else {
+            return "the raw log was expanded by default - the sheet is leading with output again"
+        }
+        guard controller.debugRawToggleTitle.contains("2 lines") else {
+            return "the disclosure must state the log's size, got \(controller.debugRawToggleTitle.debugDescription)"
+        }
+        controller.debugToggleRaw()
+        guard controller.debugRawIsVisible else {
+            return "the disclosure did not reveal the raw log"
         }
         guard controller.debugLogText == entry.log else {
             return "the log body did not show the run's real output, got \(controller.debugLogText.debugDescription)"
@@ -342,6 +453,16 @@ enum ScheduleRunHistoryStatusAndLogSelfTest {
         controller.debugCopyClicked()
         guard pasteboard.string(forType: .string) == entry.log else {
             return "Copy Log did not place the run's real output on the pasteboard"
+        }
+        // Copy Report is the other half, and it must carry the explanation
+        // rather than the transcript - the two answer different questions.
+        controller.debugCopyReportClicked()
+        let report = pasteboard.string(forType: .string) ?? ""
+        guard report.contains("What to do"), report.contains("GitHub Sync") else {
+            return "Copy Report did not place the plain-English report on the pasteboard, got \(report.debugDescription)"
+        }
+        guard !report.contains("repo-a: some real detail") else {
+            return "Copy Report dragged the raw transcript along with it"
         }
 
         guard let frames = controller.debugFooterFrames, frames.close.width < 200 else {
