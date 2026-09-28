@@ -489,6 +489,19 @@ final class NotificationPanelViewController: NSViewController {
 
     private let footerSeparator = NSView()
     private let footerLabel = NSTextField(labelWithString: "Updated just now")
+    /// X9 (review UX): the panel has had four key bindings since it was
+    /// rebuilt to the reference, and said nothing about any of them - while
+    /// the clipboard picker one chord away states its own on a line exactly
+    /// like this. Same shape, same place, same muted `captionSmall`, so the
+    /// two keyboard surfaces teach themselves the same way.
+    ///
+    /// Escape is included even though it belongs to `HelmBarPanel` rather
+    /// than to `handleListKey`: the captain does not know which object owns
+    /// a key, and a hint that lists three of the four they can press is worse
+    /// than one that lists all four.
+    private let keyHintLabel = NSTextField(labelWithString:
+        "\u{2191}\u{2193} select  \u{00B7}  \u{2192}\u{2190} expand  \u{00B7}  "
+        + "\u{23CE} act  \u{00B7}  Esc dismiss")
     private let undoButton = HelmButton(title: "Undo", variant: .quiet, size: .small)
     private let snoozedButton = HelmButton(title: "", variant: .quiet, size: .small)
 
@@ -600,8 +613,12 @@ final class NotificationPanelViewController: NSViewController {
         root.addSubview(scroll)
         root.addSubview(emptyStateAll)
         root.addSubview(emptyStateAction)
+        keyHintLabel.translatesAutoresizingMaskIntoConstraints = false
+        keyHintLabel.lineBreakMode = .byTruncatingTail
+
         root.addSubview(footerSeparator)
         root.addSubview(footerRow)
+        root.addSubview(keyHintLabel)
 
         let listHeight = scroll.heightAnchor.constraint(equalToConstant: 120)
         self.listHeight = listHeight
@@ -642,7 +659,11 @@ final class NotificationPanelViewController: NSViewController {
             footerRow.topAnchor.constraint(equalTo: footerSeparator.bottomAnchor, constant: 8),
             footerRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16),
             footerRow.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
-            footerRow.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -10),
+            footerRow.bottomAnchor.constraint(equalTo: keyHintLabel.topAnchor, constant: -4),
+
+            keyHintLabel.leadingAnchor.constraint(equalTo: footerRow.leadingAnchor),
+            keyHintLabel.trailingAnchor.constraint(lessThanOrEqualTo: footerRow.trailingAnchor),
+            keyHintLabel.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -10),
 
             // AGENTS.md gotcha (4): the document view pins to the **clip**
             // view, not the scroll view - with scrollbars set to Always, a
@@ -1152,6 +1173,8 @@ final class NotificationPanelViewController: NSViewController {
         footerSeparator.layer?.backgroundColor = line.cgColor
         footerLabel.font = HelmType.caption()
         footerLabel.textColor = muted
+        keyHintLabel.font = HelmType.captionSmall()
+        keyHintLabel.textColor = muted
         emptyStateAll.applyTheme(theme)
         emptyStateAction.applyTheme(theme)
         filterTabs?.applyTheme(theme)
@@ -1189,6 +1212,23 @@ final class NotificationPanelViewController: NSViewController {
         listStack.arrangedSubviews.flatMap { allSubviews(of: $0) }.compactMap { $0 as? NotificationChildRowView }
     }
     var debugFooterText: String { footerLabel.stringValue }
+    /// X9: the keyboard hint, and enough of its geometry to tell a line that
+    /// is on screen from one that merely exists.
+    ///
+    /// `isOnScreen` is the load-bearing field, and it is here because the
+    /// obvious one is not: `NSTextField(labelWithString:)` sizes itself at
+    /// init, so a label that was built and then never added to the tree still
+    /// reports a perfectly good non-zero `frame`. Measured - a first draft of
+    /// X9's case asserted `frame.height > 0` and passed with the label left
+    /// out of `root` entirely.
+    var debugKeyHint: (text: String, frame: NSRect, fittingWidth: CGFloat,
+                       isOnScreen: Bool, inPanel: NSRect) {
+        (keyHintLabel.stringValue,
+         keyHintLabel.frame,
+         keyHintLabel.fittingSize.width,
+         keyHintLabel.window != nil && keyHintLabel.isDescendant(of: view),
+         keyHintLabel.convert(keyHintLabel.bounds, to: view))
+    }
     var debugFooterButtonTitles: [String] {
         guard let footerRow = footerSeparator.superview?.subviews
             .compactMap({ $0 as? NSStackView })
