@@ -587,9 +587,34 @@ final class HelmPageSidebar: NSView {
         emptyBodyLabel = nil
 
         if sections.allSatisfy({ $0.rows.isEmpty }), let empty = emptyState {
+            let inset = surface == .panel ? Metrics.panelInset : 0
             appendHeader(empty.header)
             let body = NSTextField(wrappingLabelWithString: empty.body)
             body.font = HelmType.caption()
+            // A wrapping label's intrinsic width is its whole string on one
+            // line until something tells it otherwise, and this column is
+            // inside a page whose width the *window* decides - so leaving
+            // it at the default `.defaultHigh` compression resistance makes
+            // the sentence a floor on the page, and the page a floor on the
+            // window. Measured: Notebook's body container came back 9.5pt
+            // wider than a 1100pt window and failed
+            // `AppShellBodyWidthSelfTest` by name. The real width arrives in
+            // `layout()` below, from the column rather than from the label
+            // (gotcha (22) - a label must never decide its own wrap width).
+            body.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            // **Gotcha (22), and the reason this is a constant rather than
+            // `bounds.width`.** Deriving the wrap width in `layout()` from
+            // the column's own resolved width is circular - the column is
+            // only held at `Self.width` by a 499 constraint, so the label's
+            // intrinsic width is one of the things deciding how wide the
+            // column is, and reading it back to decide the label's wrap
+            // width is the loop that gotcha describes. Measured: it settled
+            // with Notebook's body container 9.5pt wider than a 1100pt
+            // window and failed `AppShellBodyWidthSelfTest` by name.
+            //
+            // `Self.width` is the column's *declared* width, which the label
+            // does not decide, so this is the non-circular derivation.
+            body.preferredMaxLayoutWidth = Self.width - 2 * inset - 2 * Metrics.rowInset
             emptyBodyLabel = body
             let bodyRow = NSView()
             bodyRow.translatesAutoresizingMaskIntoConstraints = false
@@ -606,6 +631,24 @@ final class HelmPageSidebar: NSView {
                 let button = HelmButton(title: title, variant: .secondary,
                                         target: self, action: #selector(emptyStateActionClicked))
                 button.controlSize = .small
+                // **Nothing in this column may be a floor on the window.**
+                // `columnWidth` is deliberately 499 (gotcha (13)) so the
+                // column yields before the window has to - which means any
+                // *required* minimum inside it outranks the column's own
+                // width and propagates straight out to `bodyContainer`.
+                // Measured: with this button unconstrained, Notebook's body
+                // container came back 9.5pt wider than a 1100pt window and
+                // failed `AppShellBodyWidthSelfTest` by name.
+                //
+                // A hard cap plus low compression resistance is the shape:
+                // the button truncates rather than widening the page, and
+                // the cap is the column's *declared* width rather than its
+                // resolved one, so this is not gotcha (22)'s circular
+                // derivation.
+                button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                button.widthAnchor.constraint(
+                    lessThanOrEqualToConstant: Self.width - 2 * inset - 2 * Metrics.rowInset
+                ).isActive = true
                 let actionRow = NSView()
                 actionRow.translatesAutoresizingMaskIntoConstraints = false
                 button.translatesAutoresizingMaskIntoConstraints = false
