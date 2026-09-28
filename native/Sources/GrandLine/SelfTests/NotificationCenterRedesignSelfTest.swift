@@ -55,6 +55,7 @@ enum NotificationCenterRedesignSelfTest {
                       checkToastAndUndo,
                       checkKeyboardSelection,
                       checkTheKeyboardHintIsShownAndTrue,
+                      checkDueTasksSitUnderNeedsAction,
                       checkRendersInBothThemes,
                       checkARedundantPublishRebuildsNothing] {
             var ok = true
@@ -646,6 +647,64 @@ enum NotificationCenterRedesignSelfTest {
         check(content.debugSendKey(125), "down did not move a second time", &ok)
         check(content.debugSendKey(124), "the hint names right/expand, which the panel ignored", &ok)
         check(content.debugSendKey(123), "the hint names left/collapse, which the panel ignored", &ok)
+    }
+
+    // MARK: X12 - the bell's own title includes due tasks
+
+    /// X12 (review UX): "Task reminders and fleet events arrive through two
+    /// different centres... One 'Waiting for you' list that includes due
+    /// tasks would match the bell's own title."
+    ///
+    /// The plumbing was already there - `ShiftNotifications.poll` feeds the
+    /// same due counts to the in-app bell as to the OS banner. What did not
+    /// match was the classification: a task due **today** was published
+    /// `.informational`, so the single entry naming the captain's due work
+    /// sat under "Available" in a panel titled "Waiting for you", and the
+    /// panel's own "Needs action" filter excluded it until the deadline had
+    /// already passed.
+    ///
+    /// Asserted through the real panel rather than against the enum, because
+    /// the enum is not what the review saw: what it saw was which header the
+    /// row sits under. Overdue is checked in the same case so the change is
+    /// visibly a widening rather than a swap.
+    private static func checkDueTasksSitUnderNeedsAction(_ ok: inout Bool) {
+        print("\n-- " + "X12: a task due today is waiting for you, not an FYI" + " --")
+        GrandLineNotificationCenter.shared.resetForTesting()
+        let (controller, _) = mount()
+        let content = controller.debugPanelContent
+
+        // Due today, nothing overdue - the exact state the review found.
+        NotificationSources.setShiftDue(taskCount: 2, followUpCount: 0, overdueCount: 0, navigate: {})
+        content.reload()
+        check(content.debugRowTitles.contains { $0.contains("due or overdue") },
+              "the bell carries no due-task row at all, so this case would be vacuous "
+              + "(rows: \(content.debugRowTitles))", &ok)
+
+        content.debugSetFilter(.needsAction)
+        check(content.debugRowTitles.contains { $0.contains("due or overdue") },
+              "a task due today is missing from \"Needs action\" - the panel is titled "
+              + "\"Waiting for you\" and this is the thing waiting (rows: \(content.debugRowTitles))",
+              &ok)
+
+        // Overdue still belongs there, and still reads louder inside it.
+        NotificationSources.setShiftDue(taskCount: 2, followUpCount: 0, overdueCount: 1, navigate: {})
+        content.reload()
+        check(content.debugRowTitles.contains { $0.contains("due or overdue") },
+              "an overdue task fell out of \"Needs action\" - this change was meant to widen that "
+              + "group, not swap what is in it", &ok)
+
+        // And the filter still discriminates: a genuinely informational
+        // source must not have been swept in with it.
+        NotificationSources.setToolUpdates(count: 3, navigate: {})
+        content.reload()
+        check(!content.debugRowTitles.contains { $0.lowercased().contains("update") },
+              "an informational tool-update row is now under \"Needs action\" too, so the filter "
+              + "no longer means anything (rows: \(content.debugRowTitles))", &ok)
+
+        content.debugSetFilter(.all)
+        NotificationSources.setShiftDue(taskCount: 0, followUpCount: 0, overdueCount: 0, navigate: {})
+        NotificationSources.setToolUpdates(count: 0, navigate: {})
+        GrandLineNotificationCenter.shared.resetForTesting()
     }
 
 }
