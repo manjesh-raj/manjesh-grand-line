@@ -57,8 +57,12 @@ enum SettingsSidebarNavigationSelfTest {
     /// should have to come here and say so.
     ///
     /// Twenty-four since `fm/grandline-capture-global-hotkey-configurable`
-    /// added the Capture page's two (Shortcut, System-wide access).
-    private static let expectedCardCount = 24
+    /// added the Capture page's two (Shortcut, System-wide access), and
+    /// twenty-five since the 2026-09-27 review's X2 added the Menu bar
+    /// page's own card - the switch that puts Tasks', the vault's and the
+    /// crew's separate status items back after the merge became the
+    /// default.
+    private static let expectedCardCount = 25
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see

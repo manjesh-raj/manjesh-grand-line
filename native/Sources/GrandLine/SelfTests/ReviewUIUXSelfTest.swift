@@ -59,6 +59,7 @@ enum ReviewUIUXSelfTest {
             ("X3_theGoMenuNamesEachDestinationOnce", test_x3GoMenu),
             ("X5_emptyPagesOfferAnExampleToStartFrom", test_x5SeedExamples),
             ("X6_everythingCapturedTodayIsInOnePlace", test_x6CaptureInbox),
+            ("X2_oneMenuBarIconByDefaultWithAWayBack", test_x2OneStatusItem),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -1437,6 +1438,114 @@ enum ReviewUIUXSelfTest {
             }
             return nil
         }
+    }
+
+    // MARK: X2 - four status items for one app
+
+    private static func test_x2OneStatusItem() -> String? {
+        // A stated policy rather than the live one: `AppSettings.shared`
+        // belongs to this process and a case that wrote it would be changing
+        // what every other case in this run reads.
+        func policy(compactMode: Bool, separate: Bool) -> CompactModePolicy {
+            CompactModePolicy(isEnabled: compactMode, hidesDockIcon: false,
+                              badgesOverdueCount: false, separateMenuBarItems: separate)
+        }
+
+        // The default a fresh install gets. `UserDefaults.bool(forKey:)`
+        // answers false for a key nobody has written, and the setting is
+        // stored inverted precisely so that false is the shipped default -
+        // so this is what the menu bar looks like out of the box.
+        let fresh = policy(compactMode: false, separate: false)
+        guard fresh.showsCompactStatusItem, !fresh.showsPerFeatureStatusItems else {
+            return "a fresh install shows merged=\(fresh.showsCompactStatusItem), "
+                 + "per-feature=\(fresh.showsPerFeatureStatusItems) - the review found three icons "
+                 + "in the menu bar for one app (review X2)"
+        }
+
+        // The way back the review asked for.
+        let separate = policy(compactMode: false, separate: true)
+        guard separate.showsPerFeatureStatusItems, !separate.showsCompactStatusItem else {
+            return "the Settings switch does not bring the three separate icons back: "
+                 + "merged=\(separate.showsCompactStatusItem), "
+                 + "per-feature=\(separate.showsPerFeatureStatusItems)"
+        }
+
+        // **Never both**, in any combination - three items plus a fourth
+        // containing all three is the state F22's mockup rules out, and it
+        // has to be unreachable rather than merely not chosen.
+        for compact in [true, false] {
+            for wantsSeparate in [true, false] {
+                let p = policy(compactMode: compact, separate: wantsSeparate)
+                if p.showsCompactStatusItem && p.showsPerFeatureStatusItems {
+                    return "compactMode=\(compact) separate=\(wantsSeparate) puts the merged item "
+                         + "and the three per-feature ones in the menu bar at once"
+                }
+                if !p.showsCompactStatusItem && !p.showsPerFeatureStatusItems {
+                    return "compactMode=\(compact) separate=\(wantsSeparate) leaves no menu-bar "
+                         + "item at all"
+                }
+            }
+        }
+
+        // Compact mode wins: with the window hidden the merged item is the
+        // only surface there is, so the switch must not be able to take it
+        // away.
+        let compactAndSeparate = policy(compactMode: true, separate: true)
+        guard compactAndSeparate.showsCompactStatusItem else {
+            return "compact mode with the separate-icons switch on leaves no merged item, and the "
+                 + "main window is hidden - that is a windowless app with no way in"
+        }
+
+        // The tabs really are the per-feature surfaces, which is what makes
+        // the merge a merge rather than a removal. `CompactModePopover`'s own
+        // header records that Vault and Crew host those controllers
+        // themselves; this pins the tab set.
+        let tabs = Set(CompactModeTab.allCases.map(\.title))
+        guard tabs.isSuperset(of: ["Vault", "Crew", "Today"]) else {
+            return "the merged item's tabs do not cover the features whose own icons it replaces: "
+                 + "\(CompactModeTab.allCases.map(\.title))"
+        }
+
+        // The Settings row the review asked for: "a Settings row to re-add
+        // individual icons for anyone who wants them back". Driven against
+        // the real page, because a switch that exists in `AppSettings` and
+        // nowhere in the UI is not a way back.
+        let rowFound: Bool = autoreleasepool {
+            let settings = SettingsController(hostStore: HostStore(), keyStore: SSHKeyStore(),
+                                              snippetStore: SnippetStore(),
+                                              dictationStore: DictationStore())
+            settings.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 900)
+            settings.view.layoutSubtreeIfNeeded()
+            // Settings mounts one category's cards at a time (gotcha (15)),
+            // so the row is asked for on its own page rather than by walking
+            // whatever page happens to be selected.
+            return settings.debugGroupCards(in: .menuBar)
+                .flatMap { descendants(of: $0) }
+                .compactMap { ($0 as? NSTextField)?.stringValue }
+                .contains { $0.localizedCaseInsensitiveContains("Separate icons for Tasks") }
+        }
+        guard rowFound else {
+            return "Settings offers no way back to the separate menu-bar icons (review X2)"
+        }
+
+        // And the three controllers do not show themselves at construction -
+        // otherwise every ordinary launch flashes three icons before
+        // `refresh()` hides them. A source guard: an `NSStatusItem`'s real
+        // visibility needs a real menu bar.
+        guard let files = SelfTestSources.appSourceFiles() else {
+            return "SKIP-AS-FAILURE: the app's sources are not next to this binary"
+        }
+        for name in ["ShiftMenuBar.swift", "StrawHatMenuBar.swift", "PoneglyphMenuBar.swift"] {
+            guard let file = files.first(where: { $0.lastPathComponent == name }),
+                  let text = try? String(contentsOf: file, encoding: .utf8) else {
+                return "could not read \(name)"
+            }
+            guard codeOnly(text).contains("statusItem.isVisible = false") else {
+                return "\(name) shows its status item from construction, so an ordinary launch "
+                     + "flashes it before the merged item's policy hides it (review X2)"
+            }
+        }
+        return nil
     }
 }
 
