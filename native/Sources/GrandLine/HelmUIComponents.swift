@@ -1128,6 +1128,12 @@ final class HelmRefreshPill: HoverHighlightView {
     private let titleLabel = NSTextField(labelWithString: "")
     private var clickRecognizer: NSClickGestureRecognizer?
 
+    #if FM_SELFTESTS
+    /// X8: the label a captain actually reads on the pill, so a page's own
+    /// wording can be asserted rather than the component's default.
+    var debugTitle: String { titleLabel.stringValue }
+    #endif
+
     /// - Parameters:
     ///   - title: the pill's own label, and its VoiceOver label.
     ///   - tooltip: what *this* page's refresh actually re-runs. Every page
