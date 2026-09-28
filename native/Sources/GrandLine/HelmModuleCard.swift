@@ -188,6 +188,89 @@ struct HelmModuleUsageSection: Equatable {
     let content: Content
 }
 
+
+extension Array where Element == HelmModuleUsageSection {
+
+    /// U4 of the review: **one alarm colour per card.**
+    ///
+    /// The finding, on the Claude card: "the `Session (5h) 91%` bars use red
+    /// at 91% and amber at 81%; the thresholds are fine but the card's purple
+    /// top accent plus red bars plus a red 'Near spend cap' pill compete."
+    ///
+    /// The thresholds really are fine, and none of them moves here. What
+    /// changes is how many *hues* one card spends saying the same thing: a
+    /// red bar, an amber bar and a red verdict pill are three alarm signals
+    /// for one situation, and the amber one is the least urgent of them - so
+    /// it is the one that reads as a second, competing story rather than as
+    /// detail on the first.
+    ///
+    /// So a card keeps exactly one severity hue: the worst one present. A
+    /// reading that is less severe than the card's worst renders in the
+    /// neutral track (`.idle`), which is a real progress bar and still shows
+    /// its fill and its figure - nothing is hidden, the number beside it
+    /// still says 81%, and it stops shouting alongside the 91% that is
+    /// actually the problem.
+    ///
+    /// `.ok` is left alone. It is not an alarm, it is the absence of one, and
+    /// muting a comfortable row would make "fine" and "not reported" the same
+    /// colour - which is a GL-14 collapse, not polish.
+    ///
+    /// A free function over the content rather than a change inside
+    /// `HelmModuleCard`: this is a rule about what one card is *saying*, and a
+    /// body whose rows are genuinely independent signals may legitimately
+    /// want several. The caller opts in, and the rule has one implementation.
+    func keepingOnlyTheWorstAlarm() -> [HelmModuleUsageSection] {
+        func rank(_ state: HelmModuleRowState) -> Int {
+            switch state {
+            case .bad: return 2
+            case .warn: return 1
+            case .ok, .idle: return 0
+            }
+        }
+        var worst = 0
+        for section in self {
+            if let status = section.status { worst = Swift.max(worst, rank(status.state)) }
+            switch section.content {
+            case .limits(let rows):
+                for row in rows { worst = Swift.max(worst, rank(row.state)) }
+            case .spend(let spend):
+                worst = Swift.max(worst, rank(spend.state))
+            case .note:
+                break
+            }
+        }
+        guard worst > 0 else { return self }
+
+        func muted(_ state: HelmModuleRowState) -> HelmModuleRowState {
+            rank(state) > 0 && rank(state) < worst ? .idle : state
+        }
+        return map { section in
+            let content: HelmModuleUsageSection.Content
+            switch section.content {
+            case .limits(let rows):
+                content = .limits(rows.map {
+                    HelmModuleUsageRow(title: $0.title, value: $0.value, fill: $0.fill,
+                                       state: muted($0.state), isGap: $0.isGap,
+                                       caption: $0.caption, detail: $0.detail)
+                })
+            case .spend(let spend):
+                content = .spend(HelmModuleUsageSpend(
+                    amount: spend.amount, against: spend.against, value: spend.value,
+                    fill: spend.fill, state: muted(spend.state), footnote: spend.footnote))
+            case .note:
+                content = section.content
+            }
+            // A section's own status word is its heading's verdict, and a
+            // heading that is quieter than a row beneath it reads as a
+            // contradiction - so it is muted by the same rule.
+            let status = section.status.map {
+                HelmModuleUsageStatus(text: $0.text, state: muted($0.state))
+            }
+            return HelmModuleUsageSection(title: section.title, status: status, content: content)
+        }
+    }
+}
+
 // MARK: - The card
 
 final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {

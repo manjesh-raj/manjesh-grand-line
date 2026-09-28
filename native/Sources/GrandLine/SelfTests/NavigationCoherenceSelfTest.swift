@@ -373,13 +373,19 @@ enum NavigationCoherenceSelfTest {
 
     private static func checkQuickAccessCapAndOrder() -> Bool {
         var ok = true
-        // The default is the seven that shipped, so the cap genuinely bites on
-        // a captain who has never touched this - which is the case UX2 is
-        // about. Asserted rather than assumed: if the default ever shrinks to
-        // six, every check below still passes while covering nothing.
-        let shipped = QuickAccessConfiguration()
+        // This case used to drive the *default* row, because the default was
+        // the seven that shipped and therefore genuinely exceeded the cap.
+        // Review U2 cut the default to four, and the comment that used to sit
+        // here called that exact shot: "if the default ever shrinks to six,
+        // every check below still passes while covering nothing." So the
+        // overflow mechanism is driven from an explicit over-cap row now, and
+        // the default's own size is asserted separately below as U2's claim
+        // rather than as this mechanism's fixture.
+        let shipped = QuickAccessConfiguration(pinned: [
+            .stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts,
+        ])
         check(shipped.pinned.count > QuickAccessConfiguration.visibleLimit,
-              "UX2: the default row (\(shipped.pinned.count)) no longer exceeds the cap (\(QuickAccessConfiguration.visibleLimit)) - this suite's overflow checks are vacuous", &ok)
+              "UX2: the fixture row (\(shipped.pinned.count)) no longer exceeds the cap (\(QuickAccessConfiguration.visibleLimit)) - this suite's overflow checks are vacuous", &ok)
         check(shipped.visible.count == QuickAccessConfiguration.visibleLimit,
               "UX2: \(shipped.visible.count) icons visible, expected the cap of \(QuickAccessConfiguration.visibleLimit)", &ok)
         check(shipped.overflow.count == shipped.pinned.count - QuickAccessConfiguration.visibleLimit,
@@ -392,6 +398,23 @@ enum NavigationCoherenceSelfTest {
         let small = QuickAccessConfiguration(pinned: [.console, .hosts, .shift])
         check(small.overflow.isEmpty, "UX2: a three-icon row produced an overflow tail", &ok)
         check(small.visible.count == 3, "UX2: a three-icon row drew \(small.visible.count) icons", &ok)
+
+        // U2 of the review: four pins by default, so the bar's tiles read as
+        // shortcuts rather than as a second navigation. Asserted here because
+        // it is a product decision with no other home, and because the
+        // fixture above no longer states it by accident.
+        let fresh = QuickAccessConfiguration()
+        check(fresh.pinned.count == 4,
+              "U2: a fresh install pins \(fresh.pinned.count) destinations, expected 4", &ok)
+        check(fresh.overflow.isEmpty,
+              "U2: the default row overflows, so a fresh install opens with an overflow button", &ok)
+        // The order is the shipped order's own prefix - U2 removed icons, it
+        // did not re-rank them, and re-ranking is what would cost the muscle
+        // memory `QuickAccessConfiguration`'s header protects.
+        check(Array(QuickAccessConfiguration.defaultPinned)
+              == [.stickyBoard, .codePreview, .shift, .strawHat],
+              "U2: the default row was re-ordered rather than shortened "
+              + "(\(QuickAccessConfiguration.defaultPinned.map(\.rawValue)))", &ok)
         return ok
     }
 

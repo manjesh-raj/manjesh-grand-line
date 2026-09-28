@@ -663,7 +663,17 @@ final class ShiftBoardColumnView: NSView {
     private let scroll = NSScrollView()
     private let cardsStack = NSStackView()
     private let overflowLabel = NSTextField(labelWithString: "")
-    private let emptyLabel = NSTextField(labelWithString: "")
+    /// U1 of the review: "one empty-state shape ... pick `HelmEmptyState`
+    /// everywhere". This column drew a bare centred `NSTextField` - "Nothing
+    /// here." - while every other empty surface in the app draws a symbol,
+    /// the page's own hue and a sentence. The action U1 also asks for is
+    /// already here and always has been: `addButton` sits directly beneath,
+    /// full width, so the column offers one without the empty state having to
+    /// carry a second copy of it.
+    ///
+    /// `.compact`, because a board column is ~260pt wide and the standard
+    /// size is written for a page.
+    private let emptyState: HelmEmptyState
     private let addButton = ShiftBoardAddCardView()
 
     private var cardViews: [ShiftBoardCardView] = []
@@ -685,6 +695,16 @@ final class ShiftBoardColumnView: NSView {
 
     init(column: ShiftBoardColumn) {
         self.column = column
+        // Each column says what *it* is empty of. "Nothing here" three times
+        // across a board is three labels that could be anywhere; the Done
+        // column in particular is not a gap to fill but a normal state.
+        emptyState = HelmEmptyState(
+            symbol: column.symbol,
+            body: column == .done
+                ? "Nothing finished recently. Completed tasks land here."
+                : "Nothing in \(column.title.lowercased()) yet. Add one below, or drag a card across.",
+            size: .compact,
+            hue: RailDestination.shift.domainHue)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         build()
@@ -768,8 +788,6 @@ final class ShiftBoardColumnView: NSView {
         bodyHeight = scroll.heightAnchor.constraint(equalToConstant: Self.minBodyHeight)
         bodyHeight?.isActive = true
 
-        emptyLabel.font = HelmType.caption()
-        emptyLabel.alignment = .center
         overflowLabel.font = HelmType.captionSmall()
 
         addButton.onAdd = { [weak self] in self?.addClicked() }
@@ -786,8 +804,8 @@ final class ShiftBoardColumnView: NSView {
         body.spacing = HelmMetrics.s2
         body.translatesAutoresizingMaskIntoConstraints = false
         dropView.addSubview(body)
-        dropView.addSubview(emptyLabel)
-        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        dropView.addSubview(emptyState)
+        emptyState.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             body.leadingAnchor.constraint(equalTo: dropView.leadingAnchor, constant: HelmMetrics.s2),
             body.trailingAnchor.constraint(equalTo: dropView.trailingAnchor, constant: -HelmMetrics.s2),
@@ -799,10 +817,10 @@ final class ShiftBoardColumnView: NSView {
             // `ShiftBoardAddCardView`'s own header.
             addButton.widthAnchor.constraint(equalTo: body.widthAnchor),
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-            emptyLabel.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
-            emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: dropView.leadingAnchor, constant: HelmMetrics.s3),
-            emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: dropView.trailingAnchor, constant: -HelmMetrics.s3),
+            emptyState.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
+            emptyState.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
+            emptyState.leadingAnchor.constraint(equalTo: dropView.leadingAnchor, constant: HelmMetrics.s2),
+            emptyState.trailingAnchor.constraint(equalTo: dropView.trailingAnchor, constant: -HelmMetrics.s2),
         ])
 
         card.setHeader(header)
@@ -851,9 +869,9 @@ final class ShiftBoardColumnView: NSView {
         overflowLabel.stringValue = hidden == 0
             ? ""
             : "+\(hidden) more \u{2013} switch to List view to see them all."
-        emptyLabel.isHidden = !tasks.isEmpty
+        emptyState.isHidden = !tasks.isEmpty
         needsLayout = true
-        emptyLabel.stringValue = column == .done ? "Nothing finished recently." : "Nothing here."
+
         applyTheme(theme)
     }
 
@@ -868,7 +886,7 @@ final class ShiftBoardColumnView: NSView {
         countPill.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeInkHex)
             .withAlphaComponent(0.08).cgColor
         overflowLabel.textColor = HelmTheme.mutedInk(theme)
-        emptyLabel.textColor = HelmTheme.mutedInk(theme)
+        emptyState.applyTheme(theme)
         addButton.applyTheme(theme)
         for cardView in cardViews { cardView.applyTheme(theme) }
         applyDropHighlight()
@@ -929,6 +947,13 @@ final class ShiftBoardColumnView: NSView {
     var debugOverflowText: String { overflowLabel.isHidden ? "" : overflowLabel.stringValue }
     var debugDropView: ShiftBoardDropView { dropView }
     var debugScrollHeight: CGFloat { scroll.frame.height }
+    /// U1: the column's empty state, which is a `HelmEmptyState` now rather
+    /// than a bare centred label. `isMounted` for the reason X9 measured -
+    /// a view built and never added still has a frame.
+    var debugEmptyState: (view: HelmEmptyState, isShowing: Bool, isMounted: Bool, frame: NSRect) {
+        (emptyState, !emptyState.isHidden, emptyState.isDescendant(of: self),
+         emptyState.convert(emptyState.bounds, to: self))
+    }
     #endif
 }
 

@@ -110,7 +110,13 @@ final class HelmDrillHeader: NSView {
         titleLabel.font = HelmType.drillTitle()
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.font = HelmType.caption()
+        // U5: tabular figures. Every page's subtitle here is the app's one
+        // live status line - "12 notes · synced", "checked 2m ago", a capture
+        // timestamp - so its digits change while the captain is reading it.
+        // One place, so no page has to remember, and the Whiteboard and
+        // Sticky Board headers the review singled out pick it up by being
+        // drill pages rather than by being special-cased.
+        subtitleLabel.font = HelmType.tabularCaption()
         subtitleLabel.lineBreakMode = .byTruncatingTail
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         // Shrink-wrap, but truncate: **high** hugging so the cluster is
@@ -350,7 +356,7 @@ final class HelmDrillHeader: NSView {
 
         titleLabel.font = HelmType.drillTitle()
         titleLabel.textColor = ink
-        subtitleLabel.font = HelmType.caption()
+        subtitleLabel.font = HelmType.tabularCaption()
         subtitleLabel.textColor = muted
     }
 

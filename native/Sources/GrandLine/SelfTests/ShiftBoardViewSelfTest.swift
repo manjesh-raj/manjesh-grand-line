@@ -244,6 +244,57 @@ enum ShiftBoardViewSelfTest {
             check(!labels.contains("DevOps Commands"),
                   "the Tasks page still renders a \"DevOps Commands\" tab pill - it should have "
                   + "moved to its own destination")
+
+            // MARK: U1 - an empty column uses the app's one empty-state shape
+            //
+            // The review: "Tasks columns say 'Nothing here.' Pick
+            // `HelmEmptyState` everywhere and give every one an action."
+            // Measured on real columns rather than asserted on the string,
+            // because the interesting failure is a component that is in the
+            // tree and clipped inside the column that holds it.
+            //
+            // The invariant, per column: the empty state shows exactly when
+            // the column has no cards. By this point in the run the drag
+            // cases above have already moved cards around, which is what
+            // makes this discriminating for free - some columns hold cards
+            // and at least one does not, so a state that always shows and a
+            // state that never shows both fail.
+            var emptyColumns = 0
+            var filledColumns = 0
+            for column in ShiftBoardColumn.allCases {
+                guard let view = board.debugColumn(column) else {
+                    check(false, "U1: no \(column.title) column")
+                    continue
+                }
+                let state = view.debugEmptyState
+                let isEmpty = view.debugCardViews.isEmpty
+                if isEmpty { emptyColumns += 1 } else { filledColumns += 1 }
+                check(state.isMounted,
+                      "U1: \(column.title)'s empty state is not in the column's view tree")
+                check(state.isShowing == isEmpty,
+                      "U1: \(column.title) holds \(view.debugCardViews.count) card(s) and its "
+                      + "empty state is \(state.isShowing ? "showing" : "hidden")")
+                guard isEmpty else { continue }
+
+                // It has to fit the column it is drawn in.
+                check(state.frame.width > 0 && state.frame.height > 0,
+                      "U1: \(column.title)'s empty state has no laid-out size (\(state.frame))")
+                let needed = state.view.fittingSize
+                check(needed.width <= state.frame.width + 0.5,
+                      "U1: \(column.title)'s empty state needs \(needed.width)pt and the column "
+                      + "gives it \(state.frame.width)pt - it is clipped sideways")
+                check(needed.height <= view.debugScrollHeight + 0.5,
+                      "U1: \(column.title)'s empty state needs \(needed.height)pt and the "
+                      + "column's body is \(view.debugScrollHeight)pt - it overflows")
+                // U1's other half: the column still offers an action. The add
+                // button is always there, directly beneath, which is why the
+                // empty state deliberately carries no second copy of it.
+                check(collectTextFieldValues(in: view).contains { $0.lowercased().contains("add") },
+                      "U1: an empty \(column.title) column offers no action at all")
+            }
+            check(emptyColumns > 0 && filledColumns > 0,
+                  "U1: the board has \(emptyColumns) empty and \(filledColumns) filled columns - "
+                  + "this case needs one of each to mean anything")
         }
 
         return report(failures)

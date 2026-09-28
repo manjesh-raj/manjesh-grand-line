@@ -22,11 +22,11 @@
 // the right rule *for a list nobody can edit*. Once the captain owns the list,
 // the rule it replaces is better: nothing moves unless they move it.
 //
-// **The default is exactly the seven that shipped, in exactly their shipped
-// order.** A captain who never opens the overlay sees precisely the bar they
-// had - this is the migration, not a redesign. `visibleLimit` is what changes
-// for them: the seventh icon moves into the overflow menu rather than off the
-// end of the bar.
+// **The default was exactly the seven that shipped, in exactly their shipped
+// order** - the migration, not a redesign. Review U4 cut it to the first four
+// of those seven, for the reason recorded at `defaultPinned`: eight tiles read
+// as a second navigation. The order is still the shipped order and nothing
+// moves; three icons simply are not there until the captain pins them.
 
 import Foundation
 
@@ -47,11 +47,31 @@ struct QuickAccessConfiguration: Codable, Equatable {
     /// captain's own order, rather than being dropped.
     static let visibleLimit = 6
 
-    /// The seven the bar shipped with, in the order they shipped in - see this
-    /// file's header for why the default is a migration rather than a
-    /// redesign.
+    /// **Four, since U4 of the review** (previously the seven the bar shipped
+    /// with, in their shipped order).
+    ///
+    /// The finding: "the top bar's quick-access row holds eight coloured
+    /// squares plus recents, theme and bell at 1512pt, and collapses to '…'
+    /// at 1100pt. The colour-per-destination tiles are lovely but eight of
+    /// them read as a second navigation. Consider four pins by default."
+    ///
+    /// These are the first four of the shipped seven, in the shipped order,
+    /// and that is a deliberate refusal to do the more interesting thing.
+    /// Picking "the four most-used" would mean asserting a frequency this app
+    /// does not measure, and re-ordering would break the muscle memory this
+    /// file's header spends a paragraph protecting. Taking a prefix moves
+    /// nothing - it only stops three icons being there on day one.
+    ///
+    /// The other three are not gone: ⌘⇧D's all-destinations overlay lists
+    /// every page and pins from its own right-click menu, which is the
+    /// affordance this whole file exists to provide. `visibleLimit` is
+    /// unchanged at 6, so a captain who wants six back gets six.
+    ///
+    /// This is a *default*, so it reaches a captain who has never opened that
+    /// overlay and nobody else - a stored configuration wins, including one
+    /// that stores the old seven.
     static let defaultPinned: [RailDestination] = [
-        .stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts,
+        .stickyBoard, .codePreview, .shift, .strawHat,
     ]
 
     private(set) var pinned: [RailDestination]

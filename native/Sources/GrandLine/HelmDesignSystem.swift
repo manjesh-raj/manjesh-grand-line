@@ -210,6 +210,23 @@ enum HelmType {
     /// no longer sits one half-point above it.
     static func caption() -> NSFont { .systemFont(ofSize: scaled(12)) }
 
+    /// `caption()` with **tabular figures** - the same system face at the
+    /// same size, with every digit on the same advance.
+    ///
+    /// U5 of the review: the schedule row's "1:11 PM" / "11:00 AM" read
+    /// calmly because they are monospaced-digit, and the chrome lines that
+    /// carry live counts did not - so a Sticky Board subtitle counting up
+    /// from 9 to 10 notes, or a clock ticking past the hour, reflowed the
+    /// whole line by a fraction and the eye caught it.
+    ///
+    /// `monospacedDigitSystemFont` is the *system* font with tabular figures,
+    /// not a monospaced face, so this is the same voice as `caption()` and
+    /// not a second one. Reach for it where a caption carries a number that
+    /// changes on its own; `caption()` stays right for prose.
+    static func tabularCaption() -> NSFont {
+        .monospacedDigitSystemFont(ofSize: scaled(12), weight: .regular)
+    }
+
     /// The small uppercase label above a row's body text.
     ///
     /// Kerning is a string attribute, not a font property - pair this with
