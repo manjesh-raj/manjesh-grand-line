@@ -621,3 +621,49 @@ DailyReviewData.swift` on a branch with **no commits yet** discarded that file's
 entire real change, not just the experiment. It was re-applied from the
 transformation script that made it. Copy the file aside instead - and commit
 early, which is what makes the mistake recoverable at all.
+
+#### The chip's date is region-rendered, and the first suite pinned one region
+
+CI failed on PR 491 where the full local run had passed twice:
+
+    FAIL the task chip should read the mockup's wording, got "Overdue 5 days, since Sep 23"
+    FAIL the follow-up chip should read the mockup's wording, got "Overdue 10 days, since Sep 18"
+
+`DailyReviewComposer.dayMonth` is `setLocalizedDateFormatFromTemplate("dMMM")`,
+which renders **"23 Sep" on this machine (`AppleLocale` is `en_IN`) and
+"Sep 23" on the GitHub runner (`en_US`)**. Both are correct. Reproduced locally
+byte for byte with `.build/debug/GrandLine -AppleLocale en_US -AppleLanguages
+'(en_US)'`, which is the cheap way to get a runner's rendering on a dev Mac.
+
+**The fix is in the suite, not in the formatter**, and that is the whole point
+of the entry. Pinning `dayMonth` to a literal `"d MMM"` would have made CI green
+by making a *captain-facing date* stop following the machine's region - and it
+buys nothing on the captain's own machine, which already renders day-first. It
+is also the shipped rendering of F20's `overdueText` ("overdue since 16 Sep"),
+so pinning it would have silently restyled the Today card too. The precedent was
+already in the tree and this suite had simply broken it: **`DailyReviewSelfTest`
+contains no rendered date at all**, and that is why it has always passed on CI.
+
+So `checkTheCaptainsOwnTwoRecords` now asserts the wording *around* the date
+literally - which is what this feature owns - and compares the date itself
+against `dayMonth` of an independently built `Date` (`september(23)`, from
+`DateComponents`, not through `ShiftDateFormatting`). A composer that resolves
+the wrong day still fails: injecting `entry.at.addingTimeInterval(-86400)` into
+`dueDayText` fails the check in en_US *and* en_IN, and deleting the ", since
+<date>" clause fails it too.
+
+**The first draft of the guard made the same mistake one level up.** It
+established the rendering's discriminating power with `contains("23") &&
+contains("sep")` plus a length cap - which passed in en_IN, en_US and en_GB and
+failed in de_DE (`"23. Sept."` is nine characters) and ja_JP (`"9月23日"` contains
+no "sep"). A region-locked guard against a region-locking bug is not a guard.
+It now asserts three properties that name no character of any region's output:
+the rendering is non-empty, it *differs* between 23 and 18 September (so
+comparing a chip against it cannot be vacuous), and the same day in 2027 renders
+identically (so the template still carries no year). Green in en_IN, en_US,
+en_GB, de_DE, ja_JP and fr_FR.
+
+The general rule, which is not new but was worth paying for twice: **a suite
+must not assert a string that a `DateFormatter` localised**, and a fixture that
+proves such a string is discriminating must not do it by naming one region's
+characters either.

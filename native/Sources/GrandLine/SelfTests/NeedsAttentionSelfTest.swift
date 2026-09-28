@@ -15,11 +15,20 @@
 //
 // What it covers:
 //
-//   1. **The captain's own two records**, verbatim - a "Standup Notes" task
-//      overdue since 23 Sep and a "Follow up with Nithin on SRE bot response
-//      reviews" follow-up overdue since 18 Sep, which are the two rows in the
-//      screenshots he sent. If the chip wording ever stops reading "Overdue 5
-//      days, since 23 Sep", this is what says so.
+//   1. **The captain's own two records** - a "Standup Notes" task overdue
+//      since 23 September and a "Follow up with Nithin on SRE bot response
+//      reviews" follow-up overdue since 18 September, which are the two rows
+//      in the screenshots he sent. If the chip wording ever stops reading
+//      "Overdue 5 days, since <the date>", this is what says so.
+//
+//      **The date inside that chip is rendered in the captain's own region**
+//      (`DailyReviewComposer.dayMonth` is a localised template), so this file
+//      asserts the wording around it literally and the date against the same
+//      rendering of an independently built `Date`. Anchoring the whole string
+//      to one region is what failed CI on PR 491: en_IN renders "23 Sep",
+//      the GitHub runner's en_US renders "Sep 23", and both are correct.
+//      `DailyReviewSelfTest` has never asserted a rendered date for exactly
+//      this reason.
 //   2. **The headline sentence**, in all four states.
 //   3. **The move is a move, not a copy** - a source guard that the Today
 //      page's card no longer builds a due or follow-up section, and that both
@@ -56,22 +65,30 @@ enum NeedsAttentionSelfTest {
 
     // MARK: Fixtures
 
-    /// 28 September 2026, 09:00 local - the day the captain sent the
-    /// screenshots, so the expected day counts below are the ones he saw.
+    /// A day in September 2026, at **local noon**.
     ///
     /// `Calendar.current`, never a pinned UTC one: a Shift due date is a bare
     /// `"yyyy-MM-dd"` resolved to **local** midnight, and a UTC fixture puts
     /// every date on the wrong side of `startOfDay` (AGENTS.md's own rule, and
     /// the F22 measurement behind it). Noon so no runner's time zone lands the
     /// fixture on a day boundary.
-    static func now() -> Date {
+    ///
+    /// Built from `DateComponents` here rather than through
+    /// `ShiftDateFormatting`, so where it is compared against a date the
+    /// composer resolved it is an independent witness rather than a
+    /// restatement.
+    static func september(_ day: Int, year: Int = 2026) -> Date {
         var comps = DateComponents()
-        comps.year = 2026
+        comps.year = year
         comps.month = 9
-        comps.day = 28
+        comps.day = day
         comps.hour = 12
         return Calendar.current.date(from: comps) ?? Date()
     }
+
+    /// 28 September 2026 - the day the captain sent the screenshots, so the
+    /// day counts asserted below are the ones he saw.
+    static func now() -> Date { september(28) }
 
     /// The two records from the captain's screenshots.
     private static func captainsInputs() -> DailyReviewInputs {
@@ -116,9 +133,42 @@ enum NeedsAttentionSelfTest {
         check(task.source == "Task", "and its source label should read Task, got \"\(task.source)\"", &ok)
         check(task.actionTitle == "Start",
               "a task's action is Start, got \"\(task.actionTitle)\"", &ok)
-        // 23 Sep to 28 Sep is five days. Asserted as the whole string because
-        // that string is what the captain reviewed in the mockup.
-        check(task.chipText == "Overdue 5 days, since 23 Sep",
+        // **The day/month rendering follows the captain's region, so it is
+        // not asserted literally.** `DailyReviewComposer.dayMonth` is
+        // `setLocalizedDateFormatFromTemplate("dMMM")`, which is right for a
+        // captain-facing date and renders "23 Sep" on this machine (en_IN)
+        // and "Sep 23" on the GitHub runner (en_US). Both are correct, and
+        // pinning the string to one of them is what failed CI on PR 491.
+        //
+        // So the *wording around* the date is asserted literally - which is
+        // the part this file owns - and the date itself is compared against
+        // the same rendering of a **separately built** `Date`. That keeps the
+        // check discriminating: a composer that resolved the wrong day, or
+        // dropped the "since" clause, or miscounted the days, still fails.
+        let rendered23 = DailyReviewComposer.dayMonth(september(23))
+        // The fixture's own discriminating power, first, since comparing a
+        // chip against `rendered23` proves nothing if that rendering is empty
+        // or constant.
+        //
+        // Both properties are asserted **without naming a single character of
+        // any region's output**, which is the whole point: an earlier draft
+        // guarded this with `contains("sep")` and a length cap, and that
+        // passed in three English regions and failed in de_DE ("23. Sept.")
+        // and ja_JP ("9月23日") - a guard that is itself region-locked is the
+        // bug it exists to catch, one level up.
+        check(!rendered23.isEmpty, "the day/month rendering should not be empty", &ok)
+        check(rendered23 != DailyReviewComposer.dayMonth(september(18)),
+              "it should vary with the day, or comparing a chip against it asserts nothing - "
+                  + "got \"\(rendered23)\" for both 23 and 18 September", &ok)
+        // No year: a `dMMM` template that quietly grew one would widen every
+        // chip on the card, and this catches it in any region because the same
+        // day in a different year would then render differently.
+        check(rendered23 == DailyReviewComposer.dayMonth(september(23, year: 2027)),
+              "the day/month rendering should carry no year, got \"\(rendered23)\" vs "
+                  + "\"\(DailyReviewComposer.dayMonth(september(23, year: 2027)))\"", &ok)
+
+        // 23 Sep to 28 Sep is five days.
+        check(task.chipText == "Overdue 5 days, since \(rendered23)",
               "the task chip should read the mockup's wording, got \"\(task.chipText)\"", &ok)
         check(task.tone == .late, "and it is late, got \(task.tone)", &ok)
 
@@ -128,7 +178,7 @@ enum NeedsAttentionSelfTest {
               "and its source label should read Follow-up, got \"\(followUp.source)\"", &ok)
         check(followUp.actionTitle == "Open",
               "a follow-up's action is Open, got \"\(followUp.actionTitle)\"", &ok)
-        check(followUp.chipText == "Overdue 10 days, since 18 Sep",
+        check(followUp.chipText == "Overdue 10 days, since \(DailyReviewComposer.dayMonth(september(18)))",
               "the follow-up chip should read the mockup's wording, got \"\(followUp.chipText)\"", &ok)
         // An overdue follow-up's `whenText` restates the chip, so it is not
         // repeated as the meta line.
@@ -174,6 +224,10 @@ enum NeedsAttentionSelfTest {
 
     // MARK: 3 - the chip
 
+    /// `chipText` takes the rendered day as a **parameter**, so these cases
+    /// are region-independent by construction - the literal below is a
+    /// stand-in for whatever `dayMonth` produced, not an expectation about
+    /// how this machine renders a date.
     private static func checkChipWording(_ ok: inout Bool) {
         check(NeedsAttentionComposer.chipText(isOverdue: false, days: 0, dayText: "28 Sep")
                 == "Due today",
