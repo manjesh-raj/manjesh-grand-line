@@ -45,12 +45,19 @@ final class LogRawPaneView: NSView {
     /// driven. Wiring the terminal size in here would be a new capability
     /// rather than adopting an existing mechanism.
     ///
-    /// **What this does and does not buy today**, because that finding's
-    /// stated premise for this one site is wrong: `LogRawLineCell` used to
-    /// render raw `.monospacedSystemFont(ofSize: 9.5 / 10.5)` literals, *not*
-    /// `HelmType.code()` - that call is in `LogErrorGroupListView`'s sample
-    /// cell, a different class further down this file.
+    /// **The debt this height was waiting for is paid (review bug B38).**
+    /// `LogRawLineCell` used to render raw `.monospacedSystemFont(ofSize:
+    /// 9.5 / 10.5)` literals - below GL-32's own 11pt floor, and following no
+    /// setting at all. It goes through `setScaledFont` now, so the text in
+    /// this pane really does grow, and the scaled height above is what it
+    /// grows inside. Measured by `TextScaleFontSelfTest`: the taller label
+    /// needs 14.0 / 15.0 / 18.0pt against the 15 / 17.25 / 19.5pt this hands
+    /// it at Default / Large / Larger.
     ///
+    /// Note for anyone following a review's citation here: the unscaled
+    /// literals were in *this* class, not in `LogErrorGroupListView`, whose
+    /// sample cell has always used `HelmType.code()`. Two separate audits
+    /// named the wrong one - see `docs/history/28-full-app-audit-2.md`.
     static let baseRowHeight: CGFloat = 15
     static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
 

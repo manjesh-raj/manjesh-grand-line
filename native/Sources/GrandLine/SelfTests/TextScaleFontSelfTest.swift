@@ -1,6 +1,7 @@
 // Grand Line - native macOS app.
 //
-// GL-32's *font* half (review bug B33).
+// GL-32's *font* half (review bug B33), and the raw log pane's row fit
+// (review bug B38).
 //
 // `TextScaleRowHeightSelfTest` next door covers the row-height half. This one
 // covers the other: a font set once when a view was built used to keep its
@@ -17,6 +18,11 @@
 //     keeps the walk clear of the terminal, the code preview and everything
 //     else whose size belongs to `FontSizeManager` rather than to the chrome
 //     scale;
+//   * B38: a real `LogRawPaneView` row still fits its cell at every step. The
+//     pane's own base row height (15) was measured against the unscaled 10.5pt
+//     literal it used to draw; the floor alone raises that text to 11pt before
+//     any scale is applied, so the height it was measured at is exactly the
+//     thing this fix could have broken;
 //   * the source guard - no raw `.systemFont(ofSize: <literal>)` assignment
 //     comes back into this app's own chrome, which is what stops site 151.
 //
@@ -42,6 +48,7 @@ enum TextScaleFontSelfTest {
         checkRecordedFontsReDeriveOnAScaleChange(check)
         checkAnUnrecordedFontIsLeftAlone(check)
         checkTheFloorReachesASubElevenPointSite(check)
+        checkTheRawLogPaneRowStillFits(check)
         checkNoRawFontLiteralIsAssignedInAppChrome(check)
 
         ChromeTextScale.shared.setScale(captainScale)
@@ -134,6 +141,66 @@ enum TextScaleFontSelfTest {
         check((label.font?.pointSize ?? 0) >= HelmType.minimumUIPointSize - 0.01,
               "a 9.5pt designed size rendered at \(label.font?.pointSize ?? 0)pt, below GL-32's "
               + "\(HelmType.minimumUIPointSize)pt floor")
+    }
+
+    // MARK: - B38
+
+    /// B38, and the reason it is here rather than in the row-height suite:
+    /// the row height was already scaled, and what was wrong was the *font*
+    /// inside it. Raising 9.5/10.5 to a floored 11 is exactly the change that
+    /// can make a 15pt row clip, so this measures a real cell from the real
+    /// pane at all three steps.
+    ///
+    /// **Which class.** The 2026-09-25 review's condensed summary named
+    /// `LogErrorGroupListView`; an earlier audit made the same citation error
+    /// and `docs/history/28-full-app-audit-2.md` records the correction. The
+    /// unscaled literals were in `LogRawPaneView`'s cell. Both are measured
+    /// below so the answer is in the run output rather than in a claim.
+    private static func checkTheRawLogPaneRowStillFits(_ check: (Bool, String) -> Void) {
+        let theme = ThemeManager.shared.theme
+        let text = (1...6).map { "2026-09-25T04:1\($0):22Z ERROR ingest worker failed: connection reset" }
+            .joined(separator: "\n")
+
+        for step in ChromeTextScale.steps {
+            ChromeTextScale.shared.setScale(step.scale)
+            autoreleasepool {
+                let pane = LogRawPaneView(frame: NSRect(x: 0, y: 0, width: 640, height: 300))
+                pane.setText(text, theme: theme)
+                pane.layoutSubtreeIfNeeded()
+                guard let cell = pane.tableView.view(atColumn: 0, row: 0, makeIfNecessary: true) else {
+                    check(false, "the raw pane produced no cell at \(step.title)")
+                    return
+                }
+                cell.frame = NSRect(x: 0, y: 0, width: 640, height: LogRawPaneView.rowHeight)
+                cell.layoutSubtreeIfNeeded()
+                // The cell's own `fittingSize.height` is 0 and always will
+                // be: its two labels are pinned by `centerY` alone, so
+                // nothing ties the cell's height to its content. What the row
+                // actually has to hold is the taller label's own line box,
+                // which is what this measures instead. (Measured, not
+                // assumed - the first draft of this check asserted
+                // `cell.fittingSize.height <= rowHeight` and passed 0 <= 15
+                // at every scale, which is exactly the vacuous check this
+                // repository's conventions forbid.)
+                let needed = cell.subviews
+                    .compactMap { ($0 as? NSTextField)?.fittingSize.height }
+                    .max() ?? 0
+                check(needed > 0, "the raw pane's cell measured no height at all at \(step.title)")
+                check(needed <= LogRawPaneView.rowHeight + 0.01,
+                      "at \(step.title) a raw log line needs \(needed)pt but LogRawPaneView gives "
+                      + "it \(LogRawPaneView.rowHeight)pt - the floored font clips")
+            }
+
+            // The class the review named, measured too. Its sample cell was
+            // already on `HelmType.code()`, so this should simply hold.
+            autoreleasepool {
+                let list = LogErrorGroupListView(frame: NSRect(x: 0, y: 0, width: 640, height: 300))
+                list.layoutSubtreeIfNeeded()
+                check(LogErrorGroupListView.sampleRowHeight
+                      >= LogErrorGroupListView.baseSampleRowHeight * step.scale - 0.01,
+                      "LogErrorGroupListView's sample row did not follow the scale at \(step.title)")
+            }
+        }
     }
 
     // MARK: - The source guard
