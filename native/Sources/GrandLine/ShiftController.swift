@@ -331,8 +331,43 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         ShiftTaskListView.rowHeight * CGFloat(taskFollowUpVisibleRows)
     }
 
+    /// **Review defect U15.** The constant above is a *ceiling*, and it was
+    /// being used as a fixed height - so on a new install the Follow-ups
+    /// card stood four rows tall (about 480pt with its chrome) around a
+    /// single "No follow-ups pending." line, and My Tasks did the same
+    /// beside it. Two empty cards taking half the page is what the review
+    /// rendered.
+    ///
+    /// The shared height is now the *content's* height, clamped to that
+    /// ceiling - so a short list hugs, a long one scrolls at exactly the
+    /// same place it did before, and an empty one is the height of the one
+    /// placeholder row it actually draws.
+    ///
+    /// Still **one** number for both panels, which is the property the
+    /// original constant existed for: two cards side by side that are
+    /// different heights is the defect that constant fixed, and taking the
+    /// larger of the two contents keeps them level without pinning either to
+    /// four rows.
+    private func sharedTaskFollowUpBodyHeight() -> CGFloat {
+        let wanted = max(taskListView.contentHeight, followUpListView.contentHeight)
+        return min(wanted, Self.taskFollowUpPanelBodyHeight)
+    }
+
+    private var taskListHeightConstraint: NSLayoutConstraint?
+    private var followUpHeightConstraint: NSLayoutConstraint?
+
+    private func updateTaskFollowUpPanelHeights() {
+        let height = sharedTaskFollowUpBodyHeight()
+        taskListHeightConstraint?.constant = height
+        followUpHeightConstraint?.constant = height
+    }
+
     #if FM_SELFTESTS
     static var debugTaskFollowUpPanelBodyHeight: CGFloat { taskFollowUpPanelBodyHeight }
+
+    /// Review defect U15: what the two panels are *actually* given, which is
+    /// the number the card's own height follows.
+    var debugTaskFollowUpBodyHeight: CGFloat { taskListHeightConstraint?.constant ?? -1 }
     #endif
 
     /// F7's timer. Optional so every existing construction site (and every
@@ -861,7 +896,12 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         taskListScroll.borderType = .noBorder
         taskListScroll.drawsBackground = false
         taskListScroll.translatesAutoresizingMaskIntoConstraints = false
-        taskListScroll.heightAnchor.constraint(equalToConstant: Self.taskFollowUpPanelBodyHeight).isActive = true
+        // U15: a stored constraint, re-derived from the live content on
+        // every render - see `sharedTaskFollowUpBodyHeight()`.
+        let taskHeight = taskListScroll.heightAnchor
+            .constraint(equalToConstant: Self.taskFollowUpPanelBodyHeight)
+        taskHeight.isActive = true
+        taskListHeightConstraint = taskHeight
 
         taskPanel.setHeader(headerRow)
         taskPanel.setBody(taskListScroll)
@@ -881,7 +921,10 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         followUpScroll.borderType = .noBorder
         followUpScroll.drawsBackground = false
         followUpScroll.translatesAutoresizingMaskIntoConstraints = false
-        followUpScroll.heightAnchor.constraint(equalToConstant: Self.taskFollowUpPanelBodyHeight).isActive = true
+        let followUpHeight = followUpScroll.heightAnchor
+            .constraint(equalToConstant: Self.taskFollowUpPanelBodyHeight)
+        followUpHeight.isActive = true
+        followUpHeightConstraint = followUpHeight
 
         followUpPanel.setHeader(headerRow)
         followUpPanel.setBody(followUpScroll)
@@ -1779,6 +1822,10 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         followUpListView.setItems(followUps)
         followUpsHeader.stringValue = "Follow-ups"
         followUpsCountBadge.stringValue = "\(pendingFollowUps.count) pending"
+
+        // U15: both lists have their live contents now, so this is the one
+        // place the shared panel height can be re-derived from them.
+        updateTaskFollowUpPanelHeights()
 
         renderProjectsSection()
         if topLevelView == .weeklyReview { renderWeeklyReview() }

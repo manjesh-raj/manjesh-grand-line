@@ -52,6 +52,7 @@ enum ReviewUIUXSelfTest {
             ("U9_notebookStatesOneStorageLocation", test_u9StorageWording),
             ("U10_updatesRowsCarryAnActionOnlyWhenOneIsNeeded", test_u10CheckButton),
             ("U14_allDestinationsOverlayFitsEveryName", test_u14OverlayWidth),
+            ("U15_cardsHugTheContentTheyActuallyHold", test_u15CardHeights),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -857,6 +858,93 @@ enum ReviewUIUXSelfTest {
             }
             return nil
         }
+    }
+
+    // MARK: U15 - fixed-height cards with one sentence in them
+
+    private static func test_u15CardHeights() -> String? {
+        // The review's own three measurements, in order.
+        //
+        // 1. Morning briefing at 165pt for one line. PF2 (PR #485) turned
+        //    `HelmModuleCard`'s fixed height into a floor while this review
+        //    was being fixed, so this half is already closed - and it is
+        //    asserted here rather than assumed, because "somebody else fixed
+        //    it" is exactly the claim that rots.
+        let oneLine = HelmModuleCard.Content(title: "Morning briefing", subtitle: "off in Settings",
+                                             symbol: "sun.horizon", hue: .amber, chip: nil,
+                                             body: .note("Turn on Morning briefing in Settings to "
+                                                         + "get one short summary each morning."))
+        let measured: CGFloat = autoreleasepool {
+            let card = HelmModuleCard()
+            card.configure(oneLine)
+            let host = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 600))
+            card.translatesAutoresizingMaskIntoConstraints = false
+            host.addSubview(card)
+            NSLayoutConstraint.activate([
+                card.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                card.widthAnchor.constraint(equalToConstant: 380),
+                card.topAnchor.constraint(equalTo: host.topAnchor),
+            ])
+            host.layoutSubtreeIfNeeded()
+            return card.frame.height
+        }
+        guard measured > 1 else { return "the module card did not lay out, so this case proves nothing" }
+        guard measured < 165 else {
+            return "a one-line module card is still \(measured)pt tall - the review measured 165 "
+                 + "(review U15)"
+        }
+        guard abs(measured - HelmModuleCard.minimumHeight) < 1 else {
+            return "a one-line module card is \(measured)pt against a \(HelmModuleCard.minimumHeight)pt "
+                 + "floor, so it is not hugging - something above the floor is padding it"
+        }
+
+        // 2. The Tasks page's Follow-ups card at 480pt while empty. The
+        //    shared panel height was the four-row *ceiling* used as a fixed
+        //    height; it is the content's own height clamped to that ceiling
+        //    now, and both panels still share one number.
+        return withScratchShiftStore { store in
+            autoreleasepool {
+                let controller = ShiftController(store: store)
+                controller.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 900)
+                // The panel heights are re-derived on every render, and a
+                // controller whose view was merely loaded has not rendered.
+                controller.debugRender()
+                controller.view.layoutSubtreeIfNeeded()
+                let ceiling = ShiftController.debugTaskFollowUpPanelBodyHeight
+                guard ceiling > 200 else {
+                    return "the four-row ceiling measured \(ceiling)pt, so this case cannot tell a "
+                         + "hugging panel from a fixed one"
+                }
+                let empty = controller.debugTaskFollowUpBodyHeight
+                guard empty > 0 else {
+                    return "the panels have no height constraint, so this case is measuring nothing"
+                }
+                guard empty < ceiling else {
+                    return "both panels are still \(empty)pt tall - the four-row ceiling - around one "
+                         + "empty-state line each (review U15)"
+                }
+                guard abs(empty - ShiftTaskListView.emptyRowHeight) < 1 else {
+                    return "an empty panel is \(empty)pt, not the \(ShiftTaskListView.emptyRowHeight)pt "
+                         + "its one placeholder row actually draws"
+                }
+                return nil
+            }
+        }
+    }
+
+    /// A scratch `FM_SHIFT_DIR`, so a mounted Tasks page never reads or
+    /// writes the captain's real board.
+    private static func withScratchShiftStore<T>(_ body: (ShiftStore) -> T) -> T {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("review-ui-ux-shift-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let previous = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+        setenv("FM_SHIFT_DIR", dir.path, 1)
+        defer {
+            if let previous { setenv("FM_SHIFT_DIR", previous, 1) } else { unsetenv("FM_SHIFT_DIR") }
+        }
+        return body(ShiftStore())
     }
 }
 

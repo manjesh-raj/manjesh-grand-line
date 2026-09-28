@@ -191,6 +191,18 @@ final class ShiftTaskListView: NSObject {
     static let baseRowHeight: CGFloat = 78
     static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
 
+    /// What the single `HelmEmptyState` row an empty list renders needs.
+    /// Review defect U15 reads this: a panel whose list is empty should be
+    /// the height of that one placeholder, not of four rows that are not
+    /// there.
+    static let emptyRowHeight: CGFloat = 120
+
+    /// How tall this list's content actually is right now - the number a
+    /// panel around it should hug (review U15).
+    var contentHeight: CGFloat {
+        tasks.isEmpty ? Self.emptyRowHeight : CGFloat(tasks.count) * Self.rowHeight
+    }
+
     @objc private func rowDoubleClicked() {
         let row = tableView.clickedRow
         guard row >= 0, row < tasks.count else { return }
@@ -241,7 +253,7 @@ extension ShiftTaskListView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { max(tasks.count, 1) }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        tasks.isEmpty ? 120 : Self.rowHeight
+        tasks.isEmpty ? Self.emptyRowHeight : Self.rowHeight
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -491,6 +503,15 @@ final class ShiftFollowUpListView: NSObject {
     /// side-by-side look (`fm/grandline-shift-side-by-side-composer-height`).
     static var rowHeight: CGFloat { ShiftTaskListView.rowHeight }
 
+    /// See `ShiftTaskListView.emptyRowHeight` - this list's placeholder is a
+    /// line shorter, and the two panels share one height anyway.
+    static let emptyRowHeight: CGFloat = 110
+
+    /// See `ShiftTaskListView.contentHeight` (review U15).
+    var contentHeight: CGFloat {
+        items.isEmpty ? Self.emptyRowHeight : CGFloat(items.count) * Self.rowHeight
+    }
+
     func setItems(_ items: [ShiftFollowUp]) {
         self.items = items
         tableView.reloadData()
@@ -571,7 +592,7 @@ extension ShiftFollowUpListView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { max(items.count, 1) }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        items.isEmpty ? 110 : Self.rowHeight
+        items.isEmpty ? Self.emptyRowHeight : Self.rowHeight
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
