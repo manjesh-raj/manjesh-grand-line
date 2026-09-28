@@ -240,6 +240,22 @@ final class HomeCanvasController: NSViewController {
     /// re-derived in `applyTheme`, so the paint and the copy can never
     /// disagree about which hero is on screen.
     private var heroIsBanner = false
+    /// The captain's "Needs Attention" card - the Today page's Due Today and
+    /// Follow-ups sections, moved here and merged into one flat list.
+    ///
+    /// It sits between the hero and the module grid because that is where the
+    /// mockup puts it and because it is the one thing on this page that is
+    /// about the captain's own day rather than about the fleet - the grid
+    /// below it is a navigation surface, and burying an overdue task in it
+    /// would be exactly the "80% empty paper" problem C1's hero already
+    /// answered once.
+    ///
+    /// Rule 1 of this file still holds: its rows come from
+    /// `DailyReviewComposer` reading the **injected** `ShiftStore`'s
+    /// already-loaded in-memory lists, which is the same read `fillTasks`
+    /// makes two screens down. No store is constructed and nothing is
+    /// fetched.
+    private let attentionCard = NeedsAttentionCard()
     private let gridStack = NSStackView()
 
     private var cards: [HelmModuleCard] = []
@@ -349,7 +365,11 @@ final class HomeCanvasController: NSViewController {
         stack.distribution = .fill
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(heroCard)
+        stack.addArrangedSubview(attentionCard)
         stack.addArrangedSubview(gridStack)
+
+        attentionCard.onToggleDone = { [weak self] item in self?.markAttentionItemDone(item) }
+        attentionCard.onOpenItem = { [weak self] item in self?.openAttentionItem(item) }
 
         // gotcha (9): `FlippedView`, never a plain `NSView` - y=0 must be the
         // top or short content rests against the bottom of the clip view.
@@ -415,6 +435,7 @@ final class HomeCanvasController: NSViewController {
             stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -44),
 
             heroCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            attentionCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             gridStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
@@ -597,6 +618,7 @@ final class HomeCanvasController: NSViewController {
 
     private func render() {
         renderGreeting()
+        renderAttention()
         rebuildGrid()
         applyTheme(ThemeManager.shared.theme)
     }
@@ -681,6 +703,82 @@ final class HomeCanvasController: NSViewController {
                 kicker: answer.kicker,
                 title: answer.title,
                 detail: heroDetail(for: answer))
+    }
+
+    // MARK: Needs Attention (the captain's move of Today's Due Today)
+
+    /// Build the card's rows from the **same digest** the Today page renders.
+    ///
+    /// The composer is `DailyReviewComposer`, unchanged and uncopied, so
+    /// "due", "overdue", the ordering and the caps are one definition rather
+    /// than two - which is the whole point of routing this through a digest
+    /// instead of filtering `activeTasks` here. Only the sections this card
+    /// owns are filled in; the calendar, the board and the reading list are
+    /// left at their empty defaults because this card does not draw them and
+    /// asking for them would mean this page reading three more sources.
+    ///
+    /// **Deliberately not gated on `AppSettings.dailyReviewEnabled` or the
+    /// day's dismissal.** Those two switches are about the Today page's daily
+    /// *review* - a briefing the captain may not want each morning. What is
+    /// due and who is waiting is not a briefing; it is the app's only
+    /// remaining home for that information now that the Today page's own
+    /// columns are gone, and hiding it behind a review toggle would make
+    /// turning the review off silently lose an overdue task.
+    private func renderAttention() {
+        // Only the hub itself. The other spaces are filters over the module
+        // grid and have no day of their own to report on.
+        guard space == .overview else {
+            attentionCard.isHidden = true
+            return
+        }
+        attentionCard.isHidden = false
+
+        var inputs = DailyReviewInputs()
+        inputs.now = Date()
+        if sources.shiftStore.isInFailedLoadState {
+            // GL-14/GL-01: "the store failed to parse" is not "nothing is
+            // due", and the card renders it as a stated gap rather than as an
+            // all-clear.
+            let reason = "your tasks could not be read - a file in the Tasks store failed to parse"
+            inputs.tasks = .unavailable(reason)
+            inputs.followUps = .unavailable(reason)
+        } else {
+            inputs.tasks = .available(sources.shiftStore.activeTasks)
+            inputs.followUps = .available(sources.shiftStore.followUps)
+            var names: [String: String] = [:]
+            for project in sources.shiftStore.projects { names[project.id] = project.name }
+            inputs.projectNames = names
+        }
+
+        let digest = DailyReviewComposer.digest(from: inputs)
+        attentionCard.render(NeedsAttentionComposer.summary(from: digest),
+                             // The digest's own "as of" line, not
+                             // `fleetReadAt`: the fleet is a different source,
+                             // and this one was read on this very render.
+                             subline: digest.kicker,
+                             theme: ThemeManager.shared.theme)
+    }
+
+    /// The row checkbox. Writes through the **shared** store this page was
+    /// given (GL-23) - a second `ShiftStore` would diverge from the Tasks
+    /// page's within the session and race its writes.
+    private func markAttentionItemDone(_ item: NeedsAttentionItem) {
+        switch item.kind {
+        case .task: sources.shiftStore.setTaskCompleted(id: item.id, completed: true)
+        case .followUp: sources.shiftStore.setFollowUpStatus(id: item.id, done: true)
+        }
+        // The row has just left the list, so the card has to be re-derived
+        // rather than left showing what it was handed.
+        render()
+    }
+
+    /// The row's trailing "Start" / "Open". A task opens itself; a follow-up
+    /// has no deep link of its own, so it opens the page that owns it.
+    private func openAttentionItem(_ item: NeedsAttentionItem) {
+        switch item.kind {
+        case .task: onOpenShiftTask?(item.id)
+        case .followUp: onOpenDestination?(.shift)
+        }
     }
 
     /// The hero's detail line on **the hub**, which is the one surface that
@@ -972,6 +1070,7 @@ final class HomeCanvasController: NSViewController {
         kickerLabel.font = HelmType.kicker()
         kickerLabel.textColor = HelmTheme.mutedInk(theme)
         heroBadge.applyTheme(theme)
+        attentionCard.applyTheme(theme)
         for card in cards { card.applyTheme(theme) }
     }
 
@@ -2336,6 +2435,11 @@ final class HomeCanvasController: NSViewController {
 
     var moduleCardsForTests: [HelmModuleCard] { cards }
     var visibleModulesForTests: [DaylightModule] { visibleModules() }
+    /// The captain's Needs Attention card, so a suite can drive the real card
+    /// on the real page rather than a card it built itself - which is what
+    /// proves the wiring as well as the render.
+    var attentionCardForTests: NeedsAttentionCard { attentionCard }
+    var attentionCardHiddenForTests: Bool { attentionCard.isHidden }
     var greetingForTests: (title: String, subtitle: String, kicker: String) {
         (greetingLabel.stringValue, subtitleLabel.stringValue, kickerLabel.stringValue)
     }

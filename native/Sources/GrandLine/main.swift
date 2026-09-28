@@ -3950,6 +3950,18 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAILY_REVIEW_VIEW_TESTS"] == "1" 
     exit(DailyReviewViewSelfTest.run() ? 0 : 1)
 }
 
+// The Home page's Needs Attention card - the captain's move of the Today
+// page's "Due today" and "Follow-ups" sections. Same split for the same
+// reason: `NeedsAttentionSelfTest` is a function over a struct and guards
+// CI's blocking lane, `NeedsAttentionViewSelfTest` mounts the real hub in a
+// real window and lives in `run-all-tests.sh`'s NEEDS_SESSION list.
+if ProcessInfo.processInfo.environment["FM_RUN_NEEDS_ATTENTION_TESTS"] == "1" {
+    exit(NeedsAttentionSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_NEEDS_ATTENTION_VIEW_TESTS"] == "1" {
+    exit(NeedsAttentionViewSelfTest.run() ? 0 : 1)
+}
+
 // F9 (v1, multi-host command execution): the host-selection logic - tag
 // matching, the never-preselected invariant, the risk gate firing once per
 // host, and the unfilled-parameter refusal applied across a whole selection.
