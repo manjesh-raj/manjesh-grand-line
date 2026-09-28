@@ -71,6 +71,7 @@ enum ReadingListViewSelfTest {
         checkReaderOpensAndMarksRead(check)
         checkCardIsLegibleInBothRegisters(check)
         checkSummaryWellIsActuallyPainted(check)
+        checkAISummarySaysWhereTheTextWent(check)
         checkPageDoesNotCapTheWindow(check)
 
         print(ok ? "ReadingListViewSelfTest: OK" : "ReadingListViewSelfTest: FAILURES")
@@ -552,6 +553,47 @@ enum ReadingListViewSelfTest {
                   "S13: the reader must not share the app's default data store")
         }
     }
+    /// X11 (review UX): the daily review says "no data left this Mac"; the
+    /// two surfaces that send the captain's own material to Claude said
+    /// nothing at all. This asserts the Reading List's half on real cards.
+    ///
+    /// Three states, and the second and third are what make the first mean
+    /// something: a page's own blurb was read locally by `LinkPresentation`
+    /// and must make no claim, and a card with no summary must not either.
+    private static func checkAISummarySaysWhereTheTextWent(_ check: (Bool, String) -> Void) {
+        mounted(seed: seedThreeStates) { controller, _, _, _ in
+            let cards = controller.debugCards
+            guard let ai = cards.first(where: { $0.debugSummaryKicker == "SUMMARY" }) else {
+                check(false, "X11: no card carries an AI summary - this case would be vacuous")
+                return
+            }
+            let expected = AITransparency.sentToClaude("this page's text")
+            check(ai.debugSummaryFootnote == expected,
+                  "X11: a Claude-written summary says \(ai.debugSummaryFootnote ?? "nothing"), "
+                  + "want \(expected)")
+
+            if let page = cards.first(where: { $0.debugSummaryKicker == "FROM THE PAGE" }) {
+                check(page.debugSummaryFootnote == nil,
+                      "X11: a page's own blurb claims text left this Mac, which is false - "
+                      + "`LinkPresentation` read it here")
+            }
+            if let plain = cards.first(where: { $0.debugSummaryKicker.isEmpty }) {
+                check(plain.debugSummaryFootnote == nil,
+                      "X11: a card with no summary carries a data claim about nothing")
+            }
+
+            // And the future-tense half, which is the one the captain can
+            // still act on.
+            if let offering = cards.first(where: { $0.debugShowsSummariseButton }) {
+                check(offering.debugSummariseTooltip == AITransparency.willSendToClaude("this page's text"),
+                      "X11: the Summarise button does not say what it sends before it sends it "
+                      + "(tooltip: \(offering.debugSummariseTooltip ?? "none"))")
+            } else {
+                check(false, "X11: no card offers Summarise - the tooltip check would be vacuous")
+            }
+        }
+    }
+
 }
 
 #endif

@@ -4020,6 +4020,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_TEXT_SCALE_FONT_TESTS"] == "1" {
     exit(TextScaleFontSelfTest.run() ? 0 : 1)
 }
 
+// X11: every AI surface states where the captain's data goes, and the claim
+// matches the behaviour. Source-reading and string comparison - runs in CI.
+if ProcessInfo.processInfo.environment["FM_RUN_AI_TRANSPARENCY_TESTS"] == "1" {
+    exit(AITransparencySelfTest.run() ? 0 : 1)
+}
+
 // Audit §6.10's P3 leftovers. Pure logic - runs in CI.
 if ProcessInfo.processInfo.environment["FM_RUN_P3_LEFTOVERS_TESTS"] == "1" {
     exit(Phase4P3LeftoversSelfTest.run() ? 0 : 1)
