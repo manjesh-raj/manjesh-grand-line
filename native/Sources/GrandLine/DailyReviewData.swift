@@ -170,16 +170,6 @@ struct DailyReviewEventRow: Equatable {
     }
 }
 
-/// One habit, for the day F8 lands. Defined here rather than waiting for it,
-/// so the section is a real shape rather than a placeholder - see
-/// `DailyReviewHabits`.
-struct DailyReviewHabitRow: Equatable {
-    let title: String
-    let doneToday: Bool
-    /// The current streak, when the source knows one.
-    let streak: Int?
-}
-
 /// One sticky note worth naming.
 struct DailyReviewStickyRow: Equatable {
     let id: String
@@ -219,7 +209,6 @@ struct DailyReviewInputs: Equatable {
     /// simply drops the project from the line; it never renders a raw id.
     var projectNames: [String: String] = [:]
     var calendar: DailyReviewAvailability<[DailyReviewEventRow]> = .available([])
-    var habits: DailyReviewAvailability<[DailyReviewHabitRow]> = .available([])
     var reading: DailyReviewAvailability<[ReadingLink]> = .available([])
     var stickies: DailyReviewAvailability<[StickyNote]> = .available([])
 }
@@ -246,7 +235,6 @@ struct DailyReviewDigest: Equatable {
     var hiddenFollowUpCount: Int
     var events: [DailyReviewEventRow]
     var hiddenEventCount: Int
-    var habits: [DailyReviewHabitRow]
     var stickies: [DailyReviewStickyRow]
     var reading: DailyReviewReadingSummary?
     var gaps: [DailyReviewGap]
@@ -263,7 +251,7 @@ struct DailyReviewDigest: Equatable {
     /// than vanishing - but the caller may use this to decide ordering.
     var isEmpty: Bool {
         dueTasks.isEmpty && followUps.isEmpty && events.isEmpty
-            && habits.isEmpty && stickies.isEmpty && reading == nil
+            && stickies.isEmpty && reading == nil
     }
 }
 
@@ -280,7 +268,6 @@ enum DailyReviewComposer {
     static let maxFollowUps = 3
     static let maxEvents = 4
     static let maxStickies = 3
-    static let maxHabits = 5
 
     static func digest(from inputs: DailyReviewInputs) -> DailyReviewDigest {
         let now = inputs.now
@@ -398,15 +385,6 @@ enum DailyReviewComposer {
             gaps.append(DailyReviewGap(section: "Calendar", reason: reason))
         }
 
-        // MARK: Habits
-
-        var habits: [DailyReviewHabitRow] = []
-        if let all = inputs.habits.value {
-            habits = Array(all.prefix(maxHabits))
-        } else if let reason = inputs.habits.unavailableReason {
-            gaps.append(DailyReviewGap(section: "Habits", reason: reason))
-        }
-
         // MARK: Stickies
 
         var stickies: [DailyReviewStickyRow] = []
@@ -469,7 +447,6 @@ enum DailyReviewComposer {
             hiddenFollowUpCount: hiddenFollowUps,
             events: events,
             hiddenEventCount: hiddenEvents,
-            habits: habits,
             stickies: stickies,
             reading: reading,
             gaps: gaps,
@@ -600,25 +577,28 @@ enum DailyReviewComposer {
     }()
 }
 
-// MARK: - Habits (F8 has not shipped)
+// MARK: - Habits: deliberately absent
+//
+// **UX issue X7 of the 2026-09-27 review.** This file used to carry a habits
+// source that always answered "unavailable", a habit-row shape nothing ever
+// produced, and a habits section in the digest - so every daily review,
+// every day, rendered a warning-styled line under its "Not available" block
+// saying that habit streaks were not part of this build.
+//
+// (The removed symbols are deliberately not named here. `DailyReviewSelfTest.
+// checkNoHabitsSection` scans this app's sources for them, and a comment
+// that spelled them out would be indistinguishable from the code coming
+// back.)
+//
+// GL-14's stated-gap rule is about a section this app *can* read and did
+// not (a calendar it was refused permission for, a scan that failed). A
+// feature that was never built is not a gap in today's data; it is an
+// advertisement for something that does not exist, and repeating it daily
+// under a warning icon trains the captain to ignore the block that exists
+// to be trusted.
+//
+// The habit tracker itself is still a good idea and is §7.2 of the same
+// review. When it ships it reintroduces its own row, its own source and its
+// own tests deliberately - which is cheaper than carrying a placeholder that
+// has to be kept compiling in the meantime.
 
-/// The habits section, as it stands today.
-///
-/// F8 ("habits and streaks, on the Tasks sidebar") is in the same §8 list this
-/// feature came from and has not been built. The honest rendering of that is
-/// **not** an empty section and **not** a hidden one: it is a stated gap, the
-/// same treatment a calendar this app was never given permission to read gets.
-///
-/// When F8 lands, this is the one function to change: return
-/// `.available(rows)` from whatever store it introduces, and the card, the
-/// composer and both suites already handle it - `DailyReviewSelfTest` asserts
-/// the available path with fabricated rows for exactly that reason.
-enum DailyReviewHabits {
-    /// Stated in the captain's terms, not the backlog's: "F8 has not shipped"
-    /// means nothing to someone reading a briefing.
-    static let notTrackedReason = "no habits are tracked yet - habit streaks aren\u{2019}t part of this build"
-
-    static func read() -> DailyReviewAvailability<[DailyReviewHabitRow]> {
-        .unavailable(notTrackedReason)
-    }
-}

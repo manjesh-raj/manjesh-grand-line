@@ -1751,7 +1751,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
 
             SettingsSection(heading: "Daily review", group: SettingsGroup(rows: [
                 SettingsRow(title: "Show the daily review on Fleet",
-                            description: "What is due today, the follow-ups waiting on you, today's calendar, your habits, the top notes on your sticky board and what is unread in your reading list.",
+                            description: "What is due today, the follow-ups waiting on you, today's calendar, the top notes on your sticky board and what is unread in your reading list.",
                             control: dailyReviewSwitch),
                 register(SettingsRow(
                     title: "Mac calendars",

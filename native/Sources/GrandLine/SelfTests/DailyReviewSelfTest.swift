@@ -22,9 +22,11 @@
 //      this shape). Every one of the six sections is checked in both
 //      directions, because a gap that is never rendered and a zero that is
 //      wrongly rendered look identical in a screenshot.
-//   3. **Graceful degradation for a feature that has not shipped.** Habits
-//      (F8) is the live case; the available path is asserted too, with
-//      fabricated rows, so the day it lands the suite already covers it.
+//   3. **No section for a feature that was never built.** Habits used to be
+//      the live case for "graceful degradation", which the 2026-09-27
+//      review's X7 disagreed with: a stated gap is for data this app could
+//      not read, not for a feature that does not exist. The section is gone
+//      and `checkNoHabitsSection` is what keeps it gone.
 //   4. **Caps are stated, never silent.**
 //   5. **The calendar is read-only**, asserted as a source guard - the one
 //      shape available, since a behavioural check would have to touch the
@@ -44,7 +46,7 @@ enum DailyReviewSelfTest {
         checkBusyMorning(&ok)
         checkHeadlines(&ok)
         checkUnknownIsNotZero(&ok)
-        checkHabitsDegradeGracefully(&ok)
+        checkNoHabitsSection(&ok)
         checkCapsAreStated(&ok)
         checkStickiesAndReading(&ok)
         checkDayKeyMatchesTheBriefing(&ok)
@@ -127,7 +129,7 @@ enum DailyReviewSelfTest {
 
     /// The mockup's morning: one task due today, one five days overdue, two
     /// pending follow-ups, three events, an unread reading list and two
-    /// stickies - and habits unavailable, because F8 has not shipped.
+    /// stickies.
     static func busyInputs() -> DailyReviewInputs {
         let now = morning()
         var inputs = DailyReviewInputs()
@@ -156,7 +158,6 @@ enum DailyReviewSelfTest {
             DailyReviewEventRow(title: "1:1 with Priya", timeText: "17:00", detail: "",
                                 colorHex: nil, isAllDay: false),
         ])
-        inputs.habits = DailyReviewHabits.read()
         inputs.stickies = .available([
             sticky(id: "s-1", title: "Ask Ravi about VPC peering", created: day(-3, from: now)),
             sticky(id: "s-2", title: "Cutover checklist", created: day(-1, from: now),
@@ -264,7 +265,6 @@ enum DailyReviewSelfTest {
         // produces a gap" would pass a composer that produced gaps always.
         var empty = DailyReviewInputs()
         empty.now = morning()
-        empty.habits = .available([])
         let emptyDigest = DailyReviewComposer.digest(from: empty)
         check(emptyDigest.gaps.isEmpty,
               "an empty-but-readable day has no gaps, got \(emptyDigest.gaps.map(\.section))", &ok)
@@ -276,14 +276,12 @@ enum DailyReviewSelfTest {
             ("Tasks", { $0.tasks = .unavailable("the tasks file failed to parse") }),
             ("Follow-ups", { $0.followUps = .unavailable("the follow-ups file failed to parse") }),
             ("Calendar", { $0.calendar = .unavailable("no calendar access") }),
-            ("Habits", { $0.habits = .unavailable("not tracked") }),
             ("Sticky board", { $0.stickies = .unavailable("the board file failed to parse") }),
             ("Reading list", { $0.reading = .unavailable("the reading list file failed to parse") }),
         ]
         for (section, mutate) in cases {
             var inputs = DailyReviewInputs()
             inputs.now = morning()
-            inputs.habits = .available([])
             mutate(&inputs)
             let digest = DailyReviewComposer.digest(from: inputs)
             check(digest.gaps.contains(where: { $0.section == section }),
@@ -297,38 +295,54 @@ enum DailyReviewSelfTest {
         // A reading list that could not be read is *not* "0 unread".
         var unreadable = DailyReviewInputs()
         unreadable.now = morning()
-        unreadable.habits = .available([])
         unreadable.reading = .unavailable("the reading list file failed to parse")
         let digest = DailyReviewComposer.digest(from: unreadable)
         check(digest.reading == nil,
               "an unreadable reading list must have no summary at all, got \(String(describing: digest.reading))", &ok)
     }
 
-    // MARK: 4 - habits, which have not shipped
+    // MARK: 4 - habits, which do not exist here at all
 
-    private static func checkHabitsDegradeGracefully(_ ok: inout Bool) {
-        print("\n-- habits (F8 has not shipped) --")
-        let read = DailyReviewHabits.read()
-        check(read.value == nil, "habits are not available in this build", &ok)
-        check(read.unavailableReason == DailyReviewHabits.notTrackedReason,
-              "and the reason is the stated one", &ok)
+    /// **UX issue X7.** The daily review used to render
+    /// "Habits - no habits are tracked yet - habit streaks aren't part of
+    /// this build" under a warning icon, on every review, every day, for a
+    /// feature that was never built. GL-14's stated-gap rule is about data
+    /// this app could not read; a feature that does not exist is not a gap
+    /// in today's data, and repeating it daily under a warning teaches the
+    /// captain to ignore the block that exists to be trusted.
+    ///
+    /// A source guard, because the thing to pin is an *absence*: no
+    /// behavioural check can see a section that has been deleted, and the
+    /// way this comes back is somebody re-adding the placeholder rather than
+    /// somebody shipping the tracker. When the real habit tracker lands
+    /// (§7.2 of the same review) it will introduce its own rows, its own
+    /// source and its own cases deliberately - and this case is where it
+    /// says so.
+    private static func checkNoHabitsSection(_ ok: inout Bool) {
+        print("\n-- no habits section (X7) --")
+        guard let files = SelfTestSources.appSourceFiles() else {
+            check(false, "SKIP-AS-FAILURE: the app's sources are not next to this binary", &ok)
+            return
+        }
+        // The exact sentence the review saw, and the two symbols that
+        // produced it.
+        let banned = ["aren\u{2019}t part of this build", "DailyReviewHabits", "DailyReviewHabitRow"]
+        var offenders: [String] = []
+        for file in files {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            for needle in banned where text.contains(needle) {
+                offenders.append("\(file.lastPathComponent) still carries \(needle.debugDescription)")
+            }
+        }
+        check(offenders.isEmpty,
+              "the daily review's habits placeholder is back: \(offenders.joined(separator: "; "))", &ok)
 
-        var inputs = busyInputs()
-        let digest = DailyReviewComposer.digest(from: inputs)
-        check(digest.habits.isEmpty, "no habit rows, since there is no source", &ok)
-        check(digest.gaps.contains(where: { $0.section == "Habits" }),
-              "the habits section is a stated gap rather than a silent omission", &ok)
-
-        // The path F8 will land on, asserted now so it is already covered.
-        inputs.habits = .available([
-            DailyReviewHabitRow(title: "Morning review", doneToday: true, streak: 23),
-            DailyReviewHabitRow(title: "Read 20 min", doneToday: false, streak: nil),
-        ])
-        let withHabits = DailyReviewComposer.digest(from: inputs)
-        check(withHabits.habits.count == 2, "two habit rows once a source exists", &ok)
-        check(!withHabits.gaps.contains(where: { $0.section == "Habits" }),
-              "and no habits gap once they are available", &ok)
-        check(withHabits.habits.first?.streak == 23, "the streak survives composition", &ok)
+        // And the behavioural half that *is* observable: a fully readable
+        // day produces no gaps at all, so nothing is quietly filling the
+        // "Not available" block in its place.
+        let digest = DailyReviewComposer.digest(from: busyInputs())
+        check(!digest.gaps.contains(where: { $0.section == "Habits" }),
+              "a habits gap is still being composed, got \(digest.gaps.map(\.section))", &ok)
     }
 
     // MARK: 5 - caps are stated
@@ -338,7 +352,6 @@ enum DailyReviewSelfTest {
         let now = morning()
         var inputs = DailyReviewInputs()
         inputs.now = now
-        inputs.habits = .available([])
         inputs.tasks = .available((1...8).map {
             task(id: "t-\($0)", title: "Task \($0)", due: now, time: String(format: "%02d:00", $0 + 8))
         })
@@ -402,7 +415,6 @@ enum DailyReviewSelfTest {
         let now = morning()
         var inputs = DailyReviewInputs()
         inputs.now = now
-        inputs.habits = .available([])
         let digest = DailyReviewComposer.digest(from: inputs)
         // The same key F12 uses, so the two cards turn over together - a
         // second definition of "today" is exactly how two cards on one page

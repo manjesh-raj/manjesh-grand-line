@@ -148,8 +148,11 @@ enum DailyReviewViewSelfTest {
             // GL-14's block, which is the feature's whole point.
             check(board.contains(where: { $0.hasPrefix("NOT AVAILABLE") }),
                   "the Not available block should be painted, got \(board)")
-            check(board.contains(where: { $0.hasPrefix("Habits -") }),
-                  "and it should name habits as the gap, got \(board)")
+            // X7: habits is no longer a section at all, so it must not
+            // appear in the gap block either - a feature that was never
+            // built is not a gap in today's data.
+            check(!board.contains(where: { $0.hasPrefix("Habits") }),
+                  "the Not available block still names habits, got \(board)")
             check(board.contains(where: { $0.hasPrefix("Calendar -") }),
                   "and the calendar, which is off, got \(board)")
 

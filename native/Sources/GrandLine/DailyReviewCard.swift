@@ -10,7 +10,7 @@
 //
 // The published mockup (F20 in the "Grand Line Futures" artifact) is a
 // full-width card on Overview with a header sentence, three columns - due +
-// follow-ups, calendar + habits, board + reading + "Not available" - and a
+// follow-ups, calendar, board + reading + "Not available" - and a
 // footer carrying one primary action and the locality note. That shape is
 // reproduced here, on the app's real components.
 //
@@ -386,15 +386,6 @@ final class DailyReviewCard: NSView {
                 middleColumn.addArrangedSubview(quietLine("+\(digest.hiddenEventCount) more today"))
             }
         }
-
-        middleColumn.addArrangedSubview(sectionHead("Habits"))
-        if digest.gaps.contains(where: { $0.section == "Habits" }) {
-            middleColumn.addArrangedSubview(unavailableLine())
-        } else if digest.habits.isEmpty {
-            middleColumn.addArrangedSubview(quietLine("No habits tracked yet."))
-        } else {
-            middleColumn.addArrangedSubview(habitChips(digest.habits))
-        }
     }
 
     private func buildBoardColumn(_ digest: DailyReviewDigest) {
@@ -578,28 +569,6 @@ final class DailyReviewCard: NSView {
         row.translatesAutoresizingMaskIntoConstraints = false
         bar.topAnchor.constraint(equalTo: row.topAnchor, constant: 1).isActive = true
         bar.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor).isActive = true
-        return row
-    }
-
-    private func habitChips(_ habits: [DailyReviewHabitRow]) -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = HelmMetrics.s1 + 2
-        row.distribution = .fill
-        row.translatesAutoresizingMaskIntoConstraints = false
-        for habit in habits {
-            let chip = NSView()
-            let label = NSTextField(labelWithString: "")
-            let text = habit.streak.map { "\(habit.title) \u{00B7} \($0)" } ?? habit.title
-            // The app's one chip recipe, contrast-corrected for this theme -
-            // never a hand-rolled tinted pill (the component index's rule).
-            ToolRowLayout.pill(text: text,
-                               colorHex: (habit.doneToday ? HelmTint.good : HelmTint.neutral).hex(in: theme),
-                               into: chip, label: label, theme: theme)
-            chip.setContentHuggingPriority(.required, for: .horizontal)
-            row.addArrangedSubview(chip)
-        }
         return row
     }
 

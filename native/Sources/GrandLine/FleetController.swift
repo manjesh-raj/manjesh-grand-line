@@ -1302,9 +1302,6 @@ final class FleetController: NSViewController {
             inputs.reading = .unavailable("the reading list is not connected to this page")
         }
 
-        // Habits: F8 has not shipped. A stated gap, not a hidden section -
-        // see `DailyReviewHabits`.
-        inputs.habits = DailyReviewHabits.read()
 
         // The calendar. Two sources now - this Mac's own through EventKit,
         // and any connected Google account - each behind its own switch, and
