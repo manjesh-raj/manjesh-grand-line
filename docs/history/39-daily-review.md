@@ -500,3 +500,170 @@ asserts the *opposite* property for them in a loop of its own, so both
 directions are still covered. Its "which page did the pill open" check moved
 off the drill header's title (a top-level page has none) onto
 `currentContextTitle`, which the window title and the Recents list already read.
+
+---
+
+## Due today and Follow-ups moved to Home's "Needs Attention" card
+
+`fm/grandline-needs-attention-home-card-1790594112`. The captain asked for the
+Today page's "Due today" and "Follow-ups" sections to move onto the **Home**
+page, under one section titled "Needs Attention", and supplied a static
+HTML/CSS mockup of the shape he wanted plus two screenshots of his own Today
+page (a "Standup Notes" task overdue since 23 Sep, a "Follow up with Nithin on
+SRE bot response reviews" follow-up overdue since 18 Sep).
+
+### The digest is shared, not copied
+
+The obvious implementation is to read `ShiftStore` again on the Home page and
+filter for what is due. That would be a **second definition of "due"**, which
+is the thing B22 spent a whole task collapsing into `ShiftDue.isOverdue` - a
+date-only task used to read as overdue at local midnight on one surface and not
+until the next day on another.
+
+So `HomeCanvasController.renderAttention()` builds a `DailyReviewInputs`,
+hands it to the **same `DailyReviewComposer`** the Today page uses, and
+`NeedsAttentionComposer.summary(from:)` turns the resulting `DailyReviewDigest`
+into the flat attention list. The caps, the ordering, the overdue predicate and
+the stated gaps are all the digest's, unchanged. Only the calendar, board and
+reading-list sections are left at their empty defaults, because this card does
+not draw them - and asking for them would mean the hub reading three more
+sources, against `HomeCanvasController`'s first rule.
+
+Two fields were added to `DailyReviewTaskRow`/`DailyReviewFollowUpRow`:
+`overdueDays` and `dueDayText`. The mockup words a chip "Overdue 5 days, since
+23 Sep" and the Today card words the same lateness "overdue since 23 Sep", so
+the *day count* had to come from somewhere. It comes from the composer
+(`DailyReviewComposer.daysLate`), not from a second reader doing its own date
+maths.
+
+### Nothing new was built
+
+Each row is a `HelmAccentRow` with `ShiftTaskCheckBadge` in its `leadingControl`
+slot and a `HelmButton` in its `trailingAccessory` slot - the same component and
+the same checkbox the Tasks page's own list rows use. The card is a `HelmCard`.
+AGENTS.md's component index already named `HelmAccentRow` as the thing not to
+hand-roll for this shape, and it already owned both slots.
+
+### Three deliberate deviations from the mockup
+
+1. **No Refresh button in the card header.** On the real page this card sits a
+   few points under the hero band, which already carries a Refresh that re-runs
+   the same pass. Two Refresh buttons stacked is the duplication review #3's
+   UX5 objected to on this very page.
+2. **The subline is `DailyReviewDigest.kicker`** ("Monday, 28 September ·
+   5:19 PM") rather than "Fleet read 4 minutes ago". The fleet is a different
+   source, and a freshness phrase derived from an in-memory read that just
+   happened can only ever say "just now".
+3. **No "Everything else is clear: [chips]" strip.** It links to Home cards for
+   sources this card does not read.
+
+The mockup also shows Claude-usage and session-check rows. Those are a broader
+"everything needing attention" concept than the ask, and none of their data is
+reachable from the hub without new plumbing, so they were not built. The shapes
+are open to them: `NeedsAttentionItem` carries its own source label, tone and
+action verb rather than hard-coding "Task".
+
+### The move is a move
+
+`DailyReviewCard` lost its due column, its follow-up section, the `firstDivider`
+between the three columns and the "Start on ..." footer button (which named the
+most urgent *due* item, which that card no longer knows about). It is a
+two-column card now - calendar, then board/reading/"Not available" - and
+`debugColumns` is indexed accordingly.
+
+The stated gaps split with the sections. `NeedsAttentionComposer.ownedGapSections`
+is the one list both sides filter on, because two spellings of "Follow-ups"
+would leave a GL-14 reason rendered on both pages or on neither.
+
+**Deliberately not gated on `dailyReviewEnabled` or the day's dismissal.** Those
+switches are about the Today page's *briefing*. What is due and who is waiting
+is now only on Home, and hiding it behind a review toggle would make turning the
+review off silently lose an overdue task.
+
+### Verification
+
+Full local `./Scripts/run-all-tests.sh`: **225 passed, 0 failed, 1 skipped**
+(`FM_RUN_WHISPER_METAL_FALLBACK_ONLY_TEST`), plus the two Python suites.
+`swift build -c release` clean.
+
+`screencapture -x` still fails on this machine ("could not create image from
+display"), so the visual check is an **off-screen `cacheDisplay` render** of the
+real card on the real hub, written to PNG and read back - AGENTS.md's own
+substitute. The late state was rendered in Daylight and Dusk at 1156pt and the
+all-clear state in Daylight. That render caught one real defect the suites could
+not: the all-clear body line read "Nothing is due today, and no follow-up is
+waiting on you." directly under a headline reading "Nothing is due, and nobody
+is waiting on you." - the same sentence twice. It now says what the card *is*
+("Anything due today, and any follow-up waiting on you, shows up here."), and
+`NeedsAttentionViewSelfTest` asserts the body never contains the headline.
+
+The probe was reverted before commit. No live click-through in the running app
+was done: launching a build from a worktree is forbidden here.
+
+Four injections confirmed the new checks catch real regressions:
+
+- deleting `actionButton`'s `target`/`action` fails both "pressing a ... action"
+  checks (the buttons are driven with a real `performClick`, so the check sees
+  the wiring rather than the handler);
+- deleting the `space == .overview` guard fails "the card should be hidden off
+  the hub";
+- reinstating a due column on `DailyReviewCard` fails the source guard by name
+  *and* fails `DailyReviewViewSelfTest`'s "neither should its section head";
+- an off-by-one in `DailyReviewComposer.daysLate` fails the chip-wording checks
+  with "Overdue 4 days, since 23 Sep".
+
+Note the third injection is the one a source guard alone would have missed in
+the other direction and vice versa, which is why both exist.
+
+**One process mistake worth recording**, because AGENTS.md already warns about
+it and it still happened: reverting injection 4 with `git checkout --
+DailyReviewData.swift` on a branch with **no commits yet** discarded that file's
+entire real change, not just the experiment. It was re-applied from the
+transformation script that made it. Copy the file aside instead - and commit
+early, which is what makes the mistake recoverable at all.
+
+#### The chip's date is region-rendered, and the first suite pinned one region
+
+CI failed on PR 491 where the full local run had passed twice:
+
+    FAIL the task chip should read the mockup's wording, got "Overdue 5 days, since Sep 23"
+    FAIL the follow-up chip should read the mockup's wording, got "Overdue 10 days, since Sep 18"
+
+`DailyReviewComposer.dayMonth` is `setLocalizedDateFormatFromTemplate("dMMM")`,
+which renders **"23 Sep" on this machine (`AppleLocale` is `en_IN`) and
+"Sep 23" on the GitHub runner (`en_US`)**. Both are correct. Reproduced locally
+byte for byte with `.build/debug/GrandLine -AppleLocale en_US -AppleLanguages
+'(en_US)'`, which is the cheap way to get a runner's rendering on a dev Mac.
+
+**The fix is in the suite, not in the formatter**, and that is the whole point
+of the entry. Pinning `dayMonth` to a literal `"d MMM"` would have made CI green
+by making a *captain-facing date* stop following the machine's region - and it
+buys nothing on the captain's own machine, which already renders day-first. It
+is also the shipped rendering of F20's `overdueText` ("overdue since 16 Sep"),
+so pinning it would have silently restyled the Today card too. The precedent was
+already in the tree and this suite had simply broken it: **`DailyReviewSelfTest`
+contains no rendered date at all**, and that is why it has always passed on CI.
+
+So `checkTheCaptainsOwnTwoRecords` now asserts the wording *around* the date
+literally - which is what this feature owns - and compares the date itself
+against `dayMonth` of an independently built `Date` (`september(23)`, from
+`DateComponents`, not through `ShiftDateFormatting`). A composer that resolves
+the wrong day still fails: injecting `entry.at.addingTimeInterval(-86400)` into
+`dueDayText` fails the check in en_US *and* en_IN, and deleting the ", since
+<date>" clause fails it too.
+
+**The first draft of the guard made the same mistake one level up.** It
+established the rendering's discriminating power with `contains("23") &&
+contains("sep")` plus a length cap - which passed in en_IN, en_US and en_GB and
+failed in de_DE (`"23. Sept."` is nine characters) and ja_JP (`"9月23日"` contains
+no "sep"). A region-locked guard against a region-locking bug is not a guard.
+It now asserts three properties that name no character of any region's output:
+the rendering is non-empty, it *differs* between 23 and 18 September (so
+comparing a chip against it cannot be vacuous), and the same day in 2027 renders
+identically (so the template still carries no year). Green in en_IN, en_US,
+en_GB, de_DE, ja_JP and fr_FR.
+
+The general rule, which is not new but was worth paying for twice: **a suite
+must not assert a string that a `DateFormatter` localised**, and a fixture that
+proves such a string is discriminating must not do it by naming one region's
+characters either.

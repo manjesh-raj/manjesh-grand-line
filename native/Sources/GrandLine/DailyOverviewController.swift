@@ -46,7 +46,6 @@ final class DailyOverviewController: NSViewController {
 
     /// Navigation out of the card's own buttons, owned by the shell.
     var onNavigateToDestination: ((RailDestination) -> Void)?
-    var onOpenShiftTask: ((String) -> Void)?
 
     private let scroll = NSScrollView()
     private let contentStack = NSStackView()
@@ -204,7 +203,6 @@ final class DailyOverviewController: NSViewController {
         card.onDismiss = { [weak self] in self?.dismissDailyReview() }
         card.onOpenSettings = { [weak self] in self?.onNavigateToDestination?(.settings) }
         card.onPlanDay = { [weak self] in self?.onNavigateToDestination?(.shift) }
-        card.onStartTask = { [weak self] id in self?.onOpenShiftTask?(id) }
         card.onConnectCalendar = { [weak self] in self?.connectDailyReviewCalendar() }
     }
 

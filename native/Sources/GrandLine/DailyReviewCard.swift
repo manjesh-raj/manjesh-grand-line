@@ -6,7 +6,7 @@
 // a composer a suite can drive with no window at all, so what is left here is
 // only rendering.
 //
-// ## The mockup, and the two deviations from it
+// ## The mockup, and the deviations from it
 //
 // The published mockup (F20 in the "Grand Line Futures" artifact) is a
 // full-width card on Overview with a header sentence, three columns - due +
@@ -14,7 +14,7 @@
 // footer carrying one primary action and the locality note. That shape is
 // reproduced here, on the app's real components.
 //
-// Two deliberate differences:
+// Deliberate differences:
 //
 //   1. **The header's title is the sentence, and the date is the subtitle.**
 //      The mockup draws the date above the sentence. `HelmCard`'s structured
@@ -22,10 +22,20 @@
 //      reach in and restyle them (the component index's own rule for
 //      `HelmButton` applies to this card the same way). The sentence is the
 //      thing being read, so it takes the title slot.
-//   2. **No "Start on the TLS renewal" button when nothing is due.** The
-//      mockup's primary action names a specific task; with nothing due there
-//      is no task to name, so the footer keeps only "Plan the day in Tasks"
-//      rather than showing a disabled button that says nothing.
+//   2. **There is no due/follow-up column, and no "Start on ..." button.**
+//      The captain moved "Due today" and "Follow-ups" to the Home page's
+//      Needs Attention card (`NeedsAttentionCard.swift`), and *moved* means
+//      this card no longer draws them - two surfaces showing one overdue task
+//      is the duplication that move exists to remove. The primary action went
+//      with them, because it named the most urgent *due* item, which this
+//      card no longer knows about.
+//
+//      The digest is unchanged and still carries the due and follow-up rows:
+//      it is the one composer both cards read, and re-deriving them on Home
+//      would be a second definition of "due" (B22). This card simply renders
+//      the three sections it still owns, and hands the other two's stated
+//      gaps to the card that does own them - see `NeedsAttentionComposer.
+//      ownedGapSections`, which is the single list both sides filter on.
 //
 // ## Rebuild-on-render, and why `applyTheme` re-renders
 //
@@ -38,7 +48,7 @@
 //
 // ## Layout notes that matter if this is edited
 //
-//   - The three columns are tied equal-width at `HelmDaylightPriority.
+//   - The two columns are tied equal-width at `HelmDaylightPriority.
 //     contentTie` (499), never higher: AGENTS.md's gotcha (13) is that any
 //     content constraint above 500 can resize the whole window, and a card
 //     that spans the page is exactly the shape that does it.
@@ -47,8 +57,8 @@
 //     wider (gotcha (5)), and the column stacks use the **stack**-level
 //     hugging/clipping APIs rather than the content ones, which are no-ops on
 //     a view with no intrinsic size (gotcha (12)).
-//   - The two column dividers are pinned top *and* bottom to the row so they
-//     span the tallest column. Measured while confirming the suite catches a
+//   - The column divider is pinned top *and* bottom to the row so it spans
+//     the tallest column. Measured while confirming the suite catches a
 //     real regression: a horizontal `NSStackView` does in fact stretch an
 //     arranged subview with no intrinsic height to the row, so the pins are
 //     belt-and-braces rather than load-bearing - they are kept because that
@@ -66,8 +76,6 @@ final class DailyReviewCard: NSView {
     var onOpenSettings: (() -> Void)?
     /// "Plan the day in Tasks".
     var onPlanDay: (() -> Void)?
-    /// "Start on <task>" - carries the task id the digest chose.
-    var onStartTask: ((String) -> Void)?
     /// "Show today's calendar" - the only thing in this app that asks for
     /// calendar access, and only ever from a real click.
     var onConnectCalendar: (() -> Void)?
@@ -79,14 +87,11 @@ final class DailyReviewCard: NSView {
     private let dismissButton: HelmButton
 
     private let columnsRow = NSStackView()
-    private let dueColumn = NSStackView()
-    private let middleColumn = NSStackView()
+    private let calendarColumn = NSStackView()
     private let boardColumn = NSStackView()
-    private let firstDivider = NSView()
-    private let secondDivider = NSView()
+    private let columnDivider = NSView()
     private let footerDivider = NSView()
 
-    private let startButton = HelmButton(title: "Start on it", variant: .primary, symbol: "play.fill")
     private let planButton = HelmButton(title: "Plan the day in Tasks", variant: .secondary,
                                         symbol: "checklist")
     private let calendarButton = HelmButton(title: "Show today\u{2019}s calendar", variant: .quiet,
@@ -140,8 +145,6 @@ final class DailyReviewCard: NSView {
         settingsButton.action = #selector(settingsClicked)
         dismissButton.target = self
         dismissButton.action = #selector(dismissClicked)
-        startButton.target = self
-        startButton.action = #selector(startClicked)
         planButton.target = self
         planButton.action = #selector(planClicked)
         calendarButton.target = self
@@ -151,11 +154,10 @@ final class DailyReviewCard: NSView {
                        titleLabel: headlineLabel, subtitleLabel: kickerLabel,
                        actions: [settingsButton, dismissButton])
 
-        let dueContainer = wrap(dueColumn)
-        let middleContainer = wrap(middleColumn)
+        let middleContainer = wrap(calendarColumn)
         let boardContainer = wrap(boardColumn)
 
-        for divider in [firstDivider, secondDivider, footerDivider] {
+        for divider in [columnDivider, footerDivider] {
             divider.wantsLayer = true
             divider.translatesAutoresizingMaskIntoConstraints = false
         }
@@ -168,7 +170,7 @@ final class DailyReviewCard: NSView {
         // slack resolved by Auto Layout's own tie-breaking.
         columnsRow.distribution = .fill
         columnsRow.translatesAutoresizingMaskIntoConstraints = false
-        for view in [dueContainer, firstDivider, middleContainer, secondDivider, boardContainer] {
+        for view in [middleContainer, columnDivider, boardContainer] {
             columnsRow.addArrangedSubview(view)
         }
 
@@ -186,16 +188,14 @@ final class DailyReviewCard: NSView {
         collapse.priority = .defaultLow
         collapse.isActive = true
 
-        let footerRow = NSStackView(views: [startButton, planButton, footerSpacer, footnote])
+        let footerRow = NSStackView(views: [planButton, footerSpacer, footnote])
         footerRow.orientation = .horizontal
         footerRow.alignment = .centerY
         footerRow.spacing = HelmMetrics.s2
         footerRow.distribution = .fill
         footerRow.translatesAutoresizingMaskIntoConstraints = false
-        for control in [startButton, planButton] {
-            control.setContentHuggingPriority(.required, for: .horizontal)
-            control.setContentCompressionResistancePriority(.required, for: .horizontal)
-        }
+        planButton.setContentHuggingPriority(.required, for: .horizontal)
+        planButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         let footerContainer = NSView()
         footerContainer.translatesAutoresizingMaskIntoConstraints = false
         footerContainer.addSubview(footerRow)
@@ -217,13 +217,11 @@ final class DailyReviewCard: NSView {
 
         addSubview(card)
 
-        let equalMiddle = middleContainer.widthAnchor.constraint(equalTo: dueContainer.widthAnchor)
-        let equalBoard = boardContainer.widthAnchor.constraint(equalTo: dueContainer.widthAnchor)
-        // gotcha (13): 499, below `NSLayoutPriorityWindowSizeStayPut`. These
-        // are equalities between siblings, so they cannot themselves be a
-        // floor - but the card spans the page, and this is the one place a
-        // future edit could quietly make it one.
-        equalMiddle.priority = HelmDaylightPriority.contentTie
+        let equalBoard = boardContainer.widthAnchor.constraint(equalTo: middleContainer.widthAnchor)
+        // gotcha (13): 499, below `NSLayoutPriorityWindowSizeStayPut`. This is
+        // an equality between siblings, so it cannot itself be a floor - but
+        // the card spans the page, and this is the one place a future edit
+        // could quietly make it one.
         equalBoard.priority = HelmDaylightPriority.contentTie
 
         NSLayoutConstraint.activate([
@@ -237,16 +235,13 @@ final class DailyReviewCard: NSView {
             footerDivider.heightAnchor.constraint(equalToConstant: 1),
             footerContainer.widthAnchor.constraint(equalTo: body.widthAnchor),
 
-            firstDivider.widthAnchor.constraint(equalToConstant: 1),
-            secondDivider.widthAnchor.constraint(equalToConstant: 1),
-            // `.top` alignment pins only the top; without these the dividers
-            // resolve to zero height and the columns run together.
-            firstDivider.topAnchor.constraint(equalTo: columnsRow.topAnchor),
-            firstDivider.bottomAnchor.constraint(equalTo: columnsRow.bottomAnchor),
-            secondDivider.topAnchor.constraint(equalTo: columnsRow.topAnchor),
-            secondDivider.bottomAnchor.constraint(equalTo: columnsRow.bottomAnchor),
+            columnDivider.widthAnchor.constraint(equalToConstant: 1),
+            // `.top` alignment pins only the top; without these the divider
+            // resolves to zero height and the columns run together.
+            columnDivider.topAnchor.constraint(equalTo: columnsRow.topAnchor),
+            columnDivider.bottomAnchor.constraint(equalTo: columnsRow.bottomAnchor),
 
-            equalMiddle, equalBoard,
+            equalBoard,
         ])
 
         applyTheme(theme)
@@ -301,7 +296,7 @@ final class DailyReviewCard: NSView {
     private func paintChrome() {
         card.applyTheme(theme)
         let hair = Self.hairColor(theme)
-        for divider in [firstDivider, secondDivider, footerDivider] {
+        for divider in [columnDivider, footerDivider] {
             divider.layer?.backgroundColor = hair.cgColor
         }
         footnote.textColor = HelmTheme.mutedInk(theme)
@@ -315,77 +310,33 @@ final class DailyReviewCard: NSView {
         // card and the two that have to claim the opposite read as one voice.
         footnote.stringValue = AITransparency.local
 
-        for column in [dueColumn, middleColumn, boardColumn] {
+        for column in [calendarColumn, boardColumn] {
             for view in column.arrangedSubviews {
                 column.removeArrangedSubview(view)
                 view.removeFromSuperview()
             }
         }
 
-        buildDueColumn(digest)
-        buildMiddleColumn(digest)
+        buildCalendarColumn(digest)
         buildBoardColumn(digest)
 
-        if let title = digest.primaryTaskTitle {
-            startButton.title = "Start on \u{201C}\(Self.shorten(title))\u{201D}"
-            startButton.isHidden = false
-        } else {
-            startButton.isHidden = true
-        }
         // Every child was rebuilt, so re-apply the card's own chrome colours.
         paintChrome()
         needsLayout = true
     }
 
-    // MARK: The three columns
+    // MARK: The two columns
 
-    private func buildDueColumn(_ digest: DailyReviewDigest) {
-        let tasksUnavailable = digest.gaps.contains(where: { $0.section == "Tasks" })
-        dueColumn.addArrangedSubview(sectionHead(tasksUnavailable
-            ? "Due today"
-            : "Due today \u{00B7} \(digest.dueTasks.count + digest.hiddenDueTaskCount)"))
-        if tasksUnavailable {
-            dueColumn.addArrangedSubview(unavailableLine())
-        } else if digest.dueTasks.isEmpty {
-            dueColumn.addArrangedSubview(quietLine("Nothing is due today."))
-        } else {
-            for task in digest.dueTasks { dueColumn.addArrangedSubview(taskRow(task)) }
-            if digest.hiddenDueTaskCount > 0 {
-                dueColumn.addArrangedSubview(quietLine("+\(digest.hiddenDueTaskCount) more in Tasks"))
-            }
-        }
-
-        let followUpsUnavailable = digest.gaps.contains(where: { $0.section == "Follow-ups" })
-        let followUpTotal = digest.followUps.count + digest.hiddenFollowUpCount
-        dueColumn.addArrangedSubview(sectionHead(followUpsUnavailable
-            ? "Follow-ups"
-            : "Follow-ups \u{00B7} \(followUpTotal) pending"))
-        if followUpsUnavailable {
-            dueColumn.addArrangedSubview(unavailableLine())
-        } else if digest.followUps.isEmpty {
-            dueColumn.addArrangedSubview(quietLine("None waiting on you."))
-        } else {
-            for item in digest.followUps {
-                dueColumn.addArrangedSubview(detailLine(item.title,
-                                                        detail: item.whenText,
-                                                        isAlarming: item.isOverdue))
-            }
-            if digest.hiddenFollowUpCount > 0 {
-                dueColumn.addArrangedSubview(quietLine("+\(digest.hiddenFollowUpCount) more in Tasks"))
-            }
-        }
-    }
-
-    private func buildMiddleColumn(_ digest: DailyReviewDigest) {
-        middleColumn.addArrangedSubview(sectionHead("Calendar \u{00B7} read-only"))
+    private func buildCalendarColumn(_ digest: DailyReviewDigest) {
+        calendarColumn.addArrangedSubview(sectionHead("Calendar \u{00B7} read-only"))
         if digest.gaps.contains(where: { $0.section == "Calendar" }) {
-            middleColumn.addArrangedSubview(unavailableLine())
+            calendarColumn.addArrangedSubview(unavailableLine())
         } else if digest.events.isEmpty {
-            middleColumn.addArrangedSubview(quietLine("Nothing on your calendar today."))
+            calendarColumn.addArrangedSubview(quietLine("Nothing on your calendar today."))
         } else {
-            for event in digest.events { middleColumn.addArrangedSubview(eventRow(event)) }
+            for event in digest.events { calendarColumn.addArrangedSubview(eventRow(event)) }
             if digest.hiddenEventCount > 0 {
-                middleColumn.addArrangedSubview(quietLine("+\(digest.hiddenEventCount) more today"))
+                calendarColumn.addArrangedSubview(quietLine("+\(digest.hiddenEventCount) more today"))
             }
         }
     }
@@ -425,9 +376,14 @@ final class DailyReviewCard: NSView {
         // Its own column carries a one-word "not available" so the column
         // structure never changes shape - the reason lives in exactly one
         // place rather than being repeated in two.
-        guard !digest.gaps.isEmpty else { return }
+        // The Tasks and Follow-ups sections moved to Home's Needs Attention
+        // card, and their stated gaps went with them - a reason rendered on
+        // both pages is a reason that will eventually disagree with itself,
+        // and this page no longer has the section the reason is about.
+        let gaps = digest.gaps.filter { !NeedsAttentionComposer.ownedGapSections.contains($0.section) }
+        guard !gaps.isEmpty else { return }
         boardColumn.addArrangedSubview(sectionHead("Not available"))
-        for gap in digest.gaps {
+        for gap in gaps {
             boardColumn.addArrangedSubview(gapRow(gap, naming: true))
             // The one actionable gap. Offered only when asking is possible,
             // so a denied grant never shows a button that cannot change
@@ -459,58 +415,6 @@ final class DailyReviewCard: NSView {
             label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -2),
         ])
         return container
-    }
-
-    private func taskRow(_ task: DailyReviewTaskRow) -> NSView {
-        let box = NSView()
-        box.wantsLayer = true
-        box.translatesAutoresizingMaskIntoConstraints = false
-        box.layer?.cornerRadius = 4
-        box.layer?.borderWidth = 1.6
-        box.layer?.borderColor = task.isOverdue
-            ? HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme),
-                                             over: surface, theme: theme).cgColor
-            : Self.hairColor(theme).withAlphaComponent(0.9).cgColor
-        NSLayoutConstraint.activate([
-            box.widthAnchor.constraint(equalToConstant: 14),
-            box.heightAnchor.constraint(equalToConstant: 14),
-        ])
-        box.setContentHuggingPriority(.required, for: .horizontal)
-        box.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        let title = NSTextField(labelWithString: task.title)
-        title.font = HelmType.rowTitle()
-        title.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        title.lineBreakMode = .byTruncatingTail
-        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let meta = NSTextField(labelWithString: task.overdueText ?? task.meta)
-        meta.font = HelmType.captionSmall()
-        meta.textColor = task.isOverdue
-            ? HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme),
-                                             over: surface, theme: theme)
-            : HelmTheme.mutedInk(theme)
-        meta.lineBreakMode = .byTruncatingTail
-        meta.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let text = NSStackView(views: [title, meta])
-        text.orientation = .vertical
-        text.alignment = .leading
-        text.spacing = 1
-        text.setHuggingPriority(.defaultLow, for: .horizontal)
-        text.setClippingResistancePriority(.defaultLow, for: .horizontal)
-
-        let row = NSStackView(views: [box, text])
-        row.orientation = .horizontal
-        row.alignment = .top
-        row.spacing = HelmMetrics.s2
-        row.distribution = .fill
-        row.translatesAutoresizingMaskIntoConstraints = false
-        // The box is 14pt tall and the title's first line is taller; nudge the
-        // box down so it reads as aligned with the text rather than with the
-        // line box.
-        box.topAnchor.constraint(equalTo: row.topAnchor, constant: 2).isActive = true
-        return row
     }
 
     private func eventRow(_ event: DailyReviewEventRow) -> NSView {
@@ -669,11 +573,6 @@ final class DailyReviewCard: NSView {
             : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5)
     }
 
-    /// A button title is not a place for a 90-character task name.
-    static func shorten(_ title: String, limit: Int = 32) -> String {
-        title.count <= limit ? title : String(title.prefix(limit - 1)) + "\u{2026}"
-    }
-
     /// Whether the calendar's gap is one the captain can do something about.
     /// Set by the page before `render`.
     func setCalendarConnectable(_ connectable: Bool) {
@@ -686,10 +585,6 @@ final class DailyReviewCard: NSView {
     @objc private func settingsClicked() { onOpenSettings?() }
     @objc private func planClicked() { onPlanDay?() }
     @objc private func connectCalendarClicked() { onConnectCalendar?() }
-    @objc private func startClicked() {
-        guard let id = digest?.primaryTaskID else { return }
-        onStartTask?(id)
-    }
 
     // MARK: Probe / self-test surface
     //
@@ -698,13 +593,14 @@ final class DailyReviewCard: NSView {
     #if FM_SELFTESTS
     var debugHeadline: String { headlineLabel.stringValue }
     var debugKicker: String { kickerLabel.stringValue }
-    var debugStartButtonVisible: Bool { !startButton.isHidden }
-    var debugStartButtonTitle: String { startButton.title }
     var debugCalendarButtonMounted: Bool { calendarButton.superview != nil }
-    var debugColumns: [NSStackView] { [dueColumn, middleColumn, boardColumn] }
-    /// The two vertical rules between the columns - the ones whose *height*
-    /// is the interesting question.
-    var debugColumnDividers: [NSView] { [firstDivider, secondDivider] }
+    /// Column 0 is the calendar and column 1 is the board / reading list /
+    /// "Not available" block. The due + follow-ups column moved to Home's
+    /// Needs Attention card.
+    var debugColumns: [NSStackView] { [calendarColumn, boardColumn] }
+    /// The vertical rule between the columns - the one whose *height* is the
+    /// interesting question.
+    var debugColumnDividers: [NSView] { [columnDivider] }
     /// The horizontal rule above the footer, whose *width* is.
     var debugFooterDivider: NSView { footerDivider }
 
@@ -729,7 +625,6 @@ final class DailyReviewCard: NSView {
     /// The header's two action buttons, so a suite can assert they read as
     /// words rather than as a gear and an X.
     var debugHeaderActions: [HelmButton] { [settingsButton, dismissButton] }
-    func debugPressStart() { startClicked() }
     func debugPressPlanDay() { planClicked() }
     func debugPressConnectCalendar() { connectCalendarClicked() }
     #endif

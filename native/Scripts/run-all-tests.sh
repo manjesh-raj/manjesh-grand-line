@@ -262,6 +262,10 @@ NEEDS_SESSION=(
   # own width under a shrink (gotcha (13)). Its composer half
   # (`FM_RUN_DAILY_REVIEW_TESTS`) is pure logic and deliberately NOT here.
   "FM_RUN_DAILY_REVIEW_VIEW_TESTS"
+  # Same split, same reason: the Home page's Needs Attention card mounts the
+  # real hub in a real window and drives real controls. Its pure half
+  # (`FM_RUN_NEEDS_ATTENTION_TESTS`) is deliberately NOT here.
+  "FM_RUN_NEEDS_ATTENTION_VIEW_TESTS"
   # `fm/grandline-overview-layout-fix-gmail-settings`: mounts a real
   # `SettingsController` in a real window and asserts laid-out geometry and
   # painted colour. Its sibling `FM_RUN_GOOGLE_ACCOUNTS_TESTS` is pure logic

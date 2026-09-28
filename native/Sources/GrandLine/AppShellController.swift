@@ -949,7 +949,6 @@ final class AppShellController: NSViewController {
         // wiring - `fm/grandline-overview-layout-fix-gmail-settings` made
         // Overview a top-level page, which has no drill header to update.
         dailyOverview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
-        dailyOverview.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
         // Straw Hat phase 3 (M3.2): the crew's two navigation handoffs. Both
         // are pass-throughs into navigation this object already owns - a
         // handoff writes nothing, which is what lets its link row run on a

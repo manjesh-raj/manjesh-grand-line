@@ -108,6 +108,19 @@ struct DailyReviewTaskRow: Equatable {
     let isOverdue: Bool
     /// "overdue since 16 Sep", only when `isOverdue`.
     let overdueText: String?
+    /// Whole days between the due day and today, and `0` when the row is not
+    /// overdue.
+    ///
+    /// Carried on the row rather than re-derived by a reader, because two
+    /// surfaces now word the same lateness differently - this card says
+    /// "overdue since 16 Sep" and the Home page's Needs Attention card says
+    /// "Overdue 5 days, since 16 Sep". A second reader doing its own date
+    /// maths is a second definition of overdue, which is exactly what B22
+    /// spent a task collapsing into `ShiftDue.isOverdue`.
+    let overdueDays: Int
+    /// "16 Sep" - the due day on its own, for a reader that wants to put it
+    /// in a different sentence.
+    let dueDayText: String
 }
 
 /// One pending follow-up due today or earlier.
@@ -117,6 +130,10 @@ struct DailyReviewFollowUpRow: Equatable {
     /// "today 3:00 PM", "Wed", "overdue since 16 Sep".
     let whenText: String
     let isOverdue: Bool
+    /// See `DailyReviewTaskRow.overdueDays`.
+    let overdueDays: Int
+    /// See `DailyReviewTaskRow.dueDayText`.
+    let dueDayText: String
 }
 
 /// One of today's calendar events. Read-only, and deliberately carries only
@@ -311,7 +328,9 @@ enum DailyReviewComposer {
                     title: entry.task.title,
                     meta: taskMeta(entry.task, projectNames: inputs.projectNames),
                     isOverdue: isOverdue,
-                    overdueText: isOverdue ? "overdue since \(dayMonth(entry.at))" : nil))
+                    overdueText: isOverdue ? "overdue since \(dayMonth(entry.at))" : nil,
+                    overdueDays: isOverdue ? daysLate(entry.at, now: now) : 0,
+                    dueDayText: dayMonth(entry.at)))
             }
             totalDue = due.count
             hiddenDueTasks = max(0, due.count - dueTasks.count)
@@ -364,7 +383,9 @@ enum DailyReviewComposer {
                     id: entry.item.id,
                     title: entry.item.title,
                     whenText: isOverdue ? "overdue since \(dayMonth(entry.at))" : todayTime(entry.at, hasTime: entry.item.followUpTime != nil),
-                    isOverdue: isOverdue))
+                    isOverdue: isOverdue,
+                    overdueDays: isOverdue ? daysLate(entry.at, now: now) : 0,
+                    dueDayText: dayMonth(entry.at)))
             }
             hiddenFollowUps = max(0, pending.count - followUps.count)
         } else if let reason = inputs.followUps.unavailableReason {
@@ -501,6 +522,23 @@ enum DailyReviewComposer {
 
     /// "16 Sep".
     static func dayMonth(_ date: Date) -> String { dayMonthFormatter.string(from: date) }
+
+    /// Whole days between the day something was due and today, floored at
+    /// zero.
+    ///
+    /// Days rather than elapsed hours, because that is the unit the captain
+    /// reads lateness in: a task due at 17:00 yesterday is "overdue 1 day" at
+    /// 09:00 this morning, not "overdue 16 hours". `Calendar.current`
+    /// deliberately, for the same reason `ShiftDateFormatting` resolves a bare
+    /// day string to *local* midnight - "due today" means today where the
+    /// captain is.
+    static func daysLate(_ due: Date, now: Date) -> Int {
+        let calendar = Calendar.current
+        let days = calendar.dateComponents([.day],
+                                           from: calendar.startOfDay(for: due),
+                                           to: calendar.startOfDay(for: now)).day ?? 0
+        return max(0, days)
+    }
 
     /// A follow-up due today: "today 3:00 PM" when it carries a time, plain
     /// "today" when it does not - rather than inventing a midnight.

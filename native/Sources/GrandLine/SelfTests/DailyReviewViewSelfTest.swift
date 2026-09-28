@@ -130,19 +130,25 @@ enum DailyReviewViewSelfTest {
             check(card.debugKicker.contains("\u{00B7}"),
                   "the kicker should name the day and the time, got \"\(card.debugKicker)\"")
 
-            let due = card.debugText(inColumn: 0)
-            check(due.contains(where: { $0.contains("Renew wildcard TLS certificate") }),
-                  "the overdue task should be painted, got \(due)")
-            check(due.contains(where: { $0.lowercased().contains("overdue since") }),
-                  "and it should say it is late, got \(due)")
-            check(due.contains(where: { $0.contains("Ravi on the VPC peering") }),
-                  "the pending follow-up should be painted, got \(due)")
-            // Assert what is painted, not what was computed: the section head
-            // carries the real count.
-            check(due.contains(where: { $0.hasPrefix("DUE TODAY") && $0.contains("2") }),
-                  "the due section should carry its count, got \(due)")
+            // The due / follow-up sections moved to Home's Needs Attention
+            // card, so this page must no longer paint them anywhere - which
+            // is the whole point of the move, and the check that fails if a
+            // future edit reinstates the column.
+            let everything = card.debugText(inColumn: 0) + card.debugText(inColumn: 1)
+            check(everything.contains(where: { $0.contains("Ask Ravi about VPC peering") }),
+                  "the fixture should still be discriminating - the board row should be painted, "
+                      + "got \(everything)")
+            check(!everything.contains(where: { $0.contains("Renew wildcard TLS certificate") }),
+                  "the overdue task moved to Home and must not be painted here, got \(everything)")
+            check(!everything.contains(where: { $0.contains("Ravi on the VPC peering") }),
+                  "the pending follow-up moved to Home and must not be painted here, "
+                      + "got \(everything)")
+            check(!everything.contains(where: { $0.hasPrefix("DUE TODAY") }),
+                  "and neither should its section head, got \(everything)")
+            check(!everything.contains(where: { $0.hasPrefix("FOLLOW-UPS") }),
+                  "nor the follow-ups section head, got \(everything)")
 
-            let board = card.debugText(inColumn: 2)
+            let board = card.debugText(inColumn: 1)
             check(board.contains(where: { $0.contains("Ask Ravi about VPC peering") }),
                   "the sticky note should be painted, got \(board)")
             check(board.contains(where: { $0.contains("unread") }),
@@ -157,10 +163,6 @@ enum DailyReviewViewSelfTest {
                   "the Not available block still names habits, got \(board)")
             check(board.contains(where: { $0.hasPrefix("Calendar -") }),
                   "and the calendar, which is off, got \(board)")
-
-            check(card.debugStartButtonVisible, "with something overdue, the footer offers to start on it")
-            check(card.debugStartButtonTitle.contains("Renew wildcard"),
-                  "and names it, got \"\(card.debugStartButtonTitle)\"")
         }
     }
 
@@ -174,7 +176,7 @@ enum DailyReviewViewSelfTest {
                   "every column should have a real laid-out width, got \(widths)")
             let spread = (widths.max() ?? 0) - (widths.min() ?? 0)
             check(spread < 2,
-                  "the three columns should be equal width, got \(widths)")
+                  "the two columns should be equal width, got \(widths)")
 
             // The dividers are pinned top and bottom to the row; `.top`
             // alignment alone leaves them zero-height, which is exactly the
@@ -283,14 +285,14 @@ enum DailyReviewViewSelfTest {
                                 detail: "6 attendees \u{00B7} Meet", colorHex: "CD8D2E", isAllDay: false),
         ])
         withMountedPage(stores, calendar: stub) { _, card, _ in
-            let middle = card.debugText(inColumn: 1)
+            let middle = card.debugText(inColumn: 0)
             check(middle.contains(where: { $0 == "Platform standup" }),
                   "an event should be painted by title, got \(middle)")
             check(middle.contains(where: { $0 == "10:00" }),
                   "with its own time, got \(middle)")
             check(middle.contains(where: { $0.contains("6 attendees") }),
                   "and its detail line, got \(middle)")
-            check(!card.debugText(inColumn: 2).contains(where: { $0.hasPrefix("Calendar -") }),
+            check(!card.debugText(inColumn: 1).contains(where: { $0.hasPrefix("Calendar -") }),
                   "with the calendar readable there should be no calendar gap")
             check(!card.debugCalendarButtonMounted,
                   "and nothing left to connect")
