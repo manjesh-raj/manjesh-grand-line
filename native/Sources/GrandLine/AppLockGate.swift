@@ -123,6 +123,22 @@ enum AppLockedSurface {
     /// screen's password field loses first responder to a terminal nobody can
     /// see, so the password itself is typed into a remote shell.
     case terminalFocus
+    /// Review bug B36: `processTerminated`'s automatic reconnect of a tab
+    /// whose session dropped while the app was locked.
+    ///
+    /// Its own case rather than sharing `terminalSession`'s, per this file's
+    /// header rule, and the reason is concrete here: the two are gated at
+    /// different moments and only one of them has anything to resume.
+    /// `terminalSession` guards a *first* start, which `viewDidAppear` and
+    /// `resumeAfterUnlock` between them will simply run later - nothing is
+    /// lost by refusing. This one guards a **timer** that fires 2 seconds
+    /// after a session the captain deliberately opened dropped, so refusing
+    /// it leaves a real, previously-live tab dead, and the gate only works
+    /// because the refusal is paired with `TabModel.reconnectDeferredByLock`
+    /// and a drain on unlock. A suite asserting "no ssh starts while locked"
+    /// passes just as happily with this gate deleted, which is precisely what
+    /// audit #2 recorded and left open.
+    case terminalAutoReconnect
     /// F15: launching the system region picker.
     ///
     /// The lock overlay is a view inside this app's window, and

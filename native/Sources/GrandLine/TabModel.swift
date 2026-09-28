@@ -118,6 +118,20 @@ final class TabModel {
         case unknown
     }
 
+    /// Review bug B36: this tab's session dropped while the app was locked,
+    /// so its automatic reconnect was refused and is owed on unlock.
+    ///
+    /// The flag is what turns the refusal from "a live tab silently died" -
+    /// which is why audit #2 left the gate open rather than widening it - into
+    /// a deferral: `ConsoleController.resumeAfterUnlock` drains it, and the
+    /// terminal already carries a line saying so, so a captain who unlocks
+    /// sees the same tab reconnect rather than having to notice a dead one.
+    ///
+    /// Cleared by `startTab` (any reconnect, automatic or manual, settles the
+    /// debt) as well as by the drain itself, so a captain who right-clicks
+    /// the tab first does not get a second reconnect on unlock.
+    var reconnectDeferredByLock = false
+
     /// Set by `ConsoleController.processTerminated` (and its split-pane
     /// sibling) and never cleared on restart - `startTab` resets it, so a
     /// reconnected tab does not keep describing a previous run.

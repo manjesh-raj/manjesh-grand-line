@@ -51,6 +51,8 @@ enum ConsoleTabLifecycleSelfTest {
             ("closingTheLastTabOpensAFreshShell", test_closingLastTabOpensShell),
             ("closingTheLastTabOnAHostPageLeavesItEmpty", test_hostPageMayEndUpEmpty),
             ("reconnectKeepsTheSameTabAndTerminalView", test_reconnectReusesTheSameTab),
+            ("aSessionDroppingWhileLockedDefersItsReconnect", test_lockDefersTheAutoReconnect),
+            ("aLockInsideTheTimerWindowAlsoDefers", test_lockEngagingInsideTheTimerWindowAlsoDefers),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -353,6 +355,116 @@ enum ConsoleTabLifecycleSelfTest {
         }
         return nil
     }
+    // MARK: B36 - a session that drops while the app is locked
+
+    /// Review bug B36, and the half audit #2 §5.1 deliberately left open:
+    /// `processTerminated`'s auto-reconnect timer would re-establish a dropped
+    /// `ssh` - and raise a Touch ID prompt - behind the lock overlay.
+    ///
+    /// The fix is a refusal *paired with a resume story*, which is what that
+    /// audit said the gate was waiting on, so both halves are asserted here:
+    /// nothing restarts while locked, and the same tab comes back on unlock.
+    ///
+    /// Discriminating power first, in the case's own body: the identical
+    /// sequence is run unlocked and the tab must **not** be marked deferred.
+    /// Without that, a fix that set the flag unconditionally would pass.
+    private static func test_lockDefersTheAutoReconnect() -> String? {
+        let (window, console) = makeConsole(isFirstmate: false)
+        let wasAuto = AppSettings.shared.autoReconnect
+        let wasLocked = AppLockGate.shared.isLocked
+        defer {
+            AppLockGate.shared.setLocked(wasLocked)
+            AppSettings.shared.autoReconnect = wasAuto
+            console.shutdown()
+            window.orderOut(nil)
+        }
+        AppSettings.shared.autoReconnect = true
+
+        // --- unlocked: the ordinary path, and the control for everything below
+        AppLockGate.shared.setLocked(false)
+        console.newShellTab()
+        guard let live = console.currentTab else { return "no tab" }
+        console.processTerminated(source: live.terminal, exitCode: nil)
+        if live.reconnectDeferredByLock {
+            return "an unlocked app deferred the reconnect - this case would pass with the gate "
+                 + "inverted or hard-coded"
+        }
+
+        // --- locked: the finding
+        AppLockGate.shared.setLocked(true)
+        console.newShellTab()
+        guard let tab = console.currentTab else { return "no second tab" }
+        console.processTerminated(source: tab.terminal, exitCode: nil)
+
+        guard tab.reconnectDeferredByLock else {
+            return "a session that dropped while locked was not marked as owing a reconnect - "
+                 + "it either reconnected behind the overlay or died silently"
+        }
+        let hint = console.debugCurrentTerminalOutput() ?? ""
+        guard hint.contains("reconnecting when you unlock") else {
+            return "the tab does not say a reconnect is owed - a refusal with no visible state is "
+                 + "the 'tab left dead afterwards' audit #2 refused to ship"
+        }
+        guard !hint.contains("[process ended - reconnecting\u{2026}]") else {
+            return "the tab still promises an immediate reconnect while locked"
+        }
+
+        // --- unlock: the resume story
+        AppLockGate.shared.setLocked(false)
+        console.resumeAfterUnlock()
+        guard !tab.reconnectDeferredByLock else {
+            return "unlocking did not drain the deferred reconnect - the tab stays dead"
+        }
+        guard console.tabs.contains(where: { $0 === tab }) else {
+            return "the deferred tab was replaced rather than reconnected"
+        }
+        guard (console.debugCurrentTerminalOutput() ?? "").contains("unlocked - reconnecting") else {
+            return "the tab reconnected without saying so"
+        }
+        return nil
+    }
+
+    /// The other half of the same gate, and the one a source check cannot
+    /// see: the lock can engage *inside* the two-second window between the
+    /// process ending and the timer firing, which is the moment the check at
+    /// the top of `processTerminated` cannot observe.
+    ///
+    /// This really waits for the real timer rather than calling the helper -
+    /// a hook that calls `deferReconnectUntilUnlock` directly would assert the
+    /// helper, not the wiring, which is this repository's most-repeated
+    /// testing trap.
+    private static func test_lockEngagingInsideTheTimerWindowAlsoDefers() -> String? {
+        let (window, console) = makeConsole(isFirstmate: false)
+        let wasAuto = AppSettings.shared.autoReconnect
+        let wasLocked = AppLockGate.shared.isLocked
+        defer {
+            AppLockGate.shared.setLocked(wasLocked)
+            AppSettings.shared.autoReconnect = wasAuto
+            console.shutdown()
+            window.orderOut(nil)
+        }
+        AppSettings.shared.autoReconnect = true
+        AppLockGate.shared.setLocked(false)
+
+        console.newShellTab()
+        guard let tab = console.currentTab else { return "no tab" }
+        console.processTerminated(source: tab.terminal, exitCode: nil)
+        // The timer is armed and the app was unlocked when it was armed.
+        if tab.reconnectDeferredByLock {
+            return "the reconnect was deferred before the lock engaged"
+        }
+        AppLockGate.shared.setLocked(true)
+
+        let deadline = Date().addingTimeInterval(6)
+        while !tab.reconnectDeferredByLock, Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+        }
+        guard tab.reconnectDeferredByLock else {
+            return "the timer fired against a now-locked app and reconnected anyway"
+        }
+        return nil
+    }
+
 }
 
 #endif
