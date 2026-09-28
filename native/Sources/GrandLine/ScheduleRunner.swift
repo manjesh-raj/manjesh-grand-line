@@ -71,11 +71,38 @@ struct ScheduleActionResult {
     /// rather than inventing a transcript, via the memberwise initializer
     /// below.
     let log: String
+    /// Why it did not finish, in three plain-English fields. Required for
+    /// `.failed` and `.partial`; `nil` for the three successes.
+    ///
+    /// The two initialisers below are what make that a rule rather than a
+    /// hope: there is no way to construct a failing result without supplying
+    /// one, so a future failure path cannot quietly ship
+    /// `error.localizedDescription` the way `configBackupExport` once did.
+    let failure: ScheduleFailureExplanation?
 
+    /// A successful result. Callable only with a verdict that succeeded.
     init(verdict: ScheduleRunVerdict, summary: String, log: String? = nil) {
+        precondition(verdict.succeeded,
+                     "a non-succeeding verdict needs ScheduleActionResult(failing:...) and an explanation")
         self.verdict = verdict
         self.summary = summary
         self.log = log ?? summary
+        self.failure = nil
+    }
+
+    /// A `.failed` or `.partial` result, which cannot be built without saying
+    /// what failed, why, and what the captain can do about it.
+    init(failing verdict: ScheduleRunVerdict,
+         summary: String,
+         whatFailed: String,
+         why: String,
+         whatToDo: String,
+         log: String? = nil) {
+        precondition(!verdict.succeeded, "use the plain initializer for a succeeding verdict")
+        self.verdict = verdict
+        self.summary = summary
+        self.log = log ?? summary
+        self.failure = ScheduleFailureExplanation(whatFailed: whatFailed, why: why, whatToDo: whatToDo)
     }
 }
 
@@ -262,7 +289,8 @@ final class ScheduleRunner {
                 self.runStartedAt = nil
                 self.runningScheduleID = nil
 
-                let record = ScheduleRunRecord(verdict: result.verdict, summary: result.summary, at: Date())
+                let record = ScheduleRunRecord(verdict: result.verdict, summary: result.summary,
+                                               at: Date(), failure: result.failure)
                 self.store?.recordRun(id: schedule.id, occurrence: occurrence, record: record)
                 // F11's run history: kept separately from `record` above
                 // (which `ScheduleStore` only ever remembers the latest one
@@ -275,14 +303,19 @@ final class ScheduleRunner {
                     verdict: result.verdict,
                     summary: result.summary,
                     actionTitle: action.title,
-                    log: result.log))
+                    log: result.log,
+                    failure: result.failure))
 
-                switch result.verdict {
-                case .failed:
+                // `.partial` reports as a failure here, matching
+                // `ScheduleHealthSeeding.seeds`: a run that could not
+                // establish half its own result is not a healthy run, and
+                // `verdict.succeeded` is the single place that judgement
+                // lives.
+                if result.verdict.succeeded {
+                    ServiceHealthRegistry.shared.recordSuccess(.scheduledAutomations)
+                } else {
                     ServiceHealthRegistry.shared.recordFailure(
                         .scheduledAutomations, "\(action.title): \(result.summary)")
-                case .clean, .changed:
-                    ServiceHealthRegistry.shared.recordSuccess(.scheduledAutomations)
                 }
 
                 NotificationSources.setScheduleResult(
@@ -309,6 +342,27 @@ final class ScheduleRunner {
 ///
 /// Every function here runs on a background queue - none of them touch AppKit.
 enum ScheduleActions {
+
+    /// How a tool sweep's own counts become a verdict, as pure arithmetic.
+    ///
+    /// Extracted from `toolUpdateCheck`/`toolUpdateInstall` so the rule can be
+    /// tested without a network, which is the only reason the defect it
+    /// encodes survived as long as it did: both call sites reached it through
+    /// a `UpdatesSource.check` per tool, so no suite could exercise the
+    /// branch at all and the `.clean` arm was never once evaluated against a
+    /// partly-failed sweep.
+    ///
+    /// **The rule.** All checks failed is a failure. *Some* checks failed is
+    /// `.partial` - never `.clean`, which is what it used to be, and which
+    /// made a run where 7 of 8 checks failed report "All 8 tracked tools up
+    /// to date" (GL-14: "Unknown is never rendered as zero. A failed fetch
+    /// and an empty result are different states"). Everything checked and
+    /// nothing to do is `.clean`.
+    static func toolSweepVerdict(total: Int, checkFailed: Int, actionable: Int) -> ScheduleRunVerdict {
+        if total > 0 && checkFailed == total { return .failed }
+        if checkFailed > 0 { return .partial }
+        return actionable > 0 ? .foundSomething : .clean
+    }
 
     static func run(_ action: ScheduledActionKind,
                     backupStores: (hosts: HostStore, keys: SSHKeyStore, snippets: SnippetStore, dictation: DictationStore)?) -> ScheduleActionResult {
@@ -345,9 +399,15 @@ enum ScheduleActions {
         let log = driftCheckLog(repoPath: repoPath, state: state, agentItems: agentItems)
 
         guard repoPath != nil else {
+            // `.partial`, not a finding: the check could not run at all, so it
+            // established nothing about drift either way. Reporting this as
+            // "found something" would claim a result it never had.
             return ScheduleActionResult(
-                verdict: .changed,
-                summary: "~/.dotfiles was not found on this machine.",
+                failing: .partial,
+                summary: "~/.dotfiles was not found on this machine, so nothing could be checked.",
+                whatFailed: "The drift check couldn\u{2019}t look at your dotfiles.",
+                why: "There is no ~/.dotfiles folder on this Mac, so there was nothing to compare against.",
+                whatToDo: "Open Bootstrap and use its dotfiles card to clone the repo, then run this schedule again.",
                 log: log)
         }
         if dotfilesDone && agentDone {
@@ -368,7 +428,8 @@ enum ScheduleActions {
             reasons.append("\(unlinked) agent instruction link\(unlinked == 1 ? "" : "s") not resolving")
         }
         if reasons.isEmpty { reasons.append("drift detected") }
-        return ScheduleActionResult(verdict: .changed, summary: reasons.joined(separator: ", ") + ".", log: log)
+        return ScheduleActionResult(verdict: .foundSomething,
+                                    summary: reasons.joined(separator: ", ") + ".", log: log)
     }
 
     /// A readable transcript of exactly what the drift check looked at, for
@@ -419,16 +480,36 @@ enum ScheduleActions {
         let failed = statuses.filter { $0 == .checkFailed }.count
         let available = statuses.filter { $0.showsUpdateButton }.count
         let log = perToolLog(outcomes)
-        if failed == statuses.count && !statuses.isEmpty {
-            return ScheduleActionResult(verdict: .failed, summary: "Every tool check failed - is the network reachable?", log: log)
-        }
-        if available == 0 {
+        switch toolSweepVerdict(total: statuses.count, checkFailed: failed, actionable: available) {
+        case .failed:
+            return ScheduleActionResult(
+                failing: .failed,
+                summary: "Every tool check failed - is the network reachable?",
+                whatFailed: "None of the \(statuses.count) tracked tools could be checked.",
+                why: "Every single check failed, which almost always means this Mac had no working network connection when the schedule ran.",
+                whatToDo: "Check your connection and run this schedule again from its row. Nothing was installed or changed.",
+                log: log)
+        case .partial:
+            let checked = statuses.count - failed
+            var summary = "\(failed) of \(statuses.count) tools couldn\u{2019}t be checked"
+            summary += available > 0
+                ? "; \(available) of the \(checked) that could have an update available."
+                : "; the \(checked) that could are up to date."
+            return ScheduleActionResult(
+                failing: .partial,
+                summary: summary,
+                whatFailed: "\(failed) of the \(statuses.count) tracked tools couldn\u{2019}t be checked for updates.",
+                why: "Those checks failed to return a version. The usual cause is no network, or the tool\u{2019}s own package manager being unavailable.",
+                whatToDo: "Open Updates to see which tools are affected and check them by hand. The \(checked) that did report are accurate.",
+                log: log)
+        case .clean:
             return ScheduleActionResult(verdict: .clean, summary: "All \(statuses.count) tracked tools up to date.", log: log)
+        case .foundSomething, .didWork:
+            return ScheduleActionResult(
+                verdict: .foundSomething,
+                summary: "\(available) of \(statuses.count) tools have an update available.",
+                log: log)
         }
-        return ScheduleActionResult(
-            verdict: .changed,
-            summary: "\(available) of \(statuses.count) tools have an update available.",
-            log: log)
     }
 
     /// One block per tool - name, the same one-line detail the Updates page's
@@ -497,13 +578,39 @@ enum ScheduleActions {
         if checkFailed > 0 { parts.append("\(checkFailed) could not be checked") }
         let log = logBlocks.joined(separator: "\n\n")
 
+        let summary = parts.joined(separator: "; ") + "."
         if !failed.isEmpty || (checkFailed == GitHubSyncCatalog.repos.count && checkFailed > 0) {
-            return ScheduleActionResult(verdict: .failed, summary: parts.joined(separator: "; ") + ".", log: log)
+            return ScheduleActionResult(
+                failing: .failed,
+                summary: summary,
+                whatFailed: failed.isEmpty
+                    ? "None of the \(GitHubSyncCatalog.repos.count) forks could be checked."
+                    : "\(failed.count) fork\(failed.count == 1 ? "" : "s") couldn\u{2019}t be brought up to date: \(failed.joined(separator: ", ")).",
+                why: failed.isEmpty
+                    ? "Every check failed to reach GitHub, which usually means no network or an expired gh login."
+                    : "The fast-forward was refused by GitHub. The log below has what gh reported for each one.",
+                whatToDo: "Open GitHub Sync and try those repos by hand. Nothing was force-pushed, so no history was rewritten.",
+                log: log)
+        }
+        // Some forks were checked and some were not: honest partial rather
+        // than a clean claim about repos nobody looked at.
+        if checkFailed > 0 {
+            return ScheduleActionResult(
+                failing: .partial,
+                summary: summary,
+                whatFailed: "\(checkFailed) of the \(GitHubSyncCatalog.repos.count) forks couldn\u{2019}t be checked.",
+                why: "Those checks did not get an answer from GitHub. The rest were checked normally.",
+                whatToDo: "Open GitHub Sync to check the affected forks by hand. Whatever this run did report is accurate.",
+                log: log)
         }
         if parts.isEmpty {
             return ScheduleActionResult(verdict: .clean, summary: "All \(GitHubSyncCatalog.repos.count) forks already in sync.", log: log)
         }
-        return ScheduleActionResult(verdict: .changed, summary: parts.joined(separator: "; ") + ".", log: log)
+        // Real work happened and none of it is the captain's to follow up -
+        // `.didWork`, not an FYI. A diverged fork is the one thing here that
+        // genuinely wants a human, so it is what tips this to `.foundSomething`.
+        return ScheduleActionResult(verdict: diverged.isEmpty ? .didWork : .foundSomething,
+                                    summary: summary, log: log)
     }
 
     // MARK: Vault recipe export - a commit + push, secret names only
@@ -524,8 +631,11 @@ enum ScheduleActions {
     private static func vaultRecipeExport() -> ScheduleActionResult {
         guard let repoPath = VaultRecipeGit.resolveRepoPath() else {
             return ScheduleActionResult(
-                verdict: .failed,
-                summary: "No local manjesh-config clone found - set it up from Bootstrap's dotfiles card first.")
+                failing: .failed,
+                summary: "No local manjesh-config clone found - set it up from Bootstrap's dotfiles card first.",
+                whatFailed: "The vault recipe couldn\u{2019}t be exported.",
+                why: "There is no local clone of the manjesh-config repo on this Mac to write the recipe into.",
+                whatToDo: "Open Bootstrap and set up the dotfiles card, which clones manjesh-config, then run this schedule again.")
         }
         let snapshot = VaultSource.loadSnapshot()
         // H1/B1: the same guard the two manual export paths carry
@@ -538,8 +648,11 @@ enum ScheduleActions {
         // matters more here than on the button the captain is watching.
         guard !snapshot.isDegraded else {
             return ScheduleActionResult(
-                verdict: .failed,
-                summary: "Couldn\u{2019}t read Automic Vault, so nothing was exported - a recipe built from a failed read would claim this machine has no secrets.")
+                failing: .failed,
+                summary: "Couldn\u{2019}t read Automic Vault, so nothing was exported - a recipe built from a failed read would claim this machine has no secrets.",
+                whatFailed: "The vault recipe couldn\u{2019}t be exported.",
+                why: "Automic Vault didn\u{2019}t answer, so the list of secret names came back empty. Exporting that would have published a recipe claiming this Mac holds no secrets at all.",
+                whatToDo: "Nothing was written, so nothing is wrong in the repo. Open Poneglyph to check Automic Vault is responding, then run this schedule again.")
         }
         let recipe = VaultRecipe.build(from: snapshot, generatedAt: ISO8601DateFormatter().string(from: Date()))
         let result = VaultRecipeGit.export(recipe: recipe, repoPath: repoPath)
@@ -549,25 +662,42 @@ enum ScheduleActions {
         // evaluated against alongside it.
         let log = "Repo: \(repoPath)\nRecipe file: \(result.filePath ?? "n/a")\n\n\(result.message)"
         guard result.ok else {
-            return ScheduleActionResult(verdict: .failed, summary: result.message, log: log)
+            return ScheduleActionResult(
+                failing: .failed,
+                summary: result.message,
+                whatFailed: "The vault recipe couldn\u{2019}t be committed and pushed to manjesh-config.",
+                why: result.message,
+                whatToDo: "Open Poneglyph and export the recipe by hand to see the full error. No secret value was ever read, stored or sent.",
+                log: log)
         }
         // `export` short-circuits with its own "nothing to push" message when
         // the recipe on disk already matches, which is the ordinary clean case
         // for a weekly schedule - not something worth notifying about.
         let unchanged = result.message.localizedCaseInsensitiveContains("nothing to push")
-        return ScheduleActionResult(verdict: unchanged ? .clean : .changed, summary: result.message, log: log)
+        // An export that pushed did the job it exists for. Nothing here is the
+        // captain's to act on, which is exactly the distinction `.didWork`
+        // was added to carry.
+        return ScheduleActionResult(verdict: unchanged ? .clean : .didWork, summary: result.message, log: log)
     }
 
     // MARK: Config backup export - a push of a .glbackup bundle
 
     private static func configBackupExport(stores: (hosts: HostStore, keys: SSHKeyStore, snippets: SnippetStore, dictation: DictationStore)?) -> ScheduleActionResult {
         guard let stores else {
-            return ScheduleActionResult(verdict: .failed, summary: "Backup stores are not available in this process.")
+            return ScheduleActionResult(
+                failing: .failed,
+                summary: "The app\u{2019}s data stores weren\u{2019}t ready, so there was nothing to back up.",
+                whatFailed: "The config backup didn\u{2019}t run.",
+                why: "Grand Line\u{2019}s hosts, snippets and preferences weren\u{2019}t loaded yet when the schedule fired, so there was nothing to package up.",
+                whatToDo: "Run this schedule again from its row now that the app is up. If it keeps happening at the same time every night, move the schedule a few minutes later.")
         }
         guard GitHubBackupSource.isAvailable() else {
             return ScheduleActionResult(
-                verdict: .failed,
-                summary: "GitHub is not authenticated - run `gh auth login` so the backup can be pushed.")
+                failing: .failed,
+                summary: "GitHub is not authenticated - run `gh auth login` so the backup can be pushed.",
+                whatFailed: "The backup couldn\u{2019}t be pushed to GitHub.",
+                why: "This Mac isn\u{2019}t signed in to GitHub, so the push had nowhere to authenticate to.",
+                whatToDo: "Run `gh auth login` in a Console tab, then run this schedule again from its row.")
         }
         // Reading the stores has to happen on the main thread: they are
         // main-thread-only by design (see `SnippetStore`'s header), and this
@@ -585,12 +715,29 @@ enum ScheduleActions {
                 dictationStore: stores.dictation)
         }
         guard let bundle else {
-            return ScheduleActionResult(verdict: .failed, summary: "Could not read the local stores.")
+            return ScheduleActionResult(
+                failing: .failed,
+                summary: "Couldn\u{2019}t read this Mac\u{2019}s hosts, snippets and preferences, so no backup was made.",
+                whatFailed: "The config backup didn\u{2019}t run.",
+                why: "Building the backup bundle from the local stores returned nothing.",
+                whatToDo: "Open Settings and use the Backup card to export by hand, which reports the underlying error directly.")
         }
         do {
             try GitHubBackupSource.export(bundle)
         } catch {
-            return ScheduleActionResult(verdict: .failed, summary: error.localizedDescription)
+            // This used to hand the captain `error.localizedDescription`
+            // verbatim, which for `GitHubBackupError.notConfigured` reads
+            // "Could not determine the GitHub repo from
+            // DotfilesSource.cloneURL." - a Swift symbol name. The thrown
+            // text is still the most accurate thing anyone knows about *why*,
+            // so it stays as the `why`; what it may never be again is the
+            // whole answer.
+            return ScheduleActionResult(
+                failing: .failed,
+                summary: "The backup couldn\u{2019}t be pushed to GitHub.",
+                whatFailed: "The backup couldn\u{2019}t be pushed to GitHub.",
+                why: error.localizedDescription,
+                whatToDo: "Open Settings and use the Backup card to export by hand - it runs the same push and shows the error in full. Nothing on GitHub was changed.")
         }
         let hostCount = bundle.hosts.count
         let snippetCount = bundle.snippets.count
@@ -601,7 +748,13 @@ enum ScheduleActions {
         let log = summary
             + "\nHosts: \(bundle.hosts.map { $0.label }.joined(separator: ", "))"
             + "\nSnippets: \(bundle.snippets.map { $0.label }.joined(separator: ", "))"
-        return ScheduleActionResult(verdict: .changed, summary: summary, log: log)
+        // **Defect 1's fix.** This returned `.changed` on every successful
+        // export and had no `.clean` path at all, so a nightly backup sat
+        // under "Needs you" - counted in the attention tile, chipped "Needs
+        // Attention" in Run History - every night, forever, for doing exactly
+        // its job. A push is real work that is none of the captain's
+        // business, which is `.didWork`.
+        return ScheduleActionResult(verdict: .didWork, summary: summary, log: log)
     }
 
     // MARK: Tool update check + install - captain-approved, no confirmation
@@ -667,7 +820,13 @@ enum ScheduleActions {
         let log = logBlocks.joined(separator: "\n\n")
 
         if checkFailed == DependencyCatalog.items.count && !DependencyCatalog.items.isEmpty {
-            return ScheduleActionResult(verdict: .failed, summary: "Every tool check failed - is the network reachable?", log: log)
+            return ScheduleActionResult(
+                failing: .failed,
+                summary: "Every tool check failed - is the network reachable?",
+                whatFailed: "None of the \(DependencyCatalog.items.count) tracked tools could be checked, so nothing was updated.",
+                why: "Every single check failed, which almost always means this Mac had no working network connection when the schedule ran.",
+                whatToDo: "Check your connection and run this schedule again from its row. Nothing was installed or changed.",
+                log: log)
         }
 
         var parts: [String] = []
@@ -684,12 +843,35 @@ enum ScheduleActions {
             parts.append("\(checkFailed) could not be checked")
         }
 
+        let summary = parts.joined(separator: "; ") + "."
         if !updateFailed.isEmpty {
-            return ScheduleActionResult(verdict: .failed, summary: parts.joined(separator: "; ") + ".", log: log)
+            return ScheduleActionResult(
+                failing: .failed,
+                summary: summary,
+                whatFailed: "\(updateFailed.count) tool\(updateFailed.count == 1 ? "" : "s") couldn\u{2019}t be updated: \(updateFailed.joined(separator: ", ")).",
+                why: "The update itself was attempted and did not succeed. The log below has exactly what each tool\u{2019}s installer reported.",
+                whatToDo: "Open Updates and update those tools by hand. \(installed.isEmpty ? "Nothing else was changed." : "The \(installed.count) that did update are already done.")",
+                log: log)
+        }
+        // Same GL-14 fix as the read-only check: some tools genuinely could
+        // not be checked, so this run does not get to claim anything about
+        // them either way.
+        if checkFailed > 0 {
+            return ScheduleActionResult(
+                failing: .partial,
+                summary: summary,
+                whatFailed: "\(checkFailed) of the \(DependencyCatalog.items.count) tracked tools couldn\u{2019}t be checked.",
+                why: "Those checks failed to return a version, so nothing was installed for them. The usual cause is no network, or the tool\u{2019}s own package manager being unavailable.",
+                whatToDo: "Open Updates to see which tools are affected. Whatever this run did install is already done.",
+                log: log)
         }
         if parts.isEmpty {
             return ScheduleActionResult(verdict: .clean, summary: "All \(DependencyCatalog.items.count) tracked tools up to date.", log: log)
         }
-        return ScheduleActionResult(verdict: .changed, summary: parts.joined(separator: "; ") + ".", log: log)
+        // Installing an update is the job this action exists for. A tool that
+        // needs a manual install in Bootstrap is the one thing here the
+        // captain has to act on, so that is what makes it an FYI.
+        return ScheduleActionResult(verdict: needsManualInstall > 0 ? .foundSomething : .didWork,
+                                    summary: summary, log: log)
     }
 }

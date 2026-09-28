@@ -42,6 +42,7 @@ enum ScheduleRunnerSelfTest {
         checkDisabledNeverFires(&ok)
         checkWeeklyCadence(&ok)
         checkStoreAnchoring(&ok)
+        checkToolSweepVerdict(&ok)
         checkNotifyGate(&ok)
         checkActionSafetyBar(&ok)
         checkPersistenceRoundTrip(&ok)
@@ -294,14 +295,70 @@ enum ScheduleRunnerSelfTest {
         }
     }
 
+    // MARK: The tool-sweep verdict rule (GL-14)
+
+    /// The defect this guards, in one sentence: a sweep where 7 of 8 checks
+    /// failed used to report "All 8 tracked tools up to date."
+    ///
+    /// It survived because both call sites reach the rule through a real
+    /// `UpdatesSource.check` per tool, so no suite could reach the branch and
+    /// the `.clean` arm was never evaluated against a partly-failed sweep.
+    /// `ScheduleActions.toolSweepVerdict` exists to make that arithmetic
+    /// testable on its own.
+    private static func checkToolSweepVerdict(_ ok: inout Bool) {
+        print("\n-- a partly-failed tool sweep is never reported as clean (GL-14) --")
+        let cases: [(total: Int, checkFailed: Int, actionable: Int, want: ScheduleRunVerdict, why: String)] = [
+            (8, 0, 0, .clean, "everything checked, nothing to do"),
+            (8, 0, 3, .foundSomething, "everything checked, 3 have an update"),
+            (8, 8, 0, .failed, "every check failed"),
+            // The regression itself, from both sides: with nothing actionable
+            // it used to read `.clean`, and with something actionable it used
+            // to read as an ordinary finding - both of them claims about 7
+            // tools nobody managed to look at.
+            (8, 7, 0, .partial, "7 of 8 unchecked and nothing actionable - must NOT be clean"),
+            (8, 7, 1, .partial, "7 of 8 unchecked with 1 actionable - must NOT be a plain finding"),
+            (8, 1, 0, .partial, "even a single failed check is an unknown, not a clean sweep"),
+            // An empty catalogue has nothing to be wrong about, and must not
+            // report the all-failed branch on a zero/zero comparison.
+            (0, 0, 0, .clean, "an empty catalogue is vacuously clean, not failed"),
+        ]
+        for c in cases {
+            let got = ScheduleActions.toolSweepVerdict(total: c.total, checkFailed: c.checkFailed,
+                                                       actionable: c.actionable)
+            if got != c.want {
+                fail("total \(c.total)/failed \(c.checkFailed)/actionable \(c.actionable) -> \(got), expected \(c.want) (\(c.why))", &ok)
+            }
+        }
+        // The property underneath the table, stated directly: whenever any
+        // check failed but not all of them, the verdict must be one that does
+        // not claim success.
+        for failed in 1..<8 {
+            let got = ScheduleActions.toolSweepVerdict(total: 8, checkFailed: failed, actionable: 0)
+            if got.succeeded {
+                fail("\(failed) of 8 checks failed and the sweep still reported a success (\(got))", &ok)
+            }
+        }
+        if ok { print("  OK - clean only when every tool was actually checked") }
+    }
+
     // MARK: Notify gate
 
     private static func checkNotifyGate(_ ok: inout Bool) {
         print("\n-- notify-on gate --")
         let cases: [(ScheduleNotifyOn, ScheduleRunVerdict, Bool)] = [
-            (.always, .clean, true), (.always, .changed, true), (.always, .failed, true),
-            (.failureOnly, .clean, false), (.failureOnly, .changed, false), (.failureOnly, .failed, true),
-            (.changeOnly, .clean, false), (.changeOnly, .changed, true), (.changeOnly, .failed, true),
+            (.always, .clean, true), (.always, .didWork, true), (.always, .foundSomething, true),
+            (.always, .partial, true), (.always, .failed, true),
+            (.failureOnly, .clean, false), (.failureOnly, .didWork, false),
+            (.failureOnly, .foundSomething, false), (.failureOnly, .partial, false),
+            (.failureOnly, .failed, true),
+            // The five-state split's own reason for existing, asserted here:
+            // `.didWork` must be as quiet as `.clean`. Before it, "on change
+            // only" was `verdict != .clean`, so a nightly config backup
+            // pushing successfully raised an attention-shaped notification
+            // every single night.
+            (.changeOnly, .clean, false), (.changeOnly, .didWork, false),
+            (.changeOnly, .foundSomething, true), (.changeOnly, .partial, true),
+            (.changeOnly, .failed, true),
         ]
         for (notifyOn, verdict, expected) in cases {
             let got = NotificationSources.shouldNotify(verdict: verdict, notifyOn: notifyOn)
@@ -312,7 +369,7 @@ enum ScheduleRunnerSelfTest {
         // `.failureOnly` deliberately stays quiet for a run that found drift -
         // that is what the captain asked for, and reporting anyway would make
         // the setting a lie.
-        if NotificationSources.shouldNotify(verdict: .changed, notifyOn: .failureOnly) {
+        if NotificationSources.shouldNotify(verdict: .foundSomething, notifyOn: .failureOnly) {
             fail("failure-only must not notify for a non-failing run", &ok)
         }
     }
@@ -386,7 +443,7 @@ enum ScheduleRunnerSelfTest {
                   now: at(2026, 3, 10, 12, 0))
         let id = first.schedules.first?.id
         first.recordRun(id: id ?? UUID(), occurrence: at(2026, 3, 6, 17, 0),
-                        record: ScheduleRunRecord(verdict: .changed, summary: "pushed", at: at(2026, 3, 6, 17, 1)))
+                        record: ScheduleRunRecord(verdict: .didWork, summary: "pushed", at: at(2026, 3, 6, 17, 1)))
 
         // A fresh instance, so this is a real disk round trip rather than an
         // in-memory read-back.
@@ -399,7 +456,7 @@ enum ScheduleRunnerSelfTest {
         if reloaded.cadence != .weekly(weekday: 6, hour: 17, minute: 0) { fail("cadence did not survive the reload", &ok) }
         if reloaded.notifyOn != .failureOnly { fail("notifyOn did not survive the reload", &ok) }
         if reloaded.isEnabled { fail("the paused flag did not survive the reload", &ok) }
-        if reloaded.lastRun?.verdict != .changed { fail("last-run verdict did not survive the reload", &ok) }
+        if reloaded.lastRun?.verdict != .didWork { fail("last-run verdict did not survive the reload", &ok) }
         if reloaded.lastFiredOccurrence != at(2026, 3, 6, 17, 0) {
             fail("lastFiredOccurrence did not survive the reload - which would re-fire every launch", &ok)
         }
@@ -614,7 +671,7 @@ enum ScheduleRunnerSelfTest {
         first.append(historyEntry(scheduleID: scheduleA, at: oneHourAgo, verdict: .clean,
                                   summary: "Dotfiles clean, agent instructions linked.", actionTitle: "Drift check"))
         // B's own single entry - must never leak into A's filtered view.
-        first.append(historyEntry(scheduleID: scheduleB, at: oneHourAgo, verdict: .changed,
+        first.append(historyEntry(scheduleID: scheduleB, at: oneHourAgo, verdict: .foundSomething,
                                   summary: "4 forks fast-forwarded.", actionTitle: "Fork sync"))
 
         let aEntries = first.entries(for: scheduleA, now: now)
@@ -707,7 +764,7 @@ enum ScheduleRunnerSelfTest {
 
         let store = ScheduleRunHistoryStore(directory: dir)
         let scheduleID = UUID()
-        store.append(ScheduleRunHistoryEntry(scheduleID: scheduleID, at: Date(), verdict: .changed,
+        store.append(ScheduleRunHistoryEntry(scheduleID: scheduleID, at: Date(), verdict: .foundSomething,
                                              summary: "1 fork fast-forwarded.",
                                              actionTitle: "Fork sync", log: rawLog))
 
@@ -763,15 +820,31 @@ enum ScheduleRunnerSelfTest {
             fail("a clean latest run should seed exactly one success at its own time, got \(cleanSeeds)", &ok)
         }
 
-        // `.changed` is still a *successful* run (it found something, it did
-        // not fail) - `ScheduleRunner.execute()` itself calls `recordSuccess`
-        // for it, and the seed must match that, not be mistaken for a failure.
-        let changedAt = at(2026, 3, 10, 11, 0)
-        let changedSeeds = ScheduleHealthSeeding.seeds(from: [
-            historyEntry(scheduleID: scheduleID, at: changedAt, verdict: .changed, summary: "3 tools have an update available."),
+        // `.foundSomething` and `.didWork` are both *successful* runs -
+        // `ScheduleRunner.execute()` itself calls `recordSuccess` for them,
+        // and the seed must match that rather than be mistaken for a failure.
+        for verdict in [ScheduleRunVerdict.foundSomething, .didWork] {
+            let successAt = at(2026, 3, 10, 11, 0)
+            let seeds = ScheduleHealthSeeding.seeds(from: [
+                historyEntry(scheduleID: scheduleID, at: successAt, verdict: verdict,
+                             summary: "3 tools have an update available."),
+            ])
+            if seeds != [.success(at: successAt)] {
+                fail("a \(verdict) latest run should seed a success, got \(seeds)", &ok)
+            }
+        }
+
+        // `.partial` is the opposite, and it is new: a run that could not
+        // establish half its own result must seed a *failure*, or the Health
+        // card reports a scheduler that half-worked as healthy - GL-14's own
+        // "unknown is never rendered as fine".
+        let partialAt = at(2026, 3, 11, 11, 0)
+        let partialSeeds = ScheduleHealthSeeding.seeds(from: [
+            historyEntry(scheduleID: scheduleID, at: partialAt, verdict: .partial,
+                         summary: "7 of 8 tools couldn\u{2019}t be checked."),
         ])
-        if changedSeeds != [.success(at: changedAt)] {
-            fail("a 'needs you' (.changed) latest run should still seed a success, got \(changedSeeds)", &ok)
+        if partialSeeds != [.failure(detail: "Drift check: 7 of 8 tools couldn\u{2019}t be checked.", at: partialAt)] {
+            fail("a partial latest run should seed a failure, got \(partialSeeds)", &ok)
         }
 
         // Newest-first input (what every real read from the store returns): a

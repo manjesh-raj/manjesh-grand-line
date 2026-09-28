@@ -187,21 +187,30 @@ final class SchedulesCardView: NSObject {
     /// first, what is looking after itself, and what they switched off.
     enum Group: CaseIterable {
         case needsYou
+        case worthALook
         case healthy
         case paused
 
         var title: String {
             switch self {
             case .needsYou: return "Needs you"
+            case .worthALook: return "Worth a look"
             case .healthy: return "Running on their own"
             case .paused: return "Paused"
             }
         }
 
         /// The section dot, and the hue the group's rows already carry.
+        ///
+        /// `.needsYou` is `.critical` rather than the old `.warn`, and
+        /// `.worthALook` is `.info`. Before the five-state split these were
+        /// one amber section holding both a real failure and a successful
+        /// run that merely found something, which is precisely how the two
+        /// became indistinguishable to the captain.
         var tint: HelmTint {
             switch self {
-            case .needsYou: return .warn
+            case .needsYou: return .critical
+            case .worthALook: return .info
             case .healthy: return .good
             case .paused: return .neutral
             }
@@ -217,6 +226,7 @@ final class SchedulesCardView: NSObject {
     enum StatusFilter: String, CaseIterable {
         case all
         case needsYou
+        case worthALook
         case active
         case paused
 
@@ -225,6 +235,7 @@ final class SchedulesCardView: NSObject {
             switch self {
             case .all: return "All Schedules"
             case .needsYou: return "Needs You"
+            case .worthALook: return "Worth a Look"
             case .active: return "Active"
             case .paused: return "Paused"
             }
@@ -233,7 +244,8 @@ final class SchedulesCardView: NSObject {
         var symbol: String {
             switch self {
             case .all: return "square.grid.2x2.fill"
-            case .needsYou: return "exclamationmark.circle.fill"
+            case .needsYou: return "exclamationmark.octagon.fill"
+            case .worthALook: return "info.circle.fill"
             case .active: return "bolt.horizontal.circle.fill"
             case .paused: return "pause.circle.fill"
             }
@@ -243,6 +255,7 @@ final class SchedulesCardView: NSObject {
             switch self {
             case .all: return true
             case .needsYou: return SchedulesCardView.group(for: schedule) == .needsYou
+            case .worthALook: return SchedulesCardView.group(for: schedule) == .worthALook
             case .active: return schedule.isEnabled
             case .paused: return !schedule.isEnabled
             }
@@ -279,10 +292,12 @@ final class SchedulesCardView: NSObject {
     /// "Needs you" would be a claim about a run that has not happened.
     static func group(for schedule: AutomationSchedule) -> Group {
         guard schedule.isEnabled else { return .paused }
-        switch schedule.lastRun?.verdict {
-        case .changed, .failed: return .needsYou
-        case .clean, nil: return .healthy
-        }
+        guard let verdict = schedule.lastRun?.verdict else { return .healthy }
+        // Three live groups now, keyed off the verdict's own judgement rather
+        // than a second list here. `.needsYou` means only what its name says;
+        // a successful run that found something is its own, quieter section.
+        if verdict.needsCaptain { return .needsYou }
+        return verdict == .foundSomething ? .worthALook : .healthy
     }
 
     /// Search over everything the row actually shows - the action name, the
@@ -538,9 +553,9 @@ final class SchedulesCardView: NSObject {
               schedule.id != runningScheduleID,
               let last = schedule.lastRun else { return nil }
         switch last.verdict {
-        case .clean: return nil
-        case .changed: return "Review"
-        case .failed: return "Why?"
+        case .clean, .didWork: return nil
+        case .foundSomething: return "Review"
+        case .partial, .failed: return "Why?"
         }
     }
 
@@ -673,6 +688,9 @@ final class SchedulesCardView: NSObject {
             chipTint: .neutral,
             // Daylight §6.5's signal wash, opt-in per call site: only a row
             // that genuinely wants the captain now, never every `.warn` row.
+            // Deliberately not `.worthALook`: washing an FYI would put it
+            // back on the same footing as a failure, which is the defect
+            // this change removes.
             isSignal: Self.group(for: schedule) == .needsYou
         )
     }

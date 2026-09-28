@@ -74,13 +74,13 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         let noun = all.count == 1 ? "1 schedule" : "\(all.count) schedules"
         if ScheduleRunner.shared.runningScheduleID != nil { return "\(noun) \u{00B7} one running now" }
         let paused = all.filter { !$0.isEnabled }.count
-        let failing = all.filter { $0.isEnabled && $0.lastRun?.verdict == .failed }.count
-        let needsYou = all.filter { $0.isEnabled && $0.lastRun?.verdict == .changed }.count
+        let needsYou = all.filter { SchedulesCardView.group(for: $0) == .needsYou }.count
+        let worthALook = all.filter { SchedulesCardView.group(for: $0) == .worthALook }.count
         var parts = [noun]
-        if failing > 0 { parts.append("\(failing) failing") }
-        if needsYou > 0 { parts.append("\(needsYou) needs you") }
+        if needsYou > 0 { parts.append("\(needsYou) need\(needsYou == 1 ? "s" : "") you") }
+        if worthALook > 0 { parts.append("\(worthALook) worth a look") }
         if paused > 0 { parts.append("\(paused) paused") }
-        if failing == 0 && needsYou == 0 && paused == 0 { parts.append("all running on their own") }
+        if needsYou == 0 && worthALook == 0 && paused == 0 { parts.append("all running on their own") }
         return parts.joined(separator: " \u{00B7} ")
     }
 
@@ -113,8 +113,14 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
     /// The tiles carry the counts and leave the naming to the header.
     private let activeTile = HelmStatTile(symbol: "bolt.horizontal.circle.fill",
                                           caption: "Active schedules")
-    private let attentionTile = HelmStatTile(symbol: "exclamationmark.circle.fill",
-                                             caption: "Needs your attention")
+    /// Two tiles where there was one. The single "Needs your attention" tile
+    /// counted failures *and* successful-with-news runs together and then told
+    /// the captain, in its own tooltip, that they had all "found something" -
+    /// which was never true of a failure.
+    private let attentionTile = HelmStatTile(symbol: "exclamationmark.octagon.fill",
+                                             caption: "Need you")
+    private let worthALookTile = HelmStatTile(symbol: "info.circle.fill",
+                                              caption: "Worth a look")
     private let runsTile = HelmStatTile(symbol: "chart.bar.fill", caption: "Runs \u{00B7} last 7 days")
 
     /// The page's own left navigation column - the captain's correction after
@@ -374,7 +380,7 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
 
     /// Three tiles, `.fillEqually`, exactly as reference 1 lays them out.
     private func buildStatsRow() -> NSView {
-        let row = NSStackView(views: [activeTile, attentionTile, runsTile])
+        let row = NSStackView(views: [activeTile, attentionTile, worthALookTile, runsTile])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.distribution = .fillEqually
@@ -440,16 +446,22 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
                                 history: [ScheduleRunHistoryEntry]) {
         let active = schedules.filter(\.isEnabled).count
         let attention = schedules.filter { SchedulesCardView.group(for: $0) == .needsYou }.count
+        let worthALook = schedules.filter { SchedulesCardView.group(for: $0) == .worthALook }.count
         activeTile.value = "\(active)"
         activeTile.setTint(nil, theme: theme)
         attentionTile.value = "\(attention)"
-        attentionTile.setTint(attention > 0 ? .warn : nil, theme: theme)
+        attentionTile.setTint(attention > 0 ? .critical : nil, theme: theme)
+        worthALookTile.value = "\(worthALook)"
+        worthALookTile.setTint(worthALook > 0 ? .info : nil, theme: theme)
         runsTile.value = "\(history.count)"
         runsTile.setTint(nil, theme: theme)
         activeTile.toolTip = "\(active) of \(schedules.count) schedules are running on their own"
         attentionTile.toolTip = attention == 0
             ? "Nothing is waiting on you"
-            : "Their last run found something - each one has a Review button on its row"
+            : "Their last run didn\u{2019}t finish, or couldn\u{2019}t check everything - each row says what happened and has a Why? button"
+        worthALookTile.toolTip = worthALook == 0
+            ? "Nothing to review"
+            : "Their last run succeeded and found something you may want to act on - each one has a Review button on its row"
         runsTile.toolTip = "Runs recorded in the past 7 days, across every schedule"
 
         activityCard.applyTheme(theme)
@@ -548,11 +560,18 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         let buckets = ScheduleRunStats.dailyBuckets(entries: history, now: now)
         overviewChart.setBuckets(buckets, theme: theme)
 
-        let attention = history.filter { $0.verdict != .clean }.count
+        // Counted apart, for the same reason the tiles are: folding a
+        // failure and a successful-with-news run into one "needed you" number
+        // is what made the number unreadable.
+        let needed = history.filter { $0.verdict.needsCaptain }.count
+        let found = history.filter { $0.verdict == .foundSomething }.count
         let runs = history.count == 1 ? "1 run" : "\(history.count) runs"
-        overviewSummary.stringValue = attention == 0
+        var bits: [String] = []
+        if needed > 0 { bits.append("\(needed) needed you") }
+        if found > 0 { bits.append("\(found) found something") }
+        overviewSummary.stringValue = bits.isEmpty
             ? "\(runs) \u{00B7} all clean"
-            : "\(runs) \u{00B7} \(attention) needed you"
+            : "\(runs) \u{00B7} " + bits.joined(separator: ", ")
         overviewSummary.font = HelmType.rowTitle()
         overviewSummary.textColor = HelmTheme.nsColor(theme.chromeInkHex)
 
@@ -697,11 +716,13 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
     var debugScrollOffsetY: CGFloat { scrollView?.contentView.bounds.origin.y ?? -1 }
     var debugVisibleScheduleRowCount: Int { schedulesCard.debugRowCount }
 
-    /// The three summary tiles' rendered values - read off the tiles rather
-    /// than recomputed, so a check can see a tile that stopped being repainted.
+    /// The summary tiles' rendered values - read off the tiles rather than
+    /// recomputed, so a check can see a tile that stopped being repainted.
     var debugStatValues: (active: String, attention: String, runs: String) {
         (activeTile.value, attentionTile.value, runsTile.value)
     }
+    /// The "Worth a look" tile's own value, added with the five-state split.
+    var debugWorthALookValue: String { worthALookTile.value }
     /// Whether the activity feed is showing its honest "nothing recorded yet"
     /// state rather than an empty stack that merely looks like one.
     var debugActivityShowsEmptyState: Bool {

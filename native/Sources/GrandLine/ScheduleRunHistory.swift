@@ -96,9 +96,17 @@ struct ScheduleRunHistoryEntry: Codable, Equatable, Identifiable {
     /// custom struct - so an old on-disk line still decodes; it just has
     /// nothing for "View Log" to show beyond `summary`.
     let log: String?
+    /// The plain-English "what failed / why / what to do" triple, present
+    /// exactly when `verdict.succeeded` is false. `nil` for a success, and
+    /// also `nil` for an entry an older build wrote before this field existed
+    /// - Swift's synthesized `Decodable` treats a missing key on an
+    /// `Optional` property as `nil`, the same tolerance `log` above already
+    /// relies on, so an old on-disk line still decodes.
+    let failure: ScheduleFailureExplanation?
 
     init(id: String = UUID().uuidString, scheduleID: UUID, at: Date, verdict: ScheduleRunVerdict,
-         summary: String, actionTitle: String, log: String? = nil) {
+         summary: String, actionTitle: String, log: String? = nil,
+         failure: ScheduleFailureExplanation? = nil) {
         self.id = id
         self.scheduleID = scheduleID
         self.at = at
@@ -106,6 +114,7 @@ struct ScheduleRunHistoryEntry: Codable, Equatable, Identifiable {
         self.summary = summary
         self.actionTitle = actionTitle
         self.log = Self.sanitized(log)
+        self.failure = failure
     }
 
     /// The one place a run's log is prepared for disk: redact first, then
@@ -419,12 +428,18 @@ enum ScheduleHealthSeeding {
     /// honest "not run yet" state alone.
     static func seeds(from entries: [ScheduleRunHistoryEntry]) -> [ScheduleHealthSeed] {
         guard let latest = entries.first else { return [] }
-        guard latest.verdict == .failed else {
+        // `verdict.succeeded` rather than `== .failed`: `.partial` is a run
+        // that could not establish half its own result, and replaying that as
+        // a health *success* would be the same "unknown rendered as fine"
+        // mistake GL-14 names. This matches `ScheduleRunner.execute`'s own
+        // live branch exactly, which is the property this function exists to
+        // reconstruct.
+        guard !latest.verdict.succeeded else {
             return [.success(at: latest.at)]
         }
         var streak: [ScheduleRunHistoryEntry] = []
         for entry in entries {
-            guard entry.verdict == .failed else { break }
+            guard !entry.verdict.succeeded else { break }
             streak.append(entry)
         }
         return streak.reversed().map {

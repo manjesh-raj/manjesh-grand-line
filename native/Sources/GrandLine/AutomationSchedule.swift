@@ -355,62 +355,191 @@ enum ScheduleNotifyOn: String, Codable, CaseIterable {
 
 // MARK: - Run results
 
-/// What a completed run amounted to. Three states, because "it ran and there
-/// was nothing to do" and "it ran and it changed something" are genuinely
-/// different things to the captain - that distinction is exactly what
-/// `.changeOnly` keys off.
+/// What a completed run amounted to.
+///
+/// **Five states, and the split is the whole point of
+/// `fm/grandline-schedule-status-clarity`.** This used to be three -
+/// `clean`/`changed`/`failed` - and `changed` was carrying two genuinely
+/// different meanings plus one it had no business claiming:
+///
+///  - "it did the job it exists for" (a backup pushed, forks synced): nothing
+///    for the captain, but not `clean` either, because something happened.
+///  - "a read-only check found something you may want to act on": an FYI.
+///  - and, because there was nowhere else to put it, "it ran but could not
+///    establish part of its own result", which used to be silently folded
+///    into `clean` or `changed` depending on which branch happened to win.
+///
+/// One state cannot be labelled honestly for all three, which is why every
+/// surface ended up calling a *success* "Needs you" / "Needs Attention" /
+/// "Needs your attention" - the app spent its loudest words on its quietest
+/// state and had nothing left for the one that is genuinely wrong. The
+/// captain's report of exactly that is what this split answers.
+///
+/// Two real defects fall out of it rather than being fixed alongside it:
+/// `ScheduleActions.configBackupExport` could never return anything but
+/// `changed`, so a nightly backup sat under "Needs you" forever for doing its
+/// job (now `.didWork`); and a tool check where 7 of 8 checks failed reported
+/// "All 8 tracked tools up to date", which is GL-14's exact prohibition
+/// (now `.partial`).
 enum ScheduleRunVerdict: String, Codable {
-    /// Ran successfully, nothing needed doing.
+    /// Ran successfully, there was nothing to do.
     case clean
-    /// Ran successfully and either found something (a read-only check) or did
-    /// something (a write action).
-    case changed
+    /// Ran successfully and did the job it exists for - a backup pushed, forks
+    /// fast-forwarded. Real work happened; none of it is the captain's to
+    /// follow up.
+    case didWork
+    /// Ran successfully and a read-only check found something the captain may
+    /// want to act on. This is the FYI half of the old `.changed`, and it is
+    /// the only *success* that may ask for attention at all.
+    case foundSomething
+    /// Ran, but could not establish part of its own result - some checks
+    /// failed while others succeeded. Deliberately never reported as `.clean`
+    /// (GL-14: "Unknown is never rendered as zero"), and deliberately not
+    /// `.failed` either, because the half that did run is real.
+    case partial
+    /// Did not finish.
     case failed
 
-    var label: String {
-        switch self {
-        case .clean: return "Clean"
-        case .changed: return "Needs you"
-        case .failed: return "Failed"
+    /// Old-format tolerance (GL-01). A run recorded before the five-state
+    /// split carries the raw string `"changed"`, which is not a case here and
+    /// would otherwise make every existing `schedules.json` and every line of
+    /// `schedule-history/runs.jsonl` undecodable.
+    ///
+    /// **It maps to `.foundSomething`, not `.didWork`**, and the choice is
+    /// deliberate rather than arbitrary: four of the six actions that could
+    /// produce a `changed` were read-only checks reporting a finding, so that
+    /// is the commoner historical meaning - and it is the safer of the two to
+    /// be wrong about. A past `didWork` read back as "found something" is an
+    /// FYI the captain can dismiss; the reverse would silently retire a real
+    /// finding from an old run into a row that never asks for anything.
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        if let known = ScheduleRunVerdict(rawValue: raw) {
+            self = known
+            return
+        }
+        switch raw {
+        case "changed":
+            self = .foundSomething
+        default:
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath,
+                      debugDescription: "unknown ScheduleRunVerdict \(raw.debugDescription)"))
         }
     }
 
+    /// The row kicker, and the vocabulary every status surface in this feature
+    /// now shares.
+    ///
+    /// **This string used to be pinned as "must not change".** That rule came
+    /// from `fm/grandline-run-history-status-logs`, whose stated reason was
+    /// *consistency* - the Run History sheet must not invent a second
+    /// vocabulary while the main Schedules list keeps the old one. It was
+    /// never a finding that "Clean"/"Needs you"/"Failed" were the right words;
+    /// that same task's own notes name "Needs you - itself a success - reads
+    /// as ambiguous at a glance" as a known problem. This change rewrites the
+    /// vocabulary in *both* places at once, which is what the rule was
+    /// actually protecting, and updates the source guard that enforced it.
+    var label: String {
+        switch self {
+        case .clean: return "All clear"
+        case .didWork: return "Done"
+        case .foundSomething: return "Found something"
+        case .partial: return "Couldn\u{2019}t check everything"
+        case .failed: return "Didn\u{2019}t finish"
+        }
+    }
+
+    /// `.foundSomething` is `.info`, not `.warn`: an FYI is information, not a
+    /// warning, and painting it amber beside a real failure is how the two
+    /// became indistinguishable in the first place.
     var tint: HelmTint {
         switch self {
-        case .clean: return .good
-        case .changed: return .warn
+        case .clean, .didWork: return .good
+        case .foundSomething: return .info
+        case .partial: return .warn
         case .failed: return .critical
         }
     }
 
     /// The glyph a run-history row (`ScheduleHistoryController`) draws for
-    /// this verdict - the badge equivalent of `SchedulesCardView.tickLabel`'s
-    /// own glyph choices for the same three verdicts.
+    /// this verdict.
     var symbol: String {
         switch self {
         case .clean: return "checkmark.circle.fill"
-        case .changed: return "exclamationmark.circle.fill"
+        case .didWork: return "checkmark.circle.fill"
+        case .foundSomething: return "info.circle.fill"
+        case .partial: return "exclamationmark.triangle.fill"
         case .failed: return "xmark.octagon.fill"
         }
     }
 
-    /// A blunt, unambiguous outcome word - literally "succeeded" / "failed" /
-    /// "needs attention" - for a context that has to answer "did this run
-    /// succeed?" at a glance across many runs at once (the Run History
-    /// sheet). Deliberately **not** `.label`: that string
-    /// ("Clean"/"Needs you"/"Failed") is the vocabulary `SchedulesCardView`'s
-    /// row already renders on the main Schedules list and must not change -
-    /// this is additive, rendered only where a second, plainer signal earns
-    /// its place. `.changed` still reads as a success (see `.changed`'s own
-    /// doc comment: "ran successfully and ... found something"), so this
-    /// says so - it is the "attention" half that separates it from `.clean`,
-    /// not a claim that anything went wrong.
+    /// A blunt success/failure word for the Run History sheet, where the
+    /// question being answered across many rows at once is "did this run
+    /// succeed?".
+    ///
+    /// Three of the five are plain successes and say so. `.foundSomething`
+    /// says so *and* says what separates it from `.clean`, because a chip
+    /// reading only "Succeeded" next to a kicker reading "Found something"
+    /// would lose the one distinction the row exists to make.
     var outcomeChipText: String {
         switch self {
-        case .clean: return "Succeeded"
-        case .changed: return "Needs Attention"
+        case .clean, .didWork: return "Succeeded"
+        case .foundSomething: return "Succeeded - found something"
+        case .partial: return "Partly failed"
         case .failed: return "Failed"
         }
+    }
+
+    /// Whether this outcome is one the captain has to do something about.
+    /// `SchedulesCardView.group(for:)`, the page's counters and the health
+    /// registry all key off this rather than each re-deriving the set.
+    var needsCaptain: Bool {
+        switch self {
+        case .clean, .didWork, .foundSomething: return false
+        case .partial, .failed: return true
+        }
+    }
+
+    /// Whether this outcome succeeded overall. `.partial` is deliberately
+    /// false: half of it did not.
+    var succeeded: Bool {
+        switch self {
+        case .clean, .didWork, .foundSomething: return true
+        case .partial, .failed: return false
+        }
+    }
+}
+
+/// Why a run did not finish, in three fields the captain can read without
+/// knowing what any of this app's internals are called.
+///
+/// **This exists so plain English is a type requirement rather than per-path
+/// goodwill.** Before it, most failure summaries were genuinely good
+/// ("Every tool check failed - is the network reachable?") and a few were
+/// not: "Backup stores are not available in this process." describes the
+/// app's own plumbing, and one path handed the captain
+/// `error.localizedDescription` verbatim, which for a real case reads
+/// "Could not determine the GitHub repo from DotfilesSource.cloneURL." -
+/// a Swift symbol name. Nothing required those to be better, so they were not.
+///
+/// Required for `.failed` and `.partial`; `nil` for the three successes.
+/// Optional on the persisted entry for GL-01 tolerance with lines an older
+/// build wrote.
+struct ScheduleFailureExplanation: Codable, Equatable {
+    /// What did not work, in one sentence, about the *task* rather than the
+    /// code. "The backup couldn't be pushed to GitHub."
+    var whatFailed: String
+    /// Why, in the plainest terms the call site actually knows.
+    var why: String
+    /// The next thing the captain could do. Never empty - where there is
+    /// genuinely nothing to do, say that.
+    var whatToDo: String
+
+    init(whatFailed: String, why: String, whatToDo: String) {
+        self.whatFailed = whatFailed
+        self.why = why
+        self.whatToDo = whatToDo
     }
 }
 
@@ -422,6 +551,27 @@ struct ScheduleRunRecord: Codable, Equatable {
     /// already follow.
     var summary: String
     var at: Date
+    /// Present exactly when `verdict.succeeded` is false. `decodeIfPresent`
+    /// with a `nil` default (GL-01): a record an older build wrote has no such
+    /// key, and a Swift-side default does not make a declared key optional to
+    /// the synthesised decoder.
+    var failure: ScheduleFailureExplanation?
+
+    init(verdict: ScheduleRunVerdict, summary: String, at: Date,
+         failure: ScheduleFailureExplanation? = nil) {
+        self.verdict = verdict
+        self.summary = summary
+        self.at = at
+        self.failure = failure
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        verdict = try c.decode(ScheduleRunVerdict.self, forKey: .verdict)
+        summary = try c.decode(String.self, forKey: .summary)
+        at = try c.decode(Date.self, forKey: .at)
+        failure = try c.decodeIfPresent(ScheduleFailureExplanation.self, forKey: .failure)
+    }
 }
 
 // MARK: - The schedule
@@ -492,7 +642,12 @@ struct AutomationSchedule: Codable, Equatable, Identifiable {
             parts.append("paused")
         }
         if let lastRun {
-            parts.append("last run: \(lastRun.verdict.rawValue), \(Self.relativeAge(from: lastRun.at, to: now))")
+            // Never `verdict.rawValue`: that printed the internal case name
+            // onto the captain's row ("last run: changed, 6h ago"). The row's
+            // kicker already carries the verdict in this app's own words, so
+            // this only has to say *when* - and `SchedulesCardView.rowContent`
+            // appends the run's own sentence after it.
+            parts.append("ran \(Self.relativeAge(from: lastRun.at, to: now))")
         } else {
             parts.append("not run yet")
         }

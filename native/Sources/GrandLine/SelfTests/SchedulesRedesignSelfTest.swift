@@ -93,7 +93,7 @@ enum SchedulesRedesignSelfTest {
         let id = UUID()
         let entries = [
             entry(id, .clean, daysAgo: 0),
-            entry(id, .changed, daysAgo: 0),
+            entry(id, .partial, daysAgo: 0),
             entry(id, .clean, daysAgo: 2),
             // Past the store's own retention window: it could only reach the
             // chart through a caller that skipped `allEntries`' pruning, and it
@@ -148,7 +148,7 @@ enum SchedulesRedesignSelfTest {
 
         // `lastRun` with an empty store is a *real* completed run, not a
         // stand-in - see `ScheduleRunSparkline.setRuns`'s `fallback` parameter.
-        spark.setRuns([], fallback: ScheduleRunRecord(verdict: .changed, summary: "2 forks", at: Date()),
+        spark.setRuns([], fallback: ScheduleRunRecord(verdict: .foundSomething, summary: "2 forks", at: Date()),
                       slots: 5, theme: ThemeManager.shared.theme)
         if spark.debugBarCount != 1 {
             print("  FAIL a schedule with only `lastRun` drew \(spark.debugBarCount) bars, expected 1")
@@ -203,18 +203,30 @@ enum SchedulesRedesignSelfTest {
             ("clean", AutomationSchedule(action: .toolUpdateCheck, cadence: .daily(hour: 9, minute: 0),
                                          lastRun: ScheduleRunRecord(verdict: .clean, summary: "up to date", at: now)),
              .healthy),
-            ("changed", AutomationSchedule(action: .forkSync, cadence: .daily(hour: 11, minute: 10),
-                                           lastRun: ScheduleRunRecord(verdict: .changed, summary: "2 forks", at: now)),
+            // The whole reason for the five-state split, asserted as
+            // grouping: a run that *did its job* belongs with the healthy
+            // schedules, not in the section that asks for the captain. This
+            // case is the config backup's old defect in miniature - it
+            // returned the one "changed" state on every successful push and
+            // therefore sat under "Needs you" forever.
+            ("did work", AutomationSchedule(action: .configBackupExport, cadence: .daily(hour: 4, minute: 0),
+                                            lastRun: ScheduleRunRecord(verdict: .didWork, summary: "pushed 12 hosts", at: now)),
+             .healthy),
+            ("found something", AutomationSchedule(action: .forkSync, cadence: .daily(hour: 11, minute: 10),
+                                                   lastRun: ScheduleRunRecord(verdict: .foundSomething, summary: "2 forks", at: now)),
+             .worthALook),
+            ("partial", AutomationSchedule(action: .toolUpdateCheck, cadence: .daily(hour: 3, minute: 0),
+                                           lastRun: ScheduleRunRecord(verdict: .partial, summary: "7 of 8 unchecked", at: now)),
              .needsYou),
             ("failed", AutomationSchedule(action: .vaultRecipeExport, cadence: .daily(hour: 4, minute: 0),
                                           lastRun: ScheduleRunRecord(verdict: .failed, summary: "gh auth", at: now)),
              .needsYou),
             // Paused wins over the verdict: a schedule that will not run again
             // is not waiting on the captain.
-            ("paused with a changed run",
+            ("paused with a failed run",
              AutomationSchedule(action: .configBackupExport, cadence: .daily(hour: 5, minute: 0),
                                 isEnabled: false,
-                                lastRun: ScheduleRunRecord(verdict: .changed, summary: "pushed", at: now)),
+                                lastRun: ScheduleRunRecord(verdict: .failed, summary: "gh auth", at: now)),
              .paused),
         ]
         for (label, schedule, expected) in cases {
@@ -224,7 +236,7 @@ enum SchedulesRedesignSelfTest {
                 ok = false
             }
         }
-        if ok { print("  OK - never-run counts as healthy, paused beats its own last verdict") }
+        if ok { print("  OK - never-run healthy, didWork healthy, foundSomething is its own group, paused beats its verdict") }
     }
 
     // MARK: 4 - search
@@ -233,12 +245,15 @@ enum SchedulesRedesignSelfTest {
         print("\n-- search covers what the row actually shows --")
         let schedule = AutomationSchedule(action: .forkSync,
                                           cadence: .daily(hour: 11, minute: 10),
-                                          lastRun: ScheduleRunRecord(verdict: .changed,
+                                          lastRun: ScheduleRunRecord(verdict: .foundSomething,
                                                                      summary: "2 of 8 forks fast-forwarded",
                                                                      at: Date()))
         // Each of these is a different field of the row, and a search that only
         // looked at the title would pass the first and fail the rest.
-        let hits = ["fork", "FORK", "11:10", "forks synced", "fast-forwarded", "needs you"]
+        // The last one is the *group* name, which is the field a
+        // title-only search would miss. A run that found something now lives
+        // under "Worth a look" rather than "Needs you".
+        let hits = ["fork", "FORK", "11:10", "forks synced", "fast-forwarded", "worth a look"]
         for query in hits where !SchedulesCardView.matches(schedule, query: query) {
             print("  FAIL \"\(query)\" should match")
             ok = false
@@ -259,16 +274,23 @@ enum SchedulesRedesignSelfTest {
     private static func checkTilesAndPanelsMatchTheRows(_ ok: inout Bool) {
         print("\n-- the tiles, the feed and the chart come from the rows' own data --")
         let store = scratchStore()
-        let needsYou = AutomationSchedule(action: .forkSync, cadence: .daily(hour: 11, minute: 10),
-                                          lastRun: ScheduleRunRecord(verdict: .changed,
-                                                                     summary: "2 of 8 forks fast-forwarded",
+        // One per live group, so the two counters that used to be one number
+        // are forced apart: a real failure must land in "Needs you" and an
+        // FYI must not.
+        let needsYou = AutomationSchedule(action: .vaultRecipeExport, cadence: .daily(hour: 4, minute: 0),
+                                          lastRun: ScheduleRunRecord(verdict: .failed,
+                                                                     summary: "gh auth login needed",
                                                                      at: Date()))
+        let worthALook = AutomationSchedule(action: .forkSync, cadence: .daily(hour: 11, minute: 10),
+                                            lastRun: ScheduleRunRecord(verdict: .foundSomething,
+                                                                       summary: "2 of 8 forks fast-forwarded",
+                                                                       at: Date()))
         let clean = AutomationSchedule(action: .toolUpdateCheck, cadence: .daily(hour: 9, minute: 0),
                                        lastRun: ScheduleRunRecord(verdict: .clean, summary: "all up to date",
                                                                   at: Date()))
         let paused = AutomationSchedule(action: .driftCheck, cadence: .daily(hour: 2, minute: 0),
                                         isEnabled: false)
-        for schedule in [needsYou, clean, paused] { store.add(schedule) }
+        for schedule in [needsYou, worthALook, clean, paused] { store.add(schedule) }
 
         let controller = SchedulesController(scheduleStore: store)
         let window = mount(controller)
@@ -280,13 +302,15 @@ enum SchedulesRedesignSelfTest {
             ok = false
             return
         }
-        if card.debugRowCount != 3 {
-            print("  FAIL \(card.debugRowCount) rows rendered, expected 3")
+        if card.debugRowCount != 4 {
+            print("  FAIL \(card.debugRowCount) rows rendered, expected 4")
             ok = false
         }
-        // All three groups present, in reading order.
+        // All four groups present, in reading order - "Worth a look" sits
+        // between the section that wants the captain and the one that does
+        // not, which is the ordering the split exists to produce.
         let sections = card.debugSectionTitles
-        if sections != ["NEEDS YOU", "RUNNING ON THEIR OWN", "PAUSED"] {
+        if sections != ["NEEDS YOU", "WORTH A LOOK", "RUNNING ON THEIR OWN", "PAUSED"] {
             print("  FAIL sections = \(sections)")
             ok = false
         }
@@ -295,12 +319,19 @@ enum SchedulesRedesignSelfTest {
         // Counted off the very same array the rows were built from - which is
         // the property worth guarding: a tile computing its own count from a
         // second read is how a header comes to disagree with the list under it.
-        if stats.active != "2" {
-            print("  FAIL active tile reads \(stats.active), expected 2 (paused is not active)")
+        if stats.active != "3" {
+            print("  FAIL active tile reads \(stats.active), expected 3 (paused is not active)")
             ok = false
         }
+        // The two halves of the old single "Needs your attention" tile. The
+        // fixture has exactly one of each, so a tile that still counted them
+        // together would read 2 here and fail.
         if stats.attention != "1" {
-            print("  FAIL attention tile reads \(stats.attention), expected 1")
+            print("  FAIL attention tile reads \(stats.attention), expected 1 (the failed run only)")
+            ok = false
+        }
+        if controller.debugWorthALookValue != "1" {
+            print("  FAIL worth-a-look tile reads \(controller.debugWorthALookValue), expected 1 (the FYI only)")
             ok = false
         }
         // No runs are in the real (scratch) history store, so the honest answer
@@ -327,7 +358,7 @@ enum SchedulesRedesignSelfTest {
         print("\n-- Review appears only where a run surfaced something --")
         let store = scratchStore()
         let needsYou = AutomationSchedule(action: .forkSync, cadence: .daily(hour: 11, minute: 10),
-                                          lastRun: ScheduleRunRecord(verdict: .changed,
+                                          lastRun: ScheduleRunRecord(verdict: .foundSomething,
                                                                      summary: "2 of 8 forks fast-forwarded",
                                                                      at: Date()))
         let clean = AutomationSchedule(action: .toolUpdateCheck, cadence: .daily(hour: 9, minute: 0),
@@ -466,9 +497,16 @@ extension SchedulesRedesignSelfTest {
                                      cadence: .daily(hour: 9, minute: 30), notifyOn: .always))
         var needsYou = AutomationSchedule(action: .configBackupExport,
                                           cadence: .daily(hour: 6, minute: 0), notifyOn: .always)
-        needsYou.lastRun = ScheduleRunRecord(verdict: .changed,
-                                             summary: "2 of 8 forks fast-forwarded", at: Date())
+        needsYou.lastRun = ScheduleRunRecord(verdict: .failed,
+                                             summary: "gh auth login needed", at: Date())
         store.add(needsYou)
+        // One per collection means the new "Worth a look" needs its own seed,
+        // or that filter would be indistinguishable from an empty result.
+        var worthALook = AutomationSchedule(action: .driftCheck,
+                                            cadence: .daily(hour: 2, minute: 0), notifyOn: .changeOnly)
+        worthALook.lastRun = ScheduleRunRecord(verdict: .foundSomething,
+                                               summary: "3 uncommitted files", at: Date())
+        store.add(worthALook)
         var paused = AutomationSchedule(action: .vaultRecipeExport,
                                         cadence: .daily(hour: 7, minute: 0), notifyOn: .changeOnly)
         paused.isEnabled = false
@@ -524,6 +562,7 @@ extension SchedulesRedesignSelfTest {
         let expected: [SchedulesCardView.StatusFilter: Int] = [
             .all: all.count,
             .needsYou: all.filter { SchedulesCardView.group(for: $0) == .needsYou }.count,
+            .worthALook: all.filter { SchedulesCardView.group(for: $0) == .worthALook }.count,
             .active: all.filter(\.isEnabled).count,
             .paused: all.filter { !$0.isEnabled }.count,
         ]
