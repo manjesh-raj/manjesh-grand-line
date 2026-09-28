@@ -56,6 +56,7 @@ enum ReviewUIUXSelfTest {
             ("U16_taskEditorLiftsTheDatePhraseAndEnablesTheRepeatPickers", test_u16TaskEditor),
             ("U17_lockScreenPasswordFieldDoesNotLookPreFilled", test_u17LockPlaceholder),
             ("X1_lockScreenOffersALocalFallbackWhenTheVaultIsUnreachable", test_x1LocalFallback),
+            ("X3_theGoMenuNamesEachDestinationOnce", test_x3GoMenu),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -1168,6 +1169,52 @@ enum ReviewUIUXSelfTest {
             }
             return nil
         }
+    }
+
+    // MARK: X3 - navigation vocabulary
+
+    private static func test_x3GoMenu() -> String? {
+        let menu = AppDelegate().buildMenu(installing: false)
+        guard let go = menu.items.compactMap(\.submenu).first(where: { $0.title == "Go" }) else {
+            return "there is no Go menu, so this case is measuring nothing"
+        }
+        let rows = go.items.filter { !$0.isSeparatorItem }.map(\.title)
+        guard rows.count > 20 else {
+            return "the Go menu has \(rows.count) rows, so it is not the full destination menu"
+        }
+
+        // The review read the collision straight off this menu: "Home",
+        // "Overview", "Home", an "Overview" header containing an "Overview"
+        // item, and an "Elsewhere" group holding "Home" and "Fleet".
+        guard !rows.contains("Overview") else {
+            return "the Go menu still says \"Overview\", which names nothing now (review X3)"
+        }
+        // Every *destination* appears once. Space pill rows share their
+        // names with the group headers they caption, which is the menu's own
+        // grammar, so the check is on the destination titles rather than on
+        // every row.
+        let destinationTitles = Set(RailDestination.allCases.map(\.title))
+        var counts: [String: Int] = [:]
+        for row in rows where destinationTitles.contains(row) { counts[row, default: 0] += 1 }
+        let repeated = counts.filter { $0.value > 1 }
+        guard repeated.isEmpty else {
+            return "the Go menu lists \(repeated.keys.sorted()) more than once (review X3)"
+        }
+        guard counts["Today"] == 1, counts["Home"] == 1, counts["Fleet"] == 1 else {
+            return "Home/Today/Fleet should each appear exactly once, got "
+                 + "Home=\(counts["Home"] ?? 0) Today=\(counts["Today"] ?? 0) Fleet=\(counts["Fleet"] ?? 0)"
+        }
+        // And a group whose only destination was already listed must not
+        // leave an empty header behind.
+        var previousWasHeader = false
+        for item in go.items {
+            let isHeader = !item.isSeparatorItem && !item.isEnabled && item.submenu == nil
+            if previousWasHeader, item.isSeparatorItem || isHeader {
+                return "the Go menu carries an empty group header"
+            }
+            if !item.isSeparatorItem { previousWasHeader = isHeader }
+        }
+        return nil
     }
 }
 

@@ -603,16 +603,15 @@ final class AppShellController: NSViewController {
                                           codePreviewStore: codePreviewStore,
                                           focusTimer: focusTimer)
         super.init(nibName: nil, bundle: nil)
-        // F20: Overview's daily review reads the sticky board and the reading
-        // list, both of which are built above - after `overview` itself, which
-        // is why this is an attach rather than two more `init` parameters.
-        // GL-23: the shared instances, the same ones the canvas and the two
+        // F20: the daily review reads the sticky board and the reading list,
+        // both of which are built above - after the page itself, which is why
+        // this is an attach rather than two more `init` parameters. GL-23:
+        // the shared instances, the same ones the canvas and the other
         // destinations use.
-        overview.attachDailyReviewSources(stickyBoardStore: stickyBoard.store,
-                                          readingListStore: readingListStore)
-        // The Overview page hosts the same card, over the same two shared
-        // stores. One attach each rather than one store each - see
-        // `DailyOverviewController`'s header for why both hosts exist.
+        //
+        // **One host, since X3.** Fleet used to take the same attach for its
+        // own copy of the card; the review's navigation-naming fix made Today
+        // the daily review's only home.
         dailyOverview.attachDailyReviewSources(stickyBoardStore: stickyBoard.store,
                                                readingListStore: readingListStore)
     }
@@ -977,13 +976,12 @@ final class AppShellController: NSViewController {
         settings.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // `fm/grandline-overview-layout-fix-gmail-settings`: a Google account
         // connected (or disconnected, or its calendar switch flipped) changes
-        // what the daily review's calendar column can read, on both hosts.
+        // what the daily review's calendar column can read.
         // Pushed from Settings rather than polled, and the pages re-read the
         // source rather than being handed one.
         settings.onGoogleAccountsChanged = { [weak self] in
             guard let self else { return }
             self.dailyOverview.renderDailyReviewIfMounted()
-            self.overview.renderDailyReviewIfMounted()
         }
         settings.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
         settings.onRunCommandTracked = { [weak self] label, command, completion in

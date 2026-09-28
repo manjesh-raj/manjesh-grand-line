@@ -4,12 +4,14 @@
 // stores, with the card actually laid out.
 //
 // **Which page.** `fm/grandline-overview-page-daily-review` gave the daily
-// review a destination of its own (`DailyOverviewController`, titled
-// "Overview"), which is now the card's primary host - so every case below
-// drives that page. Fleet keeps its own copy of the card (the captain asked
-// for a new page rather than a move), and `checkFleetStillHostsIt` is the one
-// case that mounts `FleetController` instead, so dropping Fleet's copy later
-// fails here by name rather than silently.
+// review a destination of its own (`DailyOverviewController`, titled **Today**
+// since the 2026-09-27 review's X3), which is the card's only host - so every
+// case below drives that page.
+//
+// Fleet used to keep a second copy, and `checkFleetStillHostsIt` was the case
+// that asserted it, written so that "dropping Fleet's copy later fails here by
+// name rather than silently". X3 dropped it, and that case is now
+// `checkFleetDoesNotHostIt`.
 //
 // The mount is written against `DailyReviewHosting`, a test-only protocol over
 // the four debug hooks both controllers already had - which is what let the
@@ -69,7 +71,7 @@ enum DailyReviewViewSelfTest {
             checkCalendarGapAndButton(stores, check: check)
             checkDismissAndDisable(stores, check: check)
             checkPageEmptyStates(stores, check: check)
-            checkFleetStillHostsIt(stores, check: check)
+            checkFleetDoesNotHostIt(stores, check: check)
             checkTheShellTreatsOverviewAsATopLevelPage(stores, check: check)
             checkHeaderButtonsAreLabelled(stores, check: check)
         }
@@ -526,23 +528,32 @@ enum DailyReviewViewSelfTest {
 
     // MARK: 8 - Fleet still hosts its own copy
 
-    /// The captain asked for a **new** page, not a move, so the fleet
-    /// dashboard keeps the card it has had since F20 - one card class, one
-    /// composer, one dismissal key, two hosts.
+     /// **UX issue X3.** Fleet used to carry a second copy of the daily
+    /// review card - the captain had asked for a new page rather than a
+    /// move, so for one release the same card rendered on two pages from the
+    /// same composer and the same dismissal key. The review found that while
+    /// untangling the navigation vocabulary, and the naming it asked for
+    /// settles it: Home is the canvas, Today is the daily review, Fleet is
+    /// the crew dashboard.
     ///
-    /// Asserted rather than assumed: if Fleet's copy is ever dropped (a
-    /// reasonable later call - see `DailyOverviewController`'s header), this
-    /// fails by name and whoever drops it deletes this case deliberately.
-    private static func checkFleetStillHostsIt(_ stores: Stores, check: (Bool, String) -> Void) {
+    /// The case this replaces said, in its own words, that dropping Fleet's
+    /// copy should "fail here by name rather than silently". It did. This is
+    /// the deliberate deletion it asked for, kept as a case rather than
+    /// removed so the copy cannot quietly come back.
+    private static func checkFleetDoesNotHostIt(_ stores: Stores, check: (Bool, String) -> Void) {
         seed(stores)
         AppSettings.shared.dailyReviewEnabled = true
         AppSettings.shared.dailyReviewDismissedDay = nil
-        withMountedPage(stores, host: { FleetController(shiftStore: $0) }) { _, card, _ in
-            check(!card.isHidden, "the fleet dashboard should still carry the daily review")
-            check(!card.debugHeadline.isEmpty, "and it should render a real headline there too")
-            check(card.debugText(inColumn: 0).contains(where: { $0.contains("Renew wildcard TLS certificate") }),
-                  "and the same overdue task, from the same composer")
+        let controller = FleetController(shiftStore: stores.shift)
+        controller.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 1000)
+        controller.view.layoutSubtreeIfNeeded()
+        var found = 0
+        var queue: [NSView] = [controller.view]
+        while let next = queue.popLast() {
+            if next is DailyReviewCard { found += 1 }
+            queue.append(contentsOf: next.subviews)
         }
+        check(found == 0, "the fleet dashboard still carries \(found) daily review card(s) (X3)")
     }
 
     // MARK: Fixtures
@@ -652,6 +663,5 @@ protocol DailyReviewHosting: AnyObject {
 }
 
 extension DailyOverviewController: DailyReviewHosting {}
-extension FleetController: DailyReviewHosting {}
 
 #endif

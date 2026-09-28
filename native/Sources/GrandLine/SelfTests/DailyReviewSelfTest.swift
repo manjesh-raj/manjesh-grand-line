@@ -51,7 +51,7 @@ enum DailyReviewSelfTest {
         checkStickiesAndReading(&ok)
         checkDayKeyMatchesTheBriefing(&ok)
         checkCalendarSourceIsReadOnly(&ok)
-        checkBothHostsRefreshGoogle(&ok)
+        checkEveryHostRefreshesGoogle(&ok)
         checkCalendarGapsAreStated(&ok)
 
         if ok {
@@ -494,18 +494,41 @@ enum DailyReviewSelfTest {
     ///
     /// `DailyReviewCalendarReading.events(on:)` is synchronous and on the main
     /// thread, so a Google source can only ever serve a **cached snapshot** -
-    /// something has to fetch. Overview always did; Fleet, which hosts the
-    /// same card, never did (B16), so on a machine where Fleet is the page the
-    /// captain opens, the calendar column rendered whatever another page had
-    /// last fetched, or a stated gap forever.
-    private static func checkBothHostsRefreshGoogle(_ ok: inout Bool) {
-        print("\n-- both hosts of the card refresh Google --")
+    /// something has to fetch. B16 found Fleet hosting the same card and
+    /// never fetching, so on a machine where Fleet was the page the captain
+    /// opened, the calendar column rendered whatever another page had last
+    /// fetched, or a stated gap forever.
+    ///
+    /// **There is one host now** (the 2026-09-27 review's X3 dropped Fleet's
+    /// copy), so this case is the same rule against a shorter list - and it
+    /// asserts the *list* as well, because "both hosts refresh" would pass
+    /// vacuously against a list that had quietly lost its only entry.
+    private static func checkEveryHostRefreshesGoogle(_ ok: inout Bool) {
+        print("\n-- every host of the card refreshes Google --")
         guard let root = SelfTestSources.appSourceDirectory() else {
             check(false, "could not resolve the app's source directory - "
                   + "this check would pass vacuously", &ok)
             return
         }
-        for name in ["DailyOverviewController.swift", "FleetController.swift"] {
+        let hosts = ["DailyOverviewController.swift"]
+        // X3: the card has exactly one home. A second file rendering it is
+        // the duplication the review removed, coming back.
+        let everyFile = (try? FileManager.default.contentsOfDirectory(at: root,
+                                                                      includingPropertiesForKeys: nil)) ?? []
+        var rendering: [String] = []
+        for file in everyFile where file.pathExtension == "swift" {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            // The declaration, in either of the two spellings the two hosts
+            // used, so this cannot pass by the property simply being renamed.
+            if text.contains("= DailyReviewCard()") {
+                rendering.append(file.lastPathComponent)
+            }
+        }
+        check(rendering.sorted() == hosts,
+              "the daily review card should have exactly one host \(hosts), found \(rendering.sorted()) (X3)",
+              &ok)
+
+        for name in hosts {
             let path = root.appendingPathComponent(name)
             guard let text = try? String(contentsOf: path, encoding: .utf8) else {
                 check(false, "could not read \(name)", &ok)
