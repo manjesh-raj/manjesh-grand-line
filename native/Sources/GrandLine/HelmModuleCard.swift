@@ -669,6 +669,19 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// when the content carries none, exactly like `chipView`.
     private let headerCaptionLabel = NSTextField(labelWithString: "")
     private let bodyContainer = NSView()
+    /// The header's status column - see `buildChrome`. Exactly as wide and
+    /// as tall as the members it is showing, and never the place the
+    /// header's leftover width lands.
+    private let statusColumn = NSView()
+    private var chipTopToColumn: NSLayoutConstraint?
+    private var chipBottomToColumn: NSLayoutConstraint?
+    private var captionTopToChip: NSLayoutConstraint?
+    private var captionTopToColumn: NSLayoutConstraint?
+    private var captionBottomToColumn: NSLayoutConstraint?
+    /// The header's own two stacks, kept only so a suite can read where the
+    /// header's leftover width actually landed - see `debugHeaderGeometry`.
+    private var headerRowRef: NSStackView?
+    private var textStackRef: NSStackView?
     /// `Content.headerAction`'s control. Built once with the rest of the
     /// chrome and hidden when the content carries no action, exactly like
     /// `chipView` - the header row's shape is stable and only its contents
@@ -851,23 +864,81 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         // finding, from this card's note label).
         headerCaptionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        // The chip and the caption stack, right-aligned, with the refresh
-        // button beside them - the mockup's header shape. An empty caption
-        // is `isHidden`, which for an *arranged* subview really does take it
-        // out of the layout, so a card with no caption renders the chip at
-        // exactly the height it always had.
-        let statusStack = NSStackView(views: [chipView, headerCaptionLabel])
-        statusStack.orientation = .vertical
-        statusStack.alignment = .trailing
-        statusStack.spacing = 3
-        statusStack.translatesAutoresizingMaskIntoConstraints = false
-        // gotcha (12): the *stack*-level APIs. Hugging required so the stack
-        // never absorbs the header's slack (that is the text column's job);
-        // clipping resistance left low so the stack itself is not a floor -
-        // the chip inside carries the one required minimum here, exactly as
-        // it did when it sat in the header row directly.
-        statusStack.setHuggingPriority(.required, for: .horizontal)
-        statusStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        // **The header's status column: the chip, and the freshness caption
+        // under it, right-aligned against the Refresh button.**
+        //
+        // A plain `NSView` with its own constraints rather than the vertical
+        // `NSStackView` this used to be, and that is the fix for
+        // `fm/grandline-claude-widget-refresh-shift` - the captain's report
+        // that the Claude widget's "Near spend cap" chip and its "Updated
+        // just now" caption jumped sideways relative to Refresh on every
+        // click of it.
+        //
+        // **What a vertical stack does not give you is a required *width*.**
+        // Its width is a cross-axis size, and it expresses "as wide as my
+        // content" as a *preference* in both directions: measured here, a
+        // required `setHuggingPriority(.required, for: .horizontal)` did not
+        // stop it absorbing 670pt of a 849.5pt card's header, and a
+        // `width == 0` ceiling at `columnHug` (251) collapsed it to 0pt with
+        // the chip hanging 95pt past the Refresh button - so its own
+        // trailing-alignment constraints are not required-strength either.
+        // Adding `leading >=` floors to the arranged subviews did not change
+        // that, because the alignment they were meant to back is the part
+        // that yields.
+        //
+        // Inside a `.fill` header row that left this column and the text
+        // column beside it both yielding at `.defaultLow`, so the header's
+        // leftover width landed on whichever one Auto Layout's own
+        // tie-breaking picked - gotcha (10)'s "can differ between rows and
+        // between runs with no code change". Every render rebuilds every
+        // card (`HomeCanvasController.rebuildGrid`), so the captain saw the
+        // tie re-rolled on every refresh: the column measured **670pt** on
+        // most rebuilds, with the chip pinned to its *leading* edge 575pt
+        // clear of Refresh, and **107pt** on the rest, hard against it.
+        //
+        // So the column states its own width, with nothing left to break:
+        // every visible member is pinned to its trailing edge and floored
+        // against its leading edge at `.required`, and the column itself
+        // prefers `width == 0` at `columnHug` (251) - which makes it exactly
+        // as wide as its widest visible member, and makes the text column
+        // the one thing in the header that absorbs slack. The ceiling is
+        // deliberately under 500: a width ceiling above it is a window floor
+        // (gotcha (13)).
+        //
+        // The vertical arrangement is the other thing the stack used to do
+        // for free, including taking a hidden caption out of the layout, so
+        // it is spelled out here instead - see `applyStatusColumnLayout`.
+        statusColumn.translatesAutoresizingMaskIntoConstraints = false
+        statusColumn.addSubview(chipView)
+        statusColumn.addSubview(headerCaptionLabel)
+
+        let statusHugsItsContent = statusColumn.widthAnchor.constraint(equalToConstant: 0)
+        statusHugsItsContent.priority = HelmDaylightPriority.columnHug
+        let statusHeightHugsItsContent = statusColumn.heightAnchor.constraint(equalToConstant: 0)
+        statusHeightHugsItsContent.priority = HelmDaylightPriority.columnHug
+        NSLayoutConstraint.activate([
+            statusHugsItsContent,
+            statusHeightHugsItsContent,
+            chipView.trailingAnchor.constraint(equalTo: statusColumn.trailingAnchor),
+            chipView.leadingAnchor.constraint(greaterThanOrEqualTo: statusColumn.leadingAnchor),
+            headerCaptionLabel.trailingAnchor.constraint(equalTo: statusColumn.trailingAnchor),
+            headerCaptionLabel.leadingAnchor
+                .constraint(greaterThanOrEqualTo: statusColumn.leadingAnchor),
+        ])
+
+        // The four vertical pins, exactly one combination of which is active
+        // at a time. `configure` picks it from what the content carries.
+        chipTopToColumn = chipView.topAnchor.constraint(equalTo: statusColumn.topAnchor)
+        chipBottomToColumn = chipView.bottomAnchor.constraint(equalTo: statusColumn.bottomAnchor)
+        captionTopToChip = headerCaptionLabel.topAnchor
+            .constraint(equalTo: chipView.bottomAnchor, constant: 3)
+        captionTopToColumn = headerCaptionLabel.topAnchor
+            .constraint(equalTo: statusColumn.topAnchor)
+        captionBottomToColumn = headerCaptionLabel.bottomAnchor
+            .constraint(equalTo: statusColumn.bottomAnchor)
+        // The chip starts visible and the caption starts hidden, exactly as
+        // the two views themselves do above.
+        applyStatusColumnLayout()
 
         actionButton.target = self
         actionButton.action = #selector(headerActionTapped)
@@ -875,7 +946,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         actionButton.setContentHuggingPriority(.required, for: .horizontal)
         actionButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let headerRow = NSStackView(views: [tile, textStack, statusStack, actionButton])
+        let headerRow = NSStackView(views: [tile, textStack, statusColumn, actionButton])
+        self.headerRowRef = headerRow
+        self.textStackRef = textStack
         headerRow.orientation = .horizontal
         headerRow.alignment = .centerY
         headerRow.spacing = HelmMetrics.s3
@@ -994,6 +1067,37 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         ])
     }
 
+    /// Pin the status column's members vertically for whichever of them is
+    /// visible, and take the column itself out of the header when neither
+    /// is.
+    ///
+    /// The vertical `NSStackView` this column used to be did this for free.
+    /// It is spelled out because that stack could not state its own *width*
+    /// at a priority that held - see `buildChrome` for the measurement.
+    ///
+    /// Exactly one combination is ever active, so the column's height is
+    /// always a required chain from its visible members and the
+    /// `columnHug` height preference above only decides the degenerate
+    /// both-hidden case.
+    private func applyStatusColumnLayout() {
+        let hasChip = !chipView.isHidden
+        let hasCaption = !headerCaptionLabel.isHidden
+
+        chipTopToColumn?.isActive = false
+        chipBottomToColumn?.isActive = false
+        captionTopToChip?.isActive = false
+        captionTopToColumn?.isActive = false
+        captionBottomToColumn?.isActive = false
+
+        chipTopToColumn?.isActive = hasChip
+        chipBottomToColumn?.isActive = hasChip && !hasCaption
+        captionTopToChip?.isActive = hasChip && hasCaption
+        captionTopToColumn?.isActive = !hasChip && hasCaption
+        captionBottomToColumn?.isActive = hasCaption
+
+        statusColumn.isHidden = !hasChip && !hasCaption
+    }
+
     @objc private func footerActionTapped() { footerActionHandler?() }
 
     // MARK: Configure
@@ -1027,6 +1131,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             headerCaptionLabel.isHidden = true
             headerCaptionLabel.stringValue = ""
         }
+        // The column's own vertical arrangement follows both, and it is a
+        // plain view rather than a stack now - see `buildChrome`.
+        applyStatusColumnLayout()
 
         if let action = content.headerAction {
             actionButton.isHidden = false
@@ -2388,6 +2495,61 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// button rather than at a guessed rectangle.
     var debugHeaderActionFrameInCard: NSRect? {
         actionButton.isHidden ? nil : actionButton.convert(actionButton.bounds, to: card)
+    }
+
+    /// The header's three columns in the card's own space: the whole row,
+    /// the text column and the status column.
+    ///
+    /// The defect these exist for is not visible in any one view's frame -
+    /// it is *which* column a header's leftover width landed in, so a check
+    /// has to be able to compare the two.
+    var debugHeaderGeometry: (row: NSRect, text: NSRect, status: NSRect)? {
+        guard let row = headerRowRef, let text = textStackRef else { return nil }
+        return (row.convert(row.bounds, to: card),
+                text.convert(text.bounds, to: card),
+                statusColumn.convert(statusColumn.bounds, to: card))
+    }
+
+    /// Where the header's status chip and its freshness caption actually
+    /// landed, in the card's own coordinate space.
+    ///
+    /// Read off the live views rather than off `Content`, because the whole
+    /// class of defect these exist for is a header whose *contents* are
+    /// right and whose *geometry* is not.
+    var debugChipFrameInCard: NSRect? {
+        chipView.isHidden ? nil : chipView.convert(chipView.bounds, to: card)
+    }
+
+    /// The caption's *alignment rect* in the card's space.
+    ///
+    /// `NSTextField`'s frame overhangs its alignment rect horizontally, and
+    /// a plain `NSView` chip's does not - so a check that the caption is
+    /// right-aligned with the chip has to compare this against the chip's
+    /// frame, or it measures the inset instead of the alignment.
+    var debugHeaderCaptionAlignmentRectInCard: NSRect? {
+        guard !headerCaptionLabel.isHidden else { return nil }
+        let insets = headerCaptionLabel.alignmentRectInsets
+        let bounds = headerCaptionLabel.bounds
+        let alignmentRect = NSRect(x: bounds.minX + insets.left,
+                                   y: bounds.minY,
+                                   width: bounds.width - insets.left - insets.right,
+                                   height: bounds.height)
+        return headerCaptionLabel.convert(alignmentRect, to: card)
+    }
+
+    var debugHeaderCaptionFrameInCard: NSRect? {
+        headerCaptionLabel.isHidden
+            ? nil
+            : headerCaptionLabel.convert(headerCaptionLabel.bounds, to: card)
+    }
+
+    /// The header's text as rendered, so a suite can pick one card out of a
+    /// grid of them by the name the captain reads.
+    var debugHeaderText: (title: String, subtitle: String, chip: String?, caption: String?) {
+        (titleLabel.stringValue,
+         subtitleLabel.stringValue,
+         chipView.isHidden ? nil : chipLabel.stringValue,
+         headerCaptionLabel.isHidden ? nil : headerCaptionLabel.stringValue)
     }
 }
 
