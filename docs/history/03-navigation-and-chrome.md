@@ -389,3 +389,92 @@ Colouring a control nobody can see would be dressing up a separate bug, and maki
 **The separation measure is weighted RGB, deliberately not `HelmContrast.ratio`.**
 That helper compares relative *luminance*, so two different hues of equal brightness score as identical - which is the exact defect being measured, so a luminance check here would be blind to it by construction.
 AGENTS.md already records that trap in the other direction; this is the same rule applied to a distance rather than to an equality.
+
+---
+
+## The Home page rebuilt against the captain's reference (`fm/grandline-home-page-visual-overhaul`)
+
+The captain called the shipped Home page "not at all great" and supplied a reference: a static HTML/CSS/JS mockup plus two screenshots.
+The ask was stronger and more literal than the narrower task before it (PR #491, which only moved "Needs Attention" onto Home): the cards, the layout and the visual language of the whole page were to match.
+
+### The two screenshots are not what the brief said they were
+
+The brief described both PNGs as renders of the mockup, one light and one dark.
+They are not.
+`reference-dark.png` is the mockup; `reference-light.png` is the **current app** - which is to say, the state being complained about.
+
+That is settled by the file rather than by eye.
+The mockup's HTML contains exactly one `<section class="card attention">` and its script never adds a second, while the light screenshot shows two stacked attention cards - the hero band over the Needs Attention card, which is precisely what this app drew.
+Rendering the real Home page off-screen at 1512pt confirmed it pixel for pixel: same top bar, same three-column masonry, same pair of cards.
+The mockup's CSS also has no card top-ribbon at all, and the light screenshot's cards each wear one, which is `HelmModuleCard.ribbon`.
+
+So the work was done against the HTML and the dark PNG, which agree with each other completely.
+
+### What already matched, which was more than expected
+
+Overview's module set was **already exactly the reference's five** - `DaylightModule.appearsOnOverview` had been trimmed to `.briefing`, `.claudeStatus`, `.fleet`, `.mergeQueue`, `.health` by `fm/grandline-home-card-reorg`.
+The Claude card's sectioned usage report, the Health card's `HelmRingGauge`, the chips, the icon tiles and the attention rows' `HelmAccentRow` shape were all already in place.
+Nothing in the reference needed a new component except one layout primitive, and the reference's own inline hexes were never used - every colour resolves through `HelmTint`/`HelmDaylight` as before, so the result themes across all 26 palettes rather than the reference's two.
+
+### 1. The grid: a dashboard is not a wrapping shelf
+
+`HelmResponsiveGrid.rows(_:)` and `spanningRows(_:)` both *derive* their column count from the container's width.
+That is right for a shelf of interchangeable navigation cards and wrong for Overview, whose five widgets have hand-picked relative sizes that **are** the design.
+At the captain's 1512pt the wrapping grid resolved to five 255pt columns and packed the five cards as 2+2+1 / 1+1 - the ragged masonry in his screenshot, with most of the third row empty.
+
+`HelmResponsiveGrid.proportionalRow(views:spans:…)` is the new primitive, built once: twelve tracks, an explicit span per card, widths at `HelmDaylightPriority.contentTie` (499) so no card can become a window-width floor (gotcha (13)), and the stack yielding both its clipping resistance and its hugging for the reason `spanningRows` already records (gotcha (12) - a stack resists clipping at 750, above `NSLayoutPriorityWindowSizeStayPut`).
+
+The reference expresses the layout as a 12-column CSS grid with the Claude card spanning two rows.
+A card spanning two rows *beside a column holding exactly those two rows' cards* is the same layout, and it is the one Auto Layout can state without a second placement axis - so row 1 is `[Claude(7) | column of [Briefing, Fleet](5)]` and row 2 is `[Merge queue(7) | Health(5)]`, each row equal-height tied.
+That is also what puts the bottoms of Claude and Fleet on one line, and the tops of Merge queue and Health on another, exactly as the reference draws them.
+
+`fitsProportionally` is the single decision point for "dashboard or wrapping grid", and it is arithmetic rather than a literal breakpoint: below about 635pt of content width a 5-track card is narrower than one wrapping column, and the page hands back to `spanningRows`, which already collapses to one card per row.
+The hand-placed path also declines when the visible module set is not the five it was written for - `appearsOnOverview` is a captain-editable list, and a sixth card must render somewhere rather than silently vanish.
+
+### 2. One card at the top, not two
+
+The reference draws a single attention card: tinted icon tile, eyebrow, headline, freshness subline, and Refresh on the right, over the item list, over an "Everything else is clear" strip.
+The app drew a hero band saying "Nothing needs you right now / Fleet read just now" **over** a Needs Attention card saying "All clear / Nothing is due" - two cards reporting two halves of one question, which is the duplication review #3's UX5 objected to on this very page.
+
+So `heroCard` is hidden on Overview and `NeedsAttentionCard` absorbed its three parts.
+The first pass at that card had listed all three as deliberate omissions; every one of those reasons rested on the band existing above it, and the merge removes the reason rather than the caution.
+
+`NeedsAttentionCard.onRefresh` is `nil` by default, so the card is byte-identical for any other host.
+
+**The hero *band* is deleted, not merely unused.** Its washed surface, its border, its `heroBandPadding` and the per-theme contrast ladder that picked its fill (`heroFill`/`heroWashFraction`/`heroWashSteps`) had exactly one caller - the hub - and `heroIsBanner` could no longer be true anywhere.
+Leaving a colour derivation behind a permanently-false flag would have left `test_c1HeroWashStaysLegible` asserting code nothing called, which is the "a check that cannot fail" failure one level up.
+The four other spaces still draw the plain header row they always did, and `test_c1HeroBandIsOverviewOnly` now asserts that half - four spaces with a row, the hub with none - so it is not a check that a view is simply never built.
+
+### 3. The other three attention sources needed no plumbing
+
+The reference lists the fleet, Claude usage and session checks alongside tasks and follow-ups.
+The first pass omitted them on the reading that they would mean new fetching on a page whose first rule is that it never fetches.
+That turned out to be wrong: every one of those readings is **already pushed into `HomeCanvasController`** for a card it already draws - the fleet snapshot for the Fleet card, the quota reading for the Claude card, `BackgroundSignalsPoller.lastCounts` for the Setup cards, `ServiceHealthRegistry` for Health.
+They arrive as `NeedsAttentionItem`s the controller builds, which is the shape that file was already documented as being open to.
+
+Three things fell out of it:
+
+- **`NeedsAttentionItem.headlineClause`.** Tasks are counted ("Two things are late"); a signal is named ("Claude is near its spend cap"), because a count of one unnamed thing tells the captain nothing. Putting the clause on the item is what stops the headline growing a `switch` over sources.
+- **The session-checks row is gated on the poller having finished a pass.** Its first pass lands about ten seconds after launch and this page is the launch landing, so without the gate the hub opened on "Needs attention, 1: one check is waiting" every single time, for ten seconds, about nothing - a false alarm on the one card whose job is to be believed. It is the same distinction `applyPendingSetupSignal` already draws for the four Setup cards.
+- **`FleetGreeting.Answer.metaRestatesCards` is the wrong predicate for "is the fleet fine", and using it was a real GL-14 regression.** That flag is a statement about the *detail line*, and it is `true` on the partly-unknown branch where the PR scan failed - so a hub that could not reach the forge fell back to "All clear" over a reading it had not taken. `answer.tint != .good` is the correct test; `DaylightModuleSelfTest` caught it, which is the second time that case has paid for itself.
+
+### 4. Two small card additions, both on the shared component
+
+- **`HelmModuleCard.Body.tiles`** for the Fleet card's Working / Done today / Queued triptych. `HelmStatTile`, which the component index names as the one stat tile, and the three counts are `FleetController`'s own `statsRow` fields rather than a second arithmetic.
+- **`HelmModuleCard.Content.footer`** for the Merge queue's "Showing 3 of 33" and "View all 33 open". Worth having beyond the reference: the card shows at most `maxPeekRows` of however many are open and said so nowhere, which is a milder form of GL-14 - a truncation drawn as a whole. Only rendered when there genuinely is more than the card is showing.
+
+### Verification
+
+- **`HomeDashboardSelfTest`** (pure logic, CI's blocking lane): the closure property that a row of spans summing to the track count lays out to *exactly* the container width, at five widths including an odd one and a half-point one (AGENTS.md's 1x/2x rounding rule); the 7:5 ratio as track arithmetic; both sides of the narrow threshold; and `sentenceList`'s serial comma. Each has its own discriminating-power guard first.
+- **`HomeDashboardViewSelfTest`** (window-backed, in `NEEDS_SESSION`): the hub has no header row and the four other spaces do; two rows of the right shape; the resolved 7:5 frames with a `1 / backingScaleFactor` tolerance; the narrow degrade; the Fleet tiles' and Merge footer's real numbers; and Daylight against Dusk with a component-wise check that the two surfaces really differ.
+- **Four injections, each confirmed to fail by name**, done by copying the file aside rather than by `git stash`: `usesDashboardLayout` forced false (`row 1 holds two members, got 3`), the hero band un-hidden on the hub (`the hub's hero band should be gone`, plus both rewritten C1 cases), the footer never un-hidden (`exactly one card carries a footer, got 0`), and `proportionalWidth` dropping the gutters a span swallows (`should lay out to exactly 1468.0, got 1308.0`).
+- **Real off-screen renders** of the real page at 1512pt in Daylight and Dusk, seeded with the reference's own fixture (the two overdue records, a 94% extra-usage reading against a $150 cap, 33 open PRs), read back as PNGs and compared against `reference-dark.png` structurally. That is what caught two defects the suite would not have: the Claude row's chip reporting `1%` for a 94% cap (`claudeSpendFraction` is 0…1 and `percentText` takes a percentage), and the first-run invitation copy rendering as the subline *over a list of four rows*. The probe was deleted before commit.
+- **Full `./Scripts/run-all-tests.sh`: 227 passed, 0 failed, 1 documented skip** (`FM_RUN_WHISPER_METAL_FALLBACK_ONLY_TEST`). This is a cross-cutting, whole-page change, so a scoped run was never an option. The **first** pass failed one suite and it is worth recording which: `FM_RUN_READY_TO_MERGE_TESTS` reads the hub's freshness line to prove the hub does not restate the merge-queue card's count, and that line had moved onto the attention card - so the assertion was comparing against an empty string and would have gone on passing for the wrong reason if it had been written any weaker. A targeted run had missed it because it was invoked as `FM_RUN_READY_TO_MERGE_COUNT_TESTS`, which is not a variable and therefore ran nothing and printed nothing. The full run is what caught both.
+- **`swift build -c release`**, which caught `debugTiles` reaching `HelmStatTile.debugMetric` across the `#if FM_SELFTESTS` boundary - exactly the gate AGENTS.md says finds that. Worth noting in passing: `HelmModuleCard`'s probe block is *itself* unguarded against GL-27 and gets away with it only because nothing else in it reaches a guarded symbol. Not fixed here.
+
+### What was deliberately not matched
+
+- **The clear strip's chips are readouts, not buttons.** The reference's scroll the matching widget into view; here that widget is already on screen a few hundred points below, and a control whose whole effect is to scroll to something visible is a dead control (gotcha (20) is about how expensive those are to notice).
+- **The chips carry no checkmark glyph.** `ToolRowLayout.pill` is the house pill and takes text only; adding a glyph slot for one caller would be hand-rolling a second chip.
+- **Attention rows keep D1's reveal-on-aim** for their Start/Open buttons above `HelmAccentRow.alwaysRevealRowCount`, where the reference shows them always. That is a prior deliberate decision about every list in the app, not something this page should overrule on its own.
+- **Merge queue rows keep the mono value face** `.peekRows` gives every card, where the reference sets "Checks green" proportionally.

@@ -153,8 +153,19 @@ enum NeedsAttentionViewSelfTest {
                   "the eyebrow should count the rows, got \"\(card.debugEyebrow)\"", &ok)
             check(card.debugHeadline == "Two things are late.",
                   "the headline should be the plain sentence, got \"\(card.debugHeadline)\"", &ok)
-            check(card.debugSubline.contains("\u{00B7}"),
-                  "the subline should name the day and the time, got \"\(card.debugSubline)\"", &ok)
+            // The subline is the **fleet's** freshness now, not the day and
+            // time the digest was composed. `fm/grandline-home-page-visual-
+            // overhaul` merged the hub's hero band into this card, and that
+            // band's line is the one fact none of the cards below it can
+            // state - a composed-at line, on a digest re-derived on every
+            // render, could only ever say "a moment ago".
+            //
+            // Nothing has been pushed into this canvas here, so the honest
+            // answer is the stated gap rather than a freshness for a reading
+            // that never happened (GL-14).
+            check(card.debugSubline.lowercased().contains("fleet"),
+                  "the subline should speak about the fleet reading, got "
+                      + "\"\(card.debugSubline)\"", &ok)
 
             // The rows really laid out, rather than collapsing to nothing
             // inside a `.leading`-aligned stack.
@@ -244,8 +255,17 @@ enum NeedsAttentionViewSelfTest {
             let card = canvas.attentionCardForTests
             check(card.debugEyebrow == "ALL CLEAR",
                   "an empty day reads as all clear, got \"\(card.debugEyebrow)\"", &ok)
-            check(card.debugHeadline == "Nothing is due, and nobody is waiting on you.",
-                  "with the calm sentence, got \"\(card.debugHeadline)\"", &ok)
+            // The all-clear sentence is the **host's** now, passed in as
+            // `allClearHeadline`: this card took over the hub's hero, and
+            // the app must have one all-clear sentence rather than a hero
+            // saying "Nothing needs you right now" over a card saying
+            // "Nothing is due". With no fleet reading pushed in, the hub
+            // hands over `FleetGreeting.timeOfDay()`.
+            //
+            // Asserted against that function rather than against a literal,
+            // so this case cannot pin a greeting that varies by hour.
+            check(card.debugHeadline == FleetGreeting.timeOfDay(),
+                  "with the host's own calm sentence, got \"\(card.debugHeadline)\"", &ok)
             check(card.debugAccentRows.isEmpty,
                   "and no rows, got \(card.debugAccentRows.count)", &ok)
             check(card.debugListText.contains(where: { $0.contains("shows up here") }),

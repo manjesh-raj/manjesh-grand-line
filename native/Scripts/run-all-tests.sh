@@ -266,6 +266,10 @@ NEEDS_SESSION=(
   # real hub in a real window and drives real controls. Its pure half
   # (`FM_RUN_NEEDS_ATTENTION_TESTS`) is deliberately NOT here.
   "FM_RUN_NEEDS_ATTENTION_VIEW_TESTS"
+  # Same split again: the hub's dashboard layout reads resolved `NSView`
+  # frames out of a real window. Its arithmetic half
+  # (`FM_RUN_HOME_DASHBOARD_TESTS`) is deliberately NOT here.
+  "FM_RUN_HOME_DASHBOARD_VIEW_TESTS"
   # `fm/grandline-overview-layout-fix-gmail-settings`: mounts a real
   # `SettingsController` in a real window and asserts laid-out geometry and
   # painted colour. Its sibling `FM_RUN_GOOGLE_ACCOUNTS_TESTS` is pure logic

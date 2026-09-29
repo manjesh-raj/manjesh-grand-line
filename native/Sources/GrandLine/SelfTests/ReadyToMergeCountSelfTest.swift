@@ -287,14 +287,25 @@ enum ReadyToMergeCountSelfTest {
             //
             // So what this case checks here is the thing that actually
             // mattered: that the hub does not state a ready count of its own
-            // that could contradict the merge-queue card below it. A hero
+            // that could contradict the merge-queue card below it. A header
             // re-deriving that number is the defect this whole suite exists
-            // to prevent, and a hero that does not state it cannot.
-            let hero = canvas.greetingForTests.subtitle
+            // to prevent, and a header that does not state it cannot.
+            //
+            // **`fm/grandline-home-page-visual-overhaul` moved the line, not
+            // the rule.** The hub has no hero band any more - the captain's
+            // reference draws one card at the top of Home, so the band was
+            // merged into the attention card - and the freshness line went
+            // with it. The assertion follows it rather than being deleted,
+            // for the reason the comment above already gives: one left
+            // pinning the old surface passes for the wrong reason, and this
+            // one would have passed against an empty string.
+            let hero = canvas.attentionCardForTests.debugSubline
+            check(canvas.heroCardHiddenForTests,
+                  "the hub should have no hero band - its verdict is on the attention card", &ok)
             check(number(before: "PRs ready to merge", in: hero) == nil,
-                  "the hub hero is restating the merge-queue card's count again: \"\(hero)\"", &ok)
+                  "the hub is restating the merge-queue card's count again: \"\(hero)\"", &ok)
             check(hero.hasPrefix("Fleet read "),
-                  "the hub hero should carry UX5's freshness line, got \"\(hero)\"", &ok)
+                  "the hub should carry UX5's freshness line, got \"\(hero)\"", &ok)
 
             // The merge-queue card is the surface that was already right, and
             // it is the one the hero visibly contradicted on the same canvas.

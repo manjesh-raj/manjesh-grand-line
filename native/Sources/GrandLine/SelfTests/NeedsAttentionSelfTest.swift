@@ -198,25 +198,59 @@ enum NeedsAttentionSelfTest {
 
     // MARK: 2 - the sentence
 
-    private static func checkHeadlines(_ ok: inout Bool) {
-        // A check that cannot fail is worse than no check: assert the four
-        // states really do produce four different sentences before believing
-        // any one of them.
-        let allClear = NeedsAttentionComposer.headline(state: .allClear, lateCount: 0, total: 0)
-        let oneLate = NeedsAttentionComposer.headline(state: .late, lateCount: 1, total: 1)
-        let mixed = NeedsAttentionComposer.headline(state: .late, lateCount: 2, total: 3)
-        let dueOnly = NeedsAttentionComposer.headline(state: .dueToday, lateCount: 0, total: 2)
-        let gap = NeedsAttentionComposer.headline(state: .unavailable, lateCount: 0, total: 0)
+    /// A stand-in row of a given tone. Only the fields the sentence reads
+    /// carry anything; the rest are deliberately inert, so a case that starts
+    /// passing because of a chip or a source label fails here first.
+    private static func toneRow(_ tone: NeedsAttentionItem.Tone,
+                                clause: String? = nil) -> NeedsAttentionItem {
+        NeedsAttentionItem(id: "x-\(clause ?? "\(tone)")", kind: .signal(.fleet), source: "Source",
+                           text: "Row", chipText: "chip", tone: tone,
+                           actionTitle: "Open", headlineClause: clause)
+    }
 
-        check(Set([allClear, oneLate, mixed, dueOnly, gap]).count == 5,
-              "the five states should read differently, got \([allClear, oneLate, mixed, dueOnly, gap])",
-              &ok)
-        check(allClear == "Nothing is due, and nobody is waiting on you.",
-              "the all-clear sentence, got \"\(allClear)\"", &ok)
+    private static func checkHeadlines(_ ok: inout Bool) {
+        func headline(_ state: NeedsAttentionSummary.State,
+                      _ items: [NeedsAttentionItem],
+                      hidden: Int = 0) -> String {
+            NeedsAttentionComposer.headline(state: state, items: items, hidden: hidden,
+                                            allClearHeadline: "Nothing needs you right now")
+        }
+
+        // A check that cannot fail is worse than no check: assert the states
+        // really do produce different sentences before believing any one of
+        // them.
+        let allClear = headline(.allClear, [])
+        let oneLate = headline(.late, [toneRow(.late)])
+        let mixed = headline(.late, [toneRow(.late), toneRow(.late), toneRow(.dueToday)])
+        let dueOnly = headline(.dueToday, [toneRow(.dueToday), toneRow(.dueToday)])
+        let gap = headline(.unavailable, [])
+        let riskOnly = headline(.risk, [toneRow(.risk, clause: "Claude is near its spend cap")])
+        let lateAndRisk = headline(.late, [toneRow(.late),
+                                           toneRow(.risk, clause: "Claude is near its spend cap")])
+        let infoOnly = headline(.dueToday, [toneRow(.info), toneRow(.info)])
+
+        let all = [allClear, oneLate, mixed, dueOnly, gap, riskOnly, lateAndRisk, infoOnly]
+        check(Set(all).count == all.count,
+              "every state should read differently, got \(all)", &ok)
+        check(allClear == "Nothing needs you right now",
+              "the all-clear sentence is the caller's, got \"\(allClear)\"", &ok)
         check(oneLate == "One thing is late.", "one late, got \"\(oneLate)\"", &ok)
         check(mixed == "Two things are late, and one more is due today.",
               "two late and one due, got \"\(mixed)\"", &ok)
         check(dueOnly == "Two things are due today.", "two due, got \"\(dueOnly)\"", &ok)
+        // A named signal is named rather than counted - the whole reason
+        // `headlineClause` lives on the item.
+        check(riskOnly == "Claude is near its spend cap.",
+              "a lone signal names itself, got \"\(riskOnly)\"", &ok)
+        check(lateAndRisk == "One thing is late, and Claude is near its spend cap.",
+              "a count and a named signal join with \", and \", got \"\(lateAndRisk)\"", &ok)
+        check(infoOnly == "Two checks are waiting.",
+              "info-only falls back to the check count, got \"\(infoOnly)\"", &ok)
+        // The digest's own overflow is counted with the due rows and never
+        // with the signals - a hidden task is a task.
+        let withHidden = headline(.late, [toneRow(.late)], hidden: 2)
+        check(withHidden == "One thing is late, and two more are due today.",
+              "the hidden overflow joins the due count, got \"\(withHidden)\"", &ok)
         // GL-14: a card that could not read a source must not say all-clear.
         check(!gap.lowercased().contains("nothing"),
               "an unreadable source must not read as an all-clear, got \"\(gap)\"", &ok)
