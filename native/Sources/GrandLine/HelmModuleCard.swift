@@ -72,6 +72,34 @@ struct HelmModuleChip: Equatable {
     static func mute(_ text: String) -> HelmModuleChip { .init(text: text, kind: .mute) }
 }
 
+/// One tile of a `.tiles` body: a number and the words under it.
+///
+/// A plain pair rather than a `HelmStatTile` so the body stays a *value* -
+/// the card rebuilds its whole body on every `configure`, and a `Content`
+/// holding live views could not be compared, cached or asserted the way
+/// every other body kind's payload can.
+///
+/// `symbol` is `HelmStatTile`'s glyph. `nil` draws the tile without one,
+/// which is what the reference's three fleet tiles do - at a 5-track card's
+/// width three glyphs plus three numbers is more furniture than the numbers
+/// are worth.
+struct HelmModuleTile: Equatable {
+    let value: String
+    let caption: String
+    let symbol: String?
+    /// Colours the *number* only, through `HelmStatTile`'s own
+    /// contrast-corrected path. `nil` leaves it in ink, which is right for a
+    /// count that is not itself a signal.
+    let tint: HelmTint?
+
+    init(value: String, caption: String, symbol: String? = nil, tint: HelmTint? = nil) {
+        self.value = value
+        self.caption = caption
+        self.symbol = symbol
+        self.tint = tint
+    }
+}
+
 /// One peek row's state dot (§6.1's "8pt filled circle").
 enum HelmModuleRowState {
     case ok, warn, bad, idle
@@ -329,6 +357,21 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// `HomeCanvasController.claudeUsageIsCompact(forCardWidth:)`, which
         /// picks between them at the same span-2 threshold.
         case usageReport([HelmModuleUsageSection], compact: Bool)
+        /// One line of copy over a row of `HelmStatTile`s - the reference's
+        /// Fleet widget, which states the fleet in a sentence and then breaks
+        /// it into Working / Finished today / Queued.
+        ///
+        /// `HelmStatTile` rather than three more peek rows, and rather than a
+        /// shape of this card's own: the component index names it as the one
+        /// stat tile ("four prior copies"), it themes itself, and it already
+        /// carries the tabular metric face the reference draws these numbers
+        /// in. What is new here is only that a module card can hold a row of
+        /// them.
+        ///
+        /// A tile is `HelmStatTile.height` (56pt) tall and its caption is one
+        /// line, so three across a 5-track card is the shape that fits;
+        /// `maxTiles` caps it for the same reason `maxPeekRows` does.
+        case tiles(note: String?, tiles: [HelmModuleTile])
         /// D3's layout-shaped placeholder, for a card whose real answer has
         /// not arrived yet.
         ///
@@ -472,6 +515,40 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// rather than leaving a blank line (AGENTS.md gotcha (15)'s one
         /// case where `isHidden` really does mean "out of the layout").
         var headerCaption: String? = nil
+        /// A hairline-separated strip along the card's bottom edge, carrying
+        /// a quiet caption on the left and a link-styled verb on the right -
+        /// the reference's Merge queue footer ("Showing 3 of 33" / "View all
+        /// 33 open").
+        ///
+        /// It is part of the card rather than of the body because it is a
+        /// statement about the *list* rather than a member of it: a peek body
+        /// is capped at `maxPeekRows`, and until now the fact that a card was
+        /// showing three of thirty-three was simply not said anywhere. That
+        /// is the same class of omission GL-14 is about, one step milder -
+        /// not an unknown drawn as a zero, but a truncation drawn as a whole.
+        ///
+        /// `nil` on every card that shows everything it has, which is all but
+        /// one of them.
+        var footer: Footer? = nil
+    }
+
+    /// See `Content.footer`.
+    ///
+    /// The action is optional because the caption is the part that owes the
+    /// captain something; a footer with no second page to open is still worth
+    /// drawing. When it is present it is a real control, so it needs the same
+    /// gesture arbitration `HeaderAction` documents - a click on it must not
+    /// also open the card.
+    struct Footer {
+        let caption: String
+        let actionTitle: String?
+        let handler: (() -> Void)?
+
+        init(caption: String, actionTitle: String? = nil, handler: (() -> Void)? = nil) {
+            self.caption = caption
+            self.actionTitle = actionTitle
+            self.handler = handler
+        }
     }
 
     // Geometry (§2.7, §2.6).
@@ -599,6 +676,26 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     private let actionButton = HelmPageToolbar.iconButton(
         symbol: "arrow.clockwise", tooltip: "", target: nil, action: nil)
     private var headerActionHandler: (() -> Void)?
+
+    /// `Content.footer`'s strip, built once with the rest of the chrome and
+    /// hidden when the content carries none - the same arrangement as
+    /// `chipView` and `actionButton`, and for the same reason: the card's
+    /// shape is stable and only its contents change.
+    private let footerContainer = NSView()
+    private let footerDivider = NSView()
+    private let footerCaption = NSTextField(labelWithString: "")
+    private let footerAction = HelmButton(title: "", variant: .quiet, size: .small)
+    private var footerActionHandler: (() -> Void)?
+    /// Exactly one of these is active: the body ends at the card's own bottom
+    /// inset, or at the footer's top edge. Stored so `configure` can swap
+    /// them rather than rebuilding the card's chrome.
+    private var bodyBottomToCard: NSLayoutConstraint?
+    private var bodyBottomToFooter: NSLayoutConstraint?
+    /// A `.tiles` body's live tiles. `HelmStatTile` themes itself, so these
+    /// are kept only to be handed the theme - never a `stashedTileParts`-style
+    /// colour registry, which is exactly what that component's header warns
+    /// against.
+    private var statTiles: [HelmStatTile] = []
 
     private var content: Content?
     private var themeToken: ThemeObservation?
@@ -796,8 +893,11 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
 
+        buildFooter()
+
         card.addSubview(headerRow)
         card.addSubview(bodyContainer)
+        card.addSubview(footerContainer)
 
         NSLayoutConstraint.activate([
             card.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -827,9 +927,74 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             bodyContainer.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: Self.horizontalInset),
             bodyContainer.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -Self.horizontalInset),
             bodyContainer.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: Self.bodyInsetTop),
-            bodyContainer.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -Self.bodyInsetBottom),
+
+            // Full bleed, unlike the header and the body: the reference's
+            // footer is separated by a hairline that runs the whole width of
+            // the card, so the strip owns its own horizontal inset inside.
+            footerContainer.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            footerContainer.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            footerContainer.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+        ])
+
+        let toCard = bodyContainer.bottomAnchor.constraint(equalTo: card.bottomAnchor,
+                                                           constant: -Self.bodyInsetBottom)
+        let toFooter = bodyContainer.bottomAnchor.constraint(equalTo: footerContainer.topAnchor,
+                                                             constant: -Self.bodyInsetBottom)
+        bodyBottomToCard = toCard
+        bodyBottomToFooter = toFooter
+        toCard.isActive = true
+    }
+
+    /// `Content.footer`'s strip. Built once; `configure` only fills it in.
+    private func buildFooter() {
+        footerContainer.translatesAutoresizingMaskIntoConstraints = false
+        footerContainer.isHidden = true
+
+        footerDivider.translatesAutoresizingMaskIntoConstraints = false
+        footerDivider.wantsLayer = true
+
+        footerCaption.font = HelmType.captionSmall()
+        footerCaption.lineBreakMode = .byTruncatingTail
+        footerCaption.translatesAutoresizingMaskIntoConstraints = false
+        // gotcha (13): a caption on a page-wide grid must never be a width
+        // floor - the same reason `headerCaptionLabel` above yields.
+        footerCaption.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        footerCaption.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        footerAction.target = self
+        footerAction.action = #selector(footerActionTapped)
+        footerAction.setContentHuggingPriority(.required, for: .horizontal)
+        footerAction.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        // gotcha (10): `.fill`, because `.gravityAreas` honours none of the
+        // priorities the two members above were just given.
+        let row = NSStackView(views: [footerCaption, footerAction])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.distribution = .fill
+        row.spacing = HelmMetrics.s2
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        row.setHuggingPriority(.defaultLow, for: .horizontal)
+
+        footerContainer.addSubview(footerDivider)
+        footerContainer.addSubview(row)
+        NSLayoutConstraint.activate([
+            footerDivider.leadingAnchor.constraint(equalTo: footerContainer.leadingAnchor),
+            footerDivider.trailingAnchor.constraint(equalTo: footerContainer.trailingAnchor),
+            footerDivider.topAnchor.constraint(equalTo: footerContainer.topAnchor),
+            footerDivider.heightAnchor.constraint(equalToConstant: 1),
+
+            row.leadingAnchor.constraint(equalTo: footerContainer.leadingAnchor,
+                                         constant: Self.horizontalInset),
+            row.trailingAnchor.constraint(equalTo: footerContainer.trailingAnchor,
+                                          constant: -Self.horizontalInset),
+            row.topAnchor.constraint(equalTo: footerDivider.bottomAnchor, constant: 9),
+            row.bottomAnchor.constraint(equalTo: footerContainer.bottomAnchor, constant: -9),
         ])
     }
+
+    @objc private func footerActionTapped() { footerActionHandler?() }
 
     // MARK: Configure
 
@@ -874,6 +1039,23 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             headerActionHandler = nil
         }
 
+        if let footer = content.footer {
+            footerContainer.isHidden = false
+            footerCaption.stringValue = footer.caption
+            footerAction.title = footer.actionTitle ?? ""
+            footerAction.isHidden = (footer.actionTitle ?? "").isEmpty
+            footerActionHandler = footer.handler
+            bodyBottomToCard?.isActive = false
+            bodyBottomToFooter?.isActive = true
+        } else {
+            footerContainer.isHidden = true
+            footerCaption.stringValue = ""
+            footerAction.title = ""
+            footerActionHandler = nil
+            bodyBottomToFooter?.isActive = false
+            bodyBottomToCard?.isActive = true
+        }
+
         rebuildBody(content.body)
 
         // GL-16: §6.1's own label spec - "<title>, <subtitle>, <chip text>".
@@ -908,6 +1090,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         usageTracks.removeAll()
         usageDividers.removeAll()
         usageRowCells.removeAll()
+        statTiles.removeAll()
         peekTextLabels.removeAll()
         peekValueLabels.removeAll()
         noteLabels.removeAll()
@@ -930,6 +1113,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             content = buildParagraph(clauses)
         case let .usageReport(sections, compact):
             content = buildUsageReport(sections, compact: compact)
+        case let .tiles(note, tiles):
+            content = buildTiles(note: note, tiles: Array(tiles.prefix(Self.maxTiles)))
         case let .skeleton(rows):
             content = buildSkeleton(rows: rows)
         }
@@ -1458,6 +1643,46 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         return row
     }
 
+    /// Three, for the same reason `maxPeekRows` is three: a fourth tile on a
+    /// 5-track card leaves each one about 60pt, which is narrower than
+    /// "Finished today" can be set at `HelmStatTile.captionSize` without
+    /// truncating. The overflow is the caller's to state, never silently
+    /// dropped - the same contract `maxPeekRows` and `maxBriefingClauses`
+    /// already carry.
+    static let maxTiles = 3
+
+    private func buildTiles(note: String?, tiles: [HelmModuleTile]) -> NSView {
+        let tileViews = tiles.map { spec -> HelmStatTile in
+            let tile = HelmStatTile(symbol: spec.symbol ?? "",
+                                    value: spec.value,
+                                    caption: spec.caption,
+                                    tint: spec.tint)
+            statTiles.append(tile)
+            return tile
+        }
+
+        // `.fillEqually`, so three tiles are three equal columns however long
+        // their captions are - the reference draws them as a even triptych,
+        // and `.fill` would let "Finished today" steal width from "Queued".
+        let row = NSStackView(views: tileViews)
+        row.orientation = .horizontal
+        row.spacing = HelmMetrics.s2
+        row.distribution = .fillEqually
+        row.alignment = .top
+        row.translatesAutoresizingMaskIntoConstraints = false
+        // gotcha (12)+(13): the *stack*-level APIs, and both yielding - a
+        // stack resists clipping at 750, which is above
+        // `NSLayoutPriorityWindowSizeStayPut`, so this row would otherwise be
+        // a window-width floor.
+        row.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        row.setHuggingPriority(.defaultLow, for: .horizontal)
+
+        guard let note, !note.isEmpty else {
+            return verticalStack([row], spacing: 0)
+        }
+        return verticalStack([noteLabel(note, maxLines: 2), row], spacing: HelmMetrics.s2)
+    }
+
     private func buildProgress(value: Int, total: Int, note: String) -> NSView {
         let number = metricLabel(total > 0 ? "\(value)/\(total)" : "\(value)")
         let bar = HelmProgressBar()
@@ -1772,6 +1997,24 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         headerCaptionLabel.font = HelmType.captionSmall()
         headerCaptionLabel.textColor = muted
 
+        // `.tiles`. `HelmStatTile` themes itself - its header is explicit
+        // that a page must hand it the theme rather than keep a colour
+        // registry for it - so this is the whole of what the card owes it.
+        for tile in statTiles { tile.applyTheme(theme) }
+
+        // `Content.footer`. The divider is the card's own hairline at the
+        // same weight the peek-row separators use, and the caption is muted
+        // for the same reason every other caption on this card is: it is a
+        // fact about the list rather than a member of it.
+        footerDivider.layer?.backgroundColor =
+            line.withAlphaComponent(theme.isDaylight ? 1.0 : 0.5).cgColor
+        footerCaption.font = HelmType.captionSmall()
+        footerCaption.textColor = muted
+        // `footerAction` is a `HelmButton`, which observes `ThemeManager`
+        // itself and owns all four of the properties a page must not set on
+        // one (the component index is explicit about that), so it is
+        // deliberately absent from this list.
+
         // `.usageReport`. The colour rule that runs through all of it:
         // AGENTS.md's "a `HelmTint` hue is safe as a fill and is NOT
         // automatically safe as text". The bars are fills and take the state
@@ -1987,6 +2230,34 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// the ribbon's live geometry, so the rest/bloom state is read off the
     /// real layer rather than recomputed by the test.
     var debugCardView: HoverHighlightView { card }
+    /// The card's resolved surface fill, so a theming check can assert two
+    /// palettes really painted differently rather than only that neither
+    /// crashed.
+    var debugCardSurfaceColor: NSColor? {
+        card.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }
+    }
+    /// `Content.footer` as rendered, or `nil` when the strip is out of the
+    /// layout. Read off the **labels**, not the content struct, so a footer
+    /// that was configured and never painted fails.
+    var debugFooter: (caption: String, action: String)? {
+        guard !footerContainer.isHidden else { return nil }
+        return (footerCaption.stringValue, footerAction.title)
+    }
+    /// A `.tiles` body's numbers as rendered, for the same reason.
+    ///
+    /// **Guarded, unlike its neighbours in this block.** GL-27 asks for the
+    /// guard on every `debug*` accessor in a production file; the rest of
+    /// this probe surface predates that and gets away without one only
+    /// because nothing in it reaches a guarded symbol. This one reads
+    /// `HelmStatTile.debugMetric`, which *is* inside `#if FM_SELFTESTS`, so
+    /// without the guard the whole app fails to build in release - caught by
+    /// `swift build -c release`, which is exactly the gate AGENTS.md says
+    /// finds this.
+    #if FM_SELFTESTS
+    var debugTiles: [(value: String, caption: String)] {
+        statTiles.map { $0.debugMetric }
+    }
+    #endif
     var debugRibbonGeometry: (height: CGFloat, opacity: Float, stopCount: Int) {
         (ribbon.frame.height, ribbon.opacity, ribbon.colors?.count ?? 0)
     }

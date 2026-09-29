@@ -4686,6 +4686,131 @@ enum HelmResponsiveGrid {
             return stack
         }
     }
+
+    // MARK: Fixed proportional layout (the Home dashboard)
+    //
+    // `rows(_:)` and `spanningRows(_:)` both *derive* their column count from
+    // the container's width, which is right for a wrapping shelf of
+    // like-sized cards and wrong for a dashboard. The Home page is a
+    // dashboard: the captain's reference lays its five widgets out on a fixed
+    // twelve-track grid with a hand-picked span each (a 7-track Claude card
+    // beside a 5-track column, then a 7-track Merge queue beside a 5-track
+    // Health card), and those proportions are the design rather than a
+    // consequence of how wide the window happens to be.
+    //
+    // Deriving the count cannot express that. At 1512pt the wrapping grid
+    // resolves to five 255pt columns and packs the same five cards as
+    // 2+2+1 / 1+1, which is the ragged masonry the captain rejected. So this
+    // is a third layout path rather than a fourth parameter on the other two:
+    // the input is "which fraction of the row does each card own", not "how
+    // many cards fit".
+
+    /// The one dashboard track count, matching the reference's CSS grid.
+    static let dashboardColumns = 12
+
+    /// The narrowest a dashboard track group may get before a row should stop
+    /// being a row at all.
+    ///
+    /// The reference collapses every widget to full width under 720px. Here
+    /// the equivalent question is asked of the *smallest* span a caller wants
+    /// to draw, against the same `minItemWidth` the wrapping grid uses - so a
+    /// 5-track card that would resolve narrower than a single wrapping column
+    /// means the row is over-subscribed and the caller should stack instead.
+    /// See `fitsProportionally`.
+    static func proportionalUnit(containerWidth: CGFloat,
+                                 totalColumns: Int = dashboardColumns,
+                                 spacing: CGFloat = spacing) -> CGFloat {
+        let width = containerWidth > 0 ? containerWidth : fallbackContainerWidth
+        let tracks = max(1, totalColumns)
+        return (width - spacing * CGFloat(tracks - 1)) / CGFloat(tracks)
+    }
+
+    /// The width a `span`-track item occupies: its own tracks plus the gutters
+    /// *between* them, which the tracks it swallows no longer need.
+    ///
+    /// A row whose spans sum to `totalColumns` therefore lays out to exactly
+    /// `containerWidth` once the stack's own inter-item spacing is added -
+    /// which is the property that makes this safe to hand to a `.fill` stack
+    /// with no leftover to distribute.
+    static func proportionalWidth(containerWidth: CGFloat,
+                                  span: Int,
+                                  totalColumns: Int = dashboardColumns,
+                                  spacing: CGFloat = spacing) -> CGFloat {
+        let tracks = max(1, min(span, max(1, totalColumns)))
+        let unit = proportionalUnit(containerWidth: containerWidth,
+                                    totalColumns: totalColumns,
+                                    spacing: spacing)
+        return unit * CGFloat(tracks) + spacing * CGFloat(tracks - 1)
+    }
+
+    /// Whether `spans` can be drawn side by side at `containerWidth` without
+    /// any of them falling below `minItemWidth`.
+    ///
+    /// Pure, and the single decision point for "dashboard row or stacked
+    /// column" - a caller that asks this and then builds the row cannot
+    /// disagree with itself about which shape it is in. Asserting it needs no
+    /// window, which is the whole reason the threshold is arithmetic rather
+    /// than a literal breakpoint.
+    static func fitsProportionally(containerWidth: CGFloat,
+                                   spans: [Int],
+                                   minItemWidth: CGFloat,
+                                   totalColumns: Int = dashboardColumns,
+                                   spacing: CGFloat = spacing) -> Bool {
+        guard !spans.isEmpty else { return true }
+        return spans.allSatisfy { span in
+            proportionalWidth(containerWidth: containerWidth,
+                              span: span,
+                              totalColumns: totalColumns,
+                              spacing: spacing) >= minItemWidth
+        }
+    }
+
+    /// One dashboard row: each view pinned to its own fraction of the track
+    /// grid, tied to a shared height so the row reads as a row.
+    ///
+    /// Every convention here is `spanningRows`', for its reasons rather than
+    /// by imitation - the width constraints are `HelmDaylightPriority.
+    /// contentTie` (499) so no card can become a window-width floor
+    /// (gotcha (13)), the stack yields its clipping resistance and its
+    /// hugging for the same reason that function's own comment records
+    /// (gotcha (12): a stack resists clipping at 750, above
+    /// `NSLayoutPriorityWindowSizeStayPut`, so a row is itself a floor unless
+    /// told to yield), and the distribution is `.fill` rather than the
+    /// default `.gravityAreas`, which honours no priority at all (gotcha
+    /// (10)).
+    ///
+    /// `equalHeights` ties every member to the row, which is what makes the
+    /// reference's tall Claude card and the two stacked cards beside it end
+    /// at the same line.
+    static func proportionalRow(views: [NSView],
+                                spans: [Int],
+                                containerWidth: CGFloat,
+                                totalColumns: Int = dashboardColumns,
+                                spacing: CGFloat = spacing,
+                                equalHeights: Bool = true) -> NSStackView {
+        for (index, view) in views.enumerated() {
+            let span = index < spans.count ? spans[index] : 1
+            view.translatesAutoresizingMaskIntoConstraints = false
+            let width = view.widthAnchor.constraint(
+                equalToConstant: proportionalWidth(containerWidth: containerWidth,
+                                                   span: span,
+                                                   totalColumns: totalColumns,
+                                                   spacing: spacing))
+            width.priority = HelmDaylightPriority.contentTie
+            width.isActive = true
+            view.setContentHuggingPriority(.required, for: .horizontal)
+        }
+        let stack = NSStackView(views: views)
+        stack.orientation = .horizontal
+        stack.spacing = spacing
+        stack.distribution = .fill
+        stack.alignment = .top
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        stack.setHuggingPriority(.defaultLow, for: .horizontal)
+        if equalHeights, views.count > 1 { tieHeights(views, to: stack.heightAnchor) }
+        return stack
+    }
 }
 
 // MARK: - HelmCountBadge

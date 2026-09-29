@@ -59,12 +59,11 @@ enum CanvasListsControlsSelfTest {
         defer { HelmMotion.reducedOverrideForTests = nil }
 
         let cases: [(String, () -> String?)] = [
-            ("C1 the hero reports the answer banner's own verdict", test_c1HeroReportsTheAnswer),
+            ("C1 the hub reports the answer banner's own verdict", test_c1HeroReportsTheAnswer),
             ("C1 every space's hero glyph resolves", test_c1HeroSymbolsResolve),
             ("C1 short content is top-anchored, leftover space trails below", test_c1ContentIsTopAnchored),
             ("C1 content taller than the viewport still scrolls", test_c1TallContentStillScrolls),
-            ("C1 the hero band is Overview's verdict and nothing else", test_c1HeroBandIsOverviewOnly),
-            ("C1 the hero band's wash keeps both lines of copy legible", test_c1HeroWashStaysLegible),
+            ("C1 the hub has no header row, the other spaces have a plain one", test_c1HeroBandIsOverviewOnly),
             ("C1 the content column uses only the columns it can fill", test_c1ComposedContentWidth),
             ("C2 a card press compresses, and composes with the hover lift", test_c2PressComposesWithHover),
             ("C2 Reduce Motion gets the end state instantly", test_c2ReduceMotionIsInstant),
@@ -929,15 +928,30 @@ enum CanvasListsControlsSelfTest {
 
         let expected = FleetGreeting.answer(tasks: [needs], readyCount: 0,
                                             prFetchFailure: nil, homeOk: true)
-        let hero = canvas.greetingForTests
-        if hero.title != expected.title {
-            return "hero headline '\(hero.title)' is not the answer's own '\(expected.title)'"
+
+        // **The verdict is on the attention card now, not on a hero band.**
+        // `fm/grandline-home-page-visual-overhaul` merged the two - the
+        // captain's reference draws one card at the top of Home - so what
+        // this case has always asserted (that the hub reports
+        // `FleetGreeting`'s own answer rather than a second computation of
+        // it) is asserted against the surface that now carries it.
+        if !canvas.heroCardHiddenForTests {
+            return "the hub still draws a hero band above its attention card"
         }
-        if hero.kicker != expected.kicker.uppercased() {
-            return "hero kicker '\(hero.kicker)' is not '\(expected.kicker.uppercased())'"
+        let card = canvas.attentionCardForTests
+        // A parked crewmate is a row, so the card counts it and names it in
+        // its headline rather than dropping the fleet's verdict on the floor.
+        if !card.debugListText.contains(where: { $0.contains(expected.title) }) {
+            return "the attention list does not carry the answer's own '\(expected.title)', "
+                 + "got \(card.debugListText)"
         }
-        if canvas.heroTintForTests != expected.tint {
-            return "hero badge is \(canvas.heroTintForTests), expected the answer's own \(expected.tint)"
+        if !card.debugHeadline.lowercased().contains(expected.title.prefix(1).lowercased()
+                                                     + expected.title.dropFirst().lowercased()) {
+            return "the headline '\(card.debugHeadline)' does not name the answer's own "
+                 + "'\(expected.title)'"
+        }
+        if card.debugEyebrow != "NEEDS ATTENTION, 1" {
+            return "the eyebrow should count the verdict as one open row, got '\(card.debugEyebrow)'"
         }
 
         // Off Overview there is no verdict to report, so the badge must not
@@ -946,6 +960,9 @@ enum CanvasListsControlsSelfTest {
         // an alert on a space that measured nothing.
         canvas.select(space: .stores)
         canvas.debugRenderNow()
+        if canvas.heroCardHiddenForTests {
+            return "a space that is not the hub still needs its header row to name itself"
+        }
         if canvas.heroTintForTests != .neutral {
             return "the Stores hero claims \(canvas.heroTintForTests); a space with no verdict must be .neutral"
         }
@@ -1063,7 +1080,17 @@ enum CanvasListsControlsSelfTest {
         let window = makeWindow(canvas.view, size: NSSize(width: 1300, height: 860))
         defer { window.orderOut(nil) }
 
-        // Every other space first, while the fleet has reported nothing.
+        // **The hub has no header row at all now.**
+        //
+        // C1 gave Overview a hero *band* - a washed surface in the verdict's
+        // own hue - and it was the only space that ever raised one.
+        // `fm/grandline-home-page-visual-overhaul` moved that verdict into
+        // the merged attention card, so the band has no caller and the whole
+        // second mode is deleted rather than left behind a flag that can
+        // never be true. What this case asserts is the other half of that:
+        // the four spaces that still head themselves render exactly the
+        // plain row they always did, and the hub renders none.
+        //
         // `fm/grandline-overview-page-daily-review`: a space that owns a
         // destination never reaches the canvas at all (`select(space:)`
         // ignores it), so sweeping it here would assert the previously
@@ -1071,129 +1098,46 @@ enum CanvasListsControlsSelfTest {
         for space in DaylightSpace.allCases where space != .overview && space.filtersCanvas {
             canvas.select(space: space)
             canvas.debugRenderNow()
-            let band = canvas.heroBandForTests
-            if band.isBanner {
-                return "\(space) renders a hero band - only a space with a real verdict earns one"
+            if canvas.heroCardHiddenForTests {
+                return "\(space) has no header row - it would render nameless"
             }
+            let band = canvas.heroBandForTests
             if band.borderWidth > 0 || band.inset > 0 {
                 return "\(space)'s header has a \(band.borderWidth)pt border and \(band.inset)pt of "
-                     + "padding - off Overview it must render as the plain row it always was"
+                     + "padding - it must render as the plain row it always was"
             }
             if let fill = band.fill, fill.alphaComponent > 0.01 {
                 return "\(space)'s header painted a surface (alpha \(fill.alphaComponent))"
             }
         }
 
-        // Overview, before any fleet snapshot: still no verdict, so still no
-        // band. GL-14 - an all-clear this page has not measured is worse than
-        // no hero at all.
+        // Overview, before any fleet snapshot, and after one: no header row
+        // either way. The fixture's own discriminating power is the loop
+        // above - four spaces that really do draw one - so this is not a
+        // check that a view is simply never built.
         canvas.select(space: .overview)
         canvas.debugRenderNow()
-        if canvas.heroBandForTests.isBanner {
-            return "Overview wears a hero band before the fleet has reported anything"
+        if !canvas.heroCardHiddenForTests {
+            return "the hub drew a header row above its attention card"
         }
-
-        // And with one: the band appears.
         let snapshot = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
                                      queuedCount: 0, doneCount: 0, projectsCount: 1,
                                      watcher: WatcherHealth(status: "healthy"))
         canvas.applyFleet(snapshot: snapshot, mergedPRs: [], prFetchFailure: nil)
         canvas.debugRenderNow()
         canvas.view.layoutSubtreeIfNeeded()
-
-        let band = canvas.heroBandForTests
-        if !band.isBanner { return "Overview did not raise its hero band after a real fleet verdict" }
-        if band.borderWidth < 0.9 { return "the hero band has no border (\(band.borderWidth)pt)" }
-        if band.radius < 1 { return "the hero band has no corner radius (\(band.radius)pt)" }
-        if abs(band.inset - HomeCanvasController.heroBandPadding) > 0.5 {
-            return "the hero band's padding is \(band.inset)pt, expected "
-                 + "\(HomeCanvasController.heroBandPadding)pt - a hero without room is a row"
+        if !canvas.heroCardHiddenForTests {
+            return "the hub raised a header row once the fleet reported - the verdict belongs "
+                 + "to the attention card now"
         }
-        guard let fill = band.fill, fill.alphaComponent > 0.9 else {
-            return "the hero band has no opaque fill"
+        // And the card really is carrying it, so this is not a check that
+        // the hub simply stopped saying anything.
+        if canvas.attentionCardHiddenForTests {
+            return "the hub has neither a header row nor an attention card"
         }
-        _ = fill
-        // The hero's detail line steps up a role on the space with a verdict.
-        if canvas.heroDetailPointSizeForTests <= HelmType.body().pointSize {
-            return "the hero's detail line is \(canvas.heroDetailPointSizeForTests)pt, no larger than the "
-                 + "plain header's \(HelmType.body().pointSize)pt"
+        if !canvas.attentionCardForTests.debugRefreshButtonVisible {
+            return "the attention card is not carrying the Refresh the band used to"
         }
-
-        // And the derived fill genuinely *reaches the layer*, on every
-        // palette - a colour computed correctly and never applied is a defect
-        // class this codebase has shipped more than once, and the arithmetic
-        // check in the next case cannot see it. Driven through
-        // `debugApplyTheme` rather than `ThemeManager.setTheme`, which writes
-        // through to the real preference and has poisoned whole suite runs.
-        let restore = ThemeManager.shared.theme
-        defer { canvas.debugApplyTheme(restore) }
-        for theme in HelmTheme.allThemes {
-            canvas.debugApplyTheme(theme)
-            let painted = canvas.heroBandForTests
-            guard let paintedFill = painted.fill else {
-                return "\(theme.id): the hero band lost its fill on a theme change"
-            }
-            let want = HomeCanvasController.heroFill(
-                tint: HelmTheme.nsColor(canvas.heroTintForTests.hex(in: theme)), theme: theme)
-            let got = HelmContrast.components(paintedFill)
-            let expected = HelmContrast.components(want)
-            // Component-wise, never `HelmContrast.ratio` - that compares
-            // relative *luminance*, so two different hues of similar
-            // brightness pass it. This codebase has walked into that twice.
-            if abs(got.0 - expected.0) > 0.01 || abs(got.1 - expected.1) > 0.01
-                || abs(got.2 - expected.2) > 0.01 {
-                return "\(theme.id): the band painted \(got) but its own derivation says \(expected)"
-            }
-            if painted.borderWidth < 0.9 {
-                return "\(theme.id): the hero band lost its border on a theme change"
-            }
-        }
-        return nil
-    }
-
-    /// The band's wash is derived per theme, so the derivation is what is
-    /// asserted: on every one of the fourteen palettes, and for every verdict
-    /// hue the answer banner can report, both lines of hero copy have to
-    /// clear the 4.5:1 text floor against the fill they actually land on.
-    ///
-    /// Pure arithmetic over the real helper, so it needs no window - and it
-    /// scores the *muted* line too, which is the one that runs out of
-    /// headroom first and the one a fill tuned by eye on Daylight would break.
-    private static func test_c1HeroWashStaysLegible() -> String? {
-        var worst = Double.greatestFiniteMagnitude
-        var worstWhere = ""
-        for theme in HelmTheme.allThemes {
-            let ink = HelmContrast.components(HelmTheme.nsColor(theme.chromeInkHex))
-            let mutedAlpha = Double(HelmTheme.mutedAlpha(for: theme))
-            for tint in [HelmTint.good, .warn, .critical, .accent, .neutral] {
-                let hue = HelmTheme.nsColor(tint.hex(in: theme))
-                let fill = HelmContrast.components(HomeCanvasController.heroFill(tint: hue, theme: theme))
-                let muted = HelmContrast.mix(ink, fill, mutedAlpha)
-                for (name, colour) in [("headline", ink), ("detail", muted)] {
-                    let ratio = HelmContrast.ratio(colour, fill)
-                    if ratio < worst { worst = ratio; worstWhere = "\(theme.id)/\(tint)/\(name)" }
-                    if ratio < HelmContrast.textTarget {
-                        return "\(theme.id): the hero band's \(name) measures \(String(format: "%.2f", ratio)):1 "
-                             + "on a \(tint) wash - the ladder must stop at a fill both lines clear"
-                    }
-                }
-            }
-        }
-        print("     (worst hero-copy contrast \(String(format: "%.2f", worst)):1 at \(worstWhere))")
-
-        // The ladder's floor is "no wash", and at least one real palette
-        // takes it (solarized-dark measures 4.47:1 on a 7% wash of its own
-        // green). Asserting that some palette *does* get a wash is what stops
-        // a future over-cautious edit from quietly flattening the band
-        // everywhere and passing this check by rendering nothing at all.
-        let washed = HelmTheme.allThemes.filter {
-            HomeCanvasController.heroWashFraction(tint: HelmTheme.nsColor(HelmTint.good.hex(in: $0)),
-                                                  theme: $0) > 0
-        }
-        if washed.isEmpty {
-            return "no palette resolved a hero wash at all - the band would be a plain card everywhere"
-        }
-        print("     (\(washed.count) of \(HelmTheme.allThemes.count) palettes afford a hue wash)")
         return nil
     }
 

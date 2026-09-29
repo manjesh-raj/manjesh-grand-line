@@ -3962,6 +3962,18 @@ if ProcessInfo.processInfo.environment["FM_RUN_NEEDS_ATTENTION_VIEW_TESTS"] == "
     exit(NeedsAttentionViewSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grandline-home-page-visual-overhaul`: the hub's hand-placed dashboard,
+// split the same way and for the same reason as the pair above -
+// `HomeDashboardSelfTest` is arithmetic over numbers and guards CI's
+// blocking lane, `HomeDashboardViewSelfTest` reads resolved frames out of a
+// real window and lives in `run-all-tests.sh`'s NEEDS_SESSION list.
+if ProcessInfo.processInfo.environment["FM_RUN_HOME_DASHBOARD_TESTS"] == "1" {
+    exit(HomeDashboardSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_HOME_DASHBOARD_VIEW_TESTS"] == "1" {
+    exit(HomeDashboardViewSelfTest.run() ? 0 : 1)
+}
+
 // F9 (v1, multi-host command execution): the host-selection logic - tag
 // matching, the never-preselected invariant, the risk gate firing once per
 // host, and the unfilled-parameter refusal applied across a whole selection.

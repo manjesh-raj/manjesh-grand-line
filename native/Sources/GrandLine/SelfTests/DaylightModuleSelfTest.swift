@@ -1852,66 +1852,85 @@ enum DaylightModuleSelfTest {
                      + "is not being deallocated", &ok)
             }
 
-            // Overview's hero comes from `FleetGreeting`, shared with the
+            // Overview's verdict comes from `FleetGreeting`, shared with the
             // Overview page - not a second implementation.
             //
-            // C1 changed *which* of that type's values the hero renders, and
-            // this assertion is inverted rather than deleted for the reason
-            // this codebase has had to relearn several times: an assertion
-            // left pinning the old shape is a record of the old behaviour,
-            // and silently keeps passing for the wrong reason. Before C1 the
-            // hero was a time-of-day greeting over `answer.canvasLine`; it is
-            // now the answer banner itself - badge, kicker, headline, detail -
-            // which is what gives the hub the focal point §3C asks for.
+            // **Which surface carries it has changed twice now, and this
+            // assertion is rewritten rather than deleted each time**, for the
+            // reason this codebase has had to relearn several times: an
+            // assertion left pinning the old shape is a record of the old
+            // behaviour and silently keeps passing for the wrong reason.
+            // Before C1 the hub showed a time-of-day greeting over
+            // `answer.canvasLine`; C1 made it the answer banner itself in a
+            // hero band; `fm/grandline-home-page-visual-overhaul` merged that
+            // band into the attention card, because the captain's reference
+            // draws one card at the top of Home rather than two.
             shell.selectSpace(.overview)
             let snapshot = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
                                          queuedCount: 0, doneCount: 0, projectsCount: 0,
                                          watcher: WatcherHealth(status: "healthy"))
             canvas.applyFleet(snapshot: snapshot, mergedPRs: [], prFetchFailure: nil)
-            let greeting = canvas.greetingForTests
             let expected = FleetGreeting.answer(tasks: [], readyCount: 0,
                                                 prFetchFailure: nil, homeOk: true)
-            if greeting.title != expected.title {
-                fail("Overview hero headline is '\(greeting.title)', expected the answer banner's own "
+            if !canvas.heroCardHiddenForTests {
+                fail("the hub still draws a header row above its attention card", &ok)
+            }
+            let card = canvas.attentionCardForTests
+            if card.debugHeadline != expected.title {
+                fail("the hub's headline is '\(card.debugHeadline)', expected the answer banner's own "
                      + "'\(expected.title)'", &ok)
             }
             // **Review #3's UX5 deliberately split the detail line here.**
             // The all-clear `meta` enumerates the two cards drawn directly
-            // under this hero ("N crew working" is the Fleet card, the PR
+            // under this header ("N crew working" is the Fleet card, the PR
             // clause is the Merge queue card), which is the finding's "the
             // same fact appears three times". On the hub - and only there -
             // it is replaced with how fresh the reading is, which is the one
-            // thing no card below can say.
-            //
-            // So the assertion inverts rather than being deleted (this case's
-            // own rule, two comments up): the hub must NOT restate the cards,
-            // and must say when it read.
+            // thing no card below can say. The merge moved the line onto the
+            // card; it did not change the rule.
             if !expected.metaRestatesCards {
                 fail("the all-clear answer no longer declares its meta a restatement - UX5's substitution is dead code", &ok)
             }
-            if greeting.subtitle == expected.meta {
-                fail("the hub hero is still restating the Fleet and Merge queue cards below it: '\(greeting.subtitle)'", &ok)
+            if card.debugSubline == expected.meta {
+                fail("the hub is still restating the Fleet and Merge queue cards below it: '\(card.debugSubline)'", &ok)
             }
-            if !greeting.subtitle.hasPrefix("Fleet read ") {
-                fail("Overview hero detail is '\(greeting.subtitle)', expected the freshness line UX5 put there", &ok)
+            if !card.debugSubline.hasPrefix("Fleet read ") {
+                fail("the hub's detail is '\(card.debugSubline)', expected the freshness line UX5 put there", &ok)
             }
-            if greeting.kicker != expected.kicker.uppercased() {
-                fail("Overview hero kicker is '\(greeting.kicker)', expected '\(expected.kicker.uppercased())'", &ok)
+            if card.debugEyebrow != expected.kicker.uppercased() {
+                fail("the hub's eyebrow is '\(card.debugEyebrow)', expected '\(expected.kicker.uppercased())'", &ok)
             }
             // GL-14: a failed PR scan must not read as a confident zero.
             canvas.applyFleet(snapshot: snapshot, mergedPRs: nil, prFetchFailure: "no network")
-            if canvas.greetingForTests.subtitle.contains("0 PRs ready") {
+            if canvas.attentionCardForTests.debugSubline.contains("0 PRs ready") {
                 fail("a failed PR scan rendered as '0 PRs ready' - GL-14's exact rule", &ok)
             }
             // GL-14 again, and the half UX5's substitution could have broken:
-            // the hub's hero must still say the reading is partial. That lives
-            // in the *kicker* and the headline ("Partly unknown" / "Nothing
-            // **known** needs you"), which the freshness line does not touch -
-            // asserted here rather than assumed, because a substitution that
-            // swallowed the failure state would look exactly like this one.
-            if canvas.greetingForTests.kicker != "PARTLY UNKNOWN" {
-                fail("a failed PR scan left the hub kicker at '\(canvas.greetingForTests.kicker)' - "
-                     + "UX5's freshness line must not hide a partial reading", &ok)
+            // the hub must still say the reading is partial. That lives in the
+            // *eyebrow* and the headline ("Partly unknown" / "Nothing **known**
+            // needs you"), which the freshness line does not touch - asserted
+            // here rather than assumed, because a substitution that swallowed
+            // the failure state would look exactly like this one.
+            //
+            // The merge moved *where* it says so: a partial reading is a row
+            // now, so the eyebrow counts it rather than quoting it, and the
+            // answer's own words ("Nothing known needs you", "Partly
+            // unknown") land in the row. Both halves are asserted, because
+            // an eyebrow that merely stopped saying "All clear" would pass a
+            // weaker version of this.
+            let partial = canvas.attentionCardForTests
+            if partial.debugEyebrow == "ALL CLEAR" {
+                fail("a failed PR scan still reads as an all-clear - GL-14's exact rule", &ok)
+            }
+            let partialExpected = FleetGreeting.answer(tasks: [], readyCount: 0,
+                                                       prFetchFailure: "no network", homeOk: true)
+            if !partial.debugListText.contains(where: { $0.contains(partialExpected.title) }) {
+                fail("the hub dropped the partial reading's own '\(partialExpected.title)' - "
+                     + "got \(partial.debugListText)", &ok)
+            }
+            if !partial.debugListText.contains(where: { $0.localizedCaseInsensitiveContains(partialExpected.kicker) }) {
+                fail("the hub dropped the partial reading's '\(partialExpected.kicker)' chip - "
+                     + "got \(partial.debugListText)", &ok)
             }
 
             if ok {

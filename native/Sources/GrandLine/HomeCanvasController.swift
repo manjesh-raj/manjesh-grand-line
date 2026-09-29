@@ -39,13 +39,26 @@
 //   - GL-20: the window-resize handler is gated on this page actually being
 //     visible, or a resize while the captain is on Console pays for the
 //     canvas's whole relayout.
-//   - gotcha (13): the grid is `HelmResponsiveGrid.spanningRows(_:)`, because
-//     the Morning briefing is two columns wide (§6.1, `DaylightModule.
-//     gridSpan` - see that enum's own note for the three passes it took to
-//     land there). That path creates a real per-card width constraint, unlike
-//     `rows(_:)`, so every one of them is `HelmDaylightPriority.contentTie`
-//     (499) - below `NSLayoutPriorityWindowSizeStayPut` - and no card can cap
-//     the window.
+//   - gotcha (13): **there are two grids here**, and every card width in
+//     either is `HelmDaylightPriority.contentTie` (499) - below
+//     `NSLayoutPriorityWindowSizeStayPut` - so no card can cap the window.
+//     Off Overview it is `HelmResponsiveGrid.spanningRows(_:)`, a wrapping
+//     shelf whose column count comes from the container's real width,
+//     because the Morning briefing is two columns wide (§6.1,
+//     `DaylightModule.gridSpan` - see that enum's own note for the three
+//     passes it took to land there). On Overview it is
+//     `HelmResponsiveGrid.proportionalRow(...)`, a hand-placed twelve-track
+//     dashboard: those five widgets have relative sizes that are the design
+//     rather than a consequence of the window, and deriving the count from
+//     the width is what produced the ragged masonry the captain rejected.
+//     See `dashboardRowViews` for the placement and the two conditions
+//     under which it hands back to the wrapping grid.
+//   - The hub has **no hero band**. `fm/grandline-home-page-visual-overhaul`
+//     merged it into `NeedsAttentionCard`, because the captain's reference
+//     draws one card at the top of Home and this page drew two. `heroCard`
+//     is still built and still heads the four other spaces as the plain row
+//     it always was there; `hubHeader` is where Overview's two header
+//     strings come from now.
 
 import AppKit
 
@@ -95,15 +108,6 @@ final class HomeCanvasController: NSViewController {
     /// between that chrome and the hero - the pre-C1 value, which is what
     /// "sits directly under the page chrome" means here.
     static let contentTopMargin: CGFloat = HelmMetrics.s2
-    /// The hero band's own padding, on the one space that has a verdict to
-    /// feature. `s5` horizontally and vertically gives the 40pt badge and the
-    /// 30pt headline a card's worth of room without the band becoming a
-    /// second page of its own.
-    static let heroBandPadding: CGFloat = HelmMetrics.s5
-    /// The strongest-to-faintest washes of the verdict's hue the band will
-    /// try for its fill. Measured per theme rather than picked - see
-    /// `heroWashFraction`.
-    static let heroWashSteps: [CGFloat] = [0.22, 0.18, 0.14, 0.10, HelmAccentRow.signalWash]
 
     // MARK: Forwarded actions (never owned)
 
@@ -235,11 +239,6 @@ final class HomeCanvasController: NSViewController {
     /// - the change there is purely that it now sits at the top of the page.
     private let heroCard = NSView()
     private var heroCardInsets: [NSLayoutConstraint] = []
-    /// `true` only while the hero is reporting a real fleet verdict, which
-    /// is what earns the band its surface. Kept as state rather than
-    /// re-derived in `applyTheme`, so the paint and the copy can never
-    /// disagree about which hero is on screen.
-    private var heroIsBanner = false
     /// The captain's "Needs Attention" card - the Today page's Due Today and
     /// Follow-ups sections, moved here and merged into one flat list.
     ///
@@ -370,6 +369,10 @@ final class HomeCanvasController: NSViewController {
 
         attentionCard.onToggleDone = { [weak self] item in self?.markAttentionItemDone(item) }
         attentionCard.onOpenItem = { [weak self] item in self?.openAttentionItem(item) }
+        // The hero band's Refresh, moved into the card that replaced the band
+        // on this page - the same `refreshTapped`, so it still re-runs the
+        // existing triggers rather than starting work of its own.
+        attentionCard.onRefresh = { [weak self] in self?.refreshTapped() }
 
         // gotcha (9): `FlippedView`, never a plain `NSView` - y=0 must be the
         // top or short content rests against the bottom of the clip view.
@@ -634,6 +637,7 @@ final class HomeCanvasController: NSViewController {
         // a semantic tint, which would be claiming a state this page has not
         // measured.
         guard space == .overview else {
+            heroCard.isHidden = false
             setHero(tint: nil,
                     symbol: space.heroSymbol,
                     kicker: "",
@@ -641,15 +645,45 @@ final class HomeCanvasController: NSViewController {
                     detail: space.subtitle)
             return
         }
+        // **The hub has no hero band any more.**
+        //
+        // `fm/grandline-home-page-visual-overhaul`: the captain's reference
+        // draws one card at the top of Home - tile, eyebrow, headline,
+        // freshness subline, Refresh - and the app drew two, a hero band
+        // saying "Nothing needs you right now / Fleet read just now" over a
+        // Needs Attention card saying "All clear / Nothing is due". Two cards
+        // one above the other, each reporting a different half of the same
+        // question, is exactly the duplication review #3's UX5 objected to on
+        // this very page, and the reference resolves it by merging them.
+        //
+        // So on Overview the band is hidden - which for an *arranged* subview
+        // really does take it out of the layout (gotcha (15)'s one such case)
+        // - and `renderAttention` below builds the whole header from the same
+        // `FleetGreeting.Answer` this function used to. Nothing was deleted:
+        // every branch that used to `setHero` here now decides a field of
+        // that card instead, and the four other spaces are untouched.
+        heroCard.isHidden = true
+    }
+
+    /// The four header fields the merged attention card takes over from the
+    /// hero band, for **Overview only**.
+    ///
+    /// Every branch below was a `setHero` call in `renderGreeting` before the
+    /// merge, in the same order and with the same copy. What changed is only
+    /// where the strings land: `title` becomes the card's all-clear headline
+    /// (used when the list is empty, which is exactly when the old hero's
+    /// title was the only thing on screen) and `detail` becomes its subline.
+    ///
+    /// A card with rows writes its own headline from those rows, so `title`
+    /// is deliberately *not* forced on it - the reference's card says "Two
+    /// things are late." over its list rather than repeating a fleet
+    /// all-clear above rows that contradict it. The one verdict that must not
+    /// be lost that way is a fleet that needs the captain, and that is not
+    /// dropped either: it becomes a row of its own (see `fleetAttentionItem`),
+    /// so it is counted, named in the headline and given a button.
+    private func hubHeader(hasItems: Bool) -> (title: String, detail: String) {
         // Review #3's UX13: "a guided 'your first host / your first task'
         // empty state on the canvas" for a genuinely first-run state.
-        //
-        // The **hero** rather than a new card, because the hero is where a
-        // first-time reader's eye already goes and because "nothing needs you
-        // right now" is exactly the wrong first sentence for someone who has
-        // not put anything in yet. It is technically true and completely
-        // unhelpful - the same class of thing GL-14 is about, one step up:
-        // reporting an all-clear over an app with no data in it.
         //
         // **It must never hide a verdict that needs the captain**, which is
         // why this is not simply "no local data -> show the invitation". The
@@ -662,47 +696,51 @@ final class HomeCanvasController: NSViewController {
         // already objects to.
         //
         // So a needs-you answer wins, and the invitation is shown only where
-        // the hero would otherwise be reporting nothing worth reading: before
-        // the first fetch lands, or over a genuine all-clear. Caught by
-        // `CanvasListsControlsSelfTest`'s C1 case, which mounts exactly that
-        // combination - a parked fleet task over empty local stores.
-        let answerIfAny = fleetSnapshot.map {
+        // the header would otherwise be reporting nothing worth reading:
+        // before the first fetch lands, or over a genuine all-clear. Caught
+        // by `CanvasListsControlsSelfTest`'s C1 case, which mounts exactly
+        // that combination - a parked fleet task over empty local stores.
+        //
+        // It is additionally safe under the merge for a second reason worth
+        // stating: this title is only ever *shown* when the list is empty, so
+        // an invitation cannot appear over rows that need doing even if the
+        // guard above were ever weakened.
+        let answerIfAny = overviewAnswer()
+        let nothingUrgent = answerIfAny.map { $0.metaRestatesCards } ?? true
+        // `hasItems` is the other half of the guard, and it is the one the
+        // merge added. The invitation replaces **both** header strings, so
+        // showing it over a list would put "Nothing is saved here yet" under
+        // a headline counting rows - measured in an off-screen render, where
+        // it read as two cards' worth of copy disagreeing with each other.
+        if !hasItems, nothingUrgent,
+           let firstRun = Self.firstRunHeroCopy(hosts: sources.hostStore.hosts.count,
+                                                tasks: sources.shiftStore.activeTasks.count,
+                                                notes: sources.stickyBoardStore.activeNotes.count) {
+            return (firstRun.title, firstRun.detail)
+        }
+        guard let answer = answerIfAny else {
+            // GL-14: nothing has been measured yet, so the header says so
+            // rather than rendering an all-clear it cannot stand behind -
+            // and the subline states the gap rather than claiming a
+            // freshness for a reading that has not happened.
+            return (FleetGreeting.timeOfDay(), "The fleet hasn\u{2019}t been read yet.")
+        }
+        return (answer.title, heroDetail(for: answer))
+    }
+
+    /// `FleetGreeting`'s verdict over the snapshot this page was handed, or
+    /// `nil` before the first one arrives.
+    ///
+    /// One definition, called by both `hubHeader` and `fleetAttentionItem` -
+    /// the headline and the row that backs it must be derived from the same
+    /// answer or the card can count a verdict it is not showing.
+    private func overviewAnswer() -> FleetGreeting.Answer? {
+        fleetSnapshot.map {
             FleetGreeting.answer(tasks: $0.tasks,
                                  readyCount: mergedPRs.map(FleetDataSource.readyToMergeCount) ?? 0,
                                  prFetchFailure: prFetchFailure,
                                  homeOk: $0.homeOk)
         }
-        let heroHasNothingUrgent = answerIfAny.map { $0.metaRestatesCards } ?? true
-        if heroHasNothingUrgent,
-           let firstRun = Self.firstRunHeroCopy(hosts: sources.hostStore.hosts.count,
-                                                tasks: sources.shiftStore.activeTasks.count,
-                                                notes: sources.stickyBoardStore.activeNotes.count) {
-            setHero(tint: nil,
-                    symbol: "sailboat.fill",
-                    kicker: "",
-                    title: firstRun.title,
-                    detail: firstRun.detail)
-            return
-        }
-        guard let snapshot = fleetSnapshot else {
-            // GL-14: nothing has been measured yet, so the hero says so
-            // rather than rendering an all-clear it cannot stand behind.
-            setHero(tint: nil,
-                    symbol: space.heroSymbol,
-                    kicker: "",
-                    title: FleetGreeting.timeOfDay(),
-                    detail: space.subtitle)
-            return
-        }
-        let answer = FleetGreeting.answer(tasks: snapshot.tasks,
-                                          readyCount: mergedPRs.map(FleetDataSource.readyToMergeCount) ?? 0,
-                                          prFetchFailure: prFetchFailure,
-                                          homeOk: snapshot.homeOk)
-        setHero(tint: answer.tint,
-                symbol: answer.badgeSymbol,
-                kicker: answer.kicker,
-                title: answer.title,
-                detail: heroDetail(for: answer))
     }
 
     // MARK: Needs Attention (the captain's move of Today's Due Today)
@@ -751,12 +789,195 @@ final class HomeCanvasController: NSViewController {
         }
 
         let digest = DailyReviewComposer.digest(from: inputs)
-        attentionCard.render(NeedsAttentionComposer.summary(from: digest),
-                             // The digest's own "as of" line, not
-                             // `fleetReadAt`: the fleet is a different source,
-                             // and this one was read on this very render.
-                             subline: digest.kicker,
+        let extra = signalAttentionItems()
+        // Whether the card will draw a list, which is what decides both of
+        // the header's strings - see `hubHeader`. Derived from the digest
+        // rather than from the built summary so the header can be handed to
+        // the composer in the same call that builds it.
+        let hasItems = !digest.dueTasks.isEmpty || !digest.followUps.isEmpty || !extra.isEmpty
+        let header = hubHeader(hasItems: hasItems)
+        attentionCard.render(NeedsAttentionComposer.summary(from: digest,
+                                                            extra: extra,
+                                                            clear: clearNotes(),
+                                                            allClearHeadline: header.title),
+                             // The **fleet freshness** line now, not the
+                             // digest's own "as of".
+                             //
+                             // Before the merge this card sat under a hero
+                             // band that carried the freshness line, and its
+                             // own subline said when the digest was composed
+                             // - a defensible answer for a card about tasks,
+                             // and a useless one for a card that is now the
+                             // page's whole verdict: the digest is re-derived
+                             // on every render, so that line could only ever
+                             // say "a moment ago". The fleet is the one
+                             // source here whose age the captain cannot
+                             // otherwise tell, which is the same argument
+                             // review #3's UX5 made for putting it in the
+                             // hero in the first place.
+                             subline: header.detail,
                              theme: ThemeManager.shared.theme)
+    }
+
+    // MARK: The three non-to-do attention rows
+
+    /// The reference's other attention sources, in its own order.
+    ///
+    /// **Rule 1 of this file holds.** Not one of these reads a store, starts
+    /// a poll or shells out: the fleet snapshot, the quota reading and
+    /// `BackgroundSignalsPoller.lastCounts` are all state that was pushed
+    /// into this page for cards it already draws. What is new is that the
+    /// card at the top of the page now says so in words as well.
+    private func signalAttentionItems() -> [NeedsAttentionItem] {
+        [fleetAttentionItem(), claudeAttentionItem(), sessionChecksAttentionItem()]
+            .compactMap { $0 }
+    }
+
+    /// The fleet, when it needs the captain.
+    ///
+    /// This is the row that keeps the hero band's strongest verdict alive
+    /// through the merge.
+    ///
+    /// **The test is the answer's own tint, and `metaRestatesCards` is the
+    /// wrong one.** That flag means "this answer's `meta` repeats the cards
+    /// below it", which is a statement about the *detail line* and not about
+    /// whether anything is wrong - and it is `true` on the partly-unknown
+    /// branch, where the PR scan failed. Using it dropped that branch's row
+    /// entirely, so a hub that could not reach the forge fell back to
+    /// "All clear" over a reading it had not taken. That is GL-14's exact
+    /// rule, and `DaylightModuleSelfTest` caught it.
+    ///
+    /// `tint == .good` is the one branch `FleetGreeting` paints green, and
+    /// it is the only one that is genuinely an all-clear. The other three -
+    /// crew parked on a decision, a PR scan that failed, a firstmate home
+    /// that could not be found - are each a thing the captain should see.
+    private func fleetAttentionItem() -> NeedsAttentionItem? {
+        guard let answer = overviewAnswer(), answer.tint != .good else { return nil }
+        return NeedsAttentionItem(
+            id: "signal.fleet",
+            kind: .signal(.fleet),
+            source: answer.isSetupPrompt ? "Setup" : "Fleet",
+            text: answer.title,
+            meta: answer.meta,
+            chipText: answer.kicker,
+            // `.warn` rather than `.critical`: the crew is *holding*, which
+            // is a state that wants the captain today and is not the same as
+            // a task that is already five days late. The reference reserves
+            // its red for what is genuinely overdue.
+            tone: .risk,
+            actionTitle: "Open",
+            headlineClause: answer.title.prefix(1).lowercased() + answer.title.dropFirst())
+    }
+
+    /// Claude's extra usage, when it is at or near the spend cap.
+    ///
+    /// The threshold is `claudeSpendStatus`', not a second one: the card
+    /// below already decides what "near cap" means, and a top-of-page row
+    /// that disagreed with the card it points at would be worse than no row.
+    private func claudeAttentionItem() -> NeedsAttentionItem? {
+        guard let snapshot = quotaSnapshot,
+              let status = Self.claudeSpendStatus(for: snapshot),
+              status.state != .ok else { return nil }
+        let fraction = Self.claudeSpendFraction(for: snapshot)
+        let atCap = (fraction ?? 0) >= 1
+        return NeedsAttentionItem(
+            id: "signal.claude",
+            kind: .signal(.claudeUsage),
+            source: "Claude usage",
+            text: atCap ? "Extra usage hit the spend cap" : "Extra usage is near the spend cap",
+            meta: Self.claudeSubtitle(for: snapshot),
+            // `claudeSpendFraction` is 0...1 and `percentText` takes a
+            // *percentage*, which is the one unit mismatch on this path -
+            // measured in an off-screen render, where a 94% cap reported
+            // "1%" on the row beside a card correctly reading "94%".
+            chipText: fraction.map { Self.percentText($0 * 100) } ?? status.text,
+            tone: .risk,
+            actionTitle: "View usage",
+            headlineClause: atCap ? "Claude has hit its spend cap" : "Claude is near its spend cap")
+    }
+
+    /// The background checks that have not run yet this session.
+    ///
+    /// The three counts named are the three the Setup cards render, and the
+    /// sentence is built from whichever of them is still `nil` rather than
+    /// from a fixed list - so a pass that produced two of three says two,
+    /// which is the honest reading and the one GL-14 asks for.
+    private func sessionChecksAttentionItem() -> NeedsAttentionItem? {
+        // **Not while the poller is warming up.** Its first pass lands about
+        // ten seconds after launch, and this page is the launch landing - so
+        // without this guard the hub would open on "Needs attention, 1: one
+        // check is waiting" every single time, for ten seconds, about
+        // nothing. That is a false alarm on the one card whose whole job is
+        // to be believed.
+        //
+        // It is the same distinction `applyPendingSetupSignal` already draws
+        // for the four Setup cards, which render a skeleton while a pass is
+        // in flight and say so in words only once one has finished and
+        // produced nothing: ordinary startup is not a fault, and a pass that
+        // completed without a number is.
+        guard !Self.pollerIsStillWarmingUp else { return nil }
+        let counts = BackgroundSignalsPoller.shared.lastCounts
+        var pending: [String] = []
+        if counts.forkDrift == nil { pending.append("forks behind upstream") }
+        if counts.toolUpdates == nil { pending.append("tool updates") }
+        if counts.setupDrift == nil { pending.append("setup drift") }
+        guard !pending.isEmpty else { return nil }
+        return NeedsAttentionItem(
+            id: "signal.checks",
+            kind: .signal(.sessionChecks),
+            source: "Session checks",
+            text: Self.sentenceList(pending).prefix(1).uppercased()
+                + Self.sentenceList(pending).dropFirst()
+                + " haven\u{2019}t been checked yet this session",
+            chipText: "\(pending.count) \(pending.count == 1 ? "check" : "checks") not run",
+            tone: .info,
+            actionTitle: "Open Setup")
+    }
+
+    /// "a", "a and b", "a, b, and c" - the reference's own joining.
+    ///
+    /// `static` and pure so the three-clause case can be asserted without a
+    /// poller: it is the only one with a serial comma, and the only one a
+    /// hand-rolled `joined(separator:)` gets wrong.
+    static func sentenceList(_ parts: [String]) -> String {
+        switch parts.count {
+        case 0: return ""
+        case 1: return parts[0]
+        case 2: return "\(parts[0]) and \(parts[1])"
+        default: return parts.dropLast().joined(separator: ", ") + ", and " + (parts.last ?? "")
+        }
+    }
+
+    /// The reference's closing strip: one phrase per source that was read and
+    /// is fine.
+    ///
+    /// **A source that has not reported contributes nothing**, which is the
+    /// whole discipline of this list: "Fleet idle" over a fleet that has
+    /// never been read is a cheerful lie of exactly the kind GL-14 forbids,
+    /// so every entry below is behind a `guard let` on the reading itself
+    /// rather than behind a count being zero.
+    private func clearNotes() -> [String] {
+        var notes: [String] = []
+        if let snapshot = fleetSnapshot,
+           snapshot.tasks.allSatisfy({ $0.status != "working" }),
+           snapshot.tasks.allSatisfy({ $0.status != "needs_decision" && $0.status != "blocked" }) {
+            notes.append("Fleet idle")
+        }
+        let readings = ServiceHealthRegistry.shared.knownServices().map { service -> HealthServiceReading in
+            let state = ServiceHealthRegistry.shared.state(service)
+            return HealthServiceReading(title: service.title,
+                                        verdict: state.verdict,
+                                        hasReported: state.hasReported)
+        }
+        let health = Self.healthRingSummary(readings)
+        if health.total > 0, health.value == health.total {
+            notes.append("\(health.value)/\(health.total) services healthy")
+        }
+        if let snapshot = quotaSnapshot,
+           let plan = Self.claudePlanLimitsStatus(for: snapshot), plan.state == .ok {
+            notes.append("Claude plan limits comfortable")
+        }
+        return notes
     }
 
     /// The row checkbox. Writes through the **shared** store this page was
@@ -766,6 +987,12 @@ final class HomeCanvasController: NSViewController {
         switch item.kind {
         case .task: sources.shiftStore.setTaskCompleted(id: item.id, completed: true)
         case .followUp: sources.shiftStore.setFollowUpStatus(id: item.id, done: true)
+        // A signal row draws no checkbox at all (see `NeedsAttentionItem.
+        // Kind.signal`), so nothing can reach this - and it is deliberately
+        // a no-op rather than a `fatalError`: the honest behaviour for
+        // "complete something that is not a to-do" is to do nothing, not to
+        // crash the hub.
+        case .signal: return
         }
         // The row has just left the list, so the card has to be re-derived
         // rather than left showing what it was handed.
@@ -773,11 +1000,21 @@ final class HomeCanvasController: NSViewController {
     }
 
     /// The row's trailing "Start" / "Open". A task opens itself; a follow-up
-    /// has no deep link of its own, so it opens the page that owns it.
+    /// has no deep link of its own, so it opens the page that owns it; a
+    /// signal opens the page that owns the thing it is reporting.
     private func openAttentionItem(_ item: NeedsAttentionItem) {
         switch item.kind {
         case .task: onOpenShiftTask?(item.id)
         case .followUp: onOpenDestination?(.shift)
+        case .signal(let signal):
+            switch signal {
+            case .fleet: onOpenDestination?(.overview)
+            // The same destination `follow(.quota)` already resolves to, and
+            // the same one `DaylightModule.claudeStatus.opens` names: the
+            // Claude-usage control lives on Console. Two callers, one answer.
+            case .claudeUsage: onOpenDestination?(.console)
+            case .sessionChecks: onOpenDestination?(.bootstrap)
+            }
         }
     }
 
@@ -856,11 +1093,6 @@ final class HomeCanvasController: NSViewController {
                          kicker: String,
                          title: String,
                          detail: String) {
-        // A `nil` tint is exactly "this hero has no verdict", which is also
-        // exactly when the band must not put a surface under it: a space that
-        // has measured nothing would otherwise wear the same card as an
-        // all-clear and look like it were reporting one.
-        heroIsBanner = tint != nil
         // `.neutral` is the one slot that claims nothing - deliberately not
         // a domain hue's `fallbackTint`, which resolves rose to `.critical`
         // and would paint an alert bar on a space that has reported nothing.
@@ -887,6 +1119,23 @@ final class HomeCanvasController: NSViewController {
         let available = gridContainerWidth()
         lastGridWidth = available
         let modules = visibleModules()
+
+        // Overview is hand-placed - see `dashboardRowViews` for why, and for
+        // the two conditions under which it declines and this falls through
+        // to the wrapping grid below.
+        if usesDashboardLayout,
+           let rows = dashboardRowViews(available: available, modules: modules) {
+            // The dashboard uses the full width by construction: its spans
+            // sum to the whole track grid, so there is no leftover column to
+            // turn into margin the way `composedContentWidth` does for a
+            // space with fewer cards than columns.
+            contentWidthConstraint?.constant = available
+            for row in rows {
+                gridStack.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
+            }
+            return
+        }
 
         // C1: use only as many columns as this space has cards to fill, and
         // let the column that is left over become margin on both sides
@@ -930,6 +1179,119 @@ final class HomeCanvasController: NSViewController {
             gridStack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
         }
+    }
+
+    // MARK: Overview's dashboard layout
+
+    /// The hub's five widgets, in the reference's own order and with its own
+    /// track spans.
+    ///
+    /// **Why Overview has a hand-placed layout and the other four spaces do
+    /// not.** The wrapping grid is right for a shelf of interchangeable
+    /// navigation cards, which is what Command, Operations, Stores and
+    /// Engineering are: a card there is one of N equivalent doors, and the
+    /// window's width should decide how many fit on a line. Overview is not
+    /// that. It is five specific readouts whose relative sizes are the
+    /// design - the Claude card carries a six-row usage report and earns the
+    /// wide column, the Fleet and Health cards carry one figure each and do
+    /// not - and letting the window decide is what produced the ragged
+    /// masonry the captain rejected (at 1512pt the wrapping grid resolved to
+    /// five 255pt columns and packed the same five cards 2+2+1 / 1+1, with
+    /// most of the third row empty).
+    ///
+    /// Two rows of two, at the reference's 7:5. The reference expresses the
+    /// same thing as a twelve-track CSS grid with the Claude card spanning
+    /// two rows; a card spanning two rows *beside a column holding exactly
+    /// those two rows' cards* is the same layout, and this shape is the one
+    /// Auto Layout can state without a second axis of placement.
+    private static let dashboardRows: [[DaylightModule]] = [
+        [.claudeStatus, .briefing],
+        [.mergeQueue, .health],
+    ]
+    /// The right column of row 1: the two cards the reference stacks beside
+    /// the tall Claude card.
+    private static let dashboardStacked: [DaylightModule] = [.briefing, .fleet]
+    /// Track spans out of `HelmResponsiveGrid.dashboardColumns`, per row.
+    private static let dashboardSpans = [7, 5]
+
+    /// Is this space laid out by hand? Only the hub.
+    private var usesDashboardLayout: Bool { space == .overview }
+
+    /// Overview's five cards, in the reference's placement.
+    ///
+    /// Returns `nil` when the modules on screen are not the five this layout
+    /// was written for - which is not a defensive flourish: `DaylightModule.
+    /// appearsOnOverview` is a captain-editable list, and a sixth card added
+    /// there must render *somewhere* rather than silently vanish. The caller
+    /// falls back to the wrapping grid, which is what every other space uses
+    /// and what Overview used before.
+    /// The two conditions `dashboardRowViews` takes, as a predicate.
+    ///
+    /// Split out so the layout and anything asking "is the dashboard on"
+    /// cannot answer differently - a `usesDashboard` flag set beside the
+    /// build is exactly the shape that drifts.
+    func dashboardRowViewsWouldApply(available: CGFloat, modules: [DaylightModule]) -> Bool {
+        let expected = Set(Self.dashboardRows.flatMap { $0 } + Self.dashboardStacked)
+        guard Set(modules) == expected else { return false }
+        // Under this width a 5-track card is narrower than one wrapping
+        // column, which is the point at which the reference collapses every
+        // widget to full width - so hand back to the wrapping grid, which
+        // already does exactly that.
+        return HelmResponsiveGrid.fitsProportionally(containerWidth: available,
+                                                     spans: Self.dashboardSpans,
+                                                     minItemWidth: Self.minModuleWidth,
+                                                     spacing: Self.gridSpacing)
+    }
+
+    private func dashboardRowViews(available: CGFloat, modules: [DaylightModule]) -> [NSStackView]? {
+        guard dashboardRowViewsWouldApply(available: available, modules: modules) else { return nil }
+
+        func card(_ module: DaylightModule, span: Int) -> HelmModuleCard {
+            makeCard(for: module,
+                     cardWidth: HelmResponsiveGrid.proportionalWidth(containerWidth: available,
+                                                                     span: span,
+                                                                     spacing: Self.gridSpacing))
+        }
+
+        var rows: [NSStackView] = []
+        for (index, modulesInRow) in Self.dashboardRows.enumerated() {
+            var views: [NSView] = []
+            for (column, module) in modulesInRow.enumerated() {
+                let span = Self.dashboardSpans[column]
+                guard index == 0, column == 1 else {
+                    views.append(card(module, span: span))
+                    continue
+                }
+                // The reference's right-hand column of row 1: two cards
+                // stacked in the space the tall Claude card occupies beside
+                // them. A vertical stack rather than two grid rows, because
+                // that is what makes the stack's *total* height the thing
+                // tied to the Claude card - which is what puts the bottom of
+                // the Fleet card and the bottom of the Claude card on one
+                // line, exactly as the reference draws it.
+                let column = NSStackView(views: Self.dashboardStacked.map { card($0, span: span) })
+                column.orientation = .vertical
+                column.alignment = .leading
+                column.distribution = .fillEqually
+                column.spacing = Self.gridSpacing
+                column.translatesAutoresizingMaskIntoConstraints = false
+                // gotcha (12)+(13): the stack-level APIs, both yielding, or
+                // this column is a window-width floor.
+                column.setHuggingPriority(.defaultLow, for: .horizontal)
+                column.setClippingResistancePriority(.defaultLow, for: .horizontal)
+                for card in column.arrangedSubviews {
+                    let tie = card.widthAnchor.constraint(equalTo: column.widthAnchor)
+                    tie.priority = HelmDaylightPriority.contentTie
+                    tie.isActive = true
+                }
+                views.append(column)
+            }
+            rows.append(HelmResponsiveGrid.proportionalRow(views: views,
+                                                           spans: Self.dashboardSpans,
+                                                           containerWidth: available,
+                                                           spacing: Self.gridSpacing))
+        }
+        return rows
     }
 
     private func makeCard(for module: DaylightModule, cardWidth: CGFloat) -> HelmModuleCard {
@@ -1054,13 +1416,12 @@ final class HomeCanvasController: NSViewController {
         paintHeroBand(theme)
         greetingLabel.font = HelmType.heroTitle()
         greetingLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        // The band's detail line is the one piece of hero copy carrying real
-        // numbers ("0 crew working - 50 PRs ready to merge"), so on the space
-        // that has a verdict it steps up a role. `sectionTitle()`, never a new
-        // size: `HelmContrastSelfTest`'s type-scale table is a fixed list of
-        // roles on purpose, and a hero-only literal would be a fifth size in a
-        // scale this app spent a whole phase reducing to four.
-        subtitleLabel.font = heroIsBanner ? HelmType.sectionTitle() : HelmType.body()
+        // Plain `body()` on every space now. The step up to `sectionTitle()`
+        // belonged to the hub's hero band, whose detail line carried real
+        // numbers; the four spaces that still draw this row only name
+        // themselves, and the verdict's own detail line moved to the merged
+        // attention card (`hubHeader`).
+        subtitleLabel.font = HelmType.body()
         subtitleLabel.textColor = HelmTheme.mutedInk(theme)
         // C1's hero. The kicker is `mutedInk`, never the hero's own tint:
         // a `HelmTint` is safe as a fill or a bar and is *not* automatically
@@ -1089,80 +1450,27 @@ final class HomeCanvasController: NSViewController {
     /// `NSColor.blended`: that method converts into a *calibrated* space
     /// first, so its result drifts from the straight-sRGB composite alpha
     /// compositing actually performs (Phase 4's segmented-tabs lesson).
-    private func paintHeroBand(_ theme: HelmTheme) {
-        // The padding *is* the difference between a hero and a plain page
-        // header, so it moves with the paint rather than in `setHero`: that
-        // runs before `loadView` on the very first `select(space:)`, when
-        // there are no constraints to set yet.
-        for constraint in heroCardInsets {
-            let inset = heroIsBanner ? Self.heroBandPadding : 0
-            // The trailing and bottom pins are negative offsets from their
-            // own edge, so the sign follows the anchor rather than the value.
-            let negative = constraint.firstAttribute == .trailing || constraint.firstAttribute == .bottom
-            constraint.constant = negative ? -inset : inset
-        }
-        guard heroIsBanner else {
-            // Off Overview the band is not a surface at all, so the header
-            // renders as the plain row it has always been.
-            heroCard.layer?.backgroundColor = NSColor.clear.cgColor
-            heroCard.layer?.borderWidth = 0
-            heroCard.layer?.cornerRadius = 0
-            return
-        }
-        let tint = HelmTheme.nsColor(heroTint.hex(in: theme))
-        heroCard.layer?.cornerRadius = theme.isDaylight ? HelmMetrics.dModule : HelmMetrics.rCard
-        heroCard.layer?.backgroundColor = Self.heroFill(tint: tint, theme: theme).cgColor
-        heroCard.layer?.borderWidth = 1
-        heroCard.layer?.borderColor = tint.withAlphaComponent(HelmAccentRow.borderAlpha).cgColor
-    }
-
-    /// The band's fill: the strongest wash of the verdict's hue that still
-    /// leaves *both* lines of hero copy above the 4.5:1 text floor.
+    /// The hero row's chrome, on the four spaces that still have one.
     ///
-    /// Derived, never a literal, for the reason `HelmSelection.alphaLadder`
-    /// and `HelmContrast.tintedSurface` derive theirs: this band has to read
-    /// as a band on fourteen palettes whose `chromeBackgroundHex` runs from
-    /// near-black to warm cream, and one alpha tuned on Daylight is either
-    /// invisible or illegible on several of the others. Both lines are scored
-    /// because they fail at different strengths - the muted detail line is
-    /// the theme's ink at its own muted alpha, so it runs out of headroom
-    /// well before the headline does.
-    static func heroFill(tint: NSColor, theme: HelmTheme) -> NSColor {
-        HelmContrast.color(HelmContrast.mix(HelmContrast.components(tint),
-                                            HelmContrast.components(HelmTheme.nsColor(theme.chromeBackgroundHex)),
-                                            Double(heroWashFraction(tint: tint, theme: theme))))
-    }
-
-    static func heroWashFraction(tint: NSColor, theme: HelmTheme) -> CGFloat {
-        let base = HelmContrast.components(HelmTheme.nsColor(theme.chromeBackgroundHex))
-        let hue = HelmContrast.components(tint)
-        let ink = HelmContrast.components(HelmTheme.nsColor(theme.chromeInkHex))
-        let mutedAlpha = Double(HelmTheme.mutedAlpha(for: theme))
-        for step in heroWashSteps {
-            let fill = HelmContrast.mix(hue, base, Double(step))
-            // `mutedInk` is the ink at the theme's own alpha, so what it
-            // resolves to depends on the surface under it - it has to be
-            // flattened against *this* fill, never against the page.
-            let muted = HelmContrast.mix(ink, fill, mutedAlpha)
-            if HelmContrast.ratio(ink, fill) >= HelmContrast.textTarget,
-               HelmContrast.ratio(muted, fill) >= HelmContrast.textTarget {
-                return step
-            }
-        }
-        // No wash at all, rather than the faintest one anyway.
-        //
-        // Measured: `solarized-dark`'s ink on a 7% wash of its own green
-        // reaches 4.47:1, so even `HelmAccentRow`'s own signal-wash value -
-        // the floor this ladder started with - is unaffordable there. (That
-        // row never renders it on this palette: its wash is Daylight-only.)
-        //
-        // Zero leaves the band on the plain card surface, which is the one
-        // pairing `HelmCard` already guarantees is legible, and the hue still
-        // reaches the border - which is what separates the band from the page
-        // in the three themes where `chromeBackgroundHex == backgroundHex`
-        // anyway. A hero that is slightly less tinted beats a hero whose own
-        // numbers cannot be read.
-        return 0
+    /// **It is a plain row, not a band, and no longer has a second mode.**
+    /// C1 gave the hub a hero *band* - a washed surface in the verdict's own
+    /// hue, with a border, a corner radius and `heroBandPadding` of room -
+    /// and the hub is the only space that ever raised one, because it was
+    /// the only one with a verdict to feature.
+    /// `fm/grandline-home-page-visual-overhaul` moved that verdict into the
+    /// merged attention card (see `hubHeader`), so the band had no remaining
+    /// caller and its whole derivation - the wash ladder, the per-theme
+    /// contrast search that picked a step, and the padding that made a row
+    /// into a card - was unreachable code that no case could have failed
+    /// against. It is deleted rather than left behind a flag that is now
+    /// always false.
+    ///
+    /// What is left is what the other four spaces always rendered.
+    private func paintHeroBand(_ theme: HelmTheme) {
+        for constraint in heroCardInsets { constraint.constant = 0 }
+        heroCard.layer?.backgroundColor = NSColor.clear.cgColor
+        heroCard.layer?.borderWidth = 0
+        heroCard.layer?.cornerRadius = 0
     }
 
     // MARK: Module content (§6.1's table)
@@ -1619,17 +1927,34 @@ final class HomeCanvasController: NSViewController {
         let needs = snapshot.tasks.filter { $0.status == "needs_decision" || $0.status == "blocked" }
         content.subtitle = "\(working.count) crew working"
         content.chip = needs.isEmpty ? .ok("All clear") : .warn("\(needs.count) need you")
+
+        // The reference's Fleet widget: one sentence, then the three numbers
+        // under it as tiles.
+        //
+        // **The three counts are the snapshot's own**, not a second
+        // definition: `working` is the same predicate this card's subtitle is
+        // already built from, and `doneCount`/`queuedCount` are the very
+        // fields Overview's own stat row reads (`FleetController`'s
+        // `statsRow`). A second arithmetic for the same three numbers on the
+        // hub is exactly what the component index exists to stop - and the
+        // tile they are drawn in is that row's `HelmStatTile` too.
+        let tiles = [
+            HelmModuleTile(value: "\(working.count)", caption: "Working"),
+            HelmModuleTile(value: "\(snapshot.doneCount)", caption: "Done today", tint: .good),
+            HelmModuleTile(value: "\(snapshot.queuedCount)", caption: "Queued"),
+        ]
+
         if working.isEmpty && needs.isEmpty {
-            content.body = .note("All hands idle. Nothing is running and nothing is waiting on you.")
+            content.body = .tiles(note: "All hands idle. Nothing is running and nothing is waiting on you.",
+                                  tiles: tiles)
             return
         }
-        let rows = (needs + working).prefix(HelmModuleCard.maxPeekRows).map { task in
-            HelmModulePeekRow(
-                state: task.status == "working" ? .ok : .warn,
-                text: task.id,
-                value: task.status == "working" ? "working" : task.status.replacingOccurrences(of: "_", with: " "))
-        }
-        content.body = .peekRows(Array(rows))
+        // With something actually in flight the sentence names it, because a
+        // parked crewmate's id is the one thing the three counts cannot say.
+        let lead = needs.isEmpty
+            ? "\(working.count) crew working."
+            : "\(needs.count) waiting on you: \(needs.prefix(2).map(\.id).joined(separator: ", "))."
+        content.body = .tiles(note: lead, tiles: tiles)
     }
 
     private func fillTasks(_ content: inout HelmModuleCard.Content) {
@@ -1688,9 +2013,24 @@ final class HomeCanvasController: NSViewController {
             default: state = .idle
             }
             return HelmModulePeekRow(state: state, text: pr.title,
-                                     value: pr.checks == "none" ? "no checks" : pr.checks)
+                                     value: pr.checks == "none" ? "No checks" : "Checks \(pr.checks)")
         }
         content.body = .peekRows(Array(rows))
+        // The reference's footer, and the reason it is worth having: this
+        // card shows at most `maxPeekRows` of however many are open, and
+        // until now it said so nowhere. "Showing 3 of 33" is the difference
+        // between a queue with three PRs in it and a queue whose first three
+        // are on screen, which a captain glancing at the hub cannot
+        // otherwise tell.
+        //
+        // Only when there is genuinely more than the card is showing - a
+        // footer reading "Showing 2 of 2" is furniture.
+        if prs.count > rows.count {
+            content.footer = HelmModuleCard.Footer(
+                caption: "Showing \(rows.count) of \(prs.count)",
+                actionTitle: "View all \(prs.count) open",
+                handler: { [weak self] in self?.onOpenDestination?(.review) })
+        }
     }
 
     /// The Straw Hat Pirates card.
@@ -2434,6 +2774,21 @@ final class HomeCanvasController: NSViewController {
     // MARK: Probe / self-test surface
 
     var moduleCardsForTests: [HelmModuleCard] { cards }
+    /// The grid's rows as built, so a suite can assert the *placement* and
+    /// not merely that five cards exist. The dashboard's whole subject is
+    /// which card sits where and how wide, and `cards` is a flat list that
+    /// cannot see any of it.
+    var gridRowsForTests: [NSStackView] { gridStack.arrangedSubviews.compactMap { $0 as? NSStackView } }
+    /// Whether the hub is using the hand-placed dashboard rather than the
+    /// wrapping grid. Read from the same two conditions the layout itself
+    /// takes, via the row shape it produces - never a flag set alongside it,
+    /// which could say yes while the grid said otherwise.
+    var usesDashboardLayoutForTests: Bool {
+        usesDashboardLayout
+            && dashboardRowViewsWouldApply(available: gridContainerWidth(),
+                                           modules: visibleModules())
+    }
+    var heroCardHiddenForTests: Bool { heroCard.isHidden }
     var visibleModulesForTests: [DaylightModule] { visibleModules() }
     /// The captain's Needs Attention card, so a suite can drive the real card
     /// on the real page rather than a card it built itself - which is what
@@ -2450,19 +2805,18 @@ final class HomeCanvasController: NSViewController {
     /// Plan B's layout: where the top-anchored content column actually sits
     /// inside the document.
     var contentFrameForTests: CGRect { stack.frame }
-    /// Plan B's hero band, as the surface it really resolved to - a paint
-    /// this app cannot see any other way, since `cacheDisplay` renders a
-    /// band and a bare row equally happily.
-    var heroBandForTests: (isBanner: Bool, fill: NSColor?, borderWidth: CGFloat, radius: CGFloat, inset: CGFloat) {
-        (heroIsBanner,
-         heroCard.layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear },
+    /// The hero row's resolved chrome - a paint this app cannot see any
+    /// other way, since `cacheDisplay` renders a surface and a bare row
+    /// equally happily.
+    ///
+    /// There is no `isBanner` any more: the banner had exactly one caller,
+    /// the hub, and the hub has no hero row at all now (`heroCardHiddenForTests`).
+    var heroBandForTests: (fill: NSColor?, borderWidth: CGFloat, radius: CGFloat, inset: CGFloat) {
+        (heroCard.layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear },
          heroCard.layer?.borderWidth ?? 0,
          heroCard.layer?.cornerRadius ?? 0,
          heroCardInsets.first(where: { $0.firstAttribute == .leading })?.constant ?? 0)
     }
-    /// The detail line's resolved size, so "the hero's copy steps up on the
-    /// space with a verdict" is asserted rather than assumed.
-    var heroDetailPointSizeForTests: CGFloat { subtitleLabel.font?.pointSize ?? 0 }
     var documentHeightForTests: CGFloat { document.frame.height }
     var viewportHeightForTests: CGFloat { scroll.contentView.bounds.height }
     var gridRowCountForTests: Int { gridStack.arrangedSubviews.count }
