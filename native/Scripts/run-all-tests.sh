@@ -270,6 +270,11 @@ NEEDS_SESSION=(
   # frames out of a real window. Its arithmetic half
   # (`FM_RUN_HOME_DASHBOARD_TESTS`) is deliberately NOT here.
   "FM_RUN_HOME_DASHBOARD_VIEW_TESTS"
+  # `fm/grandline-claude-widget-refresh-shift`: builds a real `HelmModuleCard`
+  # and a real hub in real windows and reads resolved header frames back after
+  # a real layout pass. There is no pure half of this - the whole defect was a
+  # constraint tie that only a laid-out frame can see.
+  "FM_RUN_MODULE_CARD_HEADER_TESTS"
   # `fm/grandline-overview-layout-fix-gmail-settings`: mounts a real
   # `SettingsController` in a real window and asserts laid-out geometry and
   # painted colour. Its sibling `FM_RUN_GOOGLE_ACCOUNTS_TESTS` is pure logic

@@ -3970,6 +3970,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_NEEDS_ATTENTION_VIEW_TESTS"] == "
 if ProcessInfo.processInfo.environment["FM_RUN_HOME_DASHBOARD_TESTS"] == "1" {
     exit(HomeDashboardSelfTest.run() ? 0 : 1)
 }
+// `fm/grandline-claude-widget-refresh-shift`: `HelmModuleCard`'s header
+// keeps its status column hard against the header's trailing control on
+// every rebuild of the card. See ModuleCardHeaderStabilitySelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_MODULE_CARD_HEADER_TESTS"] == "1" {
+    exit(ModuleCardHeaderStabilitySelfTest.run() ? 0 : 1)
+}
 if ProcessInfo.processInfo.environment["FM_RUN_HOME_DASHBOARD_VIEW_TESTS"] == "1" {
     exit(HomeDashboardViewSelfTest.run() ? 0 : 1)
 }

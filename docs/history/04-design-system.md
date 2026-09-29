@@ -428,3 +428,111 @@ body).
 Its fixture's discriminating-power guard is measured on the two rows that carry
 no exempt card, so it stays a statement about the fixture even when the fix is
 broken.
+
+## `HelmModuleCard`'s header status column (`fm/grandline-claude-widget-refresh-shift`)
+
+The captain reported that the Home page's Claude widget moved its "Near spend
+cap" chip and its "Updated just now" caption sideways every time he pressed the
+card's own Refresh.
+He sent two screenshots taken seconds apart: in one the chip sat well clear of
+the Refresh button, in the other it was almost touching it.
+He described it as the status "getting toggled off between left and right".
+
+### What it actually was
+
+Not the Claude card's content, and not the refresh path.
+It was the shared component's header, and the mechanism is one this file's
+gotcha catalogue already describes in another form.
+
+The header row is `[tile, textStack, statusColumn, actionButton]` at
+`distribution = .fill`.
+The status column was a **vertical** `NSStackView` holding the chip and the
+caption, and it declared `setHuggingPriority(.required, for: .horizontal)` with
+a comment saying that was what stopped it absorbing the header's slack.
+
+It is not.
+A vertical stack's *width* is a cross-axis size, and a vertical stack does not
+give itself a required width from its arranged subviews - it expresses "as wide
+as my content" as a **preference** in both directions.
+Measured three ways in an off-screen probe on a real hub:
+
+- The required cross-axis hug did not stop the column absorbing **670pt** of a
+  849.5pt card's header.
+- A `width == 0` ceiling at `HelmDaylightPriority.columnHug` (251) collapsed the
+  column to **0pt**, with the chip hanging 95pt past the Refresh button - so the
+  stack's own trailing-alignment constraints are not required-strength either.
+- Adding `leading >=` floors from the chip and the caption to the stack changed
+  nothing, because the alignment those floors were meant to back is the part
+  that yields.
+
+So the status column and the text column beside it were both yielding at
+`.defaultLow`, and the header's leftover width landed on whichever one Auto
+Layout's own tie-breaking picked.
+That is gotcha (10)'s "can differ between rows and between runs with no code
+change", and `HomeCanvasController.render` rebuilds every card on every render,
+so the tie was re-rolled on every refresh.
+
+### Measured, on the captain's own page
+
+A real `HomeCanvasController` in an `OffScreenProbe` window at 1512x1000, the
+Claude widget's own Refresh driven five times, frames read in the card's space:
+
+| state | text column | status column | chip x | gap to Refresh |
+|---|---|---|---|---|
+| broken (most rebuilds) | 53.5 | **670.0** | 123.5 | **575.0** |
+| correct (the rest) | 616.5 | 107.0 | 686.5 | 12.0 |
+
+12.0pt is `HelmMetrics.s3`, the header row's own spacing.
+The broken state also left the chip and the caption pinned to the *leading* edge
+of that 670pt column, which is why the captain saw the chip on the left with a
+wide gap before the button.
+
+A second, quieter defect fell out of the same measurement: in the *correct*
+state the caption's right edge was 13pt short of the chip's, so the column was
+never actually right-aligned, whichever way the tie went.
+
+### The fix
+
+The status column is a plain `NSView` with its own constraints now.
+Every visible member is pinned to its trailing edge and floored against its
+leading edge at `.required`, and the column itself prefers `width == 0` at
+`columnHug` (251).
+That makes it exactly as wide as its widest visible member and makes the text
+column the one thing in the header that absorbs slack.
+The ceiling is deliberately under 500: a width ceiling above it is a window
+floor (gotcha (13)).
+
+The vertical arrangement the stack did for free - including taking a hidden
+caption out of the layout - is spelled out in `applyStatusColumnLayout`, which
+picks one of four pin combinations from what the content carries and hides the
+column when it carries neither a chip nor a caption.
+
+### Which change introduced it, and which one exposed it
+
+The ambiguous shape arrived with the Claude usage card's redesign (#478), which
+is also what added `Content.headerCaption`; the stack's six lines are
+byte-identical between #478 and the fix.
+#492's 12-column dashboard did not touch it - it widened the Claude card to
+~850pt, which is what turned a small drift into a 575pt jump.
+The new suite's direct-card case reproduces the defect at 420pt, 602pt and
+849.5pt alike, so this predates #492 in every sense.
+
+### Verified
+
+`FM_RUN_MODULE_CARD_HEADER_TESTS` is the guard, in two deliberately different
+shapes: the component swept over four card widths and both caption states, and
+the captain's own page driven through four real refresh cycles plus two passive
+renders.
+
+Confirmed to catch the regression by injection - the old vertical stack put back
+with the test surface left in place, which fails both cases by name at every
+width on every run ("the status column should be exactly as wide as its widest
+member (107.0pt), got 573.0pt", "the chip should sit 12.0pt before Refresh, got
+575.0pt").
+The fixed build passes 3/3 runs.
+
+What was verified by a real geometry probe rather than only by the suite: the
+root cause itself, all three failed fixes above, and the before/after table.
+`screencapture` does not work from this shell, so there is no screenshot of the
+captain's own instance - the evidence is resolved `NSView.frame`s out of a real
+layout pass in a real window, which is this repository's documented substitute.
