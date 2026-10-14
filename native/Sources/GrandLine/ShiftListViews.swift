@@ -434,7 +434,6 @@ private final class ShiftTaskRowView: NSView {
             let done = task.subtasks.filter(\.done).count
             bits.append("\(done)/\(task.subtasks.count) subtasks")
         }
-        if let word = ShiftTaskSignals.priorityWord(task.priority) { bits.append(word) }
         let tint = ShiftProjectPalette.tint(forProjectID: task.projectID)
 
         row.configure(HelmAccentRow.Content(
@@ -698,14 +697,13 @@ private final class ShiftFollowUpRowView: NSView {
     func configure(item: ShiftFollowUp, theme: HelmTheme, onToggle: @escaping () -> Void) {
         self.onToggle = onToggle
         let isDone = item.status == .done
-        // The page's one rule (`ShiftTaskSignals`): High is the one pill, and
+        // The page's one rule (`ShiftTaskSignals`): High and Low are chips, and
         // a follow-up that is late says so as a red caption - the fact the
         // Home card shows for the same item, in the same words.
         let pill = ShiftTaskSignals.priorityPill(item.priority)
         let due = isDone ? nil : ShiftTaskSignals.dueCaption(date: item.followUpAt, time: item.followUpTime)
         var meta: [String] = []
         if let at = item.followUpAt { meta.append(ShiftDateFormatting.friendly(at, time: item.followUpTime)) }
-        if let word = ShiftTaskSignals.priorityWord(item.priority) { meta.append(word) }
 
         row.configure(HelmAccentRow.Content(
             tint: due?.tint ?? (isDone ? .good : .warn),

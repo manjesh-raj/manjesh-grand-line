@@ -245,8 +245,8 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
         currentColumn = column
 
         // UI-23 / UI-24 through `ShiftTaskSignals`, the page's one rule: a
-        // priority pill only for High, Low as a quiet word, and the due date
-        // as a caption that is amber today and red when late.
+        // priority chip only for High and Low (Q3), and the due date as a
+        // caption that is amber today and red when late.
         let pill = ShiftTaskSignals.priorityPill(task.priority)
         var bits: [String] = []
         var lead: ShiftTaskSignals.DueCaption?
@@ -262,7 +262,6 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
             let done = task.subtasks.filter(\.done).count
             bits.append("\(done)/\(task.subtasks.count) subtasks")
         }
-        if let word = ShiftTaskSignals.priorityWord(task.priority) { bits.append(word) }
 
         row.configure(HelmAccentRow.Content(
             // The bar carries **project identity**, the one thing the board's

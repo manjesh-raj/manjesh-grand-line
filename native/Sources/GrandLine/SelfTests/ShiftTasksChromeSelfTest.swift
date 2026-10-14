@@ -21,7 +21,7 @@
 //   3. **The sort orders** the toolbar offers, each on a fixture where the
 //      three orders genuinely disagree.
 //   4. **`ShiftTaskSignals`, the one priority and due rule (UI-23, UI-24,
-//      UI-32):** only High earns a pill, Low is a word, Normal says nothing;
+//      UI-32):** High and Low earn a chip (Q3), Normal says nothing;
 //      a due date is red when late, amber today, muted otherwise.
 //
 // GL-27: compiled into debug builds only.
@@ -127,10 +127,10 @@ enum ShiftTasksChromeSelfTest {
         check(ShiftTaskSignals.priorityPill(.high)?.text == "High"
                   && ShiftTaskSignals.priorityPill(.high)?.tint == .critical,
               "High earns the one red pill", &ok)
-        check(ShiftTaskSignals.priorityPill(.normal) == nil && ShiftTaskSignals.priorityWord(.normal) == nil,
-              "Normal says nothing (Q3)", &ok)
-        check(ShiftTaskSignals.priorityPill(.low) == nil && ShiftTaskSignals.priorityWord(.low) == "Low",
-              "Low is a quiet word, not a pill", &ok)
+        check(ShiftTaskSignals.priorityPill(.normal) == nil, "Normal says nothing (Q3)", &ok)
+        check(ShiftTaskSignals.priorityPill(.low)?.text == "Low"
+                  && ShiftTaskSignals.priorityPill(.low)?.tint == .neutral,
+              "Low earns a neutral chip (Q3: a chip for High and Low)", &ok)
 
         // Pinned at local noon, so no runner's time zone lands the fixture on
         // a day boundary (AGENTS.md's "YYYY-MM-DD" fixture rule).

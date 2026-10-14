@@ -93,14 +93,15 @@ enum ShiftDue {
 ///     same rule on the board, in the list and on a follow-up.
 enum ShiftTaskSignals {
 
-    /// The pill a priority earns, or `nil` for one that earns none.
+    /// The chip a priority earns, or `nil` for Normal (Q3: a chip only for
+    /// High and Low). High is red because it is the signal; Low is neutral,
+    /// because it says "this can wait" rather than "look here".
     static func priorityPill(_ priority: ShiftPriority) -> (text: String, tint: HelmTint)? {
-        priority == .high ? ("High", .critical) : nil
-    }
-
-    /// Low priority is a quiet word on the meta line rather than a pill.
-    static func priorityWord(_ priority: ShiftPriority) -> String? {
-        priority == .low ? "Low" : nil
+        switch priority {
+        case .high: return ("High", .critical)
+        case .low: return ("Low", .neutral)
+        default: return nil
+        }
     }
 
     struct DueCaption: Equatable {

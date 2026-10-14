@@ -306,8 +306,8 @@ enum ShiftBoardViewSelfTest {
     ///
     ///   - UI-21: a lane is not a card - no `HelmCard` anywhere in a lane;
     ///   - UI-22: a task card is `.cardFlat`, outlined in the hairline;
-    ///   - UI-23: a Normal task carries no chip, a High one the one pill, a Low
-    ///     one a quiet "Low" word;
+    ///   - UI-23: a Normal task carries no chip; High and Low each carry one
+    ///     (Q3);
     ///   - UI-24: the due date is a coloured lead on the meta line;
     ///   - UI-26: an empty lane's copy is the quiet "Nothing in progress";
     ///   - UI-27: a targeted lane shows its dashed outline, and only then;
@@ -359,8 +359,9 @@ enum ShiftBoardViewSelfTest {
                       + "\"\(c.debugRow.debugMetaAttributed.string)\"")
             } else { check(false, "the High task should be on the board") }
             if let c = card(low.id) {
-                check(c.debugRow.debugChipText == nil && c.debugRow.debugMetaAttributed.string.contains("Low"),
-                      "UI-23: a Low task says Low quietly, not in a pill")
+                check(c.debugRow.debugChipText == "Low",
+                      "UI-23: a Low task carries its chip (Q3: a chip for High and Low), got "
+                      + "\(String(describing: c.debugRow.debugChipText))")
             } else { check(false, "the Low task should be on the board") }
             if let c = card(finished.id) {
                 let title = c.debugRow.debugTitleAttributed

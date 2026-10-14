@@ -282,8 +282,6 @@ private final class ShiftProjectTaskRowView: NSView {
         if let pill = ShiftTaskSignals.priorityPill(task.priority) {
             append(pill.text, HelmContrast.legibleTintedText(tintHex: pill.tint.hex(in: theme),
                                                              over: surface, theme: theme), bold: true)
-        } else if let word = ShiftTaskSignals.priorityWord(task.priority) {
-            append(word, muted)
         }
         subLabel.attributedStringValue = line
     }

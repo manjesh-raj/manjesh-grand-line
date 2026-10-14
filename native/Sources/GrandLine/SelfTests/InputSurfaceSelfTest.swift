@@ -472,7 +472,10 @@ enum InputSurfaceSelfTest {
         // role, which is what this check is about - not a raw point size.
         let allowed = Set([HelmType.rowTitle(), HelmType.caption(), HelmType.body(),
                            HelmType.sectionTitle(), HelmType.cardTitle(),
-                           HelmType.kicker(), HelmType.code()]
+                           HelmType.kicker(), HelmType.code(),
+                           // UI-56: the KPI line's figures - `HelmType.metric`
+                           // at the strip's one size, still a HelmType role.
+                           HelmType.metric(HelmKPIStrip.metricSize)]
                           .map { Double($0.pointSize).rounded(toPlaces: 2) })
         var offenders: [String] = []
         walk(card.card) { view in
