@@ -235,8 +235,22 @@ enum SRELeadPerTabSelfTest {
 
         // Attempting a 6th must not crash (this test completing at all is
         // part of that proof) and must not silently start either.
+        //
+        // UI-61 moved the refusal to `HelmConfirm.notice`, which runs a real
+        // modal session: unanswered, it waits forever on a CI runner (it hit
+        // the 300s bound). The suite answers it through the component's own
+        // seam, and the answer proves the refusal was *said*, not just done.
+        var notices: [String] = []
+        HelmConfirm.responderForTests = { request in
+            notices.append(request.title)
+            return .confirm
+        }
+        defer { HelmConfirm.responderForTests = nil }
         let sixth = ids[5]
         controller.debugStartSRELead(forTabID: sixth)
+        guard notices == ["SRE Lead limit reached"] else {
+            return "the refused 6th tab should tell the captain why, once - notices were \(notices)"
+        }
         guard controller.debugActiveSRELeadCount() == 5 else {
             return "a 6th tab should be refused, not silently started - active count is now \(controller.debugActiveSRELeadCount())"
         }

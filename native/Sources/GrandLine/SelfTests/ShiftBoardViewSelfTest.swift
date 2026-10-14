@@ -33,6 +33,13 @@ enum ShiftBoardViewSelfTest {
             SelfTestAssertions.record(condition, message, into: &failures)
         }
 
+        // First, and on purpose: the revamp case drives no drag. The drag case
+        // below starts a real `NSDraggingSession` and never sends its
+        // mouse-up, and on a CI runner anything that comes after it - this
+        // case's own window, first-responder changes and run-loop turns -
+        // waits behind that session until the suite's 300s bound kills it.
+        checkTheRevampBoard(check)
+
         withScratchStore { store in
             // Three tasks, one per column, plus one cancelled task that must
             // stay off the board entirely.
@@ -296,7 +303,6 @@ enum ShiftBoardViewSelfTest {
                   + "this case needs one of each to mean anything")
         }
 
-        checkTheRevampBoard(check)
         return report(failures)
     }
 
