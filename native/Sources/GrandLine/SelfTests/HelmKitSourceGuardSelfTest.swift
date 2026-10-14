@@ -32,6 +32,13 @@
 //      carry no non-zero literal at all; every other file may not exceed the
 //      count it had when the guard landed. That is a ratchet, not a cleanup:
 //      a file that loses literals passes, and its entry can be lowered.
+//   4. **No stock system chrome (UI-61).** `NSAlert()` only where a command
+//      or binary is about to run outside this app's control - the risk gates
+//      and the AI-authored gate in `CommandLibraryViews.swift`, and the herdr
+//      restart - which is AGENTS.md's own carve-out for `HelmConfirm`.
+//      `NSProgressIndicator()` nowhere (`HelmProgressBar`, `HelmSkeleton`),
+//      and `NSSwitch()` only inside `HelmToggle`, which keeps one as its
+//      pre-Daylight shape.
 //
 // GL-27: compiled into debug builds only.
 #if FM_SELFTESTS
@@ -51,6 +58,7 @@ enum HelmKitSourceGuardSelfTest {
         checkPillsGoThroughTheKit(files, &ok)
         checkLiteralScanner(&ok)
         checkSpacingComesFromTheScale(files, &ok)
+        checkNoStockSystemChrome(files, &ok)
         print(ok ? "HelmKitSourceGuardSelfTest: OK" : "HelmKitSourceGuardSelfTest: FAILED")
         return ok
     }
@@ -288,6 +296,36 @@ enum HelmKitSourceGuardSelfTest {
         check(total > 0, "expected the existing off-scale literals to be counted, found none - the guard is blind", &ok)
         print("  off-scale spacing/radius literals across the app: \(total) "
               + "(baseline \(offScaleBaseline.values.reduce(0, +)))")
+    }
+    // MARK: 4 - no stock system chrome
+
+    /// Where each stock control may still be constructed, and why.
+    static let stockChromeAllowlist: [String: Set<String>] = [
+        // A system-level stop is the point: the command is about to run
+        // outside the app (AGENTS.md's `HelmConfirm` carve-out).
+        "NSAlert()": ["CommandLibraryViews.swift", "ConsoleController+Herdr.swift"],
+        "NSProgressIndicator()": [],
+        // `HelmToggle`'s pre-Daylight shape.
+        "NSSwitch()": ["HelmForm.swift"],
+    ]
+
+    private static func checkNoStockSystemChrome(_ files: [URL], _ ok: inout Bool) {
+        var seenAllowed = 0
+        for file in files {
+            guard let source = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let code = codeLines(source).joined(separator: "\n")
+            for (token, allowed) in stockChromeAllowlist where code.contains(token) {
+                if allowed.contains(file.lastPathComponent) {
+                    seenAllowed += 1
+                    continue
+                }
+                fail("\(file.lastPathComponent) constructs \(token) - use HelmConfirm, HelmProgressBar or "
+                     + "HelmToggle (UI-61)", &ok)
+            }
+        }
+        // The discriminating half: the scan has to see the sanctioned sites.
+        check(seenAllowed >= 3, "expected the sanctioned NSAlert/NSSwitch sites to be found, saw "
+              + "\(seenAllowed) - the guard is blind", &ok)
     }
 }
 

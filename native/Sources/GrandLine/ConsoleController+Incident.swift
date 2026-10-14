@@ -142,34 +142,31 @@ extension ConsoleController {
 
     // MARK: Starting
 
-    /// One short prompt for a title, then a real record. Deliberately an
-    /// `NSAlert` with an accessory field rather than a whole editor sheet:
-    /// this happens while something is on fire, and every other field an
-    /// incident has (host, time, status) is already known.
+    /// One short prompt for a title, then a real record. Deliberately a
+    /// confirm with an accessory field rather than a whole editor sheet: this
+    /// happens while something is on fire, and every other field an incident
+    /// has (host, time, status) is already known. UI-61: the app's own
+    /// `HelmConfirm`, not a system `NSAlert` - nothing outside the app runs
+    /// on this answer, so the system chrome bought nothing.
     private func promptForNewIncident() {
         guard let hostIdentity else { return }
 
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = "Start an incident on \(hostIdentity.label)?"
-        alert.informativeText = "SRE Lead turns, Log Analyzer captures and runbook runs on this host will "
-            + "attach to it automatically until you end it."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        let field = HelmTextField()
         field.placeholderString = "What is happening? e.g. payments-worker OOMKilled"
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Start Incident")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.widthAnchor.constraint(equalToConstant: 300).isActive = true
 
-        let handle: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-            guard let self, response == .alertFirstButtonReturn else { return }
-            self.startIncident(title: field.stringValue)
-        }
-        if let window = view.window {
-            alert.beginSheetModal(for: window, completionHandler: handle)
-        } else {
-            handle(alert.runModal())
-        }
+        var request = HelmConfirm.Request(
+            title: "Start an incident on \(hostIdentity.label)?",
+            body: "SRE Lead turns, Log Analyzer captures and runbook runs on this host will "
+                + "attach to it automatically until you end it.")
+        request.confirmTitle = "Start Incident"
+        request.symbol = "flame.fill"
+        request.hue = .rose
+        request.accessory = field
+        request.initialResponder = field
+        guard HelmConfirm.confirm(request) == .confirm else { return }
+        startIncident(title: field.stringValue)
     }
 
     private func startIncident(title: String) {

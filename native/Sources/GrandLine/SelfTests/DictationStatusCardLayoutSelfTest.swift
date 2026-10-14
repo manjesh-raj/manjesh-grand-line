@@ -43,6 +43,7 @@ enum DictationStatusCardLayoutSelfTest {
         print("== DictationStatusCardLayoutSelfTest ==")
         ok = checkTheTextColumnNeverCollapses() && ok
         ok = checkTheSettledCardWrapsAtTheRowsRealWidth() && ok
+        ok = checkTheFirstPaintIsRendered() && ok
         print(ok ? "DictationStatusCardLayoutSelfTest: OK" : "DictationStatusCardLayoutSelfTest: FAILED")
         return ok
     }
@@ -131,6 +132,25 @@ enum DictationStatusCardLayoutSelfTest {
                 check(label.height > 0 && label.height < card.height,
                       "@\(width): the label (\(label.height)pt) sits inside its card (\(card.height)pt)", &ok)
             }
+        }
+        return ok
+    }
+    /// UI-53: mounted with no `viewWillAppear` and no status pushed - a
+    /// destination's first frame. The card used to show its unfilled chrome:
+    /// an empty tile, no title, and an untitled accent button that read as a
+    /// stray toggle.
+    private static func checkTheFirstPaintIsRendered() -> Bool {
+        var ok = true
+        autoreleasepool {
+            let controller = DictationController(store: DictationStore())
+            let window = OffScreenProbe.window(width: 1512, height: 900)
+            defer { window.contentView = nil; window.close() }
+            window.contentView = controller.view
+            controller.view.layoutSubtreeIfNeeded()
+            check(!controller.debugStatusWordText.isEmpty,
+                  "the first paint's status word is empty - the card was never rendered", &ok)
+            check(controller.debugStatusActionButton.isHidden || !controller.debugStatusActionButton.title.isEmpty,
+                  "the first paint shows an action button with no title", &ok)
         }
         return ok
     }
