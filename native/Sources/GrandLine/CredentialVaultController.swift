@@ -64,8 +64,8 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     private let searchField = HelmSearchField(placeholder: "Search titles, accounts and tags")
     private let sidebar = CredentialVaultSidebar()
     private let inspector = CredentialVaultInspectorView()
-    private let clipboardPill = NSView()
-    private let clipboardLabel = NSTextField(labelWithString: "")
+    /// UI-32: the kit's status pill.
+    private let clipboardPill = HelmStatusPill()
     private let addButton = HelmButton(title: "Add credential", variant: .primary, symbol: "plus")
     private let lockButton = HelmButton(title: "Lock", variant: .secondary, symbol: "lock.fill")
     private let settingsButton = HelmButton(title: "", variant: .quiet, symbol: "gearshape")
@@ -264,17 +264,6 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         // The clipboard countdown. Hidden unless a copy is pending, which is
         // the "quiet until it matters" rule `PRODUCT.md` states - a permanent
         // "nothing copied" pill would be noise.
-        clipboardPill.wantsLayer = true
-        clipboardPill.translatesAutoresizingMaskIntoConstraints = false
-        clipboardLabel.font = HelmType.chip()
-        clipboardLabel.translatesAutoresizingMaskIntoConstraints = false
-        clipboardPill.addSubview(clipboardLabel)
-        NSLayoutConstraint.activate([
-            clipboardLabel.leadingAnchor.constraint(equalTo: clipboardPill.leadingAnchor, constant: HelmMetrics.s2),
-            clipboardLabel.trailingAnchor.constraint(equalTo: clipboardPill.trailingAnchor, constant: -HelmMetrics.s2),
-            clipboardLabel.centerYAnchor.constraint(equalTo: clipboardPill.centerYAnchor),
-            clipboardPill.heightAnchor.constraint(equalToConstant: 22),
-        ])
         let clearNowButton = HelmButton(title: "Clear now", variant: .quiet, size: .small,
                                         target: self, action: #selector(clearClipboardNow))
         clearNowButton.setContentHuggingPriority(.required, for: .horizontal)
@@ -600,13 +589,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
             return
         }
         clipboardPillGroup.forEach { $0.isHidden = false }
-        clipboardLabel.stringValue = "Clipboard clears in \(remaining)s"
-        let theme = ThemeManager.shared.theme
-        ToolRowLayout.pill(text: clipboardLabel.stringValue,
-                           colorHex: HelmTint.warn.hex(in: theme),
-                           into: clipboardPill,
-                           label: clipboardLabel,
-                           theme: theme)
+        clipboardPill.configure(text: "Clipboard clears in \(remaining)s", tint: .warn)
     }
 
     // MARK: Unlock / lock
@@ -1267,7 +1250,6 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         sidebar.applyTheme(theme)
         inspector.applyTheme(theme)
         unlockView.applyTheme(theme)
-        clipboardLabel.font = HelmType.chip()
         if !clipboardPill.isHidden {
             renderClipboardCountdown(CredentialVaultClipboard.shared.secondsRemaining)
         }

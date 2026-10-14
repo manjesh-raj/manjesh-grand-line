@@ -45,7 +45,12 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    private var theme: HelmTheme = ThemeManager.shared.theme
+    /// Read live, never cached (UI-48). A copy taken at construction is the
+    /// theme of whenever the controller was built - a fresh process starts on
+    /// Dusk - and the page's first render runs inside `loadView`, before the
+    /// theme observer below is registered. That pairing painted the tiles,
+    /// the schedules card and the sidebar in Dusk on a Daylight page.
+    private var theme: HelmTheme { ThemeManager.shared.theme }
     private var scrollView: NSScrollView!
 
     /// The card itself - see `SchedulesCardView`'s own header for why it is a
@@ -102,26 +107,17 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
 
     // MARK: The summary tiles and the two run-history panels
 
-    /// Reference 1's three stat cards, on `HelmStatTile` - the app's own tile,
-    /// which is what makes them read as this app's rather than the mockup's.
+    /// UI-44: the page's four numbers as one flat `HelmKPIStrip` - the strip
+    /// Home, Updates and Weekly Review use - rather than four boxed tiles
+    /// directly above a boxed card. The split this page made earlier stays:
+    /// "Need you" (a run that failed or could not check everything) and
+    /// "Worth a look" (a run that succeeded and found something) are two
+    /// numbers, because one count told the captain a failure had "found
+    /// something".
     ///
-    /// Reference 2 offers the same three numbers as a compact inline summary
-    /// bar instead (title + subtitle + stats + button in one row). That shape
-    /// was deliberately not taken: its title-and-subtitle half is exactly what
-    /// `HelmDrillHeader` already renders directly above this page, so adopting
-    /// it would re-introduce the duplicate-title defect §6.4 exists to remove.
-    /// The tiles carry the counts and leave the naming to the header.
-    private let activeTile = HelmStatTile(symbol: "bolt.horizontal.circle.fill",
-                                          caption: "Active schedules")
-    /// Two tiles where there was one. The single "Needs your attention" tile
-    /// counted failures *and* successful-with-news runs together and then told
-    /// the captain, in its own tooltip, that they had all "found something" -
-    /// which was never true of a failure.
-    private let attentionTile = HelmStatTile(symbol: "exclamationmark.octagon.fill",
-                                             caption: "Need you")
-    private let worthALookTile = HelmStatTile(symbol: "info.circle.fill",
-                                              caption: "Worth a look")
-    private let runsTile = HelmStatTile(symbol: "chart.bar.fill", caption: "Runs \u{00B7} last 7 days")
+    /// Reference 2's inline title-plus-stats bar is still not taken: its title
+    /// half is what `HelmDrillHeader` already renders above this page.
+    private let summaryStrip = HelmKPIStrip()
 
     /// The page's own left navigation column - the captain's correction after
     /// using the redesign (`fm/grand-line-schedules-sidebar-fullwidth-fix`).
@@ -160,8 +156,13 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
     private static let activityRowLimit = 6
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 720))
+        let root = SchedulesRootView(frame: NSRect(x: 0, y: 0, width: 620, height: 720))
         root.wantsLayer = true
+        // A mounted destination is shown by unhiding it, which never reaches
+        // `viewWillAppear` after the first time. This is where a render the
+        // visibility gate deferred (a theme switch or a run finishing while
+        // another page was showing) is settled.
+        root.onUnhide = { [weak self] in self?.refreshSchedulesIfNeeded() }
         view = root
 
         // The page-level explanatory line is gone (Daylight §6.4): the drill
@@ -251,7 +252,10 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         ThemeManager.shared.observe { [weak root, weak self] theme in
             root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
             root?.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
-            self?.theme = theme
+            // UI-48: the surfaces repaint now, whether or not the page is
+            // showing - that is a repaint, not a fetch (GL-24). Only the row
+            // rebuild waits for the page to be on screen.
+            self?.applyThemeToSurfaces(theme)
             self?.refreshSchedules()
         }
     }
@@ -380,13 +384,8 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
 
     /// Three tiles, `.fillEqually`, exactly as reference 1 lays them out.
     private func buildStatsRow() -> NSView {
-        let row = NSStackView(views: [activeTile, attentionTile, worthALookTile, runsTile])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.distribution = .fillEqually
-        row.spacing = HelmMetrics.s3
-        row.translatesAutoresizingMaskIntoConstraints = false
-        return row
+        summaryStrip.setAccessibilityLabel("Schedules summary")
+        return summaryStrip
     }
 
     // MARK: The two run-history panels
@@ -447,22 +446,20 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         let active = schedules.filter(\.isEnabled).count
         let attention = schedules.filter { SchedulesCardView.group(for: $0) == .needsYou }.count
         let worthALook = schedules.filter { SchedulesCardView.group(for: $0) == .worthALook }.count
-        activeTile.value = "\(active)"
-        activeTile.setTint(nil, theme: theme)
-        attentionTile.value = "\(attention)"
-        attentionTile.setTint(attention > 0 ? .critical : nil, theme: theme)
-        worthALookTile.value = "\(worthALook)"
-        worthALookTile.setTint(worthALook > 0 ? .info : nil, theme: theme)
-        runsTile.value = "\(history.count)"
-        runsTile.setTint(nil, theme: theme)
-        activeTile.toolTip = "\(active) of \(schedules.count) schedules are running on their own"
-        attentionTile.toolTip = attention == 0
-            ? "Nothing is waiting on you"
-            : "Their last run didn\u{2019}t finish, or couldn\u{2019}t check everything - each row says what happened and has a Why? button"
-        worthALookTile.toolTip = worthALook == 0
-            ? "Nothing to review"
-            : "Their last run succeeded and found something you may want to act on - each one has a Review button on its row"
-        runsTile.toolTip = "Runs recorded in the past 7 days, across every schedule"
+        summaryStrip.configure([
+            .count(active, caption: "Active schedules"),
+            .count(attention, caption: "Need you", tintWhenNonZero: .critical),
+            .count(worthALook, caption: "Worth a look", tintWhenNonZero: .info),
+            .count(history.count, caption: "Runs \u{00B7} last 7 days"),
+        ], theme: theme)
+        summaryStrip.toolTip = [
+            "\(active) of \(schedules.count) schedules are running on their own.",
+            attention == 0 ? "Nothing is waiting on you."
+                : "Need you: the last run didn\u{2019}t finish, or couldn\u{2019}t check everything.",
+            worthALook == 0 ? "Nothing to review."
+                : "Worth a look: the last run succeeded and found something you may want to act on.",
+            "Runs are counted across every schedule for the past 7 days.",
+        ].joined(separator: "\n")
 
         activityCard.applyTheme(theme)
         overviewCard.applyTheme(theme)
@@ -635,6 +632,16 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         renderInsights(schedules, history: history)
     }
 
+    /// Every themed surface this page owns, without rebuilding a row: the
+    /// four tiles, the three cards and the sidebar.
+    private func applyThemeToSurfaces(_ theme: HelmTheme) {
+        summaryStrip.applyTheme(theme)
+        schedulesCard.applyTheme(theme)
+        activityCard.applyTheme(theme)
+        overviewCard.applyTheme(theme)
+        sidebar.applyTheme(theme)
+    }
+
     /// Counted off the very array the rows render, against the card's own
     /// current search - so a sidebar count and the list beneath it can never
     /// disagree within a frame.
@@ -713,16 +720,21 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
     /// record delete (see `HostsController`'s own confirm alert).
     #if FM_SELFTESTS
     var debugSidebar: HelmPageSidebar { sidebar }
+    /// UI-48: the painted fills, read straight off the layers.
+    var debugSummaryValueColors: [NSColor?] { summaryStrip.debugValueColors }
+    var debugSchedulesCardFill: CGColor? { schedulesCard.card.layer?.backgroundColor }
     var debugScrollOffsetY: CGFloat { scrollView?.contentView.bounds.origin.y ?? -1 }
     var debugVisibleScheduleRowCount: Int { schedulesCard.debugRowCount }
 
     /// The summary tiles' rendered values - read off the tiles rather than
     /// recomputed, so a check can see a tile that stopped being repainted.
     var debugStatValues: (active: String, attention: String, runs: String) {
-        (activeTile.value, attentionTile.value, runsTile.value)
+        let values = summaryStrip.debugValues
+        guard values.count == 4 else { return ("", "", "") }
+        return (values[0], values[1], values[3])
     }
-    /// The "Worth a look" tile's own value, added with the five-state split.
-    var debugWorthALookValue: String { worthALookTile.value }
+    /// The "Worth a look" figure, added with the five-state split.
+    var debugWorthALookValue: String { summaryStrip.debugValues.count == 4 ? summaryStrip.debugValues[2] : "" }
     /// Whether the activity feed is showing its honest "nothing recorded yet"
     /// state rather than an empty stack that merely looks like one.
     var debugActivityShowsEmptyState: Bool {
@@ -751,5 +763,15 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         scheduleStore.delete(id: schedule.id)
         NotificationSources.clearScheduleResult(scheduleID: schedule.id)
         refreshSchedules()
+    }
+}
+
+/// The page's root: a plain layer-backed view that says when it is unhidden.
+private final class SchedulesRootView: NSView {
+    var onUnhide: (() -> Void)?
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        onUnhide?()
     }
 }

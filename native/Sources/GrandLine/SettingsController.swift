@@ -2060,7 +2060,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
                 // Amber, and the one row on this page carrying a chip at all.
                 // It is the single thing about this list a captain has to
                 // read before wiring any of it into a shortcut.
-                trailing = pillView(text: note, colorHex: HelmTint.warn.hex(in: theme))
+                trailing = pillView(text: note, tint: .warn)
             } else {
                 trailing = rowLabel("action")
             }
@@ -2203,7 +2203,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
                                      action: #selector(disableSudoTouchIDClicked))
             disable.isEnabled = !isDisablingSudo
             disable.toolTip = "Remove the Touch ID line from /etc/pam.d/sudo_local (asks for your password)"
-            let pair = NSStackView(views: [pillView(text: "On", colorHex: theme.ansiHex[2]), disable])
+            let pair = NSStackView(views: [pillView(text: "On", tint: .good, style: .dotWord), disable])
             pair.orientation = .horizontal
             pair.alignment = .centerY
             pair.spacing = HelmMetrics.s2
@@ -2215,7 +2215,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             // read-only, and an edit that did land would be regenerated away
             // by the next rebuild.
             desc += " It is on, but this Mac is managed by nix-darwin, where /etc/pam.d/sudo_local is regenerated from your flake on every rebuild - set `security.pam.services.sudo_local.touchIdAuth = false;` in your dotfiles' configuration.nix, then run rebuild.sh."
-            statusView = pillView(text: "On", colorHex: theme.ansiHex[2])
+            statusView = pillView(text: "On", tint: .good, style: .dotWord)
         case .enabledInSudoFile:
             // Turning this off means editing /etc/pam.d/sudo, the file Apple
             // ships and replaces on a system update. This app edits
@@ -2223,7 +2223,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             // rather than offering a button that would press cleanly and
             // change nothing.
             desc += " It is on via a pam_tid.so line in /etc/pam.d/sudo itself, not /etc/pam.d/sudo_local - this app only ever edits sudo_local, so remove that line by hand to turn it off."
-            statusView = pillView(text: "On", colorHex: theme.ansiHex[2])
+            statusView = pillView(text: "On", tint: .good, style: .dotWord)
         case .notEnabled:
             let button = HelmButton(title: isHardeningSudo ? "Enabling\u{2026}" : "Enable",
                                     variant: .primary, target: self,
@@ -2431,17 +2431,16 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         rows.append(SettingsRow(
             title: "Hosts, SSH keys, jump hosts",
             description: "\(hostStore.hosts.count) host(s) and the metadata for the keys they reference. Private key material never leaves the Keychain.",
-            control: statusColumn(pillView(text: "Included", colorHex: theme.ansiHex[2]))))
+            control: statusColumn(pillView(text: "Included", tint: .good, style: .dotWord))))
         rows.append(SettingsRow(
             title: "Command snippets & dictation",
             description: "\(snippetStore.snippets.count) snippet(s), the dictation vocabulary and shortcut, and the preferences on these pages.",
-            control: statusColumn(pillView(text: "Included", colorHex: theme.ansiHex[2]))))
+            control: statusColumn(pillView(text: "Included", tint: .good, style: .dotWord))))
 
         for section in BackupStoreSection.allCases {
             rows.append(SettingsRow(title: section.title,
                                     description: "\(section.detail). \(backupMeasurementText(for: section))",
-                                    control: statusColumn(pillView(text: "Included",
-                                                                    colorHex: theme.ansiHex[2]))))
+                                    control: statusColumn(pillView(text: "Included", tint: .good, style: .dotWord))))
         }
 
         rows.append(SettingsRow(
@@ -2450,7 +2449,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             // Amber, not green: "sealed" is a real caveat (the master
             // password does not travel with it), and painting it the same as
             // the rest would say there is nothing to know.
-            control: statusColumn(pillView(text: "Sealed", colorHex: theme.ansiHex[3]))))
+            control: statusColumn(pillView(text: "Sealed", tint: .warn))))
 
         rows.append(SettingsRow(
             title: "Terminal scrollback & session state",
@@ -2547,13 +2546,12 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// §6.7: the app's one chip. `ToolRowLayout.pill` corrects the label
     /// against whichever surface the chip lands on and makes it a capsule
     /// under Daylight.
-    private func pillView(text: String, colorHex: String) -> NSView {
-        let container = NSView()
-        let label = NSTextField(labelWithString: text)
-        ToolRowLayout.pill(text: text, colorHex: colorHex, into: container, label: label, theme: theme)
-        container.setContentHuggingPriority(.required, for: .horizontal)
-        container.setContentCompressionResistancePriority(.required, for: .horizontal)
-        return container
+    /// UI-32 / UI-43: the kit's status pill - a dot and a word for a state
+    /// that is the default ("On", "Included"), a pill for one that is not.
+    private func pillView(text: String, tint: HelmTint, style: HelmStatusPill.Style = .pill) -> NSView {
+        let pill = HelmStatusPill(style: style)
+        pill.configure(text: text, tint: tint, theme: theme)
+        return pill
     }
 
     /// The reference's `.status-col { width: 92px }`: a fixed-width,

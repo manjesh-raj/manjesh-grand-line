@@ -181,6 +181,14 @@ final class SchedulesCardView: NSObject {
         onStateChanged?()
     }
 
+    /// The card's own surface, without a row rebuild - for a theme switch
+    /// while the page is hidden (UI-48). The rows follow on the next
+    /// `setSchedules`, which the page runs when it is shown again.
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        card.applyTheme(theme)
+    }
+
     // MARK: Grouping and filtering
 
     /// The three groups, in the order a captain reads them: what wants them

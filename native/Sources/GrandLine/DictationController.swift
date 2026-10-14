@@ -54,8 +54,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
     // prototype's Status card-head shows ("On device") once every
     // permission is granted and no action button is needed - mutually
     // exclusive with `statusActionButton` (see `render()`).
-    private let statusChip = NSView()
-    private let statusChipLabel = NSTextField(labelWithString: "")
+    /// UI-32: the kit's status pill. "On device" is this card's default, so
+    /// it is a dot and a word (UI-53).
+    private let statusChip = HelmStatusPill(style: .dotWord)
 
     private let shortcutPanel = HelmCard()
     private let shortcutRecorder: KeyChordRecorderView
@@ -80,8 +81,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
     // one state the prototype actually depicts); every other state
     // (downloading/failed/not-downloaded) keeps the existing plain label,
     // since those messages are longer and dynamic, not a fixed short word.
-    private let modelReadyPill = NSView()
-    private let modelReadyPillLabel = NSTextField(labelWithString: "")
+    /// UI-32: the kit's status pill, which states its own width (no more
+    /// B10 workaround on the label).
+    private let modelReadyPill = HelmStatusPill(style: .dotWord)
     private let modelActionButton = HelmButton(title: "", variant: .primary)
     /// GL-35: 547MB is not a footprint to strand. Only shown while the model
     /// is actually on disk.
@@ -630,8 +632,6 @@ final class DictationController: NSViewController, DaylightDrillActions {
         // absorbs slack. One page's bug, fixed on that page.
         modelReadyPill.setContentHuggingPriority(.required, for: .horizontal)
         modelReadyPill.setContentCompressionResistancePriority(.required, for: .horizontal)
-        modelReadyPillLabel.setContentHuggingPriority(.required, for: .horizontal)
-        modelReadyPillLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         modelReadyPill.isHidden = true
 
         // G4: the app's own bar rather than the stock determinate one.
@@ -872,8 +872,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
         statusIconTile.applyTheme(theme)
         statusTitleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         statusDetailLabel.textColor = HelmTheme.mutedInk(theme)
-        ToolRowLayout.pill(text: "On device", colorHex: HelmTint.good.hex(in: theme),
-                          into: statusChip, label: statusChipLabel, theme: theme)
+        statusChip.configure(text: "On device", tint: .good, theme: theme)
         shortcutRecorder.applyTheme(theme)
         shortcutDetailLabel.textColor = HelmTheme.mutedInk(theme)
         cleanupPanel.applyTheme(theme)
@@ -883,8 +882,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
         localWhisperTitleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         localWhisperDetailLabel.textColor = HelmTheme.mutedInk(theme)
         modelStatusLabel.textColor = HelmTheme.mutedInk(theme)
-        ToolRowLayout.pill(text: "Model ready", colorHex: HelmTint.good.hex(in: theme),
-                          into: modelReadyPill, label: modelReadyPillLabel, theme: theme)
+        modelReadyPill.configure(text: "Model ready", tint: .good, theme: theme)
         // `HelmChipInput` carries its own `ThemeManager` observation (and its
         // own focus registration) - this call only keeps it right if it was
         // built between two theme changes.

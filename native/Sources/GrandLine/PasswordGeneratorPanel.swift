@@ -32,8 +32,8 @@ final class PasswordGeneratorPanel: NSView {
 
     private let valueLabel = NSTextField(labelWithString: "")
     private let valueWell = NSView()
-    private let strengthPill = NSView()
-    private let strengthLabel = NSTextField(labelWithString: "")
+    /// UI-32: the kit's status pill.
+    private let strengthPill = HelmStatusPill()
     private let lengthLabel = NSTextField(labelWithString: "")
     private let slider = NSSlider()
     private let useButton = HelmButton(title: "Use this password", variant: .secondary, size: .small, symbol: "checkmark")
@@ -75,7 +75,6 @@ final class PasswordGeneratorPanel: NSView {
             valueLabel.bottomAnchor.constraint(equalTo: valueWell.bottomAnchor, constant: -9),
         ])
 
-        strengthLabel.translatesAutoresizingMaskIntoConstraints = false
         strengthPill.translatesAutoresizingMaskIntoConstraints = false
 
         regenerateButton.target = self
@@ -226,16 +225,12 @@ final class PasswordGeneratorPanel: NSView {
         // The chip is a `HelmTint` wash routed through `ToolRowLayout.pill`,
         // which is this app's one tinted-pill renderer - never a raw hue as
         // text (see `CredentialVaultInk`'s note).
-        ToolRowLayout.pill(text: current.summary,
-                           colorHex: current.strengthTint.hex(in: theme),
-                           into: strengthPill,
-                           label: strengthLabel,
-                           theme: theme)
+        strengthPill.configure(text: current.summary, tint: current.strengthTint, theme: theme)
     }
 
     #if FM_SELFTESTS
     var debugValue: String { valueLabel.stringValue }
-    var debugStrengthText: String { strengthLabel.stringValue }
+    var debugStrengthText: String { strengthPill.text }
     var debugLengthText: String { lengthLabel.stringValue }
     var debugModes: HelmSegmentedTabs { modes }
     var debugOptions: PasswordGenerator.Options { options }

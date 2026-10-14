@@ -63,8 +63,8 @@ final class IncidentCardView: NSView {
     private let headerIcon = IconTileView(size: HelmMetrics.tileBase, cornerRadius: 9)
     fileprivate let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
-    private let statusPill = NSView()
-    private let statusLabel = NSTextField(labelWithString: "")
+    /// UI-32: the kit's status pill.
+    private let statusPill = HelmStatusPill()
     private let headerDivider = NSView()
 
     private let tabs = HelmSegmentedTabs(items: Tab.allCases.map { .init(id: $0.rawValue, title: $0.title) },
@@ -250,9 +250,8 @@ final class IncidentCardView: NSView {
         titleLabel.stringValue = "\(incident.id) - \(incident.title)"
         subtitleLabel.stringValue = incident.subtitle()
         statusPill.isHidden = false
-        ToolRowLayout.pill(text: incident.status.displayName.uppercased(),
-                           colorHex: (incident.isActive ? HelmTint.critical : HelmTint.neutral).hex(in: theme),
-                           into: statusPill, label: statusLabel, theme: theme)
+        statusPill.configure(text: incident.status.displayName.uppercased(),
+                             tint: incident.isActive ? .critical : .neutral, theme: theme)
 
         let active = incident.isActive
         endButton.isHidden = !active

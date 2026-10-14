@@ -174,7 +174,8 @@ final class CredentialVaultInspectorView: NSView {
     private var codeLabels: [NSTextField] = []
     private var wells: [NSView] = []
     private var rules: [NSView] = []
-    private var chips: [(pill: NSView, label: NSTextField, tint: HelmTint)] = []
+    /// UI-32: tag chips are the kit's status pill.
+    private var chips: [HelmStatusPill] = []
     private var tiles: [IconTileView] = []
     private let secretLabel = NSTextField(labelWithString: "")
     private let revealButton = HelmButton(title: "", variant: .quiet, size: .small, symbol: "eye")
@@ -418,13 +419,9 @@ final class CredentialVaultInspectorView: NSView {
         flow.translatesAutoresizingMaskIntoConstraints = false
         var pills: [NSView] = []
         for tag in credential.tags {
-            let pill = NSView()
-            let label = NSTextField(labelWithString: tag)
-            // Deliberately NOT added to `pill` here: `ToolRowLayout.pill` adds
-            // it and creates its padding constraints only when it is not
-            // already a subview, so pre-adding it produces a chip with a label
-            // and no size at all.
-            chips.append((pill, label, .neutral))
+            let pill = HelmStatusPill()
+            pill.configure(text: tag, tint: .neutral)
+            chips.append(pill)
             pills.append(pill)
         }
         flow.setChips(pills)
@@ -821,11 +818,7 @@ final class CredentialVaultInspectorView: NSView {
         }
         for well in wells { HelmField.applySunken(to: well, theme: theme) }
         for tile in tiles { tile.applyTheme(theme) }
-        for chip in chips {
-            ToolRowLayout.pill(text: chip.label.stringValue,
-                               colorHex: chip.tint.hex(in: theme),
-                               into: chip.pill, label: chip.label, theme: theme)
-        }
+        for chip in chips { chip.applyTheme(theme) }
         renderSecret()
     }
 

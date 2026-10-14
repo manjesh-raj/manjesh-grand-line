@@ -954,7 +954,7 @@ final class DaylightBarController: NSViewController {
         }
         let row = NSStackView(views: views)
         row.orientation = .horizontal
-        row.spacing = 2
+        row.spacing = HelmMetrics.s0
         row.distribution = .fill
         row.translatesAutoresizingMaskIntoConstraints = false
         row.setHuggingPriority(.required, for: .horizontal)
@@ -1700,7 +1700,7 @@ final class DaylightSearchPill: HoverHighlightView {
         let stack = NSStackView(views: [iconView, label, badge])
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 7
+        stack.spacing = HelmMetrics.s2
         stack.distribution = .fill
         stack.edgeInsets = NSEdgeInsets(top: 0, left: 11, bottom: 0, right: 7)
         stack.translatesAutoresizingMaskIntoConstraints = false

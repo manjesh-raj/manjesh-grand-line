@@ -193,9 +193,9 @@ final class ShiftProjectCardView: NSView {
 
     /// The one status -> `HelmTint` mapping this card uses for both the
     /// icon tile and the status pill, so the two can never disagree about
-    /// what a project's status color means. Matches `ShiftController`'s own
-    /// `applyDetailStatusPill` mapping for the same statuses.
-    private static func tint(for status: ShiftProjectStatus) -> HelmTint {
+    /// what a project's status color means. The project detail page's pill
+    /// reads the same table.
+    static func tint(for status: ShiftProjectStatus) -> HelmTint {
         switch status {
         case .notStarted: return .neutral
         case .inProgress: return .info

@@ -495,8 +495,8 @@ enum DaylightDrillPageSlice3SelfTest {
         func row(theme: HelmTheme, cardStyle: Bool, attentionHex: String?) -> ToolRowLayout.Views {
             let views = ToolRowLayout.Views(
                 iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-                detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-                pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+                detailLabel: NSTextField(labelWithString: ""), pill: HelmStatusPill(),
+                trailingStack: NSStackView(),
                 detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
                 logContainer: NSView(), rowContainer: HoverHighlightView())
             _ = ToolRowLayout.build(views, iconSymbol: "shippingbox", tint: .neutral,

@@ -1575,7 +1575,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         let textStack = NSStackView(views: [reviewGreeting, reviewSubtitle])
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = 4
+        textStack.spacing = HelmMetrics.s1
         textStack.translatesAutoresizingMaskIntoConstraints = false
 
         reviewStatsCard.setBody(reviewStats, insets: HelmCard.contentInsets)
@@ -1617,7 +1617,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         let textStack = NSStackView(views: [reviewFocusHeadline, reviewFocusCaption])
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = 2
+        textStack.spacing = HelmMetrics.s0
         textStack.translatesAutoresizingMaskIntoConstraints = false
         // AGENTS.md gotcha (12): `setContentHuggingPriority` is a **no-op**
         // on an `NSStackView` - it constrains a view against its intrinsic
@@ -1970,8 +1970,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     private let detailBackButton = NSButton(title: "\u{2039} Back to Projects", target: nil, action: nil)
     private let detailIconTile = IconTileView(size: 40, cornerRadius: 10)
     private let detailNameLabel = NSTextField(labelWithString: "")
-    private let detailStatusPill = NSView()
-    private let detailStatusPillLabel = NSTextField(labelWithString: "")
+    private let detailStatusPill = HelmStatusPill()
     private let detailMetaLabel = NSTextField(labelWithString: "")
     private let detailDescriptionLabel = NSTextField(wrappingLabelWithString: "")
 
@@ -2070,20 +2069,6 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         detailNameLabel.font = HelmType.pageTitle(.display)
         detailNameLabel.lineBreakMode = .byTruncatingTail
 
-        detailStatusPillLabel.font = ShiftFont.mono(10.5, weight: .semibold)
-        detailStatusPillLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailStatusPill.wantsLayer = true
-        detailStatusPill.layer?.cornerRadius = 8
-        detailStatusPill.translatesAutoresizingMaskIntoConstraints = false
-        detailStatusPill.addSubview(detailStatusPillLabel)
-        NSLayoutConstraint.activate([
-            detailStatusPillLabel.leadingAnchor.constraint(equalTo: detailStatusPill.leadingAnchor, constant: 8),
-            detailStatusPillLabel.trailingAnchor.constraint(equalTo: detailStatusPill.trailingAnchor, constant: -8),
-            detailStatusPillLabel.topAnchor.constraint(equalTo: detailStatusPill.topAnchor, constant: 3),
-            detailStatusPillLabel.bottomAnchor.constraint(equalTo: detailStatusPill.bottomAnchor, constant: -3),
-        ])
-        detailStatusPill.setContentHuggingPriority(.required, for: .horizontal)
-
         detailMetaLabel.font = .systemFont(ofSize: HelmType.scaled(11))
 
         let metaRow = NSStackView(views: [detailStatusPill, detailMetaLabel])
@@ -2099,7 +2084,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         let textStack = NSStackView(views: [detailNameLabel, metaRow, detailDescriptionLabel])
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = 8
+        textStack.spacing = HelmMetrics.s2
         textStack.translatesAutoresizingMaskIntoConstraints = false
         detailDescriptionLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor).isActive = true
 
@@ -2148,7 +2133,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         let stack = NSStackView(views: [grid, saveRow])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 18
+        stack.spacing = HelmMetrics.s4
         stack.translatesAutoresizingMaskIntoConstraints = false
         grid.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         saveRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -2192,20 +2177,13 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         applyDetailStatusPill(project.status)
     }
 
+    /// The project cell's rule (UI-32): "In progress" is the default state,
+    /// so it is a dot and a word; every other status is a pill.
     private func applyDetailStatusPill(_ status: ShiftProjectStatus) {
-        let tint: HelmTint = {
-            switch status {
-            case .notStarted: return .neutral
-            case .inProgress: return .info
-            case .onHold: return .warn
-            case .completed: return .good
-            case .archived: return .critical
-            }
-        }()
-        let color = HelmTheme.nsColor(tint.hex(in: theme))
-        detailStatusPill.layer?.backgroundColor = color.withAlphaComponent(0.16).cgColor
-        detailStatusPillLabel.stringValue = status.displayName
-        detailStatusPillLabel.textColor = color
+        detailStatusPill.configure(text: status.displayName,
+                                   tint: ShiftProjectCardView.tint(for: status),
+                                   style: status == .inProgress ? .dotWord : .pill,
+                                   theme: theme)
     }
 
     /// The one place subtasks render - nested under their parent task inside

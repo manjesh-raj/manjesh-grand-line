@@ -817,7 +817,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         let textStack = NSStackView(views: [titleLabel, subtitleLabel])
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = 1
+        textStack.spacing = HelmMetrics.s0
         textStack.translatesAutoresizingMaskIntoConstraints = false
         // AGENTS.md gotcha (12): the *stack*-level priority APIs, not the
         // content ones, which are no-ops on a view with no intrinsic size.
@@ -1376,13 +1376,13 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
             let dot = NSView()
             dot.wantsLayer = true
-            dot.layer?.cornerRadius = 4
+            dot.layer?.cornerRadius = HelmStatusPill.dotSize / 2
             dot.translatesAutoresizingMaskIntoConstraints = false
             dot.setContentHuggingPriority(.required, for: .horizontal)
             dot.setContentCompressionResistancePriority(.required, for: .horizontal)
             NSLayoutConstraint.activate([
-                dot.widthAnchor.constraint(equalToConstant: 8),
-                dot.heightAnchor.constraint(equalToConstant: 8),
+                dot.widthAnchor.constraint(equalToConstant: HelmStatusPill.dotSize),
+                dot.heightAnchor.constraint(equalToConstant: HelmStatusPill.dotSize),
             ])
             peekDots.append((dot, row.state))
 
@@ -1789,7 +1789,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         // truncated mid-word ("Everything that has reported i...") while the
         // card still had vertical room. Three caption lines are still shorter
         // than the 66pt gauge beside them, so the row does not grow.
-        let text = verticalStack([titleField, noteLabel(note, maxLines: 3)], spacing: 2)
+        let text = verticalStack([titleField, noteLabel(note, maxLines: 3)], spacing: HelmMetrics.s0)
         text.alignment = .leading
 
         let row = compressibleStack(NSStackView(views: [ring, text]))

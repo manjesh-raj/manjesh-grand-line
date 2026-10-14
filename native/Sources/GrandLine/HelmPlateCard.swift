@@ -166,7 +166,7 @@ final class HelmPlateCard: NSView {
 
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = 3
+        textStack.spacing = HelmMetrics.s0
         textStack.translatesAutoresizingMaskIntoConstraints = false
         // Stack-level, never the content-priority calls - those are no-ops on
         // a view with no intrinsic content size (gotcha (12)). This is what
@@ -177,7 +177,7 @@ final class HelmPlateCard: NSView {
 
         headerRow.orientation = .horizontal
         headerRow.alignment = .top
-        headerRow.spacing = 10
+        headerRow.spacing = HelmMetrics.s3
         // `.fill`, explicitly: at the default `.gravityAreas` the text stack is
         // laid out at its own natural width and a long title clips instead of
         // wrapping (gotcha (10)).

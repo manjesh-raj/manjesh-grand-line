@@ -617,15 +617,17 @@ final class AutomationController: NSViewController, DaylightDrillActions {
 
     // MARK: Stepper rendering
 
-    private func statusVisuals(_ status: AutomationStepStatus) -> (String, String) {
+    /// One status pill per step (UI-32). Only the states that need the
+    /// captain's eye are pills; the quiet ones are a dot and a word.
+    private func statusVisuals(_ status: AutomationStepStatus) -> (String, HelmTint, HelmStatusPill.Style) {
         switch status {
-        case .pending: return ("Pending", theme.chromeInkHex)
-        case .checking: return ("Checking\u{2026}", theme.chromeInkHex)
-        case .running: return ("Running\u{2026}", theme.chromeInkHex)
-        case .waitingForCaptain: return ("Needs you", theme.ansiHex[3])
-        case .done: return ("Done", theme.ansiHex[2])
-        case .skipped: return ("Skipped - already there", theme.ansiHex[2])
-        case .failed: return ("Failed", theme.ansiHex[1])
+        case .pending: return ("Pending", .neutral, .dotWord)
+        case .checking: return ("Checking\u{2026}", .neutral, .dotWord)
+        case .running: return ("Running\u{2026}", .info, .dotWord)
+        case .waitingForCaptain: return ("Needs you", .warn, .pill)
+        case .done: return ("Done", .good, .dotWord)
+        case .skipped: return ("Skipped - already there", .good, .dotWord)
+        case .failed: return ("Failed", .critical, .pill)
         }
     }
 
@@ -658,29 +660,11 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         titleLabel.setScaledFont(ofSize: 14, weight: .semibold)
         dynamicLabels.append(titleLabel)
 
-        let pillLabel = NSTextField(labelWithString: "")
-        pillLabel.setScaledFont(ofSize: 10, weight: .semibold)
-        pillLabel.translatesAutoresizingMaskIntoConstraints = false
-        let pillContainer = NSView()
-        pillContainer.wantsLayer = true
-        pillContainer.layer?.cornerRadius = 8
-        pillContainer.translatesAutoresizingMaskIntoConstraints = false
-        pillContainer.addSubview(pillLabel)
-        NSLayoutConstraint.activate([
-            pillLabel.leadingAnchor.constraint(equalTo: pillContainer.leadingAnchor, constant: 7),
-            pillLabel.trailingAnchor.constraint(equalTo: pillContainer.trailingAnchor, constant: -7),
-            pillLabel.topAnchor.constraint(equalTo: pillContainer.topAnchor, constant: 2),
-            pillLabel.bottomAnchor.constraint(equalTo: pillContainer.bottomAnchor, constant: -2),
-        ])
-        pillContainer.setContentHuggingPriority(.required, for: .horizontal)
-        pillContainer.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let (pillText, pillTint, pillStyle) = statusVisuals(status)
+        let pill = HelmStatusPill()
+        pill.configure(text: pillText, tint: pillTint, style: pillStyle, theme: theme)
 
-        let (pillText, pillColorHex) = statusVisuals(status)
-        pillLabel.stringValue = pillText
-        pillLabel.textColor = HelmTheme.nsColor(pillColorHex)
-        pillContainer.layer?.backgroundColor = HelmTheme.nsColor(pillColorHex).withAlphaComponent(0.15).cgColor
-
-        let titleRow = NSStackView(views: [titleLabel, pillContainer])
+        let titleRow = NSStackView(views: [titleLabel, pill])
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
         titleRow.spacing = 8

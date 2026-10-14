@@ -1398,8 +1398,11 @@ enum ToolRowLayout {
         let iconTile: IconTileView
         let nameLabel: NSTextField
         let detailLabel: NSTextField
-        let pill: NSView
-        let pillLabel: NSTextField
+        /// UI-32: the row's status is the kit's `HelmStatusPill`, so a row
+        /// cannot re-spell the recipe. `pillLabel` is its word, kept for the
+        /// callers and suites that read it.
+        let pill: HelmStatusPill
+        var pillLabel: NSTextField { pill.label }
         let trailingStack: NSStackView
         let detailsButton: NSButton
         let logField: NSTextField
@@ -1570,18 +1573,51 @@ enum ToolRowLayout {
     /// D1's reveal policy - see `HelmAccentRow.ActionReveal`, which this
     /// mirrors so the two row components answer the question the same way.
     ///
-    /// **No `ToolRowLayout` caller uses `.onAim` today, and that is a captain
-    /// decision rather than an oversight.** Updates was the one page that did;
-    /// he reported the result as broken, because
+    /// **Decide it per page, never per row or per category** - that is
+    /// `actionReveal(forPageRowCount:)`. Updates once used
     /// `ReviewPRListView.actionReveal(row:of:)`'s "short list keeps its
-    /// buttons, long list keeps only its first row's" rule splits a *single*
-    /// card's rows into two treatments whenever a category has more than three
-    /// of them - see `UpdatesController.buildRow` for the full report. Before
-    /// opting a dense checklist page back in, re-read that note: the four other
-    /// `ToolRowLayout` pages (Bootstrap, Automation, GitHub Sync, Vault) all
-    /// take the `.always` default, so one page opting in also splits the row
-    /// component's behaviour across the app.
+    /// buttons, long list keeps only its first row's" rule per category, and
+    /// the captain reported it as broken: a five-row category showed one row's
+    /// Check button and four empty gaps directly above a three-row category
+    /// that showed all of its own. Two treatments for one kind of row, side by
+    /// side, with nothing explaining the difference.
     enum ActionReveal { case always, onAim }
+
+    /// UI-43: one answer for every row on a page. A page of three rows or
+    /// fewer keeps its buttons at rest (there is nothing to hunt through);
+    /// a longer one reveals them on hover or keyboard focus, so a 13-row page
+    /// is 13 status lines rather than 39 controls. Every row on the page gets
+    /// the same treatment, which is what the captain's report asked for.
+    static func actionReveal(forPageRowCount count: Int) -> ActionReveal {
+        count <= HelmAccentRow.alwaysRevealRowCount ? .always : .onAim
+    }
+
+    /// A row's action column that can be **pinned** visible. Under `.onAim`,
+    /// a row whose state asks the captain to act ("Update available", "2
+    /// behind", a failure) keeps its button at rest - that is the button the
+    /// captain asked never to have to hunt for - while a row with nothing to
+    /// do reveals its quiet "Check" on hover or focus. The rule is the same
+    /// for every row on a page, so there is no unexplained split: an action
+    /// shows exactly where the status beside it is a pill.
+    final class ActionStack: NSStackView {
+        fileprivate(set) var isPinned = false
+        fileprivate var isAimed = false
+        fileprivate var revealsOnAim = false
+
+        fileprivate func applyReveal(animated: Bool) {
+            guard revealsOnAim else { return }
+            HelmMotion.fade(self, to: (isPinned || isAimed) ? 1 : 0,
+                            duration: HelmAccentRow.actionRevealDuration, animated: animated)
+        }
+    }
+
+    /// Pins (or unpins) a row's actions visible under `.onAim`. A no-op for a
+    /// row built `.always`, or one whose stack is not an `ActionStack`.
+    static func setActionsPinned(_ views: Views, _ pinned: Bool) {
+        guard let stack = views.trailingStack as? ActionStack, stack.isPinned != pinned else { return }
+        stack.isPinned = pinned
+        stack.applyReveal(animated: false)
+    }
 
     /// Assembles `views` into one row and returns the top-level view to place
     /// in a stack. `trailingViews` (e.g. a status pill plus Check/Update/
@@ -1729,11 +1765,18 @@ enum ToolRowLayout {
         // which apply identically here (the actions stay in the a11y tree and
         // the row's columns never re-flow on hover).
         if actionReveal == .onAim, !trailingViews.isEmpty {
-            views.trailingStack.alphaValue = 0
+            let actionStack = views.trailingStack as? ActionStack
+            actionStack?.revealsOnAim = true
+            views.trailingStack.alphaValue = (actionStack?.isPinned ?? false) ? 1 : 0
             let reveal: (Bool) -> Void = { [weak stack = views.trailingStack] revealed in
                 guard let stack else { return }
-                HelmMotion.fade(stack, to: revealed ? 1 : 0,
-                                duration: HelmAccentRow.actionRevealDuration, animated: true)
+                if let actionStack = stack as? ActionStack {
+                    actionStack.isAimed = revealed
+                    actionStack.applyReveal(animated: true)
+                } else {
+                    HelmMotion.fade(stack, to: revealed ? 1 : 0,
+                                    duration: HelmAccentRow.actionRevealDuration, animated: true)
+                }
             }
             views.rowContainer.onHoverChange = reveal
             // Focus-within: a captain who tabs to "Check" has to see it.

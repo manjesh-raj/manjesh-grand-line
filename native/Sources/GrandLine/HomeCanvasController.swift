@@ -325,8 +325,8 @@ final class HomeCanvasController: NSViewController {
         let textStack = NSStackView(views: [kickerLabel, greetingLabel, subtitleLabel])
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = 2
-        textStack.setCustomSpacing(4, after: kickerLabel)
+        textStack.spacing = HelmMetrics.s0
+        textStack.setCustomSpacing(HelmMetrics.s1, after: kickerLabel)
         textStack.translatesAutoresizingMaskIntoConstraints = false
         textStack.setHuggingPriority(.defaultLow, for: .horizontal)
         textStack.setClippingResistancePriority(.defaultLow, for: .horizontal)

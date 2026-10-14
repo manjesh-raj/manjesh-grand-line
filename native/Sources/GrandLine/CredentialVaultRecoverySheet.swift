@@ -72,8 +72,8 @@ final class CredentialVaultRecoverySheetController: NSViewController {
     }, selected: CredentialImportSource.onePassword.rawValue, size: .compact)
     private let chooseFileButton = HelmButton(title: "Choose a CSV file\u{2026}", variant: .secondary, size: .small, symbol: "folder")
     private let fileLabel = NSTextField(labelWithString: "No file chosen")
-    private let parsedPill = NSView()
-    private let parsedPillLabel = NSTextField(labelWithString: "")
+    /// UI-32: the kit's status pill.
+    private let parsedPill = HelmStatusPill()
     private let mappingStack = NSStackView()
     private let skippedLabel = NSTextField(wrappingLabelWithString: "")
     private var mergeRow: HelmToggleRow!
@@ -579,8 +579,7 @@ final class CredentialVaultRecoverySheetController: NSViewController {
         mergeRow?.applyTheme(theme)
         if let plan {
             let ok = plan.credentials.isEmpty ? HelmTint.warn : HelmTint.good
-            ToolRowLayout.pill(text: plan.summary, colorHex: ok.hex(in: theme),
-                               into: parsedPill, label: parsedPillLabel, theme: theme)
+            parsedPill.configure(text: plan.summary, tint: ok, theme: theme)
         }
     }
 
@@ -588,7 +587,7 @@ final class CredentialVaultRecoverySheetController: NSViewController {
     var debugRecoveryStatus: String { recoveryStatusLabel.stringValue }
     var debugCodeText: String { codeLabel.stringValue }
     var debugCodeCardIsShown: Bool { !codeCard.isHidden }
-    var debugImportSummary: String { parsedPillLabel.stringValue }
+    var debugImportSummary: String { parsedPill.text }
     var debugSkippedText: String { skippedLabel.stringValue }
     var debugImportButtonTitle: String { importButton.title }
     var debugImportButtonEnabled: Bool { importButton.isEnabled }

@@ -43,6 +43,10 @@ import AppKit
 /// (18/20/28) and the five `IconTileView` sizes (22/26/30/34/40).
 enum HelmMetrics {
     // Spacing scale.
+    /// The half step, below `s1`: between stacked lines of one text block
+    /// (a title and its subline) and between the segments of one control.
+    /// Anything wider than this is a real gap and takes `s1` upward.
+    static let s0: CGFloat = 2
     static let s1: CGFloat = 4
     static let s2: CGFloat = 8
     static let s3: CGFloat = 12

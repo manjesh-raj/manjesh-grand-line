@@ -44,6 +44,7 @@ enum SchedulesRedesignSelfTest {
         checkSidebarCountsFollowTheSearch(&ok)
         checkRunHistoryIsAnActionNotAFilter(&ok)
         checkRowsUseTheFullWidth(&ok)
+        checkSurfacesFollowTheLiveTheme(&ok)
         print(ok ? "\nPASS" : "\nFAIL")
         return ok
     }
@@ -703,6 +704,54 @@ extension SchedulesRedesignSelfTest {
     /// Comfortably under what a re-introduced content cap produces at any
     /// window this page is used at.
     private static let trailingGapCeiling: CGFloat = 160
+    // MARK: UI-48 - the surfaces follow the live theme
+
+    /// The page used to cache the theme at construction and render once
+    /// inside `loadView`, before its observer was registered. A controller
+    /// built under Dusk and first shown under Daylight painted its summary and
+    /// its schedules card in Dusk on a light page. And a theme switch while
+    /// the page was hidden was deferred whole, surfaces included.
+    private static func checkSurfacesFollowTheLiveTheme(_ ok: inout Bool) {
+        let saved = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(saved) }
+
+        func cardFill(_ theme: HelmTheme) -> [CGFloat] {
+            let card = HelmCard()
+            card.applyTheme(theme)
+            return card.layer?.backgroundColor?.components ?? []
+        }
+        func near(_ a: CGColor?, _ b: [CGFloat]) -> Bool {
+            guard let a = a?.components, a.count == b.count else { return false }
+            return zip(a, b).allSatisfy { abs($0 - $1) < 0.01 }
+        }
+        let light = cardFill(.daylight), dark = cardFill(.dusk)
+        // The discriminating half: the two registers really paint differently.
+        check(!light.isEmpty && !dark.isEmpty && zip(light, dark).contains { abs($0 - $1) > 0.1 },
+              "a Daylight card and a Dusk card should paint different fills, got \(light) / \(dark)", &ok)
+        let lightInk = HelmTheme.nsColor(HelmTheme.daylight.chromeInkHex)
+
+        ThemeManager.shared.setTheme(.dusk)
+        let controller = SchedulesController(scheduleStore: scratchStore())
+        ThemeManager.shared.setTheme(.daylight)
+        let window = mount(controller)
+        check(near(controller.debugSchedulesCardFill, light),
+              "a page built under Dusk and first shown under Daylight should paint its schedules card light, got "
+                  + "\(String(describing: controller.debugSchedulesCardFill?.components))", &ok)
+        check(controller.debugSummaryValueColors.allSatisfy { color in
+                  guard let color, let ink = lightInk.usingColorSpace(.sRGB),
+                        let c = color.usingColorSpace(.sRGB) else { return false }
+                  // Zero counts are quiet (muted ink); either way, never Dusk's light ink.
+                  return c.brightnessComponent < 0.6 || abs(c.brightnessComponent - ink.brightnessComponent) < 0.05
+              },
+              "the summary figures should be Daylight ink, not Dusk's", &ok)
+
+        controller.view.isHidden = true
+        ThemeManager.shared.setTheme(.dusk)
+        check(near(controller.debugSchedulesCardFill, dark),
+              "a theme switch while the page is hidden should still repaint its schedules card", &ok)
+        controller.view.isHidden = false
+        window.orderOut(nil)
+    }
 }
 
 #endif

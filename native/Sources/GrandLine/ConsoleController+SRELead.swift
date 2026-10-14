@@ -425,11 +425,7 @@ extension ConsoleController {
         }
         sreLeadStatusPill.isHidden = text.isEmpty
         guard !text.isEmpty else { return }
-        ToolRowLayout.pill(text: text.uppercased(),
-                           colorHex: (phase.tint ?? .neutral).hex(in: theme),
-                           into: sreLeadStatusPill,
-                           label: sreLeadStatusLabel,
-                           theme: theme)
+        sreLeadStatusPill.configure(text: text.uppercased(), tint: phase.tint ?? .neutral, theme: theme)
     }
 
     /// Turns the bordered-terminal-card look on - one condition, evaluated in

@@ -1591,14 +1591,14 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func driftedItemRow(_ kind: SetupStepKind) -> NSView {
         let views = ToolRowLayout.Views(
             iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-            detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-            pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+            detailLabel: NSTextField(labelWithString: ""), pill: HelmStatusPill(),
+            trailingStack: NSStackView(),
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView()
         )
         track(views.nameLabel, views.detailLabel)
 
-        ToolRowLayout.pill(text: "Drifted", colorHex: theme.ansiHex[1], into: views.pill, label: views.pillLabel, theme: theme)
+        views.pill.configure(text: "Drifted", tint: .critical, style: .pill, theme: theme)
 
         var trailingViews: [NSView] = []
         if let (title, action) = driftRemedy(for: kind) {
@@ -2079,15 +2079,15 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func managedItemRow(_ item: ManagedItem) -> NSView {
         let views = ToolRowLayout.Views(
             iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-            detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-            pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+            detailLabel: NSTextField(labelWithString: ""), pill: HelmStatusPill(),
+            trailingStack: NSStackView(),
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView()
         )
         track(views.nameLabel, views.detailLabel)
 
-        let (pillText, pillColor) = managedStatusVisuals(item.status)
-        ToolRowLayout.pill(text: pillText, colorHex: pillColor, into: views.pill, label: views.pillLabel)
+        let (pillText, pillTint, pillStyle) = managedStatusVisuals(item.status)
+        views.pill.configure(text: pillText, tint: pillTint, style: pillStyle, theme: theme)
 
         let view = ToolRowLayout.build(
             views,
@@ -2102,11 +2102,15 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         return view
     }
 
-    private func managedStatusVisuals(_ status: ManagedItemStatus) -> (String, String) {
+    // UI-43 / UI-55: a status is a dot and a word in its default state, and
+    // a `HelmStatusPill` only when it is not - so a page of rows that are
+    // all fine carries no wall of green capsules. Tints, never the terminal's
+    // ANSI slots (UI-32).
+    private func managedStatusVisuals(_ status: ManagedItemStatus) -> (String, HelmTint, HelmStatusPill.Style) {
         switch status {
-        case .linked: return ("Linked", theme.ansiHex[2])
-        case .notLinked: return ("Not linked", theme.ansiHex[3])
-        case .missing: return ("Missing", theme.ansiHex[1])
+        case .linked: return ("Linked", .good, .dotWord)
+        case .notLinked: return ("Not linked", .warn, .pill)
+        case .missing: return ("Missing", .critical, .pill)
         }
     }
 
@@ -2143,15 +2147,15 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func agentInstructionRow(_ item: AgentInstructionsItem) -> NSView {
         let views = ToolRowLayout.Views(
             iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-            detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-            pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+            detailLabel: NSTextField(labelWithString: ""), pill: HelmStatusPill(),
+            trailingStack: NSStackView(),
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView()
         )
         track(views.nameLabel, views.detailLabel)
 
-        let (pillText, pillColor) = agentStatusVisuals(item.status)
-        ToolRowLayout.pill(text: pillText, colorHex: pillColor, into: views.pill, label: views.pillLabel)
+        let (pillText, pillTint, pillStyle) = agentStatusVisuals(item.status)
+        views.pill.configure(text: pillText, tint: pillTint, style: pillStyle, theme: theme)
 
         let button = HelmButton(title: item.status == .linked ? "Linked" : "Create link", variant: .secondary, target: self, action: #selector(createLinkClicked))
         button.controlSize = .small
@@ -2171,11 +2175,11 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         return view
     }
 
-    private func agentStatusVisuals(_ status: AgentInstructionsRow) -> (String, String) {
+    private func agentStatusVisuals(_ status: AgentInstructionsRow) -> (String, HelmTint, HelmStatusPill.Style) {
         switch status {
-        case .linked: return ("Linked", theme.ansiHex[2])
-        case .notLinked: return ("Not linked", theme.ansiHex[1])
-        case .wrongTarget: return ("Wrong target", theme.ansiHex[3])
+        case .linked: return ("Linked", .good, .dotWord)
+        case .notLinked: return ("Not linked", .critical, .pill)
+        case .wrongTarget: return ("Wrong target", .warn, .pill)
         }
     }
 
@@ -2274,15 +2278,15 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func softwareItemRow(_ row: SoftwareRowState) -> NSView {
         let views = ToolRowLayout.Views(
             iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-            detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-            pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+            detailLabel: NSTextField(labelWithString: ""), pill: HelmStatusPill(),
+            trailingStack: NSStackView(),
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView()
         )
         track(views.nameLabel, views.detailLabel)
 
-        let (pillText, pillColor) = softwareStatusVisuals(row.status)
-        ToolRowLayout.pill(text: pillText, colorHex: pillColor, into: views.pill, label: views.pillLabel)
+        let (pillText, pillTint, pillStyle) = softwareStatusVisuals(row.status)
+        views.pill.configure(text: pillText, tint: pillTint, style: pillStyle, theme: theme)
 
         let button = HelmButton(title: installButtonTitle(row), variant: .secondary, target: self, action: #selector(installSoftwareClicked(_:)))
         button.controlSize = .small
@@ -2327,16 +2331,16 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         rebuildSoftwareSection()
     }
 
-    private func softwareStatusVisuals(_ status: DependencyStatus) -> (String, String) {
+    private func softwareStatusVisuals(_ status: DependencyStatus) -> (String, HelmTint, HelmStatusPill.Style) {
         switch status {
-        case .unknown: return ("Not checked", theme.chromeInkHex)
-        case .checking: return ("Checking\u{2026}", theme.chromeInkHex)
-        case .upToDate: return ("Installed", theme.ansiHex[2])
-        case .updateAvailable: return ("Update available", theme.ansiHex[3])
-        case .notInstalled: return ("Not installed", theme.ansiHex[3])
-        case .checkFailed: return ("Check failed", theme.ansiHex[1])
-        case .updating: return ("Installing\u{2026}", theme.chromeInkHex)
-        case .updateFailed: return ("Install failed", theme.ansiHex[1])
+        case .unknown: return ("Not checked", .neutral, .dotWord)
+        case .checking: return ("Checking\u{2026}", .neutral, .dotWord)
+        case .upToDate: return ("Installed", .good, .dotWord)
+        case .updateAvailable: return ("Update available", .warn, .pill)
+        case .notInstalled: return ("Not installed", .warn, .pill)
+        case .checkFailed: return ("Check failed", .critical, .pill)
+        case .updating: return ("Installing\u{2026}", .info, .dotWord)
+        case .updateFailed: return ("Install failed", .critical, .pill)
         }
     }
 

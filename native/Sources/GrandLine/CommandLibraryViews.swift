@@ -82,8 +82,9 @@ final class CommandLibraryPageView: NSObject {
     // Detail pane's live views (built once, mutated per-selection - see
     // `renderDetail(for:)`).
     private let detailNameLabel = NSTextField(labelWithString: "")
-    private let detailRiskPill = NSView()
-    private let detailRiskPillLabel = NSTextField(labelWithString: "")
+    /// UI-32: the kit's status pill (it used to set a 9.5pt mono face, under
+    /// the 11pt floor).
+    private let detailRiskPill = HelmStatusPill()
     private let detailMetaLabel = NSTextField(wrappingLabelWithString: "")
     private let detailCommandBox = NSView()
     private let detailCommandLabel = NSTextField(wrappingLabelWithString: "")
@@ -256,19 +257,6 @@ final class CommandLibraryPageView: NSObject {
         detailNameLabel.font = HelmType.pageTitle(.display)
         detailNameLabel.lineBreakMode = .byTruncatingTail
 
-        detailRiskPillLabel.font = ShiftFont.mono(9.5, weight: .semibold)
-        detailRiskPillLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailRiskPill.wantsLayer = true
-        detailRiskPill.layer?.cornerRadius = 8
-        detailRiskPill.translatesAutoresizingMaskIntoConstraints = false
-        detailRiskPill.addSubview(detailRiskPillLabel)
-        NSLayoutConstraint.activate([
-            detailRiskPillLabel.leadingAnchor.constraint(equalTo: detailRiskPill.leadingAnchor, constant: 8),
-            detailRiskPillLabel.trailingAnchor.constraint(equalTo: detailRiskPill.trailingAnchor, constant: -8),
-            detailRiskPillLabel.topAnchor.constraint(equalTo: detailRiskPill.topAnchor, constant: 3),
-            detailRiskPillLabel.bottomAnchor.constraint(equalTo: detailRiskPill.bottomAnchor, constant: -3),
-        ])
-        detailRiskPill.setContentHuggingPriority(.required, for: .horizontal)
 
         // The risk pill sits at the row's trailing edge (mockup:
         // `justify-between`), not crowded right up against the title text -
@@ -913,7 +901,7 @@ final class CommandLibraryPageView: NSObject {
         detailContentContainer.isHidden = false
 
         detailNameLabel.stringValue = command.name
-        ToolRowLayout.pill(text: command.risk.displayName, colorHex: command.risk.tint.hex(in: theme), into: detailRiskPill, label: detailRiskPillLabel, theme: theme)
+        detailRiskPill.configure(text: command.risk.displayName, tint: command.risk.tint, theme: theme)
 
         var metaParts = [command.description]
         var location = command.category.isEmpty ? "" : CommandLibraryCategory.info(for: command.category).displayName

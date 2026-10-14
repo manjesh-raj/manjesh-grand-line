@@ -910,8 +910,8 @@ enum HelmContrastSelfTest {
             for fx in fixtures {
                 let v = ToolRowLayout.Views(
                     iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-                    detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-                    pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+                    detailLabel: NSTextField(labelWithString: ""), pill: HelmStatusPill(),
+                    trailingStack: NSStackView(),
                     detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
                     logContainer: NSView(), rowContainer: HoverHighlightView())
                 ToolRowLayout.pill(text: "Up to Date", colorHex: theme.accentHex,
@@ -985,8 +985,8 @@ enum HelmContrastSelfTest {
         for name in ["DevOps Playbook", "Automic Vault"] {
             let v = ToolRowLayout.Views(
                 iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-                detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-                pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+                detailLabel: NSTextField(labelWithString: ""), pill: HelmStatusPill(),
+                trailingStack: NSStackView(),
                 detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
                 logContainer: NSView(), rowContainer: HoverHighlightView())
             ToolRowLayout.pill(text: "Not Installed", colorHex: theme.accentHex,
@@ -1050,8 +1050,8 @@ enum HelmContrastSelfTest {
         ])
         let v = ToolRowLayout.Views(
             iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-            detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-            pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+            detailLabel: NSTextField(labelWithString: ""), pill: HelmStatusPill(),
+            trailingStack: NSStackView(),
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView())
         ToolRowLayout.pill(text: "Up to Date", colorHex: theme.accentHex,
@@ -1100,8 +1100,8 @@ enum HelmContrastSelfTest {
         ])
         let v2 = ToolRowLayout.Views(
             iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-            detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-            pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+            detailLabel: NSTextField(labelWithString: ""), pill: HelmStatusPill(),
+            trailingStack: NSStackView(),
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView())
         ToolRowLayout.pill(text: "Up to Date", colorHex: theme.accentHex,
@@ -1159,8 +1159,8 @@ enum HelmContrastSelfTest {
         ])
         let v3 = ToolRowLayout.Views(
             iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-            detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-            pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+            detailLabel: NSTextField(labelWithString: ""), pill: HelmStatusPill(),
+            trailingStack: NSStackView(),
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView())
         ToolRowLayout.pill(text: "Update Available", colorHex: theme.accentHex,

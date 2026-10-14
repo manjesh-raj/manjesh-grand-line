@@ -67,11 +67,19 @@ final class HelmStatusPill: NSView {
         case dotWord
     }
 
-    let style: Style
-    private let label = NSTextField(labelWithString: "")
+    /// Settable: a list row's status moves between the two as its state
+    /// changes ("Up to date" is a dot and a word, "Update available" a pill).
+    var style: Style {
+        didSet { if style != oldValue { applyStyleLayout(); applyTheme(lastTheme) } }
+    }
+    /// The word. Read-only to callers - the pill owns its font and colour.
+    let label = NSTextField(labelWithString: "")
     private let dot = NSView()
     private var colorHex: String?
     private var tint: HelmTint?
+    private var lastTheme: HelmTheme = ThemeManager.shared.theme
+    private var pillConstraints: [NSLayoutConstraint] = []
+    private var dotConstraints: [NSLayoutConstraint] = []
 
     static let dotSize: CGFloat = 8
 
@@ -83,33 +91,46 @@ final class HelmStatusPill: NSView {
         label.translatesAutoresizingMaskIntoConstraints = false
         label.lineBreakMode = .byTruncatingTail
         label.font = HelmType.chip()
+        dot.wantsLayer = true
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        dot.layer?.cornerRadius = Self.dotSize / 2
+        addSubview(dot)
+        // Added here, before `ToolRowLayout.pill` ever sees it, so that
+        // helper adds no constraints of its own (it only does for a label it
+        // has to parent) - this class owns both layouts.
+        addSubview(label)
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
         setContentHuggingPriority(.required, for: .vertical)
-        if style == .dotWord {
-            dot.wantsLayer = true
-            dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.layer?.cornerRadius = Self.dotSize / 2
-            addSubview(dot)
-            addSubview(label)
-            NSLayoutConstraint.activate([
-                dot.leadingAnchor.constraint(equalTo: leadingAnchor),
-                dot.centerYAnchor.constraint(equalTo: centerYAnchor),
-                dot.widthAnchor.constraint(equalToConstant: Self.dotSize),
-                dot.heightAnchor.constraint(equalToConstant: Self.dotSize),
-                label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: HelmMetrics.s1 + 2),
-                label.trailingAnchor.constraint(equalTo: trailingAnchor),
-                label.topAnchor.constraint(equalTo: topAnchor, constant: 3),
-                label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
-            ])
-        }
-        // `.pill` adds its label inside `ToolRowLayout.pill`, which owns the
-        // capsule's padding constraints and creates them once.
+        // `ToolRowLayout.pill`'s 9/3 padding, which is the pill recipe.
+        pillConstraints = [
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+        ]
+        dotConstraints = [
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor),
+            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: Self.dotSize),
+            dot.heightAnchor.constraint(equalToConstant: Self.dotSize),
+            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: HelmMetrics.s1 + 2),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+        ]
+        applyStyleLayout()
         setAccessibilityElement(true)
         setAccessibilityRole(.staticText)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    private func applyStyleLayout() {
+        NSLayoutConstraint.deactivate(pillConstraints + dotConstraints)
+        NSLayoutConstraint.activate(style == .pill ? pillConstraints : dotConstraints)
+        dot.isHidden = style == .pill
+    }
 
     var text: String { label.stringValue }
 
@@ -118,6 +139,13 @@ final class HelmStatusPill: NSView {
         self.colorHex = nil
         label.stringValue = text
         applyTheme(theme)
+    }
+
+    /// The same, choosing the style in one call - for a status whose default
+    /// state is a dot and a word and whose other states are a pill (UI-43).
+    func configure(text: String, tint: HelmTint, style: Style, theme: HelmTheme = ThemeManager.shared.theme) {
+        self.style = style
+        configure(text: text, tint: tint, theme: theme)
     }
 
     /// For a colour the captain chose, never one the app decides - see the
@@ -130,6 +158,7 @@ final class HelmStatusPill: NSView {
     }
 
     func applyTheme(_ theme: HelmTheme) {
+        lastTheme = theme
         let hex = colorHex ?? tint?.hex(in: theme) ?? theme.chromeInkHex
         switch style {
         case .pill:
@@ -272,8 +301,8 @@ final class HelmSectionHeader: NSView {
             let column = NSStackView(views: [eyebrowLabel, titleRow, sublineLabel])
             column.orientation = .vertical
             column.alignment = .leading
-            column.spacing = 1
-            column.setCustomSpacing(3, after: eyebrowLabel)
+            column.spacing = HelmMetrics.s0
+            column.setCustomSpacing(HelmMetrics.s1, after: eyebrowLabel)
             column.translatesAutoresizingMaskIntoConstraints = false
             column.setHuggingPriority(.defaultLow, for: .horizontal)
             column.setClippingResistancePriority(Self.textResistance, for: .horizontal)
@@ -680,7 +709,7 @@ final class HelmKPIStrip: NSView {
             let column = NSStackView(views: [value, caption])
             column.orientation = .vertical
             column.alignment = .leading
-            column.spacing = 1
+            column.spacing = HelmMetrics.s0
             column.edgeInsets = NSEdgeInsets(top: HelmMetrics.s1, left: index == 0 ? 0 : Self.columnInset,
                                              bottom: HelmMetrics.s1, right: HelmMetrics.s2)
             column.translatesAutoresizingMaskIntoConstraints = false

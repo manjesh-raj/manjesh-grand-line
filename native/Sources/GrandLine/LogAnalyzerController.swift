@@ -205,8 +205,9 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     private var rootCauseCard: HelmCard!
     private let rootCauseSummaryLabel = NSTextField(wrappingLabelWithString: "")
     private let rootCauseExplanationLabel = NSTextField(wrappingLabelWithString: "")
-    private let rootCauseConfidencePill = NSView()
-    private let rootCauseConfidenceLabel = NSTextField(labelWithString: "")
+    /// UI-32: the kit's status pill; its word is the label the page writes.
+    private let rootCauseConfidencePill = HelmStatusPill()
+    private var rootCauseConfidenceLabel: NSTextField { rootCauseConfidencePill.label }
     private let evidenceStack = NSStackView()
     private let missingEvidenceStack = NSStackView()
     private var nextStepsCard: HelmCard!
@@ -832,19 +833,6 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
 
     private func buildRootCauseCard() -> HelmCard {
         let card = HelmCard()
-        rootCauseConfidenceLabel.font = HelmType.kicker()
-        rootCauseConfidenceLabel.translatesAutoresizingMaskIntoConstraints = false
-        rootCauseConfidencePill.wantsLayer = true
-        rootCauseConfidencePill.layer?.cornerRadius = HelmMetrics.rChip
-        rootCauseConfidencePill.translatesAutoresizingMaskIntoConstraints = false
-        rootCauseConfidencePill.addSubview(rootCauseConfidenceLabel)
-        NSLayoutConstraint.activate([
-            rootCauseConfidenceLabel.leadingAnchor.constraint(equalTo: rootCauseConfidencePill.leadingAnchor, constant: 8),
-            rootCauseConfidenceLabel.trailingAnchor.constraint(equalTo: rootCauseConfidencePill.trailingAnchor, constant: -8),
-            rootCauseConfidenceLabel.topAnchor.constraint(equalTo: rootCauseConfidencePill.topAnchor, constant: 3),
-            rootCauseConfidenceLabel.bottomAnchor.constraint(equalTo: rootCauseConfidencePill.bottomAnchor, constant: -3),
-        ])
-        rootCauseConfidencePill.setContentHuggingPriority(.required, for: .horizontal)
 
         let copyButton = HelmButton(title: "Copy", variant: .quiet, size: .small, symbol: "doc.on.doc",
                                     target: self, action: #selector(copyRootCause))
@@ -935,19 +923,13 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         return card
     }
 
-    private var legendChips: [(pill: NSView, label: NSTextField, kind: LogCorrelationKind)] = []
+    private var legendChips: [(pill: HelmStatusPill, kind: LogCorrelationKind)] = []
 
     private func legendChip(for kind: LogCorrelationKind) -> NSView {
-        let pill = NSView()
-        pill.translatesAutoresizingMaskIntoConstraints = false
-        let label = NSTextField(labelWithString: "\(kind.displayName) - \(kind.detail)")
-        label.font = HelmType.caption()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        ToolRowLayout.pill(text: "\(kind.displayName) - \(kind.detail)",
-                           colorHex: kind.tint.hex(in: theme),
-                           into: pill, label: label, theme: theme)
-        legendChips.append((pill, label, kind))
-        pill.setContentHuggingPriority(.required, for: .horizontal)
+        // UI-32: the kit's status pill.
+        let pill = HelmStatusPill()
+        pill.configure(text: "\(kind.displayName) - \(kind.detail)", tint: kind.tint, theme: theme)
+        legendChips.append((pill, kind))
         return pill
     }
 
@@ -2407,13 +2389,8 @@ extension LogAnalyzerController {
 
         var topViews: [NSView] = [title]
         if command.isFromLibrary {
-            let pill = NSView()
-            pill.translatesAutoresizingMaskIntoConstraints = false
-            let label = NSTextField(labelWithString: "")
-            label.translatesAutoresizingMaskIntoConstraints = false
-            ToolRowLayout.pill(text: "From your library", colorHex: HelmTint.good.hex(in: theme),
-                               into: pill, label: label, theme: theme)
-            pill.setContentHuggingPriority(.required, for: .horizontal)
+            let pill = HelmStatusPill()
+            pill.configure(text: "From your library", tint: .good, theme: theme)
             topViews.append(pill)
         }
         let topSpacer = NSView()
@@ -2659,18 +2636,11 @@ extension LogAnalyzerController {
         // the shared contrast-corrected pill (AGENTS.md §5.7: a `HelmTint`
         // hue is safe as a fill and is NOT automatically safe as text).
         let confidence = investigation.analysis?.ai?.rootCause?.confidence
-        ToolRowLayout.pill(text: rootCauseConfidenceLabel.stringValue.isEmpty
-                            ? "—" : rootCauseConfidenceLabel.stringValue,
-                           colorHex: (confidence?.tint ?? .neutral).hex(in: theme),
-                           into: rootCauseConfidencePill,
-                           label: rootCauseConfidenceLabel,
-                           theme: theme)
+        rootCauseConfidencePill.configure(text: rootCauseConfidenceLabel.stringValue.isEmpty
+                                              ? "\u{2014}" : rootCauseConfidenceLabel.stringValue,
+                                          tint: confidence?.tint ?? .neutral, theme: theme)
 
-        for chip in legendChips {
-            ToolRowLayout.pill(text: "\(chip.kind.displayName) - \(chip.kind.detail)",
-                               colorHex: chip.kind.tint.hex(in: theme),
-                               into: chip.pill, label: chip.label, theme: theme)
-        }
+        for chip in legendChips { chip.pill.applyTheme(theme) }
 
         let hoverFill = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.25)
         for row in storageRows {

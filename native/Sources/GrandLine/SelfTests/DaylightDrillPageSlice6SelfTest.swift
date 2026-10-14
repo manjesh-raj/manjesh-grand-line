@@ -805,7 +805,10 @@ enum DaylightDrillPageSlice6SelfTest {
             print("  FAIL SettingsController still hand-rolls a chip (\(marker))")
             ok = false
         }
-        if !source.contains("ToolRowLayout.pill(") {
+        // UI-32: the shared pill is `HelmStatusPill` now, which wraps
+        // `ToolRowLayout.pill` - and `HelmKitSourceGuardSelfTest` fails any
+        // page that still calls the helper itself.
+        if !source.contains("HelmStatusPill(") {
             print("  FAIL SettingsController does not route its chip through the shared pill")
             ok = false
         }

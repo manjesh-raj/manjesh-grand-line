@@ -278,7 +278,7 @@ final class HealthCardView: NSObject {
         ]
         for (count, label, tint) in buckets where count > 0 {
             headerChips.addArrangedSubview(
-                pillView(text: "\(count) \(label)", colorHex: tint.hex(in: theme)))
+                pillView(text: "\(count) \(label)", tint: tint))
         }
         headerChips.isHidden = headerChips.arrangedSubviews.isEmpty
     }
@@ -414,7 +414,7 @@ final class HealthCardView: NSObject {
             ticksLabel.setContentHuggingPriority(.required, for: .horizontal)
             trailingViews.append(ticksLabel)
         }
-        trailingViews.append(pillView(text: chip, colorHex: tint.hex(in: theme)))
+        trailingViews.append(pillView(text: chip, tint: tint))
         let trailing = NSStackView(views: trailingViews)
         trailing.orientation = .horizontal
         trailing.alignment = .centerY
@@ -636,10 +636,9 @@ final class HealthCardView: NSObject {
     /// this card when it was moved verbatim out of `SettingsController`; a
     /// contrast fix landed in the shared component is only a fix for the
     /// callers that actually call it.
-    private func pillView(text: String, colorHex: String) -> NSView {
-        let pill = NSView()
-        ToolRowLayout.pill(text: text, colorHex: colorHex, into: pill,
-                           label: NSTextField(labelWithString: ""), theme: theme)
+    private func pillView(text: String, tint: HelmTint) -> NSView {
+        let pill = HelmStatusPill()
+        pill.configure(text: text, tint: tint, theme: theme)
         return pill
     }
 

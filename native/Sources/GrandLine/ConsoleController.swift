@@ -526,8 +526,8 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// `status` chip. Uses the shared `ToolRowLayout.pill`, so its hue is
     /// contrast-corrected against the card fill like every other pill in the
     /// app rather than being a raw tint used as text (Phase 0's rule).
-    let sreLeadStatusPill = NSView()
-    let sreLeadStatusLabel = NSTextField(labelWithString: "")
+    let sreLeadStatusPill = HelmStatusPill()
+    var sreLeadStatusLabel: NSTextField { sreLeadStatusPill.label }
     /// Separates the header bar from the body below it - needed once the
     /// pane's body switched from `backgroundHex` to `chromeBackgroundHex`
     /// (matching the header's own long-standing fill) so the two don't read

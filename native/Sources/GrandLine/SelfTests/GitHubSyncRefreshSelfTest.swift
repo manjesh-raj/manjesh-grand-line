@@ -257,6 +257,7 @@ enum GitHubSyncRefreshSelfTest {
         checkRefreshPill()
         checkRefreshIsDistinctFromSyncAll()
         checkRefreshNeverSyncs()
+        checkStatusShowsOnlyWhereItDiffers()
         if failures.isEmpty {
             print("\nGitHubSyncRefreshSelfTest: all checks passed")
             return true
@@ -264,6 +265,47 @@ enum GitHubSyncRefreshSelfTest {
         print("\nGitHubSyncRefreshSelfTest: \(failures.count) check(s) failed")
         for f in failures { print("  - \(f)") }
         return false
+    }
+    // MARK: 5 - a row's status shows only when it differs (UI-52)
+
+    /// Eight rows of "Not checked" beside eight chevrons say what the header
+    /// already says once. A quiet state the whole page shares is the header's
+    /// to state; a state that needs the captain is always on its row.
+    private static func checkStatusShowsOnlyWhereItDiffers() {
+        print("\n-- UI-52: a row's status only where it differs --")
+        let vc = mountedPage()
+        let count = vc.debugRowCount
+        guard count >= 3 else {
+            check("need at least 3 forks to tell uniform from mixed",
+              false,
+              "got \(count)")
+            return
+        }
+        for i in 0..<count { vc.debugSetStatus(.unknown, atRow: i) }
+        check("a page where every fork is unchecked shows no per-row status",
+              vc.debugVisibleStatusRows.allSatisfy { !$0 },
+              "\(vc.debugVisibleStatusRows)")
+        check("and the header says it once",
+              vc.drillHeaderSubtitle?.contains("not checked") == true,
+              vc.drillHeaderSubtitle ?? "nil")
+
+        vc.debugSetStatus(.behind(2), atRow: 1)
+        let mixed = vc.debugVisibleStatusRows
+        check("a fork behind upstream shows its pill",
+              mixed[1],
+              "\(mixed)")
+        check("the unchecked rows around it stay quiet - their state is still unremarkable",
+              mixed.enumerated().filter { $0.offset != 1 }.allSatisfy { !$0.element },
+              "\(mixed)")
+
+        for i in 0..<count { vc.debugSetStatus(.inSync, atRow: i) }
+        check("a page that is all in sync shows no per-row status",
+              vc.debugVisibleStatusRows.allSatisfy { !$0 },
+              "\(vc.debugVisibleStatusRows)")
+        vc.debugSetStatus(.notAFork, atRow: 0)
+        check("once the page is mixed, a quiet state that differs (Not a fork) shows on its row",
+              vc.debugVisibleStatusRows[0],
+              "\(vc.debugVisibleStatusRows)")
     }
 }
 

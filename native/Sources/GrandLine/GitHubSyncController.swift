@@ -47,8 +47,7 @@ private final class GitHubSyncRow {
     let iconTile = IconTileView()
     let nameLabel = NSTextField(labelWithString: "")
     let detailLabel = NSTextField(labelWithString: "")
-    let pill = NSView()
-    let pillLabel = NSTextField(labelWithString: "")
+    let pill = HelmStatusPill()
     /// D3: a redacted pill in the shape of the status that is coming - see
     /// `UpdatesController`'s own `statusSkeleton` for the reasoning.
     let statusSkeleton = HelmSkeletonRow(shape: .pill)
@@ -58,12 +57,12 @@ private final class GitHubSyncRow {
     let logField = NSTextField(wrappingLabelWithString: "")
     let logContainer = NSView()
     let rowContainer = HoverHighlightView()
-    let trailingStack = NSStackView()
+    let trailingStack = ToolRowLayout.ActionStack()
 
     var toolRowViews: ToolRowLayout.Views {
         ToolRowLayout.Views(
             iconTile: iconTile, nameLabel: nameLabel, detailLabel: detailLabel,
-            pill: pill, pillLabel: pillLabel, trailingStack: trailingStack,
+            pill: pill, trailingStack: trailingStack,
             detailsButton: detailsButton, logField: logField, logContainer: logContainer,
             rowContainer: rowContainer
         )
@@ -378,6 +377,9 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             trailingViews: [row.syncButton],
             detailsTarget: self,
             detailsAction: #selector(detailsTapped(_:)),
+            // UI-43: the page-wide rule. Eight repos is eight status lines,
+            // with "Sync now" on the row you are pointing at.
+            actionReveal: ToolRowLayout.actionReveal(forPageRowCount: rows.count),
             identifier: row.repo.fullName
         )
         row.logContainer.isHidden = true
@@ -689,7 +691,6 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         // of this method), not here - see that method's own note for why the
         // theme pass has to be the single owner of it.
         let busy = row.status == .checking || row.status == .syncing
-        row.pill.isHidden = busy
         row.syncButton.isHidden = busy || !row.status.showsSyncButton
         row.statusSkeleton.isHidden = !busy
         row.progressLabel.isHidden = !busy
@@ -699,18 +700,54 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         row.rowContainer.alphaValue = row.isBusy ? 0.6 : 1.0
 
         applyThemeToRow(row)
+        // One row's change can make the page uniform, or stop it being so,
+        // so every row's status is re-decided rather than only this one's.
+        applyStatusVisibility()
     }
 
-    private func pillVisuals(_ status: GitHubSyncStatus) -> (String, String) {
+    /// UI-52: a row says its status only when it differs from the page's.
+    ///
+    /// The page's baseline is its most common *quiet* state ("Not checked",
+    /// "In sync") - the drill header already states it once ("8 forks · not
+    /// checked yet"), and eight copies of the same word beside eight chevrons
+    /// say nothing more. A row in any other state shows it, and a state that
+    /// needs the captain (a pill) always shows.
+    private func applyStatusVisibility() {
+        // Keyed by the word the row would show - two rows that would print
+        // the same thing are the same state for this purpose.
+        var quietCounts: [String: Int] = [:]
+        for row in rows where pillVisuals(row.status).2 == .dotWord {
+            quietCounts[pillVisuals(row.status).0, default: 0] += 1
+        }
+        // Ties go to the earliest row's state, so the choice is stable.
+        let baseline = rows.map { pillVisuals($0.status).0 }.first { word in
+            quietCounts[word] == quietCounts.values.max()
+        }
+        for row in rows {
+            let busy = row.status == .checking || row.status == .syncing
+            let (word, _, style) = pillVisuals(row.status)
+            let isBaseline = style == .dotWord && word == baseline
+            row.pill.isHidden = busy || isBaseline
+        }
+    }
+
+    #if FM_SELFTESTS
+    /// UI-52: which rows currently show their status, in page order.
+    var debugVisibleStatusRows: [Bool] { rows.map { !$0.pill.isHidden } }
+    #endif
+
+    /// UI-43 / UI-52: a dot and a word for a default state, a pill only for
+    /// one that is not. Tints, never the terminal's ANSI slots (UI-32).
+    private func pillVisuals(_ status: GitHubSyncStatus) -> (String, HelmTint, HelmStatusPill.Style) {
         switch status {
-        case .unknown: return ("Not Checked", theme.chromeInkHex)
-        case .checking, .syncing: return ("", theme.chromeInkHex)
-        case .inSync: return ("In Sync", theme.ansiHex[2])
-        case .behind(let n): return ("\(n) behind", theme.ansiHex[3])
-        case .diverged: return ("Diverged", theme.ansiHex[1])
-        case .notAFork: return ("Not a Fork", theme.chromeInkHex)
-        case .checkFailed: return ("Check Failed", theme.ansiHex[1])
-        case .syncFailed: return ("Sync Failed", theme.ansiHex[1])
+        case .unknown: return ("Not Checked", .neutral, .dotWord)
+        case .checking, .syncing: return ("", .neutral, .dotWord)
+        case .inSync: return ("In Sync", .good, .dotWord)
+        case .behind(let n): return ("\(n) behind", .warn, .pill)
+        case .diverged: return ("Diverged", .critical, .pill)
+        case .notAFork: return ("Not a Fork", .neutral, .dotWord)
+        case .checkFailed: return ("Check Failed", .critical, .pill)
+        case .syncFailed: return ("Sync Failed", .critical, .pill)
         }
     }
 
@@ -726,7 +763,10 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         // detection. `.inSync`/`.notAFork`/`.unknown` (and a busy
         // `.checking`/`.syncing`) keep today's flat/compact look.
         let needsAttention = failed || row.status.showsSyncButton
-        let (pillText, pillColorHex) = pillVisuals(row.status)
+        // UI-43: the row that asks the captain to act keeps its button at rest.
+        ToolRowLayout.setActionsPinned(row.toolRowViews, needsAttention)
+        let (pillText, pillTint, pillStyle) = pillVisuals(row.status)
+        let pillColorHex = pillTint.hex(in: theme)
         // The status pill is painted HERE rather than in `render` - a real,
         // captain-reported bug lived on that split. `ToolRowLayout.pill`
         // resolves a fill and a label tone for one specific theme and bakes
@@ -748,8 +788,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         // `ThemeManager.shared.theme` default: this controller keeps its own
         // `theme` copy, and a pill resolved against a different theme than
         // the row around it is exactly the class of split this fixes.
-        ToolRowLayout.pill(text: pillText, colorHex: pillColorHex,
-                           into: row.pill, label: row.pillLabel, theme: theme)
+        row.pill.configure(text: pillText, tint: pillTint, style: pillStyle, theme: theme)
         let attentionHex = needsAttention ? pillColorHex : nil
         ToolRowLayout.applyTheme(
             row.toolRowViews, theme: theme, detailFailed: failed,
@@ -798,7 +837,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     func debugPillPaint(atRow index: Int) -> (fill: CGColor?, label: NSColor?, text: String)? {
         guard rows.indices.contains(index) else { return nil }
         let row = rows[index]
-        return (row.pill.layer?.backgroundColor, row.pillLabel.textColor, row.pillLabel.stringValue)
+        return (row.pill.layer?.backgroundColor, row.pill.label.textColor, row.pill.label.stringValue)
     }
     #endif
 
