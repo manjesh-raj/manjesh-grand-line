@@ -2,9 +2,13 @@
 //
 // Fix 5 (fixes4): a brief, non-blocking success confirmation. Nothing like
 // this existed anywhere in the app before this fix - Save actions (hosts,
-// keys) just silently closed with no feedback that anything happened. A
-// small pill anchored under the top edge of the given view, styled from the
-// active Helm theme, fading in and back out on its own.
+// keys) just silently closed with no feedback that anything happened.
+//
+// Since G1 it is a card-surface capsule at the **bottom centre** of the given
+// view, on the raised elevation, rising 12pt as it fades in, with Undo as a
+// capsule button inside. (This header said "under the top edge" for a while
+// after G1 moved it, and the UI/UX revamp's UI-62 was written from that
+// sentence - the code had already done what UI-62 asks.)
 
 // GL-30 - the app's one written rule for telling the captain something went
 // wrong or right. Pick by *how long it has to matter*, not by how bad it is:
