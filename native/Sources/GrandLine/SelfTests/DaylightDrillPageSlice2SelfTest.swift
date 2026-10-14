@@ -518,7 +518,8 @@ enum DaylightDrillPageSlice2SelfTest {
             ok = false
         }
 
-        // The KPI chips: one per non-empty bucket, on a real card.
+        // UI-56: the counts are a KPI line over the rows, on a real card -
+        // the same five figures the registry reports, in bucket order.
         ServiceHealthRegistry.shared.recordSuccess(.scheduledAutomations)
         ServiceHealthRegistry.shared.recordFailure(.backgroundSignals, "probe failure")
         let health = HealthController()
@@ -526,18 +527,18 @@ enum DaylightDrillPageSlice2SelfTest {
         defer { _ = window }
         health.view.layoutSubtreeIfNeeded()
         let counts = HealthCardView.verdictCounts()
-        let expectedChips = [counts.failing, counts.degraded, counts.healthy, counts.pending]
-            .filter { $0 > 0 }.count
-        if health.debugHeaderChipCount != expectedChips {
-            print("  FAIL Health's header shows \(health.debugHeaderChipCount) KPI chips, want \(expectedChips)")
+        let expected = [counts.total, counts.failing, counts.degraded, counts.healthy, counts.pending].map { "\($0)" }
+        if health.debugSummaryValues != expected {
+            print("  FAIL Health's KPI line reads \(health.debugSummaryValues), want \(expected)")
             ok = false
         }
+        let expectedFigures = expected.count
         if counts.total == 0 {
             print("  FAIL the registry reported nothing after two real reports")
             ok = false
         }
         print("  OK - ticks: none/none/\(check)/\(cross)\(cross)\(check)/capped; "
-              + "\(expectedChips) KPI chip(s) for \(counts.total) service(s)")
+              + "\(expectedFigures) KPI figures for \(counts.total) service(s)")
     }
 
     // MARK: 7. No new window-width floor (AGENTS.md gotcha (13))

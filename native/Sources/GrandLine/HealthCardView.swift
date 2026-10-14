@@ -55,7 +55,9 @@ final class HealthCardView: NSObject {
     /// bucket, in the card header's trailing action slot. Rebuilt in place
     /// (`refreshHeaderChips`) rather than recreated, so the header's own
     /// action stack is built once.
-    private let headerChips = NSStackView()
+    /// UI-56: the verdict counts as a KPI line over the rows - one figure per
+    /// bucket - rather than a run of pills in the card header.
+    private let summaryStrip = HelmKPIStrip()
     private var theme: HelmTheme = ThemeManager.shared.theme
 
     override init() {
@@ -88,23 +90,13 @@ final class HealthCardView: NSObject {
         // The top bar names the destination and the card header names what
         // this particular card lists - the page-level restatement and this
         // one's duplicate subtitle are both gone.
-        headerChips.orientation = .horizontal
-        headerChips.alignment = .centerY
-        headerChips.spacing = HelmMetrics.s1
-        headerChips.distribution = .fill
-        headerChips.translatesAutoresizingMaskIntoConstraints = false
-        // AGENTS.md gotcha (12): the *stack*-level pair, not the content one -
-        // this stack has no intrinsic content size, so without these it is
-        // what the header's `.fill` distribution stretches.
-        headerChips.setHuggingPriority(.required, for: .horizontal)
-        headerChips.setClippingResistancePriority(.required, for: .horizontal)
         card.setHeader(
             symbol: "waveform.path.ecg",
             tint: .good,
             title: "Background services",
-            subtitle: "Last run and last error for each one",
-            actions: [headerChips]
+            subtitle: "Last run and last error for each one"
         )
+        summaryStrip.setAccessibilityLabel("Background services summary")
         healthStack.orientation = .vertical
         healthStack.alignment = .leading
         healthStack.spacing = 10
@@ -262,32 +254,25 @@ final class HealthCardView: NSObject {
     /// ("Last error ...") rather than as an unbounded glyph run.
     private static let maxRunTicks = 5
 
-    /// One chip per non-empty bucket, most urgent first. Rebuilt in place -
-    /// the header's action stack itself is built once, in `buildCard`.
-    private func refreshHeaderChips() {
-        for v in headerChips.arrangedSubviews {
-            headerChips.removeArrangedSubview(v)
-            v.removeFromSuperview()
-        }
+    /// UI-56: the counts, quiet when a bucket is empty and tinted when it is
+    /// the signal. Shown only once something has reported - an all-zero line
+    /// over "Nothing has reported yet" would say the same thing twice.
+    private func refreshSummary() {
         let counts = Self.verdictCounts()
-        let buckets: [(Int, String, HelmTint)] = [
-            (counts.failing, "failing", .critical),
-            (counts.degraded, "recent failure", .warn),
-            (counts.healthy, "healthy", .good),
-            (counts.pending, "not run yet", .neutral),
-        ]
-        for (count, label, tint) in buckets where count > 0 {
-            headerChips.addArrangedSubview(
-                pillView(text: "\(count) \(label)", tint: tint))
-        }
-        headerChips.isHidden = headerChips.arrangedSubviews.isEmpty
+        summaryStrip.configure([
+            .count(counts.total, caption: counts.total == 1 ? "Service" : "Services"),
+            .count(counts.failing, caption: "Failing", tintWhenNonZero: .critical),
+            .count(counts.degraded, caption: "Recent failure", tintWhenNonZero: .warn),
+            .count(counts.healthy, caption: "Healthy", tintWhenNonZero: .good),
+            .count(counts.pending, caption: "Not run yet"),
+        ], theme: theme)
     }
 
     private func rebuild() {
         #if FM_SELFTESTS
         debugRebuildCount += 1
         #endif
-        refreshHeaderChips()
+        refreshSummary()
         descriptionLabels.removeAll()
         for v in healthStack.arrangedSubviews {
             healthStack.removeArrangedSubview(v)
@@ -336,6 +321,7 @@ final class HealthCardView: NSObject {
             empty.applyTheme(theme)
             rows.append(empty)
         } else {
+            rows.append(summaryStrip)
             for (index, service) in services.enumerated() {
                 if index > 0 { rows.append(separator()) }
                 rows.append(healthRow(for: service))
@@ -659,6 +645,8 @@ final class HealthCardView: NSObject {
     private(set) var debugRebuildCount = 0
     var debugPendingWhileHidden: Bool { pendingWhileHidden }
     /// §7's KPI chips - how many the header band is currently showing.
-    var debugHeaderChipCount: Int { headerChips.isHidden ? 0 : headerChips.arrangedSubviews.count }
+    /// UI-56: the KPI line's figures, as rendered - empty while it is not
+    /// in the card.
+    var debugSummaryValues: [String] { summaryStrip.superview == nil ? [] : summaryStrip.debugValues }
     #endif
 }

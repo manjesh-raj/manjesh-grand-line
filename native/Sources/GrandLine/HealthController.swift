@@ -165,7 +165,7 @@ final class HealthController: NSViewController, DaylightDrillActions {
     #if FM_SELFTESTS
     var debugHealthRowCount: Int { healthCard.debugRowCount }
     var debugCardWidth: CGFloat { healthCard.card.bounds.width }
-    var debugHeaderChipCount: Int { healthCard.debugHeaderChipCount }
+    var debugSummaryValues: [String] { healthCard.debugSummaryValues }
     /// Forces the *legacy* (non-overlay) scroller style regardless of this
     /// machine's real mouse/trackpad state, so a self-test can reproduce "a
     /// mouse is attached" (this app's own documented "Show scroll bars:
