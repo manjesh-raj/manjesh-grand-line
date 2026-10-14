@@ -283,7 +283,29 @@ enum SettingsRedesignSelfTest {
         settings.select(.appearance)
         settings.view.layoutSubtreeIfNeeded()
 
+        // UI-57: at rest the grid shows the current family only - the active
+        // palette and its pair - and the disclosure opens the rest.
+        let atRest = settings.debugThemeCards
+        let family = SettingsController.themeFamilies(current: ThemeManager.shared.theme).first ?? []
+        if atRest.map(\.theme.id) != family.map(\.id) || !atRest.contains(where: \.isActive) {
+            print("  FAIL at rest the grid shows \(atRest.map(\.theme.id)), want the current family "
+                  + "\(family.map(\.id)) with the active palette in it")
+            ok = false
+        }
+        if family.count != 2 {
+            print("  FAIL Dusk's family is \(family.map(\.id)) - the pairing the grid groups by is broken")
+            ok = false
+        }
+        settings.debugThemeDisclosure.performClick(nil)
+        settings.view.layoutSubtreeIfNeeded()
+
         let all = settings.debugThemeCards
+        // The current family still leads once everything is showing.
+        if Array(all.prefix(family.count)).map(\.theme.id) != family.map(\.id) {
+            print("  FAIL with every family showing, the current one is not first: "
+                  + "\(all.prefix(2).map(\.theme.id))")
+            ok = false
+        }
         if all.count != HelmTheme.allThemes.count {
             print("  FAIL the grid drew \(all.count) cards for "
                   + "\(HelmTheme.allThemes.count) themes")

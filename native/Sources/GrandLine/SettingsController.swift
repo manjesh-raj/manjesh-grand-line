@@ -439,8 +439,12 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     private let shellCwdField = HelmTextField(placeholder: "~ (Home)")
 
     private let followSystemSwitch = HelmToggle()
-    private let systemLightPopUp = HelmPopUpButton()
-    private let systemDarkPopUp = HelmPopUpButton()
+    /// UI-57: the pair as two field cards - the app's one form-level choice
+    /// control - rather than two compact popups that read as disabled chrome.
+    private let systemLightPopUp = HelmFieldCard(label: "Light")
+    private let systemDarkPopUp = HelmFieldCard(label: "Dark")
+    /// UI-57: whether every family is showing, or only the current one.
+    private var showsAllThemes = false
     private var themeFilterTabs: HelmSegmentedTabs!
     /// Which half of the catalogue the grid shows - the reference's
     /// All / Dark / Light segmented control.
@@ -843,6 +847,11 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             sidebarColumn.addArrangedSubview(view)
             view.widthAnchor.constraint(equalTo: sidebarColumn.widthAnchor).isActive = true
         }
+        // The identity row sat 8pt above the first section header, so the
+        // avatar's caption read as the header's own subtitle. A section gap
+        // separates the two, the same `s4` the column's sections use.
+        sidebarColumn.setCustomSpacing(HelmMetrics.s4, after: identityRow)
+        sidebarColumn.setCustomSpacing(HelmMetrics.s4, after: noMatchLabel)
 
         NSLayoutConstraint.activate([
             identityAvatar.widthAnchor.constraint(equalToConstant: HelmMetrics.tileBase),
@@ -1305,12 +1314,11 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             description: "Switch between your light and dark picks when macOS does, including its own sunrise/sunset schedule.",
             control: followSystemSwitch)
 
-        for popUp in [systemLightPopUp, systemDarkPopUp] {
-            popUp.target = self
-            popUp.action = #selector(systemPairChanged)
-        }
         systemLightPopUp.setAccessibilityLabel("Light theme")
         systemDarkPopUp.setAccessibilityLabel("Dark theme")
+        for card in [systemLightPopUp, systemDarkPopUp] {
+            card.widthAnchor.constraint(equalToConstant: Self.pairCardWidth).isActive = true
+        }
         let pairControls = NSStackView(views: [systemLightPopUp, systemDarkPopUp])
         pairControls.orientation = .horizontal
         pairControls.spacing = HelmMetrics.s2
@@ -1388,22 +1396,19 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         lastAppearanceGridWidth = appearanceContainer.frame.width
         let activeID = ThemeManager.shared.theme.id
 
-        // **One grid, dark palettes first.** The card this replaces drew two
-        // separate grids, and with an odd number of dark themes that leaves a
-        // ragged partial row in the middle of the page - visible in the first
-        // render of this redesign, where Oxocarbon sat alone on a row of
-        // four. The dark/light distinction is still a real one a captain
-        // scans by, and it is what the new All/Dark/Light filter is for; the
-        // ordering keeps it legible under All without breaking the grid.
-        let palettes: [HelmTheme]
-        switch themeFilter {
-        case .all:
-            palettes = HelmTheme.allThemes.filter { $0.mode == .dark }
-                + HelmTheme.allThemes.filter { $0.mode == .light }
-        case .dark:
-            palettes = HelmTheme.allThemes.filter { $0.mode == .dark }
-        case .light:
-            palettes = HelmTheme.allThemes.filter { $0.mode == .light }
+        // UI-57: the palettes as **families** - each light/dark pair side by
+        // side - with the current family first. Only that family shows until
+        // the captain asks for the rest: 26 equal thumbnails at rest put the
+        // one choice that matters (which family) behind a scan of all of them.
+        // The All / Dark / Light filter still narrows whichever set is showing.
+        let families = Self.themeFamilies(current: ThemeManager.shared.theme)
+        let shown = showsAllThemes ? families : Array(families.prefix(1))
+        let palettes: [HelmTheme] = shown.flatMap { $0 }.filter { palette in
+            switch themeFilter {
+            case .all: return true
+            case .dark: return palette.mode == .dark
+            case .light: return palette.mode == .light
+            }
         }
 
         if !palettes.isEmpty {
@@ -1422,6 +1427,45 @@ final class SettingsController: NSViewController, DaylightDrillActions {
                 row.widthAnchor.constraint(equalTo: appearanceContainer.widthAnchor).isActive = true
             }
         }
+        let others = families.count - 1
+        themeDisclosure.title = showsAllThemes
+            ? "Show only the current family"
+            : "Show all \(families.count) families (\(others) more)"
+        themeDisclosure.symbolName = showsAllThemes ? "chevron.up" : "chevron.down"
+        appearanceContainer.addArrangedSubview(themeDisclosure)
+    }
+
+    /// The disclosure under the grid (UI-57).
+    private lazy var themeDisclosure: HelmButton = {
+        let button = HelmButton(title: "", variant: .quiet, size: .small, symbol: "chevron.down",
+                                target: self, action: #selector(themeDisclosureClicked))
+        return button
+    }()
+
+    @objc private func themeDisclosureClicked() {
+        showsAllThemes.toggle()
+        rebuildAppearanceGrid()
+    }
+
+    /// Every palette grouped with its pair (`pairId`), dark first, in the
+    /// catalogue's own order, with `current`'s family moved to the front. A
+    /// palette whose pair is missing stands alone rather than vanishing.
+    static func themeFamilies(current: HelmTheme) -> [[HelmTheme]] {
+        var seen = Set<String>()
+        var families: [[HelmTheme]] = []
+        for palette in HelmTheme.allThemes where !seen.contains(palette.id) {
+            seen.insert(palette.id)
+            var family = [palette]
+            if let pair = HelmTheme.theme(id: palette.pairId), !seen.contains(pair.id) {
+                seen.insert(pair.id)
+                family.append(pair)
+            }
+            families.append(family.sorted { $0.mode == .dark && $1.mode != .dark })
+        }
+        if let index = families.firstIndex(where: { $0.contains { $0.id == current.id } }), index > 0 {
+            families.insert(families.remove(at: index), at: 0)
+        }
+        return families
     }
 
     /// Fill both popups with the halves of the catalogue they are allowed to
@@ -1431,25 +1475,26 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// a palette added to the catalogue appears here with no second edit -
     /// the same reason the grid is derived rather than listed.
     private func refreshSystemPairPopUps() {
-        for (popUp, mode, stored) in [
+        for (card, mode, stored) in [
             (systemLightPopUp, HelmTheme.Mode.light, AppSettings.shared.systemLightThemeID),
             (systemDarkPopUp, HelmTheme.Mode.dark, AppSettings.shared.systemDarkThemeID),
         ] {
             let themes = HelmTheme.allThemes.filter { $0.mode == mode }
-            if popUp.itemTitles != themes.map(\.name) {
-                popUp.removeAllItems()
-                for palette in themes {
-                    popUp.addItem(withTitle: palette.name)
-                    popUp.lastItem?.representedObject = palette.id
+            let index = themes.firstIndex(where: { $0.id == stored }) ?? 0
+            card.configureChoices(themes.map(\.name), selectedIndex: index) { picked in
+                guard themes.indices.contains(picked) else { return }
+                if mode == .light {
+                    AppSettings.shared.systemLightThemeID = themes[picked].id
+                } else {
+                    AppSettings.shared.systemDarkThemeID = themes[picked].id
                 }
-            }
-            if let index = themes.firstIndex(where: { $0.id == stored }) {
-                popUp.selectItem(at: index)
-            } else if !themes.isEmpty {
-                popUp.selectItem(at: 0)
+                SystemAppearanceFollower.shared.applyIfFollowing()
             }
         }
     }
+
+    /// The pair cards' width - wide enough for "Catppuccin Latte".
+    private static let pairCardWidth: CGFloat = 196
 
     @objc private func followSystemToggled() {
         AppSettings.shared.followSystemAppearance = followSystemSwitch.isOn
@@ -1458,16 +1503,6 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // could be hours away - a toggle that appears to do nothing is
         // indistinguishable from one that is broken.
         SystemAppearanceFollower.shared.start()
-    }
-
-    @objc private func systemPairChanged(_ sender: NSPopUpButton) {
-        guard let id = sender.selectedItem?.representedObject as? String else { return }
-        if sender === systemLightPopUp {
-            AppSettings.shared.systemLightThemeID = id
-        } else {
-            AppSettings.shared.systemDarkThemeID = id
-        }
-        SystemAppearanceFollower.shared.applyIfFollowing()
     }
 
     // MARK: - Terminal
@@ -2717,6 +2752,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         for row in backupRows { row.applyTheme(theme) }
         sudoRowHost?.applyTheme(theme)
         for card in themeCards { card.applyTheme(theme) }
+        systemLightPopUp.applyTheme(theme)
+        systemDarkPopUp.applyTheme(theme)
         // Every recorder on this page, Capture's included - a
         // `KeyChordRecorderView` paints its own fill, border and ink from the
         // theme and renders as an unfilled rectangle with default ink until
@@ -2838,6 +2875,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
 
     /// The theme grid's cards, in grid order.
     var debugThemeCards: [SettingsThemeCard] { themeCards }
+    /// UI-57's disclosure, so a suite clicks the real button.
+    var debugThemeDisclosure: HelmButton { themeDisclosure }
     var debugThemeFilterTabs: HelmSegmentedTabs { themeFilterTabs }
     func debugSetThemeFilter(_ id: String) {
         guard let filter = ThemeFilter(rawValue: id) else { return }
@@ -2856,8 +2895,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     }
 
     var debugFollowSystemSwitch: HelmToggle { followSystemSwitch }
-    var debugSystemLightPopUp: HelmPopUpButton { systemLightPopUp }
-    var debugSystemDarkPopUp: HelmPopUpButton { systemDarkPopUp }
+    var debugSystemLightPopUp: HelmFieldCard { systemLightPopUp }
+    var debugSystemDarkPopUp: HelmFieldCard { systemDarkPopUp }
     /// The rows that follow a given switch, so a suite can assert the
     /// reference's `data-dep` dimming against the real registry rather than
     /// re-deriving which rows ought to be in it.
