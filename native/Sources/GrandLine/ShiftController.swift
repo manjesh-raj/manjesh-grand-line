@@ -2417,6 +2417,18 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     // touched; these are new, so they carry it from the start.
     #if FM_SELFTESTS
 
+    /// `ReviewTourLab`'s `tasks <view>` verb: picks a view through the same
+    /// segmented control a captain clicks, so a tour renders what a click
+    /// would have shown rather than what a private setter would.
+    func debugShowView(_ id: String) {
+        if id == "review" {
+            tabs.debugClickTab(id: ShiftTopLevelView.weeklyReview.rawValue)
+        } else {
+            tabs.debugClickTab(id: ShiftTopLevelView.dashboard.rawValue)
+            tasksViewToggle.debugClickTab(id: id)
+        }
+    }
+
     /// Where the three board panels and the project detail actually landed,
     /// read from real frames after a real layout pass - so a check of §7's
     /// "Today left, Follow-ups + Projects right" cannot pass by re-deriving

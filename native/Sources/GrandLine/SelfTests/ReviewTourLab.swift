@@ -77,6 +77,17 @@ enum ReviewTourLab {
         case resize(width: CGFloat, height: CGFloat)
         case render(name: String)
         case menu
+        /// Pump the main run loop for this many milliseconds, so work the
+        /// page started asynchronously (the Tasks page's YAML parse, a theme
+        /// transition) lands before the next `render`.
+        case wait(milliseconds: Int)
+        /// Seed the Home page with a fixed fleet, merge-queue and Claude
+        /// reading - the same shape as the captain's own Home screenshot - so
+        /// a tour can render Home with real content and no firstmate home.
+        case demoHome
+        /// Switch the Tasks page to `board`, `list`, `calendar` or `review`
+        /// through its own segmented control.
+        case tasksView(String)
         case comment
     }
 
@@ -86,10 +97,13 @@ enum ReviewTourLab {
         case unknownTheme(String)
         case badSize(String)
         case missingArgument(String)
+        case badArgument(String)
 
         var description: String {
             switch self {
-            case .unknownVerb(let v): return "unknown verb \"\(v)\" (goto, theme, resize, render, menu)"
+            case .unknownVerb(let v):
+                return "unknown verb \"\(v)\" (goto, theme, resize, render, menu, wait, demo, tasks)"
+            case .badArgument(let a): return "bad argument \"\(a)\""
             case .unknownDestination(let d): return "unknown destination \"\(d)\""
             case .unknownTheme(let t): return "unknown theme \"\(t)\""
             case .badSize(let s): return "size must be <width>x<height>, got \"\(s)\""
@@ -132,6 +146,17 @@ enum ReviewTourLab {
             return .success(.render(name: argument))
         case "menu":
             return .success(.menu)
+        case "wait":
+            guard let ms = Int(argument), ms >= 0 else { return .failure(.badArgument(argument)) }
+            return .success(.wait(milliseconds: ms))
+        case "demo":
+            guard argument == "home" else { return .failure(.badArgument(argument)) }
+            return .success(.demoHome)
+        case "tasks":
+            guard ["board", "list", "calendar", "review"].contains(argument) else {
+                return .failure(.badArgument(argument))
+            }
+            return .success(.tasksView(argument))
         default:
             return .failure(.unknownVerb(verb))
         }
@@ -195,6 +220,18 @@ enum ReviewTourLab {
                 log.append("goto \(dest.rawValue)")
             case .menu:
                 log.append(contentsOf: menuDump())
+            case .wait(let milliseconds):
+                RunLoop.main.run(until: Date().addingTimeInterval(Double(milliseconds) / 1000))
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("wait \(milliseconds)ms")
+            case .demoHome:
+                seedDemoHome(shell.debugHomeCanvas)
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo home")
+            case .tasksView(let id):
+                shell.debugShift.debugShowView(id)
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("tasks \(id)")
             case .render(let name):
                 let url = outputDirectory.appendingPathComponent("\(name).png")
                 if writePNG(of: shell.view, to: url) {
@@ -214,6 +251,42 @@ enum ReviewTourLab {
     /// `AppDelegate.buildMenu(installing:)` for a menu it does not install -
     /// the same seam that lets the menu's shape be asserted from CI's blocking
     /// lane - and falls back to the live one only when there really is an app.
+    /// The fixture `demo home` injects. Numbers and titles follow the
+    /// captain's own Home screenshot, so a render is comparable to it and to
+    /// the revamp board's mockup.
+    static func seedDemoHome(_ canvas: HomeCanvasController) {
+        let snapshot = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
+                                     queuedCount: 30, doneCount: 20, projectsCount: 4,
+                                     watcher: WatcherHealth(status: "healthy"))
+        let titles: [(String, String)] = [
+            ("ltops", "none"),
+            ("fix(windows): sign release binaries", "green"),
+            ("fix(client): avoid redundant host palette queries", "red"),
+        ]
+        var prs = titles.enumerated().map { index, pair in
+            MergedPR(source: "fleet", taskID: nil, repo: "manjesh/grand-line",
+                     url: "https://example.invalid/pr/\(index)", number: index + 1,
+                     title: pair.0, checks: pair.1, forge: "github")
+        }
+        for index in 3..<22 {
+            prs.append(MergedPR(source: "fleet", taskID: nil, repo: "manjesh/grand-line",
+                                url: "https://example.invalid/pr/\(index)", number: index + 1,
+                                title: "Open pull request \(index + 1)", checks: "pending", forge: "github"))
+        }
+        canvas.applyFleet(snapshot: snapshot, mergedPRs: prs, prFetchFailure: nil)
+        let now = Date()
+        canvas.applyQuota(.success(QuotaSnapshot(
+            plan: "team",
+            session: QuotaWindow(kind: .session, percentUsed: 0,
+                                 resetsAt: now.addingTimeInterval(3 * 3600), pace: .onPace),
+            weekly: QuotaWindow(kind: .weekly, percentUsed: 13,
+                                resetsAt: now.addingTimeInterval(4 * 86_400), pace: .onPace),
+            fable: QuotaWindow(kind: .fable, percentUsed: 0,
+                               resetsAt: now.addingTimeInterval(4 * 86_400), pace: .onPace),
+            extraUsage: QuotaCreditWindow(percentUsed: 0, spentUsd: 0, limitUsd: 50),
+            latency: 1.2, log: "")))
+    }
+
     static func menuDump() -> [String] {
         let menu: NSMenu
         if let live = NSApplication.shared.mainMenu {
