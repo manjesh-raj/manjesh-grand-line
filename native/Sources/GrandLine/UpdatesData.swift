@@ -16,7 +16,11 @@ import Foundation
 enum DependencyKind {
     case npmGlobal(package: String)
     case brewFormula(formula: String)
-    case brewCask(cask: String)
+    /// `app` is the bundle the cask installs into `/Applications`, when it
+    /// installs one (`nil` for a binary-only cask such as `claude-code`). It
+    /// is the second, brew-independent source of the installed version - see
+    /// `BrewCaskInstallation`.
+    case brewCask(cask: String, app: String? = nil)
     case herdr
     case noMistakes
     case firstmate
@@ -56,7 +60,7 @@ enum DependencyCatalog {
         .init(id: "herdr", name: "herdr", category: "Other tools", kind: .herdr),
         .init(id: "no-mistakes", name: "no-mistakes", category: "Other tools", kind: .noMistakes),
         .init(id: "firstmate", name: "firstmate", category: "Firstmate", kind: .firstmate),
-        .init(id: "automic-vault", name: "Automic Vault", category: "Security", kind: .brewCask(cask: "automic-vault/isotopes/automic-vault")),
+        .init(id: "automic-vault", name: "Automic Vault", category: "Security", kind: .brewCask(cask: "automic-vault/isotopes/automic-vault", app: "Automic Vault.app")),
         .init(id: "devops-playbook", name: "DevOps Playbook", category: "Documentation", kind: .docs),
     ]
 
@@ -192,6 +196,12 @@ enum UpdatesDataTestSeam {
     static var run: ((String, [String], URL?) -> SubprocessResult)?
     /// `name -> absolute path`, or `nil` to report the tool as missing.
     static var resolveExecutable: ((String) -> String?)?
+    /// Replaces every Homebrew prefix `BrewCaskInstallation` would look under
+    /// for a `Caskroom`, so a suite reads a fixture directory and never the
+    /// machine's real Caskroom. `nil` means "the real prefixes".
+    static var homebrewPrefixes: [URL]?
+    /// Replaces `/Applications` for the app-bundle half of the same lookup.
+    static var applicationsDirectory: URL?
 
     /// Every `(executable, args)` pair the seam saw, in order - so a test can
     /// assert what was *asked of the tool*, not only what was made of the
@@ -202,6 +212,8 @@ enum UpdatesDataTestSeam {
     static func reset() {
         run = nil
         resolveExecutable = nil
+        homebrewPrefixes = nil
+        applicationsDirectory = nil
         invocations = []
     }
 }
@@ -245,7 +257,7 @@ enum UpdatesSource {
         switch item.kind {
         case .npmGlobal(let package): return checkNpm(package)
         case .brewFormula(let formula): return checkBrewFormula(formula)
-        case .brewCask(let cask): return checkBrewCask(cask)
+        case .brewCask(let cask, let app): return checkBrewCask(cask, app: app)
         case .herdr: return checkHerdr()
         case .noMistakes: return checkNoMistakes()
         case .firstmate: return checkFirstmate()
@@ -257,7 +269,7 @@ enum UpdatesSource {
         switch item.kind {
         case .npmGlobal(let package): return updateNpm(package)
         case .brewFormula(let formula): return updateBrewFormula(formula)
-        case .brewCask(let cask): return updateBrewCask(cask)
+        case .brewCask(let cask, let app): return updateBrewCask(cask, app: app)
         case .herdr: return updateHerdr()
         case .noMistakes: return updateNoMistakes()
         case .firstmate: return updateFirstmate()
@@ -320,7 +332,7 @@ enum UpdatesSource {
 
     private static func checkBrewFormula(_ formula: String) -> CheckOutcome {
         guard let brew = resolveExecutable("brew") else { return missingToolOutcome("brew") }
-        let installed = installedBrewVersion(brew: brew, formula: formula, cask: false)
+        let installed = installedBrewVersion(brew: brew, formula: formula)
         let infoResult = run(brew, ["info", "--json=v2", formula])
         let latest = latestBrewFormulaVersion(from: infoResult.stdout)
         let log = infoResult.combinedLog
@@ -337,17 +349,12 @@ enum UpdatesSource {
         return CheckOutcome(installedLabel: installed, latestLabel: latest, status: .updateAvailable, detail: "\(installed) \u{2192} \(latest)", log: log)
     }
 
-    private static func installedBrewVersion(brew: String, formula: String, cask: Bool) -> String? {
-        var args = ["list", "--versions"]
-        if cask { args.append("--cask") }
-        // `brew list --versions --cask` only resolves an installed cask by its
-        // short token - the fully-qualified `owner/tap/name` form `brew
-        // info`/`brew upgrade` both accept happily returns exit 1 here even
-        // when installed (confirmed live with automic-vault/isotopes/automic-vault
-        // post-install: `brew list --versions --cask <full token>` failed while
-        // `brew list --versions --cask automic-vault` succeeded).
-        args.append(cask ? String(formula.split(separator: "/").last ?? Substring(formula)) : formula)
-        let result = run(brew, args)
+    /// Formulae only. A cask's installed version is read from disk by
+    /// `BrewCaskInstallation`, because `brew list --cask` has to load the
+    /// cask's definition first and fails outright when a tap ships one this
+    /// Homebrew cannot parse.
+    private static func installedBrewVersion(brew: String, formula: String) -> String? {
+        let result = run(brew, ["list", "--versions", formula])
         guard result.status == 0, !result.stdout.isEmpty else { return nil }
         // "<name> <version>[ <version>...]" - the installed formula/cask name
         // followed by one version per installed copy; the last is the newest.
@@ -373,25 +380,43 @@ enum UpdatesSource {
         guard result.status == 0 else {
             return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "brew upgrade \(formula) failed", log: result.combinedLog)
         }
-        let version = installedBrewVersion(brew: brew, formula: formula, cask: false)
+        let version = installedBrewVersion(brew: brew, formula: formula)
         return UpdateOutcome(ok: true, newVersionLabel: version, detail: "Upgraded to \(version ?? "latest")", log: result.combinedLog)
     }
 
-    // MARK: Homebrew cask (Claude Code)
+    // MARK: Homebrew cask (Claude Code, Automic Vault)
 
-    private static func checkBrewCask(_ cask: String) -> CheckOutcome {
-        guard let brew = resolveExecutable("brew") else { return missingToolOutcome("brew") }
+    /// Installed state comes from disk (`BrewCaskInstallation`) and brew is
+    /// asked only for the latest version. The order matters because brew
+    /// has to load a cask's Ruby definition before it can answer anything
+    /// about it, including `brew list --cask`, and a tap can ship a
+    /// definition the installed Homebrew cannot parse. That happened live:
+    /// `automic-vault/isotopes` moved to an `uninstall_postflight_steps`
+    /// block with a `run` step, the Nix-pinned Homebrew 6.0.1 failed every
+    /// command with "undefined method 'run'", and this check reported an
+    /// installed Automic Vault 4.18.0 as "Not installed" and offered to
+    /// install it. A brew failure is therefore never read as absence.
+    private static func checkBrewCask(_ cask: String, app: String?) -> CheckOutcome {
+        let brew = resolveExecutable("brew")
+        let found = BrewCaskInstallation.find(cask: cask, app: app, brewPath: brew)
+        guard let brew else {
+            guard let found else { return missingToolOutcome("brew") }
+            return CheckOutcome(installedLabel: found.version, latestLabel: nil, status: .checkFailed,
+                                detail: "Installed \(found.version) - Homebrew not found, cannot determine latest",
+                                log: found.evidence)
+        }
         ensureTapped(brew: brew, cask: cask)
-        let installed = installedBrewVersion(brew: brew, formula: cask, cask: true)
         let infoResult = run(brew, ["info", "--cask", "--json=v2", cask])
-        let latest = latestBrewCaskVersion(from: infoResult.stdout)
-        let log = infoResult.combinedLog
+        let latest = infoResult.status == 0 ? latestBrewCaskVersion(from: infoResult.stdout) : nil
+        let brewError = infoResult.status != 0 ? BrewCaskInstallation.firstErrorLine(of: infoResult) : nil
+        let log = [found?.evidence ?? "", brewError.map { "Homebrew error: \($0)" } ?? "", infoResult.combinedLog]
+            .filter { !$0.isEmpty }.joined(separator: "\n")
 
-        guard let installed else {
+        guard let installed = found?.version else {
             return CheckOutcome(installedLabel: "not installed", latestLabel: latest, status: .notInstalled, detail: latest != nil ? "Not installed - \(latest!) available" : "Not installed", log: log)
         }
         guard let latest else {
-            return CheckOutcome(installedLabel: installed, latestLabel: nil, status: .checkFailed, detail: "Installed \(installed) - could not reach Homebrew for the latest version", log: log)
+            return CheckOutcome(installedLabel: installed, latestLabel: nil, status: .checkFailed, detail: "Installed \(installed) - Homebrew could not read the latest version", log: log)
         }
         if installed == latest {
             return CheckOutcome(installedLabel: installed, latestLabel: latest, status: .upToDate, detail: "\(installed) - up to date", log: log)
@@ -425,7 +450,7 @@ enum UpdatesSource {
         _ = run(brew, ["tap", tap])
     }
 
-    private static func updateBrewCask(_ cask: String) -> UpdateOutcome {
+    private static func updateBrewCask(_ cask: String, app: String?) -> UpdateOutcome {
         guard let brew = resolveExecutable("brew") else {
             return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "'brew' not found on PATH", log: "")
         }
@@ -436,9 +461,13 @@ enum UpdatesSource {
         // machine since no formula shares the name.
         let result = run(brew, ["upgrade", cask])
         guard result.status == 0 else {
-            return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "brew upgrade \(cask) failed", log: result.combinedLog)
+            // Name brew's own reason. A cask brew cannot load fails here
+            // too, and "brew upgrade failed" alone reads like a network blip
+            // worth retrying rather than a Homebrew/tap mismatch.
+            let reason = BrewCaskInstallation.firstErrorLine(of: result).map { ": \($0)" } ?? ""
+            return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "brew upgrade \(cask) failed\(reason)", log: result.combinedLog)
         }
-        let version = installedBrewVersion(brew: brew, formula: cask, cask: true)
+        let version = BrewCaskInstallation.find(cask: cask, app: app, brewPath: brew)?.version
         return UpdateOutcome(ok: true, newVersionLabel: version, detail: "Upgraded to \(version ?? "latest")", log: result.combinedLog)
     }
 
@@ -492,7 +521,7 @@ enum UpdatesSource {
         guard upgradeResult.status == 0 else {
             return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "brew upgrade herdr failed", log: log)
         }
-        let version = installedBrewVersion(brew: brew, formula: "herdr", cask: false)
+        let version = installedBrewVersion(brew: brew, formula: "herdr")
         return UpdateOutcome(ok: true, newVersionLabel: version, detail: "Upgraded to \(version ?? "latest")", log: log)
     }
 
@@ -650,5 +679,118 @@ enum UpdatesSource {
         }
         guard !status.isEmpty else { return nil }
         return (status, ahead, behind, detailParts.joined(separator: " \u{00B7} "))
+    }
+}
+
+// MARK: - Homebrew cask install state, read from disk
+
+/// Where an installed Homebrew cask is, answered from the filesystem rather
+/// than from brew. Shared by every page that asks `UpdatesSource.check` about
+/// a cask (Updates, Bootstrap, Automation and the Vault page all do), so the
+/// rule lives once.
+///
+/// Two sources, in order:
+///
+/// 1. `<prefix>/Caskroom/<token>/<version>/`, which is where brew itself
+///    records an install. The newest version directory wins.
+/// 2. For a cask that installs an app bundle, `/Applications/<app>` and its
+///    `CFBundleShortVersionString`.
+///
+/// Neither needs brew to be able to load the cask's definition, which is the
+/// whole point - see `UpdatesSource.checkBrewCask`.
+enum BrewCaskInstallation {
+    struct Found: Equatable {
+        let version: String
+        /// One line for the row's log saying where the version was read, so
+        /// the captain can see the evidence rather than only the claim.
+        let evidence: String
+    }
+
+    static func find(cask: String, app: String?, brewPath: String?) -> Found? {
+        let token = shortToken(cask)
+        for prefix in prefixes(brewPath: brewPath) {
+            let dir = prefix.appendingPathComponent("Caskroom").appendingPathComponent(token)
+            if let version = newestVersion(in: dir) {
+                return Found(version: version, evidence: "Installed: \(dir.appendingPathComponent(version).path)")
+            }
+        }
+        if let app {
+            let bundle = applicationsDirectory().appendingPathComponent(app)
+            if let version = bundleVersion(of: bundle) {
+                return Found(version: version, evidence: "Installed: \(bundle.path) (CFBundleShortVersionString \(version))")
+            }
+        }
+        return nil
+    }
+
+    /// The Caskroom is keyed by the short token, so a fully-qualified
+    /// `owner/tap/name` has to be cut down to `name` first.
+    static func shortToken(_ cask: String) -> String {
+        String(cask.split(separator: "/").last ?? Substring(cask))
+    }
+
+    /// The prefix of the `brew` this app already resolved (`<prefix>/bin/brew`),
+    /// then the two standard ones. The brew path is deliberately not
+    /// symlink-resolved: on a nix-homebrew machine it points into the Nix
+    /// store while the Caskroom stays under `/opt/homebrew`.
+    static func prefixes(brewPath: String?) -> [URL] {
+        #if FM_SELFTESTS
+        if let override = UpdatesDataTestSeam.homebrewPrefixes { return override }
+        #endif
+        var paths: [String] = []
+        if let brewPath {
+            let bin = (brewPath as NSString).deletingLastPathComponent
+            if (bin as NSString).lastPathComponent == "bin" {
+                paths.append((bin as NSString).deletingLastPathComponent)
+            }
+        }
+        for standard in ["/opt/homebrew", "/usr/local"] where !paths.contains(standard) {
+            paths.append(standard)
+        }
+        return paths.map { URL(fileURLWithPath: $0, isDirectory: true) }
+    }
+
+    private static func applicationsDirectory() -> URL {
+        #if FM_SELFTESTS
+        if let override = UpdatesDataTestSeam.applicationsDirectory { return override }
+        #endif
+        return URL(fileURLWithPath: "/Applications", isDirectory: true)
+    }
+
+    /// The newest version directory under a cask's Caskroom folder, ignoring
+    /// brew's own `.metadata`. Compared numerically so 4.18.0 beats 4.9.0.
+    static func newestVersion(in dir: URL) -> String? {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return nil }
+        let versions = names.filter { name in
+            var isDir: ObjCBool = false
+            return !name.hasPrefix(".")
+                && fm.fileExists(atPath: dir.appendingPathComponent(name).path, isDirectory: &isDir)
+                && isDir.boolValue
+        }
+        return versions.max { $0.compare($1, options: .numeric) == .orderedAscending }
+    }
+
+    /// Read from the plist directly rather than through `Bundle`, which
+    /// caches by path for the life of the process and would keep reporting
+    /// the pre-upgrade version after an update.
+    private static func bundleVersion(of bundle: URL) -> String? {
+        let plist = bundle.appendingPathComponent("Contents/Info.plist")
+        guard let info = NSDictionary(contentsOf: plist),
+              let version = info["CFBundleShortVersionString"] as? String,
+              !version.isEmpty
+        else { return nil }
+        return version
+    }
+
+    /// The line a captain needs from a failed brew run: the first `Error:`
+    /// line if there is one, otherwise the first non-empty line of stderr,
+    /// then of stdout.
+    static func firstErrorLine(of result: SubprocessResult) -> String? {
+        let lines = [result.stderr, result.stdout]
+            .flatMap { $0.split(whereSeparator: \.isNewline) }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return lines.first { $0.hasPrefix("Error:") } ?? lines.first
     }
 }
