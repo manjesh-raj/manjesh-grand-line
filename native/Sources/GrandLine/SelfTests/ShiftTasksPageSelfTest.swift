@@ -455,6 +455,8 @@ enum ShiftTasksPageSelfTest {
                   + "\(controller.debugSidebar.debugSelectedRowIDs)")
         }
 
+        checkTheTasksStates(check)
+
         if failures.isEmpty {
             print("ShiftTasksPageSelfTest: PASS")
             return true
@@ -584,6 +586,66 @@ enum ShiftTasksPageSelfTest {
         let list = ShiftTaskListView()
         list.setTasks(store.activeTasks, projects: store.projects)
         check(true, "a duplicated project id must not kill the app (B19)")
+    }
+
+    // MARK: The UI/UX revamp's Tasks states (UI-26, UI-31)
+
+    /// - UI-31: the lanes draw the skeleton until the first render, and only
+    ///   the chosen view is mounted on first paint;
+    /// - UI-31 / GL-14: a task file that will not parse is a failed-read card
+    ///   naming the file and the line - the board is hidden and the subtitle
+    ///   never says "0 open";
+    /// - UI-26: a lane empty because of a filter says which, and its action
+    ///   clears it.
+    private static func checkTheTasksStates(_ check: (Bool, String) -> Void) {
+        withScratchStore { store in
+            _ = seed(store, title: "Anything", status: .todo, due: nil)
+            let controller = ShiftController(store: store)
+            _ = controller.view
+            check(controller.debugBoardView?.debugColumn(.backlog)?.debugSkeletonVisible == true,
+                  "UI-31: before the first render the lanes show the skeleton")
+            check(!controller.debugCalendarIsVisible,
+                  "UI-31: the Calendar is not mounted under the Board on first paint")
+            controller.debugRender()
+            check(controller.debugBoardView?.debugColumn(.backlog)?.debugSkeletonVisible == false,
+                  "UI-31: the skeleton goes once the board has rendered")
+        }
+
+        withScratchStore { store in
+            let alpha = seedProject(store, name: "Alpha")
+            _ = seed(store, title: "In alpha", status: .todo, due: nil, project: alpha)
+            _ = seed(store, title: "Loose", status: .inProgress, due: nil)
+            let (controller, window) = mount(store: store)
+            defer { window.orderOut(nil) }
+            controller.debugSelectSidebarRow(ShiftController.debugProjectRowID(alpha))
+            drainMainQueue(turns: 5)
+            guard let lane = controller.debugBoardView?.debugColumn(.inProgress) else {
+                check(false, "the In Progress lane should be mounted")
+                return
+            }
+            check(lane.debugFilteredEmptyText == "No In Progress tasks in Alpha",
+                  "UI-26: a filtered-empty lane names the filter, got \(lane.debugFilteredEmptyText ?? "nil")")
+            lane.debugPressClearFilter()
+            drainMainQueue(turns: 5)
+            check(controller.debugProjectFilter == nil, "UI-26: its action clears the filter")
+            check(lane.debugFilteredEmptyText == nil, "and the lane stops claiming a filter")
+        }
+
+        withScratchStore { store in
+            _ = seed(store, title: "Real task", status: .todo, due: nil)
+            let path = store.root.appendingPathComponent("tasks/active.yaml")
+            try? "tasks:\n  - id: t1\n    title: [unclosed\n    status: todo\n".write(to: path, atomically: true, encoding: .utf8)
+            store.reloadAll()
+            check(store.isInFailedLoadState, "the fixture should leave the store in its failed state")
+            let (controller, window) = mount(store: store)
+            defer { window.orderOut(nil) }
+            check(controller.debugFailedReadIsVisible, "UI-31: a failed read shows the failed-read card")
+            check(!controller.debugBoardIsVisible, "UI-31: and hides the board, whose lanes would read as empty")
+            check(controller.debugFailedReadSubline.hasPrefix("tasks/active.yaml"),
+                  "UI-31: the card names the file, got \"\(controller.debugFailedReadSubline)\"")
+            check(!(controller.drillHeaderSubtitle ?? "").contains("0 open"),
+                  "GL-14: the subtitle never says 0 open over a failed read")
+        }
     }
 
     private static func withScratchStore(_ body: (ShiftStore) -> Void) {

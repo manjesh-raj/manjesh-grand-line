@@ -478,6 +478,11 @@ enum DaylightDrillPageSelfTest {
         let shift = ShiftController(store: scratchShiftStore())
         let window = mount(shift)
         defer { _ = window }
+        // The Today | Follow-ups row is the List view's layout. The page opens
+        // on the Board, and since the UI/UX revamp's UI-31 its first paint
+        // mounts only the chosen view, so the List is selected explicitly
+        // rather than measured by accident under the Board.
+        shift.debugSelectTasksView("list")
         shift.view.layoutSubtreeIfNeeded()
 
         let geometry = shift.debugBoardGeometry()

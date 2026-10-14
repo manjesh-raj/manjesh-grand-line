@@ -681,6 +681,18 @@ final class ShiftBoardColumnView: NSView {
     /// `.compact`, because a board column is ~260pt wide and the standard
     /// size is written for a page.
     private let emptyState: HelmEmptyState
+    /// UI-26: the filtered-empty state - a lane that is empty *because of a
+    /// filter* says which, and offers the way out ("Show all projects"),
+    /// rather than claiming there is nothing to do.
+    private let filteredEmptyState: HelmEmptyState
+    private let clearFilterButton = HelmButton(title: "Show all projects", variant: .quiet, size: .small)
+    /// UI-31: the one loading idiom, shown on the page's first paint before
+    /// the task files have been read.
+    private let skeleton = HelmSkeletonList(rows: 3)
+    var onClearFilter: (() -> Void)?
+    private var isLoading = false
+    private var filterDescription: String?
+
     /// UI-25: a quiet text button at the lane's foot, not a dashed box.
     private let addButton = HelmButton(title: "Add task", variant: .quiet, size: .small, symbol: "plus")
 
@@ -710,6 +722,8 @@ final class ShiftBoardColumnView: NSView {
         // copy that names the lane properly ("Nothing in progress", never
         // "Nothing in in progress yet").
         emptyState = HelmEmptyState(symbol: column.symbol, body: Self.emptyCopy(for: column), size: .quiet)
+        filteredEmptyState = HelmEmptyState(symbol: column.symbol, body: "", size: .quiet,
+                                            accessory: clearFilterButton)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         build()
@@ -794,7 +808,15 @@ final class ShiftBoardColumnView: NSView {
         body.translatesAutoresizingMaskIntoConstraints = false
         dropView.addSubview(body)
         dropView.addSubview(emptyState)
+        dropView.addSubview(filteredEmptyState)
+        dropView.addSubview(skeleton)
         emptyState.translatesAutoresizingMaskIntoConstraints = false
+        filteredEmptyState.translatesAutoresizingMaskIntoConstraints = false
+        skeleton.translatesAutoresizingMaskIntoConstraints = false
+        filteredEmptyState.isHidden = true
+        skeleton.isHidden = true
+        clearFilterButton.target = self
+        clearFilterButton.action = #selector(clearFilterTapped)
         NSLayoutConstraint.activate([
             body.leadingAnchor.constraint(equalTo: dropView.leadingAnchor),
             body.trailingAnchor.constraint(equalTo: dropView.trailingAnchor),
@@ -806,6 +828,12 @@ final class ShiftBoardColumnView: NSView {
             emptyState.leadingAnchor.constraint(equalTo: dropView.leadingAnchor),
             emptyState.trailingAnchor.constraint(equalTo: dropView.trailingAnchor),
             emptyState.topAnchor.constraint(equalTo: scroll.topAnchor),
+            filteredEmptyState.leadingAnchor.constraint(equalTo: dropView.leadingAnchor),
+            filteredEmptyState.trailingAnchor.constraint(equalTo: dropView.trailingAnchor),
+            filteredEmptyState.topAnchor.constraint(equalTo: scroll.topAnchor),
+            skeleton.leadingAnchor.constraint(equalTo: dropView.leadingAnchor),
+            skeleton.trailingAnchor.constraint(equalTo: dropView.trailingAnchor),
+            skeleton.topAnchor.constraint(equalTo: scroll.topAnchor),
         ])
 
         for view in [header, headerRule, dropView] as [NSView] {
@@ -829,6 +857,32 @@ final class ShiftBoardColumnView: NSView {
     }
 
     @objc private func addTapped() { onAddTask?(column) }
+    @objc private func clearFilterTapped() { onClearFilter?() }
+
+    /// UI-31: skeleton bars in place of cards until the first read lands.
+    func setLoading(_ loading: Bool) {
+        isLoading = loading
+        applyEmptyStates()
+    }
+
+    /// UI-26: what the page is filtering by, phrased to follow a lane's name
+    /// ("in Ideas", "due today"), or `nil` when nothing is filtered.
+    func setFilterDescription(_ description: String?, clearTitle: String) {
+        filterDescription = description
+        clearFilterButton.title = clearTitle
+        applyEmptyStates()
+    }
+
+    private func applyEmptyStates() {
+        let empty = cardViews.isEmpty
+        skeleton.isHidden = !isLoading
+        let filtered = !isLoading && empty && filterDescription != nil
+        filteredEmptyState.isHidden = !filtered
+        if filtered, let filterDescription {
+            filteredEmptyState.setText(body: "No \(column.title) tasks \(filterDescription)")
+        }
+        emptyState.isHidden = isLoading || !empty || filtered
+    }
 
     override func layout() {
         super.layout()
@@ -875,7 +929,7 @@ final class ShiftBoardColumnView: NSView {
         overflowLabel.stringValue = hidden == 0
             ? ""
             : "+\(hidden) more \u{2013} switch to List view to see them all."
-        emptyState.isHidden = !tasks.isEmpty
+        applyEmptyStates()
         needsLayout = true
 
         applyTheme(theme)
@@ -888,6 +942,8 @@ final class ShiftBoardColumnView: NSView {
             .withAlphaComponent(theme.isDaylight ? 1 : HelmCard.borderAlpha).cgColor
         overflowLabel.textColor = HelmTheme.mutedInk(theme)
         emptyState.applyTheme(theme)
+        filteredEmptyState.applyTheme(theme)
+        skeleton.applyTheme(theme)
         for cardView in cardViews { cardView.applyTheme(theme) }
         applyDropHighlight()
     }
@@ -945,6 +1001,11 @@ final class ShiftBoardColumnView: NSView {
     var debugHeader: HelmSectionHeader { header }
     var debugAddButton: HelmButton { addButton }
     var debugDropOutlineVisible: Bool { !dropOutline.isHidden }
+    var debugSkeletonVisible: Bool { !skeleton.isHidden }
+    var debugFilteredEmptyText: String? {
+        filteredEmptyState.isHidden ? nil : filteredEmptyState.debugBodyText
+    }
+    func debugPressClearFilter() { clearFilterButton.performClick(nil) }
     func debugSetDropTargeted(_ targeted: Bool) { dropView.debugSetTargeted(targeted) }
     var debugOverflowText: String { overflowLabel.isHidden ? "" : overflowLabel.stringValue }
     var debugDropView: ShiftBoardDropView { dropView }
@@ -1164,6 +1225,18 @@ final class ShiftBoardView: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         for columnView in columnViews { columnView.applyTheme(theme) }
+    }
+
+    var onClearFilter: (() -> Void)? {
+        didSet { for columnView in columnViews { columnView.onClearFilter = onClearFilter } }
+    }
+
+    func setLoading(_ loading: Bool) {
+        for columnView in columnViews { columnView.setLoading(loading) }
+    }
+
+    func setFilterDescription(_ description: String?, clearTitle: String) {
+        for columnView in columnViews { columnView.setFilterDescription(description, clearTitle: clearTitle) }
     }
 
     #if FM_SELFTESTS

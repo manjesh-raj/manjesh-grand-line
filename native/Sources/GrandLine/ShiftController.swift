@@ -226,6 +226,15 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     private var scrollLeadingFullWidth: NSLayoutConstraint?
 
     private let boardSection = NSStackView()
+
+    /// UI-31 / GL-14: a task file that failed to parse is a stated failure
+    /// naming the file and the line, never "0 open tasks" over empty lanes.
+    /// The store already refuses to write such a file (GL-01); this card is
+    /// the page saying so.
+    private let failedReadCard = HelmCard()
+    private let failedReadHeader = HelmSectionHeader(size: .hero)
+    private let failedReadOpenButton = HelmButton(title: "Open file", variant: .secondary, size: .small)
+    private var failedReadURL: URL?
     private let boardView = ShiftBoardView()
     /// F5's third view. Mounted beside the board and only ever hidden, the
     /// same treatment the board itself gets - and hidden through the *stack*,
@@ -458,6 +467,8 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         // arranged subview of an `NSStackView`* leaves layout entirely
         // (AGENTS.md gotcha (11)'s one exception), Follow-ups takes the row
         // on its own rather than sitting beside an empty half.
+        buildFailedReadCard()
+        dashboardContainer.addArrangedSubview(failedReadCard)
         dashboardContainer.addArrangedSubview(boardSection)
         dashboardContainer.addArrangedSubview(calendarView)
         dashboardContainer.addArrangedSubview(tasksRow)
@@ -503,6 +514,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             projectsSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             weeklyReviewSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             boardSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            failedReadCard.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             calendarView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             // The toolbar spans the page so its trailing-pinned Board/List
             // switch actually lands at the page's own trailing edge.
@@ -605,6 +617,10 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         followUpListView.onDelete = { [weak self] item in
             self?.confirmDeleteFollowUp(id: item.id)
         }
+
+        // The first paint shows the chosen view only - the Calendar must not
+        // sit mounted under the Board before the first render runs.
+        applyTasksViewVisibility()
 
         ThemeManager.shared.observe { [weak self, weak root] theme in
             self?.theme = theme
@@ -980,6 +996,9 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         boardView.onDeleteTask = { [weak self] id in self?.confirmDeleteTask(id: id) }
         boardView.onAddTask = { [weak self] column in self?.addTask(in: column) }
         boardView.onDropTask = { [weak self] id, column in self?.moveTask(id: id, to: column) ?? false }
+        boardView.onClearFilter = { [weak self] in self?.clearFilters() }
+        // UI-31: the lanes show the skeleton until the first read renders.
+        boardView.setLoading(true)
 
         calendarView.onOpenTask = { [weak self] id in self?.openBoardTask(id: id) }
         calendarView.onAddTask = { [weak self] day in self?.addTask(on: day) }
@@ -990,6 +1009,65 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         boardSection.translatesAutoresizingMaskIntoConstraints = false
         boardSection.addArrangedSubview(boardView)
         boardView.widthAnchor.constraint(equalTo: boardSection.widthAnchor).isActive = true
+    }
+
+    private func buildFailedReadCard() {
+        failedReadOpenButton.target = self
+        failedReadOpenButton.action = #selector(openFailedFile)
+        failedReadHeader.setActions([failedReadOpenButton])
+        failedReadCard.setHeader(failedReadHeader, insets: NSEdgeInsets(top: HelmMetrics.s4, left: HelmMetrics.s4,
+                                                                         bottom: HelmMetrics.s4, right: HelmMetrics.s4))
+        failedReadCard.setAttentionEdge(.critical)
+        failedReadCard.translatesAutoresizingMaskIntoConstraints = false
+        failedReadCard.isHidden = true
+    }
+
+    /// Shows or hides the failed-read card from the store's own state, and
+    /// says which file and line.
+    private func applyFailedReadState() {
+        guard let failure = store.loadFailureSummary else {
+            failedReadCard.isHidden = true
+            failedReadURL = nil
+            return
+        }
+        failedReadCard.isHidden = false
+        failedReadURL = store.root.appendingPathComponent(failure.relativePath)
+        var where_ = failure.relativePath
+        if let line = failure.line { where_ += ", line \(line)" }
+        failedReadHeader.configure(
+            leading: .tile(symbol: "exclamationmark.triangle.fill", tint: .critical),
+            title: "\(failure.what.prefix(1).uppercased())\(failure.what.dropFirst()) could not be read",
+            subline: "\(where_) \u{00B7} the file was left as it is, and nothing will be written over it")
+        failedReadCard.applyTheme(theme)
+    }
+
+    @objc private func openFailedFile() {
+        guard let failedReadURL else { return }
+        NSWorkspace.shared.open(failedReadURL)
+    }
+
+    /// UI-26: what the board is filtered by, phrased to follow a lane's name,
+    /// and the one action that clears it.
+    private func filterDescription() -> (text: String?, clearTitle: String) {
+        var parts: [String] = []
+        if let filter = projectFilter, let name = store.projects.first(where: { $0.id == filter })?.name {
+            parts.append("in \(name)")
+        }
+        switch taskScope {
+        case .all: break
+        case .dueToday: parts.append("due today")
+        case .overdue: parts.append("overdue")
+        case .myPriorities: parts.append("marked high")
+        case .recentlyUpdated: parts.append("updated this week")
+        }
+        return (parts.isEmpty ? nil : parts.joined(separator: " "),
+                projectFilter != nil ? "Show all projects" : "Show all tasks")
+    }
+
+    private func clearFilters() {
+        projectFilter = nil
+        taskScope = .all
+        render()
     }
 
     private func switchTasksView(_ view: ShiftTasksView) {
@@ -1713,6 +1791,9 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         // exact "switch away and back to find yesterday's data" shape this
         // page has been corrected for before.
         boardView.setTasks(boardTasks(), projects: store.projects, theme: theme)
+        boardView.setLoading(false)
+        let filter = filterDescription()
+        boardView.setFilterDescription(filter.text, clearTitle: filter.clearTitle)
         // The calendar reads the same filtered set the board and the list do,
         // plus the completed tasks the Done column already looks back over -
         // a month grid that silently drops everything finished would read as
@@ -1763,11 +1844,15 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// entirely - so Follow-ups fills the row on its own in board mode
     /// instead of sitting beside a gap.
     private func applyTasksViewVisibility() {
-        let boardShowing = !isProjectDetailFullPage && tasksView == .board
+        // UI-31: a failed read hides every view of the task list - empty
+        // lanes under a failure would read as "nothing to do".
+        applyFailedReadState()
+        let failed = store.isInFailedLoadState && !isProjectDetailFullPage
+        let boardShowing = !isProjectDetailFullPage && !failed && tasksView == .board
         boardSection.isHidden = !boardShowing
-        let calendarShowing = !isProjectDetailFullPage && tasksView == .calendar
+        let calendarShowing = !isProjectDetailFullPage && !failed && tasksView == .calendar
         calendarView.isHidden = !calendarShowing
-        let hideTasks = isProjectDetailFullPage || boardShowing || calendarShowing
+        let hideTasks = isProjectDetailFullPage || failed || boardShowing || calendarShowing
         taskPanel.isHidden = hideTasks
         // The *column wrapper*, not just the panel inside it. `tasksRow` is
         // `.fillEqually`, and a visible-but-empty column still claims its
@@ -2403,6 +2488,9 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     var debugViewTabs: HelmSegmentedTabs { viewTabs }
     var debugSortPopup: HelmPopUpButton { sortPopup }
     var debugBoardIsVisible: Bool { !boardSection.isHidden }
+    var debugFailedReadIsVisible: Bool { !failedReadCard.isHidden }
+    var debugFailedReadSubline: String { failedReadHeader.sublineLabel.stringValue }
+    var debugFailedReadTitle: String { failedReadHeader.titleLabel.stringValue }
     var debugTaskPanelIsVisible: Bool { !taskPanel.isHidden }
 
     /// Drives the real toggle's own handler, so a test cannot pass against a

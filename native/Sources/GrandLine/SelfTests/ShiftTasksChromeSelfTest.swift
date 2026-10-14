@@ -38,6 +38,7 @@ enum ShiftTasksChromeSelfTest {
         checkOfflineDetection(&ok)
         checkSortOrders(&ok)
         checkTaskSignals(&ok)
+        checkParseFailureLine(&ok)
         print(ok ? "ShiftTasksChromeSelfTest: OK" : "ShiftTasksChromeSelfTest: FAILED")
         return ok
     }
@@ -148,6 +149,18 @@ enum ShiftTasksChromeSelfTest {
         let later = ShiftTaskSignals.dueCaption(date: day(5), time: nil, now: now, calendar: cal)
         check(later != nil && later?.tint == nil, "a later date is a muted caption", &ok)
         check(ShiftTaskSignals.dueCaption(date: nil, time: nil, now: now) == nil, "no date, no caption", &ok)
+    }
+
+    // MARK: 5 - the failed-read card's line number (UI-31)
+
+    private static func checkParseFailureLine(_ ok: inout Bool) {
+        let valid = "tasks:\n  - id: t1\n    title: Fine\n"
+        check(ShiftYaml.parseFailureLine(text: valid) == nil, "a document that parses has no failure line", &ok)
+        let broken = "tasks:\n  - id: t1\n    title: [unclosed\n    status: todo\n"
+        let line = ShiftYaml.parseFailureLine(text: broken)
+        print("  parseFailureLine on the fixture: \(String(describing: line))")
+        check(line.map { (1...4).contains($0) } ?? false,
+              "a broken document's failure should land on one of its lines, got \(String(describing: line))", &ok)
     }
 }
 

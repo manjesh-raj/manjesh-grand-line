@@ -3709,6 +3709,7 @@ final class HelmEmptyState: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     #if FM_SELFTESTS
+    var debugBodyText: String { bodyLabel.stringValue }
     /// UI-26: a `.quiet` state draws neither the gradient tile nor the glyph.
     var debugArtworkHidden: Bool { tile.isHidden && iconView.isHidden }
     /// What the watermark is *actually drawing* - review #3's B4. A check that
