@@ -96,6 +96,24 @@ final class DaylightBarController: NSViewController {
     static let topMargin: CGFloat = 14
     /// The scale's page gutter (24), so the bar's edges line up with every
     /// page's content edge (UI-14) rather than sitting 2pt outside it.
+    /// UI-34's group separators.
+    static let separatorHeight: CGFloat = 20
+    private let historySeparator = DaylightBarController.makeSeparator()
+    private let controlsSeparator = DaylightBarController.makeSeparator()
+    private static func makeSeparator() -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        view.translatesAutoresizingMaskIntoConstraints = false
+        // 1pt wide at `contentTie`, never required: a required width on the
+        // bar is a window-width cap (gotcha (13)), and the bar's own guard in
+        // `DaylightModuleSelfTest` fails on one.
+        let width = view.widthAnchor.constraint(equalToConstant: 1)
+        width.priority = HelmDaylightPriority.contentTie
+        width.isActive = true
+        view.setAccessibilityElement(false)
+        return view
+    }
+
     static let sideMargin: CGFloat = HelmMetrics.pageGutter
     /// The gap between the bar's bottom edge and the body area beneath it -
     /// §2.7's spec states 20 ("Drill page: ... top margin under the bar 20"),
@@ -501,6 +519,8 @@ final class DaylightBarController: NSViewController {
         bar.addSubview(searchPill)
         bar.addSubview(recentDestinations.button)
         bar.addSubview(clipboardHistory.button)
+        bar.addSubview(historySeparator)
+        bar.addSubview(controlsSeparator)
         bar.addSubview(quickAccessRow)
         bar.addSubview(quickAccessOverflowButton)
         bar.addSubview(themeToggleButton)
@@ -573,15 +593,28 @@ final class DaylightBarController: NSViewController {
             recentDestinations.button.trailingAnchor.constraint(equalTo: clipboardHistory.button.leadingAnchor, constant: -HelmMetrics.s2),
             recentDestinations.button.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
 
-            clipboardHistory.button.trailingAnchor.constraint(equalTo: quickAccessRow.leadingAnchor, constant: -HelmMetrics.s2),
+            // UI-38: the clipboard-history button had no size constraint at
+            // all, so it resolved to its intrinsic (empty) size and never
+            // rendered. The same 34pt square as Recents.
+            clipboardHistory.button.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+            clipboardHistory.button.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+            clipboardHistory.button.trailingAnchor.constraint(equalTo: historySeparator.leadingAnchor, constant: -HelmMetrics.s2),
             clipboardHistory.button.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            // UI-34: three groups - history | the shortcuts | theme, bell,
+            // avatar - with a 1px separator between each.
+            historySeparator.trailingAnchor.constraint(equalTo: quickAccessRow.leadingAnchor, constant: -HelmMetrics.s2),
+            historySeparator.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            historySeparator.heightAnchor.constraint(equalToConstant: Self.separatorHeight),
+            controlsSeparator.trailingAnchor.constraint(equalTo: themeToggleButton.leadingAnchor, constant: -HelmMetrics.s2),
+            controlsSeparator.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            controlsSeparator.heightAnchor.constraint(equalToConstant: Self.separatorHeight),
             recentDestinations.button.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
             recentDestinations.button.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
             quickAccessRow.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             quickAccessRow.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
-            quickAccessOverflowButton.trailingAnchor.constraint(equalTo: themeToggleButton.leadingAnchor, constant: -HelmMetrics.s2),
+            quickAccessOverflowButton.trailingAnchor.constraint(equalTo: controlsSeparator.leadingAnchor, constant: -HelmMetrics.s2),
             quickAccessOverflowButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             quickAccessOverflowButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
@@ -956,6 +989,7 @@ final class DaylightBarController: NSViewController {
         chain += pills.map { $0.container }
         chain.append(searchPill)
         chain.append(recentDestinations.button)
+        chain.append(clipboardHistory.button)
         chain += quickAccessRowButtons
         chain.append(quickAccessOverflowButton)
         chain.append(themeToggleButton)
@@ -968,7 +1002,9 @@ final class DaylightBarController: NSViewController {
     /// is deliberately not here - it is a `NotificationBellButton`, which owns
     /// its own badge geometry and its own `applyTheme`.
     private var iconSquares: [DaylightBarIconButton] {
-        [recentDestinations.button] + quickAccessRowButtons
+        // UI-38: the clipboard-history square joins the list now that it
+        // renders - it was missing here too, so it was never themed.
+        [recentDestinations.button, clipboardHistory.button] + quickAccessRowButtons
             + [quickAccessOverflowButton, themeToggleButton]
     }
 
@@ -1162,7 +1198,7 @@ final class DaylightBarController: NSViewController {
         avatar.title = ""
         avatar.isBordered = false
         avatar.wantsLayer = true
-        avatar.layer?.cornerRadius = HelmMetrics.dTileLarge
+        avatar.layer?.cornerRadius = HelmMetrics.barControlRadius
         avatar.layer?.masksToBounds = true
         avatar.translatesAutoresizingMaskIntoConstraints = false
         avatar.target = self
@@ -1174,7 +1210,7 @@ final class DaylightBarController: NSViewController {
         ])
         avatarGradient.startPoint = HelmDomainHue.tileStart
         avatarGradient.endPoint = HelmDomainHue.tileEnd
-        avatarGradient.cornerRadius = HelmMetrics.dTileLarge
+        avatarGradient.cornerRadius = HelmMetrics.barControlRadius
         // Below the title, which AppKit draws in the button's own layer.
         avatar.layer?.insertSublayer(avatarGradient, at: 0)
 
@@ -1385,6 +1421,13 @@ final class DaylightBarController: NSViewController {
             pill.container.accessibilityValueOverride = isSelected ? "selected" : "not selected"
             pill.label.font = HelmType.rounded(HelmType.scaled(12.5), .semibold)
             pill.label.textColor = isSelected ? selectedInk : muted
+            // UI-36: a space pill compresses when pressed, like every other
+            // pressable surface (`HoverHighlightView` owns the transform).
+            pill.container.pressScale = HelmButton.pressScale
+        }
+        // UI-34: the group separators, at the card hairline's weight.
+        for separator in [historySeparator, controlsSeparator] {
+            separator.layer?.backgroundColor = line.withAlphaComponent(theme.isDaylight ? 1 : 0.6).cgColor
         }
 
         searchPill.applyTheme(theme)
@@ -1470,6 +1513,9 @@ final class DaylightBarController: NSViewController {
     /// `iconSquares` the theming and the active-state push do, so a suite
     /// cannot assert against a list that has drifted from the real one.
     func debugIconSquares() -> [DaylightBarIconButton] { iconSquares }
+    /// UI-34's two group separators, and UI-35's avatar radius.
+    func debugGroupSeparators() -> [NSView] { [historySeparator, controlsSeparator] }
+    var debugAvatarRadius: CGFloat { avatar.layer?.cornerRadius ?? -1 }
 
     /// B5: the bar's three dropdown panels, by name. The avatar's is built in
     /// `buildAvatar`, so this is `nil`-safe rather than force-unwrapped.
@@ -1997,7 +2043,7 @@ class DaylightBarIconButton: NSButton {
         translatesAutoresizingMaskIntoConstraints = false
 
         iconBackground.wantsLayer = true
-        iconBackground.layer?.cornerRadius = 9
+        iconBackground.layer?.cornerRadius = HelmMetrics.barControlRadius
         iconBackground.translatesAutoresizingMaskIntoConstraints = false
         // Decorative only - clicks are handled by the button itself, exactly
         // as `NotificationBellButton.iconBackground` is.
@@ -2114,36 +2160,48 @@ class DaylightBarIconButton: NSButton {
         restyle()
     }
 
+    /// **UI-34 (Q6, the captain's call): monochrome at rest, the hue on the
+    /// page you are on.** The row went monochrome in B2, was re-coloured in
+    /// `fm/grandline-topbar-icon-tiles`, and the revamp measured what that
+    /// cost: nine pastel squares (three of them amber) on every page, so the
+    /// one square that meant "you are here" was one more colour among them.
+    /// Now every square is the plain monochrome one at rest and on hover, and
+    /// only the active destination's tile takes its hue - the active ladder,
+    /// through the same contrast-corrected `tintedSurface` recipe. The set and
+    /// the order the captain configured are untouched.
     private func restyle() {
-        guard let hue else {
+        guard let hue, isActiveDestination else {
             restyleAsPlainSquare()
             return
         }
         restyleAsTile(hue: hue)
     }
 
-    /// The pre-tile rendering, kept for a control that carries no identity at
-    /// all: the overflow button while it is drawing its generic ellipsis, and
-    /// the clipboard-history button.
-    ///
-    /// **This used to cover Recents and the theme toggle too, and the captain
-    /// asked for that reversed** (`fm/grandline-topbar-icon-tiles-round2`):
-    /// two unexplained grey squares at either end of a row of coloured tiles
-    /// read as unfinished rather than as a category. The paragraph this one
-    /// replaces argued that a plain square is "what keeps the coloured tiles
-    /// beside them reading as places you can go"; the answer is that a
-    /// *slate* tile says the same thing more legibly, because slate is
-    /// already §2.2's claims-nothing hue - see `chromeTileHue`.
-    ///
-    /// What is left here genuinely has no honest colour. The ellipsis opens a
-    /// menu rather than a surface, and `checkOverflowButtonFollowsItsIdentity`
-    /// asserts it stays plain in that identity and takes a real tile in the
-    /// other. The clipboard-history button is left alone for a different and
-    /// duller reason, recorded so it is not mistaken for a decision: it is
-    /// laid out with no width or height constraint at all (unlike every other
-    /// square on the bar), so it resolves to its intrinsic size and does not
-    /// render. Colouring a control nobody can see would be dressing up a
-    /// separate bug.
+    // MARK: Pressed (UI-36)
+
+    /// A pressed square compresses to `HelmButton.pressScale`, the same 2%
+    /// every pressable surface in this app takes, about its own centre.
+    override func highlight(_ flag: Bool) {
+        super.highlight(flag)
+        let scale = flag ? HelmButton.pressScale : 1
+        for view in [iconBackground, iconImageView] {
+            view.wantsLayer = true
+            guard let layer = view.layer else { continue }
+            let w = view.bounds.width / 2, h = view.bounds.height / 2
+            var t = CATransform3DMakeTranslation(w, h, 0)
+            t = CATransform3DScale(t, scale, scale, 1)
+            t = CATransform3DTranslate(t, -w, -h, 0)
+            HelmMotion.animate(!HelmMotion.isReduced, duration: HelmButton.stateChangeDuration) {
+                layer.transform = t
+            }
+        }
+    }
+
+    /// The bar's resting language since the UI/UX revamp's UI-34: every
+    /// square, destination or not, draws this at rest and on hover - an
+    /// `inset` fill, a hairline and a muted glyph that firms to ink under the
+    /// pointer. Only the active destination's square leaves it, for its
+    /// hued tile (`restyleAsTile`). See `restyle()` for the reasoning.
     private func restyleAsPlainSquare() {
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
@@ -2227,6 +2285,7 @@ class DaylightBarIconButton: NSButton {
         isHovering = hovering
         restyle()
     }
+    var debugIsPressedScale: CGFloat { iconBackground.layer?.transform.m11 ?? 1 }
     #endif
 }
 

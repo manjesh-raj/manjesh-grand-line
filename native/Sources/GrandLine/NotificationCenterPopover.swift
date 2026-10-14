@@ -115,7 +115,7 @@ final class NotificationBellButton: NSButton {
         translatesAutoresizingMaskIntoConstraints = false
 
         iconBackground.wantsLayer = true
-        iconBackground.layer?.cornerRadius = 9
+        iconBackground.layer?.cornerRadius = HelmMetrics.barControlRadius
         iconBackground.translatesAutoresizingMaskIntoConstraints = false
         // Decorative only - clicks are handled by the button itself, and
         // this view never needs to intercept them ahead of that.
@@ -247,27 +247,23 @@ final class NotificationBellButton: NSButton {
     /// and it is never "the destination showing"), so it draws the resting
     /// ladder only - deliberately the one state, not a third ladder invented
     /// here.
+    /// UI-34 (Q6): the bell is monochrome at rest, like every square on the
+    /// bar - the same plain recipe `DaylightBarIconButton.restyleAsPlainSquare`
+    /// draws. It used to wear an amber tile; the attention it asks for is the
+    /// badge's job (white on system red, never theme-tinted), and an amber
+    /// square on every page spent that signal on an empty list.
     func applyTheme(_ theme: HelmTheme) {
-        let resolved = HelmContrast.tintedSurface(
-            tintHex: DaylightBarIconButton.tileHex(for: DaylightBarIconButton.bellTileHue, in: theme),
-            theme: theme,
-            target: HelmContrast.nonTextTarget,
-            washSteps: HelmContrast.tileWashSteps)
-        // The glyph is `tintedSurface`'s own contrast-corrected partner for
-        // this fill, at full strength - not the muted ink the plain square
-        // used. A wash already corrected to the 3:1 non-text floor has no
-        // headroom left to spend on an alpha.
-        iconImageView.contentTintColor = resolved.foreground
-        iconBackground.layer?.backgroundColor = resolved.fill.cgColor
+        let surface = theme.isDaylight
+            ? HelmTheme.nsColor(theme.daylightTokens.inset)
+            : HelmTheme.nsColor(theme.chromeBackgroundHex)
+        iconImageView.contentTintColor = HelmTheme.mutedInk(theme)
+            .withAlphaComponent(DaylightBarIconButton.restingGlyphAlpha)
+        iconBackground.layer?.backgroundColor = surface.cgColor
         iconBackground.layer?.borderWidth = 1
-        iconBackground.layer?.borderColor = HelmTheme
-            .nsColor(DaylightBarIconButton.tileHex(for: DaylightBarIconButton.bellTileHue, in: theme))
-            .withAlphaComponent(DaylightBarIconButton.restingTileBorderAlpha).cgColor
-        // The badge's ring is the tile it sits on, so the badge reads as
-        // floating above the glyph rather than merged into it. It follows the
-        // tile's fill for that reason - the disc itself stays systemRed on
-        // every palette.
-        badgeContainer.layer?.borderColor = resolved.fill.cgColor
+        iconBackground.layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5).cgColor
+        // The badge's ring is the square it sits on, so the badge reads as
+        // floating above the glyph rather than merged into it.
+        badgeContainer.layer?.borderColor = surface.cgColor
     }
 
     #if FM_SELFTESTS

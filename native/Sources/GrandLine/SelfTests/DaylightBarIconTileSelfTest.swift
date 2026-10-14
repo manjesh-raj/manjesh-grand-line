@@ -66,7 +66,8 @@ enum DaylightBarIconTileSelfTest {
         static let iconSide: CGFloat = 34
         static let barHeight: CGFloat = 50
         static let topMargin: CGFloat = 14
-        static let cornerRadius: CGFloat = 9
+        // UI-35: the bar's one control radius.
+        static let cornerRadius: CGFloat = HelmMetrics.barControlRadius
         /// `HelmMetrics.s2`, the gap between two shortcuts in the row.
         static let rowSpacing: CGFloat = 8
     }
@@ -75,14 +76,15 @@ enum DaylightBarIconTileSelfTest {
         NSApplication.shared.setActivationPolicy(.accessory)
 
         let cases: [(String, () -> String?)] = [
-            ("every shortcut wears its own destination's tile", checkEveryShortcutWearsItsOwnTile),
+            ("UI-34: every shortcut is monochrome at rest and wears its own hue when its page shows",
+             checkEveryShortcutWearsItsOwnTile),
             ("the tile is legible in all 26 palettes, in all three states", checkEveryPaletteTilesLegibly),
-            ("hover and active deepen the tile the captain is looking at", checkStatesDeepenTheSameTile),
+            ("hover firms the glyph, active lights the tile", checkStatesDeepenTheSameTile),
             ("the terminal shortcut wears Settings' own Terminal tint", checkTerminalShortcutMatchesSettings),
-            ("the bar's own controls wear their own tiles", checkTheBarsOwnControlsAreTiled),
+            ("UI-34: the bar's own controls are monochrome, the bell included", checkTheBarsOwnControlsAreTiled),
             ("no two domain hues collapse onto one tile in any palette", checkEveryPaletteKeepsTheHuesApart),
             ("Docs, Hosts and Schedules are tellable apart everywhere", checkTheCaptainsThreeAreTellableApart),
-            ("the single-overflow shortcut is tiled, the ellipsis is not", checkOverflowButtonFollowsItsIdentity),
+            ("the single-overflow shortcut draws its destination's icon, monochrome", checkOverflowButtonFollowsItsIdentity),
             ("the row's height and footprint are unchanged", checkRowFootprintIsUnchanged),
         ]
 
@@ -102,64 +104,58 @@ enum DaylightBarIconTileSelfTest {
 
     // MARK: The colour is the destination's own
 
+    /// UI-34 (Q6): at rest every shortcut is the same monochrome square -
+    /// the `inset` fill and a muted glyph - and the one whose page is showing
+    /// takes the active wash of its **own** hue. Both halves, on one palette
+    /// from each side of `tileHex`'s split, so a rendering that kept the
+    /// pastel row or lit every tile the same colour fails here.
     private static func checkEveryShortcutWearsItsOwnTile() -> String? {
-        // One palette from each side of `tileHex`'s own split, so a fix that
-        // only ever resolved one of the two branches fails here rather than
-        // in whichever theme happened to be ambient.
         for id in ["daylight", "dusk", "helm-dark", "catppuccin-latte"] {
             guard let theme = theme(id) else {
                 return "no `\(id)` theme - has the palette been renamed?"
             }
             let bar = makeLaidOutBar(theme: theme)
-
             let buttons = bar.debugDestinationButtons()
-            guard buttons.count >= 2 else {
-                return "the bar drew \(buttons.count) shortcuts - this case needs at least two to compare"
+            guard buttons.count >= 3 else {
+                return "the bar drew \(buttons.count) shortcuts - this case needs at least three to compare"
             }
-
-            var fills: [String: NSColor] = [:]
-            for button in buttons {
-                let hex = DaylightBarIconButton.tileHex(for: button.destination, in: theme)
-                let expected = HelmContrast.tintedSurface(tintHex: hex,
-                                                          theme: theme,
-                                                          target: HelmContrast.nonTextTarget,
-                                                          washSteps: HelmContrast.tileWashSteps)
-                guard let fill = layerFill(button) else {
-                    return "\(theme.id)/\(button.destination.title): the tile has no fill at all"
-                }
-                guard sameColor(fill, expected.fill) else {
-                    return "\(theme.id)/\(button.destination.title): the tile is \(describe(fill)), expected a wash of "
-                        + "its own \(button.destination.domainHue.rawValue) hue \(describe(expected.fill)) - "
-                        + "a shortcut must carry *its* colour, not a colour"
-                }
-                guard let glyph = button.debugGlyphColor, sameColor(glyph, expected.foreground) else {
-                    return "\(theme.id)/\(button.destination.title): the glyph is "
-                        + "\(button.debugGlyphColor.map(describe) ?? "nil"), expected the contrast-corrected "
-                        + "\(describe(expected.foreground)) `tintedSurface` pairs with that fill"
-                }
-                fills[button.destination.rawValue] = fill
-            }
-
-            // Discriminating power, asserted rather than assumed. The default
-            // row pins six destinations across four domain hues, so a
-            // rendering that painted every tile one colour - the pre-fix
-            // chrome square very much included - fails here even if the
-            // per-button comparison above were somehow satisfied.
-            var distinct: [NSColor] = []
-            for fill in fills.values where !distinct.contains(where: { sameColor($0, fill) }) {
-                distinct.append(fill)
-            }
-            guard distinct.count >= 3 else {
-                return "\(theme.id): the row's \(buttons.count) shortcuts render only \(distinct.count) distinct "
-                    + "tile colours - the point of the fix is that the row is scannable"
-            }
-
-            // And the tile is not the chrome square it replaced.
             let chrome = theme.isDaylight
                 ? HelmTheme.nsColor(theme.daylightTokens.inset)
                 : HelmTheme.nsColor(theme.chromeBackgroundHex)
-            for (id, fill) in fills where sameColor(fill, chrome) {
-                return "\(theme.id)/\(id): the tile is still the plain chrome surface \(describe(chrome))"
+            for button in buttons {
+                guard let fill = layerFill(button), sameColor(fill, chrome) else {
+                    return "\(theme.id)/\(button.destination.title): at rest the square is "
+                        + "\(layerFill(button).map(describe) ?? "nil"), expected the monochrome \(describe(chrome))"
+                }
+            }
+
+            var lit: [NSColor] = []
+            for button in buttons {
+                bar.setActiveDestination(button.destination)
+                let hex = DaylightBarIconButton.tileHex(for: button.destination, in: theme)
+                let expected = HelmContrast.tintedSurface(tintHex: hex, theme: theme,
+                                                          target: HelmContrast.nonTextTarget,
+                                                          washSteps: DaylightBarIconButton.activeTileWashSteps)
+                guard let fill = layerFill(button), sameColor(fill, expected.fill) else {
+                    return "\(theme.id)/\(button.destination.title): the active tile is "
+                        + "\(layerFill(button).map(describe) ?? "nil"), expected its own hue's active wash "
+                        + "\(describe(expected.fill))"
+                }
+                guard let glyph = button.debugGlyphColor, sameColor(glyph, expected.foreground) else {
+                    return "\(theme.id)/\(button.destination.title): the active glyph is not the contrast-corrected "
+                        + "partner of its fill"
+                }
+                for other in buttons where other !== button {
+                    guard let otherFill = layerFill(other), sameColor(otherFill, chrome) else {
+                        return "\(theme.id): \(other.destination.title) is coloured while \(button.destination.title) "
+                            + "is the page showing - only the active square may be"
+                    }
+                }
+                if !lit.contains(where: { sameColor($0, fill) }) { lit.append(fill) }
+            }
+            // Discriminating power: the active tiles really are different hues.
+            guard lit.count >= 3 else {
+                return "\(theme.id): \(buttons.count) shortcuts lit in only \(lit.count) distinct colours"
             }
         }
         return nil
@@ -272,11 +268,13 @@ enum DaylightBarIconTileSelfTest {
             guard let button = bar.debugDestinationButtons().first(where: { $0.destination == .console }) else {
                 return "the fixture row no longer pins Console, so nothing here is measured"
             }
+            // UI-34: the tint shows when Console is the page showing.
+            bar.setActiveDestination(.console)
             let expected = HelmContrast.tintedSurface(
                 tintHex: SettingsController.Category.terminal.tint.hex(in: theme),
                 theme: theme,
                 target: HelmContrast.nonTextTarget,
-                washSteps: HelmContrast.tileWashSteps)
+                washSteps: DaylightBarIconButton.activeTileWashSteps)
             guard let fill = layerFill(button), sameColor(fill, expected.fill) else {
                 return "\(theme.id): the terminal shortcut paints \(layerFill(button).map(describe) ?? "nil"), "
                     + "expected Settings' own Terminal wash \(describe(expected.fill))"
@@ -294,54 +292,33 @@ enum DaylightBarIconTileSelfTest {
         let bar = makeLaidOutBar(theme: theme)
         guard let button = bar.debugDestinationButtons().first else { return "no quick-access shortcuts on the bar" }
 
-        guard let resting = layerFill(button), let restingBorder = layerBorder(button) else {
-            return "the resting tile has no fill or border"
+        guard let resting = layerFill(button), let restingGlyph = button.debugGlyphColor else {
+            return "the resting square has no fill or glyph colour"
         }
-
         button.debugSetHovering(true)
-        guard let hovered = layerFill(button), let hoveredBorder = layerBorder(button) else {
-            return "the hovered tile has no fill or border"
+        guard let hoveredGlyph = button.debugGlyphColor, let hovered = layerFill(button) else {
+            return "the hovered square has no glyph colour"
         }
         button.debugSetHovering(false)
+        // Hover stays monochrome (UI-34) but still does something: the glyph
+        // firms from muted to ink.
+        guard sameColor(resting, hovered) else {
+            return "hover changed the square's fill - hover is monochrome; only the active page takes a hue"
+        }
+        guard !sameColor(restingGlyph, hoveredGlyph) else {
+            return "the glyph is the same hovered as at rest - pointing at a shortcut has to do something"
+        }
 
         bar.setActiveDestination(button.destination)
-        guard let active = layerFill(button), let activeBorder = layerBorder(button) else {
-            return "the active tile has no fill or border"
+        guard let active = layerFill(button), !sameColor(active, resting) else {
+            return "the active square is not distinguishable from rest"
         }
-
-        // Three states, three renderings. Before this fix the fill was the
-        // chrome square in two of the three and the state lived on the glyph
-        // alone, so this is the case that fails if the ladders are ever
-        // collapsed back into one.
-        guard !sameColor(resting, hovered) else {
-            return "the tile is the same colour hovered as at rest (\(describe(resting))) - pointing at a shortcut "
-                + "has to do something"
-        }
-        guard !sameColor(hovered, active), !sameColor(resting, active) else {
-            return "the active tile (\(describe(active))) is not distinguishable from rest (\(describe(resting))) "
-                + "or hover (\(describe(hovered)))"
-        }
-        // The border carries the same ladder, and its alphas are strictly
-        // ordered - a ring that got *quieter* while the page it opens is the
-        // one showing would be backwards.
-        guard restingBorder.alphaComponent < hoveredBorder.alphaComponent,
-              hoveredBorder.alphaComponent < activeBorder.alphaComponent else {
-            return String(format: "the tile's ring reads %.2f at rest, %.2f hovered, %.2f active - "
-                          + "it must strengthen, not weaken",
-                          restingBorder.alphaComponent, hoveredBorder.alphaComponent, activeBorder.alphaComponent)
-        }
-
-        // Active survives the pointer leaving - which is what makes it "the
-        // page you are on" rather than a second hover.
+        // Active survives the pointer leaving - "the page you are on", not a
+        // second hover.
         button.debugSetHovering(true)
         button.debugSetHovering(false)
         guard let stillActive = layerFill(button), sameColor(stillActive, active) else {
             return "the active tile faded once the pointer left it"
-        }
-        for other in bar.debugDestinationButtons() where other !== button {
-            guard other.isActiveDestination == false else {
-                return "\(other.destination.title) is lit too - only the destination actually showing may be"
-            }
         }
         return nil
     }
@@ -368,8 +345,11 @@ enum DaylightBarIconTileSelfTest {
     /// too - the ring exists to separate a red disc from what is under it, so
     /// a ring left painting the old chrome surface reads as a hairline around
     /// the badge.
+    /// UI-34: Recents, the clipboard history, the theme toggle and the bell
+    /// are app chrome, so they are the same monochrome square as a resting
+    /// shortcut - never a tile. The bell's attention is its badge's job, and
+    /// the badge's ring follows the square it sits on.
     private static func checkTheBarsOwnControlsAreTiled() -> String? {
-        // Both sides of the palette families, and the captain's own theme.
         for id in ["daylight", "dusk", "ayu-dark", "catppuccin-latte"] {
             guard let theme = theme(id) else {
                 return "no `\(id)` theme - has the palette been renamed?"
@@ -378,68 +358,27 @@ enum DaylightBarIconTileSelfTest {
             let chrome = theme.isDaylight
                 ? HelmTheme.nsColor(theme.daylightTokens.inset)
                 : HelmTheme.nsColor(theme.chromeBackgroundHex)
-
-            let chromeWash = wash(DaylightBarIconButton.chromeTileHue, theme)
-            let bellWash = wash(DaylightBarIconButton.bellTileHue, theme)
-
-            // Discriminating power first: if the tile a control is supposed to
-            // wear were already the chrome square, every assertion below would
-            // pass vacuously on a control nobody had fixed.
-            guard !sameColor(chromeWash.fill, chrome), !sameColor(bellWash.fill, chrome) else {
-                return "\(theme.id): the chrome-control wash \(describe(chromeWash.fill)) or the bell's "
-                    + "\(describe(bellWash.fill)) is indistinguishable from the plain square "
-                    + "\(describe(chrome)) - this case could not fail"
-            }
-
-            for button in bar.debugIconSquares() where button is RecentDestinationsButton
-                                                    || button is DaylightThemeToggleButton {
-                let name = button.accessibilityLabel() ?? "icon"
-                guard let fill = layerFill(button), sameColor(fill, chromeWash.fill) else {
-                    return "\(theme.id)/\(name) paints \(layerFill(button).map(describe) ?? "nil"), expected the "
-                        + "\(DaylightBarIconButton.chromeTileHue.rawValue) wash \(describe(chromeWash.fill)) every "
-                        + "bar-owned control wears"
-                }
-                guard let glyph = button.debugGlyphColor, sameColor(glyph, chromeWash.foreground) else {
-                    return "\(theme.id)/\(name)'s glyph is \(button.debugGlyphColor.map(describe) ?? "nil"), "
-                        + "expected the contrast-corrected \(describe(chromeWash.foreground)) that wash pairs with"
-                }
-            }
-            // Both really were found - a `where` clause that matched nothing
-            // would leave the loop above asserting nothing at all.
             let owned = bar.debugIconSquares().filter {
-                $0 is RecentDestinationsButton || $0 is DaylightThemeToggleButton
+                $0 is RecentDestinationsButton || $0 is DaylightThemeToggleButton || $0 is ClipboardHistoryButton
             }
-            guard owned.count == 2 else {
-                return "\(theme.id): found \(owned.count) bar-owned squares, expected Recents and the theme toggle"
+            guard owned.count == 3 else {
+                return "\(theme.id): found \(owned.count) bar-owned squares, expected Recents, Clipboard and the theme toggle"
             }
-
+            for button in owned {
+                let name = button.accessibilityLabel() ?? "icon"
+                guard let fill = layerFill(button), sameColor(fill, chrome) else {
+                    return "\(theme.id)/\(name) paints \(layerFill(button).map(describe) ?? "nil"), expected the "
+                        + "monochrome square \(describe(chrome))"
+                }
+            }
             let bell = bar.notificationCenter.debugBell
-            guard let bellFill = bell.debugTileFill, sameColor(bellFill, bellWash.fill) else {
+            guard let bellFill = bell.debugTileFill, sameColor(bellFill, chrome) else {
                 return "\(theme.id): the bell paints \(bell.debugTileFill.map(describe) ?? "nil"), expected the "
-                    + "\(DaylightBarIconButton.bellTileHue.rawValue) wash \(describe(bellWash.fill))"
+                    + "monochrome square \(describe(chrome))"
             }
-            guard let bellGlyph = bell.debugGlyphColor, sameColor(bellGlyph, bellWash.foreground) else {
-                return "\(theme.id): the bell's glyph is \(bell.debugGlyphColor.map(describe) ?? "nil"), expected "
-                    + "\(describe(bellWash.foreground))"
-            }
-            guard let ring = bell.debugBadgeRingColor, sameColor(ring, bellWash.fill) else {
+            guard let ring = bell.debugBadgeRingColor, sameColor(ring, chrome) else {
                 return "\(theme.id): the badge's ring is \(bell.debugBadgeRingColor.map(describe) ?? "nil") - it has "
-                    + "to be the tile it sits on \(describe(bellWash.fill)), or a red disc merges into the glyph"
-            }
-            guard let bellBorder = layerBorderColor(bell.debugTileBorder) else {
-                return "\(theme.id): the bell's tile has no ring at all"
-            }
-            guard abs(bellBorder.alphaComponent - DaylightBarIconButton.restingTileBorderAlpha) < 0.01 else {
-                return String(format: "%@: the bell's ring reads %.2f where every other resting tile reads %.2f",
-                              theme.id, bellBorder.alphaComponent,
-                              DaylightBarIconButton.restingTileBorderAlpha)
-            }
-
-            // And the three do not all wear one colour - "they got tiles" is
-            // not the same claim as "the tiles mean something".
-            guard !sameColor(chromeWash.fill, bellWash.fill) else {
-                return "\(theme.id): the bell wears the same tile as Recents and the theme toggle "
-                    + "\(describe(bellWash.fill)) - the bell is the one control that is asking for something"
+                    + "to be the square it sits on"
             }
         }
         return nil
@@ -598,14 +537,15 @@ enum DaylightBarIconTileSelfTest {
                 + "exercises #452's branch"
         }
         let overflow = single.debugQuickAccessOverflowButton()
-        let hex = DaylightBarIconButton.tileHex(for: direct, in: theme)
-        let expected = HelmContrast.tintedSurface(tintHex: hex,
-                                                  theme: theme,
-                                                  target: HelmContrast.nonTextTarget,
-                                                  washSteps: HelmContrast.tileWashSteps)
-        guard let fill = layerFill(overflow), sameColor(fill, expected.fill) else {
-            return "the single-overflow button draws \(direct.title)'s icon but not its tile "
-                + "(\(layerFill(overflow).map(describe) ?? "nil") against \(describe(expected.fill)))"
+        guard overflow.debugSymbolName == direct.symbol else {
+            return "the single-overflow button draws \(overflow.debugSymbolName), expected \(direct.title)'s icon"
+        }
+        let restChrome = theme.isDaylight
+            ? HelmTheme.nsColor(theme.daylightTokens.inset)
+            : HelmTheme.nsColor(theme.chromeBackgroundHex)
+        guard let fill = layerFill(overflow), sameColor(fill, restChrome) else {
+            return "the single-overflow button is coloured at rest - UI-34 keeps every square monochrome "
+                + "until its page is showing"
         }
 
         // Eight pinned: two overflow, so the button is a menu opener drawing a

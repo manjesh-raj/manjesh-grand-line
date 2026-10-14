@@ -65,8 +65,11 @@ enum BarNavigationModernizationSelfTest {
             ("B1 the bar's material is per-theme-family", test_b1BarMaterialPerThemeFamily),
             ("B1 the material cannot cost the bar its legibility", test_b1MaterialCannotBreakContrast),
             ("B2 the icon row is one language", test_b2IconRowIsOneLanguage),
-            ("B2 a shortcut lights in its own hue on hover and while active", test_b2ShortcutHoverAndActiveState),
+            ("B2/UI-34 a shortcut firms on hover and lights in its own hue while active",
+             test_b2ShortcutHoverAndActiveState),
             ("B2 the bell's badge sits on the glyph, inside the tile", test_b2BellBadgeSitsOnTheGlyph),
+            ("UI-34/35/36/38 the bar's groups, one radius, a pressed state, the clipboard square",
+             test_revampBarStructure),
             ("B3 the window's initial focus is the page, not the bar", test_b3InitialFirstResponderIsThePage),
             ("B3 a ring is painted only for focus the captain moved", test_b3FocusRingOnlyForKeyboardFocus),
             ("B4 a navigation animates, and repeating it does not", test_b4TransitionSkippedWhenAlreadyShowing),
@@ -267,27 +270,11 @@ enum BarNavigationModernizationSelfTest {
                 + "a shortcut still has to respond to the pointer"
         }
 
-        // **`fm/grandline-topbar-icon-tiles` narrowed this assertion, and the
-        // narrowing is the point rather than a concession.** This used to
-        // demand the hovered glyph be the *raw* `identityHex`, which was true
-        // while the glyph sat on the plain chrome square. It now sits on a
-        // wash of its own hue, so `HelmContrast.tintedSurface` corrects it to
-        // clear the 3:1 non-text floor against that wash - and the raw hue on
-        // a wash of itself is exactly the pairing `HelmContrast` exists to
-        // forbid. Asserting the raw hue here would be asserting the defect.
-        //
-        // What survives is the claim B2 actually makes: the glyph is a
-        // rendering of *this destination's own* hue rather than of ink. It is
-        // measured as the pair `tintedSurface` produces, so a shortcut painted
-        // in a neighbour's colour still fails by name.
-        let expected = HelmContrast.tintedSurface(
-            tintHex: DaylightBarIconButton.tileHex(for: button.destination, in: daylight),
-            theme: daylight,
-            target: HelmContrast.nonTextTarget,
-            washSteps: DaylightBarIconButton.hoverTileWashSteps)
-        guard sameColor(hovered, expected.foreground) else {
-            return "\(button.destination.title): hovered glyph is \(describe(hovered)), expected its own domain hue "
-                + "corrected against its tile, \(describe(expected.foreground))"
+        // UI-34 (Q6): hover is monochrome - the glyph firms from muted to
+        // page ink on the plain square. The hue is for the page you are on.
+        guard sameColor(hovered, HelmTheme.nsColor(daylight.chromeInkHex)) else {
+            return "\(button.destination.title): hovered glyph is \(describe(hovered)), expected page ink - "
+                + "hover is monochrome since UI-34"
         }
 
         // Active: exactly the one showing, and it survives the pointer leaving.
@@ -710,6 +697,61 @@ enum BarNavigationModernizationSelfTest {
             AppSettings.shared.fontSize = savedFontSize
         }
         return body()
+    }
+
+    /// The UI/UX revamp's bar, structurally:
+    ///
+    ///   - UI-38: the clipboard-history square renders at 34pt (it had no
+    ///     size constraint and resolved to nothing);
+    ///   - UI-34: two 1px separators split history | shortcuts | controls,
+    ///     in that order along the bar;
+    ///   - UI-35: one radius (10) on every square, the avatar and the bell;
+    ///   - UI-36: a pressed square compresses, and releases.
+    private static func test_revampBarStructure() -> String? {
+        let bar = makeLaidOutBar()
+        guard let clip = bar.debugIconSquares().first(where: { $0 is ClipboardHistoryButton }) else {
+            return "the clipboard-history square is not among the bar's squares"
+        }
+        guard abs(clip.frame.width - DaylightBarIconButton.side) < 0.5,
+              abs(clip.frame.height - DaylightBarIconButton.side) < 0.5 else {
+            return "UI-38: the clipboard square measures \(clip.frame.size), expected a \(DaylightBarIconButton.side)pt square"
+        }
+        let separators = bar.debugGroupSeparators()
+        guard separators.count == 2, separators.allSatisfy({ $0.frame.height > 0 && $0.frame.width > 0 }) else {
+            return "UI-34: expected two laid-out separators, got \(separators.map(\.frame))"
+        }
+        guard let recents = bar.debugIconSquares().first(where: { $0 is RecentDestinationsButton }),
+              let firstShortcut = bar.debugDestinationButtons().first,
+              let theme = bar.debugIconSquares().first(where: { $0 is DaylightThemeToggleButton }) else {
+            return "the bar's squares are missing"
+        }
+        func x(_ v: NSView) -> CGFloat { v.convert(v.bounds, to: bar.view).midX }
+        guard x(recents) < x(separators[0]), x(separators[0]) < x(firstShortcut),
+              x(firstShortcut) < x(separators[1]), x(separators[1]) < x(theme) else {
+            return "UI-34: the separators do not split history | shortcuts | controls"
+        }
+        for square in bar.debugIconSquares() {
+            guard abs((square.debugIconBackground.layer?.cornerRadius ?? -1) - HelmMetrics.barControlRadius) < 0.01 else {
+                return "UI-35: \(square.accessibilityLabel() ?? "a square") has radius "
+                    + "\(square.debugIconBackground.layer?.cornerRadius ?? -1)"
+            }
+        }
+        guard abs(bar.debugAvatarRadius - HelmMetrics.barControlRadius) < 0.01 else {
+            return "UI-35: the avatar's radius is \(bar.debugAvatarRadius)"
+        }
+        guard abs(bar.notificationCenter.debugBell.debugIconFrameRadius - HelmMetrics.barControlRadius) < 0.01 else {
+            return "UI-35: the bell's radius is \(bar.notificationCenter.debugBell.debugIconFrameRadius)"
+        }
+        HelmMotion.reducedOverrideForTests = true
+        defer { HelmMotion.reducedOverrideForTests = nil }
+        firstShortcut.highlight(true)
+        let pressed = firstShortcut.debugIsPressedScale
+        firstShortcut.highlight(false)
+        let released = firstShortcut.debugIsPressedScale
+        guard abs(pressed - HelmButton.pressScale) < 0.001, abs(released - 1) < 0.001 else {
+            return "UI-36: a pressed square scales to \(pressed) and releases to \(released)"
+        }
+        return nil
     }
 }
 

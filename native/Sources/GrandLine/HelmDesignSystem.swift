@@ -106,6 +106,11 @@ enum HelmMetrics {
     static let dTileLarge: CGFloat = 12
     /// A 30pt icon tile (module headers).
     static let dTileSmall: CGFloat = 10
+    /// UI-35: the one radius every 34pt control on the bar wears - the
+    /// shortcut tiles, Recents, the theme toggle, the bell, the avatar and the
+    /// drill header's back button. The bar used to carry five (9, 10, 12, 14
+    /// and a capsule) on squares within a few points of each other.
+    static let barControlRadius: CGFloat = dTileSmall
     /// The 22pt logo dot.
     static let dLogoDot: CGFloat = 8
     /// Buttons, chips, space pills, tokens, progress tracks, the search pill.

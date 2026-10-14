@@ -97,7 +97,8 @@ final class HelmDrillHeader: NSView {
         backGlyph.translatesAutoresizingMaskIntoConstraints = false
 
         backButton.translatesAutoresizingMaskIntoConstraints = false
-        backButton.cornerRadius = HelmMetrics.dWell
+        // UI-35: the bar's one control radius.
+        backButton.cornerRadius = HelmMetrics.barControlRadius
         backButton.wantsLayer = true
         backButton.layer?.borderWidth = 1
         backButton.addSubview(backGlyph)
