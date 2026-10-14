@@ -2808,6 +2808,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_AGENTS_BUDGET_TESTS"] == "1" {
     exit(AgentsFileBudgetSelfTest.run() ? 0 : 1)
 }
 
+// The UI/UX revamp's source guards (UI-40): pure source reads, CI's blocking
+// lane. See `HelmKitSourceGuardSelfTest`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_HELM_KIT_GUARD_TESTS"] == "1" {
+    exit(HelmKitSourceGuardSelfTest.run() ? 0 : 1)
+}
+
 // Review process issue P9: the on-disk diagnostics sink and the crash-report
 // check. Pure logic plus real file round trips, so it guards CI's blocking
 // lane.

@@ -810,7 +810,6 @@ final class DaylightBarController: NSViewController {
 
     private func applyScrollEdge(_ theme: HelmTheme, animated: Bool) {
         guard let layer = bar.layer else { return }
-        let shadow = HelmCard.elevation(for: theme, level: scrollEdgeActive ? .raised : .resting)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         // The per-family split the audit asks for, and it falls out of the
         // palettes rather than being special-cased: Daylight/Dusk already
@@ -821,13 +820,14 @@ final class DaylightBarController: NSViewController {
         // hairline firms up as well.
         let restingAlpha: CGFloat = theme.isDaylight ? 1.0 : 0.6
         let borderColor = line.withAlphaComponent(scrollEdgeActive ? 1.0 : restingAlpha).cgColor
-        let opacity = Float(shadow.shadowColor?.alphaComponent ?? 0.1)
-
+        // UI-37: through `HelmCard.applyElevation`, which applies the
+        // level's alpha once. This used to hand `shadowColor` a colour that
+        // already carried the alpha and then set `shadowOpacity` to the same
+        // value again, so the bar's shadow rendered at the square of what
+        // §2.5 specifies and the bar barely separated from the page.
+        let level: HelmCard.Elevation = scrollEdgeActive ? .raised : .resting
         let apply = {
-            layer.shadowColor = (shadow.shadowColor ?? .black).cgColor
-            layer.shadowOpacity = opacity
-            layer.shadowRadius = shadow.shadowBlurRadius
-            layer.shadowOffset = CGSize(width: shadow.shadowOffset.width, height: shadow.shadowOffset.height)
+            HelmCard.applyElevation(level, to: layer, theme: theme)
             layer.borderColor = borderColor
         }
         // A state change is worth easing; a theme change is not (it is

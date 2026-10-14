@@ -284,15 +284,11 @@ final class HelmPlateCard: NSView {
 
     private func applyShadow(_ theme: HelmTheme) {
         guard let layer else { return }
-        let shadow = HelmCard.elevation(for: theme, level: .resting)
-        layer.shadowColor = (shadow.shadowColor ?? .black).cgColor
-        layer.shadowOpacity = Float(shadow.shadowColor?.alphaComponent ?? 0.1)
-        layer.shadowRadius = shadow.shadowBlurRadius
-        layer.shadowOffset = CGSize(width: shadow.shadowOffset.width, height: shadow.shadowOffset.height)
-        layer.shadowPath = CGPath(roundedRect: bounds,
-                                  cornerWidth: Self.cornerRadius(for: theme),
-                                  cornerHeight: Self.cornerRadius(for: theme),
-                                  transform: nil)
+        HelmCard.applyElevation(.resting, to: layer, theme: theme,
+                                path: CGPath(roundedRect: bounds,
+                                             cornerWidth: Self.cornerRadius(for: theme),
+                                             cornerHeight: Self.cornerRadius(for: theme),
+                                             transform: nil))
     }
 
     /// §6.1's radius under Daylight; the shared card radius on the other

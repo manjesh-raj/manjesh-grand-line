@@ -164,13 +164,10 @@ enum Toast {
         HelmCard.applyCardSurface(to: pill, theme: theme,
                                   cornerRadius: HelmMetrics.capsuleRadius(forHeight: pill.bounds.height),
                                   daylightRadius: HelmMetrics.capsuleRadius(forHeight: pill.bounds.height))
-        let shadow = HelmCard.elevation(for: theme, level: .raised)
         pill.layer?.masksToBounds = false
-        pill.layer?.shadowColor = shadow.shadowColor?.cgColor
-        pill.layer?.shadowOpacity = 1
-        pill.layer?.shadowRadius = shadow.shadowBlurRadius / 2
-        pill.layer?.shadowOffset = CGSize(width: shadow.shadowOffset.width,
-                                          height: shadow.shadowOffset.height)
+        if let layer = pill.layer {
+            HelmCard.applyElevation(.raised, to: layer, theme: theme, blurScale: 0.5)
+        }
 
         // A new *undo* pill still supersedes whatever undo was on screen -
         // including committing that delete by simply never running its handler.

@@ -37,6 +37,10 @@
 //   6. **Both themes paint.** Daylight and Dusk, asserting the card surface
 //      really changed between them - a theming check that cannot fail is
 //      worse than none.
+//   7. **The card shadow is really painted (UI-5).** Sampled in pixels from a
+//      real render, below a module card against the bare page ground: the
+//      squared-alpha defect darkened that strip by 3/255 on Daylight, which
+//      is what made every card read as a flat bordered box.
 
 // GL-27: compiled into debug builds only. Do not remove this guard -
 // `Phase3PolishSelfTest` asserts every file here carries it.
@@ -55,6 +59,7 @@ enum HomeDashboardViewSelfTest {
         checkItDegradesWhenNarrow(&ok)
         checkTheFleetTilesAndMergeFooter(&ok)
         checkBothThemesPaint(&ok)
+        checkTheCardShadowIsPainted(&ok)
 
         if ok {
             print("HomeDashboardViewSelfTest: all checks passed")
@@ -365,6 +370,84 @@ enum HomeDashboardViewSelfTest {
                       + "got a channel delta of \(delta)", &ok)
         } else {
             fail("both themes should have reported a card surface", &ok)
+        }
+    }
+    // MARK: 7 - the card shadow is painted, measured in pixels (UI-5)
+
+    /// The UI/UX revamp's H-01, as a pixel check rather than a reading of the
+    /// code. `HelmModuleCard` used to hand `CALayer` a shadow colour that
+    /// already carried the level's 0.10 alpha *and* set `shadowOpacity` to
+    /// 0.10 again, so the compositor painted 0.01. Measured on the tour
+    /// render: 3/255 of darkening under a Home card on Daylight and 0 on Dusk.
+    ///
+    /// The sample is the darkest pixel in the 2-10pt strip under the card's
+    /// bottom edge, against the page ground at the same height in the
+    /// page's right gutter, where no card's blur reaches. Both are read from
+    /// the same rep in its own colour space (AGENTS.md's probe rule), and the
+    /// rep is in pixels, so every coordinate is scaled by its backing factor.
+    ///
+    /// The floor is 6/255 on Daylight: twice what the defect painted, and
+    /// well under what one application of the alpha paints (about 10-14).
+    private static func checkTheCardShadowIsPainted(_ ok: inout Bool) {
+        let saved = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(saved) }
+        guard let theme = HelmTheme.theme(id: "daylight") else {
+            fail("theme daylight should exist", &ok)
+            return
+        }
+        ThemeManager.shared.setTheme(theme)
+        withScratchShift { store in
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            seedFleet(canvas)
+            canvas.debugApplyTheme(theme)
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+
+            let root = canvas.view
+            guard let card = canvas.moduleCardsForTests.first,
+                  let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) else {
+                fail("the shadow probe needs a module card and a rep to render into", &ok)
+                return
+            }
+            root.cacheDisplay(in: root.bounds, to: rep)
+            let scale = CGFloat(rep.pixelsWide) / max(1, root.bounds.width)
+            let frame = card.convert(card.bounds, to: root)
+
+            // The alpha is applied once, as the compositor reads it.
+            if let layer = card.layer {
+                let effective = HelmCard.debugEffectiveShadowAlpha(of: layer)
+                check(abs(effective - 0.10) < 0.005,
+                      "a resting module card's shadow should composite at alpha 0.10, got \(effective)", &ok)
+            }
+
+            func luma(_ x: CGFloat, _ yFromBottom: CGFloat) -> CGFloat? {
+                let px = Int((x * scale).rounded(.down))
+                let py = Int(((root.bounds.height - yFromBottom) * scale).rounded(.down))
+                guard px >= 0, py >= 0, px < rep.pixelsWide, py < rep.pixelsHigh,
+                      let c = rep.colorAt(x: px, y: py) else { return nil }
+                return (c.redComponent + c.greenComponent + c.blueComponent) / 3 * 255
+            }
+            var darkest: CGFloat = .greatestFiniteMagnitude
+            var groundAtDarkest: CGFloat = 0
+            for offset in stride(from: CGFloat(2), through: 10, by: 1) {
+                let y = frame.minY - offset
+                guard let under = luma(frame.midX, y),
+                      let ground = luma(root.bounds.width - 3, y) else { continue }
+                if under < darkest {
+                    darkest = under
+                    groundAtDarkest = ground
+                }
+            }
+            guard darkest < .greatestFiniteMagnitude else {
+                fail("the strip under the card was outside the render", &ok)
+                return
+            }
+            let darkening = groundAtDarkest - darkest
+            check(darkening >= 6,
+                  "the page under a Daylight module card should darken by at least 6/255 "
+                      + "from its resting shadow, got \(darkening)", &ok)
         }
     }
 }

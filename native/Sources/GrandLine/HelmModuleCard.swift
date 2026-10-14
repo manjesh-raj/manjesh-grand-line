@@ -2048,15 +2048,11 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
     private func applyShadow(_ theme: HelmTheme, raised: Bool) {
         guard let layer else { return }
-        let shadow = HelmCard.elevation(for: theme, level: raised ? .raised : .resting)
-        layer.shadowColor = (shadow.shadowColor ?? .black).cgColor
-        layer.shadowOpacity = Float(shadow.shadowColor?.alphaComponent ?? 0.1)
-        layer.shadowRadius = shadow.shadowBlurRadius
-        layer.shadowOffset = CGSize(width: shadow.shadowOffset.width, height: shadow.shadowOffset.height)
-        layer.shadowPath = CGPath(roundedRect: bounds,
-                                  cornerWidth: HelmMetrics.dModule,
-                                  cornerHeight: HelmMetrics.dModule,
-                                  transform: nil)
+        HelmCard.applyElevation(raised ? .raised : .resting, to: layer, theme: theme,
+                                path: CGPath(roundedRect: bounds,
+                                             cornerWidth: HelmMetrics.dModule,
+                                             cornerHeight: HelmMetrics.dModule,
+                                             transform: nil))
     }
 
     func applyTheme(_ theme: HelmTheme) {

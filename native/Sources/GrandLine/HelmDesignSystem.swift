@@ -686,18 +686,52 @@ final class HelmCard: NSView {
             layer?.shadowOpacity = 0
             return
         }
-        let shadow = Self.elevation(for: theme, level: .resting)
-        layer?.masksToBounds = false
-        // `CALayer` multiplies `shadowColor`'s own alpha by `shadowOpacity`,
-        // so handing it a pre-multiplied colour *and* the same value as the
-        // opacity squares the alpha and renders a shadow half as strong as
-        // §2.5 specifies. The colour goes in opaque; the alpha is the opacity.
-        let alpha = Float(shadow.shadowColor?.alphaComponent ?? 0)
-        layer?.shadowColor = shadow.shadowColor?.withAlphaComponent(1).cgColor
-        layer?.shadowOpacity = alpha
-        layer?.shadowRadius = shadow.shadowBlurRadius
-        layer?.shadowOffset = CGSize(width: shadow.shadowOffset.width, height: shadow.shadowOffset.height)
+        guard let layer else { return }
+        layer.masksToBounds = false
+        Self.applyElevation(.resting, to: layer, theme: theme)
     }
+
+    /// Paints one of the two elevation levels onto a layer, with the alpha
+    /// applied **once**.
+    ///
+    /// `CALayer` multiplies `shadowColor`'s own alpha by `shadowOpacity`. The
+    /// colour `elevation(for:level:)` returns already carries the level's
+    /// alpha, so a caller that hands it over as-is *and* copies the same
+    /// alpha into `shadowOpacity` squares it: 0.10 becomes 0.01, which is
+    /// what the UI/UX revamp measured below a Home card (3/255 of darkening
+    /// on Daylight, 0 on Dusk) and why every "floating card" rendered as a
+    /// flat bordered box. Three surfaces did exactly that (`HelmModuleCard`,
+    /// `HelmPlateCard` and the bar), which is why this is one function every
+    /// shadowed layer calls rather than a rule each copy has to remember.
+    /// `HelmKitSourceGuardSelfTest` fails the run on a new
+    /// `shadowOpacity = ` assignment in a file that reads the elevation colour.
+    ///
+    /// The colour goes in opaque and the alpha is the opacity. `blurScale`
+    /// exists for the one caller whose shape is much smaller than a card (the
+    /// toast capsule), where the card blur would read as a smudge.
+    static func applyElevation(_ level: Elevation,
+                               to layer: CALayer,
+                               theme: HelmTheme,
+                               path: CGPath? = nil,
+                               blurScale: CGFloat = 1) {
+        let shadow = elevation(for: theme, level: level)
+        let color = shadow.shadowColor ?? .black
+        layer.shadowColor = color.withAlphaComponent(1).cgColor
+        layer.shadowOpacity = Float(color.alphaComponent)
+        layer.shadowRadius = shadow.shadowBlurRadius * blurScale
+        layer.shadowOffset = CGSize(width: shadow.shadowOffset.width, height: shadow.shadowOffset.height)
+        layer.shadowPath = path
+    }
+
+    #if FM_SELFTESTS
+    /// What `applyElevation` actually put on a layer, as the product the
+    /// compositor uses - so a suite can assert the alpha was applied once
+    /// rather than reading back two numbers that are each "right".
+    static func debugEffectiveShadowAlpha(of layer: CALayer) -> CGFloat {
+        let colorAlpha = layer.shadowColor.flatMap { NSColor(cgColor: $0)?.alphaComponent } ?? 0
+        return colorAlpha * CGFloat(layer.shadowOpacity)
+    }
+    #endif
 
     // MARK: The one card surface
 
