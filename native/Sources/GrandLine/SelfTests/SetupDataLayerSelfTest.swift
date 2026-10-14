@@ -31,6 +31,13 @@
 // result: its entire symptom is the wrong argument being sent, which no
 // assertion about the reply can see.
 //
+// A third shipped later, and it is why a cask's installed state is no longer
+// asked of brew at all: a tap updated its cask to a DSL the captain's pinned
+// Homebrew could not parse, every brew command on it exited 1, and an
+// installed Automic Vault 4.18.0 read as "Not installed". The `cask*` cases
+// below build a fake Caskroom and `/Applications` in a temporary directory -
+// never the real ones - and assert installed state comes from there.
+//
 // Pure logic - no window, no real subprocess - so it runs in CI.
 //
 // Run with:
@@ -50,8 +57,14 @@ enum SetupDataLayerSelfTest {
             ("noMistakesVersionIgnoresTheDecoyVInTheWordVersion", test_noMistakesDecoyV),
             ("noMistakesReportsAnUpdateFromItsOwnBanner", test_noMistakesBanner),
             ("noMistakesWithNoBannerIsUpToDate", test_noMistakesNoBanner),
-            ("aFullyQualifiedCaskIsListedByItsShortToken", test_caskShortToken),
+            ("aFullyQualifiedCaskIsFoundInTheCaskroomByItsShortToken", test_caskShortToken),
             ("aFullyQualifiedCaskIsTappedBeforeAnyLookup", test_caskEnsureTapped),
+            ("aCaskOnDiskIsInstalledEvenWhenBrewCannotLoadIt", test_caskInstalledBrewFailing),
+            ("aCaskOnDiskWithBrewWorkingIsUpToDate", test_caskInstalledUpToDate),
+            ("aCaskOnDiskWithANewerReleaseHasAnUpdate", test_caskUpdateAvailable),
+            ("anAppBundleAloneCountsAsInstalled", test_caskAppBundleOnly),
+            ("aCaskAbsentEverywhereIsNotInstalled", test_caskAbsent),
+            ("aFailedCaskUpgradeNamesBrewsOwnError", test_caskUpgradeFailureNamesTheError),
             ("npmVersionsMapOntoTheRightStatus", test_npmStatusMapping),
             ("aMissingToolIsAReportedFailureNotACrash", test_missingToolIsReported),
             ("aFailedCheckCarriesTheToolsRealOutput", test_failureCarriesLog),
@@ -74,6 +87,8 @@ enum SetupDataLayerSelfTest {
         }
         UpdatesDataTestSeam.reset()
         DotfilesDataTestSeam.reset()
+        for root in fixtureRoots { try? FileManager.default.removeItem(at: root) }
+        fixtureRoots = []
         print(failures == 0
             ? "SetupDataLayerSelfTest: all \(cases.count) cases passed"
             : "SetupDataLayerSelfTest: \(failures)/\(cases.count) cases FAILED")
@@ -96,6 +111,12 @@ enum SetupDataLayerSelfTest {
     private static func fakeUpdates(_ replies: [String: SubprocessResult],
                                     resolve: @escaping (String) -> String? = { "/usr/local/bin/\($0)" }) {
         UpdatesDataTestSeam.resolveExecutable = resolve
+        // Every case reads a Caskroom and an /Applications, and must never
+        // read the machine's real ones. An empty fixture is the default; the
+        // cask cases fill theirs in with `installCaskFixture`.
+        let root = fixtureRoot()
+        UpdatesDataTestSeam.homebrewPrefixes = [root.appendingPathComponent("homebrew")]
+        UpdatesDataTestSeam.applicationsDirectory = root.appendingPathComponent("Applications")
         UpdatesDataTestSeam.run = { _, args, _ in
             for (key, value) in replies where args.first == key { return value }
             return result("")
@@ -157,23 +178,20 @@ enum SetupDataLayerSelfTest {
 
     // MARK: Homebrew cask
 
-    /// The fully-qualified-cask bug, asserted on the argv - its only symptom.
+    /// The fully-qualified-cask bug in its current form: the Caskroom folder
+    /// is named by the short token, so looking up `owner/tap/name` there
+    /// would find nothing on a machine where the cask is installed.
     private static func test_caskShortToken() -> String? {
-        fakeUpdates([
-            "list": result("automic-vault 2.10.0"),
-            "info": result("""
-            {"casks":[{"version":"2.11.0"}],"formulae":[{"versions":{"stable":"2.11.0"}}]}
-            """),
-        ])
-        _ = UpdatesSource.check(DependencyItem(id: "av", name: "Automic Vault", category: "Security",
-                                               kind: .brewCask(cask: "automic-vault/isotopes/automic-vault")))
-        guard let listArgs = args(matching: "list") else {
-            return "no `brew list` call was made at all"
+        fakeUpdates(["info": result(#"{"casks":[{"version":"2.11.0"}]}"#)])
+        installCaskFixture(token: "automic-vault", versions: ["2.10.0"])
+        let outcome = UpdatesSource.check(automicVault)
+        guard outcome.installedLabel == "2.10.0" else {
+            return "a cask installed under Caskroom/automic-vault was not found for the fully-qualified "
+                 + "token automic-vault/isotopes/automic-vault - got \(outcome.installedLabel) (\(outcome.status))"
         }
-        guard listArgs.last == "automic-vault" else {
-            return "`brew list --versions --cask` was asked for \(listArgs.last ?? "nil") - it only resolves an "
-                 + "installed cask by its SHORT token, so a fully-qualified owner/tap/name here returns exit 1 "
-                 + "even when the cask is installed. Args were \(listArgs)"
+        guard args(matching: "list") == nil else {
+            return "a cask's installed state must not be asked of `brew list` - it has to load the cask's "
+                 + "definition and fails when a tap ships one this Homebrew cannot parse"
         }
         return nil
     }
@@ -192,6 +210,133 @@ enum SetupDataLayerSelfTest {
             return "`brew tap` was asked for \(tapArgs) - expected the owner/tap portion"
         }
         return nil
+    }
+
+    private static let automicVault = DependencyItem(
+        id: "av", name: "Automic Vault", category: "Security",
+        kind: .brewCask(cask: "automic-vault/isotopes/automic-vault", app: "Automic Vault.app"))
+
+    /// The exact reply the captain's Homebrew 6.0.1 gave for every command on
+    /// the updated `automic-vault/isotopes` cask.
+    private static let brewCannotLoadCask = result(
+        "", stderr: "Error: Cask 'automic-vault' definition is invalid: undefined method 'run' for an instance of Homebrew::InstallSteps::DSL\nPlease report this issue.",
+        status: 1)
+
+    /// The regression itself. Before the fix this reported `.notInstalled`
+    /// and the row offered "Install in Bootstrap" for an installed app.
+    private static func test_caskInstalledBrewFailing() -> String? {
+        fakeUpdates(["info": brewCannotLoadCask, "list": brewCannotLoadCask])
+        installCaskFixture(token: "automic-vault", versions: ["4.9.0", "4.18.0"])
+        let outcome = UpdatesSource.check(automicVault)
+        guard outcome.status == .checkFailed else {
+            return "an installed cask brew cannot load must be .checkFailed (installed, latest unknown) - got "
+                 + "\(outcome.status) (\(outcome.detail)). .notInstalled here is the shipped bug"
+        }
+        guard outcome.installedLabel == "4.18.0" else {
+            return "expected the newest Caskroom version 4.18.0 (numeric, not lexical, order), got \(outcome.installedLabel)"
+        }
+        guard outcome.detail == "Installed 4.18.0 - Homebrew could not read the latest version" else {
+            return "unexpected detail: \(outcome.detail)"
+        }
+        guard outcome.log.contains("Homebrew error: Error: Cask 'automic-vault' definition is invalid") else {
+            return "the log must carry brew's first error line so the captain can see why. Log: \(outcome.log)"
+        }
+        return nil
+    }
+
+    private static func test_caskInstalledUpToDate() -> String? {
+        fakeUpdates(["info": result(#"{"casks":[{"version":"4.18.0"}]}"#)])
+        installCaskFixture(token: "automic-vault", versions: ["4.18.0"])
+        let outcome = UpdatesSource.check(automicVault)
+        guard outcome.status == .upToDate, outcome.installedLabel == "4.18.0", outcome.latestLabel == "4.18.0" else {
+            return "expected 4.18.0 up to date, got \(outcome.status) \(outcome.installedLabel) -> \(outcome.latestLabel ?? "nil")"
+        }
+        return nil
+    }
+
+    private static func test_caskUpdateAvailable() -> String? {
+        fakeUpdates(["info": result(#"{"casks":[{"version":"4.19.0"}]}"#)])
+        installCaskFixture(token: "automic-vault", versions: ["4.18.0"])
+        let outcome = UpdatesSource.check(automicVault)
+        guard outcome.status == .updateAvailable, outcome.installedLabel == "4.18.0", outcome.latestLabel == "4.19.0" else {
+            return "expected 4.18.0 -> 4.19.0 update available, got \(outcome.status) \(outcome.installedLabel) -> \(outcome.latestLabel ?? "nil")"
+        }
+        return nil
+    }
+
+    /// The second source: an app in /Applications with no Caskroom entry.
+    private static func test_caskAppBundleOnly() -> String? {
+        fakeUpdates(["info": brewCannotLoadCask])
+        installAppFixture(name: "Automic Vault.app", version: "4.17.2")
+        let outcome = UpdatesSource.check(automicVault)
+        guard outcome.status == .checkFailed, outcome.installedLabel == "4.17.2" else {
+            return "an app bundle in /Applications must count as installed at its CFBundleShortVersionString, got "
+                 + "\(outcome.status) \(outcome.installedLabel)"
+        }
+        return nil
+    }
+
+    /// The other direction: the fix must not turn absence into presence,
+    /// whether or not brew can answer.
+    private static func test_caskAbsent() -> String? {
+        fakeUpdates(["info": result(#"{"casks":[{"version":"4.18.0"}]}"#)])
+        let working = UpdatesSource.check(automicVault)
+        guard working.status == .notInstalled, working.detail == "Not installed - 4.18.0 available" else {
+            return "an absent cask with brew working must be .notInstalled, got \(working.status) (\(working.detail))"
+        }
+        UpdatesDataTestSeam.reset()
+        fakeUpdates(["info": brewCannotLoadCask])
+        let failing = UpdatesSource.check(automicVault)
+        guard failing.status == .notInstalled else {
+            return "an absent cask with brew failing must still be .notInstalled, got \(failing.status) (\(failing.detail))"
+        }
+        return nil
+    }
+
+    /// Update still goes through brew, and fails for a cask brew cannot
+    /// load. The detail has to say why.
+    private static func test_caskUpgradeFailureNamesTheError() -> String? {
+        fakeUpdates(["upgrade": brewCannotLoadCask])
+        installCaskFixture(token: "automic-vault", versions: ["4.18.0"])
+        let outcome = UpdatesSource.update(automicVault)
+        guard !outcome.ok else { return "a failed brew upgrade reported success" }
+        guard outcome.detail == "brew upgrade automic-vault/isotopes/automic-vault failed: Error: Cask 'automic-vault' definition is invalid: undefined method 'run' for an instance of Homebrew::InstallSteps::DSL" else {
+            return "the failure must name brew's first error line, got: \(outcome.detail)"
+        }
+        return nil
+    }
+
+    // MARK: Fixtures
+
+    private static var fixtureRoots: [URL] = []
+
+    /// One fresh directory per case, under the system temp directory, removed
+    /// when the run ends.
+    private static func fixtureRoot() -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fm-setup-data-layer-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        fixtureRoots.append(root)
+        return root
+    }
+
+    /// `<prefix>/Caskroom/<token>/<version>/` per version, plus brew's own
+    /// `.metadata` folder, which must be ignored rather than read as a version.
+    private static func installCaskFixture(token: String, versions: [String]) {
+        guard let prefix = UpdatesDataTestSeam.homebrewPrefixes?.first else { return }
+        let dir = prefix.appendingPathComponent("Caskroom").appendingPathComponent(token)
+        for name in versions + [".metadata"] {
+            try? FileManager.default.createDirectory(at: dir.appendingPathComponent(name),
+                                                     withIntermediateDirectories: true)
+        }
+    }
+
+    private static func installAppFixture(name: String, version: String) {
+        guard let apps = UpdatesDataTestSeam.applicationsDirectory else { return }
+        let contents = apps.appendingPathComponent(name).appendingPathComponent("Contents")
+        try? FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        let plist: NSDictionary = ["CFBundleShortVersionString": version]
+        plist.write(to: contents.appendingPathComponent("Info.plist"), atomically: true)
     }
 
     // MARK: npm and status mapping
