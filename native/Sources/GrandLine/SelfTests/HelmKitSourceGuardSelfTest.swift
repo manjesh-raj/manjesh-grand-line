@@ -23,6 +23,10 @@
 //      elevation colour already carries the level's alpha, and copying it
 //      into `shadowOpacity` multiplies it in twice. `HelmCard.applyElevation`
 //      is the one place that does the conversion.
+//   2. **One status pill (UI-32, Rule 4).** `ToolRowLayout.pill(` is called
+//      only by `HelmStatusPill` and by the files on the migration list below.
+//      The list only ever shrinks: a new file that paints a pill by hand
+//      fails here and should build a `HelmStatusPill` instead.
 //
 // GL-27: compiled into debug builds only.
 #if FM_SELFTESTS
@@ -39,6 +43,7 @@ enum HelmKitSourceGuardSelfTest {
             return true
         }
         checkShadowsArePaintedOnce(files, &ok)
+        checkPillsGoThroughTheKit(files, &ok)
         print(ok ? "HelmKitSourceGuardSelfTest: OK" : "HelmKitSourceGuardSelfTest: FAILED")
         return ok
     }
@@ -77,6 +82,48 @@ enum HelmKitSourceGuardSelfTest {
         check(readers >= 1,
               "expected at least one file outside \(elevationOwner) to read HelmCard.elevation(for:), "
                   + "found \(readers) - the guard is no longer looking at anything", &ok)
+    }
+
+    // MARK: 2 - one status pill
+
+    /// Files allowed to call `ToolRowLayout.pill(` directly: the class that
+    /// defines it, the kit class that wraps it, and the call sites not yet
+    /// moved onto `HelmStatusPill`. Shrinks; never grows.
+    static let pillCallAllowlist: Set<String> = [
+        "HelmUIComponents.swift",
+        "HelmKit.swift",
+        // Migration list.
+        "BootstrapController.swift",
+        "CommandLibraryViews.swift",
+        "CredentialVaultController.swift",
+        "ConsoleController+SRELead.swift",
+        "CredentialVaultInspector.swift",
+        "CredentialVaultRecoverySheet.swift",
+        "DictationController.swift",
+        "GitHubSyncController.swift",
+        "HealthCardView.swift",
+        "HelmModuleCard.swift",
+        "IncidentCardView.swift",
+        "LogAnalyzerController.swift",
+        "NeedsAttentionCard.swift",
+        "PasswordGeneratorPanel.swift",
+        "SettingsController.swift",
+        "ShiftController.swift",
+        "UpdatesController.swift",
+    ]
+
+    private static func checkPillsGoThroughTheKit(_ files: [URL], _ ok: inout Bool) {
+        var seenKit = false
+        for file in files {
+            guard let source = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let code = codeLines(source).joined(separator: "\n")
+            guard code.contains("ToolRowLayout.pill(") else { continue }
+            if file.lastPathComponent == "HelmKit.swift" { seenKit = true }
+            check(pillCallAllowlist.contains(file.lastPathComponent),
+                  "\(file.lastPathComponent) paints a pill with ToolRowLayout.pill - build a HelmStatusPill "
+                      + "(HelmKit.swift) instead, so the recipe cannot be re-spelled", &ok)
+        }
+        check(seenKit, "HelmStatusPill should be found wrapping ToolRowLayout.pill - the guard is blind", &ok)
     }
 }
 

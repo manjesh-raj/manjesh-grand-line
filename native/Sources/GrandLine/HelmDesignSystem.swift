@@ -1943,7 +1943,28 @@ final class HelmAccentRow: NSView {
     /// notification panel, which is 340pt wide and has no room for a chip
     /// beside wrapping body text. Bar weight and position, badge size, kicker
     /// typography and chip style are identical either way.
-    enum ChipPlacement { case trailing, belowBody }
+    enum ChipPlacement {
+        case trailing, belowBody
+        /// On the meta line's trailing edge, beside the due caption - the
+        /// board card's "Due today ... High" line (UI-22, UI-23).
+        case metaLine
+    }
+
+    /// The row's surface recipe (the UI/UX revamp's Rule 1: one bordered
+    /// surface per level).
+    ///
+    /// - `.card` is the recipe every row had before the revamp: a 10pt card
+    ///   outlined in a wash of its own tint, with a 3pt bar. It stays the
+    ///   default so a row nobody has moved yet renders exactly as it did.
+    /// - `.flat` is a row *inside* a card: no border, no radius, no fill of
+    ///   its own, a `rowHover` fill under the pointer and 10/16 padding with
+    ///   a 44pt floor. The 3pt bar shows only when the row carries an
+    ///   identity (`Content.showsBar`). Separators come from the list
+    ///   (`HelmFlatList`), never from the row.
+    /// - `.cardFlat` is a card that sits directly on the page ground - the
+    ///   Tasks board's task card: radius 10, a 1px neutral hairline (never
+    ///   the tint), the 3pt identity bar, 10/12 padding and the same hover.
+    enum Style: Equatable { case card, flat, cardFlat }
 
     /// Everything that varies per row. Structure - chip placement, whether
     /// there is a leading control, whether the body is text or a caller-owned
@@ -1999,6 +2020,25 @@ final class HelmAccentRow: NSView {
         var chipTint: HelmTint? = nil
         /// A wide row truncates its title to one line; a narrow one wraps.
         var titleWraps: Bool = false
+        /// A short state-coloured caption on the row's trailing edge, before
+        /// the chip - the attention card's "Overdue 26 days · since 18 Sep"
+        /// (UI-1), which used to be a large pill. Coloured through
+        /// `HelmContrast.legibleTintedText`, because a hue is not by itself
+        /// safe as text.
+        var trailingCaption: String? = nil
+        var trailingCaptionTint: HelmTint? = nil
+        /// A coloured lead-in on the meta line ("Due today", "Overdue 2
+        /// days"), with the rest of `meta` after it in the usual muted face.
+        /// UI-24: the due date is a caption that takes colour only when it
+        /// matters, on the board and in the list alike.
+        var metaLead: String? = nil
+        var metaLeadTint: HelmTint? = nil
+        /// Draw the title muted and struck through - a Done card (UI-29).
+        var titleStruck: Bool = false
+        /// Whether the 3pt bar is drawn. `nil` takes the style's own answer:
+        /// always for `.card` and `.cardFlat`, never for `.flat`, where the
+        /// bar is reserved for a row that carries an identity (Rule 3).
+        var showsBar: Bool? = nil
         /// Let the meta line wrap instead of truncating - B2 of
         /// `data/grand-line-e2e-audit/report.md`. For a read-only browsing
         /// surface with vertical room and genuinely long meta text (the
@@ -2062,16 +2102,45 @@ final class HelmAccentRow: NSView {
 
     private static let barWidth: CGFloat = 3
     private static let barRadius: CGFloat = 1.5
-    /// The bar is inset from the card's top and bottom so it never clips past
-    /// the card's own rounded corners at `HelmMetrics.rRow`.
-    private static let barVerticalInset: CGFloat = 10
-    private static let barLeadingInset: CGFloat = 2
-    private static let contentLeading: CGFloat = 12
-    private static let contentTrailing: CGFloat = 14
-    private static let contentVertical: CGFloat = 12
-    /// The vertical rhythm inside the body column - 4 in the notification
-    /// panel and 3 in the two Shift lists as shipped, unified to 4.
-    private static let bodySpacing: CGFloat = 4
+
+    /// Every padding number, per style, from one table rather than branches
+    /// scattered through `buildLayout`.
+    struct Metrics: Equatable {
+        /// The bar is inset from the card's top and bottom so it never clips
+        /// past the card's own rounded corners.
+        let barVerticalInset: CGFloat
+        let barLeadingInset: CGFloat
+        /// From the bar's trailing edge to the content.
+        let contentLeading: CGFloat
+        let contentTrailing: CGFloat
+        let contentVertical: CGFloat
+        let bodySpacing: CGFloat
+        let cornerRadius: CGFloat
+        let minHeight: CGFloat?
+    }
+
+    static func metrics(for style: Style) -> Metrics {
+        switch style {
+        case .card:
+            // `NotificationRowView`'s own geometry, promoted. The body rhythm
+            // was 4 in the notification panel and 3 in the two Shift lists as
+            // shipped, unified to 4.
+            return Metrics(barVerticalInset: 10, barLeadingInset: 2, contentLeading: 12,
+                           contentTrailing: 14, contentVertical: 12, bodySpacing: 4,
+                           cornerRadius: HelmMetrics.rRow, minHeight: nil)
+        case .flat:
+            // 10/16 and a 44pt floor (the kit table). The bar sits flush at
+            // the leading edge, so with it hidden the text starts 16pt in.
+            return Metrics(barVerticalInset: 10, barLeadingInset: 0, contentLeading: 13,
+                           contentTrailing: HelmMetrics.s4, contentVertical: 10, bodySpacing: 2,
+                           cornerRadius: 0, minHeight: 44)
+        case .cardFlat:
+            // 10/12 with the bar 2pt in, so the text lands 14pt from the edge.
+            return Metrics(barVerticalInset: HelmMetrics.s2, barLeadingInset: 2, contentLeading: 9,
+                           contentTrailing: HelmMetrics.s3, contentVertical: 10, bodySpacing: 3,
+                           cornerRadius: HelmMetrics.rRow, minHeight: nil)
+        }
+    }
 
     /// The card border is a wash of the row's own hue. It carries real load
     /// rather than decoration: it is the only thing separating a row from its
@@ -2115,8 +2184,14 @@ final class HelmAccentRow: NSView {
     /// against.
     private weak var textColumn: NSStackView?
     private let customContent: NSView?
-    private let chip = NSView()
-    private let chipLabel = NSTextField(labelWithString: "")
+    /// UI-32: the row's chip is the kit's one status pill, not a view this
+    /// row hands to `ToolRowLayout.pill` itself.
+    private let chip = HelmStatusPill(style: .pill)
+    private let trailingCaptionLabel = NSTextField(labelWithString: "")
+    /// The meta line and, for `.metaLine` placement, the chip beside it.
+    private let metaRow = NSStackView()
+    let style: Style
+    private let metrics: Metrics
 
     private let trailingAccessory: NSView?
 
@@ -2269,7 +2344,10 @@ final class HelmAccentRow: NSView {
          /// unstyled table once the window is wide. Left `nil` everywhere
          /// else, so a task row, a notification and an Overview peek row are
          /// byte-for-byte unchanged.
-         maxContentWidth: CGFloat? = nil) {
+         maxContentWidth: CGFloat? = nil,
+         style: Style = .card) {
+        self.style = style
+        self.metrics = Self.metrics(for: style)
         self.maxContentWidth = maxContentWidth
         self.chipPlacement = chipPlacement
         self.leadingControl = leadingControl
@@ -2299,9 +2377,12 @@ final class HelmAccentRow: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     private func buildLayout() {
-        card.cornerRadius = HelmMetrics.rRow
+        card.cornerRadius = metrics.cornerRadius
         card.translatesAutoresizingMaskIntoConstraints = false
         addSubview(card)
+        if let minHeight = metrics.minHeight {
+            heightAnchor.constraint(greaterThanOrEqualToConstant: HelmType.scaledRowHeight(minHeight)).isActive = true
+        }
 
         accentBar.wantsLayer = true
         accentBar.layer?.cornerRadius = Self.barRadius
@@ -2329,6 +2410,15 @@ final class HelmAccentRow: NSView {
         chip.setContentHuggingPriority(.required, for: .horizontal)
         chip.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        trailingCaptionLabel.translatesAutoresizingMaskIntoConstraints = false
+        trailingCaptionLabel.lineBreakMode = .byTruncatingTail
+        trailingCaptionLabel.isHidden = true
+        trailingCaptionLabel.setContentHuggingPriority(.required, for: .horizontal)
+        // A caption may truncate before the title column does - but only
+        // after it, so it sits at 499, under the window (gotcha (13)).
+        trailingCaptionLabel.setContentCompressionResistancePriority(
+            HelmDaylightPriority.contentTie, for: .horizontal)
+
         let titleRow = NSStackView(views: [titleLabel, titleAccessory])
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
@@ -2354,6 +2444,25 @@ final class HelmAccentRow: NSView {
             customContent.translatesAutoresizingMaskIntoConstraints = false
             bodyContent = customContent
             bodyViews.append(customContent)
+        } else if chipPlacement == .metaLine {
+            // The meta caption and the chip share one line: caption at the
+            // leading edge, chip at the trailing one (gotcha (10)'s `.fill`
+            // and a spacer, so the chip never drifts with the caption).
+            let spacer = NSView()
+            spacer.translatesAutoresizingMaskIntoConstraints = false
+            spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            for view in [metaLabel, spacer, chip] as [NSView] { metaRow.addArrangedSubview(view) }
+            metaRow.orientation = .horizontal
+            metaRow.alignment = .centerY
+            metaRow.distribution = .fill
+            metaRow.spacing = HelmMetrics.s2
+            metaRow.translatesAutoresizingMaskIntoConstraints = false
+            metaRow.setHuggingPriority(.defaultLow, for: .horizontal)
+            metaRow.setClippingResistancePriority(.defaultLow, for: .horizontal)
+            bodyContent = metaRow
+            bodyViews.append(titleRow)
+            bodyViews.append(metaRow)
         } else {
             bodyContent = metaLabel
             bodyViews.append(titleRow)
@@ -2365,8 +2474,12 @@ final class HelmAccentRow: NSView {
         textColumn = textStack
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = Self.bodySpacing
+        textStack.spacing = metrics.bodySpacing
         if chipPlacement == .belowBody { textStack.setCustomSpacing(6, after: bodyContent) }
+        if chipPlacement == .metaLine {
+            textStack.setCustomSpacing(metrics.bodySpacing + 3, after: titleRow)
+            metaRow.widthAnchor.constraint(equalTo: textStack.widthAnchor).isActive = true
+        }
         textStack.translatesAutoresizingMaskIntoConstraints = false
         // Stack-level priorities, not content-level - see `titleRow` above.
         textStack.setHuggingPriority(.defaultLow, for: .horizontal)
@@ -2379,6 +2492,7 @@ final class HelmAccentRow: NSView {
             rowViews.append(leading)
         }
         rowViews.append(textStack)
+        rowViews.append(trailingCaptionLabel)
         if chipPlacement == .trailing { rowViews.append(chip) }
         if let trailingAccessory {
             trailingAccessory.translatesAutoresizingMaskIntoConstraints = false
@@ -2436,16 +2550,18 @@ final class HelmAccentRow: NSView {
             card.topAnchor.constraint(equalTo: topAnchor),
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            accentBar.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: Self.barLeadingInset),
+            accentBar.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: metrics.barLeadingInset),
             accentBar.widthAnchor.constraint(equalToConstant: Self.barWidth),
-            accentBar.topAnchor.constraint(equalTo: card.topAnchor, constant: Self.barVerticalInset),
-            accentBar.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -Self.barVerticalInset),
+            accentBar.topAnchor.constraint(equalTo: card.topAnchor, constant: metrics.barVerticalInset),
+            accentBar.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -metrics.barVerticalInset),
 
-            row.leadingAnchor.constraint(equalTo: accentBar.trailingAnchor, constant: Self.contentLeading),
+            row.leadingAnchor.constraint(equalTo: accentBar.trailingAnchor, constant: metrics.contentLeading),
             // D2 caps this trailing pin for a record list - see below.
-            row.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -Self.contentTrailing),
-            row.topAnchor.constraint(equalTo: card.topAnchor, constant: Self.contentVertical),
-            row.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -Self.contentVertical),
+            row.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -metrics.contentTrailing),
+            // A floor row (`.flat`'s 44pt) centres its content rather than
+            // pinning it to the top, so a one-line row reads level.
+            row.topAnchor.constraint(greaterThanOrEqualTo: card.topAnchor, constant: metrics.contentVertical),
+            row.centerYAnchor.constraint(equalTo: card.centerYAnchor),
         ])
 
         // D2: a record row's own content column, capped.
@@ -2482,13 +2598,19 @@ final class HelmAccentRow: NSView {
             // cap and a narrower one resolves to the card. Both stay under
             // `NSLayoutPriorityWindowSizeStayPut` (gotcha (13)).
             let fill = row.trailingAnchor.constraint(equalTo: card.trailingAnchor,
-                                                     constant: -Self.contentTrailing)
+                                                     constant: -metrics.contentTrailing)
             fill.priority = HelmDaylightPriority.contentTie - 1
             fill.isActive = true
         } else {
             row.trailingAnchor.constraint(equalTo: card.trailingAnchor,
-                                          constant: -Self.contentTrailing).isActive = true
+                                          constant: -metrics.contentTrailing).isActive = true
         }
+        // The vertical pin, as a hug: the row is exactly its content plus
+        // padding unless a floor (`minHeight`) asks for more, and then the
+        // content centres (the `centerY` above) rather than riding the top.
+        let hug = row.topAnchor.constraint(equalTo: card.topAnchor, constant: metrics.contentVertical)
+        hug.priority = metrics.minHeight == nil ? .required : .defaultHigh
+        hug.isActive = true
 
         if let customContent {
             // A caller-owned body has to be told it may use the whole column,
@@ -2619,8 +2741,8 @@ final class HelmAccentRow: NSView {
             titleAccessory.isHidden = true
         }
 
-        metaLabel.stringValue = content.meta ?? ""
-        metaLabel.isHidden = (content.meta?.isEmpty ?? true)
+        metaLabel.stringValue = Self.metaText(content)
+        metaLabel.isHidden = metaLabel.stringValue.isEmpty
         metaLabel.font = content.metaIsCode ? HelmType.code() : HelmType.caption()
         metaLabel.maximumNumberOfLines = content.metaWraps ? 0 : 1
         metaLabel.lineBreakMode = content.metaWraps ? .byWordWrapping : .byTruncatingTail
@@ -2628,13 +2750,33 @@ final class HelmAccentRow: NSView {
         // B2: the truncated string stays readable on hover. Set on the *card*
         // as well as the labels, because the labels do not fill the row and a
         // captain aiming at the row is more likely to be over the card.
-        let full = [content.title, content.meta].compactMap { $0 }.filter { !$0.isEmpty }
+        let metaFull = Self.metaText(content)
+        let full = [content.title, metaFull].filter { !$0.isEmpty }
         titleLabel.toolTip = content.title.isEmpty ? nil : content.title
-        metaLabel.toolTip = content.meta?.isEmpty == false ? content.meta : nil
+        metaLabel.toolTip = metaFull.isEmpty ? nil : metaFull
         card.toolTip = full.isEmpty ? nil : full.joined(separator: " - ")
 
         chip.isHidden = content.chipText == nil
+        trailingCaptionLabel.stringValue = content.trailingCaption ?? ""
+        trailingCaptionLabel.isHidden = (content.trailingCaption ?? "").isEmpty
+        if chipPlacement == .metaLine {
+            metaRow.isHidden = metaLabel.isHidden && chip.isHidden
+        }
         applyTheme(theme)
+    }
+
+    /// The meta line as plain text: the coloured lead, then the rest. One
+    /// definition, so the tooltip, VoiceOver and the painted label agree.
+    static func metaText(_ content: Content) -> String {
+        [content.metaLead, content.meta]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: " \u{00B7} ")
+    }
+
+    /// Whether the bar is drawn, per `Content.showsBar`'s rule.
+    private func barIsShown(_ content: Content) -> Bool {
+        content.showsBar ?? (style != .flat)
     }
 
     /// Re-resolves every colour against `theme`. Safe to call repeatedly: it
@@ -2667,19 +2809,91 @@ final class HelmAccentRow: NSView {
         // an `NSStackView`'s layout entirely (gotcha (11)'s own exemption), so
         // this genuinely reclaims the line rather than blanking it.
         kickerLabel.isHidden = content.kicker.isEmpty
-        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        metaLabel.textColor = HelmTheme.mutedInk(theme)
-        titleAccessory.contentTintColor = HelmTheme.mutedInk(theme)
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let muted = HelmTheme.mutedInk(theme)
+        let baseFill = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        if content.titleStruck {
+            // UI-29: a Done card reads as done - muted and struck through.
+            titleLabel.attributedStringValue = NSAttributedString(string: content.title, attributes: [
+                .font: titleLabel.font ?? HelmType.rowTitle(),
+                .foregroundColor: muted,
+                .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+                .strikethroughColor: muted,
+            ])
+        } else {
+            titleLabel.stringValue = content.title
+            titleLabel.textColor = ink
+        }
+        metaLabel.textColor = muted
+        if let lead = content.metaLead, !lead.isEmpty, !content.metaIsCode {
+            let font = metaLabel.font ?? HelmType.caption()
+            let leadColor = content.metaLeadTint.map {
+                HelmContrast.legibleTintedText(tintHex: $0.hex(in: theme), over: baseFill, theme: theme)
+            } ?? muted
+            let text = NSMutableAttributedString(string: lead, attributes: [
+                .font: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask),
+                .foregroundColor: leadColor,
+            ])
+            if let rest = content.meta, !rest.isEmpty {
+                text.append(NSAttributedString(string: " \u{00B7} " + rest, attributes: [
+                    .font: font, .foregroundColor: muted,
+                ]))
+            }
+            metaLabel.attributedStringValue = text
+        }
+        titleAccessory.contentTintColor = muted
+
+        if let caption = content.trailingCaption, !caption.isEmpty {
+            trailingCaptionLabel.font = HelmType.chip()
+            trailingCaptionLabel.textColor = content.trailingCaptionTint.map {
+                HelmContrast.legibleTintedText(tintHex: $0.hex(in: theme), over: baseFill, theme: theme)
+            } ?? muted
+        }
 
         if let chipText = content.chipText {
-            let chipHex = content.chipTint.map { $0.hex(in: theme) } ?? content.resolvedTintHex(in: theme)
-            ToolRowLayout.pill(text: chipText, colorHex: chipHex,
-                               into: chip, label: chipLabel, theme: theme)
+            if let chipTint = content.chipTint {
+                chip.configure(text: chipText, tint: chipTint, theme: theme)
+            } else if content.tintHex != nil || content.domainHue != nil {
+                chip.configure(text: chipText, literalHex: content.resolvedTintHex(in: theme), theme: theme)
+            } else {
+                chip.configure(text: chipText, tint: content.tint, theme: theme)
+            }
         }
 
         accentBar.layer?.backgroundColor = tintColor.cgColor
+        accentBar.isHidden = !barIsShown(content)
 
-        let baseFill = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        // The hover fill every non-`.card` style shares: Daylight's own
+        // `rowHover` token, or a light wash of page ink on the other palettes.
+        let flatHover: NSColor = theme.isDaylight
+            ? HelmTheme.nsColor(theme.daylightTokens.rowHover)
+            : (baseFill.blended(withFraction: 0.06, of: ink) ?? baseFill)
+
+        if style != .card {
+            let accent = HelmTheme.nsColor(theme.accentHex)
+            let resting: NSColor = style == .flat ? .clear : baseFill
+            if isRowSelected {
+                // UI-28: the same accent wash and stroke `.card` selection uses.
+                let fill = baseFill.blended(withFraction: Self.selectionWash, of: accent) ?? baseFill
+                card.normalColor = fill
+                card.hoverColor = fill
+                card.layer?.borderWidth = style == .cardFlat ? 1 : 0
+                card.layer?.borderColor = accent.withAlphaComponent(Self.selectionBorderAlpha).cgColor
+            } else {
+                card.normalColor = resting
+                card.hoverColor = hoverEnabled ? flatHover : resting
+                if style == .cardFlat {
+                    card.layer?.borderWidth = 1
+                    card.layer?.borderColor = (theme.isDaylight
+                        ? HelmTheme.nsColor(theme.chromeLineHex)
+                        : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.borderAlpha)).cgColor
+                } else {
+                    card.layer?.borderWidth = 0
+                }
+            }
+            return
+        }
+
         if isRowSelected {
             // The pre-Phase-5 `HelmTableRowView` recipe, moved onto the card:
             // a wash of the theme's own accent under a stronger accent stroke.
@@ -2829,7 +3043,22 @@ final class HelmAccentRow: NSView {
     var debugMetaText: String { metaLabel.stringValue }
     /// The chip's real rendered text - `nil` when the chip is hidden (no
     /// `chipText` was set), so a test can tell "no chip" from "an empty one".
-    var debugChipText: String? { chip.isHidden ? nil : chipLabel.stringValue }
+    var debugChipText: String? { chip.isHidden ? nil : chip.text }
+    var debugTrailingCaption: String? {
+        trailingCaptionLabel.isHidden ? nil : trailingCaptionLabel.stringValue
+    }
+    var debugTrailingCaptionColor: NSColor? { trailingCaptionLabel.textColor }
+    var debugMetaAttributed: NSAttributedString { metaLabel.attributedStringValue }
+    var debugTitleAttributed: NSAttributedString { titleLabel.attributedStringValue }
+    var debugBarHidden: Bool { accentBar.isHidden }
+    var debugCardBorderWidth: CGFloat { card.layer?.borderWidth ?? 0 }
+    var debugChip: HelmStatusPill { chip }
+    var debugTrailingCaptionFrame: NSRect? {
+        trailingCaptionLabel.isHidden ? nil : trailingCaptionLabel.convert(trailingCaptionLabel.bounds, to: self)
+    }
+    /// `NSTextField`'s alignment rect sits inside its frame, so a probe
+    /// comparing where text *starts* adds this to the frame's `minX`.
+    var debugTitleAlignmentLeadingInset: CGFloat { titleLabel.alignmentRectInsets.left }
     /// Fires the row's own `trailingAccessory`'s primary control, if that
     /// control is a real `NSButton` - a test drives the actual target/action
     /// path (`performClick(nil)`) rather than reaching into the controller
