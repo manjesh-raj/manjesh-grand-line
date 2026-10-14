@@ -475,3 +475,248 @@ final class HelmFlatList: NSView {
     var debugSeparatorCount: Int { separators.count }
     #endif
 }
+
+// MARK: - HelmReading
+
+/// A value that was fetched: not read yet, read, or failed to read.
+///
+/// GL-14 - unknown is never rendered as zero - is this app's most-cited rule,
+/// and the revamp found it broken in three places on Home and Tasks alone:
+/// Fleet drew a missing firstmate home as 0/0/0 under "All clear", Health
+/// titled "nothing has reported yet" as "Healthy", and Tasks drew a failed
+/// YAML read as "0 open tasks". Each had the information to know better and
+/// a plain number to draw it with. A view that takes a `HelmReading` cannot
+/// draw a zero for an unknown, because there is no number in the two
+/// unknown cases to draw.
+enum HelmReading<Value> {
+    /// Nothing has been read yet - the first fetch is still out.
+    case unread
+    /// A real reading.
+    case value(Value)
+    /// The read was attempted and failed, with the reason to show the
+    /// captain. The last good value, if a caller has one, travels separately
+    /// rather than inside this case, so a stale number is never mistaken for
+    /// a current one.
+    case failed(String)
+
+    /// The em dash every unknown renders as.
+    static var dash: String { "\u{2014}" }
+
+    var value: Value? {
+        if case let .value(value) = self { return value }
+        return nil
+    }
+
+    var isKnown: Bool { value != nil }
+
+    /// The text to draw: the formatted value, or a dash for either unknown.
+    func text(_ format: (Value) -> String) -> String {
+        value.map(format) ?? Self.dash
+    }
+
+    /// The caption a strip or a pill uses for an unknown - "Not read" for
+    /// either case, because "failed" is a reason and belongs in a tooltip
+    /// or a subline, not in a two-word label.
+    static var unknownCaption: String { "Not read" }
+}
+
+extension HelmReading: Equatable where Value: Equatable {}
+
+// MARK: - HelmKPIStrip
+
+/// A row of numbers without boxes: each a 19pt semibold figure over an 11pt
+/// caption, separated by 1px hairlines, on whatever surface it sits on.
+///
+/// It replaces boxed stat tiles where a card already provides the surface -
+/// Fleet's three tiles on Home (UI-9), Weekly Review's three, the stat tiles
+/// on Hosts, Updates and Schedules (UI-44). A tile is a bordered box, and a
+/// bordered box inside a bordered card is two surfaces at one level.
+///
+/// An item carries a `HelmReading`, so an unknown renders as a dash rather
+/// than a zero by construction (GL-14).
+final class HelmKPIStrip: NSView {
+
+    struct Item: Equatable {
+        enum Emphasis: Equatable {
+            /// Page ink.
+            case normal
+            /// Muted - a zero that is fine ("0 working"), so the numbers that
+            /// mean something carry the weight.
+            case quiet
+            /// A state colour, contrast-corrected - for a figure that is
+            /// itself the signal ("2 overdue").
+            case tinted(HelmTint)
+        }
+
+        let reading: HelmReading<String>
+        let caption: String
+        let emphasis: Emphasis
+
+        init(_ reading: HelmReading<String>, caption: String, emphasis: Emphasis = .normal) {
+            self.reading = reading
+            self.caption = caption
+            self.emphasis = emphasis
+        }
+
+        /// A known count, quiet when it is zero.
+        static func count(_ value: Int, caption: String, tintWhenNonZero: HelmTint? = nil) -> Item {
+            let emphasis: Emphasis
+            if value == 0 {
+                emphasis = .quiet
+            } else if let tint = tintWhenNonZero {
+                emphasis = .tinted(tint)
+            } else {
+                emphasis = .normal
+            }
+            return Item(.value("\(value)"), caption: caption, emphasis: emphasis)
+        }
+    }
+
+    static let metricSize: CGFloat = 19
+    static let captionSize: CGFloat = 11
+    /// From a separator to the next column's figures.
+    static let columnInset: CGFloat = HelmMetrics.s4
+
+    private let row = NSStackView()
+    private var items: [Item] = []
+    private var valueLabels: [NSTextField] = []
+    private var captionLabels: [NSTextField] = []
+    private var separators: [NSView] = []
+    private let topRule = NSView()
+    private var theme: HelmTheme = ThemeManager.shared.theme
+
+    /// Whether a hairline runs above the strip - Fleet's card puts its
+    /// sentence above the numbers and a rule between them.
+    var showsTopRule: Bool = false {
+        didSet { topRule.isHidden = !showsTopRule; topRuleGap?.constant = showsTopRule ? HelmMetrics.s3 : 0 }
+    }
+    private var topRuleGap: NSLayoutConstraint?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        row.orientation = .horizontal
+        row.alignment = .top
+        row.spacing = 0
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
+        // gotcha (12)+(13): the stack-level APIs, both yielding, so a strip
+        // inside a card is never a window-width floor.
+        row.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        row.setHuggingPriority(.defaultLow, for: .horizontal)
+        topRule.wantsLayer = true
+        topRule.translatesAutoresizingMaskIntoConstraints = false
+        topRule.isHidden = true
+        addSubview(topRule)
+        addSubview(row)
+        let gap = row.topAnchor.constraint(equalTo: topRule.bottomAnchor)
+        topRuleGap = gap
+        NSLayoutConstraint.activate([
+            topRule.leadingAnchor.constraint(equalTo: leadingAnchor),
+            topRule.trailingAnchor.constraint(equalTo: trailingAnchor),
+            topRule.topAnchor.constraint(equalTo: topAnchor),
+            topRule.heightAnchor.constraint(equalToConstant: 1),
+            gap,
+            row.leadingAnchor.constraint(equalTo: leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+    }
+
+    convenience init() { self.init(frame: .zero) }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func configure(_ newItems: [Item], theme: HelmTheme = ThemeManager.shared.theme) {
+        items = newItems
+        for view in row.arrangedSubviews {
+            row.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        valueLabels.removeAll()
+        captionLabels.removeAll()
+        separators.removeAll()
+
+        var columns: [NSView] = []
+        for (index, item) in newItems.enumerated() {
+            if index > 0 {
+                let line = NSView()
+                line.wantsLayer = true
+                line.translatesAutoresizingMaskIntoConstraints = false
+                line.widthAnchor.constraint(equalToConstant: 1).isActive = true
+                separators.append(line)
+                row.addArrangedSubview(line)
+                line.heightAnchor.constraint(equalTo: row.heightAnchor).isActive = true
+            }
+            let value = NSTextField(labelWithString: item.reading.text { $0 })
+            value.font = HelmType.metric(Self.metricSize)
+            value.lineBreakMode = .byTruncatingTail
+            let caption = NSTextField(labelWithString: item.caption)
+            caption.font = .systemFont(ofSize: HelmType.scaled(Self.captionSize), weight: .medium)
+            caption.lineBreakMode = .byTruncatingTail
+            for label in [value, caption] {
+                label.translatesAutoresizingMaskIntoConstraints = false
+                label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            }
+            valueLabels.append(value)
+            captionLabels.append(caption)
+
+            let column = NSStackView(views: [value, caption])
+            column.orientation = .vertical
+            column.alignment = .leading
+            column.spacing = 1
+            column.edgeInsets = NSEdgeInsets(top: HelmMetrics.s1, left: index == 0 ? 0 : Self.columnInset,
+                                             bottom: HelmMetrics.s1, right: HelmMetrics.s2)
+            column.translatesAutoresizingMaskIntoConstraints = false
+            column.setClippingResistancePriority(.defaultLow, for: .horizontal)
+            column.setHuggingPriority(.defaultLow, for: .horizontal)
+            row.addArrangedSubview(column)
+            if let first = columns.first {
+                // Equal columns, at `contentTie` (gotcha (13)).
+                let equal = column.widthAnchor.constraint(equalTo: first.widthAnchor)
+                equal.priority = HelmDaylightPriority.contentTie
+                equal.isActive = true
+            }
+            columns.append(column)
+        }
+        setAccessibilityLabel(newItems.map { "\($0.caption) \($0.reading.text { $0 })" }
+            .joined(separator: ", "))
+        applyTheme(theme)
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let muted = HelmTheme.mutedInk(theme)
+        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        for (index, item) in items.enumerated() where index < valueLabels.count {
+            let color: NSColor
+            if !item.reading.isKnown {
+                color = muted
+            } else {
+                switch item.emphasis {
+                case .normal: color = ink
+                case .quiet: color = muted
+                case let .tinted(tint):
+                    color = HelmContrast.legibleTintedText(tintHex: tint.hex(in: theme), over: surface, theme: theme)
+                }
+            }
+            valueLabels[index].textColor = color
+            valueLabels[index].font = HelmType.metric(Self.metricSize)
+            captionLabels[index].textColor = muted
+        }
+        let line = HelmFlatList.hairRowColor(theme)
+        for separator in separators { separator.layer?.backgroundColor = line.cgColor }
+        topRule.layer?.backgroundColor = line.cgColor
+    }
+
+    #if FM_SELFTESTS
+    var debugValues: [String] { valueLabels.map(\.stringValue) }
+    var debugCaptions: [String] { captionLabels.map(\.stringValue) }
+    var debugValueColors: [NSColor?] { valueLabels.map(\.textColor) }
+    var debugSeparatorCount: Int { separators.count }
+    var debugHasBorder: Bool { (layer?.borderWidth ?? 0) > 0 }
+    #endif
+}

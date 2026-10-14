@@ -3385,13 +3385,19 @@ final class HelmEmptyState: NSView {
     enum Size {
         case compact
         case standard
+        /// The UI/UX revamp's quiet card-level empty state (UI-26, UI-46): no
+        /// tile and no glyph, one muted caption and, if the caller passes
+        /// one, one quiet action. A board lane or a card that is empty is a
+        /// normal state, not an event - the gradient tile is for a whole
+        /// *page* with nothing on it.
+        case quiet
 
-        var glyphPointSize: CGFloat { self == .compact ? 22 : 40 }
-        var glyphWeight: NSFont.Weight { self == .compact ? .regular : .light }
-        var spacing: CGFloat { self == .compact ? HelmMetrics.s2 : 10 }
+        var glyphPointSize: CGFloat { self == .standard ? 40 : 22 }
+        var glyphWeight: NSFont.Weight { self == .standard ? .light : .regular }
+        var spacing: CGFloat { self == .standard ? 10 : HelmMetrics.s2 }
         /// A `.compact` state fills whatever cell it is handed and centres in
         /// it; a `.standard` one owns real vertical rhythm of its own.
-        var verticalPadding: CGFloat { self == .compact ? HelmMetrics.s2 : 22 }
+        var verticalPadding: CGFloat { self == .standard ? 22 : HelmMetrics.s2 }
     }
 
     private let iconView = NSImageView()
@@ -3520,7 +3526,7 @@ final class HelmEmptyState: NSView {
         self.iconAccessibilityDescription = title ?? body
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.font = size == .compact ? HelmType.rowTitle() : HelmType.sectionTitle()
+        titleLabel.font = size == .standard ? HelmType.sectionTitle() : HelmType.rowTitle()
         titleLabel.alignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.stringValue = title ?? ""
@@ -3549,7 +3555,9 @@ final class HelmEmptyState: NSView {
         stack.alignment = .centerX
         stack.spacing = size.spacing
         stack.translatesAutoresizingMaskIntoConstraints = false
-        if accessory != nil { stack.setCustomSpacing(HelmMetrics.s4, after: bodyLabel) }
+        if accessory != nil {
+            stack.setCustomSpacing(size == .quiet ? HelmMetrics.s2 : HelmMetrics.s4, after: bodyLabel)
+        }
         // D4: the watermark goes in first, so the copy always renders on top
         // of it. Kept faint enough that it reads as the page's own identity
         // rather than as content - `watermarkOpacity` is the finding's own
@@ -3630,6 +3638,8 @@ final class HelmEmptyState: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     #if FM_SELFTESTS
+    /// UI-26: a `.quiet` state draws neither the gradient tile nor the glyph.
+    var debugArtworkHidden: Bool { tile.isHidden && iconView.isHidden }
     /// What the watermark is *actually drawing* - review #3's B4. A check that
     /// asked whether artwork was passed in would pass against the slab being
     /// drawn, which is the defect.
@@ -3716,7 +3726,7 @@ final class HelmEmptyState: NSView {
     override func layout() {
         super.layout()
         playEntranceIfNeeded()
-        let cap: CGFloat = size == .compact ? .greatestFiniteMagnitude : 360
+        let cap: CGFloat = size == .standard ? 360 : .greatestFiniteMagnitude
         let available = min(bounds.width - 2 * HelmMetrics.s3, cap)
         if available > 0, bodyLabel.preferredMaxLayoutWidth != available {
             bodyLabel.preferredMaxLayoutWidth = available
@@ -3735,8 +3745,8 @@ final class HelmEmptyState: NSView {
         // §6.14: under Daylight the glyph becomes a gradient plate and the
         // headline takes the rounded display face. Exactly one of the two is
         // ever visible.
-        tile.isHidden = !theme.isDaylight
-        iconView.isHidden = theme.isDaylight
+        tile.isHidden = !theme.isDaylight || size == .quiet
+        iconView.isHidden = theme.isDaylight || size == .quiet
         if watermarkUsesSymbol {
             // The same glyph the tile shows, drawn large and faint. Tinted
             // `mutedInk` rather than left at a template's default so it reads

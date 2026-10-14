@@ -29,6 +29,10 @@
 //      exclusive; the hero eyebrow is upper-cased; actions land in the slot.
 //   5. **`HelmFlatList`.** n rows, n-1 hairlines, and a rebuild never
 //      doubles them.
+//   6. **`HelmReading` and `HelmKPIStrip` (GL-14).** An unread or failed
+//      reading draws a dash, never a zero; a fine zero is muted; a tinted
+//      figure clears 4.5:1; the strip has no border of its own.
+//   7. **`HelmEmptyState.quiet`** draws no tile and no glyph in any palette.
 //
 // GL-27: compiled into debug builds only.
 #if FM_SELFTESTS
@@ -48,6 +52,8 @@ enum HelmKitSelfTest {
             checkStatusPillContrast(&ok)
             checkSectionHeader(&ok)
             checkFlatList(&ok)
+            checkReadingAndKPIStrip(&ok)
+            checkQuietEmptyState(&ok)
         }
         print(ok ? "HelmKitSelfTest: OK" : "HelmKitSelfTest: FAILED")
         return ok
@@ -259,6 +265,56 @@ enum HelmKitSelfTest {
         check(list.debugSeparatorCount == 3, "separatesFirstRow adds one above the first row", &ok)
         list.setRows([])
         check(list.debugSeparatorCount == 0, "an empty list has no hairlines", &ok)
+    }
+
+    // MARK: 6 - HelmReading and HelmKPIStrip
+
+    private static func checkReadingAndKPIStrip(_ ok: inout Bool) {
+        let unread: HelmReading<Int> = .unread
+        let failed: HelmReading<Int> = .failed("no firstmate home")
+        let zero: HelmReading<Int> = .value(0)
+        check(unread.text { "\($0)" } == HelmReading<Int>.dash, "an unread reading should draw a dash", &ok)
+        check(failed.text { "\($0)" } == HelmReading<Int>.dash, "a failed reading should draw a dash", &ok)
+        check(zero.text { "\($0)" } == "0", "a real zero should draw 0", &ok)
+        check(!unread.isKnown && !failed.isKnown && zero.isKnown, "isKnown should separate the cases", &ok)
+
+        let daylight = theme("daylight")
+        let strip = HelmKPIStrip()
+        strip.configure([
+            .count(0, caption: "Working"),
+            .count(20, caption: "Done today"),
+            .init(.unread, caption: "Queued"),
+            .count(2, caption: "Overdue", tintWhenNonZero: .critical),
+        ], theme: daylight)
+        check(strip.debugValues == ["0", "20", HelmReading<String>.dash, "2"],
+              "the strip should draw 0, 20, a dash and 2, got \(strip.debugValues)", &ok)
+        check(strip.debugSeparatorCount == 3, "four figures should have three hairlines", &ok)
+        check(!strip.debugHasBorder, "a KPI strip draws no box of its own", &ok)
+        let colors = strip.debugValueColors
+        let muted = HelmTheme.mutedInk(daylight), ink = HelmTheme.nsColor(daylight.chromeInkHex)
+        check(same(colors[0], muted), "a fine zero should be muted", &ok)
+        check(same(colors[1], ink), "a normal figure should be page ink", &ok)
+        check(same(colors[2], muted), "an unread figure's dash should be muted", &ok)
+        if let tinted = colors[3] {
+            check(HelmContrast.ratio(tinted, HelmTheme.nsColor(daylight.chromeBackgroundHex)) >= HelmContrast.textTarget,
+                  "a tinted figure should clear 4.5:1", &ok)
+            check(!same(tinted, ink), "a tinted figure should not be page ink", &ok)
+        }
+    }
+
+    // MARK: 7 - HelmEmptyState.quiet
+
+    private static func checkQuietEmptyState(_ ok: inout Bool) {
+        for id in ["daylight", "dusk", "helm-dark", "gruvbox-light"] {
+            let palette = theme(id)
+            let quiet = HelmEmptyState(symbol: "tray", body: "Nothing in progress", size: .quiet)
+            quiet.applyTheme(palette)
+            check(quiet.debugArtworkHidden, "\(id): a quiet empty state should draw no tile and no glyph", &ok)
+            let compact = HelmEmptyState(symbol: "tray", body: "Nothing in progress", size: .compact)
+            compact.applyTheme(palette)
+            check(!compact.debugArtworkHidden,
+                  "\(id): a compact empty state still draws its artwork, or the check above cannot fail", &ok)
+        }
     }
 }
 
