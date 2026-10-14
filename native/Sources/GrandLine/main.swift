@@ -97,6 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// UX4. See its construction in `buildMenu` for why the title is part of
     /// the contract rather than decoration.
     var contextualNewItem: NSMenuItem?
+    /// Code Preview's ⌘B, held so `menuNeedsUpdate` can say Show or Hide.
+    var snippetListItem: NSMenuItem?
     /// F2: the ⌥Space router. Built with the shell's own filer, which is
     /// where every one of the five writes lives (see
     /// `AppShellController.makeCaptureFiler`) - this panel owns no store.
@@ -1721,6 +1723,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu.title == "File", let contextualNewItem else { return }
         contextualNewItem.title = appShell.contextualNewAction.menuTitle
+        snippetListItem?.title = CodePreviewSidebarPreferences.isVisible()
+            ? "Hide Snippet List" : "Show Snippet List"
     }
 
     /// Build the app's menu bar, and (by default) install it.
@@ -1818,6 +1822,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                         keyEquivalent: "r").withSymbol("play.fill")
         runSnippetItem.target = menuTarget
         fileMenu.addItem(runSnippetItem)
+        // Code Preview's snippet list, on VS Code's own ⌘B for its sidebar.
+        // Checked free against this file's own chords before it was taken -
+        // nothing in `NSApp.mainMenu` claims "b" with any modifier mask, the
+        // configurable terminal and dictation chords default to other keys,
+        // and the vendored Monaco build binds no ⌘B of its own (that is a VS
+        // Code *workbench* binding, which `monaco-editor` does not ship).
+        // Same page-verb shape as Run Snippet: a no-op off its own page.
+        let snippetListItem = NSMenuItem(title: "Hide Snippet List",
+                                         action: #selector(AppShellController.toggleCodePreviewSidebarFromMenu),
+                                         keyEquivalent: "b").withSymbol("sidebar.left")
+        snippetListItem.target = menuTarget
+        fileMenu.addItem(snippetListItem)
+        self.snippetListItem = snippetListItem
         // F15's capture, beside F11's Run Snippet and for the same reason: a
         // page verb reachable from a chord gets a real menu item, so the chord
         // is discoverable and lands in the Help menu's generated shortcut
@@ -3692,6 +3709,17 @@ if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_TESTS"] == "1" {
 }
 if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_VIEW_TESTS"] == "1" {
     exit(CodePreviewViewSelfTest.run() ? 0 : 1)
+}
+// `fm/grandline-codepreview-file-sidebar`: Code Preview's snippet list, split
+// the same way - `CodePreviewSidebarSelfTest` is pure logic (the list's order,
+// the filter, the icon table, the remembered visibility and width, the ⌘B menu
+// item) and runs in CI; `CodePreviewSidebarViewSelfTest` mounts the real page
+// in a real window and is in NEEDS_SESSION.
+if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_SIDEBAR_TESTS"] == "1" {
+    exit(CodePreviewSidebarSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_SIDEBAR_VIEW_TESTS"] == "1" {
+    exit(CodePreviewSidebarViewSelfTest.run() ? 0 : 1)
 }
 
 // `fm/grandline-feature-f11-code-preview-run-format` (F11 of full review #3

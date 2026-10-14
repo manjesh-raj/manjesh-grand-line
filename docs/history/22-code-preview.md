@@ -242,3 +242,37 @@ network, so the check measures the sandbox rather than the firewall.
 **Not verified: the app was never launched** (the worktree rule). The pane's appearance is from real
 off-screen renders in three palettes, and its status word's contrast is measured against a real render
 in all fourteen; the live half is the captain's own check.
+
+## `fm/grandline-codepreview-file-sidebar`: the snippet list and the scrolling tab strip
+
+The captain's report: with more than a handful of snippets open, the tabs ran out of room and long names (a hash-named file, a Slack webhook file) crowded the rest out.
+They asked for a VS Code Explorer-style list on the left that can be hidden and expanded.
+
+**What the model allowed.** A snippet is one file in one folder, and `CodePreviewStore.sanitize` turns `/` into `-`, so there are no folders and never will be.
+The column is therefore a flat list in explorer order (`localizedStandardCompare`), not a tree.
+There is also no unsaved state: edits save on the page's 500ms debounce.
+The orange dot on the active tab is `TabChipView`'s *selected* marker (E4), so the list marks the active row with the sidebar's selected wash rather than inventing a dirty dot.
+
+**What shipped** (`CodePreviewFileSidebar.swift`):
+
+- A column wearing `HelmPageSidebar`'s plain surface, header and row palette without being one, for UI-45's DevOps Commands reason (a list of hundreds of records with per-row close, a filter and keyboard navigation is not a nav of a few filter rows).
+- A filter field, middle-truncated names with tooltips, hover-revealed close, and Rename / Duplicate / Close on right-click.
+- One key view for the whole list: arrows browse without opening, Return opens, Escape returns to the editor.
+- A toolbar toggle plus File > Hide/Show Snippet List on ⌘B, checked free against the menu, the configurable chords and the Monaco bundle.
+  Off Code Preview it is a no-op, like Run Snippet.
+- A drag handle in the gap (160-420pt, double-click resets).
+  Visibility and width persist in `AppDefaults.store`.
+- Hiding swaps the editor's leading constraint rather than collapsing the column, which has a real header row (gotcha (17)'s footnote).
+- The tab strip is a horizontal scroll view with `+` outside it.
+  Selecting a snippet from anywhere scrolls its tab and its row into view.
+
+**Two defects only a real render caught**, both now guarded by `FM_RUN_CODE_PREVIEW_SIDEBAR_VIEW_TESTS`:
+
+- At 499, the strip's "be as wide as the tabs" preference outranked a chip label's 250 compression resistance, so every chip was crushed to an empty pill instead of the strip scrolling.
+  The preference now sits below 250, and a check fails if any chip is narrower than its fitting width.
+- `HelmButton.restyle()` resets the button's own `alphaValue` to 1 on every theme change, so fading the close button itself revealed every row's × after one theme switch.
+  The fade lives on a plain host view now.
+  The same trap applies to any `HelmButton` someone tries to hide by alpha.
+
+**Not verified.** The probe app's Monaco page never finished loading on this machine (`isLoading` true after 60s, `evaluateJavaScript` never answered) even with the window front and unoccluded, so the screenshots show the editor card's "Starting the editor…" state.
+The page reaches ready with this change in all three windowed Code Preview suites.
