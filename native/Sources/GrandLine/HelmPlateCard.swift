@@ -28,9 +28,8 @@
 // a one-line truncating subtitle would cut. See `ToolsController.toolPlate`.
 //
 // Anatomy, top to bottom (§6.1's, minus the four body kinds):
-//   1. a 6pt `h1`->`h2` ribbon across the top, clipped by the card's radius,
-//   2. a header row - 30pt `HelmGradientTile` + title/subtitle text stack,
-//   3. an action row - the primary "Open" leading, an optional destructive
+//   1. a header row - 30pt `HelmGradientTile` + title/subtitle text stack,
+//   2. an action row - the primary "Open" leading, an optional destructive
 //      glyph pinned to the trailing edge.
 //
 // Chrome comes from the shared helpers (`HelmCard.applyCardSurface`,
@@ -78,7 +77,9 @@ final class HelmPlateCard: NSView {
 
     // MARK: Geometry
 
-    static let ribbonHeight = HelmModuleCard.ribbonHeight
+    // No ribbon (the UI/UX revamp's UI-6 and UI-58): a plate's identity is
+    // its tile, the same rule as `HelmModuleCard`'s. The 6pt the ribbon took
+    // came off `baseHeight` with it.
     static let horizontalInset: CGFloat = 14
     static let verticalInset: CGFloat = 12
     static let headerToActionsGap: CGFloat = 10
@@ -102,7 +103,7 @@ final class HelmPlateCard: NSView {
     /// *width* (AGENTS.md gotcha (13)) - a plate lives in a scroll view whose
     /// document height is free, so it cannot pressure the window.
     static var height: CGFloat { HelmType.scaled(baseHeight) }
-    static let baseHeight: CGFloat = 118
+    static let baseHeight: CGFloat = 112
 
     static let maximumTitleLines = 2
 
@@ -114,7 +115,6 @@ final class HelmPlateCard: NSView {
     /// interaction - and `HoverHighlightView` is what gives both a `.button`
     /// role and a keyboard/VoiceOver press for free.
     private let card = HoverHighlightView()
-    private let ribbon = CAGradientLayer()
     private let tile = HelmGradientTile(size: .module)
     private let titleLabel = NSTextField(wrappingLabelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
@@ -152,9 +152,6 @@ final class HelmPlateCard: NSView {
         card.translatesAutoresizingMaskIntoConstraints = false
         card.wantsLayer = true
         card.layer?.masksToBounds = true
-        card.layer?.addSublayer(ribbon)
-        ribbon.startPoint = HelmDomainHue.ribbonStart
-        ribbon.endPoint = HelmDomainHue.ribbonEnd
         addSubview(card)
 
         titleLabel.font = HelmType.moduleTitle()
@@ -217,8 +214,7 @@ final class HelmPlateCard: NSView {
 
             headerRow.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: Self.horizontalInset),
             headerRow.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -Self.horizontalInset),
-            headerRow.topAnchor.constraint(equalTo: card.topAnchor,
-                                           constant: Self.ribbonHeight + Self.verticalInset),
+            headerRow.topAnchor.constraint(equalTo: card.topAnchor, constant: Self.verticalInset),
 
             openButton.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: Self.horizontalInset),
             openButton.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -Self.verticalInset),
@@ -265,8 +261,6 @@ final class HelmPlateCard: NSView {
 
     override func layout() {
         super.layout()
-        ribbon.frame = CGRect(x: 0, y: card.bounds.height - Self.ribbonHeight,
-                              width: card.bounds.width, height: Self.ribbonHeight)
         // A wrapping label's intrinsic width comes from its own
         // `preferredMaxLayoutWidth`, which no distribution or hugging fix
         // touches - it has to be handed the column's *real* resolved width on
@@ -307,15 +301,7 @@ final class HelmPlateCard: NSView {
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         subtitleLabel.textColor = HelmTheme.mutedInk(theme)
         // The tile owns its own theme observation - never paint it from here.
-        if let content { ribbonColors(for: content.hue, theme: theme) }
         needsLayout = true
-    }
-
-    private func ribbonColors(for hue: HelmDomainHue, theme: HelmTheme) {
-        let pair = hue.pair(in: theme)
-        HelmMotion.withoutImplicitAnimation {
-            ribbon.colors = [pair.h1.cgColor, pair.h2.cgColor]
-        }
     }
 
     // MARK: Probe / self-test surface
@@ -337,9 +323,9 @@ final class HelmPlateCard: NSView {
     }
 
     var anatomyForTests: Anatomy {
-        Anatomy(hasRibbon: ribbon.superlayer != nil,
-                ribbonHeight: ribbon.frame.height,
-                ribbonStopCount: ribbon.colors?.count ?? 0,
+        Anatomy(hasRibbon: card.layer?.sublayers?.contains { $0 is CAGradientLayer } ?? false,
+                ribbonHeight: 0,
+                ribbonStopCount: 0,
                 cornerRadius: card.layer?.cornerRadius ?? 0,
                 shadowOpacity: layer?.shadowOpacity ?? 0,
                 openButtonTitle: openButton.title,

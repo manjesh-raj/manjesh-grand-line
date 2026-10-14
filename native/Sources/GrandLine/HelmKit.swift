@@ -725,3 +725,27 @@ final class HelmKPIStrip: NSView {
     var debugHasBorder: Bool { (layer?.borderWidth ?? 0) > 0 }
     #endif
 }
+
+// MARK: - HelmRelativeTime
+
+/// The app's one "how long ago" phrase (UI-13): "just now", "4 min ago",
+/// "3h ago", "2d ago".
+///
+/// Home alone carried five formatters for the age of a reading - "Fleet read
+/// 4 minutes ago", "Fleet read at 10:18", "Updated 3h ago", and two more -
+/// so the same age read differently on two cards a few points apart. This is
+/// the short form every one of them now takes. Deliberately not
+/// `RelativeDateTimeFormatter`, whose "4 minutes ago" / "in 0 seconds" is
+/// longer than a header has room for and wrong for a reading that cannot be
+/// in the future.
+enum HelmRelativeTime {
+    static func phrase(since date: Date, now: Date = Date()) -> String {
+        let seconds = max(0, now.timeIntervalSince(date))
+        if seconds < 60 { return "just now" }
+        let minutes = Int((seconds / 60).rounded(.down))
+        if minutes < 60 { return "\(minutes) min ago" }
+        let hours = Int((seconds / 3600).rounded(.down))
+        if hours < 24 { return "\(hours)h ago" }
+        return "\(Int((seconds / 86_400).rounded(.down)))d ago"
+    }
+}

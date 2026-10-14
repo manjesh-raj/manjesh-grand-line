@@ -255,6 +255,8 @@ enum ReviewTourLab {
     /// captain's own Home screenshot, so a render is comparable to it and to
     /// the revamp board's mockup.
     static func seedDemoHome(_ canvas: HomeCanvasController) {
+        canvas.debugInputsPinned = false
+        defer { canvas.debugInputsPinned = true }
         let snapshot = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
                                      queuedCount: 30, doneCount: 20, projectsCount: 4,
                                      watcher: WatcherHealth(status: "healthy"))

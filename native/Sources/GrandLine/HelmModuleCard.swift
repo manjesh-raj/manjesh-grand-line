@@ -12,10 +12,18 @@
 // that this component needs a scroll view.
 //
 // **Anatomy** (§6.1, top to bottom):
-//   1. a 6pt gradient ribbon, h1->h2 left to right;
-//   2. a header row: 30pt gradient tile, title + subtitle, trailing chip;
-//   3. a body, one of five kinds (§6.1's four plus `.note`, the one-line
-//      form three of the table's own modules ask for).
+//   1. a header row: 30pt gradient tile, title + subtitle, a trailing
+//      status word or pill;
+//   2. a body, one of the kinds below;
+//   3. an optional footer strip.
+//
+// **No ribbon (the UI/UX revamp's UI-6).** §6.1 put a 6pt hue ribbon across
+// the top of every card, C3 quietened it at rest, and the revamp removed it:
+// with a ribbon on every card no card can stand out, and the card's identity
+// is already in its 30pt tile. The only edge a card may carry now is
+// `HelmCard`'s semantic attention edge, and only Home's attention card uses
+// it. **One recipe (UI-7):** the surface is `HelmCard.applyCardSurface` and
+// the shadow `HelmCard.applyElevation`, exactly as a `HelmCard`'s own.
 //
 // **Two layers, not one, and that is load-bearing.** A layer with a shadow
 // must not clip, and a card with a rounded fill must - so the outer view
@@ -61,6 +69,20 @@ struct HelmModuleChip: Equatable {
             case .mute: return theme.chromeInkHex
             }
         }
+
+        /// UI-8 / Rule 3: whether this state is the default one - drawn as a
+        /// coloured word - rather than one that earns a pill.
+        var isDefaultState: Bool { self == .ok || self == .mute }
+
+        /// The `HelmTint` a pill of this kind takes.
+        var tint: HelmTint {
+            switch self {
+            case .ok: return .good
+            case .warn: return .warn
+            case .bad: return .critical
+            case .mute: return .neutral
+            }
+        }
     }
 
     let text: String
@@ -70,34 +92,6 @@ struct HelmModuleChip: Equatable {
     static func warn(_ text: String) -> HelmModuleChip { .init(text: text, kind: .warn) }
     static func bad(_ text: String) -> HelmModuleChip { .init(text: text, kind: .bad) }
     static func mute(_ text: String) -> HelmModuleChip { .init(text: text, kind: .mute) }
-}
-
-/// One tile of a `.tiles` body: a number and the words under it.
-///
-/// A plain pair rather than a `HelmStatTile` so the body stays a *value* -
-/// the card rebuilds its whole body on every `configure`, and a `Content`
-/// holding live views could not be compared, cached or asserted the way
-/// every other body kind's payload can.
-///
-/// `symbol` is `HelmStatTile`'s glyph. `nil` draws the tile without one,
-/// which is what the reference's three fleet tiles do - at a 5-track card's
-/// width three glyphs plus three numbers is more furniture than the numbers
-/// are worth.
-struct HelmModuleTile: Equatable {
-    let value: String
-    let caption: String
-    let symbol: String?
-    /// Colours the *number* only, through `HelmStatTile`'s own
-    /// contrast-corrected path. `nil` leaves it in ink, which is right for a
-    /// count that is not itself a signal.
-    let tint: HelmTint?
-
-    init(value: String, caption: String, symbol: String? = nil, tint: HelmTint? = nil) {
-        self.value = value
-        self.caption = caption
-        self.symbol = symbol
-        self.tint = tint
-    }
 }
 
 /// One peek row's state dot (§6.1's "8pt filled circle").
@@ -120,6 +114,12 @@ struct HelmModulePeekRow: Equatable {
     let state: HelmModuleRowState
     let text: String
     let value: String
+    /// UI-10: what a click on the row does. `nil` draws a read-only row; a
+    /// row with an action hovers, shows a chevron on aim and is a button to
+    /// VoiceOver. Not part of equality - a closure has no identity to compare.
+    var onOpen: (() -> Void)? = nil
+    /// The row's hover text and VoiceOver hint ("Open pull request #12").
+    var openHelp: String? = nil
 
     static func == (lhs: HelmModulePeekRow, rhs: HelmModulePeekRow) -> Bool {
         lhs.text == rhs.text && lhs.value == rhs.value
@@ -357,21 +357,15 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// `HomeCanvasController.claudeUsageIsCompact(forCardWidth:)`, which
         /// picks between them at the same span-2 threshold.
         case usageReport([HelmModuleUsageSection], compact: Bool)
-        /// One line of copy over a row of `HelmStatTile`s - the reference's
-        /// Fleet widget, which states the fleet in a sentence and then breaks
-        /// it into Working / Finished today / Queued.
+        /// One line of copy over a `HelmKPIStrip` - the Fleet widget's
+        /// sentence, then Working / Done today / Queued as plain figures.
         ///
-        /// `HelmStatTile` rather than three more peek rows, and rather than a
-        /// shape of this card's own: the component index names it as the one
-        /// stat tile ("four prior copies"), it themes itself, and it already
-        /// carries the tabular metric face the reference draws these numbers
-        /// in. What is new here is only that a module card can hold a row of
-        /// them.
-        ///
-        /// A tile is `HelmStatTile.height` (56pt) tall and its caption is one
-        /// line, so three across a 5-track card is the shape that fits;
-        /// `maxTiles` caps it for the same reason `maxPeekRows` does.
-        case tiles(note: String?, tiles: [HelmModuleTile])
+        /// UI-9: this used to be `.tiles`, three boxed `HelmStatTile`s - a
+        /// bordered box inside a bordered card, two surfaces at one level.
+        /// A strip has no surface of its own, and an item carries a
+        /// `HelmReading`, so a fleet that was never read draws dashes rather
+        /// than 0/0/0 (GL-14).
+        case kpis(note: String?, items: [HelmKPIStrip.Item])
         /// D3's layout-shaped placeholder, for a card whose real answer has
         /// not arrived yet.
         ///
@@ -551,27 +545,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         }
     }
 
-    // Geometry (§2.7, §2.6).
-    static let ribbonHeight: CGFloat = 6
-
-    /// C3: how tall and how present the hue ribbon is *at rest*, against
-    /// `ribbonHeight`/full opacity when it blooms.
-    ///
-    /// The UI modernization audit
-    /// (`data/grandline-ui-modernization-audit/report.md` §3C) measured the
-    /// real cost of seven saturated 6pt ribbons on one canvas: "all 7 ribbons
-    /// at once form a rainbow strip effect ... decoration, not signal - it
-    /// competes with the one thing PRODUCT.md says should dominate (the
-    /// needs-you state)". Its fix is to "quiet the ribbon at rest (2-3pt, 60%
-    /// saturation ...), let it bloom on hover/attention".
-    ///
-    /// The hue itself is untouched - only its height and presence change - so
-    /// this stays a pure rendering change and the domain-hue identity the
-    /// canvas is built on still reads at a glance.
-    static let ribbonRestHeight: CGFloat = 2
-    static let ribbonRestOpacity: Float = 0.55
-    static let ribbonBloomDuration: TimeInterval = 0.16
-    static let headerInsetTop: CGFloat = 13
+    // Geometry (§2.7, §2.6, and the revamp's 16pt card padding).
+    static let headerInsetTop: CGFloat = HelmMetrics.s4
     static let horizontalInset: CGFloat = 16
     static let bodyInsetTop: CGFloat = 10
     static let bodyInsetBottom: CGFloat = 15
@@ -659,12 +634,17 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     var onFollowLink: ((BriefingTarget) -> Void)?
 
     private let card = HoverHighlightView()
-    private let ribbon = CAGradientLayer()
     private let tile = HelmGradientTile(size: .module)
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
+    /// The header's status. UI-8 and Rule 3: a state that is fine or
+    /// neutral ("Comfortable", "All clear", "none ready") is one word in its
+    /// colour, and only a state that is not the default ("Near spend cap",
+    /// "Not read") becomes a `HelmStatusPill`. Both live in `chipView`, and
+    /// exactly one shows.
     private let chipView = NSView()
     private let chipLabel = NSTextField(labelWithString: "")
+    private let chipPill = HelmStatusPill(style: .pill)
     /// `Content.headerCaption`. Built with the rest of the chrome and hidden
     /// when the content carries none, exactly like `chipView`.
     private let headerCaptionLabel = NSTextField(labelWithString: "")
@@ -708,7 +688,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// are kept only to be handed the theme - never a `stashedTileParts`-style
     /// colour registry, which is exactly what that component's header warns
     /// against.
-    private var statTiles: [HelmStatTile] = []
+    private var kpiStrip: HelmKPIStrip?
 
     private var content: Content?
     private var themeToken: ThemeObservation?
@@ -745,7 +725,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// about whether anything was wired to it.
     private var usageRowCells: [NSView] = []
     private var peekTextLabels: [NSTextField] = []
-    private var peekValueLabels: [NSTextField] = []
+    private var peekValueLabels: [(label: NSTextField, state: HelmModuleRowState)] = []
+    private var peekRowViews: [HoverHighlightView] = []
+    private var peekChevrons: [NSImageView] = []
     private var noteLabels: [NSTextField] = []
     /// UI10: the `.skeleton` body's list, so `applyTheme` can re-tint its bars
     /// the way every other body kind's views are re-tinted.
@@ -816,9 +798,6 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         card.pressScale = Self.pressScale
         addSubview(card)
 
-        card.layer?.addSublayer(ribbon)
-        ribbon.startPoint = HelmDomainHue.ribbonStart
-        ribbon.endPoint = HelmDomainHue.ribbonEnd
 
         titleLabel.font = HelmType.moduleTitle()
         titleLabel.lineBreakMode = .byTruncatingTail
@@ -850,6 +829,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         chipView.wantsLayer = true
         chipView.translatesAutoresizingMaskIntoConstraints = false
         chipView.addSubview(chipLabel)
+        chipView.addSubview(chipPill)
+        chipPill.isHidden = true
         chipView.setContentHuggingPriority(.required, for: .horizontal)
         chipView.setContentCompressionResistancePriority(.required, for: .horizontal)
 
@@ -987,15 +968,17 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             // lives inside a scroll view whose document height is free.
             heightAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumHeight),
 
-            chipLabel.leadingAnchor.constraint(equalTo: chipView.leadingAnchor, constant: 10),
-            chipLabel.trailingAnchor.constraint(equalTo: chipView.trailingAnchor, constant: -10),
+            chipLabel.leadingAnchor.constraint(equalTo: chipView.leadingAnchor),
+            chipLabel.trailingAnchor.constraint(equalTo: chipView.trailingAnchor),
             chipLabel.topAnchor.constraint(equalTo: chipView.topAnchor, constant: 3),
             chipLabel.bottomAnchor.constraint(equalTo: chipView.bottomAnchor, constant: -3),
+            chipPill.leadingAnchor.constraint(equalTo: chipView.leadingAnchor),
+            chipPill.trailingAnchor.constraint(equalTo: chipView.trailingAnchor),
+            chipPill.centerYAnchor.constraint(equalTo: chipView.centerYAnchor),
 
             headerRow.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: Self.horizontalInset),
             headerRow.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -Self.horizontalInset),
-            headerRow.topAnchor.constraint(equalTo: card.topAnchor,
-                                           constant: Self.ribbonHeight + Self.headerInsetTop),
+            headerRow.topAnchor.constraint(equalTo: card.topAnchor, constant: Self.headerInsetTop),
 
             bodyContainer.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: Self.horizontalInset),
             bodyContainer.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -Self.horizontalInset),
@@ -1036,6 +1019,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
         footerAction.target = self
         footerAction.action = #selector(footerActionTapped)
+        // UI-10: the footer's one link reads as a link.
+        footerAction.tint = .info
         footerAction.setContentHuggingPriority(.required, for: .horizontal)
         footerAction.setContentCompressionResistancePriority(.required, for: .horizontal)
 
@@ -1197,9 +1182,11 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         usageTracks.removeAll()
         usageDividers.removeAll()
         usageRowCells.removeAll()
-        statTiles.removeAll()
+        kpiStrip = nil
         peekTextLabels.removeAll()
         peekValueLabels.removeAll()
+        peekRowViews.removeAll()
+        peekChevrons.removeAll()
         noteLabels.removeAll()
         metricLabels.removeAll()
         unitLabels.removeAll()
@@ -1220,8 +1207,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             content = buildParagraph(clauses)
         case let .usageReport(sections, compact):
             content = buildUsageReport(sections, compact: compact)
-        case let .tiles(note, tiles):
-            content = buildTiles(note: note, tiles: Array(tiles.prefix(Self.maxTiles)))
+        case let .kpis(note, items):
+            content = buildKPIs(note: note, items: Array(items.prefix(Self.maxTiles)))
         case let .skeleton(rows):
             content = buildSkeleton(rows: rows)
         }
@@ -1357,16 +1344,34 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         return verticalStack(stacked, spacing: HelmMetrics.s1 + 2)
     }
 
+    /// UI-10: flat rows separated by hairlines, each a full-bleed hover
+    /// target when it has an action. The rows run edge to edge across the
+    /// card (the body's 16pt inset is undone on both sides and the row puts
+    /// it back inside), so a row's hover fill and its hairline span the card
+    /// the way the list rows on the attention card do.
     private func buildPeekRows(_ rows: [HelmModulePeekRow]) -> NSView {
-        var stacked: [NSView] = []
+        guard !rows.isEmpty else { return verticalStack([noteLabel("Nothing to show yet.")], spacing: 0) }
+        let inset = Self.horizontalInset
+        let list = NSView()
+        list.translatesAutoresizingMaskIntoConstraints = false
+        var previous: NSView?
+        func place(_ view: NSView) {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            list.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: list.leadingAnchor, constant: -inset),
+                view.trailingAnchor.constraint(equalTo: list.trailingAnchor, constant: inset),
+                view.topAnchor.constraint(equalTo: previous?.bottomAnchor ?? list.topAnchor),
+            ])
+            previous = view
+        }
         for (index, row) in rows.enumerated() {
             if index > 0 {
                 let separator = NSView()
                 separator.wantsLayer = true
-                separator.translatesAutoresizingMaskIntoConstraints = false
                 separator.heightAnchor.constraint(equalToConstant: 1).isActive = true
                 peekSeparators.append(separator)
-                stacked.append(separator)
+                place(separator)
             }
 
             let dot = NSView()
@@ -1389,25 +1394,71 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             text.setContentHuggingPriority(.defaultLow, for: .horizontal)
             peekTextLabels.append(text)
 
+            // The value is a state word in its own colour ("Checks green",
+            // "Checks red"), in the kit's chip face rather than mono: it is a
+            // verdict, and the dot beside the title already carries the hue.
             let value = NSTextField(labelWithString: row.value)
-            value.font = HelmType.code()
+            value.font = HelmType.chip()
             value.alignment = .right
             value.translatesAutoresizingMaskIntoConstraints = false
             value.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             value.setContentHuggingPriority(.required, for: .horizontal)
-            peekValueLabels.append(value)
+            peekValueLabels.append((value, row.state))
 
-            let peek = compressibleStack(NSStackView(views: [dot, text, value]))
-            peek.orientation = .horizontal
-            peek.alignment = .centerY
-            peek.spacing = HelmMetrics.s2
-            peek.distribution = .fill
-            peek.edgeInsets = NSEdgeInsets(top: 7, left: 0, bottom: 7, right: 0)
-            peek.translatesAutoresizingMaskIntoConstraints = false
-            stacked.append(peek)
+            var members: [NSView] = [dot, text, value]
+            let chevron = NSImageView()
+            if row.onOpen != nil {
+                chevron.image = HelmSymbol.image("chevron.right", pointSize: 10, weight: .semibold)
+                chevron.translatesAutoresizingMaskIntoConstraints = false
+                chevron.setContentHuggingPriority(.required, for: .horizontal)
+                chevron.alphaValue = 0
+                chevron.setAccessibilityElement(false)
+                peekChevrons.append(chevron)
+                members.append(chevron)
+            }
+
+            let line = compressibleStack(NSStackView(views: members))
+            line.orientation = .horizontal
+            line.alignment = .centerY
+            line.spacing = HelmMetrics.s2
+            line.distribution = .fill
+            line.edgeInsets = NSEdgeInsets(top: 9, left: inset, bottom: 9, right: inset)
+            line.translatesAutoresizingMaskIntoConstraints = false
+
+            let host = HoverHighlightView()
+            host.addSubview(line)
+            NSLayoutConstraint.activate([
+                line.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                line.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+                line.topAnchor.constraint(equalTo: host.topAnchor),
+                line.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            ])
+            if let open = row.onOpen {
+                let click = PeekRowClick(open)
+                host.addGestureRecognizer(NSClickGestureRecognizer(target: click, action: #selector(PeekRowClick.fire)))
+                objc_setAssociatedObject(host, &PeekRowClick.key, click, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+                host.toolTip = row.openHelp
+                host.setAccessibilityHelp(row.openHelp)
+                host.onHoverChange = { [weak chevron] hovering in
+                    guard let chevron else { return }
+                    HelmMotion.fade(chevron, to: hovering ? 1 : 0, duration: HelmAccentRow.actionRevealDuration,
+                                    animated: true)
+                }
+                peekRowViews.append(host)
+            }
+            place(host)
         }
-        if stacked.isEmpty { stacked = [noteLabel("Nothing to show yet.")] }
-        return verticalStack(stacked, spacing: 0)
+        previous?.bottomAnchor.constraint(equalTo: list.bottomAnchor).isActive = true
+        return verticalStack([list], spacing: 0)
+    }
+
+    /// The target a peek row's click recognizer needs, since a closure cannot
+    /// be one. Retained by the row it belongs to.
+    private final class PeekRowClick: NSObject {
+        static var key = 0
+        let body: () -> Void
+        init(_ body: @escaping () -> Void) { self.body = body }
+        @objc func fire() { body() }
     }
 
     // MARK: The usage report body
@@ -1758,36 +1809,13 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// already carry.
     static let maxTiles = 3
 
-    private func buildTiles(note: String?, tiles: [HelmModuleTile]) -> NSView {
-        let tileViews = tiles.map { spec -> HelmStatTile in
-            let tile = HelmStatTile(symbol: spec.symbol ?? "",
-                                    value: spec.value,
-                                    caption: spec.caption,
-                                    tint: spec.tint)
-            statTiles.append(tile)
-            return tile
-        }
-
-        // `.fillEqually`, so three tiles are three equal columns however long
-        // their captions are - the reference draws them as a even triptych,
-        // and `.fill` would let "Finished today" steal width from "Queued".
-        let row = NSStackView(views: tileViews)
-        row.orientation = .horizontal
-        row.spacing = HelmMetrics.s2
-        row.distribution = .fillEqually
-        row.alignment = .top
-        row.translatesAutoresizingMaskIntoConstraints = false
-        // gotcha (12)+(13): the *stack*-level APIs, and both yielding - a
-        // stack resists clipping at 750, which is above
-        // `NSLayoutPriorityWindowSizeStayPut`, so this row would otherwise be
-        // a window-width floor.
-        row.setClippingResistancePriority(.defaultLow, for: .horizontal)
-        row.setHuggingPriority(.defaultLow, for: .horizontal)
-
-        guard let note, !note.isEmpty else {
-            return verticalStack([row], spacing: 0)
-        }
-        return verticalStack([noteLabel(note, maxLines: 2), row], spacing: HelmMetrics.s2)
+    private func buildKPIs(note: String?, items: [HelmKPIStrip.Item]) -> NSView {
+        let strip = HelmKPIStrip()
+        strip.configure(items, theme: ThemeManager.shared.theme)
+        kpiStrip = strip
+        guard let note, !note.isEmpty else { return verticalStack([strip], spacing: 0) }
+        strip.showsTopRule = true
+        return verticalStack([noteLabel(note, maxLines: 2), strip], spacing: HelmMetrics.s3)
     }
 
     private func buildProgress(value: Int, total: Int, note: String) -> NSView {
@@ -1915,38 +1943,6 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         applyHoverState(animated: true)
     }
 
-    /// C3: the ribbon's height and presence, from one place.
-    ///
-    /// Blooms to its full 6pt when the card is hovered, and - deliberately -
-    /// also whenever the card's own chip says the card is *bad*. That is the
-    /// finding's own carve-out ("a card whose chip is `.critical` may keep a
-    /// loud edge - color as signal, not as wallpaper"): quieting the ribbon
-    /// is about stopping seven equal-weight hues competing, not about hiding
-    /// the one card that needs the captain.
-    private func applyRibbonGeometry(animated: Bool) {
-        let bloomed = isHovering || content?.chip?.kind == .bad
-        let height = bloomed ? Self.ribbonHeight : Self.ribbonRestHeight
-        let opacity: Float = bloomed ? 1 : Self.ribbonRestOpacity
-        let frame = CGRect(x: 0, y: card.bounds.height - height,
-                           width: card.bounds.width, height: height)
-
-        guard animated, !HelmMotion.isReduced else {
-            // A standalone (non-view-backed) `CALayer` animates `frame` and
-            // `opacity` implicitly, so "instant" has to be asked for.
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            ribbon.frame = frame
-            ribbon.opacity = opacity
-            CATransaction.commit()
-            return
-        }
-        CATransaction.begin()
-        CATransaction.setAnimationDuration(Self.ribbonBloomDuration)
-        ribbon.frame = frame
-        ribbon.opacity = opacity
-        CATransaction.commit()
-    }
-
     private func applyHoverState(animated: Bool) {
         let theme = ThemeManager.shared.theme
         applyShadow(theme, raised: isHovering)
@@ -1965,9 +1961,6 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         HelmMotion.animate(animated && allowMotion, duration: Self.hoverDuration) {
             card.baseTransform = CATransform3DMakeTranslation(0, lift, 0)
         }
-        // C3: the ribbon blooms with the hover instead of sitting loud at
-        // rest - see `applyRibbonGeometry`.
-        applyRibbonGeometry(animated: animated && allowMotion)
     }
 
     #if FM_SELFTESTS
@@ -2002,14 +1995,6 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         #if FM_SELFTESTS
         debugLayoutCallCount += 1
         #endif
-        // A standalone sublayer's `frame` change animates implicitly, so a
-        // window resize would slide the ribbon into place behind the card's
-        // own instant relayout - see `HelmMotion`'s header, finding 2.
-        // C3: one writer of the ribbon's geometry, so a layout pass and a
-        // hover bloom can never disagree about how tall it currently is.
-        // Always instant here - a window resize must not slide the ribbon
-        // behind the card's own relayout.
-        applyRibbonGeometry(animated: false)
         applyNoteWrapWidth()
         applyShadow(ThemeManager.shared.theme, raised: isHovering)
     }
@@ -2048,11 +2033,25 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
     private func applyShadow(_ theme: HelmTheme, raised: Bool) {
         guard let layer else { return }
+        // UI-7: a module card shadows exactly when a `HelmCard` does - on the
+        // Daylight family, where §2.5 defines the depth levels - and is flat
+        // on the other palettes, where every card in this app always was.
+        guard theme.isDaylight else {
+            layer.shadowOpacity = 0
+            return
+        }
+        let radius = Self.cornerRadius(for: theme)
         HelmCard.applyElevation(raised ? .raised : .resting, to: layer, theme: theme,
                                 path: CGPath(roundedRect: bounds,
-                                             cornerWidth: HelmMetrics.dModule,
-                                             cornerHeight: HelmMetrics.dModule,
+                                             cornerWidth: radius,
+                                             cornerHeight: radius,
                                              transform: nil))
+    }
+
+    /// The card's radius - `HelmCard`'s, so a module card and a plain card
+    /// round identically on every palette (UI-7).
+    static func cornerRadius(for theme: HelmTheme) -> CGFloat {
+        theme.isDaylight ? HelmMetrics.dModule : HelmMetrics.rCard
     }
 
     func applyTheme(_ theme: HelmTheme) {
@@ -2061,19 +2060,12 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
 
+        // UI-7: the one card surface, from the one place it is defined.
+        HelmCard.applyCardSurface(to: card, theme: theme)
+        card.cornerRadius = Self.cornerRadius(for: theme)
         card.normalColor = surface
         card.hoverColor = surface
-        card.layer?.backgroundColor = surface.cgColor
-        card.layer?.borderColor = line.withAlphaComponent(theme.isDaylight ? 1.0 : 0.6).cgColor
 
-        let pair = (content?.hue ?? .blue).pair(in: theme)
-        HelmMotion.withoutImplicitAnimation {
-            ribbon.colors = [pair.h1.cgColor, pair.h2.cgColor]
-        }
-        // C3: re-read the rest/bloom state here too. `configure` routes
-        // through this method, so a card whose chip just became `.bad` picks
-        // up its loud edge without waiting for a hover or a layout pass.
-        applyRibbonGeometry(animated: false)
 
         titleLabel.font = HelmType.moduleTitle()
         titleLabel.textColor = ink
@@ -2081,9 +2073,15 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         subtitleLabel.textColor = muted
 
         if let chip = content?.chip {
-            ToolRowLayout.pill(text: chip.text, colorHex: chip.kind.hex(in: theme),
-                               into: chipView, label: chipLabel, theme: theme)
+            let isWord = chip.kind.isDefaultState
+            chipLabel.isHidden = !isWord
+            chipPill.isHidden = isWord
             chipLabel.font = HelmType.chip()
+            chipLabel.stringValue = chip.text
+            chipLabel.textColor = chip.kind == .mute
+                ? muted
+                : HelmContrast.legibleTintedText(tintHex: chip.kind.hex(in: theme), over: surface, theme: theme)
+            if !isWord { chipPill.configure(text: chip.text, tint: chip.kind.tint, theme: theme) }
         }
 
         for label in metricLabels { label.textColor = ink }
@@ -2091,7 +2089,20 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         for label in noteLabels { label.textColor = muted }
         skeletonList?.applyTheme(theme)
         for label in peekTextLabels { label.textColor = ink }
-        for label in peekValueLabels { label.textColor = muted }
+        for (label, state) in peekValueLabels {
+            label.font = HelmType.chip()
+            label.textColor = state == .idle
+                ? muted
+                : usageSeverityInk(state, theme: theme, surface: surface, neutral: muted, tintOK: true)
+        }
+        let rowHover = theme.isDaylight
+            ? HelmTheme.nsColor(theme.daylightTokens.rowHover)
+            : (surface.blended(withFraction: 0.06, of: ink) ?? surface)
+        for row in peekRowViews {
+            row.normalColor = .clear
+            row.hoverColor = rowHover
+        }
+        for chevron in peekChevrons { chevron.contentTintColor = muted }
         for separator in peekSeparators {
             separator.layer?.backgroundColor = line.withAlphaComponent(theme.isDaylight ? 1.0 : 0.5).cgColor
         }
@@ -2100,10 +2111,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         headerCaptionLabel.font = HelmType.captionSmall()
         headerCaptionLabel.textColor = muted
 
-        // `.tiles`. `HelmStatTile` themes itself - its header is explicit
-        // that a page must hand it the theme rather than keep a colour
-        // registry for it - so this is the whole of what the card owes it.
-        for tile in statTiles { tile.applyTheme(theme) }
+        kpiStrip?.applyTheme(theme)
 
         // `Content.footer`. The divider is the card's own hairline at the
         // same weight the peek-row separators use, and the caption is muted
@@ -2227,6 +2235,16 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
            actionButton.convert(actionButton.bounds, to: container).contains(point) {
             return false
         }
+        // UI-10: a clickable peek row owns its own click. Walk up from the
+        // hit view; an activatable `HoverHighlightView` other than the card
+        // itself is a row, and the card must not also navigate.
+        if let hit = container.hitTest(container.convert(point, to: container.superview)) {
+            var view: NSView? = hit
+            while let current = view, current !== container {
+                if let row = current as? HoverHighlightView, row !== card, row.isActivatable { return false }
+                view = current.superview
+            }
+        }
         // The hit-test half is `HelmGestureArbitration`'s - this file held one
         // of the two hand-rolled copies of it.
         return HelmGestureArbitration.shouldRecognize(recognizer, with: event)
@@ -2346,24 +2364,22 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         guard !footerContainer.isHidden else { return nil }
         return (footerCaption.stringValue, footerAction.title)
     }
-    /// A `.tiles` body's numbers as rendered, for the same reason.
-    ///
-    /// **Guarded, unlike its neighbours in this block.** GL-27 asks for the
-    /// guard on every `debug*` accessor in a production file; the rest of
-    /// this probe surface predates that and gets away without one only
-    /// because nothing in it reaches a guarded symbol. This one reads
-    /// `HelmStatTile.debugMetric`, which *is* inside `#if FM_SELFTESTS`, so
-    /// without the guard the whole app fails to build in release - caught by
-    /// `swift build -c release`, which is exactly the gate AGENTS.md says
-    /// finds this.
-    #if FM_SELFTESTS
-    var debugTiles: [(value: String, caption: String)] {
-        statTiles.map { $0.debugMetric }
+    /// A `.kpis` body's strip, so a suite reads the figures as painted.
+    var debugKPIStrip: HelmKPIStrip? { kpiStrip }
+    /// UI-10: the clickable peek rows, so a suite can press one through its
+    /// own recognizer.
+    var debugPeekRows: [HoverHighlightView] { peekRowViews }
+    var debugPeekChevronAlphas: [CGFloat] { peekChevrons.map(\.alphaValue) }
+    /// A peek row's frame in the inner card's space, for the arbitration check.
+    func debugPeekRowFrameInCard(_ index: Int) -> NSRect {
+        peekRowViews[index].convert(peekRowViews[index].bounds, to: card)
     }
-    #endif
-    var debugRibbonGeometry: (height: CGFloat, opacity: Float, stopCount: Int) {
-        (ribbon.frame.height, ribbon.opacity, ribbon.colors?.count ?? 0)
+    /// Drives a peek row's real hover path (`HoverHighlightView.onHoverChange`).
+    func debugHoverPeekRow(_ index: Int, _ hovering: Bool) {
+        peekRowViews[index].onHoverChange?(hovering)
     }
+    /// Whether the header status is drawn as a pill rather than a word.
+    var debugChipIsPill: Bool { !chipView.isHidden && !chipPill.isHidden }
     /// Drives hover without synthesizing a real mouse event.
     func debugSetHovering(_ hovering: Bool) {
         isHovering = hovering
@@ -2402,9 +2418,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     }
 
     var anatomyForTests: Anatomy {
-        Anatomy(hasRibbon: ribbon.superlayer != nil,
-                ribbonHeight: Self.ribbonHeight,
-                ribbonStopCount: ribbon.colors?.count ?? 0,
+        Anatomy(hasRibbon: card.layer?.sublayers?.contains { $0 is CAGradientLayer } ?? false,
+                ribbonHeight: 0,
+                ribbonStopCount: 0,
                 cornerRadius: card.layer?.cornerRadius ?? 0,
                 cardClipsToBounds: card.layer?.masksToBounds ?? false,
                 shadowHostClipsToBounds: layer?.masksToBounds ?? true,

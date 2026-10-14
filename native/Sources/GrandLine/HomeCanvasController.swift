@@ -99,8 +99,9 @@ final class HomeCanvasController: NSViewController {
     /// §6.1's grid: minimum column width 255, gap 16.
     static let minModuleWidth: CGFloat = 255
     static let gridSpacing: CGFloat = 16
-    /// §2.7's canvas gutter.
-    static let gutter: CGFloat = 22
+    /// The canvas gutter - the scale's 24 (UI-14), which is also the bar's
+    /// own side margin, so the cards' edges line up under the bar's.
+    static let gutter: CGFloat = HelmMetrics.pageGutter
     /// How far the top-anchored content sits below the page's own top edge.
     ///
     /// The bar already reserves its own height above this page
@@ -360,7 +361,9 @@ final class HomeCanvasController: NSViewController {
 
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 20
+        // UI-14: 16 between the attention card and the dashboard, the same
+        // gap the dashboard's own rows use.
+        stack.spacing = Self.gridSpacing
         stack.distribution = .fill
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(heroCard)
@@ -435,7 +438,7 @@ final class HomeCanvasController: NSViewController {
             // shorter than, while also being exactly its content's height, is
             // two required constraints in direct conflict.
             stack.topAnchor.constraint(equalTo: document.topAnchor, constant: Self.contentTopMargin),
-            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -44),
+            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -HelmMetrics.s5),
 
             heroCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             attentionCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -504,6 +507,8 @@ final class HomeCanvasController: NSViewController {
         scrollToTop()
     }
 
+
+
     // MARK: Space filter (§5.3)
 
     var selectedSpace: DaylightSpace { space }
@@ -535,6 +540,9 @@ final class HomeCanvasController: NSViewController {
     /// completes. That refresh already runs at launch and on every Overview
     /// visit, so the canvas gets real fleet numbers without asking for them.
     func applyFleet(snapshot: FleetSnapshot, mergedPRs: [MergedPR]?, prFetchFailure: String?) {
+        #if FM_SELFTESTS
+        if debugInputsPinned { return }
+        #endif
         self.fleetSnapshot = snapshot
         // UX5: the hero's all-clear detail line is freshness now rather than a
         // restatement of the two cards below it - see `heroDetail`. This is
@@ -555,6 +563,9 @@ final class HomeCanvasController: NSViewController {
     /// `applyFleet`: the work was already done for another surface, and this
     /// page is a second reader of it rather than a second caller.
     func applyQuota(_ result: QuotaFetchResult) {
+        #if FM_SELFTESTS
+        if debugInputsPinned { return }
+        #endif
         isRefreshingQuota = false
         switch result {
         case .success(let snapshot):
@@ -796,6 +807,12 @@ final class HomeCanvasController: NSViewController {
         // the composer in the same call that builds it.
         let hasItems = !digest.dueTasks.isEmpty || !digest.followUps.isEmpty || !extra.isEmpty
         let header = hubHeader(hasItems: hasItems)
+        // UI-13: the card re-reads the freshness phrase once a minute while it
+        // is on screen, so "Fleet read 4 min ago" stays true. The card owns
+        // that tick; this controller keeps its no-timer refresh model.
+        attentionCard.sublineProvider = { [weak self] in
+            self?.hubHeader(hasItems: hasItems).detail ?? ""
+        }
         attentionCard.render(NeedsAttentionComposer.summary(from: digest,
                                                             extra: extra,
                                                             clear: clearNotes(),
@@ -1045,15 +1062,11 @@ final class HomeCanvasController: NSViewController {
     /// app does not do that); this line is re-derived when the fleet is read
     /// and when the canvas re-renders, which is exactly when the answer
     /// changes in a way worth reading.
+    /// UI-13: the one relative-time phrase, so the attention card's "Fleet
+    /// read 4 min ago" and the Claude card's "updated 4 min ago" agree.
     static func freshnessPhrase(since date: Date?, now: Date = Date()) -> String {
         guard let date else { return "just now" }
-        let seconds = now.timeIntervalSince(date)
-        if seconds < 90 { return "just now" }
-        let minutes = Int((seconds / 60).rounded())
-        if minutes < 60 { return "\(minutes) minutes ago" }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return "at \(formatter.string(from: date))"
+        return HelmRelativeTime.phrase(since: date, now: now)
     }
 
     /// What the hub says to a captain who has not put anything in yet -
@@ -1543,8 +1556,12 @@ final class HomeCanvasController: NSViewController {
                 : "Turn on Morning briefing in Settings to get one short summary each morning.")
             return
         }
+        // UI-8's rule on this card: the source count is a fact about the
+        // reading, so it joins the subtitle; the header keeps a pill only for
+        // the state that is not the default (an offline briefing).
         content.subtitle = "generated \(Self.briefingTimeFormatter.string(from: record.generatedAt))"
-        content.chip = record.isDegraded ? .warn("offline") : .mute("\(record.sources.count) sources")
+            + " \u{00B7} \(record.sources.count) source\(record.sources.count == 1 ? "" : "s")"
+        content.chip = record.isDegraded ? .warn("offline") : nil
 
         // Two columns wide again, and still bounded - see
         // `HelmModuleCard.maxBriefingClauses` for why the cap survives the
@@ -1650,9 +1667,17 @@ final class HomeCanvasController: NSViewController {
         // nowhere else at all, which is why it is what survives.
         let updated = quotaFetchedAt.map { Self.claudeUpdatedText(fetchedAt: $0) }
         content.chip = compact ? nil : Self.claudeChip(for: snapshot)
-        content.headerCaption = compact ? nil : updated
+        // UI-8: one status word in the header, and the reading's age in the
+        // subtitle beside the plan ("Team plan · updated 3h ago") rather than
+        // as a second caption under the word.
+        if let fetchedAt = quotaFetchedAt, !compact {
+            content.subtitle = "\(Self.claudeSubtitle(for: snapshot)) \u{00B7} updated "
+                + HelmRelativeTime.phrase(since: fetchedAt)
+        }
         if compact { content.toolTip = updated }
-        content.body = .usageReport(Self.claudeUsageSections(for: snapshot), compact: compact)
+        content.body = .usageReport(Self.claudeUsageSections(for: snapshot,
+                                                             headerCarriesVerdict: content.chip != nil),
+                                    compact: compact)
     }
 
     /// Whether this card is narrow enough to need the report's stacked
@@ -1683,8 +1708,14 @@ final class HomeCanvasController: NSViewController {
     /// "Not reported" in the muted caption face with no bar at all - never a
     /// `0%` or a `$0`, which on a quota readout are real and alarming values
     /// rather than synonyms for "unknown".
+    /// - Parameter headerCarriesVerdict: UI-8 - when the card's header already
+    ///   says the plan's verdict ("Comfortable"), the Plan limits section
+    ///   keeps only its title rather than saying it a second time. A compact
+    ///   card drops the header word (see `fillClaudeStatus`), so there the
+    ///   section keeps it.
     static func claudeUsageSections(for snapshot: QuotaSnapshot,
-                                    now: Date = Date()) -> [HelmModuleUsageSection] {
+                                    now: Date = Date(),
+                                    headerCarriesVerdict: Bool = false) -> [HelmModuleUsageSection] {
         func row(_ title: String, _ window: QuotaWindow?) -> HelmModuleUsageRow {
             guard let window else {
                 return HelmModuleUsageRow(title: title, value: "Not reported",
@@ -1726,7 +1757,7 @@ final class HomeCanvasController: NSViewController {
 
         var sections: [HelmModuleUsageSection] = [
             HelmModuleUsageSection(title: "Plan limits",
-                                   status: claudePlanLimitsStatus(for: snapshot),
+                                   status: headerCarriesVerdict ? nil : claudePlanLimitsStatus(for: snapshot),
                                    content: .limits(rows)),
         ]
         sections.append(HelmModuleUsageSection(title: "Extra usage",
@@ -1829,13 +1860,7 @@ final class HomeCanvasController: NSViewController {
     /// elapsed time would be testing two clocks rather than the feature
     /// (AGENTS.md's one-injectable-clock rule).
     static func claudeUpdatedText(fetchedAt: Date, now: Date = Date()) -> String {
-        let seconds = now.timeIntervalSince(fetchedAt)
-        if seconds < 60 { return "Updated just now" }
-        let minutes = Int((seconds / 60).rounded(.down))
-        if minutes < 60 { return "Updated \(minutes) min ago" }
-        let hours = Int((seconds / 3600).rounded(.down))
-        if hours < 24 { return "Updated \(hours)h ago" }
-        return "Updated \(Int((seconds / 86400).rounded(.down)))d ago"
+        "Updated " + HelmRelativeTime.phrase(since: fetchedAt, now: now)
     }
 
     /// `96%`. No decimal: `quota-axi` reports whole `percentRemaining`
@@ -1938,15 +1963,17 @@ final class HomeCanvasController: NSViewController {
         // `statsRow`). A second arithmetic for the same three numbers on the
         // hub is exactly what the component index exists to stop - and the
         // tile they are drawn in is that row's `HelmStatTile` too.
-        let tiles = [
-            HelmModuleTile(value: "\(working.count)", caption: "Working"),
-            HelmModuleTile(value: "\(snapshot.doneCount)", caption: "Done today", tint: .good),
-            HelmModuleTile(value: "\(snapshot.queuedCount)", caption: "Queued"),
+        // UI-9: a KPI strip, not three boxed tiles. A fine zero is muted, so
+        // the numbers that mean something carry the weight.
+        let items: [HelmKPIStrip.Item] = [
+            .count(working.count, caption: "Working"),
+            .count(snapshot.doneCount, caption: "Done today"),
+            .count(snapshot.queuedCount, caption: "Queued"),
         ]
 
         if working.isEmpty && needs.isEmpty {
-            content.body = .tiles(note: "All hands idle. Nothing is running and nothing is waiting on you.",
-                                  tiles: tiles)
+            content.body = .kpis(note: "All hands idle. Nothing is running and nothing is waiting on you.",
+                                 items: items)
             return
         }
         // With something actually in flight the sentence names it, because a
@@ -1954,7 +1981,7 @@ final class HomeCanvasController: NSViewController {
         let lead = needs.isEmpty
             ? "\(working.count) crew working."
             : "\(needs.count) waiting on you: \(needs.prefix(2).map(\.id).joined(separator: ", "))."
-        content.body = .tiles(note: lead, tiles: tiles)
+        content.body = .kpis(note: lead, items: items)
     }
 
     private func fillTasks(_ content: inout HelmModuleCard.Content) {
@@ -2012,8 +2039,13 @@ final class HomeCanvasController: NSViewController {
             case "pending": state = .warn
             default: state = .idle
             }
+            // UI-10: a row is a link to its pull request rather than inert
+            // text; the card itself still opens the whole queue.
+            let url = URL(string: pr.url)
             return HelmModulePeekRow(state: state, text: pr.title,
-                                     value: pr.checks == "none" ? "No checks" : "Checks \(pr.checks)")
+                                     value: pr.checks == "none" ? "No checks" : "Checks \(pr.checks)",
+                                     onOpen: url.map { url in { NSWorkspace.shared.open(url) } },
+                                     openHelp: pr.number.map { "Open pull request #\($0)" } ?? "Open the pull request")
         }
         content.body = .peekRows(Array(rows))
         // The reference's footer, and the reason it is worth having: this
@@ -2028,7 +2060,7 @@ final class HomeCanvasController: NSViewController {
         if prs.count > rows.count {
             content.footer = HelmModuleCard.Footer(
                 caption: "Showing \(rows.count) of \(prs.count)",
-                actionTitle: "View all \(prs.count) open",
+                actionTitle: "All \(prs.count) open",
                 handler: { [weak self] in self?.onOpenDestination?(.review) })
         }
     }
@@ -2824,6 +2856,9 @@ final class HomeCanvasController: NSViewController {
     /// self-test can establish a known starting state before driving the
     /// signal it is actually testing.
     func debugRenderNow() { render() }
+    /// `ReviewTourLab`'s `demo home`: once its fixture is applied, later live
+    /// fleet and quota readings are ignored, so a render is deterministic.
+    var debugInputsPinned = false
     /// Repaint against a given theme without going near
     /// `ThemeManager.setTheme`, which writes through to the real preference -
     /// the hermeticity hazard that has poisoned whole suite runs before.

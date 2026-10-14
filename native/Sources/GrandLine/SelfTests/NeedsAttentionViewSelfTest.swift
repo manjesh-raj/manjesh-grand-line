@@ -45,6 +45,7 @@ enum NeedsAttentionViewSelfTest {
         checkDoesNotResizeTheWindow(&ok)
         checkOnlyOnTheHub(&ok)
         checkTheRevampRecipe(&ok)
+        checkTheSublineTicks(&ok)
 
         if ok {
             print("NeedsAttentionViewSelfTest: all checks passed")
@@ -399,6 +400,34 @@ enum NeedsAttentionViewSelfTest {
 
     private static func descendants(of view: NSView) -> [NSView] {
         view.subviews + view.subviews.flatMap { descendants(of: $0) }
+    }
+
+    // MARK: 8 - the freshness subline ticks (UI-13)
+
+    /// The subline says how old the fleet reading is, so it has to stay true
+    /// while the page sits open. The card re-reads it from its host once a
+    /// minute while it is in a window; here the tick is fired through the
+    /// same path the timer takes, and the phrase must move.
+    private static func checkTheSublineTicks(_ ok: inout Bool) {
+        withScratchShift { store in
+            seed(store)
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            let card = canvas.attentionCardForTests
+            check(card.debugTickIsRunning, "the tick should run while the card is in a window", &ok)
+            let before = card.debugSubline
+            var phrase = "Fleet read 7 min ago."
+            card.sublineProvider = { phrase }
+            card.debugTickSubline()
+            check(card.debugSubline == "Fleet read 7 min ago." && card.debugSubline != before,
+                  "a tick should rewrite the subline from its provider, got \"\(card.debugSubline)\"", &ok)
+            phrase = "Fleet read 8 min ago."
+            card.debugTickSubline()
+            check(card.debugSubline == phrase, "and keep tracking it", &ok)
+            window.contentView = NSView()
+            check(!card.debugTickIsRunning, "the tick should stop once the card leaves its window (GL-13)", &ok)
+        }
     }
 }
 

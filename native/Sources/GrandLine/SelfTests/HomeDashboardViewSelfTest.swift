@@ -60,6 +60,7 @@ enum HomeDashboardViewSelfTest {
         checkTheFleetTilesAndMergeFooter(&ok)
         checkBothThemesPaint(&ok)
         checkTheCardShadowIsPainted(&ok)
+        checkMergeQueueRowsAreClickable(&ok)
 
         if ok {
             print("HomeDashboardViewSelfTest: all checks passed")
@@ -304,15 +305,19 @@ enum HomeDashboardViewSelfTest {
             canvas.debugRenderNow()
             canvas.view.layoutSubtreeIfNeeded()
 
-            let tiles = canvas.moduleCardsForTests.flatMap { $0.debugTiles }
-            check(tiles.count == 3,
-                  "the Fleet card draws three tiles, got \(tiles.count)", &ok)
+            // UI-9: one KPI strip, no boxed tiles.
+            let strips = canvas.moduleCardsForTests.compactMap { $0.debugKPIStrip }
+            guard strips.count == 1, let strip = strips.first else {
+                fail("the Fleet card draws exactly one KPI strip, got \(strips.count)", &ok)
+                return
+            }
             // The numbers are the snapshot's own, so a card that drew three
-            // tiles of zeroes fails here rather than looking right.
-            check(tiles.map(\.value) == ["0", "20", "17"],
-                  "the tiles carry the snapshot's own counts, got \(tiles.map(\.value))", &ok)
-            check(tiles.map(\.caption) == ["Working", "Done today", "Queued"],
-                  "under the reference's own captions, got \(tiles.map(\.caption))", &ok)
+            // zeroes fails here rather than looking right.
+            check(strip.debugValues == ["0", "20", "17"],
+                  "the strip carries the snapshot's own counts, got \(strip.debugValues)", &ok)
+            check(strip.debugCaptions == ["Working", "Done today", "Queued"],
+                  "under the reference's own captions, got \(strip.debugCaptions)", &ok)
+            check(!strip.debugHasBorder, "the strip draws no box of its own", &ok)
 
             let footers = canvas.moduleCardsForTests.compactMap { $0.debugFooter }
             guard footers.count == 1 else {
@@ -321,7 +326,9 @@ enum HomeDashboardViewSelfTest {
             }
             check(footers[0].caption == "Showing \(HelmModuleCard.maxPeekRows) of 33",
                   "the footer states the truncation, got \"\(footers[0].caption)\"", &ok)
-            check(footers[0].action == "View all 33 open",
+            // UI-10: one link, which names the queue rather than repeating
+            // the card's own click as "View all".
+            check(footers[0].action == "All 33 open",
                   "and offers the whole queue, got \"\(footers[0].action)\"", &ok)
         }
     }
@@ -450,5 +457,50 @@ enum HomeDashboardViewSelfTest {
                       + "from its resting shadow, got \(darkening)", &ok)
         }
     }
+
+    // MARK: 8 - merge queue rows are clickable (UI-10)
+
+    /// UI-10: the merge queue's peek rows were inert text, and the card's
+    /// "View all" repeated the card's own click. Each row is now a real hover
+    /// target with a chevron on aim, and the card's own click steps aside for
+    /// it - otherwise a click on a row would also open the queue (gotcha
+    /// (20)'s shape). The row's own open is not fired here: it opens a URL.
+    private static func checkMergeQueueRowsAreClickable(_ ok: inout Bool) {
+        withScratchShift { store in
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            let prs = (1...5).map { (index: Int) -> MergedPR in
+                MergedPR(source: "forge", taskID: nil, repo: "grand-line",
+                         url: "https://example.invalid/\(index)", number: index,
+                         title: "pull request \(index)", checks: "green", forge: "github")
+            }
+            canvas.applyFleet(snapshot: FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
+                                                      queuedCount: 0, doneCount: 0, projectsCount: 1,
+                                                      watcher: WatcherHealth(status: "healthy")),
+                              mergedPRs: prs, prFetchFailure: nil)
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+            guard let card = canvas.moduleCardsForTests.first(where: { !$0.debugPeekRows.isEmpty }) else {
+                fail("the merge queue card should draw clickable peek rows", &ok)
+                return
+            }
+            check(card.debugPeekRows.count == HelmModuleCard.maxPeekRows,
+                  "every shown PR should be a clickable row, got \(card.debugPeekRows.count)", &ok)
+            check(card.debugPeekRows.allSatisfy(\.isActivatable), "each row should be a button to VoiceOver", &ok)
+            check(card.debugPeekChevronAlphas.allSatisfy { $0 == 0 }, "the chevron is hidden at rest", &ok)
+            card.debugHoverPeekRow(0, true)
+            HelmMotion.reducedOverrideForTests = true
+            card.debugHoverPeekRow(0, true)
+            HelmMotion.reducedOverrideForTests = nil
+            check((card.debugPeekChevronAlphas.first ?? 0) > 0.99, "the chevron appears on aim", &ok)
+            let frame = card.debugPeekRowFrameInCard(1)
+            check(card.debugCardClickWouldBeDeclined(at: NSPoint(x: frame.midX, y: frame.midY)),
+                  "a click on a row must not also open the card", &ok)
+            check(!card.debugCardClickWouldBeDeclined(at: NSPoint(x: 40, y: 20)),
+                  "a click on the card's own surface still opens it, or the check above cannot fail", &ok)
+        }
+    }
 }
+
 #endif

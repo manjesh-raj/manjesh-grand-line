@@ -94,7 +94,9 @@ final class DaylightBarController: NSViewController {
     // §6.3's geometry, exactly.
     static let height: CGFloat = 50
     static let topMargin: CGFloat = 14
-    static let sideMargin: CGFloat = 22
+    /// The scale's page gutter (24), so the bar's edges line up with every
+    /// page's content edge (UI-14) rather than sitting 2pt outside it.
+    static let sideMargin: CGFloat = HelmMetrics.pageGutter
     /// The gap between the bar's bottom edge and the body area beneath it -
     /// §2.7's spec states 20 ("Drill page: ... top margin under the bar 20"),
     /// but a captain screenshot flagged that as reading like leftover empty

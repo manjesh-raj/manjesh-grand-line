@@ -297,8 +297,9 @@ enum DaylightDrillPageSlice6SelfTest {
         var heights = Set<CGFloat>()
         for plate in plates {
             let anatomy = plate.anatomyForTests
-            if !anatomy.hasRibbon || anatomy.ribbonStopCount != 2 {
-                print("  FAIL a plate has no two-stop hue ribbon (§6.1)")
+            // UI-6/UI-58: a plate's identity is its tile, not a ribbon.
+            if anatomy.hasRibbon {
+                print("  FAIL a plate still carries a hue ribbon (UI-58)")
                 ok = false
             }
             if !anatomy.hasTile {

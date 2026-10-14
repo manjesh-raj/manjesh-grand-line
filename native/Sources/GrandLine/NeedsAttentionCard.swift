@@ -123,6 +123,13 @@ final class NeedsAttentionCard: NSView {
     private var summary: NeedsAttentionSummary?
     private var subline: String = ""
 
+    /// UI-13: re-derives the subline (the fleet's "read 4 min ago") so it
+    /// stays true while the card sits on screen. Called once a minute, only
+    /// while the card is in a window; it rewrites one label and fetches
+    /// nothing (GL-24).
+    var sublineProvider: (() -> String)?
+    private var tick: Timer?
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
@@ -130,6 +137,26 @@ final class NeedsAttentionCard: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    deinit { tick?.invalidate() }
+
+    /// GL-13: the tick runs only while the card is in a window, and a hidden
+    /// page skips it (the shell hides destinations rather than removing them).
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        tick?.invalidate()
+        tick = nil
+        guard window != nil else { return }
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in self?.tickSubline() }
+        timer.tolerance = 5
+        RunLoop.main.add(timer, forMode: .common)
+        tick = timer
+    }
+
+    private func tickSubline() {
+        guard !isHiddenOrHasHiddenAncestor, let provider = sublineProvider else { return }
+        setSubline(provider())
+    }
 
     // MARK: Build
 
@@ -425,6 +452,9 @@ final class NeedsAttentionCard: NSView {
         return DailyReviewCard.collectText(clearRow)
     }
     var debugClearStrip: NSView { clearStrip }
+    /// Fires the minute tick now, through the same path the timer takes.
+    func debugTickSubline() { tickSubline() }
+    var debugTickIsRunning: Bool { tick?.isValid ?? false }
     /// A **real** `performClick` on the header's Refresh, so the assertion
     /// runs the same target/action path a captain's click does rather than
     /// the handler behind it.
