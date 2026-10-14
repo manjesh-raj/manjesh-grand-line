@@ -45,8 +45,10 @@ final class DictationController: NSViewController, DaylightDrillActions {
     private let statusShortcutRow = NSStackView()
 
     private let statusPanel = HelmCard()
-    private let statusIconTile = IconTileView(size: 40, cornerRadius: 10)
-    private let statusTitleLabel = NSTextField(labelWithString: "")
+    /// UI-53: the state as a dot and a word - a pill when it asks for an
+    /// action - rather than a 40pt tile and a card title beside the card's
+    /// own "Status" header.
+    private let statusWord = HelmStatusPill(style: .dotWord)
     private let statusDetailLabel = NSTextField(wrappingLabelWithString: "")
     private var statusTextStack = NSStackView()
     private let statusActionButton = HelmButton(title: "", variant: .primary)
@@ -54,8 +56,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
     // prototype's Status card-head shows ("On device") once every
     // permission is granted and no action button is needed - mutually
     // exclusive with `statusActionButton` (see `render()`).
-    private let statusChip = NSView()
-    private let statusChipLabel = NSTextField(labelWithString: "")
+    /// UI-32: the kit's status pill. "On device" is this card's default, so
+    /// it is a dot and a word (UI-53).
+    private let statusChip = HelmStatusPill(style: .dotWord)
 
     private let shortcutPanel = HelmCard()
     private let shortcutRecorder: KeyChordRecorderView
@@ -64,13 +67,14 @@ final class DictationController: NSViewController, DaylightDrillActions {
     private var shortcutTextStack = NSStackView()
 
     private let cleanupPanel = HelmCard()
-    private let cleanupSwitch = NSSwitch()
+    /// UI-53 / UI-61: the app's own toggle, never a stock `NSSwitch`.
+    private let cleanupSwitch = HelmToggle()
     private let cleanupTitleLabel = NSTextField(labelWithString: "")
     private let cleanupDetailLabel = NSTextField(wrappingLabelWithString: "")
     private var cleanupTextStack = NSStackView()
 
     private let localWhisperPanel = HelmCard()
-    private let localWhisperSwitch = NSSwitch()
+    private let localWhisperSwitch = HelmToggle()
     private let localWhisperTitleLabel = NSTextField(labelWithString: "")
     private let localWhisperDetailLabel = NSTextField(wrappingLabelWithString: "")
     private var localWhisperTextStack = NSStackView()
@@ -80,12 +84,15 @@ final class DictationController: NSViewController, DaylightDrillActions {
     // one state the prototype actually depicts); every other state
     // (downloading/failed/not-downloaded) keeps the existing plain label,
     // since those messages are longer and dynamic, not a fixed short word.
-    private let modelReadyPill = NSView()
-    private let modelReadyPillLabel = NSTextField(labelWithString: "")
+    /// UI-32: the kit's status pill, which states its own width (no more
+    /// B10 workaround on the label).
+    private let modelReadyPill = HelmStatusPill(style: .dotWord)
     private let modelActionButton = HelmButton(title: "", variant: .primary)
     /// GL-35: 547MB is not a footprint to strand. Only shown while the model
-    /// is actually on disk.
-    private let modelDeleteButton = HelmButton(title: "Delete Model", variant: .destructive)
+    /// is actually on disk. UI-53: a quiet "⋯" whose menu holds Delete Model…,
+    /// which still asks through `HelmConfirm` - not a destructive button at
+    /// the same weight as Re-download.
+    private let modelDeleteButton = HelmButton(symbol: "ellipsis", variant: .quiet)
     private let modelProgressBar = HelmProgressBar()
     private var modelState: WhisperModelState = .notDownloaded
 
@@ -231,6 +238,14 @@ final class DictationController: NSViewController, DaylightDrillActions {
             self.modelState = state
             self.renderLocalWhisperSection()
         }
+
+        // UI-53: the first paint is a real render. Before this, a page drawn
+        // before `viewWillAppear` showed the Status card's unfilled chrome -
+        // an empty tile, no title and an untitled accent button, which read
+        // as a stray toggle (UI-49's class of defect).
+        cleanupSwitch.isOn = AppSettings.shared.dictationCleanupEnabled
+        localWhisperSwitch.isOn = AppSettings.shared.dictationLocalWhisperEnabled
+        render()
     }
 
     override func viewWillAppear() {
@@ -347,8 +362,8 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// `SudoTouchIDController`/`VaultController` already use for their own
     /// OS-level checks), and after `setEngineStatus` reports a change.
     func refresh() {
-        cleanupSwitch.state = AppSettings.shared.dictationCleanupEnabled ? .on : .off
-        localWhisperSwitch.state = AppSettings.shared.dictationLocalWhisperEnabled ? .on : .off
+        cleanupSwitch.isOn = AppSettings.shared.dictationCleanupEnabled
+        localWhisperSwitch.isOn = AppSettings.shared.dictationLocalWhisperEnabled
         WhisperModelManager.shared.refreshState()
         setStatus(DictationPermissions.currentStatus())
     }
@@ -407,17 +422,16 @@ final class DictationController: NSViewController, DaylightDrillActions {
         sectionLabel.translatesAutoresizingMaskIntoConstraints = false
         statusPanel.setHeader(sectionLabel)
 
-        statusTitleLabel.font = HelmType.cardTitle()
-        statusTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusWord.setContentHuggingPriority(.required, for: .horizontal)
 
         statusDetailLabel.font = HelmType.caption()
         statusDetailLabel.preferredMaxLayoutWidth = 520
         statusDetailLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        statusTextStack = NSStackView(views: [statusTitleLabel, statusDetailLabel])
+        statusTextStack = NSStackView(views: [statusWord, statusDetailLabel])
         statusTextStack.orientation = .vertical
         statusTextStack.alignment = .leading
-        statusTextStack.spacing = 3
+        statusTextStack.spacing = HelmMetrics.s1
         statusTextStack.translatesAutoresizingMaskIntoConstraints = false
         // Stack-level, not content-level - see `viewDidLayout`'s doc
         // comment (AGENTS.md gotcha #12): this is what actually lets the
@@ -436,10 +450,10 @@ final class DictationController: NSViewController, DaylightDrillActions {
         statusChip.setContentCompressionResistancePriority(.required, for: .horizontal)
         statusChip.isHidden = true
 
-        let row = NSStackView(views: [statusIconTile, statusTextStack, statusChip, statusActionButton])
+        let row = NSStackView(views: [statusTextStack, statusChip, statusActionButton])
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 14
+        row.spacing = HelmMetrics.s3
         // AGENTS.md gotcha #10: the default `.gravityAreas` distribution
         // lays every arranged view out at its own natural size and
         // resolves leftover width by Auto Layout's own tie-breaking, which
@@ -630,8 +644,6 @@ final class DictationController: NSViewController, DaylightDrillActions {
         // absorbs slack. One page's bug, fixed on that page.
         modelReadyPill.setContentHuggingPriority(.required, for: .horizontal)
         modelReadyPill.setContentCompressionResistancePriority(.required, for: .horizontal)
-        modelReadyPillLabel.setContentHuggingPriority(.required, for: .horizontal)
-        modelReadyPillLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         modelReadyPill.isHidden = true
 
         // G4: the app's own bar rather than the stock determinate one.
@@ -648,8 +660,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
 
         modelDeleteButton.controlSize = .small
         modelDeleteButton.target = self
-        modelDeleteButton.action = #selector(modelDeleteTapped)
-        modelDeleteButton.toolTip = "Remove the downloaded model from disk"
+        modelDeleteButton.action = #selector(modelMoreTapped(_:))
+        modelDeleteButton.toolTip = "More model actions"
+        modelDeleteButton.setAccessibilityLabel("More model actions")
         modelDeleteButton.isHidden = true
         modelDeleteButton.setContentHuggingPriority(.required, for: .horizontal)
         modelDeleteButton.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -807,8 +820,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
     // MARK: Rendering
 
     private func render() {
-        statusIconTile.configure(symbol: status.symbol, tint: status.tint)
-        statusTitleLabel.stringValue = status.title
+        statusWord.setAccessibilityLabel("Dictation status: \(status.title)")
         statusDetailLabel.stringValue = status.detail(shortcutDisplay: shortcutRecorder.shortcut.displayString)
 
         switch status {
@@ -869,11 +881,14 @@ final class DictationController: NSViewController, DaylightDrillActions {
         shortcutPanel.applyTheme(theme)
         vocabularyPanel.applyTheme(theme)
         historyPanel.applyTheme(theme)
-        statusIconTile.applyTheme(theme)
-        statusTitleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        // A state that asks for an action is a pill; every other is a dot
+        // and a word (UI-43's rule).
+        statusWord.configure(text: status.title, tint: status.tint,
+                             style: statusActionButton.isHidden ? .dotWord : .pill, theme: theme)
+        cleanupSwitch.applyTheme(theme)
+        localWhisperSwitch.applyTheme(theme)
         statusDetailLabel.textColor = HelmTheme.mutedInk(theme)
-        ToolRowLayout.pill(text: "On device", colorHex: HelmTint.good.hex(in: theme),
-                          into: statusChip, label: statusChipLabel, theme: theme)
+        statusChip.configure(text: "On device", tint: .good, theme: theme)
         shortcutRecorder.applyTheme(theme)
         shortcutDetailLabel.textColor = HelmTheme.mutedInk(theme)
         cleanupPanel.applyTheme(theme)
@@ -883,8 +898,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
         localWhisperTitleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         localWhisperDetailLabel.textColor = HelmTheme.mutedInk(theme)
         modelStatusLabel.textColor = HelmTheme.mutedInk(theme)
-        ToolRowLayout.pill(text: "Model ready", colorHex: HelmTint.good.hex(in: theme),
-                          into: modelReadyPill, label: modelReadyPillLabel, theme: theme)
+        modelReadyPill.configure(text: "Model ready", tint: .good, theme: theme)
         // `HelmChipInput` carries its own `ThemeManager` observation (and its
         // own focus registration) - this call only keeps it right if it was
         // built between two theme changes.
@@ -906,6 +920,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
             modelReadyPill.isHidden = true
             modelProgressBar.isHidden = true
             modelActionButton.title = "Download Model"
+            modelActionButton.variant = .primary
             modelActionButton.isEnabled = true
             modelDeleteButton.isHidden = true
         case .downloading(let progress):
@@ -915,6 +930,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
             modelProgressBar.isHidden = false
             modelProgressBar.configure(fraction: progress)
             modelActionButton.title = "Cancel"
+            modelActionButton.variant = .secondary
             modelActionButton.isEnabled = true
             modelDeleteButton.isHidden = true
         case .ready:
@@ -925,7 +941,10 @@ final class DictationController: NSViewController, DaylightDrillActions {
             modelStatusLabel.isHidden = true
             modelReadyPill.isHidden = false
             modelProgressBar.isHidden = true
+            // UI-53: the model is already here, so re-fetching it is not the
+            // card's main action.
             modelActionButton.title = "Re-download"
+            modelActionButton.variant = .secondary
             modelActionButton.isEnabled = true
             modelDeleteButton.isHidden = false
         case .failed(let message):
@@ -934,6 +953,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
             modelReadyPill.isHidden = true
             modelProgressBar.isHidden = true
             modelActionButton.title = "Retry Download"
+            modelActionButton.variant = .primary
             modelActionButton.isEnabled = true
             // A failed *download* leaves nothing on disk; a failed delete does
             // - so this follows the file, not the state's name.
@@ -1008,11 +1028,11 @@ final class DictationController: NSViewController, DaylightDrillActions {
     }
 
     @objc private func cleanupToggled() {
-        AppSettings.shared.dictationCleanupEnabled = cleanupSwitch.state == .on
+        AppSettings.shared.dictationCleanupEnabled = cleanupSwitch.isOn
     }
 
     @objc private func localWhisperToggled() {
-        let enabled = localWhisperSwitch.state == .on
+        let enabled = localWhisperSwitch.isOn
         AppSettings.shared.dictationLocalWhisperEnabled = enabled
         onLocalWhisperEnabledChanged?(enabled)
     }
@@ -1037,6 +1057,17 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// G3: drive the real model-delete confirmation.
     func debugModelDeleteTapped() { modelDeleteTapped() }
     #endif
+
+    /// The "⋯" menu. One item today; a menu rather than a direct click so a
+    /// 547MB delete is two deliberate steps (the menu, then `HelmConfirm`).
+    @objc private func modelMoreTapped(_ sender: NSButton) {
+        let menu = NSMenu()
+        let delete = NSMenuItem(title: "Delete Model\u{2026}", action: #selector(modelDeleteTapped), keyEquivalent: "")
+        delete.target = self
+        delete.withSymbol("trash")
+        menu.addItem(delete)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + HelmMetrics.s1), in: sender)
+    }
 
     @objc private func modelDeleteTapped() {
         let bytes = WhisperModelManager.shared.downloadedByteCount
@@ -1078,6 +1109,8 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// Review bug B10: the Status card's own frame and the wrapping detail
     /// label's resolved width, which are the two numbers the defect is about.
     var debugStatusCardFrame: NSRect { statusPanel.frame }
+    var debugStatusWordText: String { statusWord.label.stringValue }
+    var debugStatusActionButton: HelmButton { statusActionButton }
     var debugStatusDetailFrame: NSRect { statusDetailLabel.frame }
     var debugStatusDetailMaxLayoutWidth: CGFloat { statusDetailLabel.preferredMaxLayoutWidth }
     var debugStatusRowWidth: CGFloat { (statusTextStack.superview as? NSStackView)?.bounds.width ?? -1 }

@@ -143,7 +143,9 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
         table.style = .fullWidth
         table.selectionHighlightStyle = .none
         table.gridStyleMask = []
-        table.intercellSpacing = NSSize(width: 0, height: 6)
+        // UI-50: flat rows separated by a hairline each row draws, so no gap
+        // between them - Rule 1's one bordered surface per level.
+        table.intercellSpacing = NSSize(width: 0, height: 0)
         table.rowHeight = Self.recordRowHeight
         table.dataSource = self
         table.delegate = self
@@ -307,30 +309,35 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
             cell.configure(name: name, theme: theme)
             return cell
         case .empty(let symbol, let title, let body):
-            // `.standard`, not `.compact`: this state is the whole card body of
-            // a full-width page, which is exactly the case the component's own
-            // doc comment reserves the larger glyph and the real title for.
-            // Reused by identifier like any other cell, but only while the
-            // symbol matches - the glyph is fixed at init.
+            // UI-46: `.quiet` - this state sits inside the list's own card,
+            // under the card's header, so it is the card-level recipe: one
+            // muted caption, no tile. The title becomes its first sentence.
+            let caption = title.isEmpty ? body : "\(title). \(body)"
             let reused = tableView.makeView(withIdentifier: Self.emptyID, owner: nil) as? HelmEmptyState
             let cell = (reused?.symbolName == symbol ? reused : nil)
-                ?? { let v = HelmEmptyState(symbol: symbol, title: title, body: body, size: .standard)
+                ?? { let v = HelmEmptyState(symbol: symbol, body: caption, size: .quiet)
                      v.identifier = Self.emptyID
                      return v }()
-            cell.setText(title: title, body: body)
+            cell.setText(body: caption)
             cell.applyTheme(theme)
             return cell
         case .record:
             let cell = (tableView.makeView(withIdentifier: Self.recordID, owner: nil) as? HostsListRecordView)
                 ?? { let v = HostsListRecordView(); v.identifier = Self.recordID; return v }()
-            // D1: quiet the per-row "Connect" until the row is aimed at,
-            // keeping the first record's visible so the affordance is never
-            // invisible. The index is counted among *records*, not among all
-            // rows, so a group header does not spend the visible slot.
-            let recordIndex = items[..<row].filter { if case .record = $0.kind { return true }; return false }.count
+            // Counted among *records*, not all rows, so a group header does
+            // not count toward the list's length.
             let recordCount = items.filter { if case .record = $0.kind { return true }; return false }.count
+            // UI-43: one rule for the whole list, never per row - a short
+            // list keeps its actions at rest, a longer one reveals them on
+            // hover or focus.
+            let reveal: HelmAccentRow.ActionReveal =
+                recordCount <= HelmAccentRow.alwaysRevealRowCount ? .always : .onAim
+            // The hairline belongs under a record only when another record
+            // follows it directly - a group header or the end of the list
+            // already separates.
+            let nextIsRecord = row + 1 < items.count && items[row + 1].isRecord
             cell.configure(item, theme: theme, selected: tableView.selectedRowIndexes.contains(row),
-                           actionReveal: ReviewPRListView.actionReveal(row: recordIndex, of: recordCount))
+                           actionReveal: reveal, showsSeparator: nextIsRecord)
             if needsRowEntrance { HelmRowEntrance.play(cell, row: row) }
             return cell
         }
@@ -415,6 +422,8 @@ private final class HostsListRecordView: NSView {
     private let overflowSpacer = NSView()
     private let actions = NSStackView()
     private let row: HelmAccentRow
+    /// The list's hairline under this row (`HelmFlatList.hairRowColor`).
+    private let separator = NSView()
 
     private var primary: HostsListSection.Action?
     private var overflow: [HostsListSection.Action] = []
@@ -458,8 +467,9 @@ private final class HostsListRecordView: NSView {
         // action stay readable together on a wide window. The card and the
         // page behind it stay gutter-to-gutter - that is the captain's own
         // reframe, "cap rows, not pages".
+        // UI-50: `.flat` - a row inside the list card is not a second card.
         row = HelmAccentRow(trailingAccessory: actions, gradientBadge: true,
-                            maxContentWidth: HelmAccentRow.recordContentWidth)
+                            maxContentWidth: HelmAccentRow.recordContentWidth, style: .flat)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
@@ -470,19 +480,28 @@ private final class HostsListRecordView: NSView {
         overflowButton.toolTip = "More actions"
 
         addSubview(row)
+        separator.wantsLayer = true
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(separator)
         NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: leadingAnchor),
             row.trailingAnchor.constraint(equalTo: trailingAnchor),
             row.topAnchor.constraint(equalTo: topAnchor, constant: 1),
             row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+            separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s4),
+            separator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s4),
+            separator.bottomAnchor.constraint(equalTo: bottomAnchor),
+            separator.heightAnchor.constraint(equalToConstant: 1),
         ])
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func configure(_ item: HostsListSection.Item, theme: HelmTheme, selected: Bool,
-                   actionReveal: HelmAccentRow.ActionReveal = .always) {
+                   actionReveal: HelmAccentRow.ActionReveal = .always, showsSeparator: Bool = false) {
         row.actionReveal = actionReveal
+        separator.isHidden = !showsSeparator
+        separator.layer?.backgroundColor = HelmFlatList.hairRowColor(theme).cgColor
         primary = item.primary
         overflow = item.overflow
 

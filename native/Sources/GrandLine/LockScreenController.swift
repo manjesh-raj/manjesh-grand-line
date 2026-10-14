@@ -772,13 +772,10 @@ final class LockScreenController: NSViewController {
         // this gate cannot drift from the sheets it is meant to match; the
         // shadow is `HelmCard.elevation(.raised)`, §6.10's own level.
         HelmCard.applyCardSurface(to: card, theme: theme, cornerRadius: HelmMetrics.dModule)
-        let shadow = HelmCard.elevation(for: theme, level: .raised)
         HelmMotion.withoutImplicitAnimation {
-            cardShadowHost.layer?.shadowColor = (shadow.shadowColor ?? .black).cgColor
-            cardShadowHost.layer?.shadowOpacity = 1
-            cardShadowHost.layer?.shadowRadius = shadow.shadowBlurRadius
-            cardShadowHost.layer?.shadowOffset = CGSize(width: shadow.shadowOffset.width,
-                                                        height: shadow.shadowOffset.height)
+            if let host = cardShadowHost.layer {
+                HelmCard.applyElevation(.raised, to: host, theme: theme, path: host.shadowPath)
+            }
         }
         applyRibbon(theme: theme)
         markTile.configure(symbol: currentSymbol, hue: currentHue)

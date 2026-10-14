@@ -2024,6 +2024,12 @@ final class AppShellController: NSViewController {
     var debugWhiteboard: WhiteboardController { whiteboard }
 
     var debugBootstrap: BootstrapController { bootstrap }
+
+    /// The Home page and the Tasks page, for `ReviewTourLab`'s `demo home`
+    /// and `tasks <view>` verbs - so a tour can render both pages in the
+    /// state the captain sees rather than in their first paint.
+    var debugHomeCanvas: HomeCanvasController { homeCanvas }
+    var debugShift: ShiftController { shift }
     #endif
 
     func debugSeedHostConsole(_ controller: ConsoleController, hostID: UUID) {

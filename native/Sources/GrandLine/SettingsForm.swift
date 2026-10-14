@@ -235,6 +235,12 @@ final class SettingsRow: NSView {
         // guarded on `isEnabled` - so this one branch really does make the
         // row inert rather than only dim it.
         if let control = view as? NSControl { control.isEnabled = enabled }
+        // A field card is a view, not a control, and owns its own enabled
+        // state (its dimming and its click guard) - so it is told directly.
+        if let card = view as? HelmFieldCard {
+            card.isEnabled = enabled
+            return
+        }
         for subview in view.subviews { setEnabled(enabled, on: subview) }
     }
 }

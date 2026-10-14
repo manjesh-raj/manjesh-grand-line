@@ -68,9 +68,9 @@ final class CommandLibraryPageView: NSObject {
     /// One shared component where this page hand-rolled its own search well
     /// (a bordered row + a magnifier + a chromeless field) - Phase 0's
     /// raw-input purge, and the reason `HelmSearchField` exists.
-    private let searchField = HelmSearchField(
-        placeholder: "Search commands\u{2026} (try \u{201C}memory\u{201D} or \u{201C}certificate\u{201D})",
-        size: .prominent)
+    /// UI-59: at the top of the column it filters, the way Settings puts its
+    /// search - not a full-width field spanning both panes.
+    private let searchField = HelmSearchField(placeholder: "Search commands\u{2026}")
 
     private let leftPanel = NSView()
     private let leftPanelStack = NSStackView()
@@ -82,8 +82,9 @@ final class CommandLibraryPageView: NSObject {
     // Detail pane's live views (built once, mutated per-selection - see
     // `renderDetail(for:)`).
     private let detailNameLabel = NSTextField(labelWithString: "")
-    private let detailRiskPill = NSView()
-    private let detailRiskPillLabel = NSTextField(labelWithString: "")
+    /// UI-32: the kit's status pill (it used to set a 9.5pt mono face, under
+    /// the 11pt floor).
+    private let detailRiskPill = HelmStatusPill()
     private let detailMetaLabel = NSTextField(wrappingLabelWithString: "")
     private let detailCommandBox = NSView()
     private let detailCommandLabel = NSTextField(wrappingLabelWithString: "")
@@ -177,25 +178,18 @@ final class CommandLibraryPageView: NSObject {
         // right-hand pane does.
         columns.distribution = .fill
         columns.translatesAutoresizingMaskIntoConstraints = false
-        leftPanel.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        leftPanel.widthAnchor.constraint(equalToConstant: 236).isActive = true
         leftPanel.setContentHuggingPriority(.required, for: .horizontal)
         leftPanel.setContentCompressionResistancePriority(.required, for: .horizontal)
         detailPanel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         detailPanel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let root = NSStackView(views: [searchField, columns])
-        root.orientation = .vertical
-        root.alignment = .leading
-        root.spacing = 14
-        root.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(root)
+        view.addSubview(columns)
         NSLayoutConstraint.activate([
-            root.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            root.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            root.topAnchor.constraint(equalTo: view.topAnchor),
-            root.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
-            searchField.widthAnchor.constraint(equalTo: root.widthAnchor),
-            columns.widthAnchor.constraint(equalTo: root.widthAnchor),
+            columns.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            columns.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            columns.topAnchor.constraint(equalTo: view.topAnchor),
+            columns.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
         ])
     }
 
@@ -204,33 +198,43 @@ final class CommandLibraryPageView: NSObject {
     /// the same visual weight the hand-rolled row had); only the query hookup
     /// stays here.
     private func buildSearchRow() {
+        searchField.toolTip = "Search names, descriptions and tags - try \u{201C}memory\u{201D} or \u{201C}certificate\u{201D}"
         searchField.onTextChanged = { [weak self] query in
             self?.searchQuery = query
             self?.renderLeftPanel()
         }
     }
 
+    /// UI-45: the column wears `HelmPageSidebar`'s panel surface and row
+    /// recipe (`HelmPageSidebar.rowPalette`, `headerString`). It is not a
+    /// `HelmPageSidebar` itself: it is also the page's 73-row command list,
+    /// with categories that open and close in place, which that component
+    /// does not model.
     private func buildLeftPanel() {
         leftPanel.wantsLayer = true
-        leftPanel.layer?.cornerRadius = 10
         leftPanel.translatesAutoresizingMaskIntoConstraints = false
+
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        leftPanel.addSubview(searchField)
 
         leftPanelStack.orientation = .vertical
         leftPanelStack.alignment = .leading
-        leftPanelStack.spacing = 4
+        leftPanelStack.spacing = HelmMetrics.s0
         leftPanelStack.translatesAutoresizingMaskIntoConstraints = false
         leftPanel.addSubview(leftPanelStack)
         NSLayoutConstraint.activate([
-            leftPanelStack.leadingAnchor.constraint(equalTo: leftPanel.leadingAnchor, constant: 12),
-            leftPanelStack.trailingAnchor.constraint(equalTo: leftPanel.trailingAnchor, constant: -12),
-            leftPanelStack.topAnchor.constraint(equalTo: leftPanel.topAnchor, constant: 12),
-            leftPanelStack.bottomAnchor.constraint(equalTo: leftPanel.bottomAnchor, constant: -12),
+            searchField.leadingAnchor.constraint(equalTo: leftPanel.leadingAnchor, constant: HelmMetrics.s3),
+            searchField.trailingAnchor.constraint(equalTo: leftPanel.trailingAnchor, constant: -HelmMetrics.s3),
+            searchField.topAnchor.constraint(equalTo: leftPanel.topAnchor, constant: HelmMetrics.s3),
+            leftPanelStack.leadingAnchor.constraint(equalTo: leftPanel.leadingAnchor, constant: HelmMetrics.s3),
+            leftPanelStack.trailingAnchor.constraint(equalTo: leftPanel.trailingAnchor, constant: -HelmMetrics.s3),
+            leftPanelStack.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: HelmMetrics.s3),
+            leftPanelStack.bottomAnchor.constraint(equalTo: leftPanel.bottomAnchor, constant: -HelmMetrics.s3),
         ])
     }
 
     private func buildDetailPanel() {
         detailPanel.wantsLayer = true
-        detailPanel.layer?.cornerRadius = 10
         detailPanel.translatesAutoresizingMaskIntoConstraints = false
 
         emptyDetailState.translatesAutoresizingMaskIntoConstraints = false
@@ -256,19 +260,6 @@ final class CommandLibraryPageView: NSObject {
         detailNameLabel.font = HelmType.pageTitle(.display)
         detailNameLabel.lineBreakMode = .byTruncatingTail
 
-        detailRiskPillLabel.font = ShiftFont.mono(9.5, weight: .semibold)
-        detailRiskPillLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailRiskPill.wantsLayer = true
-        detailRiskPill.layer?.cornerRadius = 8
-        detailRiskPill.translatesAutoresizingMaskIntoConstraints = false
-        detailRiskPill.addSubview(detailRiskPillLabel)
-        NSLayoutConstraint.activate([
-            detailRiskPillLabel.leadingAnchor.constraint(equalTo: detailRiskPill.leadingAnchor, constant: 8),
-            detailRiskPillLabel.trailingAnchor.constraint(equalTo: detailRiskPill.trailingAnchor, constant: -8),
-            detailRiskPillLabel.topAnchor.constraint(equalTo: detailRiskPill.topAnchor, constant: 3),
-            detailRiskPillLabel.bottomAnchor.constraint(equalTo: detailRiskPill.bottomAnchor, constant: -3),
-        ])
-        detailRiskPill.setContentHuggingPriority(.required, for: .horizontal)
 
         // The risk pill sits at the row's trailing edge (mockup:
         // `justify-between`), not crowded right up against the title text -
@@ -461,16 +452,13 @@ final class CommandLibraryPageView: NSObject {
         view.layer?.backgroundColor = .clear
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
-        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
 
-        leftPanel.layer?.backgroundColor = surface.cgColor
-        leftPanel.layer?.borderWidth = 1
-        leftPanel.layer?.borderColor = line.withAlphaComponent(0.6).cgColor
-
-        detailPanel.layer?.backgroundColor = surface.cgColor
-        detailPanel.layer?.borderWidth = 1
-        detailPanel.layer?.borderColor = line.withAlphaComponent(0.6).cgColor
+        // UI-45: `HelmPageSidebar.Surface.panel`'s surface, and the detail
+        // pane the app's one card surface - not two hand-rolled boxes.
+        HelmCard.applyCardSurface(to: leftPanel, theme: theme)
+        HelmCard.applyCardSurface(to: detailPanel, theme: theme)
+        searchField.applyTheme(theme)
 
         emptyDetailState.applyTheme(theme)
         detailNameLabel.textColor = ink
@@ -581,12 +569,23 @@ final class CommandLibraryPageView: NSObject {
         leftPanelStack.setCustomSpacing(10, after: d)
     }
 
+    /// UI-45: `HelmPageSidebar`'s header - the muted kicker - rather than a
+    /// 9.5pt mono face in the accent.
     private func mutedHeaderLabel(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.font = ShiftFont.mono(9.5, weight: .semibold)
-        label.textColor = HelmTheme.nsColor(theme.accentHex)
+        let label = NSTextField(labelWithString: "")
+        // Indented to the rows' own text inset, so a header and the labels
+        // under it start on one line.
+        let header = NSMutableAttributedString(attributedString: HelmPageSidebar.headerString(text, theme: theme))
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.firstLineHeadIndent = Self.rowTextInset
+        paragraph.headIndent = Self.rowTextInset
+        header.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: header.length))
+        label.attributedStringValue = header
         return label
     }
+
+    /// A row's text inset inside its hover fill, which a header matches.
+    private static let rowTextInset: CGFloat = HelmMetrics.s2
 
     /// A section header with a leading SF Symbol.
     ///
@@ -601,7 +600,8 @@ final class CommandLibraryPageView: NSObject {
     /// builds the glyph the same way every other icon in the app is built,
     /// which also means it takes the theme's accent like the label does.
     private func symbolHeaderLabel(_ text: String, symbol: String) -> NSView {
-        let label = mutedHeaderLabel(text)
+        let label = NSTextField(labelWithString: "")
+        label.attributedStringValue = HelmPageSidebar.headerString(text, theme: theme)
         label.translatesAutoresizingMaskIntoConstraints = false
 
         let glyph = NSImageView()
@@ -610,10 +610,10 @@ final class CommandLibraryPageView: NSObject {
         // is semibold, so the glyph pairs at semibold (AGENTS.md's component
         // index - `HelmSymbol` is the app's one place for this question).
         glyph.image = HelmSymbol.image(symbol,
-                                       pointSize: 9.5,
+                                       pointSize: 10,
                                        weight: HelmSymbol.weight(for: .semibold),
                                        accessibilityDescription: nil)
-        glyph.contentTintColor = HelmTheme.nsColor(theme.accentHex)
+        glyph.contentTintColor = HelmTheme.mutedInk(theme)
         glyph.setContentHuggingPriority(.required, for: .horizontal)
         glyph.setContentCompressionResistancePriority(.required, for: .horizontal)
 
@@ -624,7 +624,8 @@ final class CommandLibraryPageView: NSObject {
         // last put it.
         row.alignment = .centerY
         row.distribution = .fill
-        row.spacing = 5
+        row.spacing = HelmMetrics.s1
+        row.edgeInsets = NSEdgeInsets(top: 0, left: Self.rowTextInset, bottom: 0, right: 0)
         row.translatesAutoresizingMaskIntoConstraints = false
         // A header is decoration around the rows that follow it; the glyph and
         // the words are one announcement, not two.
@@ -636,17 +637,19 @@ final class CommandLibraryPageView: NSObject {
 
     private func leftPanelRow(text: String, trailing: String? = nil, isSelected: Bool = false, isMuted: Bool = false, action: Selector) -> NSView {
         let container = HoverHighlightView()
-        container.cornerRadius = 6
+        container.cornerRadius = HelmMetrics.rControl
 
         let label = NSTextField(labelWithString: text)
-        label.setScaledFont(ofSize: 12, weight: isSelected ? .semibold : .regular)
+        label.font = isSelected
+            ? .systemFont(ofSize: HelmType.caption().pointSize, weight: .semibold)
+            : HelmType.caption()
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         var rowViews: [NSView] = [label]
         if let trailing {
             let trailingLabel = NSTextField(labelWithString: trailing)
-            trailingLabel.font = ShiftFont.mono(10)
+            trailingLabel.font = HelmType.captionSmall()
             trailingLabel.textColor = HelmTheme.mutedInk(theme)
             trailingLabel.setContentHuggingPriority(.required, for: .horizontal)
             rowViews.append(trailingLabel)
@@ -657,19 +660,18 @@ final class CommandLibraryPageView: NSObject {
         row.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(row)
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
-            row.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            row.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Self.rowTextInset),
+            row.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -Self.rowTextInset),
             row.topAnchor.constraint(equalTo: container.topAnchor, constant: 5),
             row.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -5),
         ])
 
-        let ink = HelmTheme.nsColor(theme.chromeInkHex)
-        let muted = HelmTheme.mutedInk(theme)
-        let line = HelmTheme.nsColor(theme.chromeLineHex)
-        let accentTint = HelmTheme.nsColor(theme.accentHex).withAlphaComponent(theme.mode == .dark ? 0.18 : 0.12)
-        label.textColor = isMuted ? muted : (isSelected ? HelmTheme.nsColor(theme.accentHex) : ink)
-        container.normalColor = isSelected ? accentTint : .clear
-        container.hoverColor = isSelected ? accentTint : line.withAlphaComponent(0.25)
+        // UI-45: the sidebar's own row recipe - the same selected wash, hover
+        // wash and contrast-corrected selected ink.
+        let palette = HelmPageSidebar.rowPalette(theme)
+        label.textColor = isMuted ? palette.muted : (isSelected ? palette.selectedInk : palette.ink)
+        container.normalColor = isSelected ? palette.selectedFill : .clear
+        container.hoverColor = isSelected ? palette.selectedFill : palette.hoverFill
         container.translatesAutoresizingMaskIntoConstraints = false
 
         let click = NSClickGestureRecognizer(target: self, action: action)
@@ -913,7 +915,7 @@ final class CommandLibraryPageView: NSObject {
         detailContentContainer.isHidden = false
 
         detailNameLabel.stringValue = command.name
-        ToolRowLayout.pill(text: command.risk.displayName, colorHex: command.risk.tint.hex(in: theme), into: detailRiskPill, label: detailRiskPillLabel, theme: theme)
+        detailRiskPill.configure(text: command.risk.displayName, tint: command.risk.tint, theme: theme)
 
         var metaParts = [command.description]
         var location = command.category.isEmpty ? "" : CommandLibraryCategory.info(for: command.category).displayName

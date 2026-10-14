@@ -433,6 +433,12 @@ enum NotebookViewSelfTest {
             check(page.debugEditorCard.frame.width > splitEditor + 50,
                   "and the editor takes the width back, got \(page.debugEditorCard.frame.width)")
 
+            // UI-54: the rail is an inspector, hidden until asked for.
+            check(page.debugRailHidden, "the inspector rail starts hidden - Split is two panes")
+            page.debugToggleRail()
+            page.view.layoutSubtreeIfNeeded()
+            check(!page.debugRailHidden && page.debugRail.frame.width > 100,
+                  "the toolbar toggle shows the inspector, got \(page.debugRail.frame.width)")
             page.debugToggleRail()
             page.view.layoutSubtreeIfNeeded()
             check(page.debugRailHidden, "the rail toggle hides the rail")

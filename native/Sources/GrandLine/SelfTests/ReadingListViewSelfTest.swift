@@ -292,12 +292,19 @@ enum ReadingListViewSelfTest {
             check(controller.debugCards.count == 2, "filters: Unread drops the read card")
             check(controller.debugCards.allSatisfy { $0.debugStatePillText == "unread" },
                   "filters: nothing read survives the Unread tab")
-            controller.debugSelectTab(ReadingListFilter.summarised.id)
+            // UI-60: Summarised is a sidebar slice now, clicked like any row.
+            check(controller.debugSidebar.debugRowIndex(id: ReadingListFilter.summarised.id) != nil,
+                  "filters: Summarised is one of the sidebar's slices")
+            controller.debugSidebar.debugClickRow(id: ReadingListFilter.summarised.id)
             check(controller.debugCards.count == 1,
                   "filters: Summarised shows only the card with an AI paragraph")
-            check(controller.debugSidebar.selection == ReadingListFilter.summarised.id,
-                  "filters: picking a tab moves the sidebar's selection too, so the two never "
-                  + "describe different things at once")
+            // ...and the sidebar is the page's one filter: no second
+            // segmented control over the same list.
+            func segmented(in view: NSView) -> Int {
+                (view is HelmSegmentedTabs ? 1 : 0) + view.subviews.reduce(0) { $0 + segmented(in: $1) }
+            }
+            check(segmented(in: controller.debugRoot) == 0,
+                  "filters: the page carries no segmented filter strip beside the sidebar (UI-60)")
             controller.debugSelectTab(ReadingListFilter.all.id)
             check(controller.debugCards.count == 3, "filters: All restores everything")
         }

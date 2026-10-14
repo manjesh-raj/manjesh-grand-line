@@ -197,6 +197,14 @@ final class DailyOverviewController: NSViewController {
             root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
             self?.applyTheme()
         }
+        // UI-49: the first paint is a real render, not the card's unfilled
+        // chrome stacked over the empty state. Before this, a page mounted
+        // and drawn before `viewWillAppear` (a lazily-mounted destination's
+        // first frame, and every off-screen render) showed a header card with
+        // a tile, Settings, Dismiss and an empty two-column body directly
+        // above "Nothing to review right now". `viewWillAppear` still
+        // re-renders, for the reason its own comment gives.
+        renderDailyReview()
     }
 
     private func buildCard() {

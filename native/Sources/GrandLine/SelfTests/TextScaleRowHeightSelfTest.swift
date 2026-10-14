@@ -62,7 +62,7 @@ enum TextScaleRowHeightSelfTest {
     /// Every fixed row height in the app, with the base it was measured at.
     private static let heights: [(name: String, base: CGFloat, current: () -> CGFloat)] = [
         ("ShiftTaskListView", ShiftTaskListView.baseRowHeight, { ShiftTaskListView.rowHeight }),
-        ("ShiftFollowUpListView", ShiftTaskListView.baseRowHeight, { ShiftFollowUpListView.rowHeight }),
+        ("ShiftFollowUpListView", ShiftFollowUpListView.baseRowHeight, { ShiftFollowUpListView.rowHeight }),
         ("ReviewPRListView", ReviewPRListView.baseRowHeight, { ReviewPRListView.rowHeight }),
         ("DictationHistoryListView", DictationHistoryListView.baseRowHeight, { DictationHistoryListView.rowHeight }),
         ("HostsListSection", HostsListSection.baseRecordRowHeight, { HostsListSection.recordRowHeight }),
@@ -125,7 +125,9 @@ enum TextScaleRowHeightSelfTest {
 
             let needed = row.fittingSize.height
             check(needed > 0, "the measured row had no height at all at \(step.title)")
-            for entry in heights where entry.name.hasPrefix("Shift") || entry.name == "DictationHistoryListView" {
+            // The two Tasks lists draw the revamp's `.flat` row and are
+            // measured in their own shapes below (`accentRowShapes`).
+            for entry in heights where entry.name == "DictationHistoryListView" {
                 check(needed <= entry.current(),
                       "at \(step.title) a real row needs \(needed)pt but \(entry.name) gives it "
                       + "\(entry.current())pt - descenders clip")
@@ -148,7 +150,7 @@ enum TextScaleRowHeightSelfTest {
             // so asserting all seven against one number would be either
             // vacuous or wrong.
             for shape in accentRowShapes {
-                let sized = HelmAccentRow(chipPlacement: shape.placement)
+                let sized = HelmAccentRow(chipPlacement: shape.placement, style: shape.style)
                 sized.configure(shape.content, theme: theme)
                 sized.applyTheme(theme)
                 sized.frame = NSRect(x: 0, y: 0, width: 520, height: shape.height())
@@ -166,10 +168,11 @@ enum TextScaleRowHeightSelfTest {
     /// for. Each is the real content that list renders, not a generic one.
     private static var accentRowShapes: [(name: String,
                                           placement: HelmAccentRow.ChipPlacement,
+                                          style: HelmAccentRow.Style,
                                           content: HelmAccentRow.Content,
                                           height: () -> CGFloat)] {
         [
-            ("ReviewPRListView", .trailing,
+            ("ReviewPRListView", .trailing, .card,
              HelmAccentRow.Content(
                 tint: .good,
                 kicker: "GITHUB \u{00B7} MANJESH-RAJ",
@@ -181,20 +184,63 @@ enum TextScaleRowHeightSelfTest {
             // of this fixture handed it a meta line it never renders and
             // reported the list 17pt short, which is a fixture bug wearing a
             // layout bug's clothes.
-            ("FleetLogListView", .trailing,
+            ("FleetLogListView", .trailing, .card,
              HelmAccentRow.Content(
                 tint: .info,
                 kicker: "MERGED",
                 title: "Move the toast off the chrome and retire the stock spinner",
                 badgeSymbol: "arrow.triangle.merge"),
              { FleetLogListView.eventRowHeight }),
-            ("ShiftBoardView card", .belowBody,
+            // The UI/UX revamp's board card: `.cardFlat`, the chip on the meta
+            // line. Two shapes, because the lane plan costs a card with no
+            // meta line and one with it differently.
+            // The Tasks lists' flat rows (UI-24, UI-30), each in its own
+            // tallest real shape.
+            ("ShiftTaskListView", .trailing, .flat,
              HelmAccentRow.Content(
                 tint: .warn,
                 kicker: "GRAND LINE",
                 title: "Re-measure every accent row after the type bump",
-                chipText: "High"),
+                meta: "1/2 subtasks",
+                chipText: "High",
+                metaLead: "Due today",
+                metaLeadTint: .warn),
+             { ShiftTaskListView.rowHeight }),
+            ("ShiftFollowUpListView", .trailing, .flat,
+             HelmAccentRow.Content(
+                tint: .critical,
+                kicker: "",
+                title: "Follow up with Nithin on SRE bot response reviews",
+                meta: "6 Oct at 9:00 AM",
+                chipText: "High",
+                trailingCaption: "Overdue 8 days",
+                trailingCaptionTint: .critical),
+             { ShiftFollowUpListView.rowHeight }),
+            ("ShiftBoardView card", .metaLine, .cardFlat,
+             HelmAccentRow.Content(
+                tint: .warn,
+                kicker: "GRAND LINE",
+                title: "Re-measure every accent row after the type bump"),
              { ShiftBoardView.cardRowHeight }),
+            ("ShiftBoardView card with a caption-only meta line", .metaLine, .cardFlat,
+             HelmAccentRow.Content(
+                tint: .warn,
+                kicker: "GRAND LINE",
+                title: "Re-measure every accent row after the type bump",
+                meta: "1/2 subtasks \u{00B7} Low",
+                metaLead: "Overdue 3 days",
+                metaLeadTint: .critical),
+             { ShiftBoardView.cardRowHeightWithCaption }),
+            ("ShiftBoardView card with a meta line", .metaLine, .cardFlat,
+             HelmAccentRow.Content(
+                tint: .warn,
+                kicker: "GRAND LINE",
+                title: "Re-measure every accent row after the type bump",
+                meta: "1/2 subtasks",
+                chipText: "High",
+                metaLead: "Due today",
+                metaLeadTint: .warn),
+             { ShiftBoardView.cardRowHeightWithMeta }),
         ]
     }
 

@@ -138,17 +138,22 @@ enum StatusPillThemeSelfTest {
     /// What a pill painted **now, in this theme, for this hue** looks like -
     /// the reference every row is measured against. Built through the real
     /// component, so it cannot drift from what the pages paint.
-    private static func referencePill(hex colorHex: String, theme: HelmTheme) -> (fill: NSColor?, label: NSColor?) {
-        let pill = NSView()
-        let label = NSTextField(labelWithString: "")
-        ToolRowLayout.pill(text: "reference", colorHex: colorHex, into: pill, label: label, theme: theme)
-        return (color(pill.layer?.backgroundColor), label.textColor)
+    private static func referencePill(tint: HelmTint, theme: HelmTheme) -> (fill: NSColor?, label: NSColor?) {
+        let pill = HelmStatusPill(style: .pill)
+        pill.configure(text: "reference", tint: tint, theme: theme)
+        return (color(pill.layer?.backgroundColor), pill.label.textColor)
     }
+
+    /// GitHub Sync's state under test. Since UI-43, "In Sync" is a quiet dot
+    /// and a word (a default state spends no capsule), so the pill these
+    /// checks measure is the first non-default state, "2 behind".
+    private static let behind: GitHubSyncStatus = .behind(2)
+    private static let behindText = "2 behind"
 
     // MARK: 1 - GitHub Sync: the captain's exact scenario
 
-    /// Half the forks report "In Sync", the theme is switched, the rest
-    /// report "In Sync". Pre-fix the first half kept the old palette's pill
+    /// Half the forks report "2 behind", the theme is switched, the rest
+    /// report "2 behind". Pre-fix the first half kept the old palette's pill
     /// for the rest of the session; this asserts all eight now match, and
     /// match a pill painted fresh in the theme that is actually current.
     private static func checkGitHubSyncPillsSurviveAThemeSwitch(_ ok: inout Bool) {
@@ -166,40 +171,40 @@ enum StatusPillThemeSelfTest {
         let split = count / 2
 
         // The opening sweep, half of it landing before the captain's toggle.
-        for i in 0..<split { controller.debugSetStatus(.inSync, atRow: i) }
+        for i in 0..<split { controller.debugSetStatus(behind, atRow: i) }
 
         // The toggle.
         ThemeManager.shared.setTheme(lightTheme)
 
         // The rest of the sweep reporting afterwards.
-        for i in split..<count { controller.debugSetStatus(.inSync, atRow: i) }
+        for i in split..<count { controller.debugSetStatus(behind, atRow: i) }
 
-        let expected = referencePill(hex: lightTheme.ansiHex[2], theme: lightTheme)
+        let expected = referencePill(tint: .warn, theme: lightTheme)
         for i in 0..<count {
             guard let paint = controller.debugPillPaint(atRow: i) else {
                 print("StatusPillThemeSelfTest: FAIL - GitHub Sync row \(i) has no pill")
                 ok = false
                 continue
             }
-            guard paint.text == "In Sync" else {
-                print("StatusPillThemeSelfTest: FAIL - GitHub Sync row \(i) reads '\(paint.text)', want 'In Sync'")
+            guard paint.text == behindText else {
+                print("StatusPillThemeSelfTest: FAIL - GitHub Sync row \(i) reads '\(paint.text)', want '\(behindText)'")
                 ok = false
                 continue
             }
             if !sameColor(color(paint.fill), expected.fill) {
-                print("StatusPillThemeSelfTest: FAIL - GitHub Sync row \(i) ('In Sync') pill fill is "
+                print("StatusPillThemeSelfTest: FAIL - GitHub Sync row \(i) ('\(behindText)') pill fill is "
                       + "\(hex(color(paint.fill))), but a pill painted now in \(lightTheme.id) is \(hex(expected.fill)) "
                       + "- this row kept the palette it was painted in")
                 ok = false
             }
             if !sameColor(paint.label, expected.label) {
-                print("StatusPillThemeSelfTest: FAIL - GitHub Sync row \(i) ('In Sync') pill label is "
+                print("StatusPillThemeSelfTest: FAIL - GitHub Sync row \(i) ('\(behindText)') pill label is "
                       + "\(hex(paint.label)), want \(hex(expected.label))")
                 ok = false
             }
         }
         if ok {
-            print("StatusPillThemeSelfTest: OK - all \(count) 'In Sync' GitHub Sync pills match one treatment "
+            print("StatusPillThemeSelfTest: OK - all \(count) '\(behindText)' GitHub Sync pills match one treatment "
                   + "(\(hex(expected.fill)) fill) after a theme switch mid-sweep")
         }
     }
@@ -224,7 +229,7 @@ enum StatusPillThemeSelfTest {
         ThemeManager.shared.setTheme(lightTheme)
         for i in split..<count { controller.debugSetStatus(.updateAvailable, atRow: i) }
 
-        let expected = referencePill(hex: lightTheme.ansiHex[3], theme: lightTheme)
+        let expected = referencePill(tint: .warn, theme: lightTheme)
         for i in 0..<count {
             guard let paint = controller.debugPillPaint(atRow: i) else {
                 print("StatusPillThemeSelfTest: FAIL - Updates row \(i) has no pill")
@@ -256,7 +261,7 @@ enum StatusPillThemeSelfTest {
     // MARK: 3 - the transition the captain actually clicked
 
     /// "Clicking Sync on one repo changed that repo's badge." A row going
-    /// `.inSync` -> `.syncing` -> `.inSync` must come back to the same pill it
+    /// `.behind` -> `.syncing` -> `.behind` must come back to the same pill it
     /// started with, and must not have disturbed any sibling on the way -
     /// which is the honest statement of "no visible badge change other than
     /// what a real state transition would justify".
@@ -272,13 +277,13 @@ enum StatusPillThemeSelfTest {
             ok = false
             return
         }
-        for i in 0..<count { controller.debugSetStatus(.inSync, atRow: i) }
+        for i in 0..<count { controller.debugSetStatus(behind, atRow: i) }
 
         let before = (0..<count).map { controller.debugPillPaint(atRow: $0) }
 
         // The row the captain pressed Sync on: busy, then back to in-sync.
         controller.debugSetStatus(.syncing, atRow: 0)
-        controller.debugSetStatus(.inSync, atRow: 0)
+        controller.debugSetStatus(behind, atRow: 0)
 
         for i in 0..<count {
             guard let now = controller.debugPillPaint(atRow: i), let was = before[i] else {
@@ -321,11 +326,11 @@ enum StatusPillThemeSelfTest {
         for theme in HelmTheme.allThemes {
             // Stagger the rows across the switch again, so each palette is
             // entered with rows painted in the *previous* one.
-            controller.debugSetStatus(.inSync, atRow: 0)
+            controller.debugSetStatus(behind, atRow: 0)
             ThemeManager.shared.setTheme(theme)
-            for i in 1..<count { controller.debugSetStatus(.inSync, atRow: i) }
+            for i in 1..<count { controller.debugSetStatus(behind, atRow: i) }
 
-            let expected = referencePill(hex: theme.ansiHex[2], theme: theme)
+            let expected = referencePill(tint: .warn, theme: theme)
             var mismatched: [Int] = []
             for i in 0..<count {
                 guard let paint = controller.debugPillPaint(atRow: i) else { continue }
@@ -335,12 +340,12 @@ enum StatusPillThemeSelfTest {
             }
             if !mismatched.isEmpty {
                 print("StatusPillThemeSelfTest: FAIL - \(theme.id): row(s) \(mismatched) render a different "
-                      + "'In Sync' pill than the \(hex(expected.fill)) one this palette resolves")
+                      + "'\(behindText)' pill than the \(hex(expected.fill)) one this palette resolves")
                 ok = false
             }
         }
         if ok {
-            print("StatusPillThemeSelfTest: OK - one 'In Sync' treatment per palette across all "
+            print("StatusPillThemeSelfTest: OK - one '\(behindText)' treatment per palette across all "
                   + "\(HelmTheme.allThemes.count) themes")
         }
     }

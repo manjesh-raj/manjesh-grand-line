@@ -37,6 +37,10 @@
 //   6. **Both themes paint.** Daylight and Dusk, asserting the card surface
 //      really changed between them - a theming check that cannot fail is
 //      worse than none.
+//   7. **The card shadow is really painted (UI-5).** Sampled in pixels from a
+//      real render, below a module card against the bare page ground: the
+//      squared-alpha defect darkened that strip by 3/255 on Daylight, which
+//      is what made every card read as a flat bordered box.
 
 // GL-27: compiled into debug builds only. Do not remove this guard -
 // `Phase3PolishSelfTest` asserts every file here carries it.
@@ -55,6 +59,9 @@ enum HomeDashboardViewSelfTest {
         checkItDegradesWhenNarrow(&ok)
         checkTheFleetTilesAndMergeFooter(&ok)
         checkBothThemesPaint(&ok)
+        checkTheCardShadowIsPainted(&ok)
+        checkMergeQueueRowsAreClickable(&ok)
+        checkUnknownStatesAreNeverZero(&ok)
 
         if ok {
             print("HomeDashboardViewSelfTest: all checks passed")
@@ -299,15 +306,19 @@ enum HomeDashboardViewSelfTest {
             canvas.debugRenderNow()
             canvas.view.layoutSubtreeIfNeeded()
 
-            let tiles = canvas.moduleCardsForTests.flatMap { $0.debugTiles }
-            check(tiles.count == 3,
-                  "the Fleet card draws three tiles, got \(tiles.count)", &ok)
+            // UI-9: one KPI strip, no boxed tiles.
+            let strips = canvas.moduleCardsForTests.compactMap { $0.debugKPIStrip }
+            guard strips.count == 1, let strip = strips.first else {
+                fail("the Fleet card draws exactly one KPI strip, got \(strips.count)", &ok)
+                return
+            }
             // The numbers are the snapshot's own, so a card that drew three
-            // tiles of zeroes fails here rather than looking right.
-            check(tiles.map(\.value) == ["0", "20", "17"],
-                  "the tiles carry the snapshot's own counts, got \(tiles.map(\.value))", &ok)
-            check(tiles.map(\.caption) == ["Working", "Done today", "Queued"],
-                  "under the reference's own captions, got \(tiles.map(\.caption))", &ok)
+            // zeroes fails here rather than looking right.
+            check(strip.debugValues == ["0", "20", "17"],
+                  "the strip carries the snapshot's own counts, got \(strip.debugValues)", &ok)
+            check(strip.debugCaptions == ["Working", "Done today", "Queued"],
+                  "under the reference's own captions, got \(strip.debugCaptions)", &ok)
+            check(!strip.debugHasBorder, "the strip draws no box of its own", &ok)
 
             let footers = canvas.moduleCardsForTests.compactMap { $0.debugFooter }
             guard footers.count == 1 else {
@@ -316,7 +327,9 @@ enum HomeDashboardViewSelfTest {
             }
             check(footers[0].caption == "Showing \(HelmModuleCard.maxPeekRows) of 33",
                   "the footer states the truncation, got \"\(footers[0].caption)\"", &ok)
-            check(footers[0].action == "View all 33 open",
+            // UI-10: one link, which names the queue rather than repeating
+            // the card's own click as "View all".
+            check(footers[0].action == "All 33 open",
                   "and offers the whole queue, got \"\(footers[0].action)\"", &ok)
         }
     }
@@ -367,5 +380,199 @@ enum HomeDashboardViewSelfTest {
             fail("both themes should have reported a card surface", &ok)
         }
     }
+    // MARK: 7 - the card shadow is painted, measured in pixels (UI-5)
+
+    /// The UI/UX revamp's H-01, as a pixel check rather than a reading of the
+    /// code. `HelmModuleCard` used to hand `CALayer` a shadow colour that
+    /// already carried the level's 0.10 alpha *and* set `shadowOpacity` to
+    /// 0.10 again, so the compositor painted 0.01. Measured on the tour
+    /// render: 3/255 of darkening under a Home card on Daylight and 0 on Dusk.
+    ///
+    /// The sample is the darkest pixel in the 2-10pt strip under the card's
+    /// bottom edge, against the page ground at the same height in the
+    /// page's right gutter, where no card's blur reaches. Both are read from
+    /// the same rep in its own colour space (AGENTS.md's probe rule), and the
+    /// rep is in pixels, so every coordinate is scaled by its backing factor.
+    ///
+    /// The floor is 6/255 on Daylight: twice what the defect painted, and
+    /// well under what one application of the alpha paints (about 10-14).
+    private static func checkTheCardShadowIsPainted(_ ok: inout Bool) {
+        let saved = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(saved) }
+        guard let theme = HelmTheme.theme(id: "daylight") else {
+            fail("theme daylight should exist", &ok)
+            return
+        }
+        ThemeManager.shared.setTheme(theme)
+        withScratchShift { store in
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            seedFleet(canvas)
+            canvas.debugApplyTheme(theme)
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+
+            let root = canvas.view
+            guard let card = canvas.moduleCardsForTests.first,
+                  let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) else {
+                fail("the shadow probe needs a module card and a rep to render into", &ok)
+                return
+            }
+            root.cacheDisplay(in: root.bounds, to: rep)
+            let scale = CGFloat(rep.pixelsWide) / max(1, root.bounds.width)
+            let frame = card.convert(card.bounds, to: root)
+
+            // The alpha is applied once, as the compositor reads it.
+            if let layer = card.layer {
+                let effective = HelmCard.debugEffectiveShadowAlpha(of: layer)
+                check(abs(effective - 0.10) < 0.005,
+                      "a resting module card's shadow should composite at alpha 0.10, got \(effective)", &ok)
+            }
+
+            func luma(_ x: CGFloat, _ yFromBottom: CGFloat) -> CGFloat? {
+                let px = Int((x * scale).rounded(.down))
+                let py = Int(((root.bounds.height - yFromBottom) * scale).rounded(.down))
+                guard px >= 0, py >= 0, px < rep.pixelsWide, py < rep.pixelsHigh,
+                      let c = rep.colorAt(x: px, y: py) else { return nil }
+                return (c.redComponent + c.greenComponent + c.blueComponent) / 3 * 255
+            }
+            var darkest: CGFloat = .greatestFiniteMagnitude
+            var groundAtDarkest: CGFloat = 0
+            for offset in stride(from: CGFloat(2), through: 10, by: 1) {
+                let y = frame.minY - offset
+                guard let under = luma(frame.midX, y),
+                      let ground = luma(root.bounds.width - 3, y) else { continue }
+                if under < darkest {
+                    darkest = under
+                    groundAtDarkest = ground
+                }
+            }
+            guard darkest < .greatestFiniteMagnitude else {
+                fail("the strip under the card was outside the render", &ok)
+                return
+            }
+            let darkening = groundAtDarkest - darkest
+            check(darkening >= 6,
+                  "the page under a Daylight module card should darken by at least 6/255 "
+                      + "from its resting shadow, got \(darkening)", &ok)
+        }
+    }
+
+    // MARK: 8 - merge queue rows are clickable (UI-10)
+
+    /// UI-10: the merge queue's peek rows were inert text, and the card's
+    /// "View all" repeated the card's own click. Each row is now a real hover
+    /// target with a chevron on aim, and the card's own click steps aside for
+    /// it - otherwise a click on a row would also open the queue (gotcha
+    /// (20)'s shape). The row's own open is not fired here: it opens a URL.
+    private static func checkMergeQueueRowsAreClickable(_ ok: inout Bool) {
+        withScratchShift { store in
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            let prs = (1...5).map { (index: Int) -> MergedPR in
+                MergedPR(source: "forge", taskID: nil, repo: "grand-line",
+                         url: "https://example.invalid/\(index)", number: index,
+                         title: "pull request \(index)", checks: "green", forge: "github")
+            }
+            canvas.applyFleet(snapshot: FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
+                                                      queuedCount: 0, doneCount: 0, projectsCount: 1,
+                                                      watcher: WatcherHealth(status: "healthy")),
+                              mergedPRs: prs, prFetchFailure: nil)
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+            guard let card = canvas.moduleCardsForTests.first(where: { !$0.debugPeekRows.isEmpty }) else {
+                fail("the merge queue card should draw clickable peek rows", &ok)
+                return
+            }
+            check(card.debugPeekRows.count == HelmModuleCard.maxPeekRows,
+                  "every shown PR should be a clickable row, got \(card.debugPeekRows.count)", &ok)
+            check(card.debugPeekRows.allSatisfy(\.isActivatable), "each row should be a button to VoiceOver", &ok)
+            check(card.debugPeekChevronAlphas.allSatisfy { $0 == 0 }, "the chevron is hidden at rest", &ok)
+            card.debugHoverPeekRow(0, true)
+            HelmMotion.reducedOverrideForTests = true
+            card.debugHoverPeekRow(0, true)
+            HelmMotion.reducedOverrideForTests = nil
+            check((card.debugPeekChevronAlphas.first ?? 0) > 0.99, "the chevron appears on aim", &ok)
+            let frame = card.debugPeekRowFrameInCard(1)
+            check(card.debugCardClickWouldBeDeclined(at: NSPoint(x: frame.midX, y: frame.midY)),
+                  "a click on a row must not also open the card", &ok)
+            check(!card.debugCardClickWouldBeDeclined(at: NSPoint(x: 40, y: 20)),
+                  "a click on the card's own surface still opens it, or the check above cannot fail", &ok)
+        }
+    }
+
+    // MARK: 9 - unknown is never zero, and one loading idiom (UI-9, UI-11, UI-12)
+
+    /// The revamp's GL-14 pass over Home, read off the painted cards:
+    ///
+    ///   - nothing read yet: the Fleet and Merge queue cards show the
+    ///     skeleton, the one loading idiom, not a sentence each;
+    ///   - a missing firstmate home: Fleet draws dashes under a "Not read"
+    ///     pill, never 0/0/0 under "All clear";
+    ///   - a failed PR scan after a good one: the last list stays, the pill
+    ///     says "Can't reach" and the subtitle says how old the list is;
+    ///   - nothing reported to Health: the title is "Not read", not "Healthy".
+    private static func checkUnknownStatesAreNeverZero(_ ok: inout Bool) {
+        withScratchShift { store in
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            func card(_ title: String) -> HelmModuleCard? {
+                canvas.moduleCardsForTests.first { $0.anatomyForTests.title == title }
+            }
+
+            check(card("Fleet")?.debugBodyIsSkeleton == true, "an unread fleet should show the skeleton", &ok)
+            check(card("Merge queue")?.debugBodyIsSkeleton == true,
+                  "an unread merge queue should show the skeleton", &ok)
+
+            canvas.applyFleet(snapshot: FleetSnapshot(homeOk: false, captain: "Manjesh", tasks: [],
+                                                      queuedCount: 0, doneCount: 0, projectsCount: 0,
+                                                      watcher: WatcherHealth(status: "off")),
+                              mergedPRs: nil, prFetchFailure: "no firstmate home")
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+            if let fleet = card("Fleet"), let strip = fleet.debugKPIStrip {
+                check(strip.debugValues.allSatisfy { $0 == HelmReading<String>.dash },
+                      "a fleet with no home should draw dashes, got \(strip.debugValues)", &ok)
+                check(!strip.debugValues.contains("0"), "and never a zero", &ok)
+                check(fleet.anatomyForTests.chipText == "Not read" && fleet.debugChipIsPill,
+                      "under a 'Not read' pill, got \(fleet.anatomyForTests.chipText ?? "nil")", &ok)
+            } else {
+                fail("the Fleet card should still draw its strip when the home is missing", &ok)
+            }
+
+            let prs = (1...4).map { (index: Int) -> MergedPR in
+                MergedPR(source: "forge", taskID: nil, repo: "grand-line",
+                         url: "https://example.invalid/\(index)", number: index,
+                         title: "pull request \(index)", checks: "green", forge: "github")
+            }
+            canvas.applyFleet(snapshot: FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
+                                                      queuedCount: 1, doneCount: 2, projectsCount: 1,
+                                                      watcher: WatcherHealth(status: "healthy")),
+                              mergedPRs: prs, prFetchFailure: nil)
+            canvas.applyFleet(snapshot: FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
+                                                      queuedCount: 1, doneCount: 2, projectsCount: 1,
+                                                      watcher: WatcherHealth(status: "healthy")),
+                              mergedPRs: nil, prFetchFailure: "GitHub timed out")
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+            if let queue = card("Merge queue") {
+                let anatomy = queue.anatomyForTests
+                check(anatomy.peekRowCount == HelmModuleCard.maxPeekRows,
+                      "a failed scan should keep the last list, got \(anatomy.peekRowCount) rows", &ok)
+                check(anatomy.chipText == "Can't reach", "and say it cannot reach GitHub", &ok)
+                check(anatomy.subtitle.contains("as of"), "and how old the list is, got \"\(anatomy.subtitle)\"", &ok)
+            } else {
+                fail("the Merge queue card should be on the hub", &ok)
+            }
+
+            let empty = HomeCanvasController.healthRingSummary([])
+            check(empty.title == "Not read" && empty.total == 0,
+                  "nothing reported is 'Not read', never 'Healthy', got \(empty.title)", &ok)
+        }
+    }
 }
+
 #endif

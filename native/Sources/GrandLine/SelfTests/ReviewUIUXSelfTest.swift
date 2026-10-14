@@ -931,8 +931,11 @@ enum ReviewUIUXSelfTest {
                     return "both panels are still \(empty)pt tall - the four-row ceiling - around one "
                          + "empty-state line each (review U15)"
                 }
-                guard abs(empty - ShiftTaskListView.emptyRowHeight) < 1 else {
-                    return "an empty panel is \(empty)pt, not the \(ShiftTaskListView.emptyRowHeight)pt "
+                // UI-30: the page opens on the Board, where the task panel is
+                // hidden, so the follow-ups panel stands alone and hugs its
+                // *own* placeholder - not the hidden task list's.
+                guard abs(empty - ShiftFollowUpListView.emptyRowHeight) < 1 else {
+                    return "an empty panel is \(empty)pt, not the \(ShiftFollowUpListView.emptyRowHeight)pt "
                          + "its one placeholder row actually draws"
                 }
                 return nil

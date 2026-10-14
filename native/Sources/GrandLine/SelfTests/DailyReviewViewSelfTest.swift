@@ -74,6 +74,7 @@ enum DailyReviewViewSelfTest {
             checkFleetDoesNotHostIt(stores, check: check)
             checkTheShellTreatsOverviewAsATopLevelPage(stores, check: check)
             checkHeaderButtonsAreLabelled(stores, check: check)
+            checkFirstPaintIsARealRender(stores, check: check)
         }
 
         return report(failures)
@@ -647,6 +648,32 @@ enum DailyReviewViewSelfTest {
         print("[DailyReviewViewSelfTest] \(failures.count) failure(s):")
         for f in failures { print("  - \(f)") }
         return false
+    }
+
+    // MARK: UI-49 - the first paint is a render
+
+    /// Mounted and drawn with no `viewWillAppear` and no explicit render -
+    /// a lazily-mounted page's first frame. It used to show the card's
+    /// unfilled chrome (tile, Settings, Dismiss, an empty two-column body)
+    /// stacked over the "Nothing to review" empty state.
+    private static func checkFirstPaintIsARealRender(_ stores: Stores, check: (Bool, String) -> Void) {
+        AppSettings.shared.dailyReviewEnabled = true
+        AppSettings.shared.dailyReviewCalendarEnabled = false
+        AppSettings.shared.dailyReviewDismissedDay = nil
+        seed(stores)
+        autoreleasepool {
+            let controller = DailyOverviewController(shiftStore: stores.shift)
+            let window = OffScreenProbe.window(width: 1300, height: 900, styleMask: [.titled, .resizable])
+            window.contentView = controller.view
+            controller.view.layoutSubtreeIfNeeded()
+            let card = controller.debugDailyReviewCard
+            check(card.isHidden == controller.debugEmptyStateIsShowing,
+                  "the first paint should show the card or the empty state, never both or neither "
+                      + "(card hidden \(card.isHidden), empty state showing \(controller.debugEmptyStateIsShowing))")
+            check(card.isHidden || !card.debugHeadline.isEmpty,
+                  "a card on the first paint should carry its headline, not an empty header")
+            window.orderOut(nil)
+        }
     }
 }
 

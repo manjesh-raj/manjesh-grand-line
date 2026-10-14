@@ -300,6 +300,39 @@ enum ShiftYaml {
         case parseFailed
     }
 
+    /// The 1-based line a YAML document fails to parse at, or `nil` when the
+    /// document parses or the line cannot be placed (UI-31: the Tasks page's
+    /// failed-read card names the file *and* the line).
+    ///
+    /// The vendored parser's error carries no line number - it carries the
+    /// text from the failure point onward ("expected colon, near \"...\"",
+    /// up to 50 characters, with newlines escaped). So the line is where that
+    /// text starts in the document. Ambiguity (the same 50 characters twice)
+    /// resolves to the first occurrence; a snippet that cannot be found
+    /// returns `nil` rather than a guess.
+    static func parseFailureLine(text: String) -> Int? {
+        do {
+            _ = try Yaml.load(text)
+            return nil
+        } catch Yaml.ResultError.message(let message?) {
+            guard let near = message.range(of: "near \"", options: .backwards) else { return nil }
+            var snippet = String(message[near.upperBound...])
+            if snippet.hasSuffix("\"") { snippet.removeLast() }
+            snippet = snippet
+                .replacingOccurrences(of: "\\n", with: "\n")
+                .replacingOccurrences(of: "\\r", with: "\r")
+                .replacingOccurrences(of: "\\\"", with: "\"")
+            guard !snippet.isEmpty else {
+                // The failure is at the end of the document.
+                return text.components(separatedBy: "\n").count
+            }
+            guard let found = text.range(of: snippet) else { return nil }
+            return text[..<found.lowerBound].filter { $0 == "\n" }.count + 1
+        } catch {
+            return nil
+        }
+    }
+
     static func readListChecked(path: String, key: String) -> ListRead {
         guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return .missing }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .missing }

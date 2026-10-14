@@ -546,7 +546,7 @@ enum LockScreenSelfTest {
                 fail(&ok, "colour literal \(banned) is back - every colour on this screen resolves from the theme")
             }
         }
-        for required in ["HelmCard.applyCardSurface", "HelmCard.elevation", "HelmSecureTextField",
+        for required in ["HelmCard.applyCardSurface", "HelmCard.applyElevation", "HelmSecureTextField",
                          "HelmButton", "HelmGradientTile", "HelmType.", "HelmField.",
                          "HelmContrast.legible", "HelmDomainHue", "HelmMotion.withoutImplicitAnimation"] {
             if !codeLines.contains(required) {

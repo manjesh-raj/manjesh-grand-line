@@ -339,16 +339,13 @@ extension ConsoleController {
     /// message telling the captain to stop one of the other 5 first, rather
     /// than silently queuing or silently refusing").
     func showSRELeadCapReachedAlert() {
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = "SRE Lead limit reached"
-        alert.informativeText = "Up to \(sreLeadMaxConcurrent) tabs on this host page can run SRE Lead at the same time. Stop SRE Lead on another tab before starting a new one."
-        alert.addButton(withTitle: "OK")
-        if let window = view.window {
-            alert.beginSheetModal(for: window)
-        } else {
-            alert.runModal()
-        }
+        // UI-61: the app's own notice, not a system `NSAlert`.
+        HelmConfirm.notice(
+            title: "SRE Lead limit reached",
+            body: "Up to \(sreLeadMaxConcurrent) tabs on this host page can run SRE Lead at the same time. "
+                + "Stop SRE Lead on another tab before starting a new one.",
+            symbol: "exclamationmark.circle.fill",
+            hue: .amber)
     }
 
     /// Refreshes the toolbar button, the pane's visible content, the Generate
@@ -425,11 +422,7 @@ extension ConsoleController {
         }
         sreLeadStatusPill.isHidden = text.isEmpty
         guard !text.isEmpty else { return }
-        ToolRowLayout.pill(text: text.uppercased(),
-                           colorHex: (phase.tint ?? .neutral).hex(in: theme),
-                           into: sreLeadStatusPill,
-                           label: sreLeadStatusLabel,
-                           theme: theme)
+        sreLeadStatusPill.configure(text: text.uppercased(), tint: phase.tint ?? .neutral, theme: theme)
     }
 
     /// Turns the bordered-terminal-card look on - one condition, evaluated in

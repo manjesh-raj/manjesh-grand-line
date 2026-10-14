@@ -94,6 +94,13 @@ final class ShiftGitSync {
         set { stateLock.lock(); _status = newValue; stateLock.unlock() }
     }
     private var _statusHandlers: [(Status) -> Void] = []
+    /// Whether `setStatus` has run at all. Before it has, `status` is only
+    /// the initial `.synced` default, which the Tasks page must not present
+    /// as a real "Synced" (UI-19). Behind `stateLock` with `_status` (GL-28).
+    private var _hasReportedStatus = false
+    var hasReportedStatus: Bool {
+        stateLock.lock(); defer { stateLock.unlock() }; return _hasReportedStatus
+    }
     private var pendingCommit: DispatchWorkItem?
     private var pullTimer: Timer?
 
@@ -230,6 +237,7 @@ final class ShiftGitSync {
     private func setStatus(_ newStatus: Status) {
         stateLock.lock()
         _status = newStatus
+        _hasReportedStatus = true
         let handlers = _statusHandlers
         stateLock.unlock()
         // F1 / GL-11: this class had zero log statements and no health signal

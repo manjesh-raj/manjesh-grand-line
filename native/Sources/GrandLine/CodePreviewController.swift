@@ -145,14 +145,13 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// same zoom idiom (and a readout) instead of two bare glyph squares
     /// each.
     private lazy var zoomStepper = HelmZoomStepper()
-    private lazy var copyButton = HelmPageToolbar.labeledButton(
-        symbol: "doc.on.doc", title: "Copy",
-        tooltip: "Copy this snippet to the clipboard",
-        target: self, action: #selector(copyTapped))
-    private lazy var clearButton = HelmPageToolbar.labeledButton(
-        symbol: "eraser", title: "Clear",
-        tooltip: "Empty this snippet, keeping the tab",
-        target: self, action: #selector(clearTapped))
+    /// UI-47: the toolbar keeps Run, Format, the language and the view
+    /// controls; Copy and Clear - one-off actions on the whole snippet - are
+    /// in this menu rather than two more pills at the same weight as Run.
+    private lazy var moreMenu = HelmOverflowMenu(items: [
+        .init("Copy snippet", symbol: "doc.on.doc") { [weak self] in self?.copyTapped() },
+        .init("Clear snippet", symbol: "eraser") { [weak self] in self?.clearTapped() },
+    ], tooltip: "More - copy or clear this snippet")
 
     private let editorCard = NSView()
     /// M2: the scroll-edge hairline, driven by Monaco's own scroll position
@@ -315,7 +314,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             showOverlay(symbol: "exclamationmark.triangle",
                         title: "No editor bundle",
                         body: CodePreviewAssets.missingBundleMessage)
-            for control in [plusButton, findButton, wrapButton, copyButton, clearButton,
+            for control in [plusButton, findButton, wrapButton, moreMenu.button,
                             runButton, formatButton, runnersButton] {
                 control.isEnabled = false
             }
@@ -435,7 +434,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // in a popover rather than permanently occupying 180pt of editor.
         toolbar.setTrailing(HelmPageToolbar.group([
             runnersButton, formatButton, runButton,
-            languagePicker, findButton, wrapButton, zoomStepper, copyButton, clearButton,
+            languagePicker, findButton, wrapButton, zoomStepper, moreMenu.button,
         ]))
 
         NSLayoutConstraint.activate([

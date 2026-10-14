@@ -32,10 +32,18 @@ final class ShiftProjectCardView: NSView {
     private let progressTrack = HelmProgressBar()
 
     private let openRegion = HoverHighlightView()
-    private let statusPill = NSView()
-    private let statusLabel = NSTextField(labelWithString: "")
+    /// UI-32: the kit's status pill rather than a hand-rolled one that set a
+    /// 10.5pt mono face (under the 11pt floor) and painted the raw hue as
+    /// text. "In progress" is a project's ordinary state, so it is a dot and
+    /// a word; every other status is a pill (Rule 3).
+    private let statusHost = NSView()
+    private let statusWord = HelmStatusPill(style: .dotWord)
+    private let statusCapsule = HelmStatusPill(style: .pill)
+    private let statusChevron = NSImageView()
     private let statusButton = NSButton()
 
+    private var statusWordGap: NSLayoutConstraint?
+    private var statusCapsuleGap: NSLayoutConstraint?
     private var project: ShiftProject?
     private var theme: HelmTheme = ThemeManager.shared.theme
 
@@ -48,7 +56,7 @@ final class ShiftProjectCardView: NSView {
     init() {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 10
+        layer?.cornerRadius = HelmMetrics.rRow
         translatesAutoresizingMaskIntoConstraints = false
 
         nameLabel.setScaledFont(ofSize: 13.5, weight: .semibold)
@@ -68,14 +76,14 @@ final class ShiftProjectCardView: NSView {
         let infoStack = NSStackView(views: [nameLabel, descriptionLabel, progressLabel, progressTrack])
         infoStack.orientation = .vertical
         infoStack.alignment = .leading
-        infoStack.spacing = 5
+        infoStack.spacing = HelmMetrics.s1
         infoStack.translatesAutoresizingMaskIntoConstraints = false
         progressTrack.widthAnchor.constraint(equalTo: infoStack.widthAnchor).isActive = true
 
         let contentRow = NSStackView(views: [iconTile, infoStack])
         contentRow.orientation = .horizontal
         contentRow.alignment = .top
-        contentRow.spacing = 10
+        contentRow.spacing = HelmMetrics.s3
         contentRow.translatesAutoresizingMaskIntoConstraints = false
 
         openRegion.cornerRadius = 8
@@ -90,37 +98,41 @@ final class ShiftProjectCardView: NSView {
         let openClick = NSClickGestureRecognizer(target: self, action: #selector(openClicked))
         openRegion.addGestureRecognizer(openClick)
 
-        statusLabel.font = ShiftFont.mono(10.5, weight: .semibold)
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusPill.wantsLayer = true
-        statusPill.layer?.cornerRadius = 9
-        statusPill.translatesAutoresizingMaskIntoConstraints = false
-        statusPill.addSubview(statusLabel)
-        NSLayoutConstraint.activate([
-            statusLabel.leadingAnchor.constraint(equalTo: statusPill.leadingAnchor, constant: 9),
-            statusLabel.trailingAnchor.constraint(equalTo: statusPill.trailingAnchor, constant: -9),
-            statusLabel.topAnchor.constraint(equalTo: statusPill.topAnchor, constant: 3),
-            statusLabel.bottomAnchor.constraint(equalTo: statusPill.bottomAnchor, constant: -3),
-        ])
-        statusPill.setContentHuggingPriority(.required, for: .horizontal)
-        statusPill.setContentCompressionResistancePriority(.required, for: .horizontal)
-
+        statusChevron.image = HelmSymbol.image("chevron.down", pointSize: 9, weight: .semibold)
+        statusChevron.translatesAutoresizingMaskIntoConstraints = false
+        statusHost.translatesAutoresizingMaskIntoConstraints = false
+        for view in [statusWord, statusCapsule, statusChevron, statusButton] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            statusHost.addSubview(view)
+        }
         statusButton.title = ""
         statusButton.isBordered = false
         statusButton.target = self
         statusButton.action = #selector(statusButtonClicked)
-        statusButton.translatesAutoresizingMaskIntoConstraints = false
-        statusPill.addSubview(statusButton)
+        statusButton.setAccessibilityLabel("Project status")
         NSLayoutConstraint.activate([
-            statusButton.leadingAnchor.constraint(equalTo: statusPill.leadingAnchor),
-            statusButton.trailingAnchor.constraint(equalTo: statusPill.trailingAnchor),
-            statusButton.topAnchor.constraint(equalTo: statusPill.topAnchor),
-            statusButton.bottomAnchor.constraint(equalTo: statusPill.bottomAnchor),
+            statusWord.leadingAnchor.constraint(equalTo: statusHost.leadingAnchor),
+            statusWord.centerYAnchor.constraint(equalTo: statusHost.centerYAnchor),
+            statusCapsule.leadingAnchor.constraint(equalTo: statusHost.leadingAnchor),
+            statusCapsule.centerYAnchor.constraint(equalTo: statusHost.centerYAnchor),
+            statusChevron.trailingAnchor.constraint(equalTo: statusHost.trailingAnchor),
+            statusChevron.centerYAnchor.constraint(equalTo: statusHost.centerYAnchor),
+            statusHost.heightAnchor.constraint(equalToConstant: 22),
+            statusButton.leadingAnchor.constraint(equalTo: statusHost.leadingAnchor),
+            statusButton.trailingAnchor.constraint(equalTo: statusHost.trailingAnchor),
+            statusButton.topAnchor.constraint(equalTo: statusHost.topAnchor),
+            statusButton.bottomAnchor.constraint(equalTo: statusHost.bottomAnchor),
         ])
+        statusWordGap = statusChevron.leadingAnchor.constraint(equalTo: statusWord.trailingAnchor,
+                                                               constant: HelmMetrics.s1)
+        statusCapsuleGap = statusChevron.leadingAnchor.constraint(equalTo: statusCapsule.trailingAnchor,
+                                                                  constant: HelmMetrics.s1)
+        statusHost.setContentHuggingPriority(.required, for: .horizontal)
+        statusHost.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let statusRow = NSStackView(views: [spacer, statusPill])
+        let statusRow = NSStackView(views: [spacer, statusHost])
         statusRow.orientation = .horizontal
         statusRow.distribution = .fill
         statusRow.translatesAutoresizingMaskIntoConstraints = false
@@ -128,14 +140,14 @@ final class ShiftProjectCardView: NSView {
         let outer = NSStackView(views: [openRegion, statusRow])
         outer.orientation = .vertical
         outer.alignment = .leading
-        outer.spacing = 10
+        outer.spacing = HelmMetrics.s2
         outer.translatesAutoresizingMaskIntoConstraints = false
         addSubview(outer)
         NSLayoutConstraint.activate([
-            outer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            outer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            outer.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            outer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            outer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s3),
+            outer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s3),
+            outer.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s3),
+            outer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -HelmMetrics.s3),
         ])
         openRegion.widthAnchor.constraint(equalTo: outer.widthAnchor).isActive = true
         statusRow.widthAnchor.constraint(equalTo: outer.widthAnchor).isActive = true
@@ -163,12 +175,16 @@ final class ShiftProjectCardView: NSView {
         // than borrowing the page-wide accent.
         progressTrack.applyTheme(theme, hue: .violet)
 
-        layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
-        layer?.borderWidth = 1
-        layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5).cgColor
+        // Rule 1: a project cell sits inside the Projects card, so it is not
+        // a bordered card of its own - the card is the one surface, and a
+        // cell is the hover fill when aimed at.
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.borderWidth = 0
 
         openRegion.normalColor = .clear
-        openRegion.hoverColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.18)
+        openRegion.hoverColor = theme.isDaylight
+            ? HelmTheme.nsColor(theme.daylightTokens.rowHover)
+            : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.18)
 
         iconTile.configure(symbol: "shippingbox", tint: Self.tint(for: project.status))
         iconTile.applyTheme(theme)
@@ -177,9 +193,9 @@ final class ShiftProjectCardView: NSView {
 
     /// The one status -> `HelmTint` mapping this card uses for both the
     /// icon tile and the status pill, so the two can never disagree about
-    /// what a project's status color means. Matches `ShiftController`'s own
-    /// `applyDetailStatusPill` mapping for the same statuses.
-    private static func tint(for status: ShiftProjectStatus) -> HelmTint {
+    /// what a project's status color means. The project detail page's pill
+    /// reads the same table.
+    static func tint(for status: ShiftProjectStatus) -> HelmTint {
         switch status {
         case .notStarted: return .neutral
         case .inProgress: return .info
@@ -190,10 +206,14 @@ final class ShiftProjectCardView: NSView {
     }
 
     private func applyStatusPill(_ status: ShiftProjectStatus) {
-        let color = HelmTheme.nsColor(Self.tint(for: status).hex(in: theme))
-        statusPill.layer?.backgroundColor = color.withAlphaComponent(0.16).cgColor
-        statusLabel.stringValue = status.displayName + " \u{2304}"
-        statusLabel.textColor = color
+        let isDefault = status == .inProgress
+        statusWord.isHidden = !isDefault
+        statusCapsule.isHidden = isDefault
+        statusWordGap?.isActive = isDefault
+        statusCapsuleGap?.isActive = !isDefault
+        (isDefault ? statusWord : statusCapsule)
+            .configure(text: status.displayName, tint: Self.tint(for: status), theme: theme)
+        statusChevron.contentTintColor = HelmTheme.mutedInk(theme)
     }
 
     @objc private func openClicked() { onOpenDetail?() }
@@ -208,7 +228,7 @@ final class ShiftProjectCardView: NSView {
             item.representedObject = status.rawValue
             menu.addItem(item)
         }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: statusPill.bounds.height + 4), in: statusPill)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: statusHost.bounds.height + 4), in: statusHost)
     }
 
     @objc private func statusItemSelected(_ sender: NSMenuItem) {

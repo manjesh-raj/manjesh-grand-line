@@ -19,7 +19,7 @@
 //      since 23 September and a "Follow up with Nithin on SRE bot response
 //      reviews" follow-up overdue since 18 September, which are the two rows
 //      in the screenshots he sent. If the chip wording ever stops reading
-//      "Overdue 5 days, since <the date>", this is what says so.
+//      "Overdue 5 days · since <the date>", this is what says so.
 //
 //      **The date inside that chip is rendered in the captain's own region**
 //      (`DailyReviewComposer.dayMonth` is a localised template), so this file
@@ -168,7 +168,7 @@ enum NeedsAttentionSelfTest {
                   + "\"\(DailyReviewComposer.dayMonth(september(23, year: 2027)))\"", &ok)
 
         // 23 Sep to 28 Sep is five days.
-        check(task.chipText == "Overdue 5 days, since \(rendered23)",
+        check(task.chipText == "Overdue 5 days \u{00B7} since \(rendered23)",
               "the task chip should read the mockup's wording, got \"\(task.chipText)\"", &ok)
         check(task.tone == .late, "and it is late, got \(task.tone)", &ok)
 
@@ -178,7 +178,7 @@ enum NeedsAttentionSelfTest {
               "and its source label should read Follow-up, got \"\(followUp.source)\"", &ok)
         check(followUp.actionTitle == "Open",
               "a follow-up's action is Open, got \"\(followUp.actionTitle)\"", &ok)
-        check(followUp.chipText == "Overdue 10 days, since \(DailyReviewComposer.dayMonth(september(18)))",
+        check(followUp.chipText == "Overdue 10 days \u{00B7} since \(DailyReviewComposer.dayMonth(september(18)))",
               "the follow-up chip should read the mockup's wording, got \"\(followUp.chipText)\"", &ok)
         // An overdue follow-up's `whenText` restates the chip, so it is not
         // repeated as the meta line.
@@ -187,7 +187,7 @@ enum NeedsAttentionSelfTest {
               &ok)
 
         check(result.state == .late, "two late rows is the late state, got \(result.state)", &ok)
-        check(result.eyebrow == "Needs attention, 2",
+        check(result.eyebrow == "Needs attention \u{00B7} 2",
               "the eyebrow should count the open rows, got \"\(result.eyebrow)\"", &ok)
         check(result.headline == "Two things are late.",
               "the headline should be the mockup's sentence, got \"\(result.headline)\"", &ok)
@@ -267,7 +267,7 @@ enum NeedsAttentionSelfTest {
                 == "Due today",
               "a row due today says so", &ok)
         check(NeedsAttentionComposer.chipText(isOverdue: true, days: 1, dayText: "27 Sep")
-                == "Overdue 1 day, since 27 Sep",
+                == "Overdue 1 day \u{00B7} since 27 Sep",
               "one day is singular", &ok)
         // A task whose due *time* passed earlier today is overdue and zero
         // days late; "Overdue 0 days" would be nonsense.

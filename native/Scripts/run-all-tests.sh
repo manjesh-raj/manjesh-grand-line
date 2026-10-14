@@ -270,6 +270,7 @@ NEEDS_SESSION=(
   # frames out of a real window. Its arithmetic half
   # (`FM_RUN_HOME_DASHBOARD_TESTS`) is deliberately NOT here.
   "FM_RUN_HOME_DASHBOARD_VIEW_TESTS"
+  "FM_RUN_HELM_KIT_VIEW_TESTS"
   # `fm/grandline-claude-widget-refresh-shift`: builds a real `HelmModuleCard`
   # and a real hub in real windows and reads resolved header frames back after
   # a real layout pass. There is no pure half of this - the whole defect was a

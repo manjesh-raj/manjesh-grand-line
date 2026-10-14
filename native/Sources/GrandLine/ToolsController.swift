@@ -417,6 +417,10 @@ final class ToolsController: NSViewController, DaylightDrillActions, TabShortcut
     /// width. Four fits inside `HelmModuleCard.standardHeight`'s body area
     /// with room to spare, which `DaylightDrillPageSlice6SelfTest` measures
     /// rather than assumes.
+    ///
+    /// UI-58 suggested two. Kept at four, because two is what this note
+    /// records as truncating: the longest description at the narrowest
+    /// column and the largest text scale needs three.
     private static let plateNoteLines = 4
 
     /// Whether the grid currently on screen was built as Daylight plates.
@@ -516,7 +520,9 @@ final class ToolsController: NSViewController, DaylightDrillActions, TabShortcut
         let plate = HelmModuleCard()
         plate.configure(HelmModuleCard.Content(
             title: kind.title,
-            subtitle: kind.shortName,
+            // UI-58: no subtitle. The short name ("Scratchpad" under
+            // "Scratchpad Calculator") repeated the title on every plate.
+            subtitle: "",
             symbol: kind.symbol,
             hue: HelmDomainHue(tint: kind.tint),
             chip: nil,

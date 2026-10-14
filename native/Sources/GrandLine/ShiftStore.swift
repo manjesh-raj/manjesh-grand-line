@@ -87,6 +87,25 @@ final class ShiftStore {
     /// treat Shift as read-only until it is resolved.
     var isInFailedLoadState: Bool { !loadFailurePaths.isEmpty }
 
+    /// What the Tasks page's failed-read card says (UI-31): which file, as a
+    /// path under the store's own root, and the line the parse stopped at
+    /// when it can be placed. The first failed file in path order, so the
+    /// card is stable between renders. `nil` while every file reads.
+    struct LoadFailureSummary: Equatable {
+        let relativePath: String
+        let line: Int?
+        let what: String
+    }
+
+    var loadFailureSummary: LoadFailureSummary? {
+        guard let path = loadFailurePaths.sorted().first else { return nil }
+        let rootPath = root.standardizedFileURL.path
+        var relative = URL(fileURLWithPath: path).standardizedFileURL.path
+        if relative.hasPrefix(rootPath + "/") { relative = String(relative.dropFirst(rootPath.count + 1)) }
+        let line = (try? String(contentsOfFile: path, encoding: .utf8)).flatMap(ShiftYaml.parseFailureLine(text:))
+        return LoadFailureSummary(relativePath: relative, line: line, what: shortName(of: path))
+    }
+
     /// Records a `.parseFailed` read: backs the file up once (so a captain
     /// has a copy even if they then hand-fix the original into something
     /// else) and marks the path as unwritable.

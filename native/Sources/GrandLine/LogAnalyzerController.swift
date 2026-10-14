@@ -170,9 +170,22 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     private let sourcePopup = HelmPopUpButton()
     private let modePopup = HelmPopUpButton()
     private var analyzeButton: HelmButton!
-    private var clearButton: HelmButton!
+    /// UI-47: the input row is Analyze and Analyze Clipboard; adding a file
+    /// and clearing (Esc) are in "⋯".
+    private lazy var inputMoreMenu = HelmOverflowMenu(items: [
+        .init("Add File\u{2026}", symbol: "doc.badge.plus") { [weak self] in self?.addFileTapped() },
+        .init(title: { [weak self] in (self?.investigation.analysis != nil) ? "Discard analysis" : "Clear input" },
+              symbol: "eraser", run: { [weak self] in self?.clearTapped() }),
+    ], tooltip: "More - add a file or clear")
+    /// UI-47: the results row is Investigate Further and Create Incident; the
+    /// other four write-ups and shortcuts are in "⋯".
+    private lazy var resultsMoreMenu = HelmOverflowMenu(items: [
+        .init("Create Runbook", symbol: "book.closed") { [weak self] in self?.createRunbook() },
+        .init("Create Ticket", symbol: "ticket") { [weak self] in self?.createTicket() },
+        .init("Compare with another run", symbol: "arrow.left.arrow.right") { [weak self] in self?.showCompareTab() },
+        .init("Copy Full Analysis", symbol: "doc.on.doc") { [weak self] in self?.copyFullAnalysis() },
+    ], tooltip: "More - runbook, ticket, compare or copy")
     private var clipboardButton: HelmButton!
-    private var fileButton: HelmButton!
     private let inputHintLabel = NSTextField(labelWithString: "")
 
     private let analyzingRow = NSStackView()
@@ -205,8 +218,9 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     private var rootCauseCard: HelmCard!
     private let rootCauseSummaryLabel = NSTextField(wrappingLabelWithString: "")
     private let rootCauseExplanationLabel = NSTextField(wrappingLabelWithString: "")
-    private let rootCauseConfidencePill = NSView()
-    private let rootCauseConfidenceLabel = NSTextField(labelWithString: "")
+    /// UI-32: the kit's status pill; its word is the label the page writes.
+    private let rootCauseConfidencePill = HelmStatusPill()
+    private var rootCauseConfidenceLabel: NSTextField { rootCauseConfidencePill.label }
     private let evidenceStack = NSStackView()
     private let missingEvidenceStack = NSStackView()
     private var nextStepsCard: HelmCard!
@@ -494,24 +508,21 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         // see `HelmButton`'s own header.
         analyzeButton.keyEquivalent = "\r"
         analyzeButton.keyEquivalentModifierMask = [.command]
-        clearButton = HelmButton(title: "Clear", variant: .secondary, target: self, action: #selector(clearTapped))
         clipboardButton = HelmButton(title: "Analyze Clipboard", variant: .secondary, symbol: "list.clipboard",
                                      target: self, action: #selector(analyzeClipboard))
-        fileButton = HelmButton(title: "Add File", variant: .secondary, symbol: "doc.badge.plus",
-                                target: self, action: #selector(addFileTapped))
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        for button in [clipboardButton!, fileButton!, clearButton!, analyzeButton!] {
+        for button in [clipboardButton!, inputMoreMenu.button, analyzeButton!] {
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
 
         let controls = NSStackView(views: [sourcePopup, modePopup, spacer,
-                                           clipboardButton, fileButton, clearButton, analyzeButton])
+                                           clipboardButton, inputMoreMenu.button, analyzeButton])
         controls.orientation = .horizontal
         controls.alignment = .centerY
         controls.distribution = .fill
@@ -832,19 +843,6 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
 
     private func buildRootCauseCard() -> HelmCard {
         let card = HelmCard()
-        rootCauseConfidenceLabel.font = HelmType.kicker()
-        rootCauseConfidenceLabel.translatesAutoresizingMaskIntoConstraints = false
-        rootCauseConfidencePill.wantsLayer = true
-        rootCauseConfidencePill.layer?.cornerRadius = HelmMetrics.rChip
-        rootCauseConfidencePill.translatesAutoresizingMaskIntoConstraints = false
-        rootCauseConfidencePill.addSubview(rootCauseConfidenceLabel)
-        NSLayoutConstraint.activate([
-            rootCauseConfidenceLabel.leadingAnchor.constraint(equalTo: rootCauseConfidencePill.leadingAnchor, constant: 8),
-            rootCauseConfidenceLabel.trailingAnchor.constraint(equalTo: rootCauseConfidencePill.trailingAnchor, constant: -8),
-            rootCauseConfidenceLabel.topAnchor.constraint(equalTo: rootCauseConfidencePill.topAnchor, constant: 3),
-            rootCauseConfidenceLabel.bottomAnchor.constraint(equalTo: rootCauseConfidencePill.bottomAnchor, constant: -3),
-        ])
-        rootCauseConfidencePill.setContentHuggingPriority(.required, for: .horizontal)
 
         let copyButton = HelmButton(title: "Copy", variant: .quiet, size: .small, symbol: "doc.on.doc",
                                     target: self, action: #selector(copyRootCause))
@@ -935,19 +933,13 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         return card
     }
 
-    private var legendChips: [(pill: NSView, label: NSTextField, kind: LogCorrelationKind)] = []
+    private var legendChips: [(pill: HelmStatusPill, kind: LogCorrelationKind)] = []
 
     private func legendChip(for kind: LogCorrelationKind) -> NSView {
-        let pill = NSView()
-        pill.translatesAutoresizingMaskIntoConstraints = false
-        let label = NSTextField(labelWithString: "\(kind.displayName) - \(kind.detail)")
-        label.font = HelmType.caption()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        ToolRowLayout.pill(text: "\(kind.displayName) - \(kind.detail)",
-                           colorHex: kind.tint.hex(in: theme),
-                           into: pill, label: label, theme: theme)
-        legendChips.append((pill, label, kind))
-        pill.setContentHuggingPriority(.required, for: .horizontal)
+        // UI-32: the kit's status pill.
+        let pill = HelmStatusPill()
+        pill.configure(text: "\(kind.displayName) - \(kind.detail)", tint: kind.tint, theme: theme)
+        legendChips.append((pill, kind))
         return pill
     }
 
@@ -1205,21 +1197,13 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
                                        target: self, action: #selector(investigateFurther))
         let incident = HelmButton(title: "Create Incident", variant: .secondary, symbol: "doc.text",
                                   target: self, action: #selector(createIncident))
-        let runbook = HelmButton(title: "Create Runbook", variant: .secondary, symbol: "book.closed",
-                                 target: self, action: #selector(createRunbook))
-        let ticket = HelmButton(title: "Create Ticket", variant: .secondary, symbol: "ticket",
-                                target: self, action: #selector(createTicket))
-        let copyAll = HelmButton(title: "Copy Full Analysis", variant: .quiet, symbol: "doc.on.doc",
-                                 target: self, action: #selector(copyFullAnalysis))
-        let compareShortcut = HelmButton(title: "Compare", variant: .quiet, symbol: "arrow.left.arrow.right",
-                                         target: self, action: #selector(showCompareTab))
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let buttons: [HelmButton] = [investigateButton, incident, runbook, ticket, compareShortcut, copyAll]
+        let buttons: [HelmButton] = [investigateButton, incident, resultsMoreMenu.button]
         for button in buttons {
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -2141,7 +2125,6 @@ extension LogAnalyzerController {
         // Only meaningful once there is an analysis to add evidence *to*;
         // before that, the whole page is the "add evidence" affordance.
         if !hasAnalysis { neededEvidenceVisible = false }
-        clearButton.title = hasAnalysis ? "Discard" : "Clear"
     }
 
     private func renderImportBadge() {
@@ -2407,13 +2390,8 @@ extension LogAnalyzerController {
 
         var topViews: [NSView] = [title]
         if command.isFromLibrary {
-            let pill = NSView()
-            pill.translatesAutoresizingMaskIntoConstraints = false
-            let label = NSTextField(labelWithString: "")
-            label.translatesAutoresizingMaskIntoConstraints = false
-            ToolRowLayout.pill(text: "From your library", colorHex: HelmTint.good.hex(in: theme),
-                               into: pill, label: label, theme: theme)
-            pill.setContentHuggingPriority(.required, for: .horizontal)
+            let pill = HelmStatusPill()
+            pill.configure(text: "From your library", tint: .good, theme: theme)
             topViews.append(pill)
         }
         let topSpacer = NSView()
@@ -2659,18 +2637,11 @@ extension LogAnalyzerController {
         // the shared contrast-corrected pill (AGENTS.md §5.7: a `HelmTint`
         // hue is safe as a fill and is NOT automatically safe as text).
         let confidence = investigation.analysis?.ai?.rootCause?.confidence
-        ToolRowLayout.pill(text: rootCauseConfidenceLabel.stringValue.isEmpty
-                            ? "—" : rootCauseConfidenceLabel.stringValue,
-                           colorHex: (confidence?.tint ?? .neutral).hex(in: theme),
-                           into: rootCauseConfidencePill,
-                           label: rootCauseConfidenceLabel,
-                           theme: theme)
+        rootCauseConfidencePill.configure(text: rootCauseConfidenceLabel.stringValue.isEmpty
+                                              ? "\u{2014}" : rootCauseConfidenceLabel.stringValue,
+                                          tint: confidence?.tint ?? .neutral, theme: theme)
 
-        for chip in legendChips {
-            ToolRowLayout.pill(text: "\(chip.kind.displayName) - \(chip.kind.detail)",
-                               colorHex: chip.kind.tint.hex(in: theme),
-                               into: chip.pill, label: chip.label, theme: theme)
-        }
+        for chip in legendChips { chip.pill.applyTheme(theme) }
 
         let hoverFill = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.25)
         for row in storageRows {

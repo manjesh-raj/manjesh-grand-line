@@ -81,29 +81,6 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         symbol: "point.topleft.down.to.point.bottomright.curvepath", title: "From text",
         tooltip: "Type a flowchart or sequence diagram and draw it instantly - no model, no waiting",
         target: self, action: #selector(dslTapped))
-    /// F15's capture verb. Still labeled rather than an icon - it is the one
-    /// action on this page that reaches *outside* the app, and a camera glyph
-    /// alone does not say that it is a region drag rather than a photo picker.
-    /// The tooltip is what carries "a region of the screen"; the label only
-    /// has to carry the verb (B14).
-    private lazy var captureButton = HelmPageToolbar.labeledButton(
-        symbol: "camera.viewfinder", title: "Capture",
-        tooltip: "Drag a region of the screen onto this board (\u{2318}\u{21E7}S)",
-        target: self, action: #selector(captureTapped))
-    /// The other end of F15: flatten the board - the capture plus every
-    /// annotation over it - and put it on the clipboard.
-    private lazy var copyButton = HelmPageToolbar.labeledButton(
-        symbol: "doc.on.doc", title: "Copy",
-        tooltip: "Copy the whole board to the clipboard as a PNG",
-        target: self, action: #selector(copyImageTapped))
-    private lazy var fitButton = HelmPageToolbar.iconButton(
-        symbol: "arrow.up.left.and.arrow.down.right",
-        tooltip: "Fit the board to the window",
-        target: self, action: #selector(fitTapped))
-    private lazy var clearButton = HelmPageToolbar.iconButton(
-        symbol: "trash", tooltip: "Clear the board",
-        target: self, action: #selector(clearTapped))
-
     /// The live element count, refreshed whenever something changes it. Read by
     /// the drill subtitle; never polled.
     private var elementCount = 0
@@ -116,13 +93,35 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     /// `dslButton` leads, ahead of its AI sibling: it is the faster path and
     /// the one that works offline, so it is the one to reach for first when
     /// the captain already knows what connects to what.
-    /// `captureButton` sits between the two authoring buttons and the two icon
-    /// ones: it is a labeled verb like them, and a capture is where an F15
-    /// board starts, so the cluster reads capture -> copy alongside the
-    /// canvas's own tools rather than burying either in an icon.
+    /// F15's Capture and Copy, and the canvas's Fit and Clear, are in the
+    /// "⋯" menu (UI-47); each runs the handler its button did.
+    /// UI-47: the bar carries the two ways to put something on the board,
+    /// and the rest is behind "⋯" - six actions in the bar squeezed its
+    /// search field to "Search anyt...".
     var drillHeaderActions: [NSView] {
-        [dslButton, generateButton, captureButton, copyButton, fitButton, clearButton]
+        [dslButton, generateButton, moreMenu.button]
     }
+
+    #if FM_SELFTESTS
+    var debugMoreMenuTitles: [String] { moreMenu.debugTitles }
+    #endif
+
+    private lazy var moreMenu = HelmOverflowMenu(items: [
+        // Enablement is read as the menu opens: no bundle means no canvas to
+        // act on, and a capture already in flight cannot start a second.
+        .init("Capture a region (\u{2318}\u{21E7}S)\u{2026}", symbol: "camera.viewfinder",
+              isEnabled: { [weak self] in WhiteboardAssets.isAvailable && !(self?.captureInFlight ?? true) },
+              run: { [weak self] in self?.captureTapped() }),
+        .init("Copy board as image", symbol: "doc.on.doc",
+              isEnabled: { WhiteboardAssets.isAvailable },
+              run: { [weak self] in self?.copyImageTapped() }),
+        .init("Fit to window", symbol: "arrow.up.left.and.arrow.down.right",
+              isEnabled: { WhiteboardAssets.isAvailable },
+              run: { [weak self] in self?.fitTapped() }),
+        .init("Clear board\u{2026}", symbol: "trash",
+              isEnabled: { WhiteboardAssets.isAvailable },
+              run: { [weak self] in self?.clearTapped() }),
+    ], tooltip: "More - capture, copy, fit or clear the board")
 
     var drillHeaderSubtitle: String? {
         if let lastError { return lastError }
@@ -221,8 +220,6 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
                         body: WhiteboardAssets.missingBundleMessage)
             dslButton.isEnabled = false
             generateButton.isEnabled = false
-            fitButton.isEnabled = false
-            clearButton.isEnabled = false
         }
         applyTheme()
     }
@@ -406,13 +403,11 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
             return
         }
         captureInFlight = true
-        captureButton.isEnabled = false
 
         let provider = captureProvider ?? { done in ScreenRegionCapture.capture(completion: done) }
         provider { [weak self] result in
             guard let self else { return }
             self.captureInFlight = false
-            self.captureButton.isEnabled = true
             switch result.outcome {
             case .cancelled:
                 // Deliberately silent. Escaping out of a region drag is a

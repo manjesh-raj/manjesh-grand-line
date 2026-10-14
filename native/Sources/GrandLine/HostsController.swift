@@ -167,6 +167,16 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// (and, since UI1, the page's one statement of them), and the detail
     /// panel simply re-fills from whichever list is showing.
     private let sideStack = HostsSideStack()
+    /// UI-50: the page-wide inventory, one KPI line over the list.
+    private let workspacePanel = HostsWorkspacePanel()
+    /// UI-50: the page's shortcuts, one line of key hints under the list.
+    private let quickActionsPanel = HostsQuickActionsPanel()
+    /// The content column's trailing edge, which moves with the inspector:
+    /// beside it when a record is selected, at the page gutter when not.
+    /// Exactly one of the two is active (gotcha (17)'s footnote - two
+    /// alternative constraints rather than a collapsing width).
+    private var contentToInspector: NSLayoutConstraint?
+    private var contentToGutter: NSLayoutConstraint?
 
     /// The reference mockup's **left** navigation column.
     ///
@@ -178,7 +188,11 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// `fm/grand-line-schedules-sidebar-fullwidth-fix`. See
     /// `HostsSidebar.swift`'s header for the full note, including why review
     /// #3's UI1 then removed the tab strip this column used to sit beside.
-    private let sidebar = HelmPageSidebar(surface: .panel)
+    /// UI-45: one sidebar shape across the app - `HelmPageSidebar` on the
+    /// plain surface with muted counts, the Tasks sidebar the revamp kept.
+    /// A boxed panel around the nav was a second bordered surface beside the
+    /// page's own cards (Rule 1).
+    private let sidebar = HelmPageSidebar()
     private let keychainCard = HostsKeychainCard()
     private let userRow = HostsUserRow()
 
@@ -211,8 +225,11 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// connected to, and inventing a timestamp would be a new field masquerading
     /// as a filter.
     private lazy var onlineChip: HelmButton = {
-        let b = HelmButton(title: "Online", variant: .secondary, size: .small,
-                           symbol: "bolt.fill", target: self, action: #selector(onlineChipClicked(_:)))
+        // UI-50: a dot and a word, not a bordered chip with a bolt. The dot
+        // is green while the filter is on, the way a live session reads
+        // everywhere else on the page.
+        let b = HelmButton(title: "Online", variant: .quiet, size: .small,
+                           symbol: "circle.fill", target: self, action: #selector(onlineChipClicked(_:)))
         b.setButtonType(.pushOnPushOff)
         b.toolTip = "Show only hosts with a live session"
         return b
@@ -361,6 +378,8 @@ final class HostsController: NSViewController, DaylightDrillActions {
         // ancestor throws (`fm/grandline-docs-no-window-fix`'s own finding).
         root.addSubview(sideStack)
         root.addSubview(sidebar)
+        root.addSubview(workspacePanel)
+        root.addSubview(quickActionsPanel)
         buildSidebar()
 
         buildHostsTab()
@@ -435,27 +454,47 @@ final class HostsController: NSViewController, DaylightDrillActions {
             greaterThanOrEqualToConstant: Self.contentMinimumWidth)
         contentMinimum.priority = HelmDaylightPriority.contentTie
 
+        // UI-50: the content column is a layout guide whose trailing edge
+        // moves with the inspector. The inventory line sits at its top, the
+        // shortcut line at its bottom, and the three tab views between them.
+        let content = NSLayoutGuide()
+        root.addLayoutGuide(content)
+        let toInspector = content.trailingAnchor.constraint(equalTo: sideStack.leadingAnchor,
+                                                            constant: -HelmMetrics.s4)
+        let toGutter = content.trailingAnchor.constraint(equalTo: column.trailingAnchor)
+        contentToInspector = toInspector
+        contentToGutter = toGutter
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: HelmMetrics.s4),
+            content.topAnchor.constraint(equalTo: column.topAnchor),
+            content.bottomAnchor.constraint(equalTo: column.bottomAnchor),
+            toGutter,
+            workspacePanel.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            workspacePanel.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            workspacePanel.topAnchor.constraint(equalTo: content.topAnchor),
+            quickActionsPanel.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            quickActionsPanel.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            quickActionsPanel.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
+
         for tabView in [hostsTabView, keysTabView, snippetsTabView] {
             tabView.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(tabView)
             NSLayoutConstraint.activate([
-                tabView.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor,
-                                                 constant: HelmMetrics.s4),
-                tabView.trailingAnchor.constraint(equalTo: sideStack.leadingAnchor,
-                                                  constant: -HelmMetrics.s4),
-                // UI1: the content column starts at the top of the page now
-                // that the duplicate tab strip above it is gone.
-                tabView.topAnchor.constraint(equalTo: column.topAnchor),
-                tabView.bottomAnchor.constraint(equalTo: column.bottomAnchor),
+                tabView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+                tabView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+                tabView.topAnchor.constraint(equalTo: workspacePanel.bottomAnchor, constant: HelmMetrics.s4),
+                tabView.bottomAnchor.constraint(equalTo: quickActionsPanel.topAnchor, constant: -HelmMetrics.s3),
             ])
         }
 
         NSLayoutConstraint.activate([
             sideStack.trailingAnchor.constraint(equalTo: column.trailingAnchor),
-            sideStack.topAnchor.constraint(equalTo: hostsTabView.topAnchor),
+            sideStack.topAnchor.constraint(equalTo: column.topAnchor),
             sideStack.bottomAnchor.constraint(lessThanOrEqualTo: column.bottomAnchor),
             contentMinimum,
         ])
+        sideStack.isHidden = true
 
         buildSidePanels()
 
@@ -575,7 +614,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
         // Every one of these is a real, bound menu item in `main.swift` -
         // the brief's own rule, and why the reference's `⌘ ↵ Connect selected`
         // and `⌘ ⇧ P Run snippet` are absent rather than drawn inert.
-        sideStack.quickActions.setItems([
+        quickActionsPanel.setItems([
             .init(shortcut: "\u{2318}K", title: "Command palette") { [weak self] in
                 self?.onOpenCommandPalette?()
             },
@@ -599,6 +638,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// (gotcha (11)).
     private func refreshExpansionPanel() {
         sideStack.expansion.isHidden = activeTab != .snippets
+        updateInspectorVisibility()
         let state = snippetExpansionState?()
             ?? (enabled: false, trusted: false, armed: false, triggerCount: 0)
         sideStack.expansion.setState(enabled: state.enabled,
@@ -612,20 +652,37 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// panel and the list can never disagree within a frame.
     private func refreshWorkspacePanel() {
         let live = hostStore.hosts.reduce(0) { $0 + (liveSession?($1.id) != nil ? 1 : 0) }
-        sideStack.workspace.setCounts(hosts: hostStore.hosts.count,
+        workspacePanel.setCounts(hosts: hostStore.hosts.count,
                                       keys: keyStore.keys.count,
                                       snippets: snippetStore.snippets.count,
                                       live: live,
                                       touchIDAvailable: CredentialVaultKeyStore.biometryAvailable)
     }
 
+    /// UI-50: the inspector column shows only when it has something to say.
+    /// Without a selection the list takes the page's full width.
+    private func updateInspectorVisibility() {
+        let show = sideStack.hasContent
+        // Deactivate before activating, so the two are never both live.
+        if show {
+            contentToGutter?.isActive = false
+            contentToInspector?.isActive = true
+        } else {
+            contentToInspector?.isActive = false
+            contentToGutter?.isActive = true
+        }
+        sideStack.isHidden = !show
+    }
+
     /// Fill (or empty) the detail panel from the showing tab's own selection.
     private func refreshDetailPanel() {
         guard let detail = currentDetail() else {
             sideStack.detail.clear()
+            updateInspectorVisibility()
             return
         }
         sideStack.detail.show(detail)
+        updateInspectorVisibility()
     }
 
     private func currentDetail() -> HostsDetailContent? {
@@ -984,6 +1041,8 @@ final class HostsController: NSViewController, DaylightDrillActions {
         keysList.applyTheme(theme)
         snippetsList.applyTheme(theme)
         sideStack.applyTheme(theme)
+        workspacePanel.applyTheme(theme)
+        quickActionsPanel.applyTheme(theme)
         sidebar.applyTheme(theme)
         keychainCard.applyTheme(theme)
         userRow.applyTheme(theme)
@@ -1088,7 +1147,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
     @objc private func onlineChipClicked(_ sender: NSButton) {
         onlineOnly = sender.state == .on
-        (sender as? HelmButton)?.variant = onlineOnly ? .primary : .secondary
+        (sender as? HelmButton)?.tint = onlineOnly ? .good : nil
         applyHostFilter(searchField.stringValue)
     }
 
@@ -1599,6 +1658,8 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
     #if FM_SELFTESTS
     var debugSideStack: HostsSideStack { sideStack }
+    var debugWorkspacePanel: HostsWorkspacePanel { workspacePanel }
+    var debugQuickActions: HostsQuickActionsPanel { quickActionsPanel }
     /// UI1: the Hosts card header as rendered, so a suite can assert the count
     /// really came off it rather than trusting the format string.
     var debugHostsTitle: String { hostsTitleLabel.stringValue }

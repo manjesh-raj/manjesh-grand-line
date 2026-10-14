@@ -2808,6 +2808,27 @@ if ProcessInfo.processInfo.environment["FM_RUN_AGENTS_BUDGET_TESTS"] == "1" {
     exit(AgentsFileBudgetSelfTest.run() ? 0 : 1)
 }
 
+// The UI/UX revamp's source guards (UI-40): pure source reads, CI's blocking
+// lane. See `HelmKitSourceGuardSelfTest`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_HELM_KIT_GUARD_TESTS"] == "1" {
+    exit(HelmKitSourceGuardSelfTest.run() ? 0 : 1)
+}
+
+// The UI/UX revamp's component kit (UI-39): what each piece paints. Pure
+// logic; its window-backed geometry half is FM_RUN_HELM_KIT_VIEW_TESTS.
+if ProcessInfo.processInfo.environment["FM_RUN_HELM_KIT_TESTS"] == "1" {
+    exit(HelmKitSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_HELM_KIT_VIEW_TESTS"] == "1" {
+    exit(HelmKitViewSelfTest.run() ? 0 : 1)
+}
+
+// The UI/UX revamp's Tasks chrome: sync wording, offline detection, sort.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_TASKS_CHROME_TESTS"] == "1" {
+    exit(ShiftTasksChromeSelfTest.run() ? 0 : 1)
+}
+
 // Review process issue P9: the on-disk diagnostics sink and the crash-report
 // check. Pure logic plus real file round trips, so it guards CI's blocking
 // lane.

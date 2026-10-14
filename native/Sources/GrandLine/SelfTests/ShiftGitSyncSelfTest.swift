@@ -129,6 +129,9 @@ enum ShiftGitSyncSelfTest {
             seedRemote(remote)
             let wt = scratch.appendingPathComponent("wt-push", isDirectory: true)
             let sync = ShiftGitSync(workingTree: wt, remoteURL: remote.path, debounceInterval: 0.2, periodicPullInterval: 999_999)
+            // UI-19: before anything has happened, the initial `.synced` is a
+            // default, not a status - the Tasks page must not say "Synced".
+            check(!sync.hasReportedStatus, "a fresh sync has reported no status yet")
             check(sync.ensureWorkingTreeNow(), "ensureWorkingTreeNow should succeed cloning a real local bare remote")
             check(sync.status == .synced, "status should be .synced right after a clean clone, got \(sync.status)")
 
@@ -137,6 +140,7 @@ enum ShiftGitSyncSelfTest {
             writeTaskFile("tasks:\n  - id: t1\n", to: taskFile)
             sync.markDirty()
             check(sync.status == .localChanges, "status should flip to .localChanges immediately on markDirty(), before any commit runs")
+            check(sync.hasReportedStatus, "a real status change counts as reported")
             waitForSynced(sync)
             check(sync.status == .synced, "status should settle back to .synced once the debounced commit+push completes, got \(sync.status)")
             let after = commitCount(remote, gitDir: true)

@@ -21,14 +21,20 @@
 //      behaviour inside a restyle. Each migrated site therefore keeps its own
 //      answer, and this pins the ones that can be reached.
 //   3. **The deliberately-kept `NSAlert`s are still there, and are exactly
-//      the seven named.** An eighth appearing means a new site chose system
+//      the five named.** A sixth appearing means a new site chose system
 //      chrome without the decision being made; one disappearing means a
 //      safety gate was migrated without being argued for.
 //
 //      (This was eight, in five files, until `UpdatesController+AppRow.swift` -
 //      the self-update card's own "replaces the running binary" alert - was
 //      deleted along with the rest of that feature; see
-//      `fm/grandline-updates-remove-app-card`. Four files, seven sites, now.)
+//      `fm/grandline-updates-remove-app-card`. Four files, seven sites.)
+//
+//      (And five, in two files, since UI-61 of the UI/UX revamp: the incident
+//      prompt and the SRE Lead cap notice moved to `HelmConfirm`. Both had
+//      been kept only because they were already window sheets; neither runs
+//      anything outside the app, which is the one reason the rule keeps a
+//      system alert.)
 //
 // Behavioural coverage is split honestly. `responderForTests` lets every
 // reachable site be driven, and **returning `.cancel` is always safe** - so
@@ -54,7 +60,7 @@ import AppKit
 
 enum ConfirmMigrationSelfTest {
 
-    /// The seven sites that deliberately keep the system alert, with the
+    /// The five sites that deliberately keep the system alert, with the
     /// reason each one does. See `HelmConfirm`'s header for the rule.
     ///
     /// A literal list, not derived from a grep: deriving it would make the
@@ -63,8 +69,6 @@ enum ConfirmMigrationSelfTest {
     private static let keepsSystemAlert: [(file: String, why: String)] = [
         ("CommandLibraryViews.swift", "the four CommandRiskConfirmation gates - a real shell command is about to run"),
         ("ConsoleController+Herdr.swift", "terminates live panes in another program"),
-        ("ConsoleController+Incident.swift", "already a sheet, not a centre-screen alert"),
-        ("ConsoleController+SRELead.swift", "already a sheet, not a centre-screen alert"),
     ]
 
     static func run() -> Bool {
@@ -76,7 +80,7 @@ enum ConfirmMigrationSelfTest {
         scratchStores()
         var allOK = true
         for check in [checkEveryCallSiteGatesItsEffect,
-                      checkKeptSystemAlertsAreExactlyTheSevenNamed,
+                      checkKeptSystemAlertsAreExactlyTheFiveNamed,
                       checkComponentContract,
                       checkEscapeArrivesAsARealKeyEvent,
                       checkDestructiveConfirmSemantics,
@@ -205,9 +209,9 @@ enum ConfirmMigrationSelfTest {
         }
     }
 
-    // MARK: 2. The seven deliberately-kept system alerts
+    // MARK: 2. The five deliberately-kept system alerts
 
-    private static func checkKeptSystemAlertsAreExactlyTheSevenNamed(_ ok: inout Bool) {
+    private static func checkKeptSystemAlertsAreExactlyTheFiveNamed(_ ok: inout Bool) {
         print("\n-- G3: NSAlert survives only where the decision says it should --")
         let files = appSources()
         guard !files.isEmpty else {
@@ -228,7 +232,7 @@ enum ConfirmMigrationSelfTest {
         let expected = Set(keepsSystemAlert.map(\.file))
         var problems: [String] = []
         for file in found.keys where !expected.contains(file) {
-            problems.append("\(file) uses NSAlert but is not one of the seven kept sites")
+            problems.append("\(file) uses NSAlert but is not one of the five kept sites")
         }
         for entry in keepsSystemAlert where found[entry.file] == nil {
             problems.append("\(entry.file) no longer uses NSAlert - it was kept because \(entry.why)")
@@ -236,11 +240,11 @@ enum ConfirmMigrationSelfTest {
         // The four command gates are one file; the total is what pins that a
         // fifth did not quietly join them.
         let total = found.values.reduce(0, +)
-        if total != 7 {
-            problems.append("\(total) NSAlert sites, want exactly 7")
+        if total != 5 {
+            problems.append("\(total) NSAlert sites, want exactly 5")
         }
         if problems.isEmpty {
-            print("  OK   7 kept, in the 4 files the decision names")
+            print("  OK   5 kept, in the 2 files the decision names")
         } else {
             for p in problems { print("  FAIL \(p)") }
             ok = false

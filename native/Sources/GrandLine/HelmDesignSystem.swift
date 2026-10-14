@@ -43,6 +43,10 @@ import AppKit
 /// (18/20/28) and the five `IconTileView` sizes (22/26/30/34/40).
 enum HelmMetrics {
     // Spacing scale.
+    /// The half step, below `s1`: between stacked lines of one text block
+    /// (a title and its subline) and between the segments of one control.
+    /// Anything wider than this is a real gap and takes `s1` upward.
+    static let s0: CGFloat = 2
     static let s1: CGFloat = 4
     static let s2: CGFloat = 8
     static let s3: CGFloat = 12
@@ -106,6 +110,11 @@ enum HelmMetrics {
     static let dTileLarge: CGFloat = 12
     /// A 30pt icon tile (module headers).
     static let dTileSmall: CGFloat = 10
+    /// UI-35: the one radius every 34pt control on the bar wears - the
+    /// shortcut tiles, Recents, the theme toggle, the bell, the avatar and the
+    /// drill header's back button. The bar used to carry five (9, 10, 12, 14
+    /// and a capsule) on squares within a few points of each other.
+    static let barControlRadius: CGFloat = dTileSmall
     /// The 22pt logo dot.
     static let dLogoDot: CGFloat = 8
     /// Buttons, chips, space pills, tokens, progress tracks, the search pill.
@@ -439,6 +448,17 @@ final class HelmCard: NSView {
     let bodyContainer = NSView()
     private let divider = NSView()
 
+    /// UI-4's attention edge: a 3pt semantic bar down the card's leading
+    /// edge, clipped to its rounded outline. The revamp's rule is that this is
+    /// the *only* edge a card may carry, and only while the card is saying
+    /// that something needs the captain - so it is off by default and a card
+    /// opts in per render (`setAttentionEdge`). Drawn on a sublayer above the
+    /// body so a row's hover fill cannot paint over it.
+    private let attentionEdge = CALayer()
+    private let attentionEdgeMask = CAShapeLayer()
+    private var attentionTint: HelmTint?
+    static let attentionEdgeWidth: CGFloat = 3
+
     /// Collapses the header area to nothing until a header is actually set.
     ///
     /// **This constraint is what makes a headerless card's layout
@@ -519,7 +539,48 @@ final class HelmCard: NSView {
         dividerHeight = divider.heightAnchor.constraint(equalToConstant: 0)
         dividerHeight.isActive = true
         divider.isHidden = true
+
+        attentionEdge.isHidden = true
+        attentionEdge.zPosition = 10
+        attentionEdge.mask = attentionEdgeMask
+        layer?.addSublayer(attentionEdge)
     }
+
+    /// Shows the attention edge in `tint`'s hue, or hides it for `nil`.
+    func setAttentionEdge(_ tint: HelmTint?) {
+        attentionTint = tint
+        applyAttentionEdge(ThemeManager.shared.theme)
+        needsLayout = true
+    }
+
+    private func applyAttentionEdge(_ theme: HelmTheme) {
+        HelmMotion.withoutImplicitAnimation {
+            attentionEdge.isHidden = attentionTint == nil
+            if let attentionTint {
+                attentionEdge.backgroundColor = HelmTheme.nsColor(attentionTint.hex(in: theme)).cgColor
+            }
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        // The edge follows the card's real height and is clipped by a mask
+        // of the card's own rounded outline, so it bends with the corners
+        // rather than poking past them.
+        HelmMotion.withoutImplicitAnimation {
+            attentionEdge.frame = CGRect(x: 0, y: 0, width: Self.attentionEdgeWidth, height: bounds.height)
+            let radius = layer?.cornerRadius ?? 0
+            attentionEdgeMask.path = CGPath(roundedRect: CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height),
+                                            cornerWidth: radius, cornerHeight: radius, transform: nil)
+        }
+    }
+
+    #if FM_SELFTESTS
+    /// The edge as painted - `nil` when hidden.
+    var debugAttentionEdgeColor: NSColor? {
+        attentionEdge.isHidden ? nil : attentionEdge.backgroundColor.flatMap { NSColor(cgColor: $0) }
+    }
+    #endif
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
@@ -661,6 +722,7 @@ final class HelmCard: NSView {
             ? HelmTheme.nsColor(theme.daylightTokens.hairRow).cgColor
             : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(Self.dividerAlpha).cgColor
         applyDaylightElevation(theme)
+        applyAttentionEdge(theme)
         headerTile?.applyTheme(theme)
         headerTitle?.font = theme.isDaylight ? HelmType.cardTitle() : HelmType.sectionTitle()
         // Theme-derived, never the system `labelColor` the four card copies
@@ -686,18 +748,52 @@ final class HelmCard: NSView {
             layer?.shadowOpacity = 0
             return
         }
-        let shadow = Self.elevation(for: theme, level: .resting)
-        layer?.masksToBounds = false
-        // `CALayer` multiplies `shadowColor`'s own alpha by `shadowOpacity`,
-        // so handing it a pre-multiplied colour *and* the same value as the
-        // opacity squares the alpha and renders a shadow half as strong as
-        // §2.5 specifies. The colour goes in opaque; the alpha is the opacity.
-        let alpha = Float(shadow.shadowColor?.alphaComponent ?? 0)
-        layer?.shadowColor = shadow.shadowColor?.withAlphaComponent(1).cgColor
-        layer?.shadowOpacity = alpha
-        layer?.shadowRadius = shadow.shadowBlurRadius
-        layer?.shadowOffset = CGSize(width: shadow.shadowOffset.width, height: shadow.shadowOffset.height)
+        guard let layer else { return }
+        layer.masksToBounds = false
+        Self.applyElevation(.resting, to: layer, theme: theme)
     }
+
+    /// Paints one of the two elevation levels onto a layer, with the alpha
+    /// applied **once**.
+    ///
+    /// `CALayer` multiplies `shadowColor`'s own alpha by `shadowOpacity`. The
+    /// colour `elevation(for:level:)` returns already carries the level's
+    /// alpha, so a caller that hands it over as-is *and* copies the same
+    /// alpha into `shadowOpacity` squares it: 0.10 becomes 0.01, which is
+    /// what the UI/UX revamp measured below a Home card (3/255 of darkening
+    /// on Daylight, 0 on Dusk) and why every "floating card" rendered as a
+    /// flat bordered box. Three surfaces did exactly that (`HelmModuleCard`,
+    /// `HelmPlateCard` and the bar), which is why this is one function every
+    /// shadowed layer calls rather than a rule each copy has to remember.
+    /// `HelmKitSourceGuardSelfTest` fails the run on a new
+    /// `shadowOpacity = ` assignment in a file that reads the elevation colour.
+    ///
+    /// The colour goes in opaque and the alpha is the opacity. `blurScale`
+    /// exists for the one caller whose shape is much smaller than a card (the
+    /// toast capsule), where the card blur would read as a smudge.
+    static func applyElevation(_ level: Elevation,
+                               to layer: CALayer,
+                               theme: HelmTheme,
+                               path: CGPath? = nil,
+                               blurScale: CGFloat = 1) {
+        let shadow = elevation(for: theme, level: level)
+        let color = shadow.shadowColor ?? .black
+        layer.shadowColor = color.withAlphaComponent(1).cgColor
+        layer.shadowOpacity = Float(color.alphaComponent)
+        layer.shadowRadius = shadow.shadowBlurRadius * blurScale
+        layer.shadowOffset = CGSize(width: shadow.shadowOffset.width, height: shadow.shadowOffset.height)
+        layer.shadowPath = path
+    }
+
+    #if FM_SELFTESTS
+    /// What `applyElevation` actually put on a layer, as the product the
+    /// compositor uses - so a suite can assert the alpha was applied once
+    /// rather than reading back two numbers that are each "right".
+    static func debugEffectiveShadowAlpha(of layer: CALayer) -> CGFloat {
+        let colorAlpha = layer.shadowColor.flatMap { NSColor(cgColor: $0)?.alphaComponent } ?? 0
+        return colorAlpha * CGFloat(layer.shadowOpacity)
+    }
+    #endif
 
     // MARK: The one card surface
 
@@ -1902,14 +1998,35 @@ final class HelmPopUpButton: NSPopUpButton {
 /// the primitives that carry the visual language - `ToolRowLayout.pill`,
 /// `IconTileView`, `ToolRowLayout.attachAccentBar`'s idiom, `HelmType` - and
 /// nothing else, because their layouts genuinely differ.
-final class HelmAccentRow: NSView {
+final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
 
     /// Where the chip sits. `.trailing` is a wide list row (Shift's task and
     /// follow-up lists, Overview's "In flight"); `.belowBody` is the
     /// notification panel, which is 340pt wide and has no room for a chip
     /// beside wrapping body text. Bar weight and position, badge size, kicker
     /// typography and chip style are identical either way.
-    enum ChipPlacement { case trailing, belowBody }
+    enum ChipPlacement {
+        case trailing, belowBody
+        /// On the meta line's trailing edge, beside the due caption - the
+        /// board card's "Due today ... High" line (UI-22, UI-23).
+        case metaLine
+    }
+
+    /// The row's surface recipe (the UI/UX revamp's Rule 1: one bordered
+    /// surface per level).
+    ///
+    /// - `.card` is the recipe every row had before the revamp: a 10pt card
+    ///   outlined in a wash of its own tint, with a 3pt bar. It stays the
+    ///   default so a row nobody has moved yet renders exactly as it did.
+    /// - `.flat` is a row *inside* a card: no border, no radius, no fill of
+    ///   its own, a `rowHover` fill under the pointer and 10/16 padding with
+    ///   a 44pt floor. The 3pt bar shows only when the row carries an
+    ///   identity (`Content.showsBar`). Separators come from the list
+    ///   (`HelmFlatList`), never from the row.
+    /// - `.cardFlat` is a card that sits directly on the page ground - the
+    ///   Tasks board's task card: radius 10, a 1px neutral hairline (never
+    ///   the tint), the 3pt identity bar, 10/12 padding and the same hover.
+    enum Style: Equatable { case card, flat, cardFlat }
 
     /// Everything that varies per row. Structure - chip placement, whether
     /// there is a leading control, whether the body is text or a caller-owned
@@ -1965,6 +2082,30 @@ final class HelmAccentRow: NSView {
         var chipTint: HelmTint? = nil
         /// A wide row truncates its title to one line; a narrow one wraps.
         var titleWraps: Bool = false
+        /// A short state-coloured caption on the row's trailing edge, before
+        /// the chip - the attention card's "Overdue 26 days · since 18 Sep"
+        /// (UI-1), which used to be a large pill. Coloured through
+        /// `HelmContrast.legibleTintedText`, because a hue is not by itself
+        /// safe as text.
+        var trailingCaption: String? = nil
+        var trailingCaptionTint: HelmTint? = nil
+        /// A coloured lead-in on the meta line ("Due today", "Overdue 2
+        /// days"), with the rest of `meta` after it in the usual muted face.
+        /// UI-24: the due date is a caption that takes colour only when it
+        /// matters, on the board and in the list alike.
+        var metaLead: String? = nil
+        var metaLeadTint: HelmTint? = nil
+        /// Draw the title muted and struck through - a Done card (UI-29).
+        var titleStruck: Bool = false
+        /// Whether the 3pt bar is drawn. `nil` takes the style's own answer:
+        /// always for `.card` and `.cardFlat`, never for `.flat`, where the
+        /// bar is reserved for a row that carries an identity (Rule 3).
+        var showsBar: Bool? = nil
+        /// A line appended to the row's hover text - how to act on it, where
+        /// that is not obvious from the row itself (the board card's "drag to
+        /// another lane, or right-click to move", which used to be a sentence
+        /// above the board on every visit - UI-20).
+        var hint: String? = nil
         /// Let the meta line wrap instead of truncating - B2 of
         /// `data/grand-line-e2e-audit/report.md`. For a read-only browsing
         /// surface with vertical room and genuinely long meta text (the
@@ -2028,16 +2169,45 @@ final class HelmAccentRow: NSView {
 
     private static let barWidth: CGFloat = 3
     private static let barRadius: CGFloat = 1.5
-    /// The bar is inset from the card's top and bottom so it never clips past
-    /// the card's own rounded corners at `HelmMetrics.rRow`.
-    private static let barVerticalInset: CGFloat = 10
-    private static let barLeadingInset: CGFloat = 2
-    private static let contentLeading: CGFloat = 12
-    private static let contentTrailing: CGFloat = 14
-    private static let contentVertical: CGFloat = 12
-    /// The vertical rhythm inside the body column - 4 in the notification
-    /// panel and 3 in the two Shift lists as shipped, unified to 4.
-    private static let bodySpacing: CGFloat = 4
+
+    /// Every padding number, per style, from one table rather than branches
+    /// scattered through `buildLayout`.
+    struct Metrics: Equatable {
+        /// The bar is inset from the card's top and bottom so it never clips
+        /// past the card's own rounded corners.
+        let barVerticalInset: CGFloat
+        let barLeadingInset: CGFloat
+        /// From the bar's trailing edge to the content.
+        let contentLeading: CGFloat
+        let contentTrailing: CGFloat
+        let contentVertical: CGFloat
+        let bodySpacing: CGFloat
+        let cornerRadius: CGFloat
+        let minHeight: CGFloat?
+    }
+
+    static func metrics(for style: Style) -> Metrics {
+        switch style {
+        case .card:
+            // `NotificationRowView`'s own geometry, promoted. The body rhythm
+            // was 4 in the notification panel and 3 in the two Shift lists as
+            // shipped, unified to 4.
+            return Metrics(barVerticalInset: 10, barLeadingInset: 2, contentLeading: 12,
+                           contentTrailing: 14, contentVertical: 12, bodySpacing: 4,
+                           cornerRadius: HelmMetrics.rRow, minHeight: nil)
+        case .flat:
+            // 10/16 and a 44pt floor (the kit table). The bar sits flush at
+            // the leading edge, so with it hidden the text starts 16pt in.
+            return Metrics(barVerticalInset: 10, barLeadingInset: 0, contentLeading: 13,
+                           contentTrailing: HelmMetrics.s4, contentVertical: 10, bodySpacing: 2,
+                           cornerRadius: 0, minHeight: 44)
+        case .cardFlat:
+            // 10/12 with the bar 2pt in, so the text lands 14pt from the edge.
+            return Metrics(barVerticalInset: HelmMetrics.s2, barLeadingInset: 2, contentLeading: 9,
+                           contentTrailing: HelmMetrics.s3, contentVertical: 10, bodySpacing: 3,
+                           cornerRadius: HelmMetrics.rRow, minHeight: nil)
+        }
+    }
 
     /// The card border is a wash of the row's own hue. It carries real load
     /// rather than decoration: it is the only thing separating a row from its
@@ -2081,8 +2251,14 @@ final class HelmAccentRow: NSView {
     /// against.
     private weak var textColumn: NSStackView?
     private let customContent: NSView?
-    private let chip = NSView()
-    private let chipLabel = NSTextField(labelWithString: "")
+    /// UI-32: the row's chip is the kit's one status pill, not a view this
+    /// row hands to `ToolRowLayout.pill` itself.
+    private let chip = HelmStatusPill(style: .pill)
+    private let trailingCaptionLabel = NSTextField(labelWithString: "")
+    /// The meta line and, for `.metaLine` placement, the chip beside it.
+    private let metaRow = NSStackView()
+    let style: Style
+    private let metrics: Metrics
 
     private let trailingAccessory: NSView?
 
@@ -2235,7 +2411,10 @@ final class HelmAccentRow: NSView {
          /// unstyled table once the window is wide. Left `nil` everywhere
          /// else, so a task row, a notification and an Overview peek row are
          /// byte-for-byte unchanged.
-         maxContentWidth: CGFloat? = nil) {
+         maxContentWidth: CGFloat? = nil,
+         style: Style = .card) {
+        self.style = style
+        self.metrics = Self.metrics(for: style)
         self.maxContentWidth = maxContentWidth
         self.chipPlacement = chipPlacement
         self.leadingControl = leadingControl
@@ -2259,15 +2438,28 @@ final class HelmAccentRow: NSView {
         // `onClick` is set, so letting the event through costs nothing for a
         // row that is not itself clickable.
         click.delaysPrimaryMouseButtonEvents = false
+        // Gotcha (20): a row that is itself clickable (`onClick`) and also
+        // holds a real control - the attention card's checkbox and its Open
+        // button - must let the control have its own click. The shared rule
+        // declines for an actionable control under the pointer.
+        click.delegate = self
         addGestureRecognizer(click)
+    }
+
+    func gestureRecognizer(_ recognizer: NSGestureRecognizer,
+                           shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
+        HelmGestureArbitration.shouldRecognize(recognizer, with: event)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     private func buildLayout() {
-        card.cornerRadius = HelmMetrics.rRow
+        card.cornerRadius = metrics.cornerRadius
         card.translatesAutoresizingMaskIntoConstraints = false
         addSubview(card)
+        if let minHeight = metrics.minHeight {
+            heightAnchor.constraint(greaterThanOrEqualToConstant: HelmType.scaledRowHeight(minHeight)).isActive = true
+        }
 
         accentBar.wantsLayer = true
         accentBar.layer?.cornerRadius = Self.barRadius
@@ -2295,6 +2487,15 @@ final class HelmAccentRow: NSView {
         chip.setContentHuggingPriority(.required, for: .horizontal)
         chip.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        trailingCaptionLabel.translatesAutoresizingMaskIntoConstraints = false
+        trailingCaptionLabel.lineBreakMode = .byTruncatingTail
+        trailingCaptionLabel.isHidden = true
+        trailingCaptionLabel.setContentHuggingPriority(.required, for: .horizontal)
+        // A caption may truncate before the title column does - but only
+        // after it, so it sits at 499, under the window (gotcha (13)).
+        trailingCaptionLabel.setContentCompressionResistancePriority(
+            HelmDaylightPriority.contentTie, for: .horizontal)
+
         let titleRow = NSStackView(views: [titleLabel, titleAccessory])
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
@@ -2320,6 +2521,25 @@ final class HelmAccentRow: NSView {
             customContent.translatesAutoresizingMaskIntoConstraints = false
             bodyContent = customContent
             bodyViews.append(customContent)
+        } else if chipPlacement == .metaLine {
+            // The meta caption and the chip share one line: caption at the
+            // leading edge, chip at the trailing one (gotcha (10)'s `.fill`
+            // and a spacer, so the chip never drifts with the caption).
+            let spacer = NSView()
+            spacer.translatesAutoresizingMaskIntoConstraints = false
+            spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            for view in [metaLabel, spacer, chip] as [NSView] { metaRow.addArrangedSubview(view) }
+            metaRow.orientation = .horizontal
+            metaRow.alignment = .centerY
+            metaRow.distribution = .fill
+            metaRow.spacing = HelmMetrics.s2
+            metaRow.translatesAutoresizingMaskIntoConstraints = false
+            metaRow.setHuggingPriority(.defaultLow, for: .horizontal)
+            metaRow.setClippingResistancePriority(.defaultLow, for: .horizontal)
+            bodyContent = metaRow
+            bodyViews.append(titleRow)
+            bodyViews.append(metaRow)
         } else {
             bodyContent = metaLabel
             bodyViews.append(titleRow)
@@ -2331,8 +2551,12 @@ final class HelmAccentRow: NSView {
         textColumn = textStack
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = Self.bodySpacing
+        textStack.spacing = metrics.bodySpacing
         if chipPlacement == .belowBody { textStack.setCustomSpacing(6, after: bodyContent) }
+        if chipPlacement == .metaLine {
+            textStack.setCustomSpacing(metrics.bodySpacing + 3, after: titleRow)
+            metaRow.widthAnchor.constraint(equalTo: textStack.widthAnchor).isActive = true
+        }
         textStack.translatesAutoresizingMaskIntoConstraints = false
         // Stack-level priorities, not content-level - see `titleRow` above.
         textStack.setHuggingPriority(.defaultLow, for: .horizontal)
@@ -2345,6 +2569,7 @@ final class HelmAccentRow: NSView {
             rowViews.append(leading)
         }
         rowViews.append(textStack)
+        rowViews.append(trailingCaptionLabel)
         if chipPlacement == .trailing { rowViews.append(chip) }
         if let trailingAccessory {
             trailingAccessory.translatesAutoresizingMaskIntoConstraints = false
@@ -2402,16 +2627,18 @@ final class HelmAccentRow: NSView {
             card.topAnchor.constraint(equalTo: topAnchor),
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            accentBar.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: Self.barLeadingInset),
+            accentBar.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: metrics.barLeadingInset),
             accentBar.widthAnchor.constraint(equalToConstant: Self.barWidth),
-            accentBar.topAnchor.constraint(equalTo: card.topAnchor, constant: Self.barVerticalInset),
-            accentBar.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -Self.barVerticalInset),
+            accentBar.topAnchor.constraint(equalTo: card.topAnchor, constant: metrics.barVerticalInset),
+            accentBar.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -metrics.barVerticalInset),
 
-            row.leadingAnchor.constraint(equalTo: accentBar.trailingAnchor, constant: Self.contentLeading),
+            row.leadingAnchor.constraint(equalTo: accentBar.trailingAnchor, constant: metrics.contentLeading),
             // D2 caps this trailing pin for a record list - see below.
-            row.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -Self.contentTrailing),
-            row.topAnchor.constraint(equalTo: card.topAnchor, constant: Self.contentVertical),
-            row.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -Self.contentVertical),
+            row.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -metrics.contentTrailing),
+            // A floor row (`.flat`'s 44pt) centres its content rather than
+            // pinning it to the top, so a one-line row reads level.
+            row.topAnchor.constraint(greaterThanOrEqualTo: card.topAnchor, constant: metrics.contentVertical),
+            row.centerYAnchor.constraint(equalTo: card.centerYAnchor),
         ])
 
         // D2: a record row's own content column, capped.
@@ -2448,13 +2675,19 @@ final class HelmAccentRow: NSView {
             // cap and a narrower one resolves to the card. Both stay under
             // `NSLayoutPriorityWindowSizeStayPut` (gotcha (13)).
             let fill = row.trailingAnchor.constraint(equalTo: card.trailingAnchor,
-                                                     constant: -Self.contentTrailing)
+                                                     constant: -metrics.contentTrailing)
             fill.priority = HelmDaylightPriority.contentTie - 1
             fill.isActive = true
         } else {
             row.trailingAnchor.constraint(equalTo: card.trailingAnchor,
-                                          constant: -Self.contentTrailing).isActive = true
+                                          constant: -metrics.contentTrailing).isActive = true
         }
+        // The vertical pin, as a hug: the row is exactly its content plus
+        // padding unless a floor (`minHeight`) asks for more, and then the
+        // content centres (the `centerY` above) rather than riding the top.
+        let hug = row.topAnchor.constraint(equalTo: card.topAnchor, constant: metrics.contentVertical)
+        hug.priority = metrics.minHeight == nil ? .required : .defaultHigh
+        hug.isActive = true
 
         if let customContent {
             // A caller-owned body has to be told it may use the whole column,
@@ -2585,8 +2818,8 @@ final class HelmAccentRow: NSView {
             titleAccessory.isHidden = true
         }
 
-        metaLabel.stringValue = content.meta ?? ""
-        metaLabel.isHidden = (content.meta?.isEmpty ?? true)
+        metaLabel.stringValue = Self.metaText(content)
+        metaLabel.isHidden = metaLabel.stringValue.isEmpty
         metaLabel.font = content.metaIsCode ? HelmType.code() : HelmType.caption()
         metaLabel.maximumNumberOfLines = content.metaWraps ? 0 : 1
         metaLabel.lineBreakMode = content.metaWraps ? .byWordWrapping : .byTruncatingTail
@@ -2594,13 +2827,34 @@ final class HelmAccentRow: NSView {
         // B2: the truncated string stays readable on hover. Set on the *card*
         // as well as the labels, because the labels do not fill the row and a
         // captain aiming at the row is more likely to be over the card.
-        let full = [content.title, content.meta].compactMap { $0 }.filter { !$0.isEmpty }
+        let metaFull = Self.metaText(content)
+        let full = [content.title, metaFull].filter { !$0.isEmpty }
         titleLabel.toolTip = content.title.isEmpty ? nil : content.title
-        metaLabel.toolTip = content.meta?.isEmpty == false ? content.meta : nil
-        card.toolTip = full.isEmpty ? nil : full.joined(separator: " - ")
+        metaLabel.toolTip = metaFull.isEmpty ? nil : metaFull
+        let summary = full.isEmpty ? nil : full.joined(separator: " - ")
+        card.toolTip = [summary, content.hint].compactMap { $0 }.joined(separator: "\n").nilIfEmpty
 
         chip.isHidden = content.chipText == nil
+        trailingCaptionLabel.stringValue = content.trailingCaption ?? ""
+        trailingCaptionLabel.isHidden = (content.trailingCaption ?? "").isEmpty
+        if chipPlacement == .metaLine {
+            metaRow.isHidden = metaLabel.isHidden && chip.isHidden
+        }
         applyTheme(theme)
+    }
+
+    /// The meta line as plain text: the coloured lead, then the rest. One
+    /// definition, so the tooltip, VoiceOver and the painted label agree.
+    static func metaText(_ content: Content) -> String {
+        [content.metaLead, content.meta]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: " \u{00B7} ")
+    }
+
+    /// Whether the bar is drawn, per `Content.showsBar`'s rule.
+    private func barIsShown(_ content: Content) -> Bool {
+        content.showsBar ?? (style != .flat)
     }
 
     /// Re-resolves every colour against `theme`. Safe to call repeatedly: it
@@ -2633,19 +2887,93 @@ final class HelmAccentRow: NSView {
         // an `NSStackView`'s layout entirely (gotcha (11)'s own exemption), so
         // this genuinely reclaims the line rather than blanking it.
         kickerLabel.isHidden = content.kicker.isEmpty
-        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        metaLabel.textColor = HelmTheme.mutedInk(theme)
-        titleAccessory.contentTintColor = HelmTheme.mutedInk(theme)
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let muted = HelmTheme.mutedInk(theme)
+        let baseFill = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        if content.titleStruck {
+            // UI-29: a Done card reads as done - muted and struck through.
+            titleLabel.attributedStringValue = NSAttributedString(string: content.title, attributes: [
+                .font: titleLabel.font ?? HelmType.rowTitle(),
+                .foregroundColor: muted,
+                .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+                .strikethroughColor: muted,
+            ])
+        } else {
+            titleLabel.stringValue = content.title
+            titleLabel.textColor = ink
+        }
+        metaLabel.textColor = muted
+        if let lead = content.metaLead, !lead.isEmpty, !content.metaIsCode {
+            let font = metaLabel.font ?? HelmType.caption()
+            let leadColor = content.metaLeadTint.map {
+                HelmContrast.legibleTintedText(tintHex: $0.hex(in: theme), over: baseFill, theme: theme)
+            } ?? muted
+            // Bold only when the lead carries a state (amber, red); a plain
+            // date or a Done date reads in the meta line's own face.
+            let text = NSMutableAttributedString(string: lead, attributes: [
+                .font: content.metaLeadTint == nil ? font : NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask),
+                .foregroundColor: leadColor,
+            ])
+            if let rest = content.meta, !rest.isEmpty {
+                text.append(NSAttributedString(string: " \u{00B7} " + rest, attributes: [
+                    .font: font, .foregroundColor: muted,
+                ]))
+            }
+            metaLabel.attributedStringValue = text
+        }
+        titleAccessory.contentTintColor = muted
+
+        if let caption = content.trailingCaption, !caption.isEmpty {
+            trailingCaptionLabel.font = HelmType.chip()
+            trailingCaptionLabel.textColor = content.trailingCaptionTint.map {
+                HelmContrast.legibleTintedText(tintHex: $0.hex(in: theme), over: baseFill, theme: theme)
+            } ?? muted
+        }
 
         if let chipText = content.chipText {
-            let chipHex = content.chipTint.map { $0.hex(in: theme) } ?? content.resolvedTintHex(in: theme)
-            ToolRowLayout.pill(text: chipText, colorHex: chipHex,
-                               into: chip, label: chipLabel, theme: theme)
+            if let chipTint = content.chipTint {
+                chip.configure(text: chipText, tint: chipTint, theme: theme)
+            } else if content.tintHex != nil || content.domainHue != nil {
+                chip.configure(text: chipText, literalHex: content.resolvedTintHex(in: theme), theme: theme)
+            } else {
+                chip.configure(text: chipText, tint: content.tint, theme: theme)
+            }
         }
 
         accentBar.layer?.backgroundColor = tintColor.cgColor
+        accentBar.isHidden = !barIsShown(content)
 
-        let baseFill = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        // The hover fill every non-`.card` style shares: Daylight's own
+        // `rowHover` token, or a light wash of page ink on the other palettes.
+        let flatHover: NSColor = theme.isDaylight
+            ? HelmTheme.nsColor(theme.daylightTokens.rowHover)
+            : (baseFill.blended(withFraction: 0.06, of: ink) ?? baseFill)
+
+        if style != .card {
+            let accent = HelmTheme.nsColor(theme.accentHex)
+            let resting: NSColor = style == .flat ? .clear : baseFill
+            if isRowSelected {
+                // UI-28: the same accent wash and stroke `.card` selection uses.
+                let fill = baseFill.blended(withFraction: Self.selectionWash, of: accent) ?? baseFill
+                card.normalColor = fill
+                card.hoverColor = fill
+                card.layer?.borderWidth = style == .cardFlat ? 1 : 0
+                card.layer?.borderColor = accent.withAlphaComponent(Self.selectionBorderAlpha).cgColor
+            } else {
+                card.normalColor = resting
+                card.hoverColor = hoverEnabled ? flatHover : resting
+                if style == .cardFlat {
+                    card.layer?.borderWidth = 1
+                    card.layer?.borderColor = (theme.isDaylight
+                        ? HelmTheme.nsColor(theme.chromeLineHex)
+                        : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.borderAlpha)).cgColor
+                } else {
+                    card.layer?.borderWidth = 0
+                }
+            }
+            return
+        }
+
         if isRowSelected {
             // The pre-Phase-5 `HelmTableRowView` recipe, moved onto the card:
             // a wash of the theme's own accent under a stronger accent stroke.
@@ -2795,7 +3123,22 @@ final class HelmAccentRow: NSView {
     var debugMetaText: String { metaLabel.stringValue }
     /// The chip's real rendered text - `nil` when the chip is hidden (no
     /// `chipText` was set), so a test can tell "no chip" from "an empty one".
-    var debugChipText: String? { chip.isHidden ? nil : chipLabel.stringValue }
+    var debugChipText: String? { chip.isHidden ? nil : chip.text }
+    var debugTrailingCaption: String? {
+        trailingCaptionLabel.isHidden ? nil : trailingCaptionLabel.stringValue
+    }
+    var debugTrailingCaptionColor: NSColor? { trailingCaptionLabel.textColor }
+    var debugMetaAttributed: NSAttributedString { metaLabel.attributedStringValue }
+    var debugTitleAttributed: NSAttributedString { titleLabel.attributedStringValue }
+    var debugBarHidden: Bool { accentBar.isHidden }
+    var debugCardBorderWidth: CGFloat { card.layer?.borderWidth ?? 0 }
+    var debugChip: HelmStatusPill { chip }
+    var debugTrailingCaptionFrame: NSRect? {
+        trailingCaptionLabel.isHidden ? nil : trailingCaptionLabel.convert(trailingCaptionLabel.bounds, to: self)
+    }
+    /// `NSTextField`'s alignment rect sits inside its frame, so a probe
+    /// comparing where text *starts* adds this to the frame's `minX`.
+    var debugTitleAlignmentLeadingInset: CGFloat { titleLabel.alignmentRectInsets.left }
     /// Fires the row's own `trailingAccessory`'s primary control, if that
     /// control is a real `NSButton` - a test drives the actual target/action
     /// path (`performClick(nil)`) rather than reaching into the controller
@@ -3122,13 +3465,19 @@ final class HelmEmptyState: NSView {
     enum Size {
         case compact
         case standard
+        /// The UI/UX revamp's quiet card-level empty state (UI-26, UI-46): no
+        /// tile and no glyph, one muted caption and, if the caller passes
+        /// one, one quiet action. A board lane or a card that is empty is a
+        /// normal state, not an event - the gradient tile is for a whole
+        /// *page* with nothing on it.
+        case quiet
 
-        var glyphPointSize: CGFloat { self == .compact ? 22 : 40 }
-        var glyphWeight: NSFont.Weight { self == .compact ? .regular : .light }
-        var spacing: CGFloat { self == .compact ? HelmMetrics.s2 : 10 }
+        var glyphPointSize: CGFloat { self == .standard ? 40 : 22 }
+        var glyphWeight: NSFont.Weight { self == .standard ? .light : .regular }
+        var spacing: CGFloat { self == .standard ? 10 : HelmMetrics.s2 }
         /// A `.compact` state fills whatever cell it is handed and centres in
         /// it; a `.standard` one owns real vertical rhythm of its own.
-        var verticalPadding: CGFloat { self == .compact ? HelmMetrics.s2 : 22 }
+        var verticalPadding: CGFloat { self == .standard ? 22 : HelmMetrics.s2 }
     }
 
     private let iconView = NSImageView()
@@ -3153,16 +3502,14 @@ final class HelmEmptyState: NSView {
     static let watermarkOpacity: CGFloat = 0.26
     static let watermarkSide: CGFloat = 116
 
-    /// U3: how far the watermark's bottom edge reaches *past* the top of the
-    /// content stack. A few points, so the mark reads as rising out of the
-    /// glyph rather than floating unattached above it, while staying clear of
-    /// the title - the glyph row is 40pt tall at `.standard`, so this never
-    /// comes near the first word.
-    static let watermarkGlyphOverlap: CGFloat = 10
+    /// The gap between the watermark and the title under it (UI-46).
+    static let watermarkTitleGap: CGFloat = HelmMetrics.s3
 
     /// Whether the watermark is drawing the destination's SF Symbol rather
     /// than the raster it was handed - see `artworkIsOpaqueSlab`.
     private var watermarkUsesSymbol = false
+    /// Whether this state carries the destination's watermark (UI-46).
+    private var hasWatermark = false
 
     /// Is this image a solid rectangle rather than a silhouette?
     ///
@@ -3257,7 +3604,7 @@ final class HelmEmptyState: NSView {
         self.iconAccessibilityDescription = title ?? body
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.font = size == .compact ? HelmType.rowTitle() : HelmType.sectionTitle()
+        titleLabel.font = size == .standard ? HelmType.sectionTitle() : HelmType.rowTitle()
         titleLabel.alignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.stringValue = title ?? ""
@@ -3286,7 +3633,9 @@ final class HelmEmptyState: NSView {
         stack.alignment = .centerX
         stack.spacing = size.spacing
         stack.translatesAutoresizingMaskIntoConstraints = false
-        if accessory != nil { stack.setCustomSpacing(HelmMetrics.s4, after: bodyLabel) }
+        if accessory != nil {
+            stack.setCustomSpacing(size == .quiet ? HelmMetrics.s2 : HelmMetrics.s4, after: bodyLabel)
+        }
         // D4: the watermark goes in first, so the copy always renders on top
         // of it. Kept faint enough that it reads as the page's own identity
         // rather than as content - `watermarkOpacity` is the finding's own
@@ -3300,6 +3649,7 @@ final class HelmEmptyState: NSView {
         // crossing live text. It sits **above** the glyph now (the finding's
         // own first suggestion), so it overlaps nothing but the top of the
         // icon row and never reaches a word.
+        hasWatermark = artwork != nil
         if let artwork {
             // B4: a raster that is really a solid tile is swapped for the
             // destination's own glyph; `applyTheme` is what renders and tints
@@ -3316,37 +3666,27 @@ final class HelmEmptyState: NSView {
 
         addSubview(stack)
         if artwork != nil {
-            // Below the stack in z-order, so the copy always renders on top
-            // of the mark - the property the old "added first" ordering gave
-            // for free, kept explicitly now that the mark is added after the
-            // stack it constrains against.
-            addSubview(watermark, positioned: .below, relativeTo: stack)
-            // U3: the mark's *bottom* is tied just inside the glyph row's
-            // top, so it rises out of the icon rather than sitting behind the
-            // copy. It is backed by a `top >= top` so a short container keeps
-            // the mark inside its own bounds instead of painting over
-            // whatever sits above it - containment therefore has to outrank
-            // the lift.
+            // UI-46: the watermark is the state's one mark, so it sits **in
+            // the stack's flow** above the title - where it cannot overlap a
+            // word whatever the container's height. (U3's earlier fix floated
+            // it above the stack on non-required constraints; with the glyph
+            // row gone, a short container let containment push the mark down
+            // across the title - measured on Kubernetes at 1400x760.)
             //
-            // **Both sit in gotcha (13)'s 251-499 band, and neither may be
-            // required.** A window holds its own size at priority 500, so a
-            // required containment constraint on a 116pt decoration is a
-            // content-driven window resize: measured, it drove Kubernetes'
-            // page to a 743pt content height against the window's 718 and
-            // failed `AppShellBodyWidthSelfTest.
-            // bodyHeightTracksWindowAcrossAllDestinations` by name. A
-            // watermark must never be the reason a page is taller.
-            let watermarkLift = watermark.bottomAnchor.constraint(
-                equalTo: stack.topAnchor, constant: Self.watermarkGlyphOverlap)
-            watermarkLift.priority = NSLayoutConstraint.Priority(450)
-            let watermarkContainment = watermark.topAnchor.constraint(greaterThanOrEqualTo: topAnchor)
-            watermarkContainment.priority = NSLayoutConstraint.Priority(499)
+            // gotcha (13): its 116pt is a preference at 499, below the
+            // window's own 500, with a required `<=` ceiling - in a cramped
+            // container the mark shrinks rather than making the page taller.
+            stack.insertArrangedSubview(watermark, at: 0)
+            stack.setCustomSpacing(Self.watermarkTitleGap, after: watermark)
+            watermark.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+            watermark.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            watermark.setContentHuggingPriority(.defaultLow, for: .vertical)
+            let preferred = watermark.heightAnchor.constraint(equalToConstant: Self.watermarkSide)
+            preferred.priority = NSLayoutConstraint.Priority(499)
             NSLayoutConstraint.activate([
-                watermark.centerXAnchor.constraint(equalTo: centerXAnchor),
-                watermarkLift,
-                watermarkContainment,
-                watermark.widthAnchor.constraint(equalToConstant: Self.watermarkSide),
-                watermark.heightAnchor.constraint(equalToConstant: Self.watermarkSide),
+                preferred,
+                watermark.heightAnchor.constraint(lessThanOrEqualToConstant: Self.watermarkSide),
+                watermark.widthAnchor.constraint(equalTo: watermark.heightAnchor),
             ])
         }
 
@@ -3367,6 +3707,9 @@ final class HelmEmptyState: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     #if FM_SELFTESTS
+    var debugBodyText: String { bodyLabel.stringValue }
+    /// UI-26: a `.quiet` state draws neither the gradient tile nor the glyph.
+    var debugArtworkHidden: Bool { tile.isHidden && iconView.isHidden }
     /// What the watermark is *actually drawing* - review #3's B4. A check that
     /// asked whether artwork was passed in would pass against the slab being
     /// drawn, which is the defect.
@@ -3386,7 +3729,7 @@ final class HelmEmptyState: NSView {
     func debugWatermarkLayout() -> WatermarkLayout {
         layoutSubtreeIfNeeded()
         return WatermarkLayout(
-            watermarkFrame: watermark.superview == nil ? .zero : watermark.frame,
+            watermarkFrame: watermark.superview == nil ? .zero : convert(watermark.bounds, from: watermark),
             titleFrame: convert(titleLabel.bounds, from: titleLabel),
             bodyFrame: convert(bodyLabel.bounds, from: bodyLabel),
             titleIsVisible: !titleLabel.isHidden)
@@ -3453,7 +3796,7 @@ final class HelmEmptyState: NSView {
     override func layout() {
         super.layout()
         playEntranceIfNeeded()
-        let cap: CGFloat = size == .compact ? .greatestFiniteMagnitude : 360
+        let cap: CGFloat = size == .standard ? 360 : .greatestFiniteMagnitude
         let available = min(bounds.width - 2 * HelmMetrics.s3, cap)
         if available > 0, bodyLabel.preferredMaxLayoutWidth != available {
             bodyLabel.preferredMaxLayoutWidth = available
@@ -3472,8 +3815,12 @@ final class HelmEmptyState: NSView {
         // §6.14: under Daylight the glyph becomes a gradient plate and the
         // headline takes the rounded display face. Exactly one of the two is
         // ever visible.
-        tile.isHidden = !theme.isDaylight
-        iconView.isHidden = theme.isDaylight
+        //
+        // UI-46: a page-level state with a watermark carries **one** mark -
+        // the watermark is the page's own artwork, so a gradient tile under
+        // it was a second icon for the same page (Postmortems drew both).
+        tile.isHidden = !theme.isDaylight || size == .quiet || hasWatermark
+        iconView.isHidden = theme.isDaylight || size == .quiet || hasWatermark
         if watermarkUsesSymbol {
             // The same glyph the tile shows, drawn large and faint. Tinted
             // `mutedInk` rather than left at a template's default so it reads
@@ -3485,6 +3832,14 @@ final class HelmEmptyState: NSView {
                                                weight: .regular,
                                                hierarchicalColor: muted,
                                                accessibilityDescription: nil)
+        }
+        if hasWatermark {
+            // An SF Symbol's image view lays out its *alignment rect*, and its
+            // frame (what draws) overhangs it by the symbol's insets - 50pt
+            // in total for a 116pt mark. The gap to the title is measured from
+            // what draws, so it carries the bottom overhang.
+            stack.setCustomSpacing(Self.watermarkTitleGap + max(0, watermark.alignmentRectInsets.bottom),
+                                   after: watermark)
         }
         tile.applyTheme(theme)
         if theme.isDaylight {
@@ -4902,4 +5257,8 @@ final class HelmCountBadge: NSView {
     var debugCornerRadius: CGFloat { layer?.cornerRadius ?? 0 }
     var debugTextColor: NSColor? { label.textColor }
     #endif
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

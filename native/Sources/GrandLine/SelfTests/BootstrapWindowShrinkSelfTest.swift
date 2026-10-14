@@ -72,6 +72,7 @@ enum BootstrapWindowShrinkSelfTest {
             ("aLongHomePathDoesNotForceTheWindowWider", test_longPathDoesNotForceTheWindow),
             ("bootstrapFitsInsideTheNarrowestWindow", test_pageFitsMinimumWindow),
             ("everyTrackedLabelGoesThroughTheHelper", test_noBareDynamicLabelsAppend),
+            ("aThemeSwitchWhileHiddenRepaintsTheSteps", test_themeSwitchWhileHidden),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -283,6 +284,58 @@ enum BootstrapWindowShrinkSelfTest {
         window.contentViewController = shell
         window.contentMinSize = NSSize(width: minWindowWidth, height: 620)
         return (window, shell)
+    }
+
+    /// Found in the revamp's own Dusk render (UI-55): Bootstrap mounted under
+    /// Daylight, the captain goes elsewhere, switches to Dusk and comes back -
+    /// and the step titles are still Daylight ink, near-invisible on the dark
+    /// card. The titles were only ever painted as a side effect of a section
+    /// rebuild, and a theme switch defers that rebuild while the page is
+    /// hidden. They are a repaint, so the theme observer now paints them at
+    /// once. Driven through the real shell, so the page is hidden and shown
+    /// exactly the way navigation does it.
+    private static func test_themeSwitchWhileHidden() -> String? {
+        withScratchEnv {
+            let saved = ThemeManager.shared.theme
+            defer { ThemeManager.shared.setTheme(saved) }
+            ThemeManager.shared.setTheme(.daylight)
+            let (window, shell) = makeMountedShell()
+            window.orderFront(nil)
+            defer { window.orderOut(nil) }
+            shell.show(.bootstrap)
+            window.contentView?.layoutSubtreeIfNeeded()
+            let bootstrap = shell.debugBootstrap
+            guard let light = bootstrap.debugStepTitleColor(.firstmateHome)?.usingColorSpace(.sRGB) else {
+                return "no Firstmate home step title to measure"
+            }
+
+            shell.show(.updates)
+            ThemeManager.shared.setTheme(.dusk)
+            // Read while the page is still hidden: the titles are a repaint,
+            // so they follow the theme at once. Reading after showing it
+            // again would not discriminate - the page's own software sweep
+            // repaints them as a side effect on the way back.
+            guard let dark = bootstrap.debugStepTitleColor(.firstmateHome)?.usingColorSpace(.sRGB) else {
+                return "the step title disappeared"
+            }
+            // The discriminating half: the two inks really differ.
+            guard abs(light.brightnessComponent - dark.brightnessComponent) > 0.3 else {
+                return "after a switch to Dusk while hidden the step title is still "
+                    + "\(String(format: "%.2f", dark.brightnessComponent)) bright, as it was on Daylight "
+                    + "(\(String(format: "%.2f", light.brightnessComponent)))"
+            }
+            guard bootstrap.debugNeedsThemeRebuild else {
+                return "the theme switch did not defer the section rebuild while hidden - "
+                    + "this case no longer reaches the path it exists for"
+            }
+            shell.show(.bootstrap)
+            window.contentView?.layoutSubtreeIfNeeded()
+            guard !bootstrap.debugNeedsThemeRebuild else {
+                return "showing the page again did not settle the deferred rebuild - AppKit sends "
+                    + "viewWillAppear when a hidden ancestor is unhidden, and that is where it settles"
+            }
+            return nil
+        }
     }
 }
 #endif

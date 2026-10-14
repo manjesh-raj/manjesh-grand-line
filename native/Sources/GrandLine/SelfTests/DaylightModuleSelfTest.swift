@@ -6,7 +6,8 @@
 // The migration spec names four things this has to pin (§8's "Testing
 // requirements per phase"), and each maps to a case below:
 //
-//   1. **Module anatomy** - a module really is §6.1's card: ribbon, gradient
+//   1. **Module anatomy** - a module really is §6.1's card (less the ribbon
+//      the UI/UX revamp retired): gradient
 //      tile, header text, optional chip, one of the body kinds, and one
 //      clickable target that announces as a button.
 //   2. **Uniform card sizing** - every card the same width, rows
@@ -1173,9 +1174,10 @@ enum DaylightModuleSelfTest {
             card.layoutSubtreeIfNeeded()
 
             let a = card.anatomyForTests
-            if !a.hasRibbon { fail("\(name): no ribbon layer", &ok) }
-            if a.ribbonStopCount != 2 { fail("\(name): ribbon has \(a.ribbonStopCount) gradient stops, expected 2", &ok) }
-            if abs(a.ribbonHeight - 6) > 0.01 { fail("\(name): ribbon is \(a.ribbonHeight)pt, \u{00A7}6.1 says 6", &ok) }
+            // The UI/UX revamp's UI-6 retired §6.1's ribbon: identity lives in
+            // the tile, and the only edge a card may carry is the attention
+            // card's semantic one.
+            if a.hasRibbon { fail("\(name): a module card still carries a ribbon (UI-6)", &ok) }
             if abs(a.cornerRadius - HelmMetrics.dModule) > 0.01 {
                 fail("\(name): radius \(a.cornerRadius), expected \(HelmMetrics.dModule)", &ok)
             }
@@ -1185,7 +1187,7 @@ enum DaylightModuleSelfTest {
             // The two-layer shadow arrangement (\u{00A7}2.5): the shadow host must
             // not clip, the card must.
             if a.shadowHostClipsToBounds { fail("\(name): the shadow host clips - it would cast no shadow", &ok) }
-            if !a.cardClipsToBounds { fail("\(name): the card does not clip - its ribbon would escape the radius", &ok) }
+            if !a.cardClipsToBounds { fail("\(name): the card does not clip - its fill would escape the radius", &ok) }
             if a.borderWidth != 1 { fail("\(name): border is \(a.borderWidth)pt, expected 1", &ok) }
             if !a.hasTile { fail("\(name): the gradient tile has no glyph", &ok) }
             if a.title != "Title" || a.subtitle != "subtitle" { fail("\(name): header text did not render", &ok) }

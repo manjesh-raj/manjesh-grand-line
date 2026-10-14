@@ -357,12 +357,9 @@ enum DaylightDrillPageSlice5SelfTest {
         runbooksPage.view.layoutSubtreeIfNeeded()
         let anatomy = plate.anatomyForTests
 
-        if !anatomy.hasRibbon || anatomy.ribbonStopCount != 2 {
-            print("  FAIL plate ribbon: attached=\(anatomy.hasRibbon) stops=\(anatomy.ribbonStopCount), want attached with 2")
-            ok = false
-        }
-        if abs(anatomy.ribbonHeight - HelmPlateCard.ribbonHeight) > 0.5 {
-            print("  FAIL plate ribbon height \(fmt(anatomy.ribbonHeight)), want \(fmt(HelmPlateCard.ribbonHeight))")
+        // UI-6/UI-58: a plate's identity is its tile; it carries no ribbon.
+        if anatomy.hasRibbon {
+            print("  FAIL a plate still carries a gradient ribbon")
             ok = false
         }
         if anatomy.openButtonTitle != "Open" {

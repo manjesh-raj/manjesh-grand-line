@@ -236,7 +236,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private let currentPathLabel = NSTextField(labelWithString: "")
     private let pathField = HelmTextField(placeholder: "~/manjesh/firstmate")
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
-    private let saveButton = HelmButton(title: "", variant: .primary)
+    private let saveButton = HelmButton(title: "", variant: .secondary)
     private let restartButton = HelmButton(title: "", variant: .secondary)
 
     /// Set by `AppShellController` (mirrors `onPresentHostEditor`'s wiring
@@ -381,8 +381,9 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         let dot: StepDotView
         let line: NSView
         let titleLabel: NSTextField
-        let chipContainer: NSView
-        let chipLabel: NSTextField
+        /// UI-32 / UI-55: the kit's pill - a result as a pill, a quiet
+        /// state as a dot and a word.
+        let chip: HelmStatusPill
         let detailLabel: NSTextField
     }
     private var stepRowViews: [SetupStepKind: StepRowViews] = [:]
@@ -398,6 +399,9 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             root?.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
             self?.theme = theme
             self?.applyTheme()
+            // The stepper's titles, dots and pills are a repaint, not a
+            // rebuild, so they follow the theme now even while hidden.
+            self?.refreshStepperVisuals()
             self?.rebuildAfterThemeChangeIfVisible { self?.rebuildDynamicSections() }
         }
 
@@ -583,12 +587,15 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         refreshDotfiles()
     }
 
+    private func settleDeferredThemeRebuild() {
+        guard needsThemeRebuild else { return }
+        needsThemeRebuild = false
+        rebuildDynamicSections()
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
-        if needsThemeRebuild {
-            needsThemeRebuild = false
-            rebuildDynamicSections()
-        }
+        settleDeferredThemeRebuild()
         refreshFromSettings()
         refreshDotfilesIfStale()
         if !hasCheckedSoftwareOnce {
@@ -1123,31 +1130,35 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         return targetIndex == firstNotDone ? .current : .pending
     }
 
-    private func stepChip(for kind: SetupStepKind) -> (String, String)? {
+    /// UI-55: a step's result is a pill - Verified in green, anything that
+    /// needs the captain in amber. A step with nothing to report yet is a
+    /// quiet dot and a word, never a capsule.
+    private func stepChip(for kind: SetupStepKind) -> (String, HelmTint, HelmStatusPill.Style)? {
         switch kind {
         case .firstmateHome:
-            return stepIsDone(.firstmateHome) == true ? ("Verified", theme.ansiHex[2]) : ("Not set up", theme.ansiHex[3])
+            return stepIsDone(.firstmateHome) == true ? ("Verified", .good, .pill) : ("Not set up", .warn, .pill)
         case .dotfiles:
             guard !isLoadingDotfiles else { return nil }
-            guard dotfilesRepoPath != nil else { return ("Not found", theme.ansiHex[3]) }
-            if let state = repoState, !state.dirtyFiles.isEmpty { return ("Uncommitted changes", theme.ansiHex[3]) }
+            guard dotfilesRepoPath != nil else { return ("Not found", .warn, .pill) }
+            if let state = repoState, !state.dirtyFiles.isEmpty { return ("Uncommitted changes", .warn, .pill) }
             if let state = repoState, let behind = state.commitsBehindOrigin, behind > 0 {
-                return ("\(behind) behind origin", theme.ansiHex[3])
+                return ("\(behind) behind origin", .warn, .pill)
             }
-            return ("Verified", theme.ansiHex[2])
+            return ("Verified", .good, .pill)
         case .agentInstructions:
             guard !isLoadingDotfiles else { return nil }
             let unresolved = agentItems.filter { $0.status != .linked }.count
-            return unresolved == 0 ? ("Linked", theme.ansiHex[2]) : ("\(unresolved) unresolved", theme.ansiHex[3])
+            return unresolved == 0 ? ("Verified", .good, .pill) : ("\(unresolved) unresolved", .warn, .pill)
         case .software:
             guard !isLoadingSoftware else { return nil }
             let missing = softwareRows.filter { $0.status == .notInstalled }.count
-            return missing == 0 ? ("All installed", theme.ansiHex[2]) : ("\(missing) missing", theme.ansiHex[3])
+            return missing == 0 ? ("Verified", .good, .pill) : ("\(missing) missing", .warn, .pill)
         case .restoreConfig:
             let hostCount = hostStore.hosts.count
             let snippetCount = snippetStore.snippets.count
-            guard hostCount > 0 || snippetCount > 0 else { return ("Nothing to show yet", theme.chromeInkHex) }
-            return ("\(hostCount) host\(hostCount == 1 ? "" : "s"), \(snippetCount) snippet\(snippetCount == 1 ? "" : "s")", theme.ansiHex[2])
+            guard hostCount > 0 || snippetCount > 0 else { return ("Nothing restored yet", .neutral, .dotWord) }
+            return ("\(hostCount) host\(hostCount == 1 ? "" : "s"), \(snippetCount) snippet\(snippetCount == 1 ? "" : "s")",
+                    .neutral, .dotWord)
         }
     }
 
@@ -1243,27 +1254,12 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         Self.yieldsToWindowWidth(titleLabel)
         titleLabel.setScaledFont(ofSize: 14, weight: .semibold)
 
-        let chipLabel = NSTextField(labelWithString: "")
-        chipLabel.setScaledFont(ofSize: 10, weight: .semibold)
-        chipLabel.translatesAutoresizingMaskIntoConstraints = false
-        let chipContainer = NSView()
-        chipContainer.wantsLayer = true
-        chipContainer.layer?.cornerRadius = 8
-        chipContainer.translatesAutoresizingMaskIntoConstraints = false
-        chipContainer.addSubview(chipLabel)
-        NSLayoutConstraint.activate([
-            chipLabel.leadingAnchor.constraint(equalTo: chipContainer.leadingAnchor, constant: 7),
-            chipLabel.trailingAnchor.constraint(equalTo: chipContainer.trailingAnchor, constant: -7),
-            chipLabel.topAnchor.constraint(equalTo: chipContainer.topAnchor, constant: 2),
-            chipLabel.bottomAnchor.constraint(equalTo: chipContainer.bottomAnchor, constant: -2),
-        ])
-        chipContainer.setContentHuggingPriority(.required, for: .horizontal)
-        chipContainer.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let chip = HelmStatusPill()
 
-        let titleRow = NSStackView(views: [titleLabel, chipContainer])
+        let titleRow = NSStackView(views: [titleLabel, chip])
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
-        titleRow.spacing = 8
+        titleRow.spacing = HelmMetrics.s2
 
         let detailLabel = NSTextField(wrappingLabelWithString: "")
         detailLabel.setScaledFont(ofSize: 11.5)
@@ -1297,25 +1293,25 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         row.distribution = .fill
         leftColumn.heightAnchor.constraint(equalTo: bodyStack.heightAnchor).isActive = true
 
-        stepRowViews[kind] = StepRowViews(dot: dot, line: line, titleLabel: titleLabel, chipContainer: chipContainer, chipLabel: chipLabel, detailLabel: detailLabel)
+        stepRowViews[kind] = StepRowViews(dot: dot, line: line, titleLabel: titleLabel, chip: chip, detailLabel: detailLabel)
         return row
     }
 
     /// Wraps a step's real content (the same field/button/table views the old
-    /// standalone cards used) in a nested, slightly recessed panel - the
-    /// mockup's `.step-content` box.
+    /// standalone cards used). UI-55: flat on the card, no recessed well -
+    /// a well inside the card's own surface was a second bordered surface at
+    /// one level (Rule 1). The box stays as the step's frame.
     private func stepContentBox(_ content: NSView) -> NSView {
         content.translatesAutoresizingMaskIntoConstraints = false
         let box = NSView()
         box.wantsLayer = true
-        box.layer?.cornerRadius = 10
         box.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(content)
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 12),
-            content.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -12),
-            content.topAnchor.constraint(equalTo: box.topAnchor, constant: 10),
-            content.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -10),
+            content.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            content.topAnchor.constraint(equalTo: box.topAnchor, constant: HelmMetrics.s1),
+            content.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -HelmMetrics.s2),
         ])
         stepContentBackgrounds.append(box)
         return box
@@ -1358,13 +1354,11 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             rowViews.detailLabel.stringValue = stepDetail(for: kind)
             rowViews.detailLabel.textColor = HelmTheme.mutedInk(theme)
             rowViews.line.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
-            if let (text, colorHex) = stepChip(for: kind) {
-                rowViews.chipContainer.isHidden = false
-                rowViews.chipLabel.stringValue = text
-                rowViews.chipLabel.textColor = HelmTheme.nsColor(colorHex)
-                rowViews.chipContainer.layer?.backgroundColor = HelmTheme.nsColor(colorHex).withAlphaComponent(0.15).cgColor
+            if let (text, tint, style) = stepChip(for: kind) {
+                rowViews.chip.isHidden = false
+                rowViews.chip.configure(text: text, tint: tint, style: style, theme: theme)
             } else {
-                rowViews.chipContainer.isHidden = true
+                rowViews.chip.isHidden = true
             }
         }
     }
@@ -1450,7 +1444,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         restoreStatusLabel.textColor = HelmTheme.mutedInk(theme)
         track(restoreStatusLabel)
 
-        let importButton = HelmButton(title: "Import\u{2026}", variant: .primary, target: self, action: #selector(importRestoreConfigClicked))
+        let importButton = HelmButton(title: "Import\u{2026}", variant: .secondary, target: self, action: #selector(importRestoreConfigClicked))
 
         let section = NSStackView(views: [desc, restoreStatusLabel, importButton])
         section.orientation = .vertical
@@ -1591,14 +1585,14 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func driftedItemRow(_ kind: SetupStepKind) -> NSView {
         let views = ToolRowLayout.Views(
             iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-            detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-            pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+            detailLabel: NSTextField(labelWithString: ""), pill: HelmStatusPill(),
+            trailingStack: NSStackView(),
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView()
         )
         track(views.nameLabel, views.detailLabel)
 
-        ToolRowLayout.pill(text: "Drifted", colorHex: theme.ansiHex[1], into: views.pill, label: views.pillLabel, theme: theme)
+        views.pill.configure(text: "Drifted", tint: .critical, style: .pill, theme: theme)
 
         var trailingViews: [NSView] = []
         if let (title, action) = driftRemedy(for: kind) {
@@ -1683,7 +1677,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         track(desc)
 
         clonePathField.translatesAutoresizingMaskIntoConstraints = false
-        let cloneButton = HelmButton(title: "Clone & Bootstrap", variant: .primary, target: self, action: #selector(cloneAndBootstrapClicked))
+        let cloneButton = HelmButton(title: "Clone & Bootstrap", variant: .secondary, target: self, action: #selector(cloneAndBootstrapClicked))
         let fieldRow = NSStackView(views: [clonePathField, cloneButton])
         fieldRow.orientation = .horizontal
         fieldRow.spacing = 8
@@ -1735,7 +1729,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         // `.required` hugging is what stops the stack handing it the slack
         // anyway (gotcha (10) - a `.gravityAreas` stack honours no hugging
         // priority at all, so the distribution has to be `.fill`).
-        let rebuildButton = HelmButton(title: "Run rebuild.sh", variant: .primary, target: self, action: #selector(runRebuildClicked))
+        let rebuildButton = HelmButton(title: "Run rebuild.sh", variant: .secondary, target: self, action: #selector(runRebuildClicked))
         rebuildButton.setContentHuggingPriority(.required, for: .horizontal)
         rebuildButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         let rebuildSpacer = NSView()
@@ -2052,7 +2046,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         let label = NSTextField(labelWithString: "macOS username")
         label.setScaledFont(ofSize: 12, weight: .medium)
 
-        let save = HelmButton(title: "Save", variant: .primary, target: self, action: #selector(saveUsernameClicked))
+        let save = HelmButton(title: "Save", variant: .secondary, target: self, action: #selector(saveUsernameClicked))
 
         let row = NSStackView(views: [usernameField, save])
         row.orientation = .horizontal
@@ -2079,15 +2073,15 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func managedItemRow(_ item: ManagedItem) -> NSView {
         let views = ToolRowLayout.Views(
             iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-            detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-            pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+            detailLabel: NSTextField(labelWithString: ""), pill: HelmStatusPill(),
+            trailingStack: NSStackView(),
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView()
         )
         track(views.nameLabel, views.detailLabel)
 
-        let (pillText, pillColor) = managedStatusVisuals(item.status)
-        ToolRowLayout.pill(text: pillText, colorHex: pillColor, into: views.pill, label: views.pillLabel)
+        let (pillText, pillTint, pillStyle) = managedStatusVisuals(item.status)
+        views.pill.configure(text: pillText, tint: pillTint, style: pillStyle, theme: theme)
 
         let view = ToolRowLayout.build(
             views,
@@ -2102,11 +2096,15 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         return view
     }
 
-    private func managedStatusVisuals(_ status: ManagedItemStatus) -> (String, String) {
+    // UI-43 / UI-55: a status is a dot and a word in its default state, and
+    // a `HelmStatusPill` only when it is not - so a page of rows that are
+    // all fine carries no wall of green capsules. Tints, never the terminal's
+    // ANSI slots (UI-32).
+    private func managedStatusVisuals(_ status: ManagedItemStatus) -> (String, HelmTint, HelmStatusPill.Style) {
         switch status {
-        case .linked: return ("Linked", theme.ansiHex[2])
-        case .notLinked: return ("Not linked", theme.ansiHex[3])
-        case .missing: return ("Missing", theme.ansiHex[1])
+        case .linked: return ("Linked", .good, .dotWord)
+        case .notLinked: return ("Not linked", .warn, .pill)
+        case .missing: return ("Missing", .critical, .pill)
         }
     }
 
@@ -2143,15 +2141,15 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func agentInstructionRow(_ item: AgentInstructionsItem) -> NSView {
         let views = ToolRowLayout.Views(
             iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-            detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-            pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+            detailLabel: NSTextField(labelWithString: ""), pill: HelmStatusPill(),
+            trailingStack: NSStackView(),
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView()
         )
         track(views.nameLabel, views.detailLabel)
 
-        let (pillText, pillColor) = agentStatusVisuals(item.status)
-        ToolRowLayout.pill(text: pillText, colorHex: pillColor, into: views.pill, label: views.pillLabel)
+        let (pillText, pillTint, pillStyle) = agentStatusVisuals(item.status)
+        views.pill.configure(text: pillText, tint: pillTint, style: pillStyle, theme: theme)
 
         let button = HelmButton(title: item.status == .linked ? "Linked" : "Create link", variant: .secondary, target: self, action: #selector(createLinkClicked))
         button.controlSize = .small
@@ -2171,11 +2169,11 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         return view
     }
 
-    private func agentStatusVisuals(_ status: AgentInstructionsRow) -> (String, String) {
+    private func agentStatusVisuals(_ status: AgentInstructionsRow) -> (String, HelmTint, HelmStatusPill.Style) {
         switch status {
-        case .linked: return ("Linked", theme.ansiHex[2])
-        case .notLinked: return ("Not linked", theme.ansiHex[1])
-        case .wrongTarget: return ("Wrong target", theme.ansiHex[3])
+        case .linked: return ("Linked", .good, .dotWord)
+        case .notLinked: return ("Not linked", .critical, .pill)
+        case .wrongTarget: return ("Wrong target", .warn, .pill)
         }
     }
 
@@ -2242,7 +2240,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         }
         let missingCount = softwareRows.filter { $0.status == .notInstalled }.count
         if missingCount > 0 {
-            let button = HelmButton(title: "Install everything missing (\(missingCount))", variant: .primary, target: self, action: #selector(installAllMissingClicked))
+            let button = HelmButton(title: "Install everything missing (\(missingCount))", variant: .secondary, target: self, action: #selector(installAllMissingClicked))
             button.isEnabled = !softwareRows.contains { $0.isBusy }
             softwareStack.addArrangedSubview(button)
             softwareStack.setCustomSpacing(12, after: button)
@@ -2274,15 +2272,15 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func softwareItemRow(_ row: SoftwareRowState) -> NSView {
         let views = ToolRowLayout.Views(
             iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-            detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-            pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
+            detailLabel: NSTextField(labelWithString: ""), pill: HelmStatusPill(),
+            trailingStack: NSStackView(),
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView()
         )
         track(views.nameLabel, views.detailLabel)
 
-        let (pillText, pillColor) = softwareStatusVisuals(row.status)
-        ToolRowLayout.pill(text: pillText, colorHex: pillColor, into: views.pill, label: views.pillLabel)
+        let (pillText, pillTint, pillStyle) = softwareStatusVisuals(row.status)
+        views.pill.configure(text: pillText, tint: pillTint, style: pillStyle, theme: theme)
 
         let button = HelmButton(title: installButtonTitle(row), variant: .secondary, target: self, action: #selector(installSoftwareClicked(_:)))
         button.controlSize = .small
@@ -2327,16 +2325,16 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         rebuildSoftwareSection()
     }
 
-    private func softwareStatusVisuals(_ status: DependencyStatus) -> (String, String) {
+    private func softwareStatusVisuals(_ status: DependencyStatus) -> (String, HelmTint, HelmStatusPill.Style) {
         switch status {
-        case .unknown: return ("Not checked", theme.chromeInkHex)
-        case .checking: return ("Checking\u{2026}", theme.chromeInkHex)
-        case .upToDate: return ("Installed", theme.ansiHex[2])
-        case .updateAvailable: return ("Update available", theme.ansiHex[3])
-        case .notInstalled: return ("Not installed", theme.ansiHex[3])
-        case .checkFailed: return ("Check failed", theme.ansiHex[1])
-        case .updating: return ("Installing\u{2026}", theme.chromeInkHex)
-        case .updateFailed: return ("Install failed", theme.ansiHex[1])
+        case .unknown: return ("Not checked", .neutral, .dotWord)
+        case .checking: return ("Checking\u{2026}", .neutral, .dotWord)
+        case .upToDate: return ("Installed", .good, .dotWord)
+        case .updateAvailable: return ("Update available", .warn, .pill)
+        case .notInstalled: return ("Not installed", .warn, .pill)
+        case .checkFailed: return ("Check failed", .critical, .pill)
+        case .updating: return ("Installing\u{2026}", .info, .dotWord)
+        case .updateFailed: return ("Install failed", .critical, .pill)
         }
     }
 
@@ -2801,6 +2799,10 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     /// string setter, so the test measures whatever the page really renders.
     var debugHomePathLabel: NSTextField { currentPathLabel }
 
+    /// A step title's painted colour, for the hidden-theme-switch check.
+    func debugStepTitleColor(_ kind: SetupStepKind) -> NSColor? { stepRowViews[kind]?.titleLabel.textColor }
+    var debugNeedsThemeRebuild: Bool { needsThemeRebuild }
+
     /// Review defect U8: the real dotfiles section, built from a stated repo
     /// state, so a check can measure what "Run rebuild.sh" is actually given
     /// rather than assert against the constructor call.
@@ -2916,27 +2918,26 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     private func applyTheme() {
         guard isViewLoaded else { return }
-        let line = HelmTheme.nsColor(theme.chromeLineHex)
-        // The Refresh pill matches Updates' own: an opaque accent fill with
-        // `selectionTextHex` content, the one pairing already contrast-
-        // verified against an opaque accent (SwiftTerm's own selected text).
-        // Set through `normalColor`/`hoverColor`, never straight onto the
-        // layer - a direct layer write looks right until the first hover cycle
-        // strands the fill at `HoverHighlightView`'s untouched `.clear`
-        // default (fm/grandline-updates-refresh-button-light-mode-fix).
-        let accent = HelmTheme.nsColor(theme.accentHex)
-        refreshPill.normalColor = accent
-        refreshPill.hoverColor = accent.hoverShifted(by: 0.10, forMode: theme.mode)
-        let onAccent = HelmTheme.nsColor(theme.selectionTextHex)
-        refreshIcon.contentTintColor = onAccent
-        refreshLabel.textColor = onAccent
+        // UI-55: the Refresh pill wears the secondary button's palette - this
+        // page's one primary is Run full setup, and Refresh is a read. Taken
+        // from `HelmButton.palette` rather than restated, so the pill cannot
+        // drift from a real secondary button. Set through `normalColor`/
+        // `hoverColor`, never straight onto the layer - a direct layer write
+        // is stranded by the next hover cycle
+        // (fm/grandline-updates-refresh-button-light-mode-fix).
+        let secondary = HelmButton.palette(variant: .secondary, tint: nil, theme: theme)
+        refreshPill.normalColor = secondary.fill
+        refreshPill.hoverColor = secondary.hoverFill
+        refreshPill.layer?.borderWidth = 1
+        refreshPill.layer?.borderColor = secondary.border.cgColor
+        refreshIcon.contentTintColor = secondary.label
+        refreshLabel.textColor = secondary.label
         refreshBusyLabel.textColor = HelmTheme.mutedInk(theme)
         currentPathLabel.textColor = HelmTheme.mutedInk(theme)
         for card in cards { card.applyTheme(theme) }
         for v in stepContentBackgrounds {
-            v.layer?.backgroundColor = line.withAlphaComponent(0.08).cgColor
-            v.layer?.borderWidth = 1
-            v.layer?.borderColor = line.withAlphaComponent(0.3).cgColor
+            v.layer?.backgroundColor = NSColor.clear.cgColor
+            v.layer?.borderWidth = 0
         }
     }
 }

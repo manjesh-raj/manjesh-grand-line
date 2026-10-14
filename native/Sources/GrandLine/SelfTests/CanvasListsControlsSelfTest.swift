@@ -68,8 +68,8 @@ enum CanvasListsControlsSelfTest {
             ("C2 a card press compresses, and composes with the hover lift", test_c2PressComposesWithHover),
             ("C2 Reduce Motion gets the end state instantly", test_c2ReduceMotionIsInstant),
             ("C2 a nested button inside a pressable view still fires", test_c2NestedButtonStillFires),
-            ("C3 the ribbon is quiet at rest and blooms on hover", test_c3RibbonQuietAtRest),
-            ("C3 a card that needs the captain keeps its loud edge", test_c3CriticalCardKeepsItsEdge),
+            ("UI-6 a module card carries no ribbon, at rest or on hover", test_c3RibbonQuietAtRest),
+            ("UI-8 a card that needs the captain says so with a pill", test_c3CriticalCardKeepsItsEdge),
             ("D1 a row's actions are quiet until aimed at", test_d1ActionsQuietUntilAimed),
             ("D1 the actions stay reachable without a mouse", test_d1ActionsStayReachable),
             ("D1 a short list, and the first row, keep their actions", test_d1DiscoverabilityMitigation),
@@ -394,7 +394,11 @@ enum CanvasListsControlsSelfTest {
             return "the watermark is the raster tile itself - at 26% that is a grey rectangle behind the "
                  + "copy, not a silhouette (review #3's B4)"
         }
-        let images = state.subviews.compactMap { $0 as? NSImageView }
+        // Any depth: since UI-46 the watermark sits in the state's own stack.
+        func imageViews(in view: NSView) -> [NSImageView] {
+            view.subviews.flatMap { ($0 as? NSImageView).map { [$0] } ?? [] } + view.subviews.flatMap(imageViews)
+        }
+        let images = imageViews(in: state)
         guard let watermark = images.first(where: { $0.image === drawn }) else {
             return "the watermark image is not in the empty state's own view tree"
         }
@@ -950,7 +954,7 @@ enum CanvasListsControlsSelfTest {
             return "the headline '\(card.debugHeadline)' does not name the answer's own "
                  + "'\(expected.title)'"
         }
-        if card.debugEyebrow != "NEEDS ATTENTION, 1" {
+        if card.debugEyebrow != "NEEDS ATTENTION \u{00B7} 1" {
             return "the eyebrow should count the verdict as one open row, got '\(card.debugEyebrow)'"
         }
 
@@ -1310,8 +1314,11 @@ enum CanvasListsControlsSelfTest {
 
     // MARK: - C3
 
-    /// §3C: seven saturated 6pt ribbons at equal weight is "decoration, not
-    /// signal". Quiet at rest, bloom on hover.
+    /// The UI/UX revamp's UI-6, which supersedes §3C's quiet-at-rest ribbon:
+    /// with a ribbon on every card no card can stand out, so a module card
+    /// carries none - not at rest, and not blooming on hover either. Its
+    /// identity is the 30pt tile. Read off the live layer tree, so a ribbon
+    /// re-added under another name still fails.
     private static func test_c3RibbonQuietAtRest() -> String? {
         let card = HelmModuleCard()
         card.configure(HelmModuleCard.Content(
@@ -1325,51 +1332,40 @@ enum CanvasListsControlsSelfTest {
         defer { window.orderOut(nil) }
         card.layoutSubtreeIfNeeded()
 
-        let rest = card.debugRibbonGeometry
-        if rest.height >= HelmModuleCard.ribbonHeight {
-            return "the ribbon is \(rest.height)pt at rest - §3C asks for 2-3pt until it blooms"
+        func gradients() -> Int {
+            card.debugCardView.layer?.sublayers?.filter { $0 is CAGradientLayer }.count ?? 0
         }
-        if rest.opacity >= 1 {
-            return "the ribbon is at full opacity at rest (\(rest.opacity))"
-        }
-
+        if gradients() != 0 { return "a resting module card still carries a gradient ribbon" }
         card.debugSetHovering(true)
-        let bloomed = card.debugRibbonGeometry
-        if bloomed.height < HelmModuleCard.ribbonHeight {
-            return "hovering did not bloom the ribbon (\(bloomed.height)pt)"
-        }
-        if bloomed.opacity < 1 {
-            return "hovering did not bring the ribbon to full presence (\(bloomed.opacity))"
-        }
-        // The hue itself is untouched - only its presence changes.
-        if rest.stopCount != bloomed.stopCount || rest.stopCount < 2 {
-            return "the ribbon's own gradient changed with the bloom (\(rest.stopCount) -> \(bloomed.stopCount))"
-        }
+        if gradients() != 0 { return "hovering a module card blooms a ribbon" }
+        if card.anatomyForTests.hasRibbon { return "the anatomy still reports a ribbon" }
         return nil
     }
 
-    /// §3C's own carve-out: "a card whose chip is `.critical` may keep a loud
-    /// edge - color as signal, not as wallpaper". Quieting the ribbons is
-    /// about stopping seven equal hues competing, not about hiding the one
-    /// card that needs the captain.
+    /// What replaced §3C's carve-out: a card that needs the captain no longer
+    /// keeps a loud edge (UI-4 reserves the one edge for Home's attention
+    /// card); it says so with a `HelmStatusPill` in its header, while a card
+    /// that is fine says so with a coloured word (UI-8).
     private static func test_c3CriticalCardKeepsItsEdge() -> String? {
-        let card = HelmModuleCard()
-        card.configure(HelmModuleCard.Content(
-            title: "Updates", subtitle: "3 tools behind", symbol: "steeringwheel",
-            hue: .amber, chip: HelmModuleChip(text: "3 behind", kind: .bad),
-            body: .metric(value: "3", unit: nil, note: "behind")))
-        let host = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 240))
-        host.addSubview(card)
-        card.frame = NSRect(x: 0, y: 0, width: 260, height: HelmModuleCard.standardHeight)
-        let window = makeWindow(host, size: NSSize(width: 300, height: 240))
-        defer { window.orderOut(nil) }
-        card.layoutSubtreeIfNeeded()
-
-        let geometry = card.debugRibbonGeometry
-        if geometry.height < HelmModuleCard.ribbonHeight || geometry.opacity < 1 {
-            return "a card whose chip is `.bad` rendered a quiet \(geometry.height)pt ribbon at "
-                 + "\(geometry.opacity) - the one card that needs the captain must keep its edge"
+        func mounted(_ chip: HelmModuleChip) -> (HelmModuleCard, NSWindow) {
+            let card = HelmModuleCard()
+            card.configure(HelmModuleCard.Content(
+                title: "Updates", subtitle: "3 tools behind", symbol: "steeringwheel",
+                hue: .amber, chip: chip, body: .metric(value: "3", unit: nil, note: "behind")))
+            let host = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 240))
+            host.addSubview(card)
+            card.frame = NSRect(x: 0, y: 0, width: 260, height: HelmModuleCard.standardHeight)
+            let window = makeWindow(host, size: NSSize(width: 300, height: 240))
+            card.layoutSubtreeIfNeeded()
+            return (card, window)
         }
+        let (bad, w1) = mounted(HelmModuleChip(text: "3 behind", kind: .bad))
+        defer { w1.orderOut(nil) }
+        if !bad.debugChipIsPill { return "a `.bad` chip should render as a status pill" }
+        let (fine, w2) = mounted(HelmModuleChip(text: "Up to date", kind: .ok))
+        defer { w2.orderOut(nil) }
+        if fine.debugChipIsPill { return "an `.ok` chip should render as a coloured word, not a pill" }
+        if fine.anatomyForTests.chipText != "Up to date" { return "the word should still read its text" }
         return nil
     }
 }

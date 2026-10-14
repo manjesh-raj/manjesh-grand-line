@@ -566,6 +566,10 @@ enum Audit3UIFixesSelfTest {
                                                   snippetStore: SnippetStore(),
                                                   dictationStore: DictationStore())
                 laidOut(settings, width: width, height: 900)
+                // UI-57: the grid opens on the current family; the disclosure
+                // shows every palette, which is what this case measures.
+                settings.debugThemeDisclosure.performClick(nil)
+                settings.view.layoutSubtreeIfNeeded()
                 let labels = settings.debugThemeNameLabels
                 check(labels.count == HelmTheme.allThemes.count,
                       "at \(Int(width)): the grid renders every theme "

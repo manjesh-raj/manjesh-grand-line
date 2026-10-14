@@ -74,3 +74,54 @@ enum ShiftDue {
         return hhmm == nil ? "Follow-up due today" : "Follow-up coming up"
     }
 }
+
+// MARK: - How a task's priority and due date are shown
+
+/// The Tasks page's **one** rule for what a task's priority and due date look
+/// like on a card or a row (the UI/UX revamp's UI-23, UI-24 and UI-32).
+///
+/// There were four priority-to-colour maps (the board card, the list row,
+/// the follow-up row, the project detail), and they disagreed: the board put
+/// a "Normal" chip on every card, and the bar colour meant priority in the
+/// list but project on the board. This is the one answer:
+///
+///   - **Priority is an exception, not a field.** High is a red pill, Low is
+///     muted text, Normal says nothing - a chip on every card is wallpaper
+///     (Q3, the captain's call).
+///   - **A due date is a caption** that takes colour only when it matters:
+///     amber when it is today, red when it is late, muted otherwise. The
+///     same rule on the board, in the list and on a follow-up.
+enum ShiftTaskSignals {
+
+    /// The chip a priority earns, or `nil` for Normal (Q3: a chip only for
+    /// High and Low). High is red because it is the signal; Low is neutral,
+    /// because it says "this can wait" rather than "look here".
+    static func priorityPill(_ priority: ShiftPriority) -> (text: String, tint: HelmTint)? {
+        switch priority {
+        case .high: return ("High", .critical)
+        case .low: return ("Low", .neutral)
+        default: return nil
+        }
+    }
+
+    struct DueCaption: Equatable {
+        let text: String
+        /// `nil` = muted.
+        let tint: HelmTint?
+    }
+
+    /// "Overdue 3 days" (red), "Due today" (amber), or the friendly date
+    /// (muted). `nil` for no date.
+    static func dueCaption(date yyyyMMdd: String?, time hhmm: String?, now: Date = Date(),
+                           calendar: Calendar = .current) -> DueCaption? {
+        guard let yyyyMMdd, let day = ShiftDateFormatting.date(from: yyyyMMdd) else { return nil }
+        if ShiftDue.isOverdue(date: yyyyMMdd, time: hhmm, now: now, calendar: calendar) {
+            let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: day),
+                                               to: calendar.startOfDay(for: now)).day ?? 0
+            let text = days <= 0 ? "Overdue" : "Overdue \(days) \(days == 1 ? "day" : "days")"
+            return DueCaption(text: text, tint: .critical)
+        }
+        if calendar.isDate(day, inSameDayAs: now) { return DueCaption(text: "Due today", tint: .warn) }
+        return DueCaption(text: ShiftDateFormatting.friendly(yyyyMMdd), tint: nil)
+    }
+}

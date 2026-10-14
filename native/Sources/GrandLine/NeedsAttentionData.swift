@@ -205,7 +205,7 @@ struct NeedsAttentionSummary: Equatable {
     }
 
     var state: State
-    /// "Needs attention, 2" / "All clear" / "Not available".
+    /// "Needs attention \u{00B7} 2" / "All clear" / "Not available".
     var eyebrow: String
     /// One plain-English line: "Two things are late.",
     /// "Nothing is due, and nobody is waiting on you."
@@ -368,14 +368,16 @@ enum NeedsAttentionComposer {
         // late since a time today, which "Overdue today" says without
         // pretending to a day count.
         guard days > 0 else { return "Overdue today" }
-        return "Overdue \(days) \(days == 1 ? "day" : "days"), since \(dayText)"
+        // UI-1: a middle dot, the separator every other caption on the page
+        // uses, rather than a comma.
+        return "Overdue \(days) \(days == 1 ? "day" : "days") \u{00B7} since \(dayText)"
     }
 
     static func eyebrow(state: NeedsAttentionSummary.State, openCount: Int) -> String {
         switch state {
         case .allClear: return "All clear"
         case .unavailable: return "Not available"
-        case .late, .risk, .dueToday: return "Needs attention, \(openCount)"
+        case .late, .risk, .dueToday: return "Needs attention \u{00B7} \(openCount)"
         }
     }
 

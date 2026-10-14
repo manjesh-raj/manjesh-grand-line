@@ -33,9 +33,24 @@
 // every other row read 1.00, with `checkButton.isHidden == false` throughout
 // - the button present and functional, merely invisible.
 //
-// **Fix.** This page passes `actionReveal: .always` for every row. D1 is
-// untouched where it was approved: `HelmAccentRow`'s own mirror of the
-// policy still backs Review's PR list and the Hosts/Keys/Snippets lists.
+// **First fix.** This page passed `actionReveal: .always` for every row.
+//
+// **What replaced it (UI-43, the UI/UX revamp the captain approved).** A
+// 13-row page with a pill, a button and a chevron on every row is 39 controls
+// at rest. The revamp keeps what the captain's report was about - **one
+// treatment for every row on the page, never a split by category** - and
+// changes what that treatment is:
+//
+//   - the rule is decided once per page (`ToolRowLayout.actionReveal(
+//     forPageRowCount:)`), never per category;
+//   - a row whose status asks the captain to act (an update available, a
+//     failure) keeps its button at rest - the "Update button visible at rest"
+//     half of the original ask, kept as an assertion below;
+//   - a row with nothing to do shows its status as a dot and a word, and its
+//     quiet "Check" appears on hover or keyboard focus.
+//
+// So an action is visible exactly where the status beside it is a pill,
+// which is the explanation the original split lacked.
 //
 // **Why this suite reads `alphaValue` and not a render.** `cacheDisplay` -
 // this repo's screenshot substitute - draws an `alphaValue = 0` view
@@ -57,10 +72,11 @@ enum UpdatesActionVisibilitySelfTest {
 
     static func run() -> Bool {
         var allOK = true
-        for check in [checkEveryRowShowsItsActionsAtRest,
+        for check in [checkEveryRowFollowsOneRule,
                       checkAnUpdateAvailableRowShowsItsUpdateButton,
+                      checkAQuietRowRevealsItsCheckOnHover,
                       checkTheCheckButtonKeepsItsOwnHoverFeedback,
-                      checkThePageDoesNotOptBackIntoHoverReveal] {
+                      checkThePageDecidesTheRuleOnce] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -87,9 +103,10 @@ enum UpdatesActionVisibilitySelfTest {
 
     // MARK: Checks
 
-    /// The captain's own report, as an assertion: every row on the page shows
-    /// its action buttons without being hovered.
-    private static func checkEveryRowShowsItsActionsAtRest(_ ok: inout Bool) {
+    /// The captain's own report, as an assertion: no split by category.
+    /// Every row in the same state has the same action treatment, whichever
+    /// card it sits in - here, every not-yet-checked row reveals on aim.
+    private static func checkEveryRowFollowsOneRule(_ ok: inout Bool) {
         let (c, window) = mount()
         defer { window.contentView = nil }
 
@@ -100,39 +117,73 @@ enum UpdatesActionVisibilitySelfTest {
             return
         }
 
-        // Discriminating power, asserted before anything else. The bug only
-        // bites a category with MORE rows than `alwaysRevealRowCount`; if the
-        // catalog ever shrinks so every category is short, the reveal policy
-        // could come back and every assertion below would still pass. Fail
-        // loudly instead of quietly proving nothing.
+        // Discriminating power, asserted before anything else. The original
+        // bug only bit a category with MORE rows than `alwaysRevealRowCount`
+        // beside one with fewer; without both, a per-category rule and a
+        // per-page rule would render identically and this would prove nothing.
         var perCategory: [String: Int] = [:]
         for s in states { perCategory[s.category, default: 0] += 1 }
         let longest = perCategory.max { $0.value < $1.value }
-        guard let longest, longest.value > HelmAccentRow.alwaysRevealRowCount else {
+        let shortest = perCategory.min { $0.value < $1.value }
+        guard let longest, let shortest, longest.value > HelmAccentRow.alwaysRevealRowCount,
+              shortest.value <= HelmAccentRow.alwaysRevealRowCount else {
             print("""
-                  UpdatesActionVisibility: no category has more than \
-                  \(HelmAccentRow.alwaysRevealRowCount) rows (longest is \
-                  \(longest?.key ?? "none") at \(longest?.value ?? 0)), so this check \
-                  cannot tell the fix from the bug - see this file's header
+                  UpdatesActionVisibility: the catalog no longer has both a long and a short \
+                  category (longest \(longest?.value ?? 0), shortest \(shortest?.value ?? 0)), so this \
+                  check cannot tell a per-page rule from the per-category bug - see this file's header
                   """)
             ok = false
             return
         }
 
-        for s in states where s.actionsAlpha < 0.99 || s.checkHidden {
+        let alphas = Set(states.map { ($0.actionsAlpha * 100).rounded() })
+        if alphas.count != 1 {
             print("""
-                  UpdatesActionVisibility: \(s.name) (\(s.category)) hides its actions at \
-                  rest - alpha \(String(format: "%.2f", s.actionsAlpha)), \
-                  checkHidden=\(s.checkHidden). This is the captain's report: a status pill \
-                  with an empty gap beside it until the row is hovered.
+                  UpdatesActionVisibility: rows in one state render \(alphas.count) different action \
+                  treatments at rest (\(states.map { "\($0.name)=\(String(format: "%.2f", $0.actionsAlpha))" })) - \
+                  the split the captain reported
                   """)
+            ok = false
+        }
+        for s in states where s.checkHidden {
+            print("UpdatesActionVisibility: \(s.name) has no Check button at all")
             ok = false
         }
         if ok {
             print("""
-                  UpdatesActionVisibility: all \(states.count) rows show their actions at rest \
-                  (longest category "\(longest.key)" has \(longest.value) rows)
+                  UpdatesActionVisibility: all \(states.count) rows share one treatment at rest \
+                  ("\(longest.key)" has \(longest.value) rows, "\(shortest.key)" \(shortest.value))
                   """)
+        }
+    }
+
+    /// The quiet half: a row with nothing to do still offers its Check, on
+    /// the real hover path (`HoverHighlightView.mouseEntered`), not a helper.
+    private static func checkAQuietRowRevealsItsCheckOnHover(_ ok: inout Bool) {
+        let (c, window) = mount()
+        defer { window.contentView = nil }
+        guard let container = c.debugRowContainer(atRow: 3) else {
+            print("UpdatesActionVisibility: no row at 3")
+            ok = false
+            return
+        }
+        // Reduce Motion pinned on, so the reveal lands synchronously - the
+        // eased fade reports its old alpha until the animation completes.
+        let savedMotion = HelmMotion.reducedOverrideForTests
+        HelmMotion.reducedOverrideForTests = true
+        defer { HelmMotion.reducedOverrideForTests = savedMotion }
+        let rest = c.debugRowActionStates[3].actionsAlpha
+        container.mouseEntered(with: hoverEvent(container))
+        let aimed = c.debugRowTrailingStack(atRow: 3)?.alphaValue ?? -1
+        container.mouseExited(with: hoverEvent(container))
+        if rest > 0.01 || aimed < 0.99 {
+            print("""
+                  UpdatesActionVisibility: a quiet row should hide its Check at rest and show it \
+                  on hover - rest \(String(format: "%.2f", rest)), hovered \(String(format: "%.2f", aimed))
+                  """)
+            ok = false
+        } else {
+            print("UpdatesActionVisibility: a quiet row reveals its Check on hover")
         }
     }
 
@@ -203,32 +254,33 @@ enum UpdatesActionVisibilitySelfTest {
         }
     }
 
-    /// A source guard, because the behavioural check above cannot see every
-    /// way this can come back. It reads the page's REAL catalog, so a future
-    /// catalog whose every category is short would let the reveal policy
-    /// return while every row still happened to render visible.
-    private static func checkThePageDoesNotOptBackIntoHoverReveal(_ ok: inout Bool) {
+    /// A source guard: the rule is the page-wide one, never the per-row
+    /// `ReviewPRListView.actionReveal(row:of:)` that produced the split.
+    private static func checkThePageDecidesTheRuleOnce(_ ok: inout Bool) {
         let path = SelfTestSources.appSourceDirectory()?
             .appendingPathComponent("UpdatesController.swift")
         guard let path, let raw = try? String(contentsOf: path, encoding: .utf8) else {
             print("UpdatesActionVisibility: could not read UpdatesController.swift - skipping source guard")
             return
         }
-        // Strip whole-line comments: this file names both tokens on purpose,
-        // in the note explaining why it no longer uses them.
+        // Strip whole-line comments: this file names the old token on
+        // purpose, in the note explaining why it no longer uses it.
         let code = raw.split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
 
-        for token in [".onAim", "ReviewPRListView.actionReveal"] where code.contains(token) {
+        if code.contains("ReviewPRListView.actionReveal") {
             print("""
-                  UpdatesActionVisibility: UpdatesController.swift uses \(token) again. That is \
-                  D1's hover-reveal, which the captain reported as broken on this page - see \
-                  this file's header before reinstating it.
+                  UpdatesActionVisibility: UpdatesController.swift decides the reveal per row again \
+                  (ReviewPRListView.actionReveal) - the split the captain reported as broken
                   """)
             ok = false
         }
-        if ok { print("UpdatesActionVisibility: the page does not opt back into hover-reveal") }
+        if !code.contains("ToolRowLayout.actionReveal(forPageRowCount:") {
+            print("UpdatesActionVisibility: UpdatesController.swift no longer uses the page-wide reveal rule")
+            ok = false
+        }
+        if ok { print("UpdatesActionVisibility: the page decides its reveal rule once") }
     }
 
     // MARK: Helpers

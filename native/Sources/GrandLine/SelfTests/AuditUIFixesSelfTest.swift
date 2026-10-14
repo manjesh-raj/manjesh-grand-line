@@ -300,19 +300,27 @@ enum AuditUIFixesSelfTest {
     /// claim about an answer the page does not have - the same GL-14 shape as
     /// B1. `setupSummaryLine` already applied this rule to the header; the
     /// tiles never followed.
+    /// Behavioural since UI-44 moved the four numbers onto a `HelmKPIStrip`:
+    /// a page that has not checked anything shows the catalog size and a
+    /// dash for each derived count - never "0 up to date".
     private static func test_b9_tiles() -> String? {
-        guard let dir = SelfTestSources.appSourceDirectory(),
-              let text = try? String(contentsOf: dir.appendingPathComponent("UpdatesController.swift"), encoding: .utf8) else {
-            return nil
+        let controller = UpdatesController()
+        let window = mount(controller.view, width: 1100, height: 900)
+        defer { window.contentView = nil }
+        let values = controller.debugSummaryValues
+        guard values.count == 4 else { return "the Updates summary has \(values.count) figures, want 4" }
+        // The discriminating half: the page really is unchecked at mount.
+        guard controller.drillHeaderSubtitle?.contains("not checked") == true else {
+            return "the fixture is not unchecked (\(controller.drillHeaderSubtitle ?? "nil")) - the check would be vacuous"
         }
-        guard text.contains("let pending = rows.contains { $0.status == .checking || $0.status == .updating }"),
-              text.contains("(pending || neverChecked) ? unknown") else {
-            return "the Updates stat tiles no longer distinguish \"not checked yet\" from a real zero"
+        let dash = "\u{2014}"
+        guard values[1] == dash, values[2] == dash else {
+            return "the Updates summary no longer distinguishes \"not checked yet\" from a real zero: \(values)"
         }
-        // The "Tools Installed" tile is the catalog's own size and must stay a
-        // real number throughout - going unknown there would be its own bug.
-        guard text.contains("statTiles[0].value = \"\\(total)\"") else {
-            return "the Tools Installed tile stopped reporting the catalog size"
+        // "Tools installed" is the catalog's own size and must stay a real
+        // number throughout - going unknown there would be its own bug.
+        guard let total = Int(values[0]), total > 0 else {
+            return "the Tools installed figure stopped reporting the catalog size: \(values[0])"
         }
         return nil
     }

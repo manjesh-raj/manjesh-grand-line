@@ -51,8 +51,7 @@ private final class UpdateRow {
     let iconTile = IconTileView()
     let nameLabel = NSTextField(labelWithString: "")
     let detailLabel = NSTextField(labelWithString: "")
-    let pill = NSView()
-    let pillLabel = NSTextField(labelWithString: "")
+    let pill = HelmStatusPill()
     /// D3: the status column's placeholder is a redacted pill in the shape
     /// of the status that is coming, not a grey system spinner. The finding's
     /// own scope limit is kept - a spinner inside a button the captain just
@@ -73,13 +72,13 @@ private final class UpdateRow {
     let rowContainer = HoverHighlightView()
     /// Swapped between [pill, checkButton, updateButton] and
     /// [spinner, progressLabel] depending on `isBusy`.
-    let trailingStack = NSStackView()
+    let trailingStack = ToolRowLayout.ActionStack()
 
     /// This row's fields, packaged for the shared `ToolRowLayout` assembly.
     var toolRowViews: ToolRowLayout.Views {
         ToolRowLayout.Views(
             iconTile: iconTile, nameLabel: nameLabel, detailLabel: detailLabel,
-            pill: pill, pillLabel: pillLabel, trailingStack: trailingStack,
+            pill: pill, trailingStack: trailingStack,
             detailsButton: detailsButton, logField: logField, logContainer: logContainer,
             rowContainer: rowContainer
         )
@@ -115,7 +114,10 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     /// The summary strip's four tiles. Each themes itself; this list is what
     /// `renderStats` writes the numbers into and `applyTheme` hands the theme to.
-    private var statTiles: [HelmStatTile] = []
+    /// UI-44: the page's four numbers as one flat strip, not four boxes.
+    private let summaryStrip = HelmKPIStrip()
+    /// One per category card, themed with the page.
+    private var groupHeaders: [HelmSectionHeader] = []
     /// The tool filter, in the app's own search well (Phase 0's raw-input
     /// purge). This is the audit's screenshot-5 brown field: a stock
     /// `NSSearchField` whose only theming was a forced `appearance`, which
@@ -157,10 +159,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
             self?.applyTheme()
         }
 
-        let header = buildHeader()
         let statsRow = buildStatsRow()
         let toolbarRow = buildToolbarRow()
-        var sections: [NSView] = [header, statsRow, toolbarRow]
+        var sections: [NSView] = [statsRow, toolbarRow]
         for category in DependencyCatalog.categoryOrder {
             let categoryRows = rows.filter { $0.item.category == category }
             guard !categoryRows.isEmpty else { continue }
@@ -170,11 +171,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         let stack = NSStackView(views: sections)
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 14
+        // UI-33's scale: 16 between sections, 24 from the top.
+        stack.spacing = HelmMetrics.s4
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setCustomSpacing(18, after: header)
-        stack.setCustomSpacing(18, after: statsRow)
-        stack.setCustomSpacing(18, after: toolbarRow)
 
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -182,7 +181,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
+            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: HelmMetrics.s5),
             // U10's second half: a completion toast is a floating pill at the
             // bottom of the window, and this page's last card used to end
             // 20pt above that edge - so "Checked 13 tools" landed on top of
@@ -247,17 +246,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     private func scrollToTop() {
         scrollView.contentView.scroll(to: .zero)
         scrollView.reflectScrolledClipView(scrollView.contentView)
-    }
-
-    // MARK: Header
-
-    private let subtitleLabel = NSTextField(labelWithString: "Every tool in the fleet, checked against its real source - npm, Homebrew, herdr, no-mistakes, and firstmate's own upstream.")
-
-    private func buildHeader() -> NSView {
-        subtitleLabel.setScaledFont(ofSize: 12)
-        subtitleLabel.preferredMaxLayoutWidth = 560
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        return subtitleLabel
     }
 
     // MARK: Toolbar (segmented filter + search + Refresh)
@@ -447,30 +435,21 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     // MARK: Stats strip
 
-    /// The four-tile summary strip, built from the app's shared `HelmStatTile`
-    /// (`HelmDesignSystem.swift`, audit §6.3 component 4). This page's own copy
-    /// was the loudest of the three the audit measured - a 19pt **bold** metric
-    /// at 15/13 padding on a `surface @ 0.60` fill, 67pt tall against Overview's
-    /// 50 - for the same job. Two behaviours are unchanged: the per-tile
-    /// neutral/success/warning signal (now a `HelmTint`, and contrast-corrected
-    /// rather than painted as the raw hue - audit §5.7), and `renderStats`
-    /// writing only the numbers.
+    /// UI-44: the four numbers as a `HelmKPIStrip` on the page ground - the
+    /// same strip Home's Fleet card and Weekly Review use. It used to be four
+    /// boxed `HelmStatTile`s, a bordered surface per number directly above
+    /// the bordered category cards. What the tiles got right stays: a figure
+    /// the page cannot know yet is a dash, never a zero (GL-14).
     private func buildStatsRow() -> NSView {
-        statTiles = [
-            HelmStatTile(symbol: "shippingbox", value: "0", caption: "Tools Installed"),
-            HelmStatTile(symbol: "checkmark.circle", value: "0", caption: "Up to Date", tint: .good),
-            HelmStatTile(symbol: "arrow.up.circle", value: "0", caption: "Updates Available", tint: .warn),
-            HelmStatTile(symbol: "clock", value: "0", caption: "Last Checked"),
-        ]
-
-        let row = NSStackView(views: statTiles)
-        row.orientation = .horizontal
-        row.distribution = .fillEqually
-        row.spacing = 12
-        row.translatesAutoresizingMaskIntoConstraints = false
-        return row
+        summaryStrip.setAccessibilityLabel("Updates summary")
+        // UI-51: the page's explanatory caption is a tooltip on its numbers.
+        // The drill header names the page, and a sentence above every visit
+        // was the longest line on it.
+        summaryStrip.toolTip = "Every tool in the fleet, checked against its real source - npm, Homebrew, "
+            + "herdr, no-mistakes, and firstmate's own upstream."
+        renderStats()
+        return summaryStrip
     }
-
 
     // MARK: Daylight §6.4 - the drill header's live line
 
@@ -516,24 +495,21 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         let total = rows.count
         let upToDate = rows.filter { $0.status == .upToDate }.count
         let needsUpdate = rows.filter { $0.status == .updateAvailable || $0.status == .notInstalled }.count
-        guard statTiles.count == 4 else { return }
         // B9 (`data/grand-line-e2e-audit/report.md`): "0 Updates Available"
         // while 13 checks are still running is a confident claim about an
-        // answer this page does not have yet - the same GL-14 shape as B1,
-        // just quieter (the adjacent "Checking… (1/13)" mitigates it, which is
-        // why this is the audit's lowest-severity item rather than a
-        // non-issue). `drillHeaderSubtitle` right above already applies exactly
-        // this rule to the header; the tiles never followed.
-        //
-        // Only the two *derived* counts go unknown. "Tools Installed" is the
-        // catalog's own size and is true before any check runs.
+        // answer this page does not have yet - GL-14. Only the two *derived*
+        // counts go unknown. "Tools installed" is the catalog's own size and
+        // is true before any check runs.
         let pending = rows.contains { $0.status == .checking || $0.status == .updating }
         let neverChecked = !rows.isEmpty && rows.allSatisfy { $0.status == .unknown }
-        let unknown = "\u{2014}"
-        statTiles[0].value = "\(total)"
-        statTiles[1].value = (pending || neverChecked) ? unknown : "\(upToDate)"
-        statTiles[2].value = (pending || neverChecked) ? unknown : "\(needsUpdate)"
-        statTiles[3].value = relativeLastChecked()
+        let known = !(pending || neverChecked)
+        summaryStrip.configure([
+            .init(.value("\(total)"), caption: "Tools installed"),
+            known ? .count(upToDate, caption: "Up to date") : .init(.unread, caption: "Up to date"),
+            known ? .count(needsUpdate, caption: "Need attention", tintWhenNonZero: .warn)
+                  : .init(.unread, caption: "Need attention"),
+            .init(.value(relativeLastChecked()), caption: "Last checked"),
+        ], theme: theme)
     }
 
     /// `fm/grandline-engineering-cards-stale-counts`: hand the freshly-learned
@@ -673,9 +649,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         var rowViews: [NSView] = []
         var sectionSeparators: [NSView] = []
         for (index, row) in categoryRows.enumerated() {
-            // Every row keeps its Check/Update button at rest - see
-            // `buildRow`'s own note for the captain report that retired D1's
-            // hover-reveal on this page.
+            // One reveal rule for every row on the page - see `buildRow`.
             rowViews.append(buildRow(row))
             if index < categoryRows.count - 1 {
                 let sep = separator()
@@ -691,7 +665,14 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         for v in rowViews { v.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true }
 
         let card = HelmCard()
-        card.setHeader(symbol: icon, tint: DependencyCatalog.tint(for: title), title: title)
+        // UI-51: the group header is the kit's section header - the
+        // category's tile, its name and a muted count - the same header
+        // Tasks' panels use.
+        let header = HelmSectionHeader(size: .section)
+        header.configure(leading: .tile(symbol: icon, tint: DependencyCatalog.tint(for: title)),
+                         title: title, count: "\(categoryRows.count)")
+        groupHeaders.append(header)
+        card.setHeader(header)
         card.setBody(rowsStack, insets: HelmCard.contentInsets)
         cards.append(card)
         categorySections.append(CategorySection(background: card, rows: categoryRows, separators: sectionSeparators))
@@ -708,8 +689,8 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     // MARK: Row
 
-    /// Builds one tool row. Its Check/Update buttons are **always** visible,
-    /// never hover-revealed - see the `actionReveal` argument below.
+    /// Builds one tool row. Its Check/Update buttons follow the page-wide
+    /// reveal rule - see the `actionReveal` argument below.
     private func buildRow(_ row: UpdateRow) -> NSView {
         // Check / Update
         row.checkButton.target = self
@@ -748,29 +729,14 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
             trailingViews: [row.checkButton, row.updateButton, row.installInBootstrapButton],
             detailsTarget: self,
             detailsAction: #selector(detailsTapped(_:)),
-            // This page deliberately opts OUT of D1's hover-reveal
-            // (`ToolRowLayout.ActionReveal.onAim`), and must keep doing so.
-            //
-            // It used to pass `ReviewPRListView.actionReveal(row:of:)`, whose
-            // discoverability rule is "a category of three rows or fewer keeps
-            // every row's buttons, a longer one keeps only its first row's".
-            // On this page's real catalog that resolves to a split the captain
-            // reported as broken: "npm packages" has five rows, so `tasks-axi`
-            // showed its Check button while `gh-axi`, `chrome-devtools-axi`,
-            // `lavish-axi` and `quota-axi` rendered an empty gap beside their
-            // status pill - directly above "Homebrew", whose three rows all
-            // showed theirs. Two treatments for one kind of row, side by side
-            // in one list, with nothing on screen explaining the difference.
-            //
-            // It also made this page the odd one out among the five that share
-            // `ToolRowLayout`: Bootstrap, Automation, GitHub Sync and Vault all
-            // take the `.always` default, so a captain moving between them saw
-            // the same row component behave two different ways.
-            //
-            // D1 itself is untouched where it was approved - `HelmAccentRow`'s
-            // own mirror of this policy still backs Review's PR list and the
-            // Hosts/Keys/Snippets lists.
-            actionReveal: .always,
+            // UI-43: one rule for the whole page, from
+            // `ToolRowLayout.actionReveal(forPageRowCount:)`. This page once
+            // split its rows per category (five-row "npm packages" showed one
+            // Check button and four gaps above "Homebrew", which showed all
+            // three) and the captain reported that as broken. The page-wide
+            // count gives every row the same treatment: the buttons appear on
+            // hover or keyboard focus, and the status stays visible at rest.
+            actionReveal: ToolRowLayout.actionReveal(forPageRowCount: rows.count),
             identifier: row.item.id
         )
         row.logContainer.isHidden = true // collapsed until the details chevron is tapped.
@@ -1002,6 +968,19 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     // MARK: Render
 
+    /// UI-51: a row shows its status only when it differs from the page's
+    /// most common quiet state, which the drill header already states once
+    /// ("13 tools · not checked yet") - `ToolRowLayout.statusHidden`, the rule
+    /// GitHub Sync uses. Re-decided for every row on any change, because one
+    /// row's change can move the page's baseline.
+    private func applyStatusVisibility() {
+        let hidden = ToolRowLayout.statusHidden(rows.map { row in
+            let (word, _, style) = pillVisuals(row.status)
+            return (word, style, row.status == .checking || row.status == .updating)
+        })
+        for (row, hide) in zip(rows, hidden) { row.pill.isHidden = hide }
+    }
+
     private func render(_ row: UpdateRow) {
         row.detailLabel.stringValue = row.detail
         row.logField.stringValue = row.log.isEmpty ? "No output yet." : row.log
@@ -1010,7 +989,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // down this method), not here - see that method's own note for why
         // the theme pass has to be the single owner of it.
         let busy = row.status == .checking || row.status == .updating
-        row.pill.isHidden = busy
         // U10: not in every state - see `DependencyStatus.showsCheckButton`.
         row.checkButton.isHidden = busy || !row.status.showsCheckButton
         // `.notInstalled` shows the distinct "Install in Bootstrap ->" link
@@ -1029,28 +1007,31 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         row.rowContainer.alphaValue = disabled ? 0.6 : 1.0
 
         applyThemeToRow(row)
+        applyStatusVisibility()
         renderStats()
         // A status change can move this row in/out of the "Needs attention"
         // set - keep the current filter's visible rows in sync.
         if !categorySections.isEmpty { applyFilter() }
     }
 
-    private func pillVisuals(_ status: DependencyStatus) -> (String, String) {
+    /// UI-43: a row's status is a dot and a word while it is the default
+    /// ("Up to Date", "Not Checked") and a `HelmStatusPill` only when it is
+    /// not. Tints, never the terminal's ANSI slots (UI-32).
+    private func pillVisuals(_ status: DependencyStatus) -> (String, HelmTint, HelmStatusPill.Style) {
         switch status {
-        case .unknown: return ("Not Checked", theme.chromeInkHex)
-        case .checking, .updating: return ("", theme.chromeInkHex)
-        case .upToDate: return ("Up to Date", theme.ansiHex[2])
-        case .updateAvailable: return ("Update Available", theme.ansiHex[3])
-        case .notInstalled: return ("Not Installed", theme.ansiHex[3])
-        case .checkFailed: return ("Check Failed", theme.ansiHex[1])
-        case .updateFailed: return ("Update Failed", theme.ansiHex[1])
+        case .unknown: return ("Not Checked", .neutral, .dotWord)
+        case .checking, .updating: return ("", .neutral, .dotWord)
+        case .upToDate: return ("Up to Date", .good, .dotWord)
+        case .updateAvailable: return ("Update Available", .warn, .pill)
+        case .notInstalled: return ("Not Installed", .warn, .pill)
+        case .checkFailed: return ("Check Failed", .critical, .pill)
+        case .updateFailed: return ("Update Failed", .critical, .pill)
         }
     }
 
     // MARK: Theme
 
     private func applyTheme() {
-        subtitleLabel.textColor = HelmTheme.mutedInk(theme)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         // The pill owns its own fill, and that is load-bearing rather than
         // tidy. The line this replaced wrote `checkAllPill.layer?
@@ -1070,10 +1051,11 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         checkAllProgressLabel.textColor = HelmTheme.mutedInk(theme)
         filterTabs.applyTheme(theme)
         for card in cards { card.applyTheme(theme) }
+        for header in groupHeaders { header.applyTheme(theme) }
         for v in separators {
             v.layer?.backgroundColor = line.withAlphaComponent(0.5).cgColor
         }
-        for tile in statTiles { tile.applyTheme(theme) }
+        summaryStrip.applyTheme(theme)
         for row in rows { applyThemeToRow(row) }
     }
 
@@ -1087,7 +1069,10 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // (`.upToDate`, `.unknown`, or a busy `.checking`/`.updating`) keeps
         // the exact flat/compact look it always has.
         let needsAttention = row.status.showsUpdateButton
-        let (pillText, pillColorHex) = pillVisuals(row.status)
+        // UI-43: the row that asks the captain to act keeps its button at rest.
+        ToolRowLayout.setActionsPinned(row.toolRowViews, needsAttention)
+        let (pillText, pillTint, pillStyle) = pillVisuals(row.status)
+        let pillColorHex = pillTint.hex(in: theme)
         // The status pill is painted HERE rather than in `render`, for the
         // reason `GitHubSyncController.applyThemeToRow` states in full: the
         // pill bakes one theme's fill and label tone into its layer, nothing
@@ -1099,8 +1084,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // a solid dark one, while the amber card border they share (derived
         // from `attentionHex` below, which was already re-resolved on every
         // theme pass) matched correctly on both.
-        ToolRowLayout.pill(text: pillText, colorHex: pillColorHex,
-                           into: row.pill, label: row.pillLabel, theme: theme)
+        row.pill.configure(text: pillText, tint: pillTint, style: pillStyle, theme: theme)
         let attentionHex = needsAttention ? pillColorHex : nil
         // §7's "the update row is a warn signal row with an amber primary
         // Update". The warn half was already true - `.updateAvailable`
@@ -1156,6 +1140,18 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         }
     }
 
+    /// The summary strip's four figures, as rendered (UI-44).
+    var debugSummaryValues: [String] { summaryStrip.debugValues }
+
+    /// The row's hover target and its action column, so a suite can drive
+    /// the real `HoverHighlightView` hover path (UI-43).
+    func debugRowContainer(atRow index: Int) -> HoverHighlightView? {
+        rows.indices.contains(index) ? rows[index].rowContainer : nil
+    }
+    func debugRowTrailingStack(atRow index: Int) -> NSStackView? {
+        rows.indices.contains(index) ? rows[index].trailingStack : nil
+    }
+
     /// The real Check button, so a test can drive its own hover feedback
     /// rather than asserting a colour it computed itself.
     func debugCheckButton(atRow index: Int) -> HelmButton? {
@@ -1176,7 +1172,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     func debugPillPaint(atRow index: Int) -> (fill: CGColor?, label: NSColor?, text: String)? {
         guard rows.indices.contains(index) else { return nil }
         let row = rows[index]
-        return (row.pill.layer?.backgroundColor, row.pillLabel.textColor, row.pillLabel.stringValue)
+        return (row.pill.layer?.backgroundColor, row.pill.label.textColor, row.pill.label.stringValue)
     }
     #endif
 
