@@ -315,7 +315,7 @@ final class FleetController: NSViewController {
 
         overviewContainer.orientation = .vertical
         overviewContainer.alignment = .leading
-        overviewContainer.spacing = 20
+        overviewContainer.spacing = HelmMetrics.s4
         overviewContainer.translatesAutoresizingMaskIntoConstraints = false
         // F12 + F6: the briefing is the first thing read on the *Overview*
         // tab, directly under the tab strip rather than under the page header
@@ -339,10 +339,10 @@ final class FleetController: NSViewController {
 
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
-        contentStack.spacing = 20
+        contentStack.spacing = HelmMetrics.s4
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(header)
-        contentStack.addArrangedSubview(tabs)
+        contentStack.addArrangedSubview(toolbarRow)
         contentStack.addArrangedSubview(overviewContainer)
         contentStack.addArrangedSubview(logSection)
 
@@ -359,9 +359,10 @@ final class FleetController: NSViewController {
         NSLayoutConstraint.activate([
             contentStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
             contentStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
-            contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -28),
+            contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: HelmMetrics.s5),
+            contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -HelmMetrics.s5),
             headerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            toolbarRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             overviewContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             logSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             briefingCard.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
@@ -440,6 +441,11 @@ final class FleetController: NSViewController {
     // MARK: Building the static chrome
 
     private func buildHeader() -> NSView {
+        // UI-63: the greeting is there from the first frame - the time of day
+        // needs no fetch, and the captain's name joins it when the snapshot
+        // lands. A blank hero line left a 60pt hole above the toolbar for as
+        // long as the fleet took to read.
+        greetingLabel.stringValue = FleetGreeting.timeOfDay(at: Date())
         greetingLabel.font = HelmType.heroTitle()
         greetingLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -467,25 +473,37 @@ final class FleetController: NSViewController {
         textStack.translatesAutoresizingMaskIntoConstraints = false
         textStack.setHuggingPriority(.defaultLow, for: .horizontal)
 
-        // `.fill` plus a flexible spacer, so Refresh sits at the page's own
-        // trailing edge (prototype `.phead .row`) instead of hugging the
-        // greeting. See AGENTS.md gotcha (10)/(12): a nested stack has no
-        // intrinsic size, so the spacer - not the text stack - is what carries
-        // the low hugging priority the distribution actually stretches.
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        headerRow = NSStackView(views: [textStack])
+        headerRow.orientation = .horizontal
+        headerRow.translatesAutoresizingMaskIntoConstraints = false
 
-        let row = NSStackView(views: [textStack, spacer, crewButton, refreshButton])
-        row.orientation = .horizontal
-        row.alignment = .lastBaseline
-        row.distribution = .fill
-        row.spacing = 12
-        row.translatesAutoresizingMaskIntoConstraints = false
-        headerRow = row
-        return row
+        // UI-63: the page's controls are one toolbar row - the view switcher
+        // leading, the two actions trailing - rather than a switcher alone on
+        // its own row and two buttons floating beside the greeting. A plain
+        // row on the page ground, not `HelmPageToolbar`: that strip is a
+        // filled band for a page that sits directly under the bar with no
+        // greeting above it (Console, Tools), and here it would be a second
+        // surface between the greeting and the cards.
+        let actionsSpacer = NSView()
+        actionsSpacer.translatesAutoresizingMaskIntoConstraints = false
+        actionsSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        actionsSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        tabs.setContentHuggingPriority(.required, for: .horizontal)
+        toolbarRow.setViews([tabs, actionsSpacer, crewButton, refreshButton], in: .leading)
+        toolbarRow.orientation = .horizontal
+        toolbarRow.alignment = .centerY
+        toolbarRow.distribution = .fill
+        toolbarRow.spacing = HelmMetrics.s3
+        toolbarRow.translatesAutoresizingMaskIntoConstraints = false
+        // gotcha (12)+(13): the stack-level APIs, both yielding, so this row
+        // is never a width floor or ceiling on the window.
+        toolbarRow.setHuggingPriority(.defaultLow, for: .horizontal)
+        toolbarRow.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        return headerRow
     }
+
+    /// UI-63: the view switcher and the page's actions, one row.
+    private let toolbarRow = NSStackView()
 
     /// Kept so `loadView` can pin it to the content column's full width -
     /// without that the row shrinks to its content and Refresh stops being at
@@ -495,7 +513,7 @@ final class FleetController: NSViewController {
     private func buildStatsRow() {
         statsRow.orientation = .horizontal
         statsRow.distribution = .fillEqually
-        statsRow.spacing = 10
+        statsRow.spacing = HelmMetrics.s3
         statsRow.translatesAutoresizingMaskIntoConstraints = false
     }
 
@@ -506,29 +524,65 @@ final class FleetController: NSViewController {
     /// collapsed, empty-looking stack of cards while `refresh()`'s
     /// background fetch (real `gh`/Bitbucket network calls) is in flight.
     private func buildLoadingState() -> NSView {
-        // D3: the page arrives in the shape of the content that is coming,
-        // rather than as a grey system spinner over a sentence.
+        // D3: the page arrives in the shape of the content that is coming.
+        // UI-63: in the *real* shapes - the banner card, the six stat tiles
+        // and the In flight card - rather than one generic list in a box, so
+        // nothing moves when the data lands.
         loadingLabel.font = HelmType.caption()
         loadingLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [loadingLabel, loadingSkeleton])
+        bannerSkeletonCard.setBody(HelmSkeletonList(rows: 1), insets: HelmCard.contentInsets)
+        let tiles = NSStackView()
+        tiles.orientation = .horizontal
+        tiles.distribution = .fillEqually
+        tiles.spacing = HelmMetrics.s3
+        tiles.translatesAutoresizingMaskIntoConstraints = false
+        for _ in 0..<6 {
+            let tile = HelmCard()
+            // The pill is a fixed width, so it is pinned on its leading edge
+            // only. Pinned edge to edge, six equal tiles tied to the page's
+            // width became a required *width* for the whole window - measured,
+            // showing Fleet shrank a 1512pt window to 744pt (gotcha (13)).
+            let pill = HelmSkeletonRow(shape: .pill)
+            pill.translatesAutoresizingMaskIntoConstraints = false
+            let holder = NSView()
+            holder.translatesAutoresizingMaskIntoConstraints = false
+            holder.addSubview(pill)
+            NSLayoutConstraint.activate([
+                pill.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
+                pill.trailingAnchor.constraint(lessThanOrEqualTo: holder.trailingAnchor),
+                pill.topAnchor.constraint(equalTo: holder.topAnchor),
+                pill.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
+            ])
+            tile.setBody(holder, insets: HelmCard.contentInsets)
+            tileSkeletonCards.append(tile)
+            tiles.addArrangedSubview(tile)
+        }
+        listSkeletonCard.setBody(loadingSkeleton, insets: HelmCard.contentInsets)
+
+        let stack = NSStackView(views: [loadingLabel, bannerSkeletonCard, tiles, listSkeletonCard])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = HelmMetrics.s3
+        stack.spacing = HelmMetrics.s4
         stack.translatesAutoresizingMaskIntoConstraints = false
+        for view in [bannerSkeletonCard, tiles, listSkeletonCard] as [NSView] {
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
 
-        loadingContainer.wantsLayer = true
-        loadingContainer.layer?.cornerRadius = 10
         loadingContainer.translatesAutoresizingMaskIntoConstraints = false
         loadingContainer.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: loadingContainer.leadingAnchor, constant: HelmMetrics.s3),
-            stack.trailingAnchor.constraint(equalTo: loadingContainer.trailingAnchor, constant: -HelmMetrics.s3),
-            stack.topAnchor.constraint(equalTo: loadingContainer.topAnchor, constant: HelmMetrics.s4),
-            stack.bottomAnchor.constraint(equalTo: loadingContainer.bottomAnchor, constant: -HelmMetrics.s4),
+            stack.leadingAnchor.constraint(equalTo: loadingContainer.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: loadingContainer.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: loadingContainer.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: loadingContainer.bottomAnchor),
         ])
         return loadingContainer
     }
+
+    private let bannerSkeletonCard = HelmCard()
+    private var tileSkeletonCards: [HelmCard] = []
+    private let listSkeletonCard = HelmCard()
 
     /// One `HelmStatTile` - the app's shared stat tile
     /// (`HelmDesignSystem.swift`, audit §6.3 component 4). This page's own copy
@@ -1197,9 +1251,6 @@ final class FleetController: NSViewController {
     private func applyTheme() {
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
-        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
-        let line = HelmTheme.nsColor(theme.chromeLineHex)
-
         // Fix 8 (fixes4): every "muted" text style below now routes through
         // `HelmTheme.mutedInk`, not its own ad hoc alpha - `0.55`/`0.6` looked
         // fine in the dark palettes but measured below WCAG AA (as low as
@@ -1211,11 +1262,9 @@ final class FleetController: NSViewController {
         // `refreshButton` is a `HelmButton` and themes itself - never set
         // `contentTintColor` on one, `restyle()` owns that property.
 
-        loadingContainer.layer?.backgroundColor = surface.cgColor
-        loadingContainer.layer?.borderWidth = 1
-        loadingContainer.layer?.borderColor = line.withAlphaComponent(0.4).cgColor
         loadingLabel.textColor = muted
         loadingSkeleton.applyTheme(theme)
+        for card in [bannerSkeletonCard, listSkeletonCard] + tileSkeletonCards { card.applyTheme(theme) }
 
         bannerRow.applyTheme(theme)
         briefingCard.applyTheme(theme)
