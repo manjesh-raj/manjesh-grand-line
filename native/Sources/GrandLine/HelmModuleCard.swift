@@ -1096,6 +1096,10 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         }
         titleLabel.stringValue = content.title
         subtitleLabel.stringValue = content.subtitle
+        // An empty subtitle leaves the header (a hidden arranged subview drops
+        // out of the stack), so the title centres on the tile instead of
+        // sitting over a blank line.
+        subtitleLabel.isHidden = content.subtitle.isEmpty
         // On the card view itself, not only on the inner surface: the whole
         // module is the hover target a captain aims at.
         toolTip = content.toolTip

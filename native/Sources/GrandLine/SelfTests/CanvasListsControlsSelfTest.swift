@@ -394,7 +394,11 @@ enum CanvasListsControlsSelfTest {
             return "the watermark is the raster tile itself - at 26% that is a grey rectangle behind the "
                  + "copy, not a silhouette (review #3's B4)"
         }
-        let images = state.subviews.compactMap { $0 as? NSImageView }
+        // Any depth: since UI-46 the watermark sits in the state's own stack.
+        func imageViews(in view: NSView) -> [NSImageView] {
+            view.subviews.flatMap { ($0 as? NSImageView).map { [$0] } ?? [] } + view.subviews.flatMap(imageViews)
+        }
+        let images = imageViews(in: state)
         guard let watermark = images.first(where: { $0.image === drawn }) else {
             return "the watermark image is not in the empty state's own view tree"
         }
