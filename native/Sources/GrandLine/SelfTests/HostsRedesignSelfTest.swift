@@ -774,7 +774,10 @@ enum HostsRedesignSelfTest {
         if nav.debugRowKinds != ["filter", "filter", "filter", "action", "action"] {
             fail("row kinds are \(nav.debugRowKinds) - a TOOLS row must not latch", &ok)
         }
-        if !nav.debugSurfaceIsPanel { fail("the column is not a panel surface", &ok) }
+        // UI-45: one sidebar shape across the app - the plain surface the
+        // Tasks sidebar uses. A boxed nav panel was a second bordered surface
+        // beside the page's own cards.
+        if nav.debugSurfaceIsPanel { fail("the column is boxed again - UI-45 puts every sidebar on the plain surface", &ok) }
         // Review #3's UI1 inverted this one. It used to assert the WORKSPACE
         // rows *were* badged; the badge was the fourth statement of the same
         // number on one screen (this row, the card header, the drill subtitle

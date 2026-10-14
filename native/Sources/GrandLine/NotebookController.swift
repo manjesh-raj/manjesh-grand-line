@@ -99,7 +99,11 @@ final class NotebookController: NSViewController, DaylightDrillActions {
     // MARK: Views
 
     private let toolbar = HelmPageToolbar()
-    private let sidebar = HelmPageSidebar(surface: .panel, countStyle: .badge)
+    /// UI-45: one sidebar shape across the app - `HelmPageSidebar` on the
+    /// plain surface with muted counts, the Tasks sidebar the revamp kept.
+    /// A boxed panel around the nav was a second bordered surface beside the
+    /// page's own cards (Rule 1).
+    private let sidebar = HelmPageSidebar()
     private lazy var modeTabs = HelmSegmentedTabs(
         items: ViewMode.allCases.map { .init(id: $0.rawValue, title: $0.title) },
         selected: mode.rawValue, size: .compact)
@@ -134,9 +138,13 @@ final class NotebookController: NSViewController, DaylightDrillActions {
     private let backlinksStack = NSStackView()
     private let inspectorCard = HelmCard()
     private let inspectorStack = NSStackView()
-    private let statusLabel = NSTextField(labelWithString: "")
-
-    private var railVisible = true
+    /// UI-54: Split means two panes. Backlinks and Page are an inspector the
+    /// toolbar's `sidebar.right` button shows, hidden until the captain asks
+    /// for it, and the choice is remembered.
+    private var railVisible = AppDefaults.store.bool(forKey: NotebookController.inspectorDefaultsKey) {
+        didSet { AppDefaults.store.set(railVisible, forKey: Self.inspectorDefaultsKey) }
+    }
+    static let inspectorDefaultsKey = "fm.notebook.inspectorVisible"
     private var railWidth: NSLayoutConstraint!
     /// The collapsed state's own constraint. Separate from `railWidth`, and
     /// **required**, for a reason gotcha (13) makes precise: a required
@@ -334,12 +342,10 @@ final class NotebookController: NSViewController, DaylightDrillActions {
             self.mode = picked
             self.applyMode()
         }
-        statusLabel.font = HelmType.caption()
-        statusLabel.lineBreakMode = .byTruncatingTail
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        toolbar.setLeading(HelmPageToolbar.group([modeTabs, statusLabel]))
+        // The sync line that sat beside the mode switch was the drill
+        // header's subtitle, word for word, one row above it.
+        toolbar.setLeading(HelmPageToolbar.group([modeTabs]))
         toolbar.setTrailing(HelmPageToolbar.group([findButton, railButton, deleteButton]))
 
         NSLayoutConstraint.activate([
@@ -430,6 +436,10 @@ final class NotebookController: NSViewController, DaylightDrillActions {
         host.layer?.masksToBounds = true
         host.addSubview(webView)
         editorOverlay.translatesAutoresizingMaskIntoConstraints = false
+        // Opaque, in the card's own surface: transparent, it let Monaco's
+        // editor background show through under the empty state, which on Dusk
+        // put a page-ground body under a card-coloured header.
+        editorOverlay.wantsLayer = true
         host.addSubview(editorOverlay)
         NSLayoutConstraint.activate([
             webView.leadingAnchor.constraint(equalTo: host.leadingAnchor),
@@ -1014,9 +1024,9 @@ final class NotebookController: NSViewController, DaylightDrillActions {
         return chip
     }
 
+    /// The sync state's one reader on this page is the drill subtitle, so a
+    /// change only has to refresh the inspector's own sync row.
     private func refreshStatusLine() {
-        statusLabel.stringValue = syncSummary
-        statusLabel.textColor = HelmTheme.mutedInk(theme)
         refreshInspector()
     }
 
@@ -1189,6 +1199,7 @@ final class NotebookController: NSViewController, DaylightDrillActions {
         sidebar.applyTheme(theme)
         editorCard.applyTheme(theme)
         previewCard.applyTheme(theme)
+        editorOverlay.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         backlinksCard.applyTheme(theme)
         inspectorCard.applyTheme(theme)
         editorOverlayState?.applyTheme(theme)

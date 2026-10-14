@@ -188,7 +188,11 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// `fm/grand-line-schedules-sidebar-fullwidth-fix`. See
     /// `HostsSidebar.swift`'s header for the full note, including why review
     /// #3's UI1 then removed the tab strip this column used to sit beside.
-    private let sidebar = HelmPageSidebar(surface: .panel)
+    /// UI-45: one sidebar shape across the app - `HelmPageSidebar` on the
+    /// plain surface with muted counts, the Tasks sidebar the revamp kept.
+    /// A boxed panel around the nav was a second bordered surface beside the
+    /// page's own cards (Rule 1).
+    private let sidebar = HelmPageSidebar()
     private let keychainCard = HostsKeychainCard()
     private let userRow = HostsUserRow()
 

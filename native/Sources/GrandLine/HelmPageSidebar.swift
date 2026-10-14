@@ -920,6 +920,39 @@ final class HelmPageSidebar: NSView {
 
     // MARK: Theme
 
+    /// UI-45: the nav column's row and header colours, as one value - so a
+    /// column that cannot be a `HelmPageSidebar` (DevOps Commands, whose
+    /// column is also a 73-row command list) still reads as this one.
+    struct RowPalette {
+        let ink: NSColor
+        let muted: NSColor
+        let selectedFill: NSColor
+        let hoverFill: NSColor
+        let selectedInk: NSColor
+    }
+
+    static func rowPalette(_ theme: HelmTheme) -> RowPalette {
+        let accent = HelmTheme.nsColor(theme.accentHex)
+        // The same accent wash `HelmAccentRow` paints for its own selected
+        // card, so a selected nav row and a selected list row are one idiom.
+        let surfaceColor = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        let selectedFill = surfaceColor.blended(withFraction: HelmAccentRow.selectionWash, of: accent) ?? surfaceColor
+        let hoverFill = surfaceColor.blended(withFraction: HelmAccentRow.selectionWash / 2.5, of: accent) ?? surfaceColor
+        // A selected row's label takes the corrected accent - never the raw
+        // hue, which is audit §5.7's defect (`HelmContrast`'s own rule: a
+        // tint is safe as a fill and is not automatically safe as text).
+        let selectedInk = HelmContrast.legibleTintedText(
+            tintHex: theme.accentHex, overAnyOf: [selectedFill, surfaceColor], theme: theme)
+        return RowPalette(ink: HelmTheme.nsColor(theme.chromeInkHex), muted: HelmTheme.mutedInk(theme),
+                          selectedFill: selectedFill, hoverFill: hoverFill, selectedInk: selectedInk)
+    }
+
+    /// A section header, as the column draws it: the kicker, upper-cased, muted.
+    static func headerString(_ title: String, theme: HelmTheme) -> NSAttributedString {
+        NSAttributedString(string: title.uppercased(),
+                           attributes: HelmType.kickerAttributes(color: HelmTheme.mutedInk(theme)))
+    }
+
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
         defer { applyAttentionCounts() }
@@ -928,31 +961,22 @@ final class HelmPageSidebar: NSView {
         if surface == .panel {
             HelmCard.applyCardSurface(to: self, theme: theme)
         }
-        let muted = HelmTheme.mutedInk(theme)
-        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let palette = Self.rowPalette(theme)
+        let muted = palette.muted
+        let ink = palette.ink
         let accent = HelmTheme.nsColor(theme.accentHex)
-        // The same accent wash `HelmAccentRow` paints for its own selected
-        // card, so a selected nav row and a selected list row are one idiom.
         let surfaceColor = HelmTheme.nsColor(theme.chromeBackgroundHex)
-        let selectedFill = surfaceColor.blended(withFraction: HelmAccentRow.selectionWash, of: accent) ?? surfaceColor
-        let hoverFill = surfaceColor.blended(withFraction: HelmAccentRow.selectionWash / 2.5, of: accent) ?? surfaceColor
+        let selectedFill = palette.selectedFill
+        let hoverFill = palette.hoverFill
+        let selectedInk = palette.selectedInk
 
         emptyBodyLabel?.textColor = muted
         for header in headers {
-            header.attributedStringValue = NSAttributedString(
-                string: (header.placeholderString ?? "").uppercased(),
-                attributes: HelmType.kickerAttributes(color: muted))
+            header.attributedStringValue = Self.headerString(header.placeholderString ?? "", theme: theme)
         }
 
         for row in rows {
             let isSelected = row.kind == .filter && row.id == selections[row.group]
-            // A selected row's label takes the corrected accent - never the raw
-            // hue, which is audit §5.7's defect (`HelmContrast`'s own rule: a
-            // tint is safe as a fill and is not automatically safe as text).
-            let selectedInk = HelmContrast.legibleTintedText(
-                tintHex: theme.accentHex,
-                overAnyOf: [selectedFill, HelmTheme.nsColor(theme.chromeBackgroundHex)],
-                theme: theme)
             row.label.textColor = isSelected ? selectedInk : ink
             row.icon.contentTintColor = isSelected ? selectedInk : muted
             // The dot carries the **raw** tint, deliberately: it is the same
