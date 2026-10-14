@@ -1317,7 +1317,12 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         systemLightPopUp.setAccessibilityLabel("Light theme")
         systemDarkPopUp.setAccessibilityLabel("Dark theme")
         for card in [systemLightPopUp, systemDarkPopUp] {
-            card.widthAnchor.constraint(equalToConstant: Self.pairCardWidth).isActive = true
+            // gotcha (13): a preference at `contentTie`, never required - two
+            // required 196pt cards made the row a width floor, and Settings at
+            // a 760pt window resolved to 767 (DaylightDrillPageSlice6SelfTest).
+            let width = card.widthAnchor.constraint(equalToConstant: Self.pairCardWidth)
+            width.priority = HelmDaylightPriority.contentTie
+            width.isActive = true
         }
         let pairControls = NSStackView(views: [systemLightPopUp, systemDarkPopUp])
         pairControls.orientation = .horizontal

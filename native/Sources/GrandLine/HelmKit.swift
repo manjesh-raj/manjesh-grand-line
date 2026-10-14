@@ -795,3 +795,81 @@ enum HelmRelativeTime {
         return "\(Int((seconds / 86_400).rounded(.down)))d ago"
     }
 }
+
+// MARK: - The overflow menu
+
+/// UI-47: a page's secondary actions behind one quiet "⋯" button.
+///
+/// The rule it carries: the bar or toolbar shows the page's primary action,
+/// one more, and the view controls; everything else is one click away here.
+/// A page that put six or eight same-weight pills in a row made the one that
+/// mattered impossible to find. Each item runs the same handler its old
+/// button did, so moving an action into the menu changes where it lives, not
+/// what it does.
+final class HelmOverflowMenu: NSObject {
+    struct Item {
+        /// Read as the menu opens - an action whose name follows the page's
+        /// state ("Clear" before an analysis, "Discard" after) stays one item.
+        let currentTitle: () -> String
+        var title: String { currentTitle() }
+        let symbol: String?
+        /// Read each time the menu opens, so an item follows the page's own
+        /// state (a missing bundle, an empty board) without being rebuilt.
+        let isEnabled: () -> Bool
+        let run: () -> Void
+
+        init(_ title: String, symbol: String? = nil,
+             isEnabled: @escaping () -> Bool = { true }, run: @escaping () -> Void) {
+            self.init(title: { title }, symbol: symbol, isEnabled: isEnabled, run: run)
+        }
+
+        init(title: @escaping () -> String, symbol: String? = nil,
+             isEnabled: @escaping () -> Bool = { true }, run: @escaping () -> Void) {
+            self.currentTitle = title
+            self.symbol = symbol
+            self.isEnabled = isEnabled
+            self.run = run
+        }
+    }
+
+    let items: [Item]
+    private(set) lazy var button: HelmButton = HelmPageToolbar.iconButton(
+        symbol: "ellipsis", tooltip: tooltip, target: self, action: #selector(open(_:)))
+    private let tooltip: String
+
+    init(items: [Item], tooltip: String = "More actions") {
+        self.items = items
+        self.tooltip = tooltip
+        super.init()
+        button.setAccessibilityLabel(tooltip)
+    }
+
+    /// The menu as it would open now - built fresh, so enablement is current.
+    func makeMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for (index, item) in items.enumerated() {
+            let entry = NSMenuItem(title: item.title, action: #selector(picked(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.tag = index
+            entry.isEnabled = item.isEnabled()
+            if let symbol = item.symbol { entry.withSymbol(symbol) }
+            menu.addItem(entry)
+        }
+        return menu
+    }
+
+    @objc private func open(_ sender: NSView) {
+        makeMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + HelmMetrics.s1), in: sender)
+    }
+
+    @objc private func picked(_ sender: NSMenuItem) {
+        guard items.indices.contains(sender.tag) else { return }
+        items[sender.tag].run()
+    }
+
+    #if FM_SELFTESTS
+    var debugTitles: [String] { items.map(\.title) }
+    func debugRun(_ title: String) { items.first { $0.title == title }?.run() }
+    #endif
+}

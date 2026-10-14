@@ -170,9 +170,22 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     private let sourcePopup = HelmPopUpButton()
     private let modePopup = HelmPopUpButton()
     private var analyzeButton: HelmButton!
-    private var clearButton: HelmButton!
+    /// UI-47: the input row is Analyze and Analyze Clipboard; adding a file
+    /// and clearing (Esc) are in "⋯".
+    private lazy var inputMoreMenu = HelmOverflowMenu(items: [
+        .init("Add File\u{2026}", symbol: "doc.badge.plus") { [weak self] in self?.addFileTapped() },
+        .init(title: { [weak self] in (self?.investigation.analysis != nil) ? "Discard analysis" : "Clear input" },
+              symbol: "eraser", run: { [weak self] in self?.clearTapped() }),
+    ], tooltip: "More - add a file or clear")
+    /// UI-47: the results row is Investigate Further and Create Incident; the
+    /// other four write-ups and shortcuts are in "⋯".
+    private lazy var resultsMoreMenu = HelmOverflowMenu(items: [
+        .init("Create Runbook", symbol: "book.closed") { [weak self] in self?.createRunbook() },
+        .init("Create Ticket", symbol: "ticket") { [weak self] in self?.createTicket() },
+        .init("Compare with another run", symbol: "arrow.left.arrow.right") { [weak self] in self?.showCompareTab() },
+        .init("Copy Full Analysis", symbol: "doc.on.doc") { [weak self] in self?.copyFullAnalysis() },
+    ], tooltip: "More - runbook, ticket, compare or copy")
     private var clipboardButton: HelmButton!
-    private var fileButton: HelmButton!
     private let inputHintLabel = NSTextField(labelWithString: "")
 
     private let analyzingRow = NSStackView()
@@ -495,24 +508,21 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         // see `HelmButton`'s own header.
         analyzeButton.keyEquivalent = "\r"
         analyzeButton.keyEquivalentModifierMask = [.command]
-        clearButton = HelmButton(title: "Clear", variant: .secondary, target: self, action: #selector(clearTapped))
         clipboardButton = HelmButton(title: "Analyze Clipboard", variant: .secondary, symbol: "list.clipboard",
                                      target: self, action: #selector(analyzeClipboard))
-        fileButton = HelmButton(title: "Add File", variant: .secondary, symbol: "doc.badge.plus",
-                                target: self, action: #selector(addFileTapped))
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        for button in [clipboardButton!, fileButton!, clearButton!, analyzeButton!] {
+        for button in [clipboardButton!, inputMoreMenu.button, analyzeButton!] {
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
 
         let controls = NSStackView(views: [sourcePopup, modePopup, spacer,
-                                           clipboardButton, fileButton, clearButton, analyzeButton])
+                                           clipboardButton, inputMoreMenu.button, analyzeButton])
         controls.orientation = .horizontal
         controls.alignment = .centerY
         controls.distribution = .fill
@@ -1187,21 +1197,13 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
                                        target: self, action: #selector(investigateFurther))
         let incident = HelmButton(title: "Create Incident", variant: .secondary, symbol: "doc.text",
                                   target: self, action: #selector(createIncident))
-        let runbook = HelmButton(title: "Create Runbook", variant: .secondary, symbol: "book.closed",
-                                 target: self, action: #selector(createRunbook))
-        let ticket = HelmButton(title: "Create Ticket", variant: .secondary, symbol: "ticket",
-                                target: self, action: #selector(createTicket))
-        let copyAll = HelmButton(title: "Copy Full Analysis", variant: .quiet, symbol: "doc.on.doc",
-                                 target: self, action: #selector(copyFullAnalysis))
-        let compareShortcut = HelmButton(title: "Compare", variant: .quiet, symbol: "arrow.left.arrow.right",
-                                         target: self, action: #selector(showCompareTab))
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let buttons: [HelmButton] = [investigateButton, incident, runbook, ticket, compareShortcut, copyAll]
+        let buttons: [HelmButton] = [investigateButton, incident, resultsMoreMenu.button]
         for button in buttons {
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -2123,7 +2125,6 @@ extension LogAnalyzerController {
         // Only meaningful once there is an analysis to add evidence *to*;
         // before that, the whole page is the "add evidence" affordance.
         if !hasAnalysis { neededEvidenceVisible = false }
-        clearButton.title = hasAnalysis ? "Discard" : "Clear"
     }
 
     private func renderImportBadge() {

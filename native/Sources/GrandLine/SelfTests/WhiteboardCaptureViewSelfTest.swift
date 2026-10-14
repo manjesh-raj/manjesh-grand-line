@@ -314,14 +314,19 @@ enum WhiteboardCaptureViewSelfTest {
     private static func checkHeaderDoesNotResizeTheWindow(_ controller: WhiteboardController,
                                                           _ window: NSWindow,
                                                           _ check: (Bool, String) -> Void) {
+        // UI-47: the bar carries the two authoring verbs and a "⋯"; F15's
+        // Capture and Copy, Fit and Clear are in that menu, each still
+        // reaching the handler its button did.
         let actions = controller.drillHeaderActions
-        check(actions.count == 6, "the Whiteboard's action cluster should carry six buttons - got \(actions.count)")
+        check(actions.count == 3, "the Whiteboard's bar should carry From text, Generate and More - got \(actions.count)")
+        let menuTitles = controller.debugMoreMenuTitles
+        check(menuTitles.contains { $0.hasPrefix("Capture") } && menuTitles.contains { $0.hasPrefix("Copy") },
+              "Capture and Copy should be in the More menu - got \(menuTitles)")
         let total = actions.reduce(CGFloat(0)) { $0 + $1.fittingSize.width }
         // The narrowest display this app is expected on is 1280pt wide; the
-        // cluster shares the bar with a title, a search pill and an avatar, so
-        // it has no business claiming half of that.
-        check(total < 620,
-              "the six action buttons should stay well inside a bar - they want \(Int(total))pt")
+        // cluster shares the bar with a title, a search pill and an avatar.
+        check(total < 360,
+              "the bar's actions should stay well inside it - they want \(Int(total))pt")
 
         // And the window itself still resizes, which is the outcome gotcha
         // (13) is actually about.

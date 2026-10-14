@@ -54,6 +54,7 @@ enum HelmKitSelfTest {
             checkFlatList(&ok)
             checkReadingAndKPIStrip(&ok)
             checkQuietEmptyState(&ok)
+            checkOverflowMenu(&ok)
         }
         print(ok ? "HelmKitSelfTest: OK" : "HelmKitSelfTest: FAILED")
         return ok
@@ -315,6 +316,32 @@ enum HelmKitSelfTest {
             check(!compact.debugArtworkHidden,
                   "\(id): a compact empty state still draws its artwork, or the check above cannot fail", &ok)
         }
+    }
+    /// UI-47: the "⋯" menu builds one item per action, reads enablement and
+    /// a state-dependent title each time it opens, and picking an item runs
+    /// that item's handler - not its neighbour's.
+    private static func checkOverflowMenu(_ ok: inout Bool) {
+        var ran: [String] = []
+        var canClear = false
+        var hasAnalysis = false
+        let menu = HelmOverflowMenu(items: [
+            .init("Add File") { ran.append("add") },
+            .init(title: { hasAnalysis ? "Discard analysis" : "Clear input" },
+                  isEnabled: { canClear }, run: { ran.append("clear") }),
+        ])
+        var built = menu.makeMenu()
+        check(built.items.map(\.title) == ["Add File", "Clear input"], "titles, got \(built.items.map(\.title))", &ok)
+        check(built.items[0].isEnabled && !built.items[1].isEnabled, "enablement is read as the menu opens", &ok)
+        canClear = true
+        hasAnalysis = true
+        built = menu.makeMenu()
+        check(built.items[1].isEnabled && built.items[1].title == "Discard analysis",
+              "a reopened menu follows the page's state", &ok)
+        if let item = built.items.last, let target = item.target, let action = item.action {
+            _ = (target as AnyObject).perform(action, with: item)
+        }
+        check(ran == ["clear"], "picking the second item runs the second handler, got \(ran)", &ok)
+        check(menu.button.accessibilityLabel() == "More actions", "the button names itself for VoiceOver", &ok)
     }
 }
 
