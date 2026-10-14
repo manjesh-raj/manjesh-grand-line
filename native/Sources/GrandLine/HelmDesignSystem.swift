@@ -3502,16 +3502,14 @@ final class HelmEmptyState: NSView {
     static let watermarkOpacity: CGFloat = 0.26
     static let watermarkSide: CGFloat = 116
 
-    /// U3: how far the watermark's bottom edge reaches *past* the top of the
-    /// content stack. A few points, so the mark reads as rising out of the
-    /// glyph rather than floating unattached above it, while staying clear of
-    /// the title - the glyph row is 40pt tall at `.standard`, so this never
-    /// comes near the first word.
-    static let watermarkGlyphOverlap: CGFloat = 10
+    /// The gap between the watermark and the title under it (UI-46).
+    static let watermarkTitleGap: CGFloat = HelmMetrics.s3
 
     /// Whether the watermark is drawing the destination's SF Symbol rather
     /// than the raster it was handed - see `artworkIsOpaqueSlab`.
     private var watermarkUsesSymbol = false
+    /// Whether this state carries the destination's watermark (UI-46).
+    private var hasWatermark = false
 
     /// Is this image a solid rectangle rather than a silhouette?
     ///
@@ -3651,6 +3649,7 @@ final class HelmEmptyState: NSView {
         // crossing live text. It sits **above** the glyph now (the finding's
         // own first suggestion), so it overlaps nothing but the top of the
         // icon row and never reaches a word.
+        hasWatermark = artwork != nil
         if let artwork {
             // B4: a raster that is really a solid tile is swapped for the
             // destination's own glyph; `applyTheme` is what renders and tints
@@ -3667,37 +3666,27 @@ final class HelmEmptyState: NSView {
 
         addSubview(stack)
         if artwork != nil {
-            // Below the stack in z-order, so the copy always renders on top
-            // of the mark - the property the old "added first" ordering gave
-            // for free, kept explicitly now that the mark is added after the
-            // stack it constrains against.
-            addSubview(watermark, positioned: .below, relativeTo: stack)
-            // U3: the mark's *bottom* is tied just inside the glyph row's
-            // top, so it rises out of the icon rather than sitting behind the
-            // copy. It is backed by a `top >= top` so a short container keeps
-            // the mark inside its own bounds instead of painting over
-            // whatever sits above it - containment therefore has to outrank
-            // the lift.
+            // UI-46: the watermark is the state's one mark, so it sits **in
+            // the stack's flow** above the title - where it cannot overlap a
+            // word whatever the container's height. (U3's earlier fix floated
+            // it above the stack on non-required constraints; with the glyph
+            // row gone, a short container let containment push the mark down
+            // across the title - measured on Kubernetes at 1400x760.)
             //
-            // **Both sit in gotcha (13)'s 251-499 band, and neither may be
-            // required.** A window holds its own size at priority 500, so a
-            // required containment constraint on a 116pt decoration is a
-            // content-driven window resize: measured, it drove Kubernetes'
-            // page to a 743pt content height against the window's 718 and
-            // failed `AppShellBodyWidthSelfTest.
-            // bodyHeightTracksWindowAcrossAllDestinations` by name. A
-            // watermark must never be the reason a page is taller.
-            let watermarkLift = watermark.bottomAnchor.constraint(
-                equalTo: stack.topAnchor, constant: Self.watermarkGlyphOverlap)
-            watermarkLift.priority = NSLayoutConstraint.Priority(450)
-            let watermarkContainment = watermark.topAnchor.constraint(greaterThanOrEqualTo: topAnchor)
-            watermarkContainment.priority = NSLayoutConstraint.Priority(499)
+            // gotcha (13): its 116pt is a preference at 499, below the
+            // window's own 500, with a required `<=` ceiling - in a cramped
+            // container the mark shrinks rather than making the page taller.
+            stack.insertArrangedSubview(watermark, at: 0)
+            stack.setCustomSpacing(Self.watermarkTitleGap, after: watermark)
+            watermark.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+            watermark.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            watermark.setContentHuggingPriority(.defaultLow, for: .vertical)
+            let preferred = watermark.heightAnchor.constraint(equalToConstant: Self.watermarkSide)
+            preferred.priority = NSLayoutConstraint.Priority(499)
             NSLayoutConstraint.activate([
-                watermark.centerXAnchor.constraint(equalTo: centerXAnchor),
-                watermarkLift,
-                watermarkContainment,
-                watermark.widthAnchor.constraint(equalToConstant: Self.watermarkSide),
-                watermark.heightAnchor.constraint(equalToConstant: Self.watermarkSide),
+                preferred,
+                watermark.heightAnchor.constraint(lessThanOrEqualToConstant: Self.watermarkSide),
+                watermark.widthAnchor.constraint(equalTo: watermark.heightAnchor),
             ])
         }
 
@@ -3740,7 +3729,7 @@ final class HelmEmptyState: NSView {
     func debugWatermarkLayout() -> WatermarkLayout {
         layoutSubtreeIfNeeded()
         return WatermarkLayout(
-            watermarkFrame: watermark.superview == nil ? .zero : watermark.frame,
+            watermarkFrame: watermark.superview == nil ? .zero : convert(watermark.bounds, from: watermark),
             titleFrame: convert(titleLabel.bounds, from: titleLabel),
             bodyFrame: convert(bodyLabel.bounds, from: bodyLabel),
             titleIsVisible: !titleLabel.isHidden)
@@ -3826,8 +3815,12 @@ final class HelmEmptyState: NSView {
         // §6.14: under Daylight the glyph becomes a gradient plate and the
         // headline takes the rounded display face. Exactly one of the two is
         // ever visible.
-        tile.isHidden = !theme.isDaylight || size == .quiet
-        iconView.isHidden = theme.isDaylight || size == .quiet
+        //
+        // UI-46: a page-level state with a watermark carries **one** mark -
+        // the watermark is the page's own artwork, so a gradient tile under
+        // it was a second icon for the same page (Postmortems drew both).
+        tile.isHidden = !theme.isDaylight || size == .quiet || hasWatermark
+        iconView.isHidden = theme.isDaylight || size == .quiet || hasWatermark
         if watermarkUsesSymbol {
             // The same glyph the tile shows, drawn large and faint. Tinted
             // `mutedInk` rather than left at a template's default so it reads
@@ -3839,6 +3832,14 @@ final class HelmEmptyState: NSView {
                                                weight: .regular,
                                                hierarchicalColor: muted,
                                                accessibilityDescription: nil)
+        }
+        if hasWatermark {
+            // An SF Symbol's image view lays out its *alignment rect*, and its
+            // frame (what draws) overhangs it by the symbol's insets - 50pt
+            // in total for a 116pt mark. The gap to the title is measured from
+            // what draws, so it carries the bottom overhang.
+            stack.setCustomSpacing(Self.watermarkTitleGap + max(0, watermark.alignmentRectInsets.bottom),
+                                   after: watermark)
         }
         tile.applyTheme(theme)
         if theme.isDaylight {

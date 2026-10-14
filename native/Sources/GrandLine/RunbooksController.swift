@@ -379,11 +379,15 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
                                   target: self, action: #selector(seedExampleRunbookTapped))
             seed.controlSize = .small
             seed.toolTip = "Writes one short example runbook you can edit or delete."
+            // UI-46: the page-level recipe - the page's own watermark, a
+            // title and one sentence - rather than a lone tile over a line.
             let empty = HelmEmptyState(symbol: "list.bullet.rectangle",
-                                       body: "No runbooks yet. Create one, or start from an example.",
+                                       title: "No runbooks yet",
+                                       body: "Create one with New Runbook, or start from an example.",
                                        size: .standard,
                                        accessory: seed,
-                                       hue: RailDestination.runbooks.domainHue)
+                                       hue: RailDestination.runbooks.domainHue,
+                                       artwork: RailDestination.runbooks.drillHeaderArtwork)
             empty.heightAnchor.constraint(greaterThanOrEqualToConstant: 110).isActive = true
             runbookGridEmptyState = empty
             runbookListStack.addArrangedSubview(empty)

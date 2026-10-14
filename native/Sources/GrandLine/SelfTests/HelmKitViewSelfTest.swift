@@ -42,6 +42,7 @@ enum HelmKitViewSelfTest {
             checkMetaLineChip(&ok)
             checkTrailingCaption(&ok)
             checkSectionHeaderActions(&ok)
+            checkPageEmptyStateHasOneMark(&ok)
         }
         print(ok ? "HelmKitViewSelfTest: OK" : "HelmKitViewSelfTest: FAILED")
         return ok
@@ -165,6 +166,23 @@ enum HelmKitViewSelfTest {
         let title = header.titleLabel.convert(header.titleLabel.bounds, to: header)
         check(count.minX >= title.maxX && count.minX - title.maxX < 12,
               "the count should sit right beside the title, not drift with the slack", &ok)
+    }
+    /// UI-46: a page-level empty state with the destination's watermark draws
+    /// that one mark - no gradient tile under it - and one without a
+    /// watermark keeps its tile, so the rule is about the watermark.
+    private static func checkPageEmptyStateHasOneMark(_ ok: inout Bool) {
+        guard let artwork = RailDestination.postmortems.drillHeaderArtwork else {
+            fail("Postmortems has no artwork, so the watermark case proves nothing", &ok)
+            return
+        }
+        let withMark = HelmEmptyState(symbol: "doc.text.magnifyingglass", title: "Nothing yet",
+                                      body: "A sentence.", size: .standard, artwork: artwork)
+        let withoutMark = HelmEmptyState(symbol: "doc.text.magnifyingglass", title: "Nothing yet",
+                                         body: "A sentence.", size: .standard)
+        _ = mount(withMark, width: 600)
+        _ = mount(withoutMark, width: 600)
+        check(withMark.debugArtworkHidden, "a watermarked page state draws no tile or glyph as well", &ok)
+        check(!withoutMark.debugArtworkHidden, "a state without a watermark keeps its tile", &ok)
     }
 }
 

@@ -309,17 +309,16 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
             cell.configure(name: name, theme: theme)
             return cell
         case .empty(let symbol, let title, let body):
-            // `.standard`, not `.compact`: this state is the whole card body of
-            // a full-width page, which is exactly the case the component's own
-            // doc comment reserves the larger glyph and the real title for.
-            // Reused by identifier like any other cell, but only while the
-            // symbol matches - the glyph is fixed at init.
+            // UI-46: `.quiet` - this state sits inside the list's own card,
+            // under the card's header, so it is the card-level recipe: one
+            // muted caption, no tile. The title becomes its first sentence.
+            let caption = title.isEmpty ? body : "\(title). \(body)"
             let reused = tableView.makeView(withIdentifier: Self.emptyID, owner: nil) as? HelmEmptyState
             let cell = (reused?.symbolName == symbol ? reused : nil)
-                ?? { let v = HelmEmptyState(symbol: symbol, title: title, body: body, size: .standard)
+                ?? { let v = HelmEmptyState(symbol: symbol, body: caption, size: .quiet)
                      v.identifier = Self.emptyID
                      return v }()
-            cell.setText(title: title, body: body)
+            cell.setText(body: caption)
             cell.applyTheme(theme)
             return cell
         case .record:
