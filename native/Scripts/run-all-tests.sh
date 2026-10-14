@@ -437,6 +437,11 @@ NEEDS_SESSION=(
   # window server and a live web content process. FM_RUN_CODE_PREVIEW_TESTS
   # covers the logic half and does run in CI.
   "FM_RUN_CODE_PREVIEW_VIEW_TESTS"
+  # Code Preview's snippet list: mounts the real page in a real window and
+  # drives the list's rows, keyboard, hide/show and resize handle, and measures
+  # the editor's width with the list shown and hidden. FM_RUN_CODE_PREVIEW_SIDEBAR_TESTS
+  # covers the logic half (order, filter, icons, preferences) and does run in CI.
+  "FM_RUN_CODE_PREVIEW_SIDEBAR_VIEW_TESTS"
   # F11's UI half: mounts the real Code Preview page in a real window, drives
   # the real Run/Format buttons and measures the editor's own rendered height
   # with the output pane hidden and shown. Its logic half

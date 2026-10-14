@@ -2875,6 +2875,14 @@ final class AppShellController: NSViewController {
         codePreview.runCodeSnippet()
     }
 
+    /// Code Preview's ⌘B: show or hide the snippet list. A no-op anywhere
+    /// else, for `runCodeSnippetFromMenu`'s reason - a chord that navigated to
+    /// toggle a column the captain is not looking at would be a surprise.
+    @objc func toggleCodePreviewSidebarFromMenu() {
+        guard case .rail(.codePreview)? = currentDestinationKindForMenus else { return }
+        codePreview.toggleSidebarFromMenu()
+    }
+
     /// F15's ⌘⇧S. Unlike `runCodeSnippetFromMenu` - which refuses off its own
     /// page because ⌘R has a page-local meaning - this one *navigates*: the
     /// capture is the thing the captain asked for, the Whiteboard is only

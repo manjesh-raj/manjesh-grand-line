@@ -117,6 +117,34 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
 
     private let toolbar = HelmPageToolbar()
     private let tabsStack = NSStackView()
+    /// The tab strip scrolls sideways once the tabs outgrow the toolbar, so a
+    /// page with forty snippets open shows forty reachable tabs rather than
+    /// forty chips crushed to nothing. The `+` sits outside it, so creating a
+    /// snippet never scrolls away.
+    private let tabStrip = NSView()
+    private let tabScroll = CodePreviewTabStripScrollView()
+    private let tabsDocument = NSView()
+    private lazy var sidebarButton = HelmPageToolbar.iconButton(
+        symbol: "sidebar.left", tooltip: "Hide the snippet list (\u{2318}B)",
+        target: self, action: #selector(toggleSidebarTapped))
+
+    // MARK: The snippet list (left column)
+
+    /// See `CodePreviewFileSidebar`'s header for why it is a flat list and
+    /// why it wears `HelmPageSidebar`'s recipe rather than being one.
+    private let sidebar = CodePreviewFileSidebar()
+    private let resizeHandle = CodePreviewSidebarResizeHandle()
+    private var sidebarVisible = CodePreviewSidebarPreferences.isVisible()
+    /// Below `NSLayoutPriorityWindowSizeStayPut` (gotcha (13)): the column's
+    /// width reaches `bodyContainer` through this page, so a required one
+    /// would be a floor on how narrow the captain's window may get.
+    private var sidebarWidth: NSLayoutConstraint!
+    /// The editor's leading edge, which is the one constraint showing and
+    /// hiding the column swaps - the neighbour collapses, not the column
+    /// (gotcha (17)'s footnote): the column has a real header row and filter
+    /// field, so a required `width == 0` on it would be a conflict.
+    private var editorBesideSidebar: NSLayoutConstraint!
+    private var editorAtPageEdge: NSLayoutConstraint!
     private lazy var plusButton = HelmPageToolbar.iconButton(
         symbol: "plus", tooltip: "New snippet",
         target: self, action: #selector(newSnippetTapped))
@@ -215,6 +243,11 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
 
     private static let cardInset: CGFloat = HelmMetrics.s3
     private static let statusBarHeight: CGFloat = 26
+    /// The tab strip's height inside the 44pt toolbar: a 28pt chip plus room
+    /// for its focus ring above and below.
+    /// See `buildTabStrip`: below a chip label's own compression resistance.
+    private static let tabStripFitPriority = NSLayoutConstraint.Priority(NSLayoutConstraint.Priority.defaultLow.rawValue - 50)
+    private static let tabStripHeight: CGFloat = HelmPageToolbar.iconButtonSide + 2 * HelmMetrics.s1
 
     // MARK: Init
 
@@ -272,6 +305,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         buildOutputPane(in: root)
         buildStatusBar(in: root)
         buildStatusBarPlacement()
+        buildSidebar(in: root)
 
         webView.onReady = { [weak self] in self?.editorBecameReady() }
         webView.onPageError = { [weak self] message in self?.report(error: message) }
@@ -414,7 +448,8 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         tabsStack.spacing = 4
         tabsStack.alignment = .centerY
         tabsStack.translatesAutoresizingMaskIntoConstraints = false
-        toolbar.setLeading(tabsStack)
+        buildTabStrip()
+        toolbar.setLeading(tabStrip)
 
         languagePicker.translatesAutoresizingMaskIntoConstraints = false
         languagePicker.target = self
@@ -442,6 +477,109 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             toolbar.topAnchor.constraint(equalTo: root.topAnchor),
         ])
+    }
+
+    /// The toolbar's leading slot: the column toggle, the scrolling tabs and
+    /// the `+`, in that order.
+    ///
+    /// The strip asks to be as wide as its tabs, and the toolbar's own
+    /// required clearance against the action cluster is what stops it - so
+    /// with a few tabs the `+` sits right after the last one, exactly where it
+    /// always was, and with many the strip scrolls. Nothing here is above 500,
+    /// so a long row of tabs can never widen the window (gotcha (13)).
+    ///
+    /// **That preference sits below `.defaultLow` (250), on purpose.** A
+    /// chip's label is compressible at 250, so at anything higher Auto Layout
+    /// satisfies "strip as wide as its tabs" the cheap way - by crushing every
+    /// chip to an empty pill until the tabs fit - instead of scrolling.
+    /// Measured exactly that way at 499 in a real render with 25 tabs open.
+    private func buildTabStrip() {
+        tabStrip.translatesAutoresizingMaskIntoConstraints = false
+        tabsDocument.translatesAutoresizingMaskIntoConstraints = false
+        tabsDocument.addSubview(tabsStack)
+
+        tabScroll.translatesAutoresizingMaskIntoConstraints = false
+        tabScroll.drawsBackground = false
+        tabScroll.hasHorizontalScroller = false
+        tabScroll.hasVerticalScroller = false
+        tabScroll.verticalScrollElasticity = .none
+        tabScroll.horizontalScrollElasticity = .allowed
+        tabScroll.documentView = tabsDocument
+        tabScroll.setAccessibilityLabel("Open snippet tabs")
+
+        sidebarButton.setAccessibilityLabel("Show or hide the snippet list")
+        for view in [sidebarButton, tabScroll, plusButton] as [NSView] { tabStrip.addSubview(view) }
+
+        let fitTabs = tabScroll.widthAnchor.constraint(equalTo: tabsDocument.widthAnchor)
+        fitTabs.priority = Self.tabStripFitPriority
+        NSLayoutConstraint.activate([
+            sidebarButton.leadingAnchor.constraint(equalTo: tabStrip.leadingAnchor),
+            sidebarButton.centerYAnchor.constraint(equalTo: tabStrip.centerYAnchor),
+
+            tabScroll.leadingAnchor.constraint(equalTo: sidebarButton.trailingAnchor, constant: HelmMetrics.s2),
+            tabScroll.topAnchor.constraint(equalTo: tabStrip.topAnchor),
+            tabScroll.bottomAnchor.constraint(equalTo: tabStrip.bottomAnchor),
+            // Room for a chip's focus ring above and below its 28pt body.
+            tabScroll.heightAnchor.constraint(equalToConstant: Self.tabStripHeight),
+            fitTabs,
+
+            plusButton.leadingAnchor.constraint(equalTo: tabScroll.trailingAnchor, constant: 4),
+            plusButton.trailingAnchor.constraint(equalTo: tabStrip.trailingAnchor),
+            plusButton.centerYAnchor.constraint(equalTo: tabStrip.centerYAnchor),
+
+            // The document is as wide as its tabs and as tall as the clip view
+            // (gotcha (4): pinned to the clip view, on the axis that does not
+            // scroll).
+            tabsDocument.heightAnchor.constraint(equalTo: tabScroll.contentView.heightAnchor),
+            tabsStack.leadingAnchor.constraint(equalTo: tabsDocument.leadingAnchor, constant: 2),
+            tabsStack.trailingAnchor.constraint(equalTo: tabsDocument.trailingAnchor, constant: -2),
+            tabsStack.centerYAnchor.constraint(equalTo: tabsDocument.centerYAnchor),
+        ])
+        // Nothing may scroll the strip vertically, and its document starts at
+        // the clip view's top-left rather than wherever the first layout pass
+        // left it.
+        tabsDocument.topAnchor.constraint(equalTo: tabScroll.contentView.topAnchor).isActive = true
+    }
+
+    /// The left column, its resize handle, and the editor's two alternative
+    /// leading edges. Built last so every view it ties to already exists.
+    private func buildSidebar(in root: NSView) {
+        root.addSubview(sidebar)
+        root.addSubview(resizeHandle)
+
+        sidebar.onOpen = { [weak self] key in self?.select(key: key) }
+        sidebar.onClose = { [weak self] key in self?.closeTab(key: key) }
+        sidebar.onDuplicate = { [weak self] key in self?.duplicateTab(key: key) }
+        sidebar.onRename = { [weak self] key in self?.beginRenameFromSidebar(key: key) }
+        sidebar.onDismissKeyboardFocus = { [weak self] in self?.focusEditor() }
+
+        resizeHandle.currentWidth = { [weak self] in self?.sidebarWidth.constant ?? 0 }
+        resizeHandle.onResize = { [weak self] width in self?.setSidebarWidth(width, remember: false) }
+        resizeHandle.onResizeEnded = { [weak self] width in self?.setSidebarWidth(width, remember: true) }
+        resizeHandle.onReset = { [weak self] in
+            self?.setSidebarWidth(CodePreviewSidebarPreferences.defaultWidth, remember: true)
+        }
+
+        sidebarWidth = sidebar.widthAnchor.constraint(equalToConstant: CodePreviewSidebarPreferences.width())
+        sidebarWidth.priority = HelmDaylightPriority.contentTie
+        editorBesideSidebar = editorCard.leadingAnchor.constraint(equalTo: resizeHandle.trailingAnchor)
+        editorAtPageEdge = editorCard.leadingAnchor.constraint(equalTo: root.leadingAnchor,
+                                                               constant: Self.cardInset)
+        NSLayoutConstraint.activate([
+            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardInset),
+            sidebar.topAnchor.constraint(equalTo: editorCard.topAnchor),
+            // Gotcha (16): the column's height is tied to the page, not left
+            // to its content - it runs from under the toolbar to the status
+            // bar, past the output pane, the way VS Code's Explorer does.
+            sidebar.bottomAnchor.constraint(equalTo: statusBar.topAnchor, constant: -Self.cardInset),
+            sidebarWidth,
+
+            resizeHandle.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            resizeHandle.topAnchor.constraint(equalTo: sidebar.topAnchor),
+            resizeHandle.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
+            resizeHandle.widthAnchor.constraint(equalToConstant: Self.cardInset),
+        ])
+        applySidebarVisibility()
     }
 
     private func buildEditor(in root: NSView) {
@@ -472,7 +610,8 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         }
 
         NSLayoutConstraint.activate([
-            editorCard.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardInset),
+            // The leading edge is one of the two `buildSidebar` owns and
+            // swaps as the snippet list shows and hides.
             editorCard.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -Self.cardInset),
             editorCard.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: Self.cardInset),
 
@@ -533,7 +672,10 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         outputPaneTopGap = gap
 
         NSLayoutConstraint.activate([
-            outputPane.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardInset),
+            // Under the editor, not under the snippet list: the column runs
+            // the page's full height, so the pane follows the editor's own
+            // leading edge whichever of its two it is on.
+            outputPane.leadingAnchor.constraint(equalTo: editorCard.leadingAnchor),
             outputPane.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -Self.cardInset),
         ])
     }
@@ -637,7 +779,6 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         guard !hasRestored else { return }
         hasRestored = true
         isRestoring = true
-        defer { isRestoring = false }
 
         // Audit §6.6a: the captain's own tab order, not filename order - so
         // renaming a tab no longer moves it on the next launch.
@@ -653,8 +794,9 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         if open.isEmpty {
             addTab(name: nextUntitledName(), content: "", persisted: false, select: false)
         }
-        if let first = open.first { select(key: first.key) }
+        isRestoring = false
         refreshTabBar()
+        if let first = open.first { select(key: first.key) }
         onDrillSubtitleChanged?()
     }
 
@@ -692,6 +834,9 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     private func addTab(name: String, content: String, persisted: Bool, select shouldSelect: Bool) -> OpenSnippet {
         let key = UUID().uuidString
         let chip = TabChipView(tabID: UUID(), name: name)
+        // A long name truncates on the chip, so the whole of it is one hover
+        // away (the chip's own label is tail-truncated at its 240pt cap).
+        chip.toolTip = name
         let snippet = OpenSnippet(key: key, name: name, content: content, persisted: persisted, chip: chip)
 
         chip.onSelect = { [weak self] in self?.select(key: key) }
@@ -706,8 +851,11 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             "content": content,
             "select": shouldSelect,
         ])
+        // The strip first, then the selection: selecting scrolls the new tab
+        // into view, which needs it to be in the strip already. A restore
+        // builds the strip once at the end instead of once per snippet.
+        if !isRestoring { refreshTabBar() }
         if shouldSelect { select(key: key) }
-        refreshTabBar()
         persistTabOrder()
         return snippet
     }
@@ -723,6 +871,17 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // own last run - never the neighbour's.
         renderPane()
         refreshRunControls()
+        refreshSidebar()
+        revealActiveSnippet()
+    }
+
+    /// Scrolls the active tab, and the active row, into view - however the
+    /// snippet was chosen (a tab, a row, ⌘K, a drop, a new snippet).
+    private func revealActiveSnippet() {
+        guard let snippet = currentSnippet else { return }
+        view.layoutSubtreeIfNeeded()
+        snippet.chip.scrollToVisible(snippet.chip.bounds.insetBy(dx: -HelmMetrics.s2, dy: 0))
+        sidebar.revealActiveRow()
     }
 
     private func closeTab(key: String) {
@@ -782,14 +941,13 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             // Put the chip back to the real name: the captain may have typed
             // something the store would have changed, and a chip showing a
             // name no file has is the start of the two-sources-of-truth bug.
-            snippet.chip.setName(snippet.name)
+            setName(snippet.name, for: snippet)
             return
         }
         let landed = snippet.persisted
             ? store.rename(from: snippet.name, to: target)
             : uniqueName(target, excluding: key)
-        snippet.name = landed
-        snippet.chip.setName(landed)
+        setName(landed, for: snippet)
         // The order file holds names, so a rename has to update it - and this
         // is the whole point of §6.6a: the tab keeps its slot instead of
         // jumping to wherever its new name sorts.
@@ -825,8 +983,98 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             v.removeFromSuperview()
         }
         for snippet in open { tabsStack.addArrangedSubview(snippet.chip) }
-        tabsStack.addArrangedSubview(plusButton)
         styleChips()
+        refreshSidebar()
+    }
+
+    /// The one place a snippet's name changes on screen: the model, the chip,
+    /// the chip's tooltip and the list row move together, so the tab and the
+    /// row can never name one snippet two ways.
+    private func setName(_ name: String, for snippet: OpenSnippet) {
+        snippet.name = name
+        snippet.chip.setName(name)
+        snippet.chip.toolTip = name
+        refreshSidebar()
+    }
+
+    private func refreshSidebar() {
+        sidebar.setEntries(open.map { CodePreviewFileEntry(key: $0.key, name: $0.name) },
+                           activeKey: currentKey)
+    }
+
+    // MARK: Showing and hiding the snippet list
+
+    /// The toolbar button.
+    @objc private func toggleSidebarTapped() {
+        setSidebarVisible(!sidebarVisible)
+    }
+
+    /// ⌘B, from the File menu. Showing the list from the keyboard also puts
+    /// the caret in its filter, so "⌘B, type a few letters, Return" reaches
+    /// any open snippet without the mouse; hiding it hands the keyboard back
+    /// to the editor.
+    func toggleSidebarFromMenu() {
+        setSidebarVisible(!sidebarVisible)
+        if sidebarVisible { sidebar.filterField.focusEditor() }
+    }
+
+    var isSidebarVisible: Bool { sidebarVisible }
+
+    private func setSidebarVisible(_ visible: Bool) {
+        let focusWasInside = sidebarHasKeyboardFocus
+        sidebarVisible = visible
+        CodePreviewSidebarPreferences.setVisible(visible)
+        applySidebarVisibility()
+        if !visible, focusWasInside { focusEditor() }
+    }
+
+    private var sidebarHasKeyboardFocus: Bool {
+        guard let responder = view.window?.firstResponder as? NSView else { return false }
+        return responder.isDescendant(of: sidebar)
+    }
+
+    /// Hidden is hidden *and* out of the editor's way: the editor's leading
+    /// edge moves to the page edge, so it takes the full width. Deactivate
+    /// before activating - two active `editorCard.leading ==` ties are a
+    /// required conflict (gotcha (13)'s silent resize).
+    private func applySidebarVisibility() {
+        sidebar.isHidden = !sidebarVisible
+        resizeHandle.isHidden = !sidebarVisible
+        if sidebarVisible {
+            editorAtPageEdge.isActive = false
+            editorBesideSidebar.isActive = true
+        } else {
+            editorBesideSidebar.isActive = false
+            editorAtPageEdge.isActive = true
+        }
+        sidebarButton.tint = sidebarVisible ? .accent : nil
+        sidebarButton.toolTip = sidebarVisible
+            ? "Hide the snippet list (\u{2318}B)"
+            : "Show the snippet list (\u{2318}B)"
+        // Gotcha (14): a swapped tie is not re-derived until something asks.
+        view.layoutSubtreeIfNeeded()
+        if sidebarVisible { sidebar.revealActiveRow() }
+    }
+
+    private func setSidebarWidth(_ width: CGFloat, remember: Bool) {
+        let clamped = CodePreviewSidebarPreferences.clamp(width)
+        sidebarWidth.constant = clamped
+        if remember { CodePreviewSidebarPreferences.setWidth(clamped) }
+        view.layoutSubtreeIfNeeded()
+    }
+
+    /// The list row's Rename: the tab chip owns inline renaming, so the row
+    /// selects its snippet, brings the tab into view and starts the chip's
+    /// own rename rather than growing a second rename field.
+    private func beginRenameFromSidebar(key: String) {
+        guard let snippet = snippet(for: key) else { return }
+        select(key: key)
+        snippet.chip.beginRename()
+    }
+
+    private func focusEditor() {
+        view.window?.makeFirstResponder(webView)
+        webView.call("focusEditor")
     }
 
     private func styleChips() {
@@ -951,8 +1199,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         let landed = snippet.persisted
             ? store.rename(from: snippet.name, to: target)
             : uniqueName(target, excluding: snippet.key)
-        snippet.name = landed
-        snippet.chip.setName(landed)
+        setName(landed, for: snippet)
         // The order sidecar holds names, so a rename has to update it or the
         // tab jumps to wherever its new name sorts on the next launch - §6.6a.
         persistTabOrder()
@@ -968,8 +1215,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             let landed = snippet.persisted
                 ? store.rename(from: snippet.name, to: target)
                 : uniqueName(target, excluding: snippet.key)
-            snippet.name = landed
-            snippet.chip.setName(landed)
+            setName(landed, for: snippet)
             // Picking a language renames the file (the extension *is* the
             // language here), so the order sidecar has to follow or the tab
             // moves on the next launch - the exact thing §6.6a is about.
@@ -1479,6 +1725,8 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         overlay.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         overlayState?.applyTheme(theme)
         outputPane.applyTheme(theme)
+        sidebar.applyTheme(theme)
+        resizeHandle.lineColor = HelmTheme.nsColor(theme.chromeLineHex)
         styleChips()
         styleStatusLabels()
         pushTheme()
@@ -1586,6 +1834,17 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     func debugShowPane(_ state: CodeRunPaneState) {
         guard let key = currentKey else { return }
         show(state: state, for: key)
+    }
+    var debugSidebar: CodePreviewFileSidebar { sidebar }
+    var debugResizeHandle: CodePreviewSidebarResizeHandle { resizeHandle }
+    var debugSidebarButton: HelmButton { sidebarButton }
+    var debugPlusButton: HelmButton { plusButton }
+    var debugTabScroll: CodePreviewTabStripScrollView { tabScroll }
+    var debugSidebarWidth: CGFloat { sidebarWidth.constant }
+    func debugChip(named name: String) -> TabChipView? { open.first(where: { $0.name == name })?.chip }
+    func debugNewSnippet(named name: String, content: String) {
+        let snippet = store.create(name: name, content: content)
+        addTab(name: snippet.id, content: content, persisted: true, select: true)
     }
     func debugRename(from: String, to: String) {
         guard let snippet = open.first(where: { $0.name == from }) else { return }
