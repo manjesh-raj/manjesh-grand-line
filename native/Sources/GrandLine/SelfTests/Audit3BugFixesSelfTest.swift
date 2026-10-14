@@ -157,7 +157,8 @@ enum Audit3BugFixesSelfTest {
             // Vacuity guard: a fixture whose cards lost their meta line would
             // fit under any cap and prove nothing.
             let tallest = cards.map(\.frame.height).max() ?? 0
-            guard tallest >= ShiftBoardView.cardRowHeightWithMeta - 1 else {
+            guard tallest >= ShiftBoardView.cardHeight(for: tasks[0]) - 1,
+                  ShiftBoardView.cardHasMetaLine(tasks[0]) else {
                 fail("the fixture's cards are \(tallest)pt - they lost their meta line, so this check is vacuous", &ok)
                 return
             }

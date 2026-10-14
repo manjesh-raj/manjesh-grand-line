@@ -245,32 +245,47 @@ private final class ShiftProjectTaskRowView: NSView {
         chevronButton.alphaValue = hasSubtasks ? 1 : 0
         chevronButton.isEnabled = hasSubtasks
 
-        // Same overdue-wins-over-priority tint rule `ShiftTaskRowView`
-        // (`ShiftListViews.swift`) uses for the main My Tasks list, so a
-        // project's own task checklist reads consistently with it.
-        let isOverdue = ShiftDue.isOverdue(date: task.dueDate, time: task.dueTime, now: Date())
-        let priorityTint: HelmTint = {
-            switch task.priority {
-            case .high: return .critical
-            case .normal: return .info
-            case .low: return .neutral
-            }
-        }()
-        let tint: HelmTint = isOverdue ? .critical : priorityTint
-        checkbox.setChecked(task.status == .completed, tint: HelmTheme.nsColor(tint.hex(in: theme)))
+        // The Tasks page's one rule (`ShiftTaskSignals`, UI-24/UI-32): the
+        // checkbox takes the due state's colour, the due date is a caption
+        // that is coloured only when it matters, and a priority is said only
+        // when it is not Normal.
+        let due = ShiftTaskSignals.dueCaption(date: task.dueDate, time: task.dueTime)
+        checkbox.setChecked(task.status == .completed,
+                            tint: HelmTheme.nsColor((due?.tint ?? .neutral).hex(in: theme)))
 
         titleLabel.stringValue = task.title
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
 
-        var bits: [String] = []
-        if task.status == .completed { bits.append("Completed") }
-        if let due = task.dueDate { bits.append(ShiftDateFormatting.friendly(due)) }
+        let muted = HelmTheme.mutedInk(theme)
+        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        let line = NSMutableAttributedString()
+        func append(_ text: String, _ color: NSColor, bold: Bool = false) {
+            if line.length > 0 {
+                line.append(NSAttributedString(string: " \u{00B7} ", attributes: [
+                    .font: subLabel.font ?? HelmType.captionSmall(), .foregroundColor: muted]))
+            }
+            let font = subLabel.font ?? HelmType.captionSmall()
+            line.append(NSAttributedString(string: text, attributes: [
+                .font: bold ? NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) : font,
+                .foregroundColor: color]))
+        }
+        if task.status == .completed { append("Completed", muted) }
+        if let due, task.status != .completed {
+            append(due.text, due.tint.map {
+                HelmContrast.legibleTintedText(tintHex: $0.hex(in: theme), over: surface, theme: theme)
+            } ?? muted, bold: due.tint != nil)
+        }
         if hasSubtasks {
             let done = task.subtasks.filter(\.done).count
-            bits.append("\(done)/\(task.subtasks.count) subtasks")
+            append("\(done)/\(task.subtasks.count) subtasks", muted)
         }
-        subLabel.stringValue = bits.joined(separator: " \u{00B7} ")
-        subLabel.textColor = HelmTheme.mutedInk(theme)
+        if let pill = ShiftTaskSignals.priorityPill(task.priority) {
+            append(pill.text, HelmContrast.legibleTintedText(tintHex: pill.tint.hex(in: theme),
+                                                             over: surface, theme: theme), bold: true)
+        } else if let word = ShiftTaskSignals.priorityWord(task.priority) {
+            append(word, muted)
+        }
+        subLabel.attributedStringValue = line
     }
 
     @objc private func chevronClicked() { onToggleExpand?() }

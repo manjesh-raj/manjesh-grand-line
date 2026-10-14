@@ -20,6 +20,9 @@
 //      offline.
 //   3. **The sort orders** the toolbar offers, each on a fixture where the
 //      three orders genuinely disagree.
+//   4. **`ShiftTaskSignals`, the one priority and due rule (UI-23, UI-24,
+//      UI-32):** only High earns a pill, Low is a word, Normal says nothing;
+//      a due date is red when late, amber today, muted otherwise.
 //
 // GL-27: compiled into debug builds only.
 #if FM_SELFTESTS
@@ -34,6 +37,7 @@ enum ShiftTasksChromeSelfTest {
         checkSyncMapping(&ok)
         checkOfflineDetection(&ok)
         checkSortOrders(&ok)
+        checkTaskSignals(&ok)
         print(ok ? "ShiftTasksChromeSelfTest: OK" : "ShiftTasksChromeSelfTest: FAILED")
         return ok
     }
@@ -114,6 +118,36 @@ enum ShiftTasksChromeSelfTest {
         // The discriminating half: the fixture really separates the orders.
         check(Set([order(.dueDate), order(.priority), order(.recentlyUpdated)].map { $0.joined() }).count == 3,
               "the fixture should give three different orders", &ok)
+    }
+
+    // MARK: 4
+
+    private static func checkTaskSignals(_ ok: inout Bool) {
+        check(ShiftTaskSignals.priorityPill(.high)?.text == "High"
+                  && ShiftTaskSignals.priorityPill(.high)?.tint == .critical,
+              "High earns the one red pill", &ok)
+        check(ShiftTaskSignals.priorityPill(.normal) == nil && ShiftTaskSignals.priorityWord(.normal) == nil,
+              "Normal says nothing (Q3)", &ok)
+        check(ShiftTaskSignals.priorityPill(.low) == nil && ShiftTaskSignals.priorityWord(.low) == "Low",
+              "Low is a quiet word, not a pill", &ok)
+
+        // Pinned at local noon, so no runner's time zone lands the fixture on
+        // a day boundary (AGENTS.md's "YYYY-MM-DD" fixture rule).
+        var cal = Calendar.current
+        cal.timeZone = .current
+        let now = cal.date(bySettingHour: 12, minute: 0, second: 0, of: Date()) ?? Date()
+        func day(_ offset: Int) -> String {
+            ShiftDateFormatting.components(from: cal.date(byAdding: .day, value: offset, to: now) ?? now).dateStr
+        }
+        let late = ShiftTaskSignals.dueCaption(date: day(-3), time: nil, now: now, calendar: cal)
+        check(late?.text == "Overdue 3 days" && late?.tint == .critical,
+              "three days late is red \"Overdue 3 days\", got \(String(describing: late))", &ok)
+        let today = ShiftTaskSignals.dueCaption(date: day(0), time: nil, now: now, calendar: cal)
+        check(today?.text == "Due today" && today?.tint == .warn,
+              "today is amber \"Due today\", got \(String(describing: today))", &ok)
+        let later = ShiftTaskSignals.dueCaption(date: day(5), time: nil, now: now, calendar: cal)
+        check(later != nil && later?.tint == nil, "a later date is a muted caption", &ok)
+        check(ShiftTaskSignals.dueCaption(date: nil, time: nil, now: now) == nil, "no date, no caption", &ok)
     }
 }
 

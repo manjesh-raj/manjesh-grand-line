@@ -866,6 +866,10 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         taskListScroll.hasHorizontalScroller = false
         taskListScroll.borderType = .noBorder
         taskListScroll.drawsBackground = false
+        // A nested list owns its whole frame; an automatic top inset (the
+        // window's own chrome) pushed its rows down and sliced the last one.
+        taskListScroll.automaticallyAdjustsContentInsets = false
+        taskListScroll.contentInsets = NSEdgeInsetsZero
         taskListScroll.translatesAutoresizingMaskIntoConstraints = false
         // U15: a stored constraint, re-derived from the live content on
         // every render - see `sharedTaskFollowUpBodyHeight()`.
@@ -891,6 +895,10 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         followUpScroll.hasHorizontalScroller = false
         followUpScroll.borderType = .noBorder
         followUpScroll.drawsBackground = false
+        // A nested list owns its whole frame; an automatic top inset (the
+        // window's own chrome) pushed its rows down and sliced the last one.
+        followUpScroll.automaticallyAdjustsContentInsets = false
+        followUpScroll.contentInsets = NSEdgeInsetsZero
         followUpScroll.translatesAutoresizingMaskIntoConstraints = false
         let followUpHeight = followUpScroll.heightAnchor
             .constraint(equalToConstant: Self.taskFollowUpPanelBodyHeight)

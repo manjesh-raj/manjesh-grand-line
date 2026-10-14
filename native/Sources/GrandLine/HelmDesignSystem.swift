@@ -2092,6 +2092,11 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
         /// always for `.card` and `.cardFlat`, never for `.flat`, where the
         /// bar is reserved for a row that carries an identity (Rule 3).
         var showsBar: Bool? = nil
+        /// A line appended to the row's hover text - how to act on it, where
+        /// that is not obvious from the row itself (the board card's "drag to
+        /// another lane, or right-click to move", which used to be a sentence
+        /// above the board on every visit - UI-20).
+        var hint: String? = nil
         /// Let the meta line wrap instead of truncating - B2 of
         /// `data/grand-line-e2e-audit/report.md`. For a read-only browsing
         /// surface with vertical room and genuinely long meta text (the
@@ -2817,7 +2822,8 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
         let full = [content.title, metaFull].filter { !$0.isEmpty }
         titleLabel.toolTip = content.title.isEmpty ? nil : content.title
         metaLabel.toolTip = metaFull.isEmpty ? nil : metaFull
-        card.toolTip = full.isEmpty ? nil : full.joined(separator: " - ")
+        let summary = full.isEmpty ? nil : full.joined(separator: " - ")
+        card.toolTip = [summary, content.hint].compactMap { $0 }.joined(separator: "\n").nilIfEmpty
 
         chip.isHidden = content.chipText == nil
         trailingCaptionLabel.stringValue = content.trailingCaption ?? ""
@@ -2893,8 +2899,10 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
             let leadColor = content.metaLeadTint.map {
                 HelmContrast.legibleTintedText(tintHex: $0.hex(in: theme), over: baseFill, theme: theme)
             } ?? muted
+            // Bold only when the lead carries a state (amber, red); a plain
+            // date or a Done date reads in the meta line's own face.
             let text = NSMutableAttributedString(string: lead, attributes: [
-                .font: NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask),
+                .font: content.metaLeadTint == nil ? font : NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask),
                 .foregroundColor: leadColor,
             ])
             if let rest = content.meta, !rest.isEmpty {
@@ -5238,4 +5246,8 @@ final class HelmCountBadge: NSView {
     var debugCornerRadius: CGFloat { layer?.cornerRadius ?? 0 }
     var debugTextColor: NSColor? { label.textColor }
     #endif
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

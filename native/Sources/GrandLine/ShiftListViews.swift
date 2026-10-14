@@ -96,8 +96,13 @@ final class ShiftTaskListView: NSObject {
         tableView.headerView = nil
         tableView.backgroundColor = .clear
         tableView.selectionHighlightStyle = .none
+        // Flat rows (Rule 1): no gap between rows; each row draws its own
+        // hairline under it, except the last. `.plain`, because the
+        // automatic style resolves to `.inset` and pads the content ~10pt
+        // down from the panel's top edge, which sliced the last row.
+        tableView.style = .plain
         tableView.gridStyleMask = []
-        tableView.intercellSpacing = NSSize(width: 0, height: 4)
+        tableView.intercellSpacing = NSSize(width: 0, height: 0)
         tableView.autoresizingMask = [.width]
         tableView.rowHeight = Self.rowHeight
         tableView.dataSource = self
@@ -188,7 +193,12 @@ final class ShiftTaskListView: NSObject {
     /// this list's own former 13/10.5 pair).
     /// Measured at chrome text scale 1.0; `scaledRowHeight` grows it with
     /// the captain's own text-size setting (GL-32, audit §6.1).
-    static let baseRowHeight: CGFloat = 78
+    ///
+    /// **70 since the UI/UX revamp's flat row** (10pt padding rather than a
+    /// card's 12, and no 4pt gap between rows): `TextScaleRowHeightSelfTest`
+    /// measures the tallest real row - kicker, title, a due caption and a
+    /// chip - at 69pt, and the extra point is the Daylight family's.
+    static let baseRowHeight: CGFloat = 70
     static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
 
     /// What the single `HelmEmptyState` row an empty list renders needs.
@@ -285,6 +295,7 @@ extension ShiftTaskListView: NSTableViewDataSource, NSTableViewDelegate {
         // has never hovered a row cannot tell it has any. The same floor
         // `HelmAccentRow` states for itself.
         rowView.setActionReveal(tasks.count <= HelmAccentRow.alwaysRevealRowCount ? .always : .onAim)
+        rowView.setSeparatorVisible(row < tasks.count - 1, theme: theme)
         return rowView
     }
 }
@@ -354,6 +365,13 @@ final class ShiftTaskCheckBadge: NSButton {
 /// behaviour it has always had, and the table's own double-click-to-open is
 /// untouched.
 private final class ShiftTaskRowView: NSView {
+    /// The hairline under the row (Rule 1) - every row but the last.
+    private let separator = NSView()
+    func setSeparatorVisible(_ visible: Bool, theme: HelmTheme) {
+        separator.isHidden = !visible
+        separator.layer?.backgroundColor = HelmFlatList.hairRowColor(theme).cgColor
+    }
+
     private let checkBadge = ShiftTaskCheckBadge()
     /// F7's "Start 25 min" / "Stop", in the row's own trailing accessory
     /// slot - the slot `HelmAccentRow` already owns for exactly this, and
@@ -368,7 +386,9 @@ private final class ShiftTaskRowView: NSView {
     init() {
         focusButton.setContentHuggingPriority(.required, for: .horizontal)
         focusButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        row = HelmAccentRow(leadingControl: checkBadge, trailingAccessory: focusButton)
+        // A flat row inside the panel's card (Rule 1); the bar is the
+        // project's identity, the same as on the board (UI-24).
+        row = HelmAccentRow(leadingControl: checkBadge, trailingAccessory: focusButton, style: .flat)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         checkBadge.target = self
@@ -376,11 +396,18 @@ private final class ShiftTaskRowView: NSView {
         focusButton.target = self
         focusButton.action = #selector(focusClicked)
         addSubview(row)
+        separator.wantsLayer = true
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(separator)
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
-            row.topAnchor.constraint(equalTo: topAnchor, constant: 1),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor),
+            row.topAnchor.constraint(equalTo: topAnchor),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor),
+            separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s4),
+            separator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s4),
+            separator.bottomAnchor.constraint(equalTo: bottomAnchor),
+            separator.heightAnchor.constraint(equalToConstant: 1),
         ])
     }
 
@@ -395,44 +422,41 @@ private final class ShiftTaskRowView: NSView {
         self.onToggle = onToggle
         self.onFocus = onFocus
 
-        // B22: one definition, shared with the notifier - which used to call a
-        // date-only task overdue at local midnight while this row did not
-        // until the next day.
-        let isOverdue = ShiftDue.isOverdue(date: task.dueDate, time: task.dueTime, now: Date())
-        let (priorityText, priorityTint): (String, HelmTint) = {
-            switch task.priority {
-            case .high: return ("High", .critical)
-            case .normal: return ("Normal", .info)
-            case .low: return ("Low", .neutral)
-            }
-        }()
-        // Overdue is a stronger, more urgent signal than priority alone - it
-        // wins the accent bar/badge tint when both are present, while the
-        // chip keeps reporting priority.
-        let tint: HelmTint = isOverdue ? .critical : priorityTint
-
+        // UI-24: the board's rule, through `ShiftTaskSignals` - the due date
+        // is a caption (amber today, red when late), High is the one pill,
+        // Low a quiet word. A flat row carries no bar (Rule 3); the kicker
+        // names the project.
+        // B22's one overdue definition lives inside `dueCaption`.
+        let due = ShiftTaskSignals.dueCaption(date: task.dueDate, time: task.dueTime)
+        let pill = ShiftTaskSignals.priorityPill(task.priority)
         var bits: [String] = []
-        if let due = task.dueDate { bits.append(ShiftDateFormatting.friendly(due)) }
         if !task.subtasks.isEmpty {
             let done = task.subtasks.filter(\.done).count
             bits.append("\(done)/\(task.subtasks.count) subtasks")
         }
+        if let word = ShiftTaskSignals.priorityWord(task.priority) { bits.append(word) }
+        let tint = ShiftProjectPalette.tint(forProjectID: task.projectID)
 
         row.configure(HelmAccentRow.Content(
             tint: tint,
-            kicker: project?.name ?? "Task",
+            kicker: project?.name ?? "No project",
             title: task.title,
-            meta: bits.joined(separator: " \u{00B7} "),
+            meta: bits.isEmpty ? nil : bits.joined(separator: " \u{00B7} "),
             // A rendered thumbnail would blow out this row's fixed height the
             // way `fm/grandline-shift-panel-height-scroll-fix` already fixed
             // once; the real image only ever shows in the editor sheet.
             titleAccessorySymbol: task.hasAttachment ? "paperclip" : nil,
-            chipText: priorityText,
-            chipTint: priorityTint
+            chipText: pill?.text,
+            chipTint: pill?.tint,
+            metaLead: due?.text,
+            metaLeadTint: due?.tint,
+            titleStruck: task.status == .completed
         ), theme: theme)
 
+        // The checkbox takes the due state's colour (red late, amber today),
+        // and is neutral otherwise - the project is already the kicker.
         checkBadge.setChecked(task.status == .completed,
-                              tint: HelmTheme.nsColor(tint.hex(in: theme)))
+                              tint: HelmTheme.nsColor((due?.tint ?? .neutral).hex(in: theme)))
 
         // F7. The button is the one control on this row that changes its
         // *meaning* rather than its state, so it says which it is - the
@@ -491,8 +515,13 @@ final class ShiftFollowUpListView: NSObject {
         tableView.headerView = nil
         tableView.backgroundColor = .clear
         tableView.selectionHighlightStyle = .none
+        // Flat rows (Rule 1): no gap between rows; each row draws its own
+        // hairline under it, except the last. `.plain`, because the
+        // automatic style resolves to `.inset` and pads the content ~10pt
+        // down from the panel's top edge, which sliced the last row.
+        tableView.style = .plain
         tableView.gridStyleMask = []
-        tableView.intercellSpacing = NSSize(width: 0, height: 4)
+        tableView.intercellSpacing = NSSize(width: 0, height: 0)
         tableView.autoresizingMask = [.width]
         tableView.rowHeight = Self.rowHeight
         tableView.dataSource = self
@@ -502,10 +531,14 @@ final class ShiftFollowUpListView: NSObject {
         tableView.menu = rowMenu()
     }
 
-    /// Matches `ShiftTaskListView.rowHeight` - both lists share the same card
-    /// treatment, so their rows are the same height for a consistent
-    /// side-by-side look (`fm/grandline-shift-side-by-side-composer-height`).
-    static var rowHeight: CGFloat { ShiftTaskListView.rowHeight }
+    /// Used to match `ShiftTaskListView.rowHeight` so the two side-by-side
+    /// card lists lined up. The revamp's rows are flat and the two lists hold
+    /// different shapes (a follow-up has no kicker), so each is its own height;
+    /// the two panels still share one *panel* height (`ShiftController`).
+    static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
+    /// Its own height since the revamp: a follow-up row has no kicker, so it
+    /// is the mockup's 56pt flat row (53pt measured, at Default).
+    static let baseRowHeight: CGFloat = 56
 
     /// See `ShiftTaskListView.emptyRowHeight` - this list's placeholder is a
     /// line shorter, and the two panels share one height anyway.
@@ -609,7 +642,10 @@ extension ShiftFollowUpListView: NSTableViewDataSource, NSTableViewDelegate {
         }
         let rowView = (tableView.makeView(withIdentifier: Self.rowViewID, owner: nil) as? ShiftFollowUpRowView)
             ?? { let v = ShiftFollowUpRowView(); v.identifier = Self.rowViewID; return v }()
-        rowView.configure(item: items[row], theme: theme)
+        let item = items[row]
+        rowView.configure(item: item, theme: theme,
+                          onToggle: { [weak self] in self?.onToggleDone?(item) })
+        rowView.setSeparatorVisible(row < items.count - 1, theme: theme)
         return rowView
     }
 }
@@ -621,44 +657,73 @@ extension ShiftFollowUpListView: NSTableViewDataSource, NSTableViewDelegate {
 /// done/pending status - a stronger "does this still need me" glance than
 /// priority alone - while priority moves into the trailing chip.
 private final class ShiftFollowUpRowView: NSView {
-    private let row = HelmAccentRow()
+    /// The hairline under the row (Rule 1) - every row but the last.
+    private let separator = NSView()
+    func setSeparatorVisible(_ visible: Bool, theme: HelmTheme) {
+        separator.isHidden = !visible
+        separator.layer?.backgroundColor = HelmFlatList.hairRowColor(theme).cgColor
+    }
+
+    /// UI-30: a follow-up is a flat row with the checkbox the attention card
+    /// already gives the same follow-up on Home, so it can be ticked off
+    /// where it is listed rather than only from its menu.
+    private let checkBadge = ShiftTaskCheckBadge()
+    private let row: HelmAccentRow
+    private var onToggle: (() -> Void)?
 
     init() {
+        row = HelmAccentRow(leadingControl: checkBadge, style: .flat)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
+        checkBadge.target = self
+        checkBadge.action = #selector(checkboxClicked)
         addSubview(row)
+        separator.wantsLayer = true
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(separator)
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
-            row.topAnchor.constraint(equalTo: topAnchor, constant: 1),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor),
+            row.topAnchor.constraint(equalTo: topAnchor),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor),
+            separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s4),
+            separator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s4),
+            separator.bottomAnchor.constraint(equalTo: bottomAnchor),
+            separator.heightAnchor.constraint(equalToConstant: 1),
         ])
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    func configure(item: ShiftFollowUp, theme: HelmTheme) {
+    func configure(item: ShiftFollowUp, theme: HelmTheme, onToggle: @escaping () -> Void) {
+        self.onToggle = onToggle
         let isDone = item.status == .done
-        let (priorityText, priorityTint): (String, HelmTint) = {
-            switch item.priority {
-            case .high: return ("High", .critical)
-            case .normal: return ("Normal", .info)
-            case .low: return ("Low", .neutral)
-            }
-        }()
-        var bits: [String] = []
-        if let at = item.followUpAt { bits.append(ShiftDateFormatting.friendly(at, time: item.followUpTime)) }
+        // The page's one rule (`ShiftTaskSignals`): High is the one pill, and
+        // a follow-up that is late says so as a red caption - the fact the
+        // Home card shows for the same item, in the same words.
+        let pill = ShiftTaskSignals.priorityPill(item.priority)
+        let due = isDone ? nil : ShiftTaskSignals.dueCaption(date: item.followUpAt, time: item.followUpTime)
+        var meta: [String] = []
+        if let at = item.followUpAt { meta.append(ShiftDateFormatting.friendly(at, time: item.followUpTime)) }
+        if let word = ShiftTaskSignals.priorityWord(item.priority) { meta.append(word) }
 
         row.configure(HelmAccentRow.Content(
-            tint: isDone ? .good : .warn,
-            kicker: isDone ? "Done" : "Pending",
+            tint: due?.tint ?? (isDone ? .good : .warn),
+            kicker: "",
             title: item.title,
-            meta: bits.joined(separator: " \u{00B7} "),
-            badgeSymbol: isDone ? "checkmark" : "bell.fill",
-            chipText: priorityText,
-            chipTint: priorityTint
+            meta: meta.joined(separator: " \u{00B7} "),
+            chipText: pill?.text,
+            chipTint: pill?.tint,
+            trailingCaption: due?.tint == .critical ? due?.text : nil,
+            trailingCaptionTint: .critical,
+            titleStruck: isDone
         ), theme: theme)
+        checkBadge.setChecked(isDone, tint: HelmTheme.nsColor((due?.tint ?? .warn).hex(in: theme)))
+        checkBadge.setAccessibilityLabel(isDone ? "Reopen \u{201C}\(item.title)\u{201D}"
+                                                : "Mark \u{201C}\(item.title)\u{201D} as done")
     }
+
+    @objc private func checkboxClicked() { onToggle?() }
 }
 
 // MARK: - Shared date formatting

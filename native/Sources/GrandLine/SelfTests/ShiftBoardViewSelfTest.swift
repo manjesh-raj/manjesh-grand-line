@@ -284,15 +284,113 @@ enum ShiftBoardViewSelfTest {
                 // U1's other half: the column still offers an action. The add
                 // button is always there, directly beneath, which is why the
                 // empty state deliberately carries no second copy of it.
-                check(collectTextFieldValues(in: view).contains { $0.lowercased().contains("add") },
-                      "U1: an empty \(column.title) column offers no action at all")
+                // The Done lane takes no new task (UI-25) - a task is finished
+                // by moving it there - so only the open lanes owe an action.
+                if column != .done {
+                    check(!view.debugAddButton.isHidden && view.debugAddButton.variant == .quiet,
+                          "U1/UI-25: an empty \(column.title) lane should offer its quiet Add task")
+                }
             }
             check(emptyColumns > 0 && filledColumns > 0,
                   "U1: the board has \(emptyColumns) empty and \(filledColumns) filled columns - "
                   + "this case needs one of each to mean anything")
         }
 
+        checkTheRevampBoard(check)
         return report(failures)
+    }
+
+    // MARK: The UI/UX revamp's board (UI-21 to UI-29)
+
+    /// What the revamp changed on the board, read off the mounted page:
+    ///
+    ///   - UI-21: a lane is not a card - no `HelmCard` anywhere in a lane;
+    ///   - UI-22: a task card is `.cardFlat`, outlined in the hairline;
+    ///   - UI-23: a Normal task carries no chip, a High one the one pill, a Low
+    ///     one a quiet "Low" word;
+    ///   - UI-24: the due date is a coloured lead on the meta line;
+    ///   - UI-26: an empty lane's copy is the quiet "Nothing in progress";
+    ///   - UI-27: a targeted lane shows its dashed outline, and only then;
+    ///   - UI-28: a focused card renders selected;
+    ///   - UI-29: a Done card is struck through and says when it finished.
+    private static func checkTheRevampBoard(_ check: (Bool, String) -> Void) {
+        withScratchStore { store in
+            var normal = ShiftTask.fresh()
+            normal.title = "Normal priority, no date"
+            store.addTask(normal)
+            var high = ShiftTask.fresh()
+            high.title = "High priority, due today"
+            high.priority = .high
+            high.dueDate = ShiftDateFormatting.components(from: Date()).dateStr
+            store.addTask(high)
+            var low = ShiftTask.fresh()
+            low.title = "Low priority"
+            low.priority = .low
+            store.addTask(low)
+            var finished = ShiftTask.fresh()
+            finished.title = "Already done"
+            store.addTask(finished)
+            store.setTaskCompleted(id: finished.id, completed: true)
+
+            let (controller, window) = mount(store: store)
+            defer { window.orderOut(nil) }
+            guard let board = controller.debugBoardView,
+                  let backlog = board.debugColumn(.backlog),
+                  let progress = board.debugColumn(.inProgress),
+                  let done = board.debugColumn(.done) else {
+                check(false, "the revamp case needs a mounted board")
+                return
+            }
+
+            func descendants(_ view: NSView) -> [NSView] { view.subviews + view.subviews.flatMap(descendants) }
+            check(!descendants(backlog).contains { $0 is HelmCard }, "UI-21: a lane must not be a card")
+
+            func card(_ id: String) -> ShiftBoardCardView? {
+                (backlog.debugCardViews + done.debugCardViews).first { $0.taskID == id }
+            }
+            if let c = card(normal.id) {
+                check(c.debugRow.style == .cardFlat, "UI-22: a task card should be .cardFlat")
+                check(c.debugRow.debugChipText == nil, "UI-23: a Normal task carries no chip")
+            } else { check(false, "the Normal task should be on the board") }
+            if let c = card(high.id) {
+                check(c.debugRow.debugChipText == "High", "UI-23: a High task carries the one pill")
+                check(c.debugRow.debugMetaAttributed.string.hasPrefix("Due today"),
+                      "UI-24: a task due today leads its meta line with the caption, got "
+                      + "\"\(c.debugRow.debugMetaAttributed.string)\"")
+            } else { check(false, "the High task should be on the board") }
+            if let c = card(low.id) {
+                check(c.debugRow.debugChipText == nil && c.debugRow.debugMetaAttributed.string.contains("Low"),
+                      "UI-23: a Low task says Low quietly, not in a pill")
+            } else { check(false, "the Low task should be on the board") }
+            if let c = card(finished.id) {
+                let title = c.debugRow.debugTitleAttributed
+                check(title.length > 0 && title.attribute(.strikethroughStyle, at: 0, effectiveRange: nil) != nil,
+                      "UI-29: a Done card's title is struck through")
+                check(c.debugRow.debugMetaAttributed.string.hasPrefix("Done "),
+                      "UI-29: a Done card says when it finished")
+            } else { check(false, "the finished task should be in the Done lane") }
+
+            check(progress.debugEmptyState.isShowing, "In Progress is empty in this fixture")
+            check(collectTextFieldValues(in: progress).contains("Nothing in progress"),
+                  "UI-26: the empty lane should read \"Nothing in progress\"")
+            check(!collectTextFieldValues(in: progress).contains { $0.contains("in in progress") },
+                  "UI-26: never \"in in progress\"")
+
+            check(!progress.debugDropOutlineVisible, "UI-27: no outline while nothing is dragged")
+            progress.debugSetDropTargeted(true)
+            check(progress.debugDropOutlineVisible, "UI-27: a targeted lane shows its dashed outline")
+            progress.debugSetDropTargeted(false)
+            check(!progress.debugDropOutlineVisible, "UI-27: and loses it when the drag leaves")
+
+            if let c = card(normal.id) {
+                window.makeFirstResponder(c)
+                check(c.debugRow.isRowSelected, "UI-28: a focused card renders selected")
+                window.makeFirstResponder(nil)
+                check(!c.debugRow.isRowSelected, "UI-28: and stops when focus moves on")
+                check((c.debugLiftedSnapshotSize()?.width ?? 0) > c.bounds.width,
+                      "UI-27: the drag image is padded for its lifted shadow")
+            }
+        }
     }
 
     // MARK: Harness
