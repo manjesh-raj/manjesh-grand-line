@@ -514,6 +514,14 @@ final class HelmFlatList: NSView {
             : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.dividerAlpha)
     }
 
+    /// §6.5's `rowHover` over `base`: Daylight's own token, or a light wash of
+    /// page ink on the other palettes - the fill every flat row shares.
+    static func rowHoverColor(_ theme: HelmTheme, over base: NSColor) -> NSColor {
+        theme.isDaylight
+            ? HelmTheme.nsColor(theme.daylightTokens.rowHover)
+            : (base.blended(withFraction: 0.06, of: HelmTheme.nsColor(theme.chromeInkHex)) ?? base)
+    }
+
     #if FM_SELFTESTS
     var debugSeparatorCount: Int { separators.count }
     #endif

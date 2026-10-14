@@ -41,17 +41,12 @@ import AppKit
 /// the rule `FleetDataSource.readyToMerge` exists for one page over.
 final class HostsWorkspacePanel: NSView {
 
-    let card = HelmCard()
-
-    private let hostsTile = HelmStatTile(symbol: "server.rack", caption: "Hosts")
-    private let keysTile = HelmStatTile(symbol: "key.fill", caption: "SSH keys")
-    private let snippetsTile = HelmStatTile(symbol: "chevron.left.forwardslash.chevron.right",
-                                            caption: "Snippets")
-    /// The reference's fourth metric is a hardcoded "100% Keychain protected",
-    /// which is a claim rather than a measurement. Live sessions is the real
-    /// number this page already knows (`HostsController.liveSession`, the
-    /// app's one `HostSessionRegistry`) and the one most worth a glance.
-    private let liveTile = HelmStatTile(symbol: "bolt.fill", caption: "Live sessions", tint: .good)
+    /// UI-50: the inventory is one flat KPI line over the list, not a card of
+    /// four boxed tiles in a side column. Live sessions is the real number
+    /// this page knows (`HostsController.liveSession`, the app's one
+    /// `HostSessionRegistry`), in place of the reference's hardcoded "100%
+    /// Keychain protected".
+    private let strip = HelmKPIStrip()
 
     private let statusDot = NSView()
     private let statusLabel = NSTextField(labelWithString: "")
@@ -71,63 +66,39 @@ final class HostsWorkspacePanel: NSView {
 
     private func build() {
         translatesAutoresizingMaskIntoConstraints = false
+        strip.setAccessibilityLabel("Hosts inventory")
 
-        // A 2x2 grid, the reference's own `.metric-grid`. Two `.fillEqually`
-        // rows rather than an `NSGridView`: the tiles are all one fixed height
-        // and want equal widths, which is exactly what that distribution is.
-        let topRow = NSStackView(views: [hostsTile, keysTile])
-        let bottomRow = NSStackView(views: [snippetsTile, liveTile])
-        for row in [topRow, bottomRow] {
-            row.orientation = .horizontal
-            row.distribution = .fillEqually
-            row.spacing = HelmMetrics.s2
-        }
-
+        // Touch ID's state as a dot and a word (UI-43): a fact about this
+        // Mac, read by a real `LAContext` probe, beside the numbers.
         statusDot.wantsLayer = true
         statusDot.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.font = HelmType.captionSmall()
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        // The panel is a fixed-width column, so the only thing in it that
-        // could otherwise become a window floor is a long status string.
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let statusRow = NSView()
-        statusRow.translatesAutoresizingMaskIntoConstraints = false
-        statusRow.addSubview(statusDot)
-        statusRow.addSubview(statusLabel)
+        let status = NSStackView(views: [statusDot, statusLabel])
+        status.orientation = .horizontal
+        status.alignment = .centerY
+        status.spacing = HelmMetrics.s2
+        status.translatesAutoresizingMaskIntoConstraints = false
+        status.setHuggingPriority(.required, for: .horizontal)
         NSLayoutConstraint.activate([
-            statusDot.leadingAnchor.constraint(equalTo: statusRow.leadingAnchor),
-            statusDot.centerYAnchor.constraint(equalTo: statusRow.centerYAnchor),
-            statusDot.widthAnchor.constraint(equalToConstant: 7),
-            statusDot.heightAnchor.constraint(equalToConstant: 7),
-            statusLabel.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: HelmMetrics.s2),
-            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: statusRow.trailingAnchor),
-            statusLabel.topAnchor.constraint(equalTo: statusRow.topAnchor),
-            statusLabel.bottomAnchor.constraint(equalTo: statusRow.bottomAnchor),
+            statusDot.widthAnchor.constraint(equalToConstant: HelmStatusPill.dotSize),
+            statusDot.heightAnchor.constraint(equalToConstant: HelmStatusPill.dotSize),
         ])
 
-        let body = NSStackView(views: [topRow, bottomRow, statusRow])
-        body.orientation = .vertical
-        body.alignment = .leading
-        body.spacing = HelmMetrics.s2
-        body.translatesAutoresizingMaskIntoConstraints = false
-        for row in [topRow, bottomRow, statusRow] as [NSView] {
-            row.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
-        }
-
-        _ = card.setHeader(symbol: "square.grid.2x2.fill", tint: .neutral,
-                           title: "Workspace",
-                           subtitle: "At-a-glance inventory")
-        card.setBody(body, insets: HelmCard.contentInsets)
-
-        card.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(card)
+        let row = NSStackView(views: [strip, status])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = HelmMetrics.s4
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
         NSLayoutConstraint.activate([
-            card.leadingAnchor.constraint(equalTo: leadingAnchor),
-            card.trailingAnchor.constraint(equalTo: trailingAnchor),
-            card.topAnchor.constraint(equalTo: topAnchor),
-            card.bottomAnchor.constraint(equalTo: bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor),
+            row.topAnchor.constraint(equalTo: topAnchor),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 
@@ -135,17 +106,14 @@ final class HostsWorkspacePanel: NSView {
     /// real `LAContext.canEvaluatePolicy` probe - not the reference's
     /// unconditional "Touch ID enabled".
     func setCounts(hosts: Int, keys: Int, snippets: Int, live: Int, touchIDAvailable: Bool) {
-        hostsTile.value = "\(hosts)"
-        keysTile.value = "\(keys)"
-        snippetsTile.value = "\(snippets)"
-        liveTile.value = "\(live)"
+        strip.configure([
+            .count(hosts, caption: "Hosts"),
+            .count(keys, caption: "SSH keys"),
+            .count(snippets, caption: "Snippets"),
+            .count(live, caption: "Live sessions", tintWhenNonZero: .good),
+        ], theme: theme)
         statusOK = touchIDAvailable
         // UI1: one wording, defined once - see `HostsKeychainCard.biometryPhrase`.
-        // The "Keychain available" half went with it: nothing here probes
-        // whether the Keychain is reachable, so it was an unconditional claim
-        // sitting beside the sidebar footer's own honest "Keychain / Empty"
-        // verdict, which is about a different thing (how many keys this app
-        // holds) and read as a contradiction.
         statusLabel.stringValue = HostsKeychainCard.biometryPhrase(touchIDAvailable,
                                                                    capitalized: true)
         applyTheme(theme)
@@ -153,22 +121,22 @@ final class HostsWorkspacePanel: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
-        card.applyTheme(theme)
-        for tile in [hostsTile, keysTile, snippetsTile, liveTile] { tile.applyTheme(theme) }
+        strip.applyTheme(theme)
         statusLabel.textColor = HelmTheme.mutedInk(theme)
         // The dot is a fill, so the hue is safe on it raw - unlike the label
-        // beside it, which stays `mutedInk` (audit §5.7: a tint is safe as a
-        // fill and is not automatically safe as text).
+        // beside it, which stays `mutedInk` (audit §5.7).
         let tint: HelmTint = statusOK ? .good : .warn
         statusDot.layer?.backgroundColor = HelmTheme.nsColor(tint.hex(in: theme)).cgColor
-        statusDot.layer?.cornerRadius = 3.5
+        statusDot.layer?.cornerRadius = HelmStatusPill.dotSize / 2
     }
 
     #if FM_SELFTESTS
     var debugMetrics: [(value: String, caption: String)] {
-        [hostsTile, keysTile, snippetsTile, liveTile].map { $0.debugMetric }
+        Array(zip(strip.debugValues, strip.debugCaptions))
     }
     var debugStatusText: String { statusLabel.stringValue }
+    /// UI-50: the inventory is a flat strip - no tile, no card.
+    var debugIsFlat: Bool { !strip.debugHasBorder && !(subviews.contains { $0 is HelmCard }) }
     #endif
 }
 
@@ -355,6 +323,9 @@ final class HostsDetailPanel: NSView {
         applyTheme(theme)
     }
 
+    /// Whether a record is on show (UI-50: the column hides without one).
+    var isShowingRecord: Bool { !content.isHidden }
+
     func clear() {
         content.isHidden = true
         emptyState.isHidden = false
@@ -527,13 +498,11 @@ final class HostsDetailPanel: NSView {
 
 // MARK: - Quick actions
 
-/// The reference's shortcut grid. **Only shortcuts this app really has** - the
-/// brief's own rule, and the reason this carries four of its six: the
-/// reference's `⌘ ↵ Connect selected` and `⌘ ⇧ P Run snippet` are not bound to
-/// anything in this app, and a button advertising a keystroke that does
-/// nothing is worse than no button.
+/// UI-50: the page's shortcuts as one line of key hints under the list -
+/// `[⌘][K] Command palette  [⌘][⌃][N] Add host ...` - rather than a card of
+/// four boxed buttons in a side column.
 ///
-/// The four below are read off `main.swift`'s real menu items (`⌘K` Search…,
+/// The four are read off `main.swift`'s real menu items (`⌘K` Search…,
 /// `⌘⌃N` New Host…, `⌘⇧N` New Key…, `⌘⌥N` New Snippet…), and clicking one
 /// performs the action as well as naming it - so it is a real control, not a
 /// legend.
@@ -545,79 +514,48 @@ final class HostsQuickActionsPanel: NSView {
         let run: () -> Void
     }
 
-    let card = HelmCard()
-
-    private let grid = NSStackView()
-    private var buttons: [(button: HoverHighlightView, shortcut: NSTextField, title: NSTextField)] = []
+    private let line = NSStackView()
+    private var buttons: [(button: HoverHighlightView, hint: HelmKeyHint)] = []
     private var items: [Item] = []
-    /// See `HostsWorkspacePanel.theme` - same reasoning.
     private var theme: HelmTheme = ThemeManager.shared.theme
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        build()
+        translatesAutoresizingMaskIntoConstraints = false
+        line.orientation = .horizontal
+        line.alignment = .centerY
+        line.spacing = HelmMetrics.s2
+        line.translatesAutoresizingMaskIntoConstraints = false
+        // gotcha (13): a line of hints is never a width floor - it clips.
+        line.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        line.setHuggingPriority(.defaultLow, for: .horizontal)
+        addSubview(line)
+        NSLayoutConstraint.activate([
+            line.leadingAnchor.constraint(equalTo: leadingAnchor),
+            line.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            line.topAnchor.constraint(equalTo: topAnchor),
+            line.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        setAccessibilityElement(false)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    private func build() {
-        translatesAutoresizingMaskIntoConstraints = false
-        grid.orientation = .vertical
-        grid.alignment = .leading
-        grid.spacing = HelmMetrics.s2
-        grid.translatesAutoresizingMaskIntoConstraints = false
-
-        _ = card.setHeader(symbol: "command", tint: .violet,
-                           title: "Quick actions",
-                           subtitle: "Keyboard and mouse, same result")
-        card.setBody(grid, insets: HelmCard.contentInsets)
-
-        card.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(card)
-        NSLayoutConstraint.activate([
-            card.leadingAnchor.constraint(equalTo: leadingAnchor),
-            card.trailingAnchor.constraint(equalTo: trailingAnchor),
-            card.topAnchor.constraint(equalTo: topAnchor),
-            card.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-    }
-
     /// Rebuilt whole - a handful of fixed items, so there is nothing to diff.
     func setItems(_ items: [Item]) {
-        for view in grid.arrangedSubviews {
-            grid.removeArrangedSubview(view)
+        for view in line.arrangedSubviews {
+            line.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
         buttons.removeAll()
         self.items = items
-
-        // Two per row, the reference's own 2x2.
-        for pair in stride(from: 0, to: items.count, by: 2) {
-            let row = NSStackView()
-            row.orientation = .horizontal
-            row.distribution = .fillEqually
-            row.spacing = HelmMetrics.s2
-            row.translatesAutoresizingMaskIntoConstraints = false
-            for index in pair..<min(pair + 2, items.count) {
-                row.addArrangedSubview(makeButton(items[index]))
-            }
-            // A trailing odd item would otherwise stretch across the whole
-            // row under `.fillEqually` - the same partial-row padding
-            // `HelmResponsiveGrid` does for a card grid.
-            if items.count - pair == 1 {
-                let spacer = NSView()
-                spacer.translatesAutoresizingMaskIntoConstraints = false
-                row.addArrangedSubview(spacer)
-            }
-            grid.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: grid.widthAnchor).isActive = true
-        }
+        for item in items { line.addArrangedSubview(makeButton(item)) }
         applyTheme(theme)
     }
 
     /// A `HoverHighlightView` rather than a hand-rolled clickable view: it is
     /// this app's one hover/press/focus-ring treatment, and GL-16's button
-    /// role plus keyboard activation come with it. It carries only labels -
+    /// role plus keyboard activation come with it. It carries only the hint -
     /// a nested real control would be the hit-testing hazard that class's
     /// header warns about.
     private func makeButton(_ item: Item) -> NSView {
@@ -627,37 +565,22 @@ final class HostsQuickActionsPanel: NSView {
         button.cornerRadius = HelmMetrics.rControl
         button.pressScale = HelmModuleCard.pressScale
 
-        let shortcut = NSTextField(labelWithString: item.shortcut)
-        shortcut.font = HelmType.chip()
-        shortcut.lineBreakMode = .byClipping
-        shortcut.translatesAutoresizingMaskIntoConstraints = false
-        shortcut.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let title = NSTextField(labelWithString: item.title)
-        title.font = HelmType.captionSmall()
-        title.lineBreakMode = .byTruncatingTail
-        title.translatesAutoresizingMaskIntoConstraints = false
-        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let stack = NSStackView(views: [shortcut, title])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
-        button.addSubview(stack)
+        let hint = HelmKeyHint(keys: item.shortcut.map { String($0) }, caption: item.title)
+        hint.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(hint)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: HelmMetrics.s2),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: button.trailingAnchor, constant: -HelmMetrics.s2),
-            stack.topAnchor.constraint(equalTo: button.topAnchor, constant: HelmMetrics.s2),
-            stack.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -HelmMetrics.s2),
+            hint.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: HelmMetrics.s1),
+            hint.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -HelmMetrics.s1),
+            hint.topAnchor.constraint(equalTo: button.topAnchor, constant: HelmMetrics.s1),
+            hint.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -HelmMetrics.s1),
         ])
+        button.setContentHuggingPriority(.required, for: .horizontal)
 
         button.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(buttonClicked(_:))))
         button.accessibilityRoleOverride = .button
         button.accessibilityLabelOverride = "\(item.title) (\(item.shortcut))"
         button.toolTip = "\(item.title) \u{00B7} \(item.shortcut)"
-        buttons.append((button, shortcut, title))
+        buttons.append((button, hint))
         return button
     }
 
@@ -670,29 +593,20 @@ final class HostsQuickActionsPanel: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
-        card.applyTheme(theme)
-        let muted = HelmTheme.mutedInk(theme)
-        let ink = HelmTheme.nsColor(theme.chromeInkHex)
-        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
-        let accent = HelmTheme.nsColor(theme.accentHex)
-        let hover = surface.blended(withFraction: HelmAccentRow.selectionWash, of: accent) ?? surface
-        let rest = HelmField.fill(theme)
+        let hover = HelmFlatList.rowHoverColor(theme, over: HelmTheme.nsColor(theme.backgroundHex))
         for entry in buttons {
-            entry.shortcut.textColor = ink
-            entry.title.textColor = muted
             // Both colours, never `layer.backgroundColor` directly: a
             // `HoverHighlightView` owns persistent hover state and a direct
-            // layer write is stranded by the next `mouseExited`
-            // (`fm/grandline-updates-refresh-button-light-mode-fix`).
-            entry.button.normalColor = rest
+            // layer write is stranded by the next `mouseExited`.
+            entry.button.normalColor = .clear
             entry.button.hoverColor = hover
-            entry.button.layer?.cornerRadius = HelmMetrics.rControl
+            entry.hint.applyTheme(theme)
         }
     }
 
     #if FM_SELFTESTS
-    var debugShortcuts: [String] { buttons.map { $0.shortcut.stringValue } }
-    var debugTitles: [String] { buttons.map { $0.title.stringValue } }
+    var debugShortcuts: [String] { items.map(\.shortcut) }
+    var debugTitles: [String] { buttons.map { $0.hint.debugCaption ?? "" } }
     func debugClick(_ index: Int) {
         guard index < items.count else { return }
         items[index].run()
@@ -702,7 +616,10 @@ final class HostsQuickActionsPanel: NSView {
 
 // MARK: - The stack
 
-/// The three panels as one fixed-width column.
+/// The selected record's inspector as one fixed-width column (UI-50). The
+/// page shows it only when there is something to inspect - a selected row,
+/// or F12's expansion card on the Snippets tab. The inventory and the
+/// shortcuts moved into the content column.
 ///
 /// **Window-floor discipline** (gotchas (13)/(14)): the column's width sits at
 /// `HelmDaylightPriority.contentTie` (499), below
@@ -714,9 +631,7 @@ final class HostsSideStack: NSView {
 
     static let width: CGFloat = 320
 
-    let workspace = HostsWorkspacePanel()
     let detail = HostsDetailPanel()
-    let quickActions = HostsQuickActionsPanel()
     /// F12. Shown only on the Snippets tab - it is the one panel here that is
     /// about a single tab rather than about the page. An *arranged* subview,
     /// so hiding it genuinely removes it from the column's layout (gotcha
@@ -730,7 +645,7 @@ final class HostsSideStack: NSView {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [workspace, detail, expansion, quickActions])
+        let stack = NSStackView(views: [detail, expansion])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = HelmMetrics.s4
@@ -809,9 +724,7 @@ final class HostsSideStack: NSView {
             stack.topAnchor.constraint(equalTo: document.topAnchor),
             stack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
         ])
-        for panel in [workspace, detail, quickActions] as [NSView] {
-            panel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
+        detail.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
         // A scroll view has no intrinsic height, so this is the only thing
         // giving the column one: it prefers to be exactly as tall as its cards
@@ -831,10 +744,11 @@ final class HostsSideStack: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    /// Whether the column has anything to show.
+    var hasContent: Bool { detail.isShowingRecord || !expansion.isHidden }
+
     func applyTheme(_ theme: HelmTheme) {
-        workspace.applyTheme(theme)
         detail.applyTheme(theme)
         expansion.applyTheme(theme)
-        quickActions.applyTheme(theme)
     }
 }

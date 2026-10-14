@@ -168,17 +168,45 @@ enum HostsRedesignSelfTest {
     /// Re-adding the column has to come here and read why it went, which is
     /// this codebase's own convention for an assertion that has become a
     /// record of an overturned decision.
+    ///
+    /// **UI-50 made the third column conditional.** The inspector shows only
+    /// when a record is selected; with nothing selected the list takes its
+    /// width. So the case asserts both: two columns tiling the page at rest,
+    /// and three once a row is selected - the tiling arithmetic is the same
+    /// guarantee either way.
     private static func checkThreeColumnLayout(_ ok: inout Bool) {
-        print("\n-- three columns, and none of them is a window floor --")
+        print("\n-- two columns at rest, three with a selection, none a window floor --")
         let (controller, window, _) = page(hosts: [devHost(), prodHost()])
         defer { _ = window }
 
         let stack = controller.debugSideStack
-        let state = controller.debugState()
         guard let nav = findSidebar(in: controller.view) else {
             fail("no HelmPageSidebar in the page - the nav column is missing", &ok)
             return
         }
+        let rest = controller.debugState()
+        let restExpected = rest.rootWidth - HelmMetrics.pageGutter * 2 - HelmPageSidebar.width - HelmMetrics.s4
+        if !stack.isHidden {
+            fail("the inspector column shows with nothing selected", &ok)
+        }
+        if !controller.debugWorkspacePanel.debugIsFlat {
+            fail("the inventory is boxed again - UI-50 makes it one flat KPI line", &ok)
+        }
+        if abs(rest.hostsCardFrame.width - restExpected) > 0.5 {
+            fail("with nothing selected the list is \(fmt(rest.hostsCardFrame.width))pt, want "
+                 + "\(fmt(restExpected))pt - it should take the inspector's width", &ok)
+        }
+
+        guard let devRow = row(controller.debugList(.hosts), labelled: "DEV Bastion") else {
+            fail("no DEV Bastion row to select", &ok)
+            return
+        }
+        controller.debugList(.hosts).debugSelect(devRow)
+        controller.view.layoutSubtreeIfNeeded()
+        if stack.isHidden {
+            fail("selecting a host did not show the inspector column", &ok)
+        }
+        let state = controller.debugState()
         let expected = state.rootWidth
             - HelmMetrics.pageGutter * 2
             - HelmPageSidebar.width
@@ -320,19 +348,18 @@ enum HostsRedesignSelfTest {
             return
         }
 
+        // UI-50: nothing is selected, so the inspector is hidden and the list
+        // should hold the page's whole content width.
         let expected = state.rootWidth
             - HelmMetrics.pageGutter * 2
-            - HelmMetrics.s4
-            - HostsSideStack.width
             - HelmMetrics.s4
             - HelmPageSidebar.width
         if abs(state.hostsCardFrame.width - expected) > 0.5 {
             fail("content column is \(fmt(state.hostsCardFrame.width))pt, want \(fmt(expected))pt "
                  + "- an untagged host list collapses the page's primary content", &ok)
         }
-        if abs(stack.frame.width - HostsSideStack.width) > 0.5 {
-            fail("side column is \(fmt(stack.frame.width))pt, want \(fmt(HostsSideStack.width))pt "
-                 + "- the rail has taken the list's width", &ok)
+        if !stack.isHidden {
+            fail("the inspector column shows with nothing selected", &ok)
         }
         // Both hosts plus the pinned Firstmate row plus two group headers.
         if state.hostRowCount < 3 {
@@ -396,7 +423,7 @@ enum HostsRedesignSelfTest {
                                                    live: [dev.id])
         defer { _ = window }
 
-        let metrics = controller.debugSideStack.workspace.debugMetrics
+        let metrics = controller.debugWorkspacePanel.debugMetrics
         let expected = [("2", "Hosts"), ("1", "SSH keys"), ("1", "Snippets"), ("1", "Live sessions")]
         for (index, want) in expected.enumerated() {
             guard index < metrics.count else {
@@ -413,7 +440,7 @@ enum HostsRedesignSelfTest {
         // once and never corrected.
         hostStore.add(Host(label: "Third", address: "third.example.com"))
         controller.view.layoutSubtreeIfNeeded()
-        let after = controller.debugSideStack.workspace.debugMetrics.first?.value ?? "?"
+        let after = controller.debugWorkspacePanel.debugMetrics.first?.value ?? "?"
         if after != "3" { fail("adding a host left the Hosts tile at \(after)", &ok) }
 
         // The Keychain line is a real `LAContext` probe, so it says one of two
@@ -425,7 +452,7 @@ enum HostsRedesignSelfTest {
         // on CI (a runner has no biometry, so it takes the branch this Mac
         // never does) while passing on every developer machine with Touch ID.
         // The property is which *fact* is stated, not how it is capitalised.
-        let status = controller.debugSideStack.workspace.debugStatusText
+        let status = controller.debugWorkspacePanel.debugStatusText
         if !(status.localizedCaseInsensitiveContains("Touch ID ready")
              || status.localizedCaseInsensitiveContains("no biometry")) {
             fail("keychain status reads \"\(status)\"", &ok)
@@ -623,7 +650,7 @@ enum HostsRedesignSelfTest {
         let (controller, window, _) = page(hosts: [devHost()])
         defer { _ = window }
 
-        let panel = controller.debugSideStack.quickActions
+        let panel = controller.debugQuickActions
         let wantShortcuts = ["\u{2318}K", "\u{2318}\u{2303}N", "\u{2318}\u{21E7}N", "\u{2318}\u{2325}N"]
         let wantTitles = ["Command palette", "Add host", "New key", "New snippet"]
         if panel.debugShortcuts != wantShortcuts {
@@ -848,7 +875,7 @@ enum HostsRedesignSelfTest {
                                                    keys: [navKey("work"), navKey("legacy")],
                                                    snippets: [navSnippet("tail")])
         defer { _ = window }
-        let tiles = controller.debugSideStack.workspace.debugMetrics
+        let tiles = controller.debugWorkspacePanel.debugMetrics
         guard tiles.count >= 3 else {
             fail("the Workspace panel renders \(tiles.count) tiles, want at least 3", &ok); return
         }
@@ -857,7 +884,7 @@ enum HostsRedesignSelfTest {
             fail("the \(tiles[index].caption) tile reads \(tiles[index].value), want \(value)", &ok)
         }
         hostStore.add(prodHost())
-        let after = controller.debugSideStack.workspace.debugMetrics
+        let after = controller.debugWorkspacePanel.debugMetrics
         if after.first?.value != "2" {
             fail("after adding a host the Hosts tile reads \(after.first?.value ?? "nil"), want 2", &ok)
         }
