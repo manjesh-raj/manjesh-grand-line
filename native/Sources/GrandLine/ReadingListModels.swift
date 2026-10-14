@@ -418,9 +418,6 @@ enum ReadingListFilter: Equatable {
     case addedToday
     case tag(String)
 
-    /// The segmented strip's own three, in the mockup's order.
-    static let tabs: [ReadingListFilter] = [.all, .unread, .summarised]
-
     var id: String {
         switch self {
         case .all: return "all"

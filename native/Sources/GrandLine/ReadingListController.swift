@@ -12,8 +12,11 @@
 //
 //   - a left column of inbox slices (Unread / Read / Added today) over a list
 //     of tags with counts - `HelmPageSidebar`, not a fifth hand-rolled nav;
-//   - a segmented All / Unread / Summarised strip over the grid, with the
-//     "drop a URL anywhere in the window" hint beside it;
+//   - a toolbar over the grid carrying the "drop a URL anywhere in the
+//     window" hint and the paste and refresh actions. It used to carry a
+//     segmented All / Unread / Summarised strip too - a second filter for one
+//     list beside the sidebar's own. UI-60 made the sidebar the one filter,
+//     with Summarised as one of its slices;
 //   - a responsive grid of cards, three states deep (summarised, awaiting a
 //     summary, read) - `ReadingListCardView`;
 //   - a dashed drop-zone card under the grid.
@@ -67,12 +70,8 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var themeObservation: ThemeObservation?
 
+    /// UI-60: the sidebar is the one filter, so this has one writer.
     private var filter: ReadingListFilter = .all
-    /// The segmented strip and the sidebar are two views of one question, so
-    /// the sidebar's slices and the strip's tabs both write `filter` - and
-    /// whichever did not fire is re-synced afterwards, so the page never shows
-    /// two different answers at once.
-    private var tabFilter: ReadingListFilter = .all
 
     private var syncStatus: ReadingListGitSync.Status = .synced
     /// GL-14: "nothing loaded yet" and "nothing saved" are different states,
@@ -92,10 +91,6 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
     // MARK: Views
 
     private let toolbar = HelmPageToolbar()
-    private let tabs = HelmSegmentedTabs(items: ReadingListFilter.tabs.map {
-        HelmSegmentedTabs.Item(id: $0.id, title: $0.title)
-    }, size: .compact)
-    private let statusLabel = NSTextField(labelWithString: "")
 
     private let sidebar = HelmPageSidebar(surface: .panel, countStyle: .badge)
 
@@ -204,7 +199,6 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
         store.gitSync?.observeStatus { [weak self] status in
             guard let self else { return }
             self.syncStatus = status
-            self.refreshStatusLine()
             self.onDrillSubtitleChanged?()
             if case .failed(let why) = status {
                 // GL-30: a failed sync is still true after a toast would have
@@ -249,32 +243,16 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
 
     private func buildToolbar(in root: NSView) {
         root.addSubview(toolbar)
-        tabs.translatesAutoresizingMaskIntoConstraints = false
-        tabs.onSelect = { [weak self] id in
-            guard let self, let picked = ReadingListFilter.fromID(id) else { return }
-            self.tabFilter = picked
-            self.filter = picked
-            // The sidebar and the strip are two views of one question. Picking
-            // a tab clears the sidebar's own slice rather than leaving a row
-            // highlighted that no longer describes the grid.
-            self.sidebar.select(picked.id)
-            self.rebuildGrid()
-            self.rebuildSidebar()
-        }
-
-        statusLabel.font = HelmType.caption()
-        statusLabel.lineBreakMode = .byTruncatingTail
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
         hintLabel.font = HelmType.captionSmall()
         hintLabel.translatesAutoresizingMaskIntoConstraints = false
         hintLabel.lineBreakMode = .byTruncatingTail
         hintLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        toolbar.setLeading(HelmPageToolbar.group([tabs, statusLabel]))
+        // UI-60: the toolbar carries the paste hint and the two actions. The
+        // sync line it used to lead with was the drill header's own subtitle,
+        // word for word, one row above it.
+        toolbar.setLeading(HelmPageToolbar.group([hintLabel]))
         toolbar.setTrailing(HelmPageToolbar.group([
-            hintLabel,
             HelmPageToolbar.iconButton(symbol: "doc.on.clipboard",
                                        tooltip: "Save the link on the clipboard (\u{2318}V)",
                                        target: self, action: #selector(pasteTapped)),
@@ -302,11 +280,6 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
         sidebar.onSelect = { [weak self] id in
             guard let self, let picked = ReadingListFilter.fromID(id) else { return }
             self.filter = picked
-            // A sidebar slice that is not one of the strip's three leaves the
-            // strip on All rather than lighting a tab that is not what the grid
-            // is showing.
-            self.tabFilter = ReadingListFilter.tabs.contains(picked) ? picked : .all
-            self.tabs.select(self.tabFilter.id)
             self.rebuildGrid()
         }
         root.addSubview(sidebar)
@@ -451,7 +424,6 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
             : nil
         rebuildSidebar()
         rebuildGrid()
-        refreshStatusLine()
         onDrillSubtitleChanged?()
         fetchMissingMetadata()
     }
@@ -700,7 +672,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
         let links = store.links
         let calendar = Calendar.current
         let now = Date()
-        let inbox: [ReadingListFilter] = [.unread, .read, .addedToday]
+        let inbox: [ReadingListFilter] = [.unread, .read, .summarised, .addedToday]
         var counts: [String: Int] = [ReadingListFilter.all.id: links.count]
         for slice in inbox {
             counts[slice.id] = links.filter {
@@ -715,6 +687,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
                 .init(id: ReadingListFilter.all.id, indicator: .symbol("tray.full"), title: "Everything"),
                 .init(id: ReadingListFilter.unread.id, indicator: .symbol("book"), title: "Unread"),
                 .init(id: ReadingListFilter.read.id, indicator: .symbol("checkmark.circle"), title: "Read"),
+                .init(id: ReadingListFilter.summarised.id, indicator: .symbol("sparkles"), title: "Summarised"),
                 .init(id: ReadingListFilter.addedToday.id, indicator: .symbol("bolt"), title: "Added today"),
             ]),
         ]
@@ -853,11 +826,6 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
         return "Nothing under \u{201C}\(filter.title)\u{201D}"
     }
 
-    private func refreshStatusLine() {
-        guard isViewLoaded else { return }
-        statusLabel.stringValue = hasLoaded ? syncSummary : "opening\u{2026}"
-    }
-
     override func viewDidLayout() {
         super.viewDidLayout()
         // GL-20: a cheap staleness check first, and only then the layout pass.
@@ -883,9 +851,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         toolbar.applyTheme(theme)
         readerBar.applyTheme(theme)
-        tabs.applyTheme(theme)
         sidebar.applyTheme(theme)
-        statusLabel.textColor = HelmTheme.mutedInk(theme)
         hintLabel.textColor = HelmTheme.mutedInk(theme)
         readerTitle.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         HelmCard.applyCardSurface(to: readerCard, theme: theme)
@@ -922,10 +888,10 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
         rebuildGrid()
         rebuildSidebar()
     }
+    /// UI-60: the strip is gone, so a "tab" is a sidebar slice, selected
+    /// through the sidebar's own path.
     func debugSelectTab(_ id: String) {
-        tabs.select(id)
         guard let picked = ReadingListFilter.fromID(id) else { return }
-        tabFilter = picked
         filter = picked
         sidebar.select(picked.id)
         rebuildGrid()
