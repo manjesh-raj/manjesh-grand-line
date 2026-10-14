@@ -81,25 +81,45 @@ enum ShiftTasksPageSelfTest {
             check(visible().count == 5,
                   "All tasks should restore the full board, got \(visible().count)")
 
-            // MARK: The counts come off the same arrays the tiles were built from
+            // MARK: One counting pass feeds the subtitle and the sidebar (UI-16, UI-18)
 
-            let tiles = controller.debugStatTiles
-            check(tiles.count == 4, "the page should carry four stat tiles, got \(tiles.count)")
-            let byCaption = Dictionary(tiles.map { ($0.caption, $0.value) }, uniquingKeysWith: { a, _ in a })
-            check(byCaption["open tasks"] == "4",
-                  "open tasks should count the four active tasks, got \(byCaption["open tasks"] ?? "nil")")
-            check(byCaption["tasks today"] == "2",
-                  "tasks today should be 2, got \(byCaption["tasks today"] ?? "nil")")
-            check(byCaption["overdue"] == "1",
-                  "overdue should be 1, got \(byCaption["overdue"] ?? "nil")")
+            check(controller.debugStatTileCount == 0,
+                  "the page should carry no stat tiles (UI-16), found \(controller.debugStatTileCount)")
+            let c = controller.counts()
+            check(c.open == 4, "open should count the four active tasks, got \(c.open)")
+            check(c.dueToday == 2, "due today should be 2, got \(c.dueToday)")
+            check(c.overdue == 1, "overdue should be 1, got \(c.overdue)")
+            let subtitle = controller.drillHeaderSubtitle ?? ""
+            check(subtitle == "4 open \u{00B7} 2 due today \u{00B7} \(c.followUps) follow-up\(c.followUps == 1 ? "" : "s") \u{00B7} 1 overdue",
+                  "the subtitle should carry all four counts, got \"\(subtitle)\"")
 
             let counts = controller.debugSidebar.debugCounts
-            check(counts["all"] == byCaption["open tasks"],
-                  "the column's All tasks count must equal the open-tasks tile, got \(counts["all"] ?? "nil")")
-            check(counts["due_today"] == byCaption["tasks today"],
-                  "the column's Due today count must equal the tile, got \(counts["due_today"] ?? "nil")")
-            check(counts["overdue"] == byCaption["overdue"],
-                  "the column's Overdue count must equal the tile, got \(counts["overdue"] ?? "nil")")
+            check(counts["all"] == "\(c.open)",
+                  "the column's All tasks count must equal the subtitle's, got \(counts["all"] ?? "nil")")
+            check(counts["due_today"] == "\(c.dueToday)",
+                  "the column's Due today count must equal the subtitle's, got \(counts["due_today"] ?? "nil")")
+            check(counts["overdue"] == "\(c.overdue)",
+                  "the column's Overdue count must equal the subtitle's, got \(counts["overdue"] ?? "nil")")
+        }
+
+        // MARK: The counts follow the project filter (UI-18)
+
+        withScratchStore { store in
+            let alpha = seedProject(store, name: "Alpha")
+            _ = seed(store, title: "In alpha", status: .todo, due: nil, project: alpha)
+            _ = seed(store, title: "Loose", status: .todo, due: nil)
+            _ = seed(store, title: "Loose too", status: .todo, due: nil)
+            let (controller, window) = mount(store: store)
+            defer { window.orderOut(nil) }
+            check(controller.counts().open == 3, "unfiltered, all three tasks count")
+            controller.debugSelectSidebarRow(ShiftController.debugProjectRowID(alpha))
+            drainMainQueue(turns: 5)
+            check(controller.counts().open == 1,
+                  "filtered to Alpha, only Alpha's task counts, got \(controller.counts().open)")
+            check(controller.debugSidebar.debugCounts["all"] == "1",
+                  "and the sidebar follows, got \(controller.debugSidebar.debugCounts["all"] ?? "nil")")
+            check((controller.drillHeaderSubtitle ?? "").hasPrefix("Alpha \u{00B7} 1 open"),
+                  "and the subtitle names the filter, got \(controller.drillHeaderSubtitle ?? "nil")")
         }
 
         // MARK: An action row never takes the selection
@@ -266,9 +286,8 @@ enum ShiftTasksPageSelfTest {
                   "clicking a project row filters by it, got \(controller.debugProjectFilter ?? "nil")")
             check(controller.debugVisibleTaskIDs(.backlog) == [inAlpha],
                   "the board should show only Alpha's task, got \(controller.debugVisibleTaskIDs(.backlog))")
-            check(controller.debugProjectFilterBar?.selectedProjectID == alpha,
-                  "the chip row must move with it, got "
-                  + "\(controller.debugProjectFilterBar?.selectedProjectID ?? "nil")")
+            check(!controller.debugHasProjectChipRow,
+                  "the sidebar is the one project filter - no chip row repeats it (UI-17)")
             check(controller.debugSidebar.debugSelectedRowIDs
                     .contains(ShiftController.debugProjectRowID(alpha)),
                   "the picked project row is the one rendering selected, got "

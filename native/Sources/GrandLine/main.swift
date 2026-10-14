@@ -2824,6 +2824,11 @@ if ProcessInfo.processInfo.environment["FM_RUN_HELM_KIT_VIEW_TESTS"] == "1" {
     exit(HelmKitViewSelfTest.run() ? 0 : 1)
 }
 
+// The UI/UX revamp's Tasks chrome: sync wording, offline detection, sort.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_TASKS_CHROME_TESTS"] == "1" {
+    exit(ShiftTasksChromeSelfTest.run() ? 0 : 1)
+}
+
 // Review process issue P9: the on-disk diagnostics sink and the crash-report
 // check. Pure logic plus real file round trips, so it guards CI's blocking
 // lane.

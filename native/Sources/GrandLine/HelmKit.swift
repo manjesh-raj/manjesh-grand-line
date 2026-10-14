@@ -184,8 +184,8 @@ final class HelmSectionHeader: NSView {
     }
 
     let size: Size
-    let titleLabel = NSTextField(labelWithString: "")
-    let countLabel = NSTextField(labelWithString: "")
+    let titleLabel: NSTextField
+    let countLabel: NSTextField
     let eyebrowLabel = NSTextField(labelWithString: "")
     let sublineLabel = NSTextField(labelWithString: "")
     private let tile: IconTileView
@@ -198,8 +198,17 @@ final class HelmSectionHeader: NSView {
     static let textResistance = NSLayoutConstraint.Priority(490)
     static func tileSide(for size: Size) -> CGFloat { size == .hero ? HelmMetrics.tileBase : 30 }
 
-    init(size: Size) {
+    /// - Parameters:
+    ///   - titleLabel, countLabel: caller-owned labels, for a page that
+    ///     rewrites the title or the count as data arrives (Tasks' "2 pending")
+    ///     and already holds the label. The header still owns their fonts and
+    ///     colours, so the page only ever sets `stringValue`.
+    init(size: Size,
+         titleLabel: NSTextField = NSTextField(labelWithString: ""),
+         countLabel: NSTextField = NSTextField(labelWithString: "")) {
         self.size = size
+        self.titleLabel = titleLabel
+        self.countLabel = countLabel
         let side = Self.tileSide(for: size)
         tile = IconTileView(size: side, cornerRadius: HelmMetrics.dTileSmall)
         super.init(frame: .zero)

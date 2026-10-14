@@ -200,7 +200,11 @@ final class ShiftTaskListView: NSObject {
     /// How tall this list's content actually is right now - the number a
     /// panel around it should hug (review U15).
     var contentHeight: CGFloat {
-        tasks.isEmpty ? Self.emptyRowHeight : CGFloat(tasks.count) * Self.rowHeight
+        // Each row occupies its height plus the table's intercell gap; leaving
+        // the gap out sliced the last row once the follow-ups panel started
+        // sizing to its own rows (UI-30).
+        tasks.isEmpty ? Self.emptyRowHeight
+            : CGFloat(tasks.count) * (Self.rowHeight + tableView.intercellSpacing.height)
     }
 
     @objc private func rowDoubleClicked() {
@@ -509,7 +513,8 @@ final class ShiftFollowUpListView: NSObject {
 
     /// See `ShiftTaskListView.contentHeight` (review U15).
     var contentHeight: CGFloat {
-        items.isEmpty ? Self.emptyRowHeight : CGFloat(items.count) * Self.rowHeight
+        items.isEmpty ? Self.emptyRowHeight
+            : CGFloat(items.count) * (Self.rowHeight + tableView.intercellSpacing.height)
     }
 
     func setItems(_ items: [ShiftFollowUp]) {

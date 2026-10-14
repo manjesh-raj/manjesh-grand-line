@@ -207,23 +207,18 @@ enum ShiftBoardViewSelfTest {
             store.addTask(assigned)
             controller.debugRender()
 
-            guard let chips = controller.debugProjectFilterBar else {
-                failures.append("the board has no project filter bar")
-                return
-            }
-            check(chips.debugChipTitles.first == "All projects",
-                  "the filter row should lead with All projects, got \(chips.debugChipTitles)")
-            check(chips.debugChipTitles.contains("Grand Line"),
-                  "the filter row should carry a chip per project, got \(chips.debugChipTitles)")
-
-            chips.debugClickChip(projectID: project.id)
+            // UI-17: the sidebar is the one project filter - the chip row
+            // that repeated it above the board is gone.
+            check(!controller.debugHasProjectChipRow, "the board should carry no project chip row")
+            let row = ShiftController.debugProjectRowID(project.id)
+            controller.debugSelectSidebarRow(row)
             let filtered = ids(.backlog)
             check(filtered == [assigned.id],
                   "filtering to a project should leave only that project's cards, got \(filtered)")
 
-            chips.debugClickChip(projectID: project.id)
+            controller.debugSelectSidebarRow(row)
             check(ids(.backlog).count > 1,
-                  "clicking the active chip again should clear the filter, got \(ids(.backlog))")
+                  "clicking the active project again should clear the filter, got \(ids(.backlog))")
 
             // MARK: The Board/List toggle
 

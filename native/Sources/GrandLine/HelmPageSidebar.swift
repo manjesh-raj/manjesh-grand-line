@@ -870,6 +870,8 @@ final class HelmPageSidebar: NSView {
     /// Keyed by row id. A row built with `showsCount: false` ignores whatever
     /// it is handed here, so a caller need not special-case its action rows.
     func setCounts(_ counts: [String: Int]) {
+        for (id, value) in counts { countValues[id] = value }
+        defer { applyAttentionCounts() }
         for row in rows {
             guard let value = counts[row.id] else { continue }
             row.count.stringValue = "\(value)"
@@ -881,10 +883,46 @@ final class HelmPageSidebar: NSView {
         }
     }
 
+    /// Row ids whose count is the column's one attention badge while it is
+    /// above zero - Tasks' Follow-ups (the UI/UX revamp's sidebar: muted
+    /// counts everywhere, and one badge where something is waiting on the
+    /// captain). Off by default.
+    var attentionCountRowIDs: Set<String> = [] {
+        didSet { applyAttentionCounts() }
+    }
+    var attentionCountTint: HelmTint = .warn
+    private var countValues: [String: Int] = [:]
+
+    /// The badge treatment: a bold count in the contrast-corrected tint, so
+    /// the one number that wants the captain reads as different from the
+    /// counts around it without adding a capsule to a quiet column.
+    private func applyAttentionCounts() {
+        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        let tinted = HelmContrast.legibleTintedText(tintHex: attentionCountTint.hex(in: theme),
+                                                    over: surface, theme: theme)
+        // Only the opted-in rows are touched, so a column with no attention
+        // rows renders exactly as it always did.
+        for row in rows where attentionCountRowIDs.contains(row.id) {
+            let isAttention = (countValues[row.id] ?? 0) > 0
+            row.count.font = isAttention
+                ? .systemFont(ofSize: HelmType.captionSmall().pointSize, weight: .bold)
+                : HelmType.captionSmall()
+            if isAttention { row.count.textColor = tinted }
+        }
+    }
+
+    #if FM_SELFTESTS
+    func debugCountIsAttention(_ id: String) -> Bool {
+        guard let row = rows.first(where: { $0.id == id }) else { return false }
+        return row.count.font?.fontDescriptor.symbolicTraits.contains(.bold) ?? false
+    }
+    #endif
+
     // MARK: Theme
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        defer { applyAttentionCounts() }
         // A `.plain` column never touches its own layer, so the two pages that
         // predate `Surface` render exactly as before.
         if surface == .panel {
