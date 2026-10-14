@@ -188,7 +188,10 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     /// to exactly the same accent fill and label pairing - so this is the
     /// shared definition to reuse rather than a sixth copy of that bespoke
     /// recipe (`fm/grandline-refresh-button-consistency`).
-    private let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")
+    ///
+    /// UI-55: `.secondary` now. A page carries one primary, and on this page
+    /// it is Run Automation - Refresh is a read, Run changes the machine.
+    private let refreshButton = HelmButton(title: "Refresh", variant: .secondary, symbol: "arrow.clockwise")
 
     /// Guards the manual re-check against re-entry while its two background
     /// sweeps are still out, exactly like `ReviewController.refresh`'s own
@@ -301,12 +304,15 @@ final class AutomationController: NSViewController, DaylightDrillActions {
             rebuild()
         }
     }
+    private func settleDeferredThemeRebuild() {
+        guard needsThemeRebuild else { return }
+        needsThemeRebuild = false
+        rebuildStepper()
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
-        if needsThemeRebuild {
-            needsThemeRebuild = false
-            rebuildStepper()
-        }
+        settleDeferredThemeRebuild()
         if isLoadingDotfiles { refreshDotfiles() }
         if isLoadingSoftware { checkAllSoftware() }
         scrollToTop()
@@ -617,15 +623,16 @@ final class AutomationController: NSViewController, DaylightDrillActions {
 
     // MARK: Stepper rendering
 
-    /// One status pill per step (UI-32). Only the states that need the
-    /// captain's eye are pills; the quiet ones are a dot and a word.
+    /// One status per step (UI-32, UI-55): a dot and a word while a step is
+    /// pending or in progress, a pill for a result - Done, Failed - and for
+    /// the one state that waits on the captain.
     private func statusVisuals(_ status: AutomationStepStatus) -> (String, HelmTint, HelmStatusPill.Style) {
         switch status {
         case .pending: return ("Pending", .neutral, .dotWord)
         case .checking: return ("Checking\u{2026}", .neutral, .dotWord)
         case .running: return ("Running\u{2026}", .info, .dotWord)
         case .waitingForCaptain: return ("Needs you", .warn, .pill)
-        case .done: return ("Done", .good, .dotWord)
+        case .done: return ("Done", .good, .pill)
         case .skipped: return ("Skipped - already there", .good, .dotWord)
         case .failed: return ("Failed", .critical, .pill)
         }
@@ -667,7 +674,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         let titleRow = NSStackView(views: [titleLabel, pill])
         titleRow.orientation = .horizontal
         titleRow.alignment = .centerY
-        titleRow.spacing = 8
+        titleRow.spacing = HelmMetrics.s2
 
         let detailLabel = NSTextField(wrappingLabelWithString: stepDetail(for: kind))
         detailLabel.setScaledFont(ofSize: 11.5)
@@ -735,20 +742,23 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         let content = NSStackView(views: bodyViews)
         content.orientation = .vertical
         content.alignment = .leading
-        content.spacing = 8
+        content.spacing = HelmMetrics.s2
         content.translatesAutoresizingMaskIntoConstraints = false
         for v in bodyViews { v.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true }
 
+        // UI-55: a step is flat on the card - no sunken well inside the
+        // card's own surface (Rule 1, one bordered surface per level). The
+        // box stays as the step's frame, so a step that needs the captain can
+        // still carry its 3pt accent bar at the leading edge.
         let box = NSView()
         box.wantsLayer = true
-        box.layer?.cornerRadius = 10
         box.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(content)
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 12),
-            content.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -12),
-            content.topAnchor.constraint(equalTo: box.topAnchor, constant: 10),
-            content.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -10),
+            content.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: HelmMetrics.s3),
+            content.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -HelmMetrics.s3),
+            content.topAnchor.constraint(equalTo: box.topAnchor, constant: HelmMetrics.s1),
+            content.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -HelmMetrics.s2),
         ])
         stepContentBoxes.append(box)
         return box
@@ -758,103 +768,90 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     /// small rounded, status-tinted chip per `DependencyCatalog` item, never
     /// collapsed into a single "Software (N tools)" summary line.
     private func buildSoftwareChecklistGrid() -> NSView {
-        let columns = 3
+        // UI-55: a two-column list with a glyph per tool, not a grid of
+        // fifteen tinted chips. Two equal columns so a name has room, and
+        // the glyph carries the state.
+        let columns = 2
         let rows = toolRows.chunked(into: columns)
         let gridStack = NSStackView()
         gridStack.orientation = .vertical
         gridStack.alignment = .leading
-        gridStack.spacing = 6
+        gridStack.spacing = HelmMetrics.s1
         gridStack.translatesAutoresizingMaskIntoConstraints = false
         for rowItems in rows {
-            let rowStack = NSStackView(views: rowItems.map { toolChipView($0) })
+            var cells = rowItems.map { toolChipView($0) }
+            // An odd last row keeps the column widths of the rows above.
+            while cells.count < columns { cells.append(NSView()) }
+            let rowStack = NSStackView(views: cells)
             rowStack.orientation = .horizontal
             rowStack.alignment = .centerY
-            rowStack.spacing = 6
+            rowStack.distribution = .fillEqually
+            rowStack.spacing = HelmMetrics.s4
             gridStack.addArrangedSubview(rowStack)
+            rowStack.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
         }
         return gridStack
     }
 
+    /// One tool: its state glyph and its name. A check for installed, a cross
+    /// for a failed check, an arrow while it is the one running, and an
+    /// empty circle for not yet checked.
     private func toolChipView(_ row: ToolRowState) -> NSView {
-        let dot = NSView()
-        dot.wantsLayer = true
-        dot.translatesAutoresizingMaskIntoConstraints = false
-        dot.layer?.cornerRadius = 3.5
-        NSLayoutConstraint.activate([
-            dot.widthAnchor.constraint(equalToConstant: 7),
-            dot.heightAnchor.constraint(equalToConstant: 7),
-        ])
+        let glyph = NSImageView()
+        glyph.translatesAutoresizingMaskIntoConstraints = false
+        glyph.setContentHuggingPriority(.required, for: .horizontal)
 
         let label = NSTextField(labelWithString: row.item.name)
-        label.setScaledFont(ofSize: 11, weight: .medium)
+        label.font = HelmType.caption()
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        dynamicLabels.append(label)
 
-        let innerStack = NSStackView(views: [dot, label])
-        innerStack.orientation = .horizontal
-        innerStack.spacing = 6
-        innerStack.alignment = .centerY
-        innerStack.translatesAutoresizingMaskIntoConstraints = false
-
-        let chip = NSView()
-        chip.wantsLayer = true
-        chip.layer?.cornerRadius = 9
-        chip.translatesAutoresizingMaskIntoConstraints = false
-        chip.widthAnchor.constraint(lessThanOrEqualToConstant: 190).isActive = true
-        chip.addSubview(innerStack)
-        NSLayoutConstraint.activate([
-            innerStack.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: 10),
-            innerStack.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -10),
-            innerStack.topAnchor.constraint(equalTo: chip.topAnchor, constant: 6),
-            innerStack.bottomAnchor.constraint(equalTo: chip.bottomAnchor, constant: -6),
-        ])
-
-        // A fresh chip every call (this whole grid is torn down and rebuilt
-        // on every status change, see `rebuildStepper`'s doc comment), so a
-        // brand-new accent bar here needs no idempotency guard - `build()`'s
-        // `superview !== ...` dance is only needed for a persistent, reused
-        // container.
-        let accentBar = NSView()
-        ToolRowLayout.attachAccentBar(accentBar, to: chip, verticalInset: 4, width: 2.5)
-        applyChipTheme(chip: chip, dot: dot, label: label, accentBar: accentBar, row: row)
-        return chip
+        let item = NSStackView(views: [glyph, label])
+        item.orientation = .horizontal
+        item.spacing = HelmMetrics.s2
+        item.alignment = .centerY
+        item.translatesAutoresizingMaskIntoConstraints = false
+        item.edgeInsets = NSEdgeInsets(top: HelmMetrics.s1, left: 0, bottom: HelmMetrics.s1, right: 0)
+        item.setAccessibilityElement(true)
+        item.setAccessibilityRole(.staticText)
+        item.setAccessibilityLabel("\(row.item.name), \(Self.toolStateWord(row))")
+        applyChipTheme(glyph: glyph, label: label, row: row)
+        return item
     }
 
-    /// The three visual states the brief asks for - "a soft good tint for
-    /// done, a highlighted accent-bordered tint for the one currently
-    /// running, muted/plain for pending" - plus a fourth (critical) for a
-    /// genuine check/install failure, which the brief's three named states
-    /// don't cover but this page still needs to represent honestly. The
-    /// failure case is also the one that gets the notification-card-style
-    /// left accent bar (`fm/grandline-setup-attention-row-style`) - a
-    /// pending/done/running chip already reads calmly via its own fill/dot
-    /// color and shouldn't grow extra chrome.
-    private func applyChipTheme(chip: NSView, dot: NSView, label: NSTextField, accentBar: NSView, row: ToolRowState) {
-        let hex: String
-        var borderHex: String?
+    private static func toolStateWord(_ row: ToolRowState) -> String {
+        if row.isCurrent { return "checking now" }
+        switch row.status {
+        case .checkFailed, .updateFailed: return "check failed"
+        case .upToDate, .updateAvailable: return "installed"
+        case .notInstalled: return "not installed"
+        default: return "not checked yet"
+        }
+    }
+
+    /// The four states the brief asks for - done, the one running, pending,
+    /// and a genuine check/install failure - as a glyph and its colour. The
+    /// name stays page ink.
+    private func applyChipTheme(glyph: NSImageView, label: NSTextField, row: ToolRowState) {
+        let symbol: String
+        let tint: HelmTint
         let isFailed = row.status == .checkFailed || row.status == .updateFailed
         if row.isCurrent {
-            hex = theme.accentHex
-            borderHex = theme.accentHex
+            symbol = "arrow.triangle.2.circlepath"; tint = .accent
         } else if isFailed {
-            hex = theme.ansiHex[1]
+            symbol = "xmark.circle.fill"; tint = .critical
         } else if row.status == .upToDate || row.status == .updateAvailable {
-            hex = theme.ansiHex[2]
+            symbol = "checkmark.circle.fill"; tint = .good
+        } else if row.status == .notInstalled {
+            symbol = "minus.circle"; tint = .warn
         } else {
-            hex = theme.chromeInkHex
+            symbol = "circle"; tint = .neutral
         }
-        let color = HelmTheme.nsColor(hex)
-        dot.layer?.backgroundColor = color.cgColor
-        chip.layer?.backgroundColor = color.withAlphaComponent(row.isCurrent ? 0.16 : 0.10).cgColor
-        if let borderHex {
-            chip.layer?.borderWidth = 1.5
-            chip.layer?.borderColor = HelmTheme.nsColor(borderHex).cgColor
-        } else {
-            chip.layer?.borderWidth = 0
-        }
+        let color = tint == .neutral ? HelmTheme.mutedInk(theme) : HelmTheme.nsColor(tint.hex(in: theme))
+        glyph.image = HelmSymbol.image(symbol, pointSize: 12, weight: .medium,
+                                       hierarchicalColor: color, accessibilityDescription: nil)
+        glyph.contentTintColor = color
         label.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        ToolRowLayout.setAccentBar(accentBar, colorHex: isFailed ? theme.ansiHex[1] : nil)
     }
 
     private func buildRestoreConfigActions(isWaiting: Bool) -> NSView {
@@ -1048,12 +1045,10 @@ final class AutomationController: NSViewController, DaylightDrillActions {
 
     private func applyTheme() {
         guard isViewLoaded else { return }
-        let line = HelmTheme.nsColor(theme.chromeLineHex)
         for card in cards { card.applyTheme(theme) }
         for v in stepContentBoxes {
-            v.layer?.backgroundColor = line.withAlphaComponent(0.08).cgColor
-            v.layer?.borderWidth = 1
-            v.layer?.borderColor = line.withAlphaComponent(0.3).cgColor
+            v.layer?.backgroundColor = NSColor.clear.cgColor
+            v.layer?.borderWidth = 0
         }
         for label in dynamicLabels {
             label.textColor = HelmTheme.nsColor(theme.chromeInkHex)

@@ -156,13 +156,8 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
     private static let activityRowLimit = 6
 
     override func loadView() {
-        let root = SchedulesRootView(frame: NSRect(x: 0, y: 0, width: 620, height: 720))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 720))
         root.wantsLayer = true
-        // A mounted destination is shown by unhiding it, which never reaches
-        // `viewWillAppear` after the first time. This is where a render the
-        // visibility gate deferred (a theme switch or a run finishing while
-        // another page was showing) is settled.
-        root.onUnhide = { [weak self] in self?.refreshSchedulesIfNeeded() }
         view = root
 
         // The page-level explanatory line is gone (Daylight §6.4): the drill
@@ -763,15 +758,5 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         scheduleStore.delete(id: schedule.id)
         NotificationSources.clearScheduleResult(scheduleID: schedule.id)
         refreshSchedules()
-    }
-}
-
-/// The page's root: a plain layer-backed view that says when it is unhidden.
-private final class SchedulesRootView: NSView {
-    var onUnhide: (() -> Void)?
-
-    override func viewDidUnhide() {
-        super.viewDidUnhide()
-        onUnhide?()
     }
 }
