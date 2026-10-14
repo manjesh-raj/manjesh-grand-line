@@ -183,6 +183,11 @@ final class HomeCanvasController: NSViewController {
     private var fleetReadAt: Date?
     private var mergedPRs: [MergedPR]?
     private var prFetchFailure: String?
+    /// UI-12's error state for the merge queue: the last list that was read,
+    /// and when. A failed scan keeps showing it and says how old it is,
+    /// rather than blanking a card that was right a minute ago.
+    private var lastGoodPRs: [MergedPR]?
+    private var lastGoodPRsAt: Date?
     /// `nil` until the engine has pushed one. The Dictation module then falls
     /// back to `DictationPermissions.currentStatus()` rather than assuming
     /// `.ready`: the engine only pushes on a *change*, so a hub rendered at
@@ -550,6 +555,10 @@ final class HomeCanvasController: NSViewController {
         self.fleetReadAt = Date()
         self.mergedPRs = mergedPRs
         self.prFetchFailure = prFetchFailure
+        if let mergedPRs {
+            lastGoodPRs = mergedPRs
+            lastGoodPRsAt = fleetReadAt
+        }
         guard isViewLoaded else { return }
         // Synchronous, unlike the two burst sources below: Overview's refresh
         // completes at most once per refresh cycle, so there is nothing to
@@ -1654,6 +1663,17 @@ final class HomeCanvasController: NSViewController {
 
         let compact = Self.claudeUsageIsCompact(forCardWidth: cardWidth)
         content.subtitle = Self.claudeSubtitle(for: snapshot)
+        // UI-12's error state: a refresh that failed keeps the last reading,
+        // says how old it is and why, rather than presenting it as current.
+        if let failure = quotaFailure {
+            if let fetchedAt = quotaFetchedAt {
+                content.subtitle += " \u{00B7} as of \(Self.briefingTimeFormatter.string(from: fetchedAt))"
+            }
+            content.chip = .warn("Can't reach")
+            content.toolTip = "The last refresh failed: \(failure)"
+            content.body = .usageReport(Self.claudeUsageSections(for: snapshot), compact: compact)
+            return
+        }
         // **A compact card's header is identity and Refresh, nothing else**,
         // and that is a design call rather than a shrug at a layout problem.
         // Measured at a one-column card's 255pt: the tile, a "Near spend
@@ -1944,8 +1964,23 @@ final class HomeCanvasController: NSViewController {
 
     private func fillFleet(_ content: inout HelmModuleCard.Content) {
         guard let snapshot = fleetSnapshot else {
-            content.subtitle = "loading"
-            content.body = .note("Reading the fleet's state\u{2026}")
+            // UI-12: the one loading idiom, the skeleton every card uses.
+            content.subtitle = "reading"
+            content.toolTip = "Reading the fleet's state\u{2026}"
+            content.body = .skeleton(rows: 2)
+            return
+        }
+        // UI-9 / GL-14: a snapshot from a missing firstmate home is not a
+        // fleet of zeroes. `homeOk` false means nothing was read, so the
+        // counts are dashes under a "Not read" pill - never 0/0/0 under
+        // "All clear", which is what this card used to draw.
+        guard snapshot.homeOk else {
+            content.subtitle = "not read"
+            content.chip = .warn(HelmReading<String>.unknownCaption)
+            content.body = .kpis(note: "Point Grand Line at your firstmate home in Settings.",
+                                 items: ["Working", "Done today", "Queued"].map {
+                                     HelmKPIStrip.Item(.unread, caption: $0)
+                                 })
             return
         }
         let working = snapshot.tasks.filter { $0.status == "working" }
@@ -2016,17 +2051,35 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func fillMergeQueue(_ content: inout HelmModuleCard.Content) {
-        guard let prs = mergedPRs else {
-            content.subtitle = prFetchFailure == nil ? "loading" : "unavailable"
-            content.chip = prFetchFailure == nil ? nil : .warn("Can't reach")
+        var stale: Date?
+        let prs: [MergedPR]
+        if let current = mergedPRs {
+            prs = current
+        } else if let failure = prFetchFailure, let last = lastGoodPRs {
+            // UI-12's error state: keep the last reading and say how old it
+            // is, with the reason on hover - stale-but-real beats a blank.
+            prs = last
+            stale = lastGoodPRsAt
+            content.toolTip = "GitHub did not answer: \(failure)"
+        } else if let failure = prFetchFailure {
+            content.subtitle = "not read"
+            content.chip = .warn("Can't reach")
             // GL-14: a failed scan must never render as a confident zero.
-            content.body = .note(prFetchFailure.map { "PR status unavailable - \($0)" }
-                ?? "Reading open pull requests\u{2026}")
+            content.body = .note("PR status unavailable - \(failure)")
+            return
+        } else {
+            content.subtitle = "reading"
+            content.toolTip = "Reading open pull requests\u{2026}"
+            content.body = .skeleton(rows: 3)
             return
         }
         let ready = FleetDataSource.readyToMerge(prs)
         content.subtitle = "\(prs.count) open"
         content.chip = ready.isEmpty ? .mute("none ready") : .ok("\(ready.count) ready")
+        if let stale {
+            content.subtitle = "\(prs.count) open \u{00B7} as of \(Self.briefingTimeFormatter.string(from: stale))"
+            content.chip = .warn("Can't reach")
+        }
         if prs.isEmpty {
             content.body = .note("Nothing open. The queue is clear.")
             return
@@ -2170,7 +2223,9 @@ final class HomeCanvasController: NSViewController {
             // B9: shorter copy as well as a third line - the note column
             // beside a 66pt gauge is genuinely narrow, and a summary that
             // needs three lines to say "fine" is not a summary.
-            return HealthRingSummary(value: 0, total: 0, title: "Healthy",
+            // UI-11 / GL-14: nothing reported is not healthy. The ring draws
+            // its grey track and a dash, and the title says what is true.
+            return HealthRingSummary(value: 0, total: 0, title: HelmReading<String>.unknownCaption,
                                      note: "Nothing has reported yet.")
         }
         let total = services.count

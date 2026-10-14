@@ -2366,6 +2366,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     }
     /// A `.kpis` body's strip, so a suite reads the figures as painted.
     var debugKPIStrip: HelmKPIStrip? { kpiStrip }
+    /// UI-12: whether the body is the one loading idiom.
+    var debugBodyIsSkeleton: Bool { skeletonList != nil }
     /// UI-10: the clickable peek rows, so a suite can press one through its
     /// own recognizer.
     var debugPeekRows: [HoverHighlightView] { peekRowViews }

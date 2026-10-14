@@ -61,6 +61,7 @@ enum HomeDashboardViewSelfTest {
         checkBothThemesPaint(&ok)
         checkTheCardShadowIsPainted(&ok)
         checkMergeQueueRowsAreClickable(&ok)
+        checkUnknownStatesAreNeverZero(&ok)
 
         if ok {
             print("HomeDashboardViewSelfTest: all checks passed")
@@ -499,6 +500,77 @@ enum HomeDashboardViewSelfTest {
                   "a click on a row must not also open the card", &ok)
             check(!card.debugCardClickWouldBeDeclined(at: NSPoint(x: 40, y: 20)),
                   "a click on the card's own surface still opens it, or the check above cannot fail", &ok)
+        }
+    }
+
+    // MARK: 9 - unknown is never zero, and one loading idiom (UI-9, UI-11, UI-12)
+
+    /// The revamp's GL-14 pass over Home, read off the painted cards:
+    ///
+    ///   - nothing read yet: the Fleet and Merge queue cards show the
+    ///     skeleton, the one loading idiom, not a sentence each;
+    ///   - a missing firstmate home: Fleet draws dashes under a "Not read"
+    ///     pill, never 0/0/0 under "All clear";
+    ///   - a failed PR scan after a good one: the last list stays, the pill
+    ///     says "Can't reach" and the subtitle says how old the list is;
+    ///   - nothing reported to Health: the title is "Not read", not "Healthy".
+    private static func checkUnknownStatesAreNeverZero(_ ok: inout Bool) {
+        withScratchShift { store in
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            func card(_ title: String) -> HelmModuleCard? {
+                canvas.moduleCardsForTests.first { $0.anatomyForTests.title == title }
+            }
+
+            check(card("Fleet")?.debugBodyIsSkeleton == true, "an unread fleet should show the skeleton", &ok)
+            check(card("Merge queue")?.debugBodyIsSkeleton == true,
+                  "an unread merge queue should show the skeleton", &ok)
+
+            canvas.applyFleet(snapshot: FleetSnapshot(homeOk: false, captain: "Manjesh", tasks: [],
+                                                      queuedCount: 0, doneCount: 0, projectsCount: 0,
+                                                      watcher: WatcherHealth(status: "off")),
+                              mergedPRs: nil, prFetchFailure: "no firstmate home")
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+            if let fleet = card("Fleet"), let strip = fleet.debugKPIStrip {
+                check(strip.debugValues.allSatisfy { $0 == HelmReading<String>.dash },
+                      "a fleet with no home should draw dashes, got \(strip.debugValues)", &ok)
+                check(!strip.debugValues.contains("0"), "and never a zero", &ok)
+                check(fleet.anatomyForTests.chipText == "Not read" && fleet.debugChipIsPill,
+                      "under a 'Not read' pill, got \(fleet.anatomyForTests.chipText ?? "nil")", &ok)
+            } else {
+                fail("the Fleet card should still draw its strip when the home is missing", &ok)
+            }
+
+            let prs = (1...4).map { (index: Int) -> MergedPR in
+                MergedPR(source: "forge", taskID: nil, repo: "grand-line",
+                         url: "https://example.invalid/\(index)", number: index,
+                         title: "pull request \(index)", checks: "green", forge: "github")
+            }
+            canvas.applyFleet(snapshot: FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
+                                                      queuedCount: 1, doneCount: 2, projectsCount: 1,
+                                                      watcher: WatcherHealth(status: "healthy")),
+                              mergedPRs: prs, prFetchFailure: nil)
+            canvas.applyFleet(snapshot: FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
+                                                      queuedCount: 1, doneCount: 2, projectsCount: 1,
+                                                      watcher: WatcherHealth(status: "healthy")),
+                              mergedPRs: nil, prFetchFailure: "GitHub timed out")
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+            if let queue = card("Merge queue") {
+                let anatomy = queue.anatomyForTests
+                check(anatomy.peekRowCount == HelmModuleCard.maxPeekRows,
+                      "a failed scan should keep the last list, got \(anatomy.peekRowCount) rows", &ok)
+                check(anatomy.chipText == "Can't reach", "and say it cannot reach GitHub", &ok)
+                check(anatomy.subtitle.contains("as of"), "and how old the list is, got \"\(anatomy.subtitle)\"", &ok)
+            } else {
+                fail("the Merge queue card should be on the hub", &ok)
+            }
+
+            let empty = HomeCanvasController.healthRingSummary([])
+            check(empty.title == "Not read" && empty.total == 0,
+                  "nothing reported is 'Not read', never 'Healthy', got \(empty.title)", &ok)
         }
     }
 }
