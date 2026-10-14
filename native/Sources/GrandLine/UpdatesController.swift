@@ -116,6 +116,8 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// `renderStats` writes the numbers into and `applyTheme` hands the theme to.
     /// UI-44: the page's four numbers as one flat strip, not four boxes.
     private let summaryStrip = HelmKPIStrip()
+    /// One per category card, themed with the page.
+    private var groupHeaders: [HelmSectionHeader] = []
     /// The tool filter, in the app's own search well (Phase 0's raw-input
     /// purge). This is the audit's screenshot-5 brown field: a stock
     /// `NSSearchField` whose only theming was a forced `appearance`, which
@@ -157,10 +159,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
             self?.applyTheme()
         }
 
-        let header = buildHeader()
         let statsRow = buildStatsRow()
         let toolbarRow = buildToolbarRow()
-        var sections: [NSView] = [header, statsRow, toolbarRow]
+        var sections: [NSView] = [statsRow, toolbarRow]
         for category in DependencyCatalog.categoryOrder {
             let categoryRows = rows.filter { $0.item.category == category }
             guard !categoryRows.isEmpty else { continue }
@@ -170,11 +171,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         let stack = NSStackView(views: sections)
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 14
+        // UI-33's scale: 16 between sections, 24 from the top.
+        stack.spacing = HelmMetrics.s4
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setCustomSpacing(18, after: header)
-        stack.setCustomSpacing(18, after: statsRow)
-        stack.setCustomSpacing(18, after: toolbarRow)
 
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -182,7 +181,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
+            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: HelmMetrics.s5),
             // U10's second half: a completion toast is a floating pill at the
             // bottom of the window, and this page's last card used to end
             // 20pt above that edge - so "Checked 13 tools" landed on top of
@@ -247,17 +246,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     private func scrollToTop() {
         scrollView.contentView.scroll(to: .zero)
         scrollView.reflectScrolledClipView(scrollView.contentView)
-    }
-
-    // MARK: Header
-
-    private let subtitleLabel = NSTextField(labelWithString: "Every tool in the fleet, checked against its real source - npm, Homebrew, herdr, no-mistakes, and firstmate's own upstream.")
-
-    private func buildHeader() -> NSView {
-        subtitleLabel.setScaledFont(ofSize: 12)
-        subtitleLabel.preferredMaxLayoutWidth = 560
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        return subtitleLabel
     }
 
     // MARK: Toolbar (segmented filter + search + Refresh)
@@ -454,6 +442,11 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// the page cannot know yet is a dash, never a zero (GL-14).
     private func buildStatsRow() -> NSView {
         summaryStrip.setAccessibilityLabel("Updates summary")
+        // UI-51: the page's explanatory caption is a tooltip on its numbers.
+        // The drill header names the page, and a sentence above every visit
+        // was the longest line on it.
+        summaryStrip.toolTip = "Every tool in the fleet, checked against its real source - npm, Homebrew, "
+            + "herdr, no-mistakes, and firstmate's own upstream."
         renderStats()
         return summaryStrip
     }
@@ -672,7 +665,14 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         for v in rowViews { v.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true }
 
         let card = HelmCard()
-        card.setHeader(symbol: icon, tint: DependencyCatalog.tint(for: title), title: title)
+        // UI-51: the group header is the kit's section header - the
+        // category's tile, its name and a muted count - the same header
+        // Tasks' panels use.
+        let header = HelmSectionHeader(size: .section)
+        header.configure(leading: .tile(symbol: icon, tint: DependencyCatalog.tint(for: title)),
+                         title: title, count: "\(categoryRows.count)")
+        groupHeaders.append(header)
+        card.setHeader(header)
         card.setBody(rowsStack, insets: HelmCard.contentInsets)
         cards.append(card)
         categorySections.append(CategorySection(background: card, rows: categoryRows, separators: sectionSeparators))
@@ -968,6 +968,19 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     // MARK: Render
 
+    /// UI-51: a row shows its status only when it differs from the page's
+    /// most common quiet state, which the drill header already states once
+    /// ("13 tools · not checked yet") - `ToolRowLayout.statusHidden`, the rule
+    /// GitHub Sync uses. Re-decided for every row on any change, because one
+    /// row's change can move the page's baseline.
+    private func applyStatusVisibility() {
+        let hidden = ToolRowLayout.statusHidden(rows.map { row in
+            let (word, _, style) = pillVisuals(row.status)
+            return (word, style, row.status == .checking || row.status == .updating)
+        })
+        for (row, hide) in zip(rows, hidden) { row.pill.isHidden = hide }
+    }
+
     private func render(_ row: UpdateRow) {
         row.detailLabel.stringValue = row.detail
         row.logField.stringValue = row.log.isEmpty ? "No output yet." : row.log
@@ -976,7 +989,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // down this method), not here - see that method's own note for why
         // the theme pass has to be the single owner of it.
         let busy = row.status == .checking || row.status == .updating
-        row.pill.isHidden = busy
         // U10: not in every state - see `DependencyStatus.showsCheckButton`.
         row.checkButton.isHidden = busy || !row.status.showsCheckButton
         // `.notInstalled` shows the distinct "Install in Bootstrap ->" link
@@ -995,6 +1007,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         row.rowContainer.alphaValue = disabled ? 0.6 : 1.0
 
         applyThemeToRow(row)
+        applyStatusVisibility()
         renderStats()
         // A status change can move this row in/out of the "Needs attention"
         // set - keep the current filter's visible rows in sync.
@@ -1019,7 +1032,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     // MARK: Theme
 
     private func applyTheme() {
-        subtitleLabel.textColor = HelmTheme.mutedInk(theme)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         // The pill owns its own fill, and that is load-bearing rather than
         // tidy. The line this replaced wrote `checkAllPill.layer?
@@ -1039,6 +1051,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         checkAllProgressLabel.textColor = HelmTheme.mutedInk(theme)
         filterTabs.applyTheme(theme)
         for card in cards { card.applyTheme(theme) }
+        for header in groupHeaders { header.applyTheme(theme) }
         for v in separators {
             v.layer?.backgroundColor = line.withAlphaComponent(0.5).cgColor
         }
@@ -1126,6 +1139,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
                                 updateHidden: $0.updateButton.isHidden)
         }
     }
+
+    /// The summary strip's four figures, as rendered (UI-44).
+    var debugSummaryValues: [String] { summaryStrip.debugValues }
 
     /// The row's hover target and its action column, so a suite can drive
     /// the real `HoverHighlightView` hover path (UI-43).

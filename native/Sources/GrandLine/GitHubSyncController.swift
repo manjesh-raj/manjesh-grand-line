@@ -707,28 +707,15 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
 
     /// UI-52: a row says its status only when it differs from the page's.
     ///
-    /// The page's baseline is its most common *quiet* state ("Not checked",
-    /// "In sync") - the drill header already states it once ("8 forks · not
-    /// checked yet"), and eight copies of the same word beside eight chevrons
-    /// say nothing more. A row in any other state shows it, and a state that
-    /// needs the captain (a pill) always shows.
+    /// The rule is `ToolRowLayout.statusHidden`: the drill header already
+    /// says "8 forks · not checked yet" once, and eight copies of the same
+    /// word beside eight chevrons say nothing more.
     private func applyStatusVisibility() {
-        // Keyed by the word the row would show - two rows that would print
-        // the same thing are the same state for this purpose.
-        var quietCounts: [String: Int] = [:]
-        for row in rows where pillVisuals(row.status).2 == .dotWord {
-            quietCounts[pillVisuals(row.status).0, default: 0] += 1
-        }
-        // Ties go to the earliest row's state, so the choice is stable.
-        let baseline = rows.map { pillVisuals($0.status).0 }.first { word in
-            quietCounts[word] == quietCounts.values.max()
-        }
-        for row in rows {
-            let busy = row.status == .checking || row.status == .syncing
+        let hidden = ToolRowLayout.statusHidden(rows.map { row in
             let (word, _, style) = pillVisuals(row.status)
-            let isBaseline = style == .dotWord && word == baseline
-            row.pill.isHidden = busy || isBaseline
-        }
+            return (word, style, row.status == .checking || row.status == .syncing)
+        })
+        for (row, hide) in zip(rows, hidden) { row.pill.isHidden = hide }
     }
 
     #if FM_SELFTESTS

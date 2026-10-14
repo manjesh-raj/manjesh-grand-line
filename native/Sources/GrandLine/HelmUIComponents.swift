@@ -1611,6 +1611,24 @@ enum ToolRowLayout {
         }
     }
 
+    /// UI-52 / UI-51: which rows' statuses to hide, as one rule for every
+    /// checklist page. A page's *baseline* is its most common quiet state
+    /// (a dot and a word: "Not checked", "Up to date", "In sync"). The page's
+    /// header states it once, so a row in the baseline shows no status of its
+    /// own; a row in any other state shows it, and a state that needs the
+    /// captain (a pill) always shows. A busy row's status is replaced by its
+    /// progress either way. Ties go to the earliest row, so the choice is
+    /// stable. Returns one `isHidden` per entry, in order.
+    static func statusHidden(_ entries: [(word: String, style: HelmStatusPill.Style, busy: Bool)]) -> [Bool] {
+        var counts: [String: Int] = [:]
+        for entry in entries where entry.style == .dotWord && !entry.busy {
+            counts[entry.word, default: 0] += 1
+        }
+        let top = counts.values.max()
+        let baseline = entries.first { $0.style == .dotWord && !$0.busy && counts[$0.word] == top }?.word
+        return entries.map { $0.busy || ($0.style == .dotWord && $0.word == baseline) }
+    }
+
     /// Pins (or unpins) a row's actions visible under `.onAim`. A no-op for a
     /// row built `.always`, or one whose stack is not an `ActionStack`.
     static func setActionsPinned(_ views: Views, _ pinned: Bool) {
