@@ -194,6 +194,8 @@ final class HelmSectionHeader: NSView {
     private var leading: Leading = .none
 
     static let dotSize: CGFloat = 8
+    /// Above every stack default and the spacer, under the window's own 500.
+    static let textResistance = NSLayoutConstraint.Priority(490)
     static func tileSide(for size: Size) -> CGFloat { size == .hero ? HelmMetrics.tileBase : 30 }
 
     init(size: Size) {
@@ -214,9 +216,12 @@ final class HelmSectionHeader: NSView {
             label.lineBreakMode = .byTruncatingTail
         }
         // gotcha (13): a header can span the page, so no label in it may be
-        // a width floor; the count and the tile hold, the title yields.
+        // a width floor - its compression resistance stays under 500. But it
+        // must beat the spacer beside it, which has no intrinsic width and
+        // would otherwise take the title's room and truncate a headline that
+        // fits (measured: "Two things a..." on a 1512pt Home).
         for label in [titleLabel, eyebrowLabel, sublineLabel] {
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            label.setContentCompressionResistancePriority(Self.textResistance, for: .horizontal)
             label.setContentHuggingPriority(.defaultLow, for: .horizontal)
         }
         countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -251,7 +256,7 @@ final class HelmSectionHeader: NSView {
         titleRow.distribution = .fill
         titleRow.translatesAutoresizingMaskIntoConstraints = false
         titleRow.setHuggingPriority(.defaultLow, for: .horizontal)
-        titleRow.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        titleRow.setClippingResistancePriority(Self.textResistance, for: .horizontal)
 
         let textColumn: NSView
         if size == .hero {
@@ -262,7 +267,7 @@ final class HelmSectionHeader: NSView {
             column.setCustomSpacing(3, after: eyebrowLabel)
             column.translatesAutoresizingMaskIntoConstraints = false
             column.setHuggingPriority(.defaultLow, for: .horizontal)
-            column.setClippingResistancePriority(.defaultLow, for: .horizontal)
+            column.setClippingResistancePriority(Self.textResistance, for: .horizontal)
             textColumn = column
         } else {
             eyebrowLabel.isHidden = true

@@ -905,7 +905,7 @@ final class HomeCanvasController: NSViewController {
     private func sessionChecksAttentionItem() -> NeedsAttentionItem? {
         // **Not while the poller is warming up.** Its first pass lands about
         // ten seconds after launch, and this page is the launch landing - so
-        // without this guard the hub would open on "Needs attention, 1: one
+        // without this guard the hub would open on "Needs attention \u{00B7} 1: one
         // check is waiting" every single time, for ten seconds, about
         // nothing. That is a false alarm on the one card whose whole job is
         // to be believed.

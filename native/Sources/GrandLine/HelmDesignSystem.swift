@@ -439,6 +439,17 @@ final class HelmCard: NSView {
     let bodyContainer = NSView()
     private let divider = NSView()
 
+    /// UI-4's attention edge: a 3pt semantic bar down the card's leading
+    /// edge, clipped to its rounded outline. The revamp's rule is that this is
+    /// the *only* edge a card may carry, and only while the card is saying
+    /// that something needs the captain - so it is off by default and a card
+    /// opts in per render (`setAttentionEdge`). Drawn on a sublayer above the
+    /// body so a row's hover fill cannot paint over it.
+    private let attentionEdge = CALayer()
+    private let attentionEdgeMask = CAShapeLayer()
+    private var attentionTint: HelmTint?
+    static let attentionEdgeWidth: CGFloat = 3
+
     /// Collapses the header area to nothing until a header is actually set.
     ///
     /// **This constraint is what makes a headerless card's layout
@@ -519,7 +530,48 @@ final class HelmCard: NSView {
         dividerHeight = divider.heightAnchor.constraint(equalToConstant: 0)
         dividerHeight.isActive = true
         divider.isHidden = true
+
+        attentionEdge.isHidden = true
+        attentionEdge.zPosition = 10
+        attentionEdge.mask = attentionEdgeMask
+        layer?.addSublayer(attentionEdge)
     }
+
+    /// Shows the attention edge in `tint`'s hue, or hides it for `nil`.
+    func setAttentionEdge(_ tint: HelmTint?) {
+        attentionTint = tint
+        applyAttentionEdge(ThemeManager.shared.theme)
+        needsLayout = true
+    }
+
+    private func applyAttentionEdge(_ theme: HelmTheme) {
+        HelmMotion.withoutImplicitAnimation {
+            attentionEdge.isHidden = attentionTint == nil
+            if let attentionTint {
+                attentionEdge.backgroundColor = HelmTheme.nsColor(attentionTint.hex(in: theme)).cgColor
+            }
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        // The edge follows the card's real height and is clipped by a mask
+        // of the card's own rounded outline, so it bends with the corners
+        // rather than poking past them.
+        HelmMotion.withoutImplicitAnimation {
+            attentionEdge.frame = CGRect(x: 0, y: 0, width: Self.attentionEdgeWidth, height: bounds.height)
+            let radius = layer?.cornerRadius ?? 0
+            attentionEdgeMask.path = CGPath(roundedRect: CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height),
+                                            cornerWidth: radius, cornerHeight: radius, transform: nil)
+        }
+    }
+
+    #if FM_SELFTESTS
+    /// The edge as painted - `nil` when hidden.
+    var debugAttentionEdgeColor: NSColor? {
+        attentionEdge.isHidden ? nil : attentionEdge.backgroundColor.flatMap { NSColor(cgColor: $0) }
+    }
+    #endif
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
@@ -661,6 +713,7 @@ final class HelmCard: NSView {
             ? HelmTheme.nsColor(theme.daylightTokens.hairRow).cgColor
             : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(Self.dividerAlpha).cgColor
         applyDaylightElevation(theme)
+        applyAttentionEdge(theme)
         headerTile?.applyTheme(theme)
         headerTitle?.font = theme.isDaylight ? HelmType.cardTitle() : HelmType.sectionTitle()
         // Theme-derived, never the system `labelColor` the four card copies
@@ -1936,7 +1989,7 @@ final class HelmPopUpButton: NSPopUpButton {
 /// the primitives that carry the visual language - `ToolRowLayout.pill`,
 /// `IconTileView`, `ToolRowLayout.attachAccentBar`'s idiom, `HelmType` - and
 /// nothing else, because their layouts genuinely differ.
-final class HelmAccentRow: NSView {
+final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
 
     /// Where the chip sits. `.trailing` is a wide list row (Shift's task and
     /// follow-up lists, Overview's "In flight"); `.belowBody` is the
@@ -2371,7 +2424,17 @@ final class HelmAccentRow: NSView {
         // `onClick` is set, so letting the event through costs nothing for a
         // row that is not itself clickable.
         click.delaysPrimaryMouseButtonEvents = false
+        // Gotcha (20): a row that is itself clickable (`onClick`) and also
+        // holds a real control - the attention card's checkbox and its Open
+        // button - must let the control have its own click. The shared rule
+        // declines for an actionable control under the pointer.
+        click.delegate = self
         addGestureRecognizer(click)
+    }
+
+    func gestureRecognizer(_ recognizer: NSGestureRecognizer,
+                           shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
+        HelmGestureArbitration.shouldRecognize(recognizer, with: event)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }

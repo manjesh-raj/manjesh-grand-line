@@ -44,6 +44,7 @@ enum NeedsAttentionViewSelfTest {
         checkAllClearState(&ok)
         checkDoesNotResizeTheWindow(&ok)
         checkOnlyOnTheHub(&ok)
+        checkTheRevampRecipe(&ok)
 
         if ok {
             print("NeedsAttentionViewSelfTest: all checks passed")
@@ -149,7 +150,7 @@ enum NeedsAttentionViewSelfTest {
             check(kickers.contains("TASK") && kickers.contains("FOLLOW-UP"),
                   "each row should name its source in caps, got \(kickers)", &ok)
 
-            check(card.debugEyebrow == "NEEDS ATTENTION, 2",
+            check(card.debugEyebrow == "NEEDS ATTENTION \u{00B7} 2",
                   "the eyebrow should count the rows, got \"\(card.debugEyebrow)\"", &ok)
             check(card.debugHeadline == "Two things are late.",
                   "the headline should be the plain sentence, got \"\(card.debugHeadline)\"", &ok)
@@ -268,9 +269,15 @@ enum NeedsAttentionViewSelfTest {
                   "with the host's own calm sentence, got \"\(card.debugHeadline)\"", &ok)
             check(card.debugAccentRows.isEmpty,
                   "and no rows, got \(card.debugAccentRows.count)", &ok)
-            check(card.debugListText.contains(where: { $0.contains("shows up here") }),
-                  "but the body still says what the card is rather than rendering an empty box, "
+            // The mockup's all-clear state: no list, and the sunk strip of
+            // readings that are fine. With nothing read at all, the body
+            // still says what the card is rather than rendering an empty box.
+            check(!card.debugClearNotes.isEmpty
+                      || card.debugListText.contains(where: { $0.contains("shows up here") }),
+                  "but the body still says something rather than rendering an empty box, "
                       + "got \(card.debugListText)", &ok)
+            check(card.debugCard.debugAttentionEdgeColor == nil,
+                  "an all-clear card carries no attention edge (UI-4)", &ok)
             // And it must not simply repeat the headline - two renderings of
             // one sentence is what this line replaced.
             check(!card.debugListText.contains(card.debugHeadline),
@@ -332,6 +339,66 @@ enum NeedsAttentionViewSelfTest {
             check(canvas.attentionCardHiddenForTests,
                   "and the card should be hidden off the hub", &ok)
         }
+    }
+
+    // MARK: 7 - the UI/UX revamp's recipe (UI-1 to UI-4)
+
+    /// What the revamp changed, read off the painted card:
+    ///
+    ///   - UI-1: every row is `.flat` (no outline, no fill of its own), the
+    ///     overdue fact is a red trailing caption rather than a pill, the
+    ///     action is quiet until aimed at, and the row itself opens the item.
+    ///   - UI-2: the clear strip's words are plain text, not pills.
+    ///   - UI-3: Refresh is a line (secondary) button.
+    ///   - UI-4: the card carries the attention edge while something is late.
+    private static func checkTheRevampRecipe(_ ok: inout Bool) {
+        withScratchShift { store in
+            seed(store)
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            let card = canvas.attentionCardForTests
+            let theme = ThemeManager.shared.theme
+
+            let rows = card.debugAccentRows
+            check(!rows.isEmpty, "the seeded card should have rows", &ok)
+            for row in rows {
+                check(row.style == .flat, "every attention row should be flat", &ok)
+                check(row.debugCardBorderWidth == 0, "a flat attention row draws no outline", &ok)
+                check(row.debugChipText == nil, "an attention row carries no pill", &ok)
+                check(row.actionReveal == .onAim, "the row's action is quiet until aimed at", &ok)
+            }
+            if let late = rows.first(where: { ($0.debugTrailingCaption ?? "").hasPrefix("Overdue") }),
+               let color = late.debugTrailingCaptionColor {
+                let red = HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme),
+                                                         over: HelmTheme.nsColor(theme.chromeBackgroundHex),
+                                                         theme: theme)
+                let a = HelmContrast.components(color), b = HelmContrast.components(red)
+                check(abs(a.0 - b.0) + abs(a.1 - b.1) + abs(a.2 - b.2) < 0.03,
+                      "the overdue caption should be the critical tint as legible text", &ok)
+            } else {
+                fail("an overdue row should paint its trailing caption", &ok)
+            }
+
+            // The row itself opens the item, through the row's own press.
+            var opened: NeedsAttentionItem?
+            card.onOpenItem = { opened = $0 }
+            if let first = card.debugRows.first as? NeedsAttentionRowView {
+                check(first.debugPressRow(), "pressing the row should be handled", &ok)
+                check(opened != nil, "and pressing the row should open its item", &ok)
+            }
+
+            check(card.debugRefreshButton.variant == .secondary, "Refresh should be a line button (UI-3)", &ok)
+            check(card.debugCard.debugAttentionEdgeColor != nil,
+                  "a card with late rows carries the attention edge (UI-4)", &ok)
+            for pill in Self.descendants(of: card.debugClearStrip).compactMap({ $0 as? HelmStatusPill }) {
+                fail("the clear strip should hold words, not pills - found \(pill.text)", &ok)
+            }
+        }
+    }
+
+    private static func descendants(of view: NSView) -> [NSView] {
+        view.subviews + view.subviews.flatMap { descendants(of: $0) }
     }
 }
 

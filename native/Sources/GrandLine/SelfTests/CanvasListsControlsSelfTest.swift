@@ -950,7 +950,7 @@ enum CanvasListsControlsSelfTest {
             return "the headline '\(card.debugHeadline)' does not name the answer's own "
                  + "'\(expected.title)'"
         }
-        if card.debugEyebrow != "NEEDS ATTENTION, 1" {
+        if card.debugEyebrow != "NEEDS ATTENTION \u{00B7} 1" {
             return "the eyebrow should count the verdict as one open row, got '\(card.debugEyebrow)'"
         }
 

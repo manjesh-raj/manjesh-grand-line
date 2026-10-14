@@ -44,6 +44,20 @@
 // Every one of the three is still optional and still off by default, because
 // this card is not only the hub's: `onRefresh` nil hides the button.
 //
+// ## The UI/UX revamp (UI-1 to UI-4)
+//
+// The card is now built from the revamp's kit rather than from rows that are
+// cards of their own:
+//
+//   - the header is `HelmSectionHeader(.hero)` and Refresh is a line button;
+//   - the rows are `HelmAccentRow(.flat)` in a `HelmFlatList`, so the card is
+//     the only bordered surface - the overdue fact is a red caption, the
+//     action shows on aim and the row itself opens the item;
+//   - the clear strip is sunk into the card's foot as words with check
+//     glyphs, because the pills it used to be read as controls;
+//   - the card carries the page's one attention edge, and only while
+//     something on it needs the captain.
+//
 // ## Rebuild-on-render
 //
 // The list is rebuilt wholesale from the summary on every `render`, and
@@ -73,7 +87,8 @@ final class NeedsAttentionCard: NSView {
     /// A row's checkbox was clicked: mark this item done. The card does not
     /// own a store, so the host writes and re-renders.
     var onToggleDone: ((NeedsAttentionItem) -> Void)?
-    /// A row's trailing button ("Start" / "Open") was clicked.
+    /// A row's trailing button ("Start" / "Open"), or the row itself, was
+    /// clicked.
     var onOpenItem: ((NeedsAttentionItem) -> Void)?
     /// The header's Refresh. `nil` - the default - leaves the button out of
     /// the header entirely, which is how any host other than the hub gets
@@ -86,27 +101,27 @@ final class NeedsAttentionCard: NSView {
     }
 
     private let card = HelmCard()
-    private let headerTile = IconTileView(size: HelmMetrics.tileBase, cornerRadius: 9)
-    private let eyebrowLabel = NSTextField(labelWithString: "")
-    private let headlineLabel = NSTextField(labelWithString: "")
-    private let sublineLabel = NSTextField(labelWithString: "")
-    /// The reference's filled accent pill, which is the same
-    /// `HelmButton(.primary)` the hub's hero band carried before this card
-    /// absorbed it - one definition, not a second page-local look.
-    private let refreshButton = HelmButton(title: "Refresh", variant: .primary,
+    /// UI-3: the kit's one header, in its hero size - tile, eyebrow, a 19pt
+    /// heavy rounded headline and the subline.
+    private let header = HelmSectionHeader(size: .hero)
+    /// UI-3: a line (secondary) button. Refresh is not the page's primary
+    /// action - nothing on Home is - and a filled accent pill in the corner
+    /// of the verdict card was the loudest thing on the page.
+    private let refreshButton = HelmButton(title: "Refresh", variant: .secondary, size: .small,
                                            symbol: "arrow.clockwise")
-    /// The list. Rebuilt wholesale on every render.
-    private let listStack = NSStackView()
-    /// The reference's closing strip. Rebuilt with the list, and hidden -
-    /// which for an arranged subview really does remove it from layout
-    /// (gotcha (15)'s one such case) - when there is nothing to say.
-    private let clearStrip = NSStackView()
+    /// UI-1: the rows are flat, separated by hairlines, inside the one card.
+    private let list = HelmFlatList()
+    /// Quiet lines under the list (the empty promise, the overflow note).
+    private let notesStack = NSStackView()
+    /// UI-2: the closing strip, sunk into the card's foot.
+    private let clearStrip = NSView()
+    private let clearRow = NSStackView()
+    private let clearRule = NSView()
+    private let body = NSStackView()
 
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var summary: NeedsAttentionSummary?
     private var subline: String = ""
-    /// See `rebuildClearStrip`.
-    private var clearStripWidthTie: NSLayoutConstraint?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -119,74 +134,40 @@ final class NeedsAttentionCard: NSView {
     // MARK: Build
 
     private func build() {
-        // `HelmCard`'s structured `setHeader(symbol:title:subtitle:)` is
-        // title-then-subtitle and has no eyebrow slot, and the mockup's
-        // eyebrow sits *above* the sentence. So this uses the component's own
-        // "arbitrary header view" overload rather than restyling the
-        // structured one from outside, which the component index forbids.
-        eyebrowLabel.font = HelmType.kicker()
-        headlineLabel.font = HelmType.sectionTitle()
-        sublineLabel.font = HelmType.caption()
-        for label in [eyebrowLabel, headlineLabel, sublineLabel] {
-            label.translatesAutoresizingMaskIntoConstraints = false
-            label.lineBreakMode = .byTruncatingTail
-            // gotcha (13): this card is page-wide, so no label in it may act
-            // as a width floor.
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        }
-
-        let textColumn = NSStackView(views: [eyebrowLabel, headlineLabel, sublineLabel])
-        textColumn.orientation = .vertical
-        textColumn.alignment = .leading
-        textColumn.spacing = 1
-        textColumn.setCustomSpacing(3, after: eyebrowLabel)
-        textColumn.translatesAutoresizingMaskIntoConstraints = false
-        // gotcha (12): a stack has no intrinsic size, so the *stack*-priority
-        // API is what makes this the column that flexes.
-        textColumn.setHuggingPriority(.defaultLow, for: .horizontal)
-        textColumn.setClippingResistancePriority(.defaultLow, for: .horizontal)
-
-        headerTile.setContentHuggingPriority(.required, for: .horizontal)
-        headerTile.setContentCompressionResistancePriority(.required, for: .horizontal)
-
         refreshButton.target = self
         refreshButton.action = #selector(refreshClicked)
         refreshButton.isHidden = true
-        refreshButton.setContentHuggingPriority(.required, for: .horizontal)
-        refreshButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        header.setActions([refreshButton])
+        card.setHeader(header, insets: NSEdgeInsets(top: HelmMetrics.s4, left: HelmMetrics.s4,
+                                                     bottom: HelmMetrics.s4, right: HelmMetrics.s4))
 
-        let headerRow = NSStackView(views: [headerTile, textColumn, refreshButton])
-        headerRow.orientation = .horizontal
-        headerRow.alignment = .centerY
-        headerRow.spacing = HelmMetrics.s3
-        // gotcha (10): the default `.gravityAreas` honours no priority at all.
-        headerRow.distribution = .fill
-        headerRow.translatesAutoresizingMaskIntoConstraints = false
-        card.setHeader(headerRow)
+        notesStack.orientation = .vertical
+        notesStack.alignment = .leading
+        notesStack.spacing = HelmMetrics.s1
+        notesStack.edgeInsets = NSEdgeInsets(top: HelmMetrics.s3, left: HelmMetrics.s4,
+                                             bottom: HelmMetrics.s3, right: HelmMetrics.s4)
+        notesStack.translatesAutoresizingMaskIntoConstraints = false
+        notesStack.setHuggingPriority(.defaultLow, for: .horizontal)
+        notesStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
 
-        listStack.orientation = .vertical
-        listStack.alignment = .leading
-        listStack.spacing = HelmMetrics.s1
-        listStack.distribution = .fill
-        listStack.translatesAutoresizingMaskIntoConstraints = false
-        listStack.setHuggingPriority(.defaultLow, for: .horizontal)
-        listStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        buildClearStrip()
 
-        clearStrip.orientation = .horizontal
-        clearStrip.alignment = .centerY
-        clearStrip.spacing = HelmMetrics.s2
-        clearStrip.distribution = .fill
-        clearStrip.translatesAutoresizingMaskIntoConstraints = false
-        clearStrip.setHuggingPriority(.defaultLow, for: .horizontal)
-        clearStrip.setClippingResistancePriority(.defaultLow, for: .horizontal)
-        clearStrip.isHidden = true
-        // Deliberately **not** added to `listStack` here: `rebuild` empties
-        // that stack wholesale (see the file header), so the strip is
-        // re-added at the end of every rebuild instead of being torn out by
-        // the first one.
-
-        card.setBody(listStack, insets: HelmCard.contentInsets)
+        body.orientation = .vertical
+        body.alignment = .leading
+        body.spacing = 0
+        body.distribution = .fill
+        body.translatesAutoresizingMaskIntoConstraints = false
+        body.setHuggingPriority(.defaultLow, for: .horizontal)
+        body.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        for view in [list, notesStack, clearStrip] as [NSView] {
+            body.addArrangedSubview(view)
+            // gotcha (13): this card spans the page, so a full-width tie is
+            // `contentTie`, never required.
+            let tie = view.widthAnchor.constraint(equalTo: body.widthAnchor)
+            tie.priority = HelmDaylightPriority.contentTie
+            tie.isActive = true
+        }
+        card.setBody(body)
 
         addSubview(card)
         NSLayoutConstraint.activate([
@@ -195,21 +176,62 @@ final class NeedsAttentionCard: NSView {
             card.topAnchor.constraint(equalTo: topAnchor),
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
-
         applyTheme(theme)
+    }
+
+    /// The strip under the list: a hairline, the sunk `inset` fill, and the
+    /// readings that are fine as plain words with green checks. UI-2: these
+    /// used to be three green pills, which read as controls and were not.
+    private func buildClearStrip() {
+        clearStrip.wantsLayer = true
+        clearStrip.translatesAutoresizingMaskIntoConstraints = false
+        clearStrip.isHidden = true
+        clearRule.wantsLayer = true
+        clearRule.translatesAutoresizingMaskIntoConstraints = false
+
+        clearRow.orientation = .horizontal
+        clearRow.alignment = .centerY
+        clearRow.spacing = HelmMetrics.s4
+        clearRow.distribution = .fill
+        clearRow.translatesAutoresizingMaskIntoConstraints = false
+        clearRow.setHuggingPriority(.defaultLow, for: .horizontal)
+        clearRow.setClippingResistancePriority(.defaultLow, for: .horizontal)
+
+        clearStrip.addSubview(clearRule)
+        clearStrip.addSubview(clearRow)
+        NSLayoutConstraint.activate([
+            clearRule.leadingAnchor.constraint(equalTo: clearStrip.leadingAnchor),
+            clearRule.trailingAnchor.constraint(equalTo: clearStrip.trailingAnchor),
+            clearRule.topAnchor.constraint(equalTo: clearStrip.topAnchor),
+            clearRule.heightAnchor.constraint(equalToConstant: 1),
+            clearRow.leadingAnchor.constraint(equalTo: clearStrip.leadingAnchor, constant: HelmMetrics.s4),
+            clearRow.trailingAnchor.constraint(lessThanOrEqualTo: clearStrip.trailingAnchor,
+                                               constant: -HelmMetrics.s4),
+            clearRow.topAnchor.constraint(equalTo: clearRule.bottomAnchor, constant: 10),
+            clearRow.bottomAnchor.constraint(equalTo: clearStrip.bottomAnchor, constant: -10),
+        ])
     }
 
     // MARK: Render
 
-    /// - Parameter subline: the "as of" line under the headline -
-    ///   `DailyReviewDigest.kicker`. The host passes it rather than this card
-    ///   formatting a date of its own, so the two cards that render the same
-    ///   digest can never disagree about when it was taken.
+    /// - Parameter subline: the line under the headline - the fleet's
+    ///   freshness. The host passes it rather than this card formatting a
+    ///   date of its own, so the two places that say when the fleet was read
+    ///   can never disagree.
     func render(_ summary: NeedsAttentionSummary, subline: String, theme: HelmTheme) {
         self.summary = summary
         self.subline = subline
         self.theme = theme
         rebuild()
+    }
+
+    /// Rewrites only the subline - the freshness phrase ticks once a minute
+    /// (UI-13) without rebuilding a row.
+    func setSubline(_ subline: String) {
+        guard subline != self.subline, let summary else { return }
+        self.subline = subline
+        header.configure(leading: .tile(symbol: summary.symbol, tint: summary.tint),
+                         title: summary.headline, eyebrow: summary.eyebrow, subline: subline)
     }
 
     func applyTheme(_ theme: HelmTheme) {
@@ -223,81 +245,71 @@ final class NeedsAttentionCard: NSView {
     /// `rebuild`, because either can be the one that runs last.
     private func paintChrome() {
         card.applyTheme(theme)
-        headerTile.applyTheme(theme)
-        eyebrowLabel.textColor = HelmTheme.mutedInk(theme)
-        headlineLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        sublineLabel.textColor = HelmTheme.mutedInk(theme)
-        headlineLabel.font = theme.isDaylight ? HelmType.cardTitle() : HelmType.sectionTitle()
+        header.applyTheme(theme)
+        list.applyTheme(theme)
+        clearRule.layer?.backgroundColor = HelmFlatList.hairRowColor(theme).cgColor
+        clearStrip.layer?.backgroundColor = (theme.isDaylight
+            ? HelmTheme.nsColor(theme.daylightTokens.inset)
+            : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.18)).cgColor
+        // The strip is the card's foot, so its lower corners follow the
+        // card's - `HelmCard` cannot clip (it casts a shadow), so the strip
+        // rounds itself. Unflipped layer space: `MinY` is the bottom.
+        clearStrip.layer?.cornerRadius = card.layer?.cornerRadius ?? 0
+        clearStrip.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
     }
 
     private func rebuild() {
         guard let summary else { return }
 
-        headerTile.configure(symbol: summary.symbol, tint: summary.tint)
-        eyebrowLabel.stringValue = summary.eyebrow.uppercased()
-        headlineLabel.stringValue = summary.headline
-        sublineLabel.stringValue = subline
+        header.configure(leading: .tile(symbol: summary.symbol, tint: summary.tint),
+                         title: summary.headline, eyebrow: summary.eyebrow, subline: subline)
 
-        for view in listStack.arrangedSubviews {
-            listStack.removeArrangedSubview(view)
+        var rows: [NSView] = summary.items.map { row(for: $0) }
+        rows += summary.gaps.map { gapRow($0) }
+        list.setRows(rows, theme: theme)
+        list.isHidden = rows.isEmpty
+
+        for view in notesStack.arrangedSubviews {
+            notesStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-
-        for item in summary.items { add(row(for: item), fullWidth: true) }
-        for gap in summary.gaps { add(gapRow(gap), fullWidth: true) }
-        if summary.items.isEmpty && summary.gaps.isEmpty {
+        if summary.items.isEmpty && summary.gaps.isEmpty && summary.clearNotes.isEmpty {
             // Not a restatement of the headline, which already says nothing
-            // is due - measured in an off-screen render, where the two lines
-            // read as the same sentence twice. This one says what the card
-            // *is*, so an empty card is still legible as a promise rather
-            // than as a card that failed to load.
-            add(quietLine("Anything due today, and any follow-up waiting on you, shows up here."),
-                fullWidth: false)
+            // is due. This one says what the card *is*, so an empty card is
+            // still legible as a promise rather than as a card that failed
+            // to load.
+            notesStack.addArrangedSubview(quietLine(
+                "Anything due today, and any follow-up waiting on you, shows up here."))
         }
         if let note = summary.overflowNote {
-            add(quietLine(note), fullWidth: false)
+            notesStack.addArrangedSubview(quietLine(note))
         }
+        notesStack.isHidden = notesStack.arrangedSubviews.isEmpty
+        // A list with rows already ends on its own last row, so the notes sit
+        // directly under it; with no rows they need the card's top padding.
+        notesStack.edgeInsets.top = rows.isEmpty ? HelmMetrics.s3 : HelmMetrics.s2
 
         rebuildClearStrip(summary.clearNotes, hasItems: !summary.items.isEmpty)
 
-        // Every child was rebuilt, so re-apply the card's own chrome colours.
+        // UI-4: the card carries the page's only attention edge, and only
+        // while it is saying that something needs the captain.
+        card.setAttentionEdge(summary.items.isEmpty && summary.gaps.isEmpty ? nil : summary.tint)
+
         paintChrome()
         needsLayout = true
     }
 
-    /// The stack is `.leading`-aligned, which sizes an arranged subview to
-    /// its own fitting width rather than to the column. A row card has to
-    /// span the card, so it takes an explicit tie; a quiet line must not,
-    /// or the line's own truncation stops working.
-    ///
-    /// The tie is `HelmDaylightPriority.contentTie` (499), never required:
-    /// this card spans the page, and a required width equality on something
-    /// page-wide is gotcha (13)'s window-size cap.
-    private func add(_ view: NSView, fullWidth: Bool) {
-        listStack.addArrangedSubview(view)
-        guard fullWidth else { return }
-        let tie = view.widthAnchor.constraint(equalTo: listStack.widthAnchor)
-        tie.priority = HelmDaylightPriority.contentTie
-        tie.isActive = true
-    }
-
     @objc private func refreshClicked() { onRefresh?() }
 
-    // MARK: The closing "everything else is clear" strip
+    // MARK: The closing strip
 
-    /// The reference's footer: a lead-in phrase and one green check chip per
-    /// source that was read and is fine.
-    ///
-    /// The chips are **not** `HelmModuleChip`s and not buttons. The
-    /// reference's are clickable and scroll the matching widget into view;
-    /// here they are readouts, because the widget they would scroll to is
-    /// already on screen a few hundred points below on the only page that
-    /// draws this strip - a control whose whole effect is to scroll something
-    /// already visible is a control that does nothing, and gotcha (20) is
-    /// about how expensive a dead control is to notice.
+    /// UI-2: "Everything else is clear" and one check-and-word per source
+    /// that was read and is fine. Readouts, not controls - which is why they
+    /// are no longer pill-shaped. The widget each one would scroll to is
+    /// already on screen a few hundred points below.
     private func rebuildClearStrip(_ notes: [String], hasItems: Bool) {
-        for view in clearStrip.arrangedSubviews {
-            clearStrip.removeArrangedSubview(view)
+        for view in clearRow.arrangedSubviews {
+            clearRow.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
         guard !notes.isEmpty else {
@@ -307,57 +319,41 @@ final class NeedsAttentionCard: NSView {
         clearStrip.isHidden = false
 
         // "Everything else is clear" only makes sense when there *is*
-        // something else; on an empty card the reference says "All clear:".
-        let lead = NSTextField(labelWithString: hasItems ? "Everything else is clear:" : "All clear:")
+        // something else; on an empty card the reference says "All clear".
+        let lead = NSTextField(labelWithString: hasItems ? "Everything else is clear" : "All clear")
         lead.font = HelmType.caption()
         lead.textColor = HelmTheme.mutedInk(theme)
         lead.lineBreakMode = .byTruncatingTail
         lead.translatesAutoresizingMaskIntoConstraints = false
-        // gotcha (13): page-wide card, so nothing in it may be a width floor.
         lead.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         lead.setContentHuggingPriority(.required, for: .horizontal)
-        clearStrip.addArrangedSubview(lead)
-
-        for note in notes { clearStrip.addArrangedSubview(clearChip(note)) }
-
-        // gotcha (10): a trailing spacer is what keeps the chips packed at
-        // the leading edge under `.fill`, rather than Auto Layout's own
-        // tie-breaking deciding which chip absorbs the row's slack.
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        clearStrip.addArrangedSubview(spacer)
-
-        // The strip outlives the rebuild that empties the list, so its width
-        // tie is created once and reused - creating one per rebuild would
-        // stack a fresh 499 equality on the same pair of anchors on every
-        // render of a page the captain leaves open all day.
-        if clearStripWidthTie == nil {
-            let tie = clearStrip.widthAnchor.constraint(equalTo: listStack.widthAnchor)
-            tie.priority = HelmDaylightPriority.contentTie
-            clearStripWidthTie = tie
-        }
-        listStack.addArrangedSubview(clearStrip)
-        clearStripWidthTie?.isActive = true
+        clearRow.addArrangedSubview(lead)
+        for note in notes { clearRow.addArrangedSubview(clearNote(note)) }
     }
 
-    /// One green check chip. `HelmContrast.tintedSurface`/`legibleTintedText`
-    /// rather than the hue raw, per AGENTS.md's colour rule - a `HelmTint`
-    /// hue is safe as a fill and is not automatically safe as text, and this
-    /// chip is both at once.
-    private func clearChip(_ text: String) -> NSView {
-        let container = NSView()
+    private func clearNote(_ text: String) -> NSView {
+        let surface = theme.isDaylight
+            ? HelmTheme.nsColor(theme.daylightTokens.inset)
+            : HelmTheme.nsColor(theme.chromeBackgroundHex)
+        let ok = HelmContrast.legibleTintedText(tintHex: HelmTint.good.hex(in: theme), over: surface, theme: theme)
+        let glyph = NSImageView()
+        glyph.image = HelmSymbol.image("checkmark", pointSize: 10, weight: .bold)
+        glyph.contentTintColor = ok
+        glyph.translatesAutoresizingMaskIntoConstraints = false
+        glyph.setAccessibilityElement(false)
         let label = NSTextField(labelWithString: text)
-        container.translatesAutoresizingMaskIntoConstraints = false
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = HelmType.chip()
+        label.font = .systemFont(ofSize: HelmType.scaled(12), weight: .semibold)
+        label.textColor = ok
         label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        ToolRowLayout.pill(text: text, colorHex: HelmTint.good.hex(in: theme),
-                           into: container, label: label, theme: theme)
-        container.setContentHuggingPriority(.required, for: .horizontal)
-        return container
+        let pair = NSStackView(views: [glyph, label])
+        pair.orientation = .horizontal
+        pair.alignment = .centerY
+        pair.spacing = HelmMetrics.s1
+        pair.translatesAutoresizingMaskIntoConstraints = false
+        pair.setHuggingPriority(.required, for: .horizontal)
+        return pair
     }
 
     // MARK: Rows
@@ -367,11 +363,6 @@ final class NeedsAttentionCard: NSView {
         view.configure(item, theme: theme,
                        onToggle: { [weak self] in self?.onToggleDone?(item) },
                        onOpen: { [weak self] in self?.onOpenItem?(item) })
-        // D1's discoverability floor: a list this short or shorter keeps
-        // every row's action visible, and this card is normally one or two
-        // rows. Above that the buttons go quiet until the row is aimed at.
-        let rowCount = summary?.items.count ?? 0
-        view.setActionReveal(rowCount <= HelmAccentRow.alwaysRevealRowCount ? .always : .onAim)
         return view
     }
 
@@ -380,15 +371,16 @@ final class NeedsAttentionCard: NSView {
     /// list, with its reason in full and no checkbox to pretend it is
     /// actionable.
     private func gapRow(_ gap: DailyReviewGap) -> NSView {
-        let row = HelmAccentRow(hover: false)
+        let row = HelmAccentRow(hover: false, style: .flat)
         row.configure(HelmAccentRow.Content(
             tint: .warn,
             kicker: gap.section,
             title: gap.reason,
             badgeSymbol: "exclamationmark.shield",
-            chipText: "Not available",
             // A reason that truncates is a reason nobody can act on.
-            titleWraps: true), theme: theme)
+            titleWraps: true,
+            trailingCaption: "Not available",
+            trailingCaptionTint: .warn), theme: theme)
         return row
     }
 
@@ -407,29 +399,32 @@ final class NeedsAttentionCard: NSView {
     // GL-27: debug builds only, like every other `debug*` hook in this app.
 
     #if FM_SELFTESTS
-    var debugEyebrow: String { eyebrowLabel.stringValue }
-    var debugHeadline: String { headlineLabel.stringValue }
-    var debugSubline: String { sublineLabel.stringValue }
-    var debugRows: [NSView] { listStack.arrangedSubviews }
+    var debugEyebrow: String { header.eyebrowLabel.stringValue }
+    var debugHeadline: String { header.titleLabel.stringValue }
+    var debugSubline: String { header.sublineLabel.stringValue }
+    var debugRows: [NSView] { list.rows }
     var debugAccentRows: [HelmAccentRow] {
-        listStack.arrangedSubviews.compactMap { view in
+        list.rows.compactMap { view in
             (view as? NeedsAttentionRowView)?.debugRow ?? (view as? HelmAccentRow)
         }
     }
     /// Every string the list is currently painting, top to bottom - what lets
     /// a suite assert the card really says what the composer decided, rather
     /// than that the composer merely computed it.
-    var debugListText: [String] { DailyReviewCard.collectText(listStack) }
-    var debugHeaderTile: IconTileView { headerTile }
-    /// Whether the header carries the Refresh the hero band used to. Read
-    /// off the button's own visibility rather than off `onRefresh`, so a
-    /// handler wired to a button that never renders fails here.
+    var debugListText: [String] { DailyReviewCard.collectText(body) }
+    var debugHeader: HelmSectionHeader { header }
+    var debugCard: HelmCard { card }
+    /// Whether the header carries the Refresh. Read off the button's own
+    /// visibility rather than off `onRefresh`, so a handler wired to a button
+    /// that never renders fails here.
     var debugRefreshButtonVisible: Bool { !refreshButton.isHidden }
-    /// The closing strip's chips, as painted.
+    var debugRefreshButton: HelmButton { refreshButton }
+    /// The closing strip's words, as painted (the lead and each note).
     var debugClearNotes: [String] {
         guard !clearStrip.isHidden else { return [] }
-        return DailyReviewCard.collectText(clearStrip)
+        return DailyReviewCard.collectText(clearRow)
     }
+    var debugClearStrip: NSView { clearStrip }
     /// A **real** `performClick` on the header's Refresh, so the assertion
     /// runs the same target/action path a captain's click does rather than
     /// the handler behind it.
@@ -440,11 +435,11 @@ final class NeedsAttentionCard: NSView {
     /// `debugClickDisclosure` lesson: a hook that calls the helper stays green
     /// with the wiring deleted.
     func debugPressCheckbox(atRow index: Int) {
-        (listStack.arrangedSubviews[index] as? NeedsAttentionRowView)?.debugPressCheckbox()
+        (list.rows[index] as? NeedsAttentionRowView)?.debugPressCheckbox()
     }
 
     func debugPressAction(atRow index: Int) {
-        (listStack.arrangedSubviews[index] as? NeedsAttentionRowView)?.debugPressAction()
+        (list.rows[index] as? NeedsAttentionRowView)?.debugPressAction()
     }
     #endif
 }
@@ -464,7 +459,7 @@ final class NeedsAttentionRowView: NSView {
     /// documented behaviour and the nearest thing it has to the reference's
     /// severity dot.
     private let checkBadge: ShiftTaskCheckBadge?
-    private let actionButton = HelmButton(title: "Open", variant: .quiet, size: .small)
+    private let actionButton = HelmButton(title: "Open", variant: .secondary, size: .small)
     private let row: HelmAccentRow
     private var onToggle: (() -> Void)?
     private var onOpen: (() -> Void)?
@@ -474,7 +469,10 @@ final class NeedsAttentionRowView: NSView {
         checkBadge = badge
         actionButton.setContentHuggingPriority(.required, for: .horizontal)
         actionButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        row = HelmAccentRow(leadingControl: badge, trailingAccessory: actionButton)
+        // UI-1: a flat row inside the card, the action revealed on aim and
+        // the row itself the click target.
+        row = HelmAccentRow(leadingControl: badge, trailingAccessory: actionButton, style: .flat)
+        row.actionReveal = .onAim
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         badge?.target = self
@@ -491,8 +489,6 @@ final class NeedsAttentionRowView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    func setActionReveal(_ reveal: HelmAccentRow.ActionReveal) { row.actionReveal = reveal }
 
     func configure(_ item: NeedsAttentionItem,
                    theme: HelmTheme,
@@ -512,11 +508,12 @@ final class NeedsAttentionRowView: NSView {
             // documented fallback, and the nearest thing it has to the
             // reference's severity dot.
             badgeSymbol: item.kind.isSignal ? Self.signalBadgeSymbol(for: item.tone) : nil,
-            chipText: item.chipText,
-            // §6.5's signal wash: a late row is the one thing on this card
-            // that needs the captain *now*, which is exactly what the opt-in
-            // is for.
-            isSignal: item.tone == .late), theme: theme)
+            // UI-1: the "Overdue 26 days" fact is a caption in the state
+            // colour, not a pill - the row is already on the attention card,
+            // so a second capsule shouting the same thing was decoration.
+            trailingCaption: item.chipText,
+            trailingCaptionTint: Self.captionTint(for: item.tone)), theme: theme)
+        row.onClick = { [weak self] in self?.onOpen?() }
 
         // Always unchecked: this card lists what is still open, so a row that
         // gets ticked leaves the list on the next render rather than sitting
@@ -529,6 +526,16 @@ final class NeedsAttentionRowView: NSView {
         case .task: actionButton.toolTip = "Open this task in Tasks"
         case .followUp: actionButton.toolTip = "Open this follow-up in Tasks"
         case .signal: actionButton.toolTip = "Open the page this is about"
+        }
+    }
+
+    /// The caption's colour, by tone: red for late, amber for what is due or
+    /// at risk today (the board's own rule - UI-24), and muted for a fact.
+    static func captionTint(for tone: NeedsAttentionItem.Tone) -> HelmTint? {
+        switch tone {
+        case .late: return .critical
+        case .risk, .dueToday: return .warn
+        case .info: return nil
         }
     }
 
@@ -551,6 +558,9 @@ final class NeedsAttentionRowView: NSView {
     #if FM_SELFTESTS
     var debugRow: HelmAccentRow { row }
     var debugActionTitle: String { actionButton.title }
+    /// The row's own click, as `HelmAccentRow.accessibilityPerformPress`
+    /// reaches it - the row is the click target now (UI-1).
+    func debugPressRow() -> Bool { row.accessibilityPerformPress() }
     /// A **real** `performClick`, so the assertion runs the same target/action
     /// path a captain's click does rather than the handler behind it.
     func debugPressCheckbox() { checkBadge?.performClick(nil) }
