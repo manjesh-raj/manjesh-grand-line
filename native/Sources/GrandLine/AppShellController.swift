@@ -910,6 +910,12 @@ final class AppShellController: NSViewController {
         // own Software checklist card instead (same catalog, same install
         // action, just relocated).
         updates.onNavigateToBootstrap = { [weak self] in self?.show(.bootstrap) }
+        // An update that needs the captain's `sudo` password is never started
+        // in the background (`BrewCaskSudo`); its row's "Run in Terminal"
+        // opens the exact command here instead, then re-checks on exit.
+        updates.onRunCommandTracked = { [weak self] label, command, completion in
+            self?.runInConsole(label: label, command: command, completion: completion)
+        }
         // fm/grandline-overview-drop-duplicate-pr-list: Overview's own
         // itemized "Ready to merge" list was removed as a duplicate of
         // `.review`'s - the stat tile that's left jumps straight there.

@@ -157,6 +157,74 @@ struct UpdateOutcome {
     let newVersionLabel: String?
     let detail: String
     let log: String
+    /// Set when the update was not attempted because it needs something a
+    /// background child cannot give it (today: an administrator password for
+    /// `sudo`). It is the exact command for the captain to run in a terminal,
+    /// which the Updates page offers to open in its Console.
+    var terminalCommand: String? = nil
+}
+
+/// The text a captain reads when an update could not finish in the background.
+/// Shared by every update path so a timeout reads the same on every row and
+/// never surfaces as the child's own dying words.
+///
+/// That was the shipped bug: `brew` prints `Error: SIGTERM` when `Subprocess`
+/// stops it at the time limit, and the cask row showed exactly that, which
+/// reads like a Homebrew crash rather than "we stopped it after five minutes".
+enum UpdateFailureText {
+    /// `updatesRunTimeout` in words, e.g. "5 minutes".
+    static var limitText: String {
+        let minutes = Int((UpdatesRunLimits.timeout / 60).rounded())
+        return minutes == 1 ? "1 minute" : "\(minutes) minutes"
+    }
+
+    static func timedOutDetail(command: String) -> String {
+        "Stopped after \(limitText): \(command) was still running"
+    }
+
+    /// The log keeps the tool's own output, under a plain account of what
+    /// happened and what it means for the machine.
+    static func timedOutLog(command: String, output: String) -> String {
+        let lines = [
+            "Grand Line stopped `\(command)` because it was still running after \(limitText).",
+            "It may have been waiting for a password or another answer, which a background update cannot give.",
+            "The update may be partly done. Check the app before trying again, or run the command in Terminal to see what it is waiting for.",
+        ]
+        return ([lines.joined(separator: "\n")] + (output.isEmpty ? [] : ["", output])).joined(separator: "\n")
+    }
+
+    static func needsPasswordDetail(command: String) -> String {
+        "Needs your administrator password - run in Terminal: \(command)"
+    }
+
+    static func needsPasswordLog(command: String, reasons: [String]) -> String {
+        var lines = [
+            "Not started: this update runs `sudo`, which asks for your administrator password (or Touch ID).",
+            "A background update cannot answer that prompt, so it would wait until it was stopped.",
+            "",
+            "Run this in Terminal instead:",
+            "  \(command)",
+            "",
+            "Why it needs sudo:",
+        ]
+        lines += reasons.map { "  - \($0)" }
+        return lines.joined(separator: "\n")
+    }
+}
+
+/// One place for how long an update or check command may run.
+enum UpdatesRunLimits {
+    /// `brew upgrade`, `npm -g install` and `git fetch` legitimately take
+    /// minutes on a slow link, so this is far above `Subprocess.defaultTimeout`
+    /// - but it is a bound, which is the whole point of GL-02. A check or
+    /// update that has not finished in five minutes is wedged, and reporting
+    /// that beats a background thread parked forever (the failure that took
+    /// every notification signal down with it in GL-03).
+    ///
+    /// Not raised for casks. The Automic Vault timeout that looked like "five
+    /// minutes is too short" was a `sudo` password dialog nobody answered for
+    /// thirteen minutes, and no limit fixes that - `BrewCaskSudo` does.
+    static let timeout: TimeInterval = 300
 }
 
 // MARK: - Process plumbing
@@ -228,21 +296,26 @@ private func resolveExecutable(_ name: String) -> String? {
 
 private typealias RunResult = SubprocessResult
 
-/// `brew upgrade`, `npm -g install` and `git fetch` legitimately take minutes
-/// on a slow link, so this is far above `Subprocess.defaultTimeout` - but it is
-/// a bound, which is the whole point of GL-02. A check or update that has not
-/// finished in five minutes is wedged, and reporting that beats a background
-/// thread parked forever (the failure that took every notification signal down
-/// with it in GL-03).
-private let updatesRunTimeout: TimeInterval = 300
-
 private func run(_ executable: String, _ args: [String], cwd: URL? = nil) -> RunResult {
     #if FM_SELFTESTS
     UpdatesDataTestSeam.invocations.append((executable, args))
     if let override = UpdatesDataTestSeam.run { return override(executable, args, cwd) }
     #endif
     return Subprocess.run(executable: executable, arguments: args, cwd: cwd,
-                          timeout: updatesRunTimeout, log: AppLog.subprocess)
+                          timeout: UpdatesRunLimits.timeout, log: AppLog.subprocess)
+}
+
+/// The failed-update outcome every path below returns. A timeout gets
+/// `UpdateFailureText`'s account instead of `detail`, whatever the tool
+/// printed on its way out.
+private func failedUpdate(_ command: String, _ result: RunResult, detail: String? = nil, log: String? = nil) -> UpdateOutcome {
+    let output = log ?? result.combinedLog
+    if result.timedOut {
+        return UpdateOutcome(ok: false, newVersionLabel: nil,
+                             detail: UpdateFailureText.timedOutDetail(command: command),
+                             log: UpdateFailureText.timedOutLog(command: command, output: output))
+    }
+    return UpdateOutcome(ok: false, newVersionLabel: nil, detail: detail ?? "\(command) failed", log: output)
 }
 
 private func missingToolOutcome(_ tool: String) -> CheckOutcome {
@@ -321,9 +394,7 @@ enum UpdatesSource {
             return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "'npm' not found on PATH", log: "")
         }
         let result = run(npm, ["install", "-g", package])
-        guard result.status == 0 else {
-            return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "npm install -g \(package) failed", log: result.combinedLog)
-        }
+        guard result.status == 0 else { return failedUpdate("npm install -g \(package)", result) }
         let version = installedNpmVersion(npm: npm, package: package)
         return UpdateOutcome(ok: true, newVersionLabel: version, detail: "Installed \(version ?? "latest")", log: result.combinedLog)
     }
@@ -377,9 +448,7 @@ enum UpdatesSource {
             return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "'brew' not found on PATH", log: "")
         }
         let result = run(brew, ["upgrade", formula])
-        guard result.status == 0 else {
-            return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "brew upgrade \(formula) failed", log: result.combinedLog)
-        }
+        guard result.status == 0 else { return failedUpdate("brew upgrade \(formula)", result) }
         let version = installedBrewVersion(brew: brew, formula: formula)
         return UpdateOutcome(ok: true, newVersionLabel: version, detail: "Upgraded to \(version ?? "latest")", log: result.combinedLog)
     }
@@ -455,6 +524,19 @@ enum UpdatesSource {
             return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "'brew' not found on PATH", log: "")
         }
         ensureTapped(brew: brew, cask: cask)
+        // A cask whose upgrade runs `sudo` is not started in the background
+        // at all - see `BrewCaskSudo` for the Automic Vault run that waited
+        // on an unanswered password dialog until it was stopped.
+        let info = run(brew, ["info", "--cask", "--json=v2", cask])
+        let current = info.status == 0 ? BrewCaskSudo.artifacts(fromInfoJSON: info.stdout) : []
+        let sudoReasons = BrewCaskSudo.reasons(cask: cask, brewPath: brew, currentArtifacts: current)
+        if !sudoReasons.isEmpty {
+            let command = "brew upgrade --cask \(cask)"
+            return UpdateOutcome(ok: false, newVersionLabel: nil,
+                                 detail: UpdateFailureText.needsPasswordDetail(command: command),
+                                 log: UpdateFailureText.needsPasswordLog(command: command, reasons: sudoReasons),
+                                 terminalCommand: command)
+        }
         // Matches the exact hint text Claude Code itself prints ("Update
         // available! Run: brew upgrade claude-code") rather than the more
         // explicit `--cask` form - brew resolves it unambiguously on this
@@ -465,7 +547,7 @@ enum UpdatesSource {
             // too, and "brew upgrade failed" alone reads like a network blip
             // worth retrying rather than a Homebrew/tap mismatch.
             let reason = BrewCaskInstallation.firstErrorLine(of: result).map { ": \($0)" } ?? ""
-            return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "brew upgrade \(cask) failed\(reason)", log: result.combinedLog)
+            return failedUpdate("brew upgrade \(cask)", result, detail: "brew upgrade \(cask) failed\(reason)")
         }
         let version = BrewCaskInstallation.find(cask: cask, app: app, brewPath: brew)?.version
         return UpdateOutcome(ok: true, newVersionLabel: version, detail: "Upgraded to \(version ?? "latest")", log: result.combinedLog)
@@ -519,7 +601,7 @@ enum UpdatesSource {
         let upgradeResult = run(brew, ["upgrade", "herdr"])
         let log = [updateResult.combinedLog, upgradeResult.combinedLog].filter { !$0.isEmpty }.joined(separator: "\n")
         guard upgradeResult.status == 0 else {
-            return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "brew upgrade herdr failed", log: log)
+            return failedUpdate("brew upgrade herdr", upgradeResult, log: log)
         }
         let version = installedBrewVersion(brew: brew, formula: "herdr")
         return UpdateOutcome(ok: true, newVersionLabel: version, detail: "Upgraded to \(version ?? "latest")", log: log)
@@ -585,9 +667,7 @@ enum UpdatesSource {
             return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "'no-mistakes' not found on PATH", log: "")
         }
         let result = run(path, ["update", "-y"])
-        guard result.status == 0 else {
-            return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "no-mistakes update failed", log: result.combinedLog)
-        }
+        guard result.status == 0 else { return failedUpdate("no-mistakes update", result) }
         let versionResult = run(path, ["--version"])
         let version = parseNoMistakesVersion(versionResult.stdout)
         return UpdateOutcome(ok: true, newVersionLabel: version, detail: "Updated to \(version ?? "latest")", log: result.combinedLog)
@@ -635,7 +715,7 @@ enum UpdatesSource {
         }
         let result = run("/bin/bash", [script.path], cwd: FirstmateHome.root)
         guard result.status == 0, let parsed = parseSyncLine(result.stdout) else {
-            return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "fm-sync-upstream.sh failed", log: result.combinedLog)
+            return failedUpdate("fm-sync-upstream.sh", result)
         }
         switch parsed.status {
         case "updated":
@@ -786,11 +866,153 @@ enum BrewCaskInstallation {
     /// The line a captain needs from a failed brew run: the first `Error:`
     /// line if there is one, otherwise the first non-empty line of stderr,
     /// then of stdout.
+    ///
+    /// A run this app stopped at its time limit is the exception. brew's own
+    /// last words there are `Error: SIGTERM`, which names our signal rather
+    /// than brew's problem, so the line says what actually happened instead.
     static func firstErrorLine(of result: SubprocessResult) -> String? {
+        if result.timedOut { return "stopped after \(UpdateFailureText.limitText) because it was still running" }
         let lines = [result.stderr, result.stdout]
             .flatMap { $0.split(whereSeparator: \.isNewline) }
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         return lines.first { $0.hasPrefix("Error:") } ?? lines.first
+    }
+}
+
+// MARK: - Will this cask's upgrade run sudo?
+
+/// Answers, before anything runs, whether `brew upgrade` on a cask will call
+/// `sudo`, and why.
+///
+/// This exists because of a measured hang. Grand Line's Update on Automic
+/// Vault ended with `Error: SIGTERM` after the five-minute limit, and the
+/// unified log showed why: brew's uninstall step ran `sudo`, `pam_tid` (Touch
+/// ID for sudo, which the captain's nix-darwin config turns on) found no
+/// terminal and raised a SecurityAgent password dialog, and that dialog was
+/// answered thirteen minutes later - long after the limit had stopped brew.
+/// A child of a GUI app has no terminal for `sudo` to fail fast on, and no
+/// environment variable stops `pam_tid` from asking, so the only reliable fix
+/// is to not start such an upgrade in the background.
+///
+/// Where the answer comes from matters. On upgrade, brew uninstalls the *old*
+/// version with the old version's own stanzas: the installed cask file under
+/// `Caskroom/<token>/.metadata/<version>/`, then `INSTALL_RECEIPT.json`'s
+/// `uninstall_artifacts` when that file will not load, then the current
+/// definition. Automic Vault's installed cask file is `{}`, so brew rebuilt
+/// the old cask from a receipt still carrying `uninstall launchctl:` from the
+/// 3.2.0 install, even though today's cask no longer has it. All three
+/// sources are read and their answers combined, because over-reporting only
+/// moves one upgrade into Terminal a release early, while under-reporting is
+/// the five-minute hang.
+///
+/// The directive list mirrors Homebrew 6.0.22's own `sudo: true` call sites
+/// in `cask/artifact/abstract_uninstall.rb` and `cask/artifact/pkg.rb`.
+/// `quit` is deliberately absent: Homebrew bounds it at ten seconds and moves
+/// on when the app does not quit.
+enum BrewCaskSudo {
+
+    /// Uninstall directives that always run `sudo` when present.
+    private static let sudoUninstallDirectives: [(key: String, why: String)] = [
+        ("launchctl", "Homebrew also looks for it in the system launchd domain with sudo"),
+        ("kext", "unloading a kernel extension runs sudo"),
+        ("pkgutil", "removing an installer package runs sudo"),
+        ("delete", "Homebrew deletes these paths with sudo"),
+        ("rmdir", "Homebrew lists these directories with sudo"),
+    ]
+
+    static func reasons(cask: String, brewPath: String?, currentArtifacts: [Any]) -> [String] {
+        var found: [String] = []
+        func add(_ more: [String]) {
+            for reason in more where !found.contains(reason) { found.append(reason) }
+        }
+        if let caskroom = installedCaskroom(cask: cask, brewPath: brewPath) {
+            add(reasons(in: installedCaskfileArtifacts(caskroom: caskroom, token: BrewCaskInstallation.shortToken(cask))))
+            add(reasons(in: receiptUninstallArtifacts(caskroom: caskroom)))
+            add(reasons(in: currentArtifacts))
+        } else {
+            // Nothing to uninstall, so only the install side can ask.
+            add(reasons(in: currentArtifacts, uninstall: false))
+        }
+        return found
+    }
+
+    /// The reasons one artifact list carries, as brew's JSON spells it:
+    /// an array of single-key objects such as `{"uninstall": [{...}]}`.
+    static func reasons(in artifacts: [Any], uninstall: Bool = true) -> [String] {
+        var found: [String] = []
+        for case let artifact as [String: Any] in artifacts {
+            if uninstall, let stanzas = artifact["uninstall"] as? [Any] {
+                for case let stanza as [String: Any] in stanzas {
+                    for (key, why) in sudoUninstallDirectives {
+                        if let value = stanza[key] { found.append("uninstall \(key): \(describe(value)) - \(why)") }
+                    }
+                    for key in ["early_script", "script"] {
+                        if let script = stanza[key] as? [String: Any], script["sudo"] as? Bool == true {
+                            found.append("uninstall \(key): \(describe(script["executable"] ?? "")) - runs with sudo: true")
+                        }
+                    }
+                }
+            }
+            if let pkg = artifact["pkg"] {
+                found.append("pkg: \(describe(pkg)) - the macOS installer runs with sudo")
+            }
+            if let installers = artifact["installer"] as? [Any] {
+                for case let installer as [String: Any] in installers {
+                    if let script = installer["script"] as? [String: Any], script["sudo"] as? Bool == true {
+                        found.append("installer script: \(describe(script["executable"] ?? "")) - runs with sudo: true")
+                    }
+                }
+            }
+        }
+        return found
+    }
+
+    /// `casks[0].artifacts` from `brew info --cask --json=v2`.
+    static func artifacts(fromInfoJSON json: String) -> [Any] {
+        guard let data = json.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let casks = obj["casks"] as? [[String: Any]],
+              let artifacts = casks.first?["artifacts"] as? [Any]
+        else { return [] }
+        return artifacts
+    }
+
+    /// The installed cask's `Caskroom/<token>` folder, under the same
+    /// prefixes `BrewCaskInstallation.find` looks in.
+    private static func installedCaskroom(cask: String, brewPath: String?) -> URL? {
+        let token = BrewCaskInstallation.shortToken(cask)
+        for prefix in BrewCaskInstallation.prefixes(brewPath: brewPath) {
+            let dir = prefix.appendingPathComponent("Caskroom").appendingPathComponent(token)
+            if BrewCaskInstallation.newestVersion(in: dir) != nil { return dir }
+        }
+        return nil
+    }
+
+    private static func receiptUninstallArtifacts(caskroom: URL) -> [Any] {
+        let receipt = caskroom.appendingPathComponent(".metadata/INSTALL_RECEIPT.json")
+        guard let data = try? Data(contentsOf: receipt),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [] }
+        return obj["uninstall_artifacts"] as? [Any] ?? []
+    }
+
+    /// `.metadata/<newest version>/<newest timestamp>/Casks/<token>.json`,
+    /// the definition brew saved at install time.
+    private static func installedCaskfileArtifacts(caskroom: URL, token: String) -> [Any] {
+        let metadata = caskroom.appendingPathComponent(".metadata")
+        guard let version = BrewCaskInstallation.newestVersion(in: metadata) else { return [] }
+        let versionDir = metadata.appendingPathComponent(version)
+        guard let stamp = BrewCaskInstallation.newestVersion(in: versionDir) else { return [] }
+        let file = versionDir.appendingPathComponent(stamp).appendingPathComponent("Casks/\(token).json")
+        guard let data = try? Data(contentsOf: file),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [] }
+        return obj["artifacts"] as? [Any] ?? []
+    }
+
+    private static func describe(_ value: Any) -> String {
+        if let list = value as? [Any] { return list.map { describe($0) }.joined(separator: ", ") }
+        return "\(value)"
     }
 }

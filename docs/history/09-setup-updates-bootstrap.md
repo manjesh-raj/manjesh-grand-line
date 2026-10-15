@@ -1054,3 +1054,28 @@ the column one point *left* of the sidebar's visible edge with the entire
 slack on the right, which trips the case's "one margin is gone entirely" guard
 before the tolerance is consulted at all. Re-confirmed by re-running the same
 injection after the tolerance change - 38 failures, all in this case.
+
+## Updates: the Automic Vault `Error: SIGTERM` and the `sudo` that nobody answered
+
+`fm/grandline-updates-cask-upgrade-sigterm-1792041534`.
+Pressing Update on Automic Vault ended with `brew upgrade automic-vault/isotopes/automic-vault failed: Error: SIGTERM`.
+That text is brew's own last words when `Subprocess` stops it at `UpdatesRunLimits.timeout` (300 s).
+The unified log on the captain's machine explained why brew was still running.
+
+- 10:03:28 the upgrade starts. The 4.19.0 dmg was already in brew's download cache from 11 Oct, so it was not a slow download.
+- 10:06:08 launchd removes `com.automicvault.menubar-helper` and the Automic Vault menubar app exits on SIGTERM. That is the user-domain half of brew's `uninstall launchctl:` step.
+- 10:06:09 brew runs `sudo` for the system-domain half. `pam_tid` (Touch ID for sudo, on through nix-darwin since July) finds no terminal and raises a SecurityAgent dialog.
+- 10:08:28 Grand Line stops brew at the 300 s limit.
+- 10:19:42 the dialog is answered, eleven minutes after brew was gone.
+
+Why `uninstall launchctl:` ran at all, when today's cask no longer has it: the installed cask file under `Caskroom/automic-vault/.metadata/4.18.0/.../Casks/automic-vault.json` is `{}`, so Homebrew 6.0.22 rebuilds the old cask from `INSTALL_RECEIPT.json`, whose `uninstall_artifacts` still say `launchctl: com.automicvault.menubar-helper, quit: com.automicvault` from the 3.2.0 install in August.
+`uninstall_launchctl` always does a second pass with `sudo` (`Homebrew::Services::System.launchctl_find_service(service, sudo: true)`), in 6.0.1 as well as 6.0.22.
+
+What changed:
+
+- **A timeout reads as one.** `UpdateFailureText` and `failedUpdate(...)` give every update path the same "Stopped after 5 minutes: <command> was still running" detail, with a log that says the update may be partly done (Homebrew does not roll back on SIGTERM, and here it had already quit the app and deleted its launch agent). `BrewCaskInstallation.firstErrorLine` never returns brew's `Error: SIGTERM` for a timed-out run.
+- **A cask upgrade that will run `sudo` is not started in the background.** `BrewCaskSudo` reads the same three sources brew uses for the old version's uninstall (installed cask file, receipt, current definition) and recognises the directives Homebrew 6.0.22 runs with `sudo`. The row then reads "Needs Password" and offers **Run in Terminal**, which opens the exact command in a Console tab through `runInConsole` and re-checks when it exits.
+- **The limit was not raised.** The evidence is a dialog nobody answered for thirteen minutes, and no limit fixes that.
+- **No environment variables were added.** stdin is already `/dev/null` (`aBackgroundChildReadsEndOfFileFromStdin` measures it), and nothing in the child's environment stops `pam_tid` from asking. `HOMEBREW_NO_AUTO_UPDATE` was considered and left out, because nothing measured showed auto-update mattered here, and `ensureTapped`'s `brew tap` is what refreshes the tap for Check.
+
+`FM_RUN_UPDATES_FAILURE_TESTS` covers the data side, including the real runner reproducing `Error: SIGTERM` from a `/bin/sh` child that traps TERM. `UpdatesActionVisibilitySelfTest.checkANeedsPasswordRowOffersTheTerminalNotUpdate` covers the row through the real completion path and a real `performClick`.
