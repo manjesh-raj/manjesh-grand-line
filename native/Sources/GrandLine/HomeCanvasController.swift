@@ -99,6 +99,39 @@ final class HomeCanvasController: NSViewController {
     /// §6.1's grid: minimum column width 255, gap 16.
     static let minModuleWidth: CGFloat = 255
     static let gridSpacing: CGFloat = 16
+
+    /// Which grid a card was placed by, and how much of it the card owns.
+    ///
+    /// A card's narrow-form decisions (the Claude report's stacked reflow,
+    /// the briefing's clause cap) are made from this rather than from a bare
+    /// width. The two grids answer "is this card degraded?" differently: on
+    /// the wrapping shelf a card is narrow exactly when `packRows` has put a
+    /// span-2 card into one column, which a width compared against the
+    /// shelf's two-column arithmetic tells correctly. On the hub's
+    /// proportional dashboard that same comparison is wrong by construction -
+    /// at the 960pt minimum window a 7-of-12-track card resolves to 525.33pt,
+    /// under the shelf's 526pt, and was being built as a degraded card it was
+    /// not (the scout's finding M3, 88pt of page height).
+    enum CardPlacement: Equatable {
+        /// The wrapping shelf, building this card `width` wide.
+        case shelf(width: CGFloat)
+        /// The hub's hand-placed dashboard, `span` of
+        /// `HelmResponsiveGrid.dashboardColumns` tracks.
+        case dashboard(span: Int)
+
+        /// Whether this card is narrower than a span-2 card on the grid that
+        /// placed it.
+        var isNarrowerThanTwoColumns: Bool {
+            switch self {
+            case .shelf(let width):
+                return width + 0.5 < HomeCanvasController.minModuleWidth * 2 + HomeCanvasController.gridSpacing
+            case .dashboard(let span):
+                // Half the track grid is the dashboard's analogue of the
+                // shelf's two columns: a 6-track card is two 3-track halves.
+                return span * 2 < HelmResponsiveGrid.dashboardColumns
+            }
+        }
+    }
     /// The canvas gutter - the scale's 24 (UI-14), which is also the bar's
     /// own side margin, so the cards' edges line up under the bar's.
     static let gutter: CGFloat = HelmMetrics.pageGutter
@@ -1194,7 +1227,7 @@ final class HomeCanvasController: NSViewController {
             exemptsHeightTie: { $0.sizesToOwnContent }
         ) { [weak self] module, cardWidth in
             guard let self else { return NSView() }
-            return self.makeCard(for: module, cardWidth: cardWidth)
+            return self.makeCard(for: module, placement: .shelf(width: cardWidth))
         }
 
         for row in rows {
@@ -1269,10 +1302,7 @@ final class HomeCanvasController: NSViewController {
         guard dashboardRowViewsWouldApply(available: available, modules: modules) else { return nil }
 
         func card(_ module: DaylightModule, span: Int) -> HelmModuleCard {
-            makeCard(for: module,
-                     cardWidth: HelmResponsiveGrid.proportionalWidth(containerWidth: available,
-                                                                     span: span,
-                                                                     spacing: Self.gridSpacing))
+            makeCard(for: module, placement: .dashboard(span: span))
         }
 
         var rows: [NSStackView] = []
@@ -1316,9 +1346,9 @@ final class HomeCanvasController: NSViewController {
         return rows
     }
 
-    private func makeCard(for module: DaylightModule, cardWidth: CGFloat) -> HelmModuleCard {
+    private func makeCard(for module: DaylightModule, placement: CardPlacement) -> HelmModuleCard {
         let card = HelmModuleCard()
-        card.configure(content(for: module, cardWidth: cardWidth))
+        card.configure(content(for: module, placement: placement))
         card.onOpen = { [weak self] in self?.onOpenDestination?(module.opens) }
         card.onFollowLink = { [weak self] target in self?.follow(target) }
         cards.append(card)
@@ -1497,9 +1527,10 @@ final class HomeCanvasController: NSViewController {
 
     // MARK: Module content (§6.1's table)
 
-    /// `cardWidth` is the width the grid built this card for. Only the
-    /// briefing reads it, and only to size its paragraph - see `fillBriefing`.
-    private func content(for module: DaylightModule, cardWidth: CGFloat) -> HelmModuleCard.Content {
+    /// `placement` is where the grid put this card. Only the briefing and the
+    /// Claude report read it, to pick their narrow forms - see
+    /// `CardPlacement`.
+    private func content(for module: DaylightModule, placement: CardPlacement) -> HelmModuleCard.Content {
         var content = HelmModuleCard.Content(
             title: module.title,
             subtitle: "",
@@ -1509,8 +1540,8 @@ final class HomeCanvasController: NSViewController {
             body: .note(""))
 
         switch module {
-        case .briefing: fillBriefing(&content, cardWidth: cardWidth)
-        case .claudeStatus: fillClaudeStatus(&content, cardWidth: cardWidth)
+        case .briefing: fillBriefing(&content, placement: placement)
+        case .claudeStatus: fillClaudeStatus(&content, placement: placement)
         case .fleet: fillFleet(&content)
         case .strawHat: fillStrawHat(&content)
         case .tasks: fillTasks(&content)
@@ -1555,7 +1586,7 @@ final class HomeCanvasController: NSViewController {
         f.dateStyle = .none
         return f
     }()
-    private func fillBriefing(_ content: inout HelmModuleCard.Content, cardWidth: CGFloat) {
+    private func fillBriefing(_ content: inout HelmModuleCard.Content, placement: CardPlacement) {
         guard let record = AppSettings.shared.morningBriefingRecord, !record.clauses.isEmpty else {
             content.subtitle = AppSettings.shared.morningBriefingEnabled
                 ? "not generated yet today"
@@ -1581,7 +1612,7 @@ final class HomeCanvasController: NSViewController {
         // silent caps" failure. The trailing line is a plain `.none`-target
         // clause, so it renders as text inside the same paragraph and needs no
         // new mechanism.
-        var clauses = Array(record.clauses.prefix(Self.briefingClauseCap(forCardWidth: cardWidth)))
+        var clauses = Array(record.clauses.prefix(Self.briefingClauseCap(for: placement)))
         let hidden = record.clauses.count - clauses.count
         if hidden > 0 {
             clauses.append(BriefingClause(text: "+\(hidden) more on Fleet.", target: .none))
@@ -1597,10 +1628,15 @@ final class HomeCanvasController: NSViewController {
     /// to one column in a single-column grid - and its paragraph has to shrink
     /// with it or it overflows the fixed card height and is clipped.
     static func briefingClauseCap(forCardWidth width: CGFloat) -> Int {
-        let spanTwo = minModuleWidth * 2 + gridSpacing
-        return width + 0.5 >= spanTwo
-            ? HelmModuleCard.maxBriefingClauses
-            : HelmModuleCard.maxNarrowBriefingClauses
+        briefingClauseCap(for: .shelf(width: width))
+    }
+
+    /// The same decision from the card's placement - see `CardPlacement` for
+    /// why the dashboard cannot use the shelf's width arithmetic.
+    static func briefingClauseCap(for placement: CardPlacement) -> Int {
+        placement.isNarrowerThanTwoColumns
+            ? HelmModuleCard.maxNarrowBriefingClauses
+            : HelmModuleCard.maxBriefingClauses
     }
 
     // MARK: The Claude usage report
@@ -1637,7 +1673,7 @@ final class HomeCanvasController: NSViewController {
     /// "Not reported" in the muted face with no bar at all - never a `0%` or
     /// a `$0`, which on a quota readout are real and alarming values rather
     /// than synonyms for "unknown".
-    private func fillClaudeStatus(_ content: inout HelmModuleCard.Content, cardWidth: CGFloat) {
+    private func fillClaudeStatus(_ content: inout HelmModuleCard.Content, placement: CardPlacement) {
         // On every state, including the two below: the one moment a captain
         // most wants to re-take a reading is when the card is stating a gap.
         content.headerAction = HelmModuleCard.HeaderAction(
@@ -1661,7 +1697,7 @@ final class HomeCanvasController: NSViewController {
             return
         }
 
-        let compact = Self.claudeUsageIsCompact(forCardWidth: cardWidth)
+        let compact = Self.claudeUsageIsCompact(for: placement)
         content.subtitle = Self.claudeSubtitle(for: snapshot)
         // UI-12's error state: a refresh that failed keeps the last reading,
         // says how old it is and why, rather than presenting it as current.
@@ -1714,8 +1750,15 @@ final class HomeCanvasController: NSViewController {
     /// The card pays height, never a reading. Nothing is dropped in either
     /// layout, which is the property the strip already had when it wrapped.
     static func claudeUsageIsCompact(forCardWidth width: CGFloat) -> Bool {
-        let spanTwo = minModuleWidth * 2 + gridSpacing
-        return width + 0.5 < spanTwo
+        claudeUsageIsCompact(for: .shelf(width: width))
+    }
+
+    /// The same decision from the card's placement. On the dashboard a
+    /// 7-of-12-track card is never the degraded one-column card this reflow
+    /// exists for, even where it resolves a fraction of a point under the
+    /// shelf's 526pt (M3) - see `CardPlacement`.
+    static func claudeUsageIsCompact(for placement: CardPlacement) -> Bool {
+        placement.isNarrowerThanTwoColumns
     }
 
     /// The report's two sections, in the mockup's order. `static` so a suite
