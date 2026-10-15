@@ -693,7 +693,10 @@ final class NeedsAttentionCard: NSView {
         label.textColor = ok
         label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // One above the strip row's own 250 hugging, which it tied at 250:
+        // measured, "Claude plan limits comfortable" truncated with room to
+        // spare in a 293pt column on one render and not the next.
+        label.setContentCompressionResistancePriority(HelmDaylightPriority.columnHug, for: .horizontal)
         let pair = NSStackView(views: [glyph, label])
         pair.orientation = .horizontal
         pair.alignment = .centerY
