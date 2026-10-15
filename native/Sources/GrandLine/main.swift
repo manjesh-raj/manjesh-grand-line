@@ -3300,6 +3300,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_SETUP_DATA_LAYER_TESTS"] == "1" {
     exit(SetupDataLayerSelfTest.run() ? 0 : 1)
 }
 
+// What the Updates page says when an update cannot finish in the background:
+// a timeout reads as one, never as the child's `Error: SIGTERM`, and a cask
+// upgrade that would run `sudo` is handed to the Terminal instead of started.
+if ProcessInfo.processInfo.environment["FM_RUN_UPDATES_FAILURE_TESTS"] == "1" {
+    exit(UpdatesFailureSelfTest.run() ? 0 : 1)
+}
+
 // The Security card's Disable action: the removal the shipped command really
 // performs, run against scratch files, plus the status split that decides
 // which enabled state may offer that button at all.

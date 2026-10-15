@@ -45,6 +45,10 @@ private final class UpdateRow {
     var latestLabel: String?
     var detail: String = "Not checked yet"
     var log: String = ""
+    /// Set when the last Update was not started because it needs the
+    /// captain's password - `UpdateOutcome.terminalCommand`. Cleared by the
+    /// next check, which re-asks the machine.
+    var terminalCommand: String?
     var isLogExpanded = false
     var isBusy = false
 
@@ -66,6 +70,9 @@ private final class UpdateRow {
     /// (inline/link-style rather than a bordered rounded button) so it reads
     /// as "go elsewhere," not "click to install here" - see the file header.
     let installInBootstrapButton = HelmButton(title: "Install in Bootstrap \u{2192}", variant: .quiet, size: .small)
+    /// Shown in place of Update when the update needs a password: opens the
+    /// exact command in a Console tab, where `sudo` has a terminal to ask in.
+    let runInTerminalButton = HelmButton(title: "Run in Terminal", variant: .primary, size: .small)
     let detailsButton = NSButton()
     let logField = NSTextField(wrappingLabelWithString: "")
     let logContainer = NSView()
@@ -140,6 +147,10 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// the Bootstrap rail destination without this controller knowing
     /// anything about `AppShellController`/`RailDestination` itself.
     var onNavigateToBootstrap: (() -> Void)?
+    /// Set by `AppShellController` to its `runInConsole`, the same
+    /// one-shot Console tab Bootstrap and Settings use for anything that
+    /// needs a real `sudo` prompt. The completion carries the exit status.
+    var onRunCommandTracked: ((String, String, @escaping (Bool) -> Void) -> Void)?
     private var lastCheckedAt: Date?
     private var lastCheckedTimer: Timer?
     private var hasCheckedOnce = false
@@ -714,6 +725,11 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         row.installInBootstrapButton.identifier = NSUserInterfaceItemIdentifier(row.item.id)
         row.installInBootstrapButton.isHidden = true
 
+        row.runInTerminalButton.target = self
+        row.runInTerminalButton.action = #selector(runInTerminalTapped(_:))
+        row.runInTerminalButton.identifier = NSUserInterfaceItemIdentifier(row.item.id)
+        row.runInTerminalButton.isHidden = true
+
         // Busy state
         row.progressLabel.setScaledFont(ofSize: 11, weight: .medium)
 
@@ -726,7 +742,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
             // it while a check or update runs. Actions stay in their own
             // trailing column (audit §5.4).
             statusViews: [row.pill, row.statusSkeleton, row.progressLabel],
-            trailingViews: [row.checkButton, row.updateButton, row.installInBootstrapButton],
+            trailingViews: [row.checkButton, row.updateButton, row.runInTerminalButton, row.installInBootstrapButton],
             detailsTarget: self,
             detailsAction: #selector(detailsTapped(_:)),
             // UI-43: one rule for the whole page, from
@@ -794,6 +810,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
                 row.latestLabel = outcome.latestLabel
                 row.detail = outcome.detail
                 row.log = outcome.log
+                row.terminalCommand = nil
                 row.checkButton.isEnabled = true
                 self?.render(row)
                 completion?()
@@ -810,6 +827,17 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     @objc private func installInBootstrapTapped(_ sender: NSButton) {
         onNavigateToBootstrap?()
+    }
+
+    /// Opens the update the background run refused in a Console tab, then
+    /// re-checks the row once that command exits, whatever its status - the
+    /// machine is the source of truth, not the command's exit code.
+    @objc private func runInTerminalTapped(_ sender: NSButton) {
+        guard let row = row(for: sender), let command = row.terminalCommand,
+              let onRunCommandTracked else { return }
+        onRunCommandTracked("Update \(row.item.name)", command) { [weak self] _ in
+            DispatchQueue.main.async { self?.check(row, forceRefresh: true) }
+        }
     }
 
     /// Run one tool's real update, asked for from the notification popover's
@@ -891,30 +919,36 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
             let outcome = UpdatesSource.update(row.item)
             DispatchQueue.main.async {
                 guard let self else { return }
-                row.isBusy = false
-                row.log = outcome.log
-                if outcome.ok {
-                    row.status = .upToDate
-                    row.detail = outcome.detail
-                    self.showSuccess(row: row, outcome: outcome)
-                } else {
-                    row.status = .updateFailed
-                    row.detail = outcome.detail
-                }
-                self.render(row)
-                // Re-run a real Check right after so the row's status/labels
-                // reflect the machine's true state rather than the update
-                // command's own self-report - matches every other row's
-                // "Check is the source of truth for status" contract.
-                // `forceRefresh: true`: this row's own cache entry is now
-                // stale by definition (the tool just changed underneath it),
-                // so this must never read it back - and forcing it here also
-                // refreshes the shared cache with the truth for the other
-                // two pages.
-                if outcome.ok { self.check(row, forceRefresh: true) }
+                self.apply(outcome, to: row)
                 completion?()
             }
         }
+    }
+
+    /// Where every finished update lands, success or not.
+    private func apply(_ outcome: UpdateOutcome, to row: UpdateRow) {
+        row.isBusy = false
+        row.log = outcome.log
+        row.terminalCommand = outcome.terminalCommand
+        if outcome.ok {
+            row.status = .upToDate
+            row.detail = outcome.detail
+            showSuccess(row: row, outcome: outcome)
+        } else {
+            row.status = .updateFailed
+            row.detail = outcome.detail
+        }
+        render(row)
+        // Re-run a real Check right after so the row's status/labels
+        // reflect the machine's true state rather than the update
+        // command's own self-report - matches every other row's
+        // "Check is the source of truth for status" contract.
+        // `forceRefresh: true`: this row's own cache entry is now
+        // stale by definition (the tool just changed underneath it),
+        // so this must never read it back - and forcing it here also
+        // refreshes the shared cache with the truth for the other
+        // two pages.
+        if outcome.ok { check(row, forceRefresh: true) }
     }
 
     private func showSuccess(row: UpdateRow, outcome: UpdateOutcome) {
@@ -975,7 +1009,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// row's change can move the page's baseline.
     private func applyStatusVisibility() {
         let hidden = ToolRowLayout.statusHidden(rows.map { row in
-            let (word, _, style) = pillVisuals(row.status)
+            let (word, _, style) = pillVisuals(row)
             return (word, style, row.status == .checking || row.status == .updating)
         })
         for (row, hide) in zip(rows, hidden) { row.pill.isHidden = hide }
@@ -994,7 +1028,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // `.notInstalled` shows the distinct "Install in Bootstrap ->" link
         // instead of Update - every other status that `showsUpdateButton`
         // keeps its existing Update button unchanged.
-        row.updateButton.isHidden = busy || !row.status.showsUpdateButton || row.status == .notInstalled
+        let needsTerminal = row.terminalCommand != nil
+        row.updateButton.isHidden = busy || !row.status.showsUpdateButton || row.status == .notInstalled || needsTerminal
+        row.runInTerminalButton.isHidden = busy || !needsTerminal
         row.installInBootstrapButton.isHidden = busy || row.status != .notInstalled
         row.statusSkeleton.isHidden = !busy
         row.progressLabel.isHidden = !busy
@@ -1004,6 +1040,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         row.checkButton.isEnabled = !disabled
         row.updateButton.isEnabled = !disabled
         row.installInBootstrapButton.isEnabled = !disabled
+        row.runInTerminalButton.isEnabled = !disabled
         row.rowContainer.alphaValue = disabled ? 0.6 : 1.0
 
         applyThemeToRow(row)
@@ -1017,8 +1054,13 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// UI-43: a row's status is a dot and a word while it is the default
     /// ("Up to Date", "Not Checked") and a `HelmStatusPill` only when it is
     /// not. Tints, never the terminal's ANSI slots (UI-32).
-    private func pillVisuals(_ status: DependencyStatus) -> (String, HelmTint, HelmStatusPill.Style) {
-        switch status {
+    ///
+    /// An update that was not started because it needs the captain's
+    /// password has not failed, so it reads as a warning that asks for them
+    /// rather than as a red failure.
+    private func pillVisuals(_ row: UpdateRow) -> (String, HelmTint, HelmStatusPill.Style) {
+        if row.status == .updateFailed, row.terminalCommand != nil { return ("Needs Password", .warn, .pill) }
+        switch row.status {
         case .unknown: return ("Not Checked", .neutral, .dotWord)
         case .checking, .updating: return ("", .neutral, .dotWord)
         case .upToDate: return ("Up to Date", .good, .dotWord)
@@ -1060,7 +1102,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     }
 
     private func applyThemeToRow(_ row: UpdateRow) {
-        let failed = row.status == .checkFailed || row.status == .updateFailed
+        let failed = row.status == .checkFailed || (row.status == .updateFailed && row.terminalCommand == nil)
         // Reuses `showsUpdateButton` - the exact predicate already driving
         // the "Needs Attention" filter segment above - as "this row is
         // worth a card/accent-bar treatment," and `pillVisuals` for its
@@ -1071,7 +1113,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         let needsAttention = row.status.showsUpdateButton
         // UI-43: the row that asks the captain to act keeps its button at rest.
         ToolRowLayout.setActionsPinned(row.toolRowViews, needsAttention)
-        let (pillText, pillTint, pillStyle) = pillVisuals(row.status)
+        let (pillText, pillTint, pillStyle) = pillVisuals(row)
         let pillColorHex = pillTint.hex(in: theme)
         // The status pill is painted HERE rather than in `render`, for the
         // reason `GitHubSyncController.applyThemeToRow` states in full: the
@@ -1099,6 +1141,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // `.primary` button on the twelve palettes (from `accentHex` to the
         // fallback tint) - `nil` there keeps every other palette byte-identical.
         row.updateButton.domainHue = theme.isDaylight ? RailDestination.updates.domainHue : nil
+        row.runInTerminalButton.domainHue = theme.isDaylight ? RailDestination.updates.domainHue : nil
         ToolRowLayout.applyTheme(
             row.toolRowViews, theme: theme, detailFailed: failed,
             cardStyle: needsAttention, attentionHex: attentionHex, accentBar: needsAttention
@@ -1164,6 +1207,20 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         rows[index].status = status
         rows[index].detail = "probe"
         render(rows[index])
+    }
+
+    /// Lands an update outcome on a row through the same `apply` a real
+    /// Update's completion uses. Failure outcomes only - a success kicks off a
+    /// real re-check, which a suite must not reach.
+    func debugApplyFailedUpdate(_ outcome: UpdateOutcome, atRow index: Int) {
+        guard rows.indices.contains(index), !outcome.ok else { return }
+        apply(outcome, to: rows[index])
+    }
+
+    /// The row's real buttons and detail, as rendered.
+    func debugRowButtons(atRow index: Int) -> (update: HelmButton, runInTerminal: HelmButton, detail: String)? {
+        guard rows.indices.contains(index) else { return nil }
+        return (rows[index].updateButton, rows[index].runInTerminalButton, rows[index].detailLabel.stringValue)
     }
 
     /// What the pill is ACTUALLY painted with - see

@@ -76,7 +76,8 @@ enum UpdatesActionVisibilitySelfTest {
                       checkAnUpdateAvailableRowShowsItsUpdateButton,
                       checkAQuietRowRevealsItsCheckOnHover,
                       checkTheCheckButtonKeepsItsOwnHoverFeedback,
-                      checkThePageDecidesTheRuleOnce] {
+                      checkThePageDecidesTheRuleOnce,
+                      checkANeedsPasswordRowOffersTheTerminalNotUpdate] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -102,6 +103,73 @@ enum UpdatesActionVisibilitySelfTest {
     }
 
     // MARK: Checks
+
+    /// An update that needs the captain's `sudo` password is not started in
+    /// the background (`BrewCaskSudo`). Its row has to say so and offer the
+    /// command in a terminal instead of an Update that would just ask again -
+    /// and a timed-out update must keep its Update and never show the child's
+    /// `Error: SIGTERM`. Both go through the real completion path
+    /// (`debugApplyFailedUpdate` -> `apply`), and the button through a real
+    /// `performClick`, whose closure is captured rather than run: running it
+    /// would open a Console tab and re-check against the real `brew`.
+    private static func checkANeedsPasswordRowOffersTheTerminalNotUpdate(_ ok: inout Bool) {
+        let (c, window) = mount()
+        defer { window.contentView = nil }
+        let index = c.debugRowActionStates.firstIndex { $0.id == "automic-vault" } ?? 0
+        let command = "brew upgrade --cask automic-vault/isotopes/automic-vault"
+
+        c.debugApplyFailedUpdate(UpdateOutcome(
+            ok: false, newVersionLabel: nil,
+            detail: UpdateFailureText.needsPasswordDetail(command: command),
+            log: UpdateFailureText.needsPasswordLog(command: command, reasons: ["probe"]),
+            terminalCommand: command), atRow: index)
+        guard let needs = c.debugRowButtons(atRow: index), let needsPill = c.debugPillPaint(atRow: index) else {
+            print("UpdatesActionVisibility: no row at \(index)")
+            ok = false
+            return
+        }
+        if needs.runInTerminal.isHidden || !needs.update.isHidden {
+            print("UpdatesActionVisibility: a needs-password row must show Run in Terminal and hide Update - "
+                  + "runInTerminal hidden \(needs.runInTerminal.isHidden), update hidden \(needs.update.isHidden)")
+            ok = false
+        }
+        if needsPill.text != "Needs Password" || !needs.detail.contains(command) {
+            print("UpdatesActionVisibility: a needs-password row reads \"\(needsPill.text)\" / \"\(needs.detail)\"")
+            ok = false
+        }
+        if c.debugRowActionStates[index].actionsAlpha < 0.99 {
+            print("UpdatesActionVisibility: a needs-password row must keep its action visible at rest")
+            ok = false
+        }
+
+        var asked: (label: String, command: String)?
+        c.onRunCommandTracked = { label, command, _ in asked = (label, command) }
+        needs.runInTerminal.performClick(nil)
+        if asked?.command != command {
+            print("UpdatesActionVisibility: Run in Terminal asked the Console for "
+                  + "\(asked?.command ?? "nothing") - expected \(command)")
+            ok = false
+        }
+
+        // A timeout is a retryable failure: Update back, terminal gone, and
+        // no raw signal name anywhere the captain reads first.
+        c.debugApplyFailedUpdate(UpdateOutcome(
+            ok: false, newVersionLabel: nil,
+            detail: UpdateFailureText.timedOutDetail(command: "brew upgrade automic-vault/isotopes/automic-vault"),
+            log: "probe"), atRow: index)
+        guard let timedOut = c.debugRowButtons(atRow: index), let timedOutPill = c.debugPillPaint(atRow: index) else {
+            ok = false
+            return
+        }
+        if timedOut.update.isHidden || !timedOut.runInTerminal.isHidden || timedOutPill.text != "Update Failed"
+            || timedOut.detail.contains("SIGTERM") || !timedOut.detail.hasPrefix("Stopped after") {
+            print("UpdatesActionVisibility: a timed-out row must offer Update again and say it was stopped - "
+                  + "update hidden \(timedOut.update.isHidden), runInTerminal hidden \(timedOut.runInTerminal.isHidden), "
+                  + "pill \"\(timedOutPill.text)\", detail \"\(timedOut.detail)\"")
+            ok = false
+        }
+        if ok { print("UpdatesActionVisibility: a needs-password row offers Run in Terminal, a timed-out one offers Update") }
+    }
 
     /// The captain's own report, as an assertion: no split by category.
     /// Every row in the same state has the same action treatment, whichever
