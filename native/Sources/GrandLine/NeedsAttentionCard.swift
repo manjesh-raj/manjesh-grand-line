@@ -58,6 +58,36 @@
 //   - the card carries the page's one attention edge, and only while
 //     something on it needs the captain.
 //
+// ## The list scrolls inside the card (`fm/grandline-home-fit-implement`)
+//
+// The captain asked for Home to fit the window, with the follow-ups list
+// scrolling inside its own card rather than growing the page. So the list sits
+// in its own `NSScrollView`, and the card's height comes from its host:
+//
+//   - The scroll view prefers the list's full height (`listShowsAllRows`, 490)
+//     and never goes below three rows (`minimumVisibleRows`, required). When
+//     the host gives the card less room than the whole list, the 499 column
+//     tie wins over the 490 preference and the list scrolls. When it gives
+//     more, the scroll view absorbs the slack, so the clear strip stays at the
+//     card's foot and the empty space sits under the last row.
+//   - The total is always in the eyebrow ("NEEDS ATTENTION \u{00B7} 10"), and
+//     while rows are clipped a "+N more" pill sits on the list's bottom edge
+//     over a short fade. It goes away once the last row is in view.
+//   - The scroller is the small control size and follows the system's
+//     scroll-bar setting, because the pill already says there is more.
+//   - A row that takes keyboard focus scrolls itself into view, and VoiceOver
+//     hears the list as one group naming how many rows it has and how many
+//     are visible. Every row stays in the accessibility tree.
+//   - A wheel event over a list that has nothing to scroll goes to the page,
+//     so the page's own fallback scroll (the minimum window with Larger text)
+//     still works with the pointer over the card.
+//
+// Rows are the N1 shape the captain picked: the title on line one, and the
+// kind and the state together on line two ("Follow-up \u{00B7} Overdue 27 days
+// \u{00B7} since 18 Sep"), the state run in its tint. The separate kicker line
+// and the far-right caption are gone, so every row is the same height and the
+// status sits under the title rather than a page-width away from it.
+//
 // ## Rebuild-on-render
 //
 // The list is rebuilt wholesale from the summary on every `render`, and
@@ -111,6 +141,23 @@ final class NeedsAttentionCard: NSView {
                                            symbol: "arrow.clockwise")
     /// UI-1: the rows are flat, separated by hairlines, inside the one card.
     private let list = HelmFlatList()
+    /// The list's own scroll view - see the file header.
+    private let listScroll = NeedsAttentionListScrollView()
+    private let listDocument = FlippedView()
+    /// The list's preferred height, at `listShowsAllRows`.
+    private var listShowsAll: NSLayoutConstraint?
+    /// The floor: `minimumVisibleRows` rows, or every row when there are
+    /// fewer.
+    private var listFloor: NSLayoutConstraint?
+    /// "+N more", while rows are clipped below the visible part of the list.
+    private let morePill = NeedsAttentionMorePill()
+    private let moreFade = NSView()
+    private let moreFadeLayer = CAGradientLayer()
+    /// Scrolling, and the clip or the list changing size, all move the cue.
+    private var cueObservers: [NSObjectProtocol] = []
+    /// The width the host laid this card out at, which decides the compact
+    /// header - see `setLayoutWidth`.
+    private var layoutWidth: CGFloat = 0
     /// Quiet lines under the list (the empty promise, the overflow note).
     private let notesStack = NSStackView()
     /// UI-2: the closing strip, sunk into the card's foot.
@@ -138,7 +185,24 @@ final class NeedsAttentionCard: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    deinit { tick?.invalidate() }
+    /// At least this many rows are always on screen, which is what sets the
+    /// card's own minimum height.
+    static let minimumVisibleRows = 3
+    /// The list's preference for showing every row. Under the 499 a host ties
+    /// the card's height with, so a page that has to fit wins; over anything
+    /// that merely stretches.
+    static let listShowsAllRows = NSLayoutConstraint.Priority(490)
+    /// Below this card width the header drops its subline, the headline wraps
+    /// to two lines, and Refresh is a glyph.
+    static let compactHeaderWidth: CGFloat = 420
+    /// Below this width the clear strip drops its "Everything else is clear"
+    /// lead and keeps only the readings.
+    static let clearLeadWidth: CGFloat = 560
+
+    deinit {
+        tick?.invalidate()
+        for observer in cueObservers { NotificationCenter.default.removeObserver(observer) }
+    }
 
     /// GL-13: the tick runs only while the card is in a window, and a hidden
     /// page skips it (the shell hides destinations rather than removing them).
@@ -178,6 +242,7 @@ final class NeedsAttentionCard: NSView {
         notesStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
 
         buildClearStrip()
+        buildListScroll()
 
         body.orientation = .vertical
         body.alignment = .leading
@@ -186,7 +251,7 @@ final class NeedsAttentionCard: NSView {
         body.translatesAutoresizingMaskIntoConstraints = false
         body.setHuggingPriority(.defaultLow, for: .horizontal)
         body.setClippingResistancePriority(.defaultLow, for: .horizontal)
-        for view in [list, notesStack, clearStrip] as [NSView] {
+        for view in [listScroll, notesStack, clearStrip] as [NSView] {
             body.addArrangedSubview(view)
             // gotcha (13): this card spans the page, so a full-width tie is
             // `contentTie`, never required.
@@ -196,6 +261,20 @@ final class NeedsAttentionCard: NSView {
         }
         card.setBody(body)
 
+        // The pill and its fade sit over the list's bottom edge, outside the
+        // scroll view so they do not scroll with it.
+        body.addSubview(moreFade)
+        body.addSubview(morePill)
+        NSLayoutConstraint.activate([
+            moreFade.leadingAnchor.constraint(equalTo: listScroll.leadingAnchor),
+            moreFade.trailingAnchor.constraint(equalTo: listScroll.trailingAnchor),
+            moreFade.bottomAnchor.constraint(equalTo: listScroll.bottomAnchor),
+            moreFade.heightAnchor.constraint(equalToConstant: 28),
+            morePill.centerXAnchor.constraint(equalTo: listScroll.centerXAnchor),
+            morePill.bottomAnchor.constraint(equalTo: listScroll.bottomAnchor, constant: -HelmMetrics.s2),
+        ])
+        morePill.onPress = { [weak self] in self?.pageDown() }
+
         addSubview(card)
         NSLayoutConstraint.activate([
             card.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -204,6 +283,131 @@ final class NeedsAttentionCard: NSView {
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         applyTheme(theme)
+    }
+
+    /// The list's scroll view: vertical only, no background, the small
+    /// scroller, and a flipped document pinned to the clip view (gotchas (4)
+    /// and (9)).
+    private func buildListScroll() {
+        listScroll.translatesAutoresizingMaskIntoConstraints = false
+        listScroll.drawsBackground = false
+        listScroll.hasVerticalScroller = true
+        listScroll.hasHorizontalScroller = false
+        listScroll.autohidesScrollers = true
+        listScroll.verticalScroller?.controlSize = .small
+        listScroll.verticalScrollElasticity = .allowed
+        listScroll.horizontalScrollElasticity = .none
+        listDocument.translatesAutoresizingMaskIntoConstraints = false
+        listDocument.addSubview(list)
+        listScroll.documentView = listDocument
+        let showsAll = listScroll.heightAnchor.constraint(equalTo: list.heightAnchor)
+        showsAll.priority = Self.listShowsAllRows
+        let floor = listScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 0)
+        NSLayoutConstraint.activate([
+            listDocument.leadingAnchor.constraint(equalTo: listScroll.contentView.leadingAnchor),
+            listDocument.widthAnchor.constraint(equalTo: listScroll.contentView.widthAnchor),
+            listDocument.topAnchor.constraint(equalTo: listScroll.contentView.topAnchor),
+            list.leadingAnchor.constraint(equalTo: listDocument.leadingAnchor),
+            list.trailingAnchor.constraint(equalTo: listDocument.trailingAnchor),
+            list.topAnchor.constraint(equalTo: listDocument.topAnchor),
+            list.bottomAnchor.constraint(equalTo: listDocument.bottomAnchor),
+            showsAll,
+            floor,
+        ])
+        listShowsAll = showsAll
+        listFloor = floor
+        listScroll.setAccessibilityRole(.group)
+
+        listScroll.contentView.postsBoundsChangedNotifications = true
+        listScroll.contentView.postsFrameChangedNotifications = true
+        listDocument.postsFrameChangedNotifications = true
+        list.postsFrameChangedNotifications = true
+        let center = NotificationCenter.default
+        cueObservers = [
+            center.addObserver(forName: NSView.boundsDidChangeNotification, object: listScroll.contentView,
+                               queue: .main) { [weak self] _ in self?.setNeedsCueUpdate() },
+            center.addObserver(forName: NSView.frameDidChangeNotification, object: listScroll.contentView,
+                               queue: .main) { [weak self] _ in self?.setNeedsCueUpdate() },
+            center.addObserver(forName: NSView.frameDidChangeNotification, object: listDocument,
+                               queue: .main) { [weak self] _ in self?.setNeedsCueUpdate() },
+            center.addObserver(forName: NSView.frameDidChangeNotification, object: list,
+                               queue: .main) { [weak self] _ in self?.setNeedsCueUpdate() },
+        ]
+
+        moreFade.wantsLayer = true
+        moreFade.translatesAutoresizingMaskIntoConstraints = false
+        moreFade.layer?.addSublayer(moreFadeLayer)
+        moreFade.isHidden = true
+        moreFade.setAccessibilityElement(false)
+        morePill.isHidden = true
+    }
+
+    override func layout() {
+        super.layout()
+        moreFadeLayer.frame = moreFade.bounds
+        setNeedsCueUpdate()
+    }
+
+    /// The host's laid-out width for this card. Below `compactHeaderWidth`
+    /// the header is the compact one; it also lets the headline wrap against
+    /// a width this card does not itself decide (gotcha (22)).
+    func setLayoutWidth(_ width: CGFloat) {
+        guard abs(width - layoutWidth) > 0.5 else { return }
+        layoutWidth = width
+        if summary != nil { rebuild() }
+    }
+
+    private var isCompact: Bool { layoutWidth > 0 && layoutWidth < Self.compactHeaderWidth }
+
+    // MARK: The "+N more" cue
+
+    /// How many rows lie wholly or partly below the visible part of the list.
+    private var rowsBelowTheFold: Int {
+        let visible = listScroll.contentView.documentVisibleRect
+        guard list.frame.height > visible.height + 0.5 else { return 0 }
+        return list.rows.filter { row in
+            let frame = row.convert(row.bounds, to: listDocument)
+            return frame.maxY > visible.maxY + 0.5
+        }.count
+    }
+
+    private var cueUpdatePending = false
+
+    /// The rows are placed by the list's own stack *after* the list and the
+    /// clip view report their new frames, so the count is taken on the next
+    /// main-queue turn rather than inside the notification - measured: taken
+    /// inline, it counted every row as below the fold.
+    private func setNeedsCueUpdate() {
+        guard !cueUpdatePending else { return }
+        cueUpdatePending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.cueUpdatePending = false
+            self.updateMoreCue()
+        }
+    }
+
+    private func updateMoreCue() {
+        let hidden = rowsBelowTheFold
+        morePill.isHidden = hidden == 0
+        moreFade.isHidden = hidden == 0
+        if hidden > 0 { morePill.configure(count: hidden, theme: theme) }
+        let total = list.rows.count
+        let visible = total - hidden
+        listScroll.setAccessibilityLabel(hidden == 0
+            ? "Needs attention, \(total) \(total == 1 ? "item" : "items")"
+            : "Needs attention, \(total) items, \(visible) visible")
+    }
+
+    /// The pill's press: one page down, keeping one row of context.
+    private func pageDown() {
+        let clip = listScroll.contentView
+        let visible = clip.documentVisibleRect
+        let maxY = max(0, listDocument.frame.height - visible.height)
+        let target = min(maxY, visible.minY + max(visible.height - 53, 53))
+        clip.scroll(to: NSPoint(x: 0, y: target))
+        listScroll.reflectScrolledClipView(clip)
+        updateMoreCue()
     }
 
     /// The strip under the list: a hairline, the sunk `inset` fill, and the
@@ -257,8 +461,7 @@ final class NeedsAttentionCard: NSView {
     func setSubline(_ subline: String) {
         guard subline != self.subline, let summary else { return }
         self.subline = subline
-        header.configure(leading: .tile(symbol: summary.symbol, tint: summary.tint),
-                         title: summary.headline, eyebrow: summary.eyebrow, subline: subline)
+        configureHeader(summary)
     }
 
     func applyTheme(_ theme: HelmTheme) {
@@ -283,18 +486,24 @@ final class NeedsAttentionCard: NSView {
         // rounds itself. Unflipped layer space: `MinY` is the bottom.
         clearStrip.layer?.cornerRadius = card.layer?.cornerRadius ?? 0
         clearStrip.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        listScroll.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        moreFadeLayer.colors = [surface.withAlphaComponent(0).cgColor, surface.cgColor]
+        moreFadeLayer.startPoint = CGPoint(x: 0.5, y: 1)
+        moreFadeLayer.endPoint = CGPoint(x: 0.5, y: 0)
+        morePill.applyTheme(theme)
     }
 
     private func rebuild() {
         guard let summary else { return }
 
-        header.configure(leading: .tile(symbol: summary.symbol, tint: summary.tint),
-                         title: summary.headline, eyebrow: summary.eyebrow, subline: subline)
+        configureHeader(summary)
 
         var rows: [NSView] = summary.items.map { row(for: $0) }
         rows += summary.gaps.map { gapRow($0) }
         list.setRows(rows, theme: theme)
-        list.isHidden = rows.isEmpty
+        listScroll.isHidden = rows.isEmpty
+        listFloor?.constant = Self.floorHeight(of: rows)
 
         for view in notesStack.arrangedSubviews {
             notesStack.removeArrangedSubview(view)
@@ -316,7 +525,8 @@ final class NeedsAttentionCard: NSView {
         // directly under it; with no rows they need the card's top padding.
         notesStack.edgeInsets.top = rows.isEmpty ? HelmMetrics.s3 : HelmMetrics.s2
 
-        rebuildClearStrip(summary.clearNotes, hasItems: !summary.items.isEmpty)
+        rebuildClearStrip(summary.clearNotes, hasItems: !summary.items.isEmpty,
+                          showsLead: layoutWidth <= 0 || layoutWidth >= Self.clearLeadWidth)
 
         // UI-4: the card carries the page's only attention edge, and only
         // while it is saying that something needs the captain.
@@ -324,6 +534,50 @@ final class NeedsAttentionCard: NSView {
 
         paintChrome()
         needsLayout = true
+        setNeedsCueUpdate()
+    }
+
+    /// The header, in its full or its compact form.
+    ///
+    /// Compact is the hero header with its subline dropped, the headline
+    /// wrapping to at most two lines and Refresh as a glyph - so a long
+    /// verdict in a 293pt column is never cut mid-sentence. The headline's
+    /// wrap width is derived from the host's width, never from the label's
+    /// own (gotcha (22)).
+    private func configureHeader(_ summary: NeedsAttentionSummary) {
+        let compact = isCompact
+        header.configure(leading: .tile(symbol: summary.symbol, tint: summary.tint),
+                         title: summary.headline, eyebrow: summary.eyebrow,
+                         subline: compact ? nil : subline)
+        let title = header.titleLabel
+        title.toolTip = summary.headline
+        if compact {
+            refreshButton.title = ""
+            refreshButton.toolTip = "Refresh"
+            refreshButton.setAccessibilityLabel("Refresh")
+            title.cell?.wraps = true
+            title.cell?.truncatesLastVisibleLine = true
+            title.maximumNumberOfLines = 2
+            title.lineBreakMode = .byWordWrapping
+            let actions = refreshButton.isHidden ? 0 : refreshButton.fittingSize.width + HelmMetrics.s3
+            title.preferredMaxLayoutWidth = max(80, layoutWidth - HelmMetrics.s4 * 2
+                                                - HelmSectionHeader.tileSide(for: .hero) - HelmMetrics.s3 - actions)
+        } else {
+            refreshButton.title = "Refresh"
+            refreshButton.toolTip = nil
+            title.cell?.wraps = false
+            title.maximumNumberOfLines = 1
+            title.lineBreakMode = .byTruncatingTail
+            title.preferredMaxLayoutWidth = 0
+        }
+    }
+
+    /// The list's floor: the first `minimumVisibleRows` rows and the
+    /// hairlines between them, or all of them when there are fewer.
+    private static func floorHeight(of rows: [NSView]) -> CGFloat {
+        let shown = rows.prefix(minimumVisibleRows)
+        guard !shown.isEmpty else { return 0 }
+        return shown.reduce(0) { $0 + $1.fittingSize.height } + CGFloat(shown.count - 1)
     }
 
     @objc private func refreshClicked() { onRefresh?() }
@@ -334,7 +588,7 @@ final class NeedsAttentionCard: NSView {
     /// that was read and is fine. Readouts, not controls - which is why they
     /// are no longer pill-shaped. The widget each one would scroll to is
     /// already on screen a few hundred points below.
-    private func rebuildClearStrip(_ notes: [String], hasItems: Bool) {
+    private func rebuildClearStrip(_ notes: [String], hasItems: Bool, showsLead: Bool) {
         for view in clearRow.arrangedSubviews {
             clearRow.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -354,6 +608,7 @@ final class NeedsAttentionCard: NSView {
         lead.translatesAutoresizingMaskIntoConstraints = false
         lead.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         lead.setContentHuggingPriority(.required, for: .horizontal)
+        lead.isHidden = !showsLead
         clearRow.addArrangedSubview(lead)
         for note in notes { clearRow.addArrangedSubview(clearNote(note)) }
     }
@@ -452,6 +707,12 @@ final class NeedsAttentionCard: NSView {
         return DailyReviewCard.collectText(clearRow)
     }
     var debugClearStrip: NSView { clearStrip }
+    var debugListScroll: NeedsAttentionListScrollView { listScroll }
+    /// The "+N more" pill's count, or `nil` while it is hidden.
+    var debugMoreCount: Int? { morePill.isHidden ? nil : morePill.count }
+    var debugMorePill: NeedsAttentionMorePill { morePill }
+    var debugIsCompact: Bool { isCompact }
+    var debugListAccessibilityLabel: String? { listScroll.accessibilityLabel() }
     /// Fires the minute tick now, through the same path the timer takes.
     func debugTickSubline() { tickSubline() }
     var debugTickIsRunning: Bool { tick?.isValid ?? false }
@@ -528,21 +789,26 @@ final class NeedsAttentionRowView: NSView {
         self.onOpen = onOpen
 
         let tint = item.tint
-        row.configure(HelmAccentRow.Content(
+        // N1 (`fm/grandline-home-fit-implement`): the title, then one line
+        // carrying the kind and the state together - "Follow-up \u{00B7}
+        // Overdue 27 days \u{00B7} since 18 Sep" - with the state run in its
+        // tint, and the item's own meta after it. The kicker line and the
+        // trailing caption are gone: the status sits under the title instead
+        // of a page-width away, and every row is the same height.
+        var content = HelmAccentRow.Content(
             tint: tint,
-            kicker: item.source,
+            kicker: "",
             title: item.text,
             meta: item.meta,
             // A signal row has no checkbox in the badge slot, so the row's
             // own badge carries the tone instead - the component's
             // documented fallback, and the nearest thing it has to the
             // reference's severity dot.
-            badgeSymbol: item.kind.isSignal ? Self.signalBadgeSymbol(for: item.tone) : nil,
-            // UI-1: the "Overdue 26 days" fact is a caption in the state
-            // colour, not a pill - the row is already on the attention card,
-            // so a second capsule shouting the same thing was decoration.
-            trailingCaption: item.chipText,
-            trailingCaptionTint: Self.captionTint(for: item.tone)), theme: theme)
+            badgeSymbol: item.kind.isSignal ? Self.signalBadgeSymbol(for: item.tone) : nil)
+        content.metaPrefix = item.source
+        content.metaLead = item.chipText
+        content.metaLeadTint = Self.captionTint(for: item.tone)
+        row.configure(content, theme: theme)
         row.onClick = { [weak self] in self?.onOpen?() }
 
         // Always unchecked: this card lists what is still open, so a row that
@@ -585,6 +851,31 @@ final class NeedsAttentionRowView: NSView {
 
     @objc private func actionClicked() { onOpen?() }
 
+    // MARK: Focus scrolls the row into view
+
+    /// The card's list scrolls inside the card, so a row that takes keyboard
+    /// focus below the visible part of it has to bring itself into view, or
+    /// Tab would move focus somewhere the captain cannot see.
+    /// `includesDescendants`, because the focusable views are the row's own
+    /// card, its checkbox and its action - never this adapter.
+    private var focusRegistration: HelmFocusRegistration?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if focusRegistration == nil, window != nil {
+            focusRegistration = HelmFocusSensing.shared.register(self, includesDescendants: true) { [weak self] focused in
+                guard focused, let self else { return }
+                self.scrollToVisible(self.bounds)
+            }
+        } else if window != nil {
+            HelmFocusSensing.shared.noteWindowChanged(for: self)
+        }
+    }
+
+    deinit {
+        if let focusRegistration { HelmFocusSensing.shared.unregister(focusRegistration) }
+    }
+
     #if FM_SELFTESTS
     var debugRow: HelmAccentRow { row }
     var debugActionTitle: String { actionButton.title }
@@ -595,5 +886,70 @@ final class NeedsAttentionRowView: NSView {
     /// path a captain's click does rather than the handler behind it.
     func debugPressCheckbox() { checkBadge?.performClick(nil) }
     func debugPressAction() { actionButton.performClick(nil) }
+    var debugActionButton: HelmButton { actionButton }
     #endif
+}
+
+// MARK: - The list's scroll view
+
+/// The attention list's scroll view. It only differs from a plain one in
+/// where a wheel event goes when the list has nothing to scroll: to the page,
+/// so the page's own fallback scroll (the minimum window with Larger text)
+/// still works with the pointer over this card.
+final class NeedsAttentionListScrollView: NSScrollView {
+    /// Whether a wheel event here belongs to the page rather than the list.
+    var forwardsWheelToPage: Bool {
+        (documentView?.frame.height ?? 0) <= contentView.bounds.height + 0.5
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if forwardsWheelToPage {
+            nextResponder?.scrollWheel(with: event)
+        } else {
+            super.scrollWheel(with: event)
+        }
+    }
+}
+
+// MARK: - "+N more"
+
+/// The pill on the list's bottom edge while rows are clipped. The kit's
+/// `HelmStatusPill` in its neutral tint, made pressable: a click, Return or
+/// Space, or VoiceOver's press scrolls the list down a page.
+final class NeedsAttentionMorePill: NSView {
+    var onPress: (() -> Void)?
+    private let pill = HelmStatusPill(style: .pill)
+    private(set) var count = 0
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        addSubview(pill)
+        NSLayoutConstraint.activate([
+            pill.leadingAnchor.constraint(equalTo: leadingAnchor),
+            pill.trailingAnchor.constraint(equalTo: trailingAnchor),
+            pill.topAnchor.constraint(equalTo: topAnchor),
+            pill.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        pill.setAccessibilityElement(false)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        toolTip = "Scroll the list down"
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func configure(count: Int, theme: HelmTheme) {
+        self.count = count
+        pill.configure(text: "+\(count) more", tint: .neutral, theme: theme)
+        setAccessibilityLabel("\(count) more \(count == 1 ? "item" : "items") below")
+    }
+
+    func applyTheme(_ theme: HelmTheme) { pill.applyTheme(theme) }
+
+    override func mouseDown(with event: NSEvent) { onPress?() }
+    override func accessibilityPerformPress() -> Bool {
+        onPress?()
+        return true
+    }
 }

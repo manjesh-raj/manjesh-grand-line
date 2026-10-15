@@ -2095,6 +2095,12 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
         /// matters, on the board and in the list alike.
         var metaLead: String? = nil
         var metaLeadTint: HelmTint? = nil
+        /// A muted run *before* `metaLead` on the meta line - the Needs
+        /// Attention card's kind ("Follow-up \u{00B7} Overdue 27 days"), so
+        /// the state reads in its tint right after the word that names what
+        /// is late (`fm/grandline-home-fit-implement`'s N1 rows). Additive and
+        /// `nil` by default, so every other caller's meta line is unchanged.
+        var metaPrefix: String? = nil
         /// Draw the title muted and struck through - a Done card (UI-29).
         var titleStruck: Bool = false
         /// Whether the 3pt bar is drawn. `nil` takes the style's own answer:
@@ -2753,7 +2759,10 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
     override func accessibilityLabel() -> String? {
         guard onClick != nil else { return super.accessibilityLabel() }
         var parts: [String] = []
-        for piece in [content?.kicker, content?.title, content?.meta, content?.chipText] {
+        // The meta line as painted - `metaText` carries the prefix and the
+        // coloured lead as well as `meta`, so a state shown only in the lead
+        // ("Overdue 2 days") is read as well as seen.
+        for piece in [content?.kicker, content?.title, content.map(Self.metaText), content?.chipText] {
             let text = (piece ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty { parts.append(text) }
         }
@@ -2846,7 +2855,7 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
     /// The meta line as plain text: the coloured lead, then the rest. One
     /// definition, so the tooltip, VoiceOver and the painted label agree.
     static func metaText(_ content: Content) -> String {
-        [content.metaLead, content.meta]
+        [content.metaPrefix, content.metaLead, content.meta]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
             .joined(separator: " \u{00B7} ")
@@ -2910,10 +2919,16 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
             } ?? muted
             // Bold only when the lead carries a state (amber, red); a plain
             // date or a Done date reads in the meta line's own face.
-            let text = NSMutableAttributedString(string: lead, attributes: [
+            let text = NSMutableAttributedString()
+            if let prefix = content.metaPrefix, !prefix.isEmpty {
+                text.append(NSAttributedString(string: prefix + " \u{00B7} ", attributes: [
+                    .font: font, .foregroundColor: muted,
+                ]))
+            }
+            text.append(NSAttributedString(string: lead, attributes: [
                 .font: content.metaLeadTint == nil ? font : NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask),
                 .foregroundColor: leadColor,
-            ])
+            ]))
             if let rest = content.meta, !rest.isEmpty {
                 text.append(NSAttributedString(string: " \u{00B7} " + rest, attributes: [
                     .font: font, .foregroundColor: muted,
@@ -3156,6 +3171,8 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
     /// separately because a cap applied to the wrong one of the two is
     /// invisible to a check that only reads the outer view.
     var debugCardWidth: CGFloat { card.frame.width }
+    /// The row's own focusable, clickable view - what Tab lands on.
+    var debugHitView: HoverHighlightView { card }
     /// D1: the accessory itself, so a suite can read the reveal's alpha -
     /// `cacheDisplay` renders an alpha-0 view visibly, so a render cannot
     /// answer this either way.
