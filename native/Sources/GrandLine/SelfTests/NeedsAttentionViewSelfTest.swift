@@ -485,6 +485,10 @@ enum NeedsAttentionViewSelfTest {
                 && card.debugRefreshButton.accessibilityLabel() == "Refresh",
               "compact Refresh is a glyph that VoiceOver still calls Refresh", &ok)
         check(!card.debugSubline.isEmpty, "the compact header keeps the freshness subline", &ok)
+        // Whether the header stays inside a 293pt card is asserted on the
+        // real page by `HomeFitSelfTest`: in this standalone card the wrong
+        // arithmetic still resolved the good way, so a check here could not
+        // fail.
         if let first = card.debugRows.first as? NeedsAttentionRowView {
             check(first.debugRow.debugMetaText == "Overdue 27 days",
                   "a compact row keeps the state's first phrase, got \"\(first.debugRow.debugMetaText)\"", &ok)

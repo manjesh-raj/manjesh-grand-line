@@ -158,6 +158,16 @@ enum HomeFitSelfTest {
         show(rows: 3, at: sizes[0], shell: shell, window: window)
         check(healthLines() == 0,
               "at 960x620 Health should be the ring alone, got \(healthLines() ?? -1) lines", &ok)
+        // In the narrowest column a peek row's title truncates and its state
+        // word survives. Measured: at an equal compression resistance the
+        // Merge queue painted "Chec" one render and "Checks green" the next.
+        if let merge = canvas.moduleCardsForTests.first(where: { $0.anatomyForTests.title == "Merge queue" }) {
+            let values = merge.debugPeekValueTruncations
+            check(!values.isEmpty, "fixture: the Merge queue should draw rows at 960x620", &ok)
+            for value in values where value.truncated {
+                fail("at 960x620 the Merge queue's state word \"\(value.text)\" is painted truncated", &ok)
+            }
+        }
     }
 
     // MARK: 3. The Larger-text fallback
@@ -205,6 +215,21 @@ enum HomeFitSelfTest {
                 let drawn = canvas.attentionCardForTests.debugRows.count
                 if drawn != rows {
                     fail("\(label): the attention card drew \(drawn) rows, not \(rows)", &ok)
+                }
+                // Nothing in the attention card's header leaves the card.
+                // Measured in a tour render at 960x620: the headline's wrap
+                // width was 12pt too wide and the subline tied its column's
+                // clipping resistance, so the Refresh was clipped off the card
+                // and the subline ran under the Claude card.
+                let card = canvas.attentionCardForTests
+                let header = card.debugHeader
+                for (name, view) in [("headline", header.titleLabel as NSView), ("subline", header.sublineLabel),
+                                     ("Refresh", card.debugRefreshButton)] where !view.isHidden {
+                    let frame = view.convert(view.bounds, to: card)
+                    if frame.maxX > card.bounds.width - HelmMetrics.s4 + 0.5 {
+                        fail("\(label): the attention header's \(name) ends at \(frame.maxX) in a "
+                             + "\(card.bounds.width)pt card", &ok)
+                    }
                 }
                 let overflow = page - viewport
                 print(String(format: "   %@: page %.1f in viewport %.1f (%@%.1f)",

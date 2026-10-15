@@ -207,6 +207,10 @@ final class NeedsAttentionCard: NSView {
     /// lines at 15pt, and a verdict cut mid-sentence is the one thing the
     /// compact header exists to avoid.
     static let compactHeadlineLines = 3
+    /// The header's single-line labels in a page column: under every
+    /// stack's 250 clipping resistance, so they truncate rather than
+    /// overflow.
+    static let columnLineResistance = NSLayoutConstraint.Priority(249)
 
     deinit {
         tick?.invalidate()
@@ -598,10 +602,29 @@ final class NeedsAttentionCard: NSView {
             title.cell?.truncatesLastVisibleLine = true
             title.maximumNumberOfLines = compact ? Self.compactHeadlineLines : 2
             title.lineBreakMode = .byWordWrapping
+            // The header row is tile, text, spacer, actions with a 12pt gap
+            // between each - three gaps, not one. Measured: counting one left
+            // the headline 12pt too wide, and whether the row then clipped
+            // the Refresh off the card or squeezed the text was Auto
+            // Layout's own tie-break.
             let actions = refreshButton.isHidden ? 0 : refreshButton.fittingSize.width + HelmMetrics.s3
             title.preferredMaxLayoutWidth = max(80, layoutWidth - HelmMetrics.s4 * 2
-                                                - HelmSectionHeader.tileSide(for: .hero) - HelmMetrics.s3 - actions)
+                                                - HelmSectionHeader.tileSide(for: .hero)
+                                                - HelmMetrics.s3 * 2 - actions)
+            // The eyebrow and the subline are single lines that must truncate
+            // in a column. At the header's 490 their compression resistance
+            // ties the text column's own 490 clipping resistance and loses to
+            // the row's 250, so a long subline ran off the card. Under 250
+            // they give way first; the subline's full text is on its hover.
+            for label in [header.eyebrowLabel, header.sublineLabel] {
+                label.setContentCompressionResistancePriority(Self.columnLineResistance, for: .horizontal)
+            }
+            header.sublineLabel.toolTip = subline
         } else {
+            for label in [header.eyebrowLabel, header.sublineLabel] {
+                label.setContentCompressionResistancePriority(HelmSectionHeader.textResistance, for: .horizontal)
+            }
+            header.sublineLabel.toolTip = nil
             title.cell?.wraps = false
             title.maximumNumberOfLines = 1
             title.lineBreakMode = .byTruncatingTail
@@ -1022,7 +1045,9 @@ final class NeedsAttentionFadeView: NSView {
     private let gradient = CAGradientLayer()
     var surface: NSColor = .clear {
         didSet {
-            gradient.colors = [surface.withAlphaComponent(0).cgColor, surface.cgColor]
+            HelmMotion.withoutImplicitAnimation {
+                gradient.colors = [surface.withAlphaComponent(0).cgColor, surface.cgColor]
+            }
         }
     }
 
@@ -1042,10 +1067,7 @@ final class NeedsAttentionFadeView: NSView {
 
     override func layout() {
         super.layout()
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        gradient.frame = bounds
-        CATransaction.commit()
+        HelmMotion.withoutImplicitAnimation { gradient.frame = bounds }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }

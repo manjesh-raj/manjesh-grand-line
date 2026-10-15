@@ -1442,7 +1442,12 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             value.font = HelmType.chip()
             value.alignment = .right
             value.translatesAutoresizingMaskIntoConstraints = false
-            value.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            // One above the text's 250, so in a narrow card the title
+            // truncates and the state word ("Checks red") survives. At an
+            // equal 250 which one gave way was Auto Layout's tie-break -
+            // measured as "Chec" in a 293pt Merge queue. Still under 500,
+            // so it is never a floor on the window (gotcha (13)).
+            value.setContentCompressionResistancePriority(HelmDaylightPriority.columnHug, for: .horizontal)
             value.setContentHuggingPriority(.required, for: .horizontal)
             peekValueLabels.append((value, row.state))
 
@@ -1879,7 +1884,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             value.font = HelmType.chip()
             value.alignment = .right
             value.translatesAutoresizingMaskIntoConstraints = false
-            value.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            value.setContentCompressionResistancePriority(HelmDaylightPriority.columnHug, for: .horizontal)
             value.setContentHuggingPriority(HelmDaylightPriority.columnHug, for: .horizontal)
             peekValueLabels.append((value, line.state))
             let row = compressibleStack(NSStackView(views: [dot, text, value]))
@@ -2500,6 +2505,11 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// UI-10: the clickable peek rows, so a suite can press one through its
     /// own recognizer.
     var debugPeekRows: [HoverHighlightView] { peekRowViews }
+    /// Each peek or status line's state word, and whether it is painted
+    /// truncated - its own fitting width wider than its frame.
+    var debugPeekValueTruncations: [(text: String, truncated: Bool)] {
+        peekValueLabels.map { ($0.label.stringValue, $0.label.fittingSize.width > $0.label.frame.width + 0.5) }
+    }
     var debugPeekChevronAlphas: [CGFloat] { peekChevrons.map(\.alphaValue) }
     /// A peek row's frame in the inner card's space, for the arbitration check.
     func debugPeekRowFrameInCard(_ index: Int) -> NSRect {
