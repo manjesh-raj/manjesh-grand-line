@@ -352,13 +352,13 @@ final class NeedsAttentionCard: NSView {
         let center = NotificationCenter.default
         cueObservers = [
             center.addObserver(forName: NSView.boundsDidChangeNotification, object: listScroll.contentView,
-                               queue: .main) { [weak self] _ in self?.setNeedsCueUpdate() },
+                               queue: .main) { [weak self] _ in self?.updateMoreCue() },
             center.addObserver(forName: NSView.frameDidChangeNotification, object: listScroll.contentView,
-                               queue: .main) { [weak self] _ in self?.setNeedsCueUpdate() },
+                               queue: .main) { [weak self] _ in self?.updateMoreCue() },
             center.addObserver(forName: NSView.frameDidChangeNotification, object: listDocument,
-                               queue: .main) { [weak self] _ in self?.setNeedsCueUpdate() },
+                               queue: .main) { [weak self] _ in self?.updateMoreCue() },
             center.addObserver(forName: NSView.frameDidChangeNotification, object: list,
-                               queue: .main) { [weak self] _ in self?.setNeedsCueUpdate() },
+                               queue: .main) { [weak self] _ in self?.updateMoreCue() },
         ]
 
         moreFade.translatesAutoresizingMaskIntoConstraints = false
@@ -369,7 +369,7 @@ final class NeedsAttentionCard: NSView {
 
     override func layout() {
         super.layout()
-        setNeedsCueUpdate()
+        updateMoreCue()
     }
 
     /// The host's laid-out width for this card. Below `compactHeaderWidth`
@@ -400,22 +400,13 @@ final class NeedsAttentionCard: NSView {
         return rowBottoms.filter { $0 > visible.maxY + 0.5 }.count
     }
 
-    private var cueUpdatePending = false
-
-    /// The rows are placed by the list's own stack *after* the list and the
-    /// clip view report their new frames, so the count is taken on the next
-    /// main-queue turn rather than inside the notification - measured: taken
-    /// inline, it counted every row as below the fold.
-    private func setNeedsCueUpdate() {
-        guard !cueUpdatePending else { return }
-        cueUpdatePending = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.cueUpdatePending = false
-            self.updateMoreCue()
-        }
-    }
-
+    /// Taken synchronously, on every scroll, every frame change of the clip,
+    /// the document or the list, every rebuild and every layout. It reads
+    /// only the clip's visible rect and `rowBottoms`, both of which are
+    /// current at each of those moments, so there is nothing to wait for.
+    /// Measured: an earlier version hopped to the next main-queue turn, and
+    /// on CI's runner that queued update had still not run when a suite
+    /// read the cue (its log showed it pending), so the cue was stale.
     private func updateMoreCue() {
         let hidden = rowsBelowTheFold
         morePill.isHidden = hidden == 0
@@ -571,7 +562,7 @@ final class NeedsAttentionCard: NSView {
 
         paintChrome()
         needsLayout = true
-        setNeedsCueUpdate()
+        updateMoreCue()
     }
 
     /// The header, in its full or its compact form.
@@ -790,12 +781,11 @@ final class NeedsAttentionCard: NSView {
     var debugMoreCount: Int? { morePill.isHidden ? nil : morePill.count }
     /// What the cue was last computed from, for a failure message that says
     /// why - the cached row bottoms, the clip's visible rect, the document's
-    /// height, the window's first responder and whether an update is still
-    /// queued.
+    /// height and the window's first responder.
     var debugCueState: String {
         let visible = listScroll.contentView.documentVisibleRect
         return "visible \(visible), document \(listDocument.frame.height), "
-            + "row bottoms \(rowBottoms.map { Int($0) }), pending \(cueUpdatePending), "
+            + "row bottoms \(rowBottoms.map { Int($0) }), "
             + "first responder \(window?.firstResponder.map { String(describing: type(of: $0)) } ?? "none")"
     }
     var debugMorePill: NeedsAttentionMorePill { morePill }

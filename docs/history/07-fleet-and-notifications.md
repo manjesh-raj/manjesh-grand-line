@@ -1353,6 +1353,13 @@ And at the 960pt minimum the Claude card was built in its 364pt stacked form (fi
   The header's eyebrow and subline resisted compression at 490, tying their column's clipping resistance, so a long subline could run under the Claude card (they give way at 249 in a column now).
   A peek row's title and state word both resisted at 250, so the Merge queue could paint "Chec" (the state word is at 251 now).
   And a clear-strip reading tied the strip row's 250 hugging, so "Claude plan limits comfortable" could truncate with room to spare (251 now).
+- **CI's runner found two more, both green on a 2x Mac.**
+  First, the "+N more" cue was updated on the next main-queue turn, and on the runner that queued update had still not run when the suites read it (the failure message printed it as pending), so the cue was stale.
+  Since the count reads only the clip's visible rect and row heights cached at rebuild, it is now computed synchronously on every scroll, frame change, rebuild and layout.
+  The suites read it with no run-loop pump in between, and putting the async hop back reproduces the runner's failure locally.
+  Second, on the 1x runner a label's intrinsic width rounds up to a whole point, so the compact headline's zero-slack wrap width made the header row 1pt too wide (the Refresh ended at 278 in a 293pt card).
+  The wrap width is floored and a point narrower now.
+  That one could not be reproduced on a 2x Mac, so the CI run is its only check.
 - **A peek list spreads a stretched card's slack unevenly.**
   With the Merge queue as column 3's absorber, the remainder under one row landed between rows 15 and 17.
   The briefing absorbs instead, under its paragraph.
@@ -1385,7 +1392,8 @@ Injected regressions, each restored from a copy taken aside:
 - the cue never shown: the cue check failed;
 - the Merge queue forced to at least 20 rows: the fit check failed at all three 960x620 cases;
 - the header's old one-gap arithmetic and 490 resistance: the header-inside-the-card check failed at 960x620;
-- the peek row's old 250 tie: the truncated-state-word check failed on "Checks green" and "Checks red".
+- the peek row's old 250 tie: the truncated-state-word check failed on "Checks green" and "Checks red";
+- the cue's old next-turn update: both cue checks failed exactly as they had on the runner.
 
 Two checks were written and then removed because they could not fail.
 The header check first lived on a standalone 293pt card, where the wrong arithmetic still resolved the good way, so it moved to the real page in `HomeFitSelfTest`.

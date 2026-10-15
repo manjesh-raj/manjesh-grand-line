@@ -106,7 +106,9 @@ enum HomeFitSelfTest {
         let rows = ReviewTourLab.demoAttentionMaximum
         for size in sizes {
             show(rows: rows, at: size, shell: shell, window: window)
-            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            // No run-loop pump before reading the cue: it is computed
+            // synchronously, and CI's runner showed a queued update still pending
+            // after one. Reading it straight away is what keeps it that way.
             let label = "\(Int(size.width))x\(Int(size.height)), \(rows) rows"
             let card = canvas.attentionCardForTests
             let scroll = card.debugListScroll

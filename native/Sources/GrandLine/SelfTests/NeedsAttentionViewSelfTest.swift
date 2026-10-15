@@ -383,9 +383,9 @@ enum NeedsAttentionViewSelfTest {
                     theme: ThemeManager.shared.theme)
         host.layoutSubtreeIfNeeded()
         card.layoutSubtreeIfNeeded()
-        // The cue is counted on the next main-queue turn, once the list's
-        // stack has placed its rows.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        // No run-loop pump before reading the cue: it is computed
+        // synchronously, and CI's runner showed a queued update still pending
+        // after one. Reading it straight away is what keeps it that way.
 
         let scroll = card.debugListScroll
         let documentHeight = scroll.documentView?.frame.height ?? 0
@@ -433,7 +433,6 @@ enum NeedsAttentionViewSelfTest {
         // row into view; then Space presses it.
         scroll.contentView.scroll(to: .zero)
         scroll.reflectScrolledClipView(scroll.contentView)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         if let last = card.debugRows.last as? NeedsAttentionRowView {
             check(card.debugMoreCount != nil,
                   "fixture: the last row should start below the fold - \(card.debugCueState)", &ok)
@@ -465,7 +464,6 @@ enum NeedsAttentionViewSelfTest {
         card.render(ReviewTourLab.demoAttentionSummary(count: 3), subline: "Fleet read just now.",
                     theme: ThemeManager.shared.theme)
         card.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         check(card.debugMoreCount == nil, "three rows in 460pt should show no cue", &ok)
         check(card.debugListScroll.forwardsWheelToPage,
               "a list with nothing to scroll should hand wheel events to the page", &ok)
