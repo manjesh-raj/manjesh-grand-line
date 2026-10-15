@@ -478,3 +478,46 @@ Three things fell out of it:
 - **The chips carry no checkmark glyph.** `ToolRowLayout.pill` is the house pill and takes text only; adding a glyph slot for one caller would be hand-rolling a second chip.
 - **Attention rows keep D1's reveal-on-aim** for their Start/Open buttons above `HelmAccentRow.alwaysRevealRowCount`, where the reference shows them always. That is a prior deliberate decision about every list in the app, not something this page should overrule on its own.
 - **Merge queue rows keep the mono value face** `.peekRows` gives every card, where the reference sets "Checks green" proportionally.
+
+## The top bar's active and pressed states (`fm/grandline-bar-active-state`)
+
+The captain reported that Hosts and the light/dark toggle never showed their colour, while Console and the other shortcuts did.
+That was three separate causes, not one.
+
+### What was wrong
+
+- **Hosts is drawn by the overflow control.**
+  It is the seventh of the seven default pins against UX2's cap of six, so it is never a `DaylightDestinationButton`.
+  `setActiveDestination` only asked those buttons, so the square standing for Hosts could never light.
+- **The active state was pushed, not kept.**
+  `show(_:)` and `revealHostConsole` each pushed it, and the SRE Lead reply-jump pushed nothing, so the previous page's square stayed lit over a host page.
+  The bar kept no copy either, so a pin change (which rebuilds every shortcut) or a resize across `quickAccessCollapseWidth` came back with nothing lit until the next navigation.
+- **A real press drew nothing.**
+  The pressed state hung off `highlight(_:)`.
+  AppKit's own tracking loop highlights the button's cell and never calls that on the control, so only `performClick` reached it.
+  Measured with real posted events: removing the new `mouseDown` override makes `BarActiveStateSelfTest` report that a real click "never entered the pressed state".
+  Even where it did fire, the only effect was a 2% scale.
+
+The toggle had no state at all to show, and its half-filled circle looked the same in both modes.
+
+### The rule now
+
+- A square is lit (its hued tile, at the active ladder) while its page is open, by whatever route the page was opened.
+  The overflow control is lit when the open page is one it stands for, in that destination's hue when it draws one, and in `chromeTileHue` while it is a collapsed row's menu.
+- The bar keeps the active destination and re-applies it after a rebuild or a collapse.
+  The shell pushes it from `updateRecentDestinations`, the one call every navigation route already makes, and a source guard asserts it is the only push site.
+- A held press draws the square's tile at `pressedTileWashSteps`, one ladder deeper than the active one, with a full-alpha ring.
+  That reads on a page that is already open too.
+  It comes from `mouseDown` (HelmButton's shape) and from `highlight(_:)` (the keyboard's `performClick`), through one `setPressed`.
+- The light/dark toggle is an action, so it never lights.
+  It presses like every other square, and shows the current appearance as a monochrome `sun.max` or `moon` glyph, with the matching VoiceOver value.
+  The glyph names the mode that is on, the Control Center convention, and the tooltip names the other one.
+- VoiceOver hears "current page" as the lit square's value.
+
+### Verification
+
+- `FM_RUN_BAR_ACTIVE_STATE_TESTS` (window-backed) opens every pinned destination in Daylight and Dusk and asserts exactly that square is lit, in its own active tile.
+  It also covers Recents, a space pill, the bar's own clicks, a host page, a pin change and a collapse, posts real clicks to read the pressed tile mid-tracking, and checks the toggle's glyph, value and press.
+- `DaylightBarIconTileSelfTest`'s 26-palette legibility sweep now includes the pressed ladder.
+- Six injections each failed the new suite by name: no `mouseDown` override, no overflow branch, no re-apply after a row change, the push moved back into `show(_:)`, no toggle glyph swap, and no pressed restyle.
+- The tour lab gained `bar hover|press|rest <target>` and `renderbar`, which render the bar's states side by side without a real pointer.
