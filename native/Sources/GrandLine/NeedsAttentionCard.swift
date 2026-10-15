@@ -607,10 +607,16 @@ final class NeedsAttentionCard: NSView {
             // the headline 12pt too wide, and whether the row then clipped
             // the Refresh off the card or squeezed the text was Auto
             // Layout's own tie-break.
+            //
+            // Floored, less one point: a label's intrinsic width is rounded up
+            // to a whole device pixel, which is a whole point on a 1x display.
+            // Measured on CI's 1x runner: with zero slack the row came out 1pt
+            // wide and the Refresh ended at 278 in a 293pt card (277 is its
+            // edge), where a 2x Mac rounds to half a point and fits.
             let actions = refreshButton.isHidden ? 0 : refreshButton.fittingSize.width + HelmMetrics.s3
-            title.preferredMaxLayoutWidth = max(80, layoutWidth - HelmMetrics.s4 * 2
-                                                - HelmSectionHeader.tileSide(for: .hero)
-                                                - HelmMetrics.s3 * 2 - actions)
+            title.preferredMaxLayoutWidth = max(80, (layoutWidth - HelmMetrics.s4 * 2
+                                                     - HelmSectionHeader.tileSide(for: .hero)
+                                                     - HelmMetrics.s3 * 2 - actions).rounded(.down) - 1)
             // The eyebrow and the subline are single lines that must truncate
             // in a column. At the header's 490 their compression resistance
             // ties the text column's own 490 clipping resistance and loses to
@@ -782,6 +788,16 @@ final class NeedsAttentionCard: NSView {
     var debugListScroll: NeedsAttentionListScrollView { listScroll }
     /// The "+N more" pill's count, or `nil` while it is hidden.
     var debugMoreCount: Int? { morePill.isHidden ? nil : morePill.count }
+    /// What the cue was last computed from, for a failure message that says
+    /// why - the cached row bottoms, the clip's visible rect, the document's
+    /// height, the window's first responder and whether an update is still
+    /// queued.
+    var debugCueState: String {
+        let visible = listScroll.contentView.documentVisibleRect
+        return "visible \(visible), document \(listDocument.frame.height), "
+            + "row bottoms \(rowBottoms.map { Int($0) }), pending \(cueUpdatePending), "
+            + "first responder \(window?.firstResponder.map { String(describing: type(of: $0)) } ?? "none")"
+    }
     var debugMorePill: NeedsAttentionMorePill { morePill }
     var debugIsCompact: Bool { isCompact }
     var debugListAccessibilityLabel: String? { listScroll.accessibilityLabel() }

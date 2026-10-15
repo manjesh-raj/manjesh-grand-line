@@ -123,7 +123,7 @@ enum HomeFitSelfTest {
                   "\(label): the card should sit inside a page that fits", &ok)
             if clipped {
                 check(card.debugMoreCount != nil,
-                      "\(label): rows are clipped but no \"+N more\" cue is shown", &ok)
+                      "\(label): rows are clipped but no \"+N more\" cue is shown - \(card.debugCueState)", &ok)
                 check(visible >= 3 * 53 - 0.5,
                       "\(label): the list shows \(visible)pt, under its three-row floor", &ok)
             } else {

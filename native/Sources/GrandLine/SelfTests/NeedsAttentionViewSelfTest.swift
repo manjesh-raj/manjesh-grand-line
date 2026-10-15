@@ -435,7 +435,8 @@ enum NeedsAttentionViewSelfTest {
         scroll.reflectScrolledClipView(scroll.contentView)
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         if let last = card.debugRows.last as? NeedsAttentionRowView {
-            check(card.debugMoreCount != nil, "fixture: the last row should start below the fold", &ok)
+            check(card.debugMoreCount != nil,
+                  "fixture: the last row should start below the fold - \(card.debugCueState)", &ok)
             window.makeFirstResponder(last.debugActionButton)
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
             let frame = last.convert(last.bounds, to: scroll.documentView)
