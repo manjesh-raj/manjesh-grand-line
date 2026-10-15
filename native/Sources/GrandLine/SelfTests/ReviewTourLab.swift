@@ -85,6 +85,18 @@ enum ReviewTourLab {
         /// reading - the same shape as the captain's own Home screenshot - so
         /// a tour can render Home with real content and no firstmate home.
         case demoHome
+        /// Put exactly this many fabricated attention rows on Home, in the
+        /// captain's own shape (`demoAttentionSummary`).
+        case demoAttention(Int)
+        /// Seed a three-clause Morning briefing.
+        case demoBriefing
+        /// Print the Home page's geometry (`debugMeasureLines`) under a label.
+        case measure(String)
+        /// Print module-card heights at the widths Home's columns take.
+        case probe
+        /// Render Home's whole scroll document, not just the window - what a
+        /// page that overflows really holds below the fold.
+        case renderDoc(String)
         /// Switch the Tasks page to `board`, `list`, `calendar` or `review`
         /// through its own segmented control.
         case tasksView(String)
@@ -102,7 +114,8 @@ enum ReviewTourLab {
         var description: String {
             switch self {
             case .unknownVerb(let v):
-                return "unknown verb \"\(v)\" (goto, theme, resize, render, menu, wait, demo, tasks)"
+                return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, menu, wait, "
+                    + "demo, measure, probe, tasks)"
             case .badArgument(let a): return "bad argument \"\(a)\""
             case .unknownDestination(let d): return "unknown destination \"\(d)\""
             case .unknownTheme(let t): return "unknown theme \"\(t)\""
@@ -150,8 +163,21 @@ enum ReviewTourLab {
             guard let ms = Int(argument), ms >= 0 else { return .failure(.badArgument(argument)) }
             return .success(.wait(milliseconds: ms))
         case "demo":
+            if argument == "briefing" { return .success(.demoBriefing) }
+            if argument.hasPrefix("attention "),
+               let count = Int(argument.dropFirst("attention ".count)), count >= 0 {
+                return .success(.demoAttention(count))
+            }
             guard argument == "home" else { return .failure(.badArgument(argument)) }
             return .success(.demoHome)
+        case "measure":
+            guard !argument.isEmpty else { return .failure(.missingArgument("measure")) }
+            return .success(.measure(argument))
+        case "probe":
+            return .success(.probe)
+        case "renderdoc":
+            guard !argument.isEmpty else { return .failure(.missingArgument("renderdoc")) }
+            return .success(.renderDoc(argument))
         case "tasks":
             guard ["board", "list", "calendar", "review"].contains(argument) else {
                 return .failure(.badArgument(argument))
@@ -228,6 +254,29 @@ enum ReviewTourLab {
                 seedDemoHome(shell.debugHomeCanvas)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo home")
+            case .demoAttention(let count):
+                let canvas = shell.debugHomeCanvas
+                canvas.debugAttentionOverride = demoAttentionSummary(count: count)
+                canvas.debugRenderNow()
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo attention \(count)")
+            case .demoBriefing:
+                seedDemoBriefing()
+                shell.debugHomeCanvas.debugRenderNow()
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo briefing")
+            case .measure(let label):
+                log.append("== measure \(label) window \(Int(window.frame.width))x\(Int(window.frame.height))")
+                log.append(contentsOf: shell.debugHomeCanvas.debugMeasureLines().map { "  " + $0 })
+            case .probe:
+                log.append(contentsOf: componentProbe())
+            case .renderDoc(let name):
+                let url = outputDirectory.appendingPathComponent("\(name).png")
+                if writePNG(of: shell.debugHomeCanvas.debugDocumentView, to: url) {
+                    log.append("renderdoc \(url.path)")
+                } else {
+                    log.append("renderdoc FAILED \(name) - the document has no bitmap to cache")
+                }
             case .tasksView(let id):
                 shell.debugShift.debugShowView(id)
                 shell.view.layoutSubtreeIfNeeded()
@@ -289,6 +338,127 @@ enum ReviewTourLab {
             latency: 1.2, log: "")))
     }
 
+    /// `demo briefing`'s record: three clauses, the shape the captain's
+    /// own briefing usually has.
+    ///
+    /// It writes `AppSettings.shared`, which in an `FM_*` process is the
+    /// per-process suite domain (`AppDefaults.store`), never the captain's.
+    static func seedDemoBriefing() {
+        AppSettings.shared.morningBriefingRecord = MorningBriefingRecord(
+            day: MorningBriefing.dayKey(for: Date()), generatedAt: Date(),
+            clauses: [
+                BriefingClause(text: "One fleet task needs a decision.", target: .fleet),
+                BriefingClause(text: "Two personal follow-ups are due or overdue.", target: .tasks),
+                BriefingClause(text: "20 fleet tasks finished today and 31 are queued.", target: .fleet),
+            ],
+            isDegraded: false, degradedReason: nil, dismissed: false,
+            sources: ["fleet", "tasks", "quota"], shiftTaskID: nil)
+    }
+
+    /// `count` attention rows in the captain's own shape: his two overdue
+    /// follow-ups and the fleet decision first (his screenshot), then the
+    /// kinds the digest can add, up to its own maximum of eleven.
+    static func demoAttentionSummary(count: Int) -> NeedsAttentionSummary {
+        let pool: [NeedsAttentionItem] = [
+            NeedsAttentionItem(id: "f1", kind: .followUp, source: "Follow-up",
+                               text: "Follow up with Nithin on SRE bot response reviews",
+                               chipText: "Overdue 27 days \u{00B7} since 18 Sep", tone: .late, actionTitle: "Open"),
+            NeedsAttentionItem(id: "f2", kind: .followUp, source: "Follow-up",
+                               text: "AWS Backup Service Failure Notification",
+                               chipText: "Overdue 9 days \u{00B7} since 6 Oct", tone: .late, actionTitle: "Open"),
+            NeedsAttentionItem(id: "signal.fleet", kind: .signal(.fleet), source: "Fleet",
+                               text: "1 task need your call",
+                               meta: "1 decision waiting - the crew is holding for you.",
+                               chipText: "Needs you", tone: .risk, actionTitle: "Open",
+                               headlineClause: "1 task need your call"),
+            NeedsAttentionItem(id: "t1", kind: .task, source: "Task", text: "Renew the staging TLS certificate",
+                               meta: "Infra", chipText: "Overdue 2 days \u{00B7} since 13 Oct", tone: .late,
+                               actionTitle: "Start"),
+            NeedsAttentionItem(id: "t2", kind: .task, source: "Task", text: "Review the Q4 on-call rota",
+                               meta: "SRE", chipText: "Due today", tone: .dueToday, actionTitle: "Start"),
+            NeedsAttentionItem(id: "f3", kind: .followUp, source: "Follow-up",
+                               text: "Ping Priya about the Vault hardening checklist",
+                               chipText: "Overdue 1 day \u{00B7} since 14 Oct", tone: .late, actionTitle: "Open"),
+            NeedsAttentionItem(id: "t3", kind: .task, source: "Task",
+                               text: "Rotate the GitHub deploy key for grand-line",
+                               chipText: "Due today", tone: .dueToday, actionTitle: "Start"),
+            NeedsAttentionItem(id: "t4", kind: .task, source: "Task",
+                               text: "Write the postmortem for the 9 Oct outage",
+                               meta: "Postmortems", chipText: "Overdue 5 days \u{00B7} since 10 Oct", tone: .late,
+                               actionTitle: "Start"),
+            NeedsAttentionItem(id: "t5", kind: .task, source: "Task", text: "Clean up the old EKS node groups",
+                               chipText: "Due today", tone: .dueToday, actionTitle: "Start"),
+            NeedsAttentionItem(id: "signal.claude", kind: .signal(.claudeUsage), source: "Claude usage",
+                               text: "Extra usage is near the spend cap", meta: "Team plan",
+                               chipText: "92%", tone: .risk, actionTitle: "View usage",
+                               headlineClause: "Claude is near its spend cap"),
+            NeedsAttentionItem(id: "signal.checks", kind: .signal(.sessionChecks), source: "Session checks",
+                               text: "Tool updates haven\u{2019}t been checked yet this session",
+                               chipText: "1 check not run", tone: .info, actionTitle: "Open Setup"),
+        ]
+        let items = Array(pool.prefix(max(0, min(count, pool.count))))
+        let state: NeedsAttentionSummary.State = items.isEmpty
+            ? .allClear
+            : (items.contains { $0.tone == .late } ? .late : .risk)
+        return NeedsAttentionSummary(
+            state: state,
+            eyebrow: NeedsAttentionComposer.eyebrow(state: state, openCount: items.count),
+            headline: NeedsAttentionComposer.headline(state: state, items: items, hidden: 0,
+                                                      allClearHeadline: "Nothing needs you right now."),
+            items: items, overflowNote: nil, gaps: [],
+            clearNotes: ["7/7 services healthy", "Claude plan limits comfortable"])
+    }
+
+    /// The most rows `demoAttentionSummary` can produce, which is the most
+    /// the digest's own caps allow (5 due tasks, 3 follow-ups, 3 signals).
+    static let demoAttentionMaximum = 11
+
+    /// Module-card heights at the widths Home's columns take at the three
+    /// window sizes the fit suite checks, measured in a bare host view.
+    static func componentProbe() -> [String] {
+        var out: [String] = ["== component probe"]
+        let now = Date()
+        let snapshot = QuotaSnapshot(
+            plan: "team",
+            session: QuotaWindow(kind: .session, percentUsed: 9,
+                                 resetsAt: now.addingTimeInterval(3 * 3600), pace: .onPace),
+            weekly: QuotaWindow(kind: .weekly, percentUsed: 31,
+                                resetsAt: now.addingTimeInterval(4 * 86_400), pace: .onPace),
+            fable: QuotaWindow(kind: .fable, percentUsed: 10,
+                               resetsAt: now.addingTimeInterval(4 * 86_400), pace: .onPace),
+            extraUsage: QuotaCreditWindow(percentUsed: 0, spentUsd: 0, limitUsd: 50),
+            latency: 1.2, log: "")
+        func height(_ title: String, _ body: HelmModuleCard.Body, width: CGFloat,
+                    chip: HelmModuleChip? = nil, footer: HelmModuleCard.Footer? = nil) -> String {
+            let card = HelmModuleCard()
+            var content = HelmModuleCard.Content(title: title, subtitle: "Team plan \u{00B7} updated just now",
+                                                 symbol: "gauge", hue: .violet, chip: chip, body: body)
+            content.footer = footer
+            card.configure(content)
+            card.translatesAutoresizingMaskIntoConstraints = false
+            let host = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 2000))
+            host.addSubview(card)
+            NSLayoutConstraint.activate([
+                card.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                card.widthAnchor.constraint(equalToConstant: width),
+                card.topAnchor.constraint(equalTo: host.topAnchor),
+            ])
+            host.layoutSubtreeIfNeeded()
+            return String(format: "%.1f", card.fittingSize.height)
+        }
+        let peek = (0..<3).map { HelmModulePeekRow(state: .idle, text: "Open pull request \($0)", value: "No checks") }
+        for width in [293.0, 477.0, 613.0] as [CGFloat] {
+            out.append("-- width \(Int(width))")
+            let wide = HomeCanvasController.claudeUsageSections(for: snapshot, headerCarriesVerdict: true)
+            out.append("claude grid \(height("Claude", .usageReport(wide, compact: false), width: width, chip: .ok("Comfortable")))")
+            out.append("claude stacked \(height("Claude", .usageReport(HomeCanvasController.claudeUsageSections(for: snapshot), compact: true), width: width))")
+            out.append("kpis no note \(height("Fleet", .kpis(note: nil, items: [.count(0, caption: "Working"), .count(20, caption: "Done today"), .count(31, caption: "Queued")]), width: width))")
+            out.append("ring \(height("Health", .ring(value: 7, total: 7, title: "Healthy", note: "All 7 services healthy."), width: width))")
+            out.append("peek 3 + footer \(height("Merge", .peekRows(peek), width: width, footer: .init(caption: "Showing 3 of 22", actionTitle: "All 22 open")))")
+        }
+        return out
+    }
+
     static func menuDump() -> [String] {
         let menu: NSMenu
         if let live = NSApplication.shared.mainMenu {
@@ -346,6 +516,11 @@ enum ReviewTourLab {
     /// off-screen whatever origin it is given.
     static func makeOffScreenShell() -> (window: NSWindow, shell: AppShellController) {
         let window = OffScreenProbe.window(width: 1512, height: 950, styleMask: [.titled, .resizable])
+        // The real window's chrome fusion (`main.swift`), so the shell's view
+        // is the whole frame and the bar reserves its height inside it -
+        // without it every page measured here is a title bar shorter than the
+        // captain's.
+        WindowChromeFusion.apply(to: window)
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()

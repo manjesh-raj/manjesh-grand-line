@@ -823,6 +823,15 @@ final class HomeCanvasController: NSViewController {
             return
         }
         attentionCard.isHidden = false
+        #if FM_SELFTESTS
+        // The tour lab's and the fit suite's fabricated rows - see
+        // `debugAttentionOverride`.
+        if let override = debugAttentionOverride {
+            attentionCard.sublineProvider = nil
+            attentionCard.render(override, subline: debugAttentionSubline, theme: ThemeManager.shared.theme)
+            return
+        }
+        #endif
 
         var inputs = DailyReviewInputs()
         inputs.now = Date()
@@ -2961,4 +2970,40 @@ final class HomeCanvasController: NSViewController {
     /// `ThemeManager.setTheme`, which writes through to the real preference -
     /// the hermeticity hazard that has poisoned whole suite runs before.
     func debugApplyTheme(_ theme: HelmTheme) { applyTheme(theme) }
+
+    #if FM_SELFTESTS
+    /// A fabricated attention summary, rendered in place of the one the
+    /// digest would compose. The tour lab's `demo attention N` and
+    /// `HomeFitSelfTest` use it to put an exact number of rows on the page
+    /// without seeding a Tasks store with dated tasks.
+    var debugAttentionOverride: NeedsAttentionSummary?
+    var debugAttentionSubline = "1 decision waiting - the crew is holding for you."
+    /// The scroll view's document, for a render of the whole page rather
+    /// than the part that fits the window.
+    var debugDocumentView: NSView { document }
+
+    /// The page's geometry as text: the viewport, the document, the overflow
+    /// between them, the attention card and every module card's resolved and
+    /// fitting heights. The tour lab's `measure` verb prints it; the numbers
+    /// in the Home fit history entry came from it.
+    func debugMeasureLines() -> [String] {
+        view.layoutSubtreeIfNeeded()
+        func f(_ value: CGFloat) -> String { String(format: "%.1f", value) }
+        var out: [String] = []
+        out.append("viewport \(f(scroll.contentView.bounds.width))x\(f(scroll.contentView.bounds.height))")
+        out.append("document height \(f(document.frame.height))")
+        out.append("overflow \(f(document.frame.height - scroll.contentView.bounds.height))")
+        out.append("grid width \(f(lastGridWidth))")
+        out.append("attention card \(f(attentionCard.frame.width))x\(f(attentionCard.frame.height))"
+                   + " fit \(f(attentionCard.fittingSize.height))")
+        for (index, row) in attentionCard.debugRows.enumerated() {
+            out.append("  attention row \(index) h \(f(row.frame.height))")
+        }
+        for card in cards {
+            out.append("card \(card.debugHeaderText.title) \(f(card.frame.width))x\(f(card.frame.height))"
+                       + " fit \(f(card.fittingSize.height))")
+        }
+        return out
+    }
+    #endif
 }
