@@ -451,6 +451,10 @@ enum ReviewTourLab {
             out.append("-- width \(Int(width))")
             let wide = HomeCanvasController.claudeUsageSections(for: snapshot, headerCarriesVerdict: true)
             out.append("claude grid \(height("Claude", .usageReport(wide, compact: false), width: width, chip: .ok("Comfortable")))")
+            let dense = HomeCanvasController.claudeUsageSections(
+                for: snapshot, headerCarriesVerdict: true,
+                shortLabels: HomeCanvasController.claudeUsesShortLabels(forCardWidth: width))
+            out.append("claude dense \(height("Claude", .usageReportDense(dense), width: width, chip: .ok("Comfortable")))")
             out.append("claude stacked \(height("Claude", .usageReport(HomeCanvasController.claudeUsageSections(for: snapshot), compact: true), width: width))")
             out.append("kpis no note \(height("Fleet", .kpis(note: nil, items: [.count(0, caption: "Working"), .count(20, caption: "Done today"), .count(31, caption: "Queued")]), width: width))")
             out.append("ring \(height("Health", .ring(value: 7, total: 7, title: "Healthy", note: "All 7 services healthy."), width: width))")

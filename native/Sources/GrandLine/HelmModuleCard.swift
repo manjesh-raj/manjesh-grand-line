@@ -357,6 +357,22 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// `HomeCanvasController.claudeUsageIsCompact(forCardWidth:)`, which
         /// picks between them at the same span-2 threshold.
         case usageReport([HelmModuleUsageSection], compact: Bool)
+        /// The usage report as one aligned grid with a row per reading and
+        /// no section headers - the form a card in a page column takes when
+        /// the page has to fit its window (`fm/grandline-home-fit-implement`).
+        ///
+        /// Every limit row is `.usageReport`'s own grid row (title, figure,
+        /// bar, reset caption), and a `.spend` section becomes one more row
+        /// in the same grid: its title, its percentage, its bar, and the
+        /// amount against the cap where a limit row has its reset time. The
+        /// spend footnote moves to that row's hover text and VoiceOver help,
+        /// and a `.note` section becomes a stated-gap row (GL-14).
+        ///
+        /// **The section statuses are not drawn.** The host must carry the
+        /// verdict in the card's header chip instead, which is what the
+        /// Claude card already does when it has room (UI-8). Nothing else is
+        /// dropped: every reading and every reset time is still painted.
+        case usageReportDense([HelmModuleUsageSection])
         /// One line of copy over a `HelmKPIStrip` - the Fleet widget's
         /// sentence, then Working / Done today / Queued as plain figures.
         ///
@@ -1211,6 +1227,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             content = buildParagraph(clauses)
         case let .usageReport(sections, compact):
             content = buildUsageReport(sections, compact: compact)
+        case let .usageReportDense(sections):
+            content = buildUsageReportDense(sections)
         case let .kpis(note, items):
             content = buildKPIs(note: note, items: Array(items.prefix(Self.maxTiles)))
         case let .skeleton(rows):
@@ -1742,6 +1760,47 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         usageCaptions.append(label)
         return label
+    }
+
+    /// `.usageReportDense`: every section's readings as rows of one
+    /// `buildUsageLimitsGrid`, so a spend bar lines up with the limit bars
+    /// above it. A section after the first starts with a little more space
+    /// above it, which is all that is left of its header.
+    private func buildUsageReportDense(_ sections: [HelmModuleUsageSection]) -> NSView {
+        guard !sections.isEmpty else { return noteLabel("Nothing to show yet.") }
+        var rows: [HelmModuleUsageRow] = []
+        var sectionStarts: [Int] = []
+        for section in sections {
+            sectionStarts.append(rows.count)
+            switch section.content {
+            case let .limits(limits):
+                rows += limits
+            case let .spend(spend):
+                let against = [spend.amount, spend.against].compactMap { $0 }.filter { !$0.isEmpty }
+                rows.append(HelmModuleUsageRow(title: section.title,
+                                               value: spend.value ?? "",
+                                               fill: spend.fill,
+                                               state: spend.state,
+                                               caption: against.joined(separator: " "),
+                                               detail: spend.footnote))
+            case let .note(text):
+                rows.append(HelmModuleUsageRow(title: section.title, value: text,
+                                               fill: nil, state: .idle, isGap: true))
+            }
+        }
+        let grid = buildUsageLimitsGrid(rows)
+        if let grid = grid as? NSGridView {
+            // A page column is as narrow as 293pt, where the regular grid's
+            // 12pt gutters left the widest spend caption ("$137.62 of $140")
+            // painting truncated - measured by `ClaudeStatusCardSelfTest`.
+            grid.columnSpacing = HelmMetrics.s2
+            for start in sectionStarts.dropFirst() where start < grid.numberOfRows {
+                grid.row(at: start).topPadding = HelmMetrics.s1
+            }
+        }
+        let column = verticalStack([makeUsageDivider(), grid], spacing: HelmMetrics.s2 + 2)
+        column.alignment = .leading
+        return column
     }
 
     private func buildUsageReport(_ sections: [HelmModuleUsageSection], compact: Bool) -> NSView {

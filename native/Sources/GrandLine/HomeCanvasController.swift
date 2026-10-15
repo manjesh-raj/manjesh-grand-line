@@ -116,8 +116,15 @@ final class HomeCanvasController: NSViewController {
         /// The wrapping shelf, building this card `width` wide.
         case shelf(width: CGFloat)
         /// The hub's hand-placed dashboard, `span` of
-        /// `HelmResponsiveGrid.dashboardColumns` tracks.
-        case dashboard(span: Int)
+        /// `HelmResponsiveGrid.dashboardColumns` tracks, `width` wide.
+        case dashboard(span: Int, width: CGFloat)
+
+        /// The width the grid built this card for.
+        var width: CGFloat {
+            switch self {
+            case .shelf(let width), .dashboard(_, let width): return width
+            }
+        }
 
         /// Whether this card is narrower than a span-2 card on the grid that
         /// placed it.
@@ -125,7 +132,7 @@ final class HomeCanvasController: NSViewController {
             switch self {
             case .shelf(let width):
                 return width + 0.5 < HomeCanvasController.minModuleWidth * 2 + HomeCanvasController.gridSpacing
-            case .dashboard(let span):
+            case .dashboard(let span, _):
                 // Half the track grid is the dashboard's analogue of the
                 // shelf's two columns: a 6-track card is two 3-track halves.
                 return span * 2 < HelmResponsiveGrid.dashboardColumns
@@ -1311,7 +1318,10 @@ final class HomeCanvasController: NSViewController {
         guard dashboardRowViewsWouldApply(available: available, modules: modules) else { return nil }
 
         func card(_ module: DaylightModule, span: Int) -> HelmModuleCard {
-            makeCard(for: module, placement: .dashboard(span: span))
+            makeCard(for: module, placement: .dashboard(
+                span: span,
+                width: HelmResponsiveGrid.proportionalWidth(containerWidth: available, span: span,
+                                                            spacing: Self.gridSpacing)))
         }
 
         var rows: [NSStackView] = []
@@ -1706,6 +1716,15 @@ final class HomeCanvasController: NSViewController {
             return
         }
 
+        // `fm/grandline-home-fit-implement`: on the hub the report is the
+        // dense one-grid form, so the page fits its window - never the
+        // stacked reflow, which is the shelf's answer to a degraded card and
+        // costs the most height of the three. The dense form draws no section
+        // verdicts, so the header chip carries the card's one verdict always.
+        if case .dashboard = placement {
+            fillClaudeDense(&content, snapshot: snapshot, width: placement.width)
+            return
+        }
         let compact = Self.claudeUsageIsCompact(for: placement)
         content.subtitle = Self.claudeSubtitle(for: snapshot)
         // UI-12's error state: a refresh that failed keeps the last reading,
@@ -1743,6 +1762,41 @@ final class HomeCanvasController: NSViewController {
         content.body = .usageReport(Self.claudeUsageSections(for: snapshot,
                                                              headerCarriesVerdict: content.chip != nil),
                                     compact: compact)
+    }
+
+    /// The hub's Claude card: `.usageReportDense`, with the verdict in the
+    /// header chip and the reading's age beside the plan. The UI-12 error
+    /// state is the same as the shelf's: the last reading stays, the chip
+    /// says it could not be refreshed, and the reason is on hover.
+    private func fillClaudeDense(_ content: inout HelmModuleCard.Content, snapshot: QuotaSnapshot, width: CGFloat) {
+        content.subtitle = Self.claudeSubtitle(for: snapshot)
+        if let failure = quotaFailure {
+            if let fetchedAt = quotaFetchedAt {
+                content.subtitle += " \u{00B7} as of \(Self.briefingTimeFormatter.string(from: fetchedAt))"
+            }
+            content.chip = .warn("Can't reach")
+            content.toolTip = "The last refresh failed: \(failure)"
+        } else {
+            content.chip = Self.claudeChip(for: snapshot)
+            if let fetchedAt = quotaFetchedAt {
+                content.subtitle += " \u{00B7} " + (Self.claudeUsesShortLabels(forCardWidth: width)
+                    ? HelmRelativeTime.phrase(since: fetchedAt)
+                    : "updated " + HelmRelativeTime.phrase(since: fetchedAt))
+            }
+        }
+        content.body = .usageReportDense(Self.claudeUsageSections(
+            for: snapshot, headerCarriesVerdict: true,
+            shortLabels: Self.claudeUsesShortLabels(forCardWidth: width)))
+    }
+
+    /// Below this card width the dense grid's four columns do not fit the
+    /// long names and the "Resets" word: "Session (5h)", a figure, a 40pt bar
+    /// and "Resets Mon 12:32 PM" need about 280pt of a 293pt column's 261pt
+    /// of content. Measured with the tour lab's `probe` verb.
+    static let claudeShortLabelWidth: CGFloat = 400
+
+    static func claudeUsesShortLabels(forCardWidth width: CGFloat) -> Bool {
+        width < claudeShortLabelWidth
     }
 
     /// Whether this card is narrow enough to need the report's stacked
@@ -1785,9 +1839,14 @@ final class HomeCanvasController: NSViewController {
     ///   keeps only its title rather than saying it a second time. A compact
     ///   card drops the header word (see `fillClaudeStatus`), so there the
     ///   section keeps it.
+    /// - Parameter shortLabels: the dense form at a narrow column's width -
+    ///   "Session" / "Week" / "Fable" and the reset time without its
+    ///   "Resets" word. The long reset sentence stays on each row's hover
+    ///   text and VoiceOver help, so nothing is lost but the painted word.
     static func claudeUsageSections(for snapshot: QuotaSnapshot,
                                     now: Date = Date(),
-                                    headerCarriesVerdict: Bool = false) -> [HelmModuleUsageSection] {
+                                    headerCarriesVerdict: Bool = false,
+                                    shortLabels: Bool = false) -> [HelmModuleUsageSection] {
         func row(_ title: String, _ window: QuotaWindow?) -> HelmModuleUsageRow {
             guard let window else {
                 return HelmModuleUsageRow(title: title, value: "Not reported",
@@ -1817,14 +1876,14 @@ final class HomeCanvasController: NSViewController {
                 // and nothing on this canvas ticks - a countdown rendered
                 // once at build time and then left to go stale would be
                 // worse than the instant it replaced.
-                caption: window.resetsCompact(now: now).map { "Resets \($0)" },
+                caption: window.resetsCompact(now: now).map { shortLabels ? $0 : "Resets \($0)" },
                 detail: window.resetsSentence)
         }
 
         let rows = [
-            row("Session (5h)", snapshot.session),
+            row(shortLabels ? "Session" : "Session (5h)", snapshot.session),
             row("Week", snapshot.weekly),
-            row("Fable week", snapshot.fable),
+            row(shortLabels ? "Fable" : "Fable week", snapshot.fable),
         ]
 
         var sections: [HelmModuleUsageSection] = [
@@ -1834,7 +1893,8 @@ final class HomeCanvasController: NSViewController {
         ]
         sections.append(HelmModuleUsageSection(title: "Extra usage",
                                                status: claudeSpendStatus(for: snapshot),
-                                               content: claudeSpendContent(for: snapshot)))
+                                               content: claudeSpendContent(for: snapshot,
+                                                                           shortLabels: shortLabels)))
         // U4: one alarm colour per card. The thresholds above are untouched -
         // this only stops a card spending two hues on one situation. See
         // `keepingOnlyTheWorstAlarm`.
@@ -1844,7 +1904,12 @@ final class HomeCanvasController: NSViewController {
     /// The extra-usage section's body. Three genuinely different states, and
     /// they read differently (GL-14): no window at all, a window carrying
     /// dollars but no cap, and the full reading.
-    static func claudeSpendContent(for snapshot: QuotaSnapshot) -> HelmModuleUsageSection.Content {
+    /// `shortLabels` drops the word "cap" from "of $140 cap" for the dense
+    /// form's narrow column, where the worst-case "$137.62 of $140 cap" was
+    /// measured painting truncated at 293pt. The row's hover text still
+    /// carries the footnote, which says "before the cap" in full.
+    static func claudeSpendContent(for snapshot: QuotaSnapshot,
+                                   shortLabels: Bool = false) -> HelmModuleUsageSection.Content {
         guard let credits = snapshot.extraUsage, let spent = credits.spentUsd else {
             return .note("Not reported.")
         }
@@ -1867,7 +1932,7 @@ final class HomeCanvasController: NSViewController {
         let remaining = max(0, limit - spent)
         return .spend(HelmModuleUsageSpend(
             amount: dollarText(spent),
-            against: "of \(dollarText(limit)) cap",
+            against: shortLabels ? "of \(dollarText(limit))" : "of \(dollarText(limit)) cap",
             value: percentText(fraction * 100),
             fill: fraction,
             state: state,
