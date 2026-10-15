@@ -3211,7 +3211,7 @@ if ProcessInfo.processInfo.environment["FM_RUN_BAR_NAV_MODERNIZATION_TESTS"] == 
 
 // `fm/grandline-bar-active-state`: every bar square lit while its page is
 // open, by every route, and a real press drawing the pressed tile.
-// Window-backed - it posts real mouse events to a mounted shell.
+// Window-backed - it presses the squares of a mounted shell.
 if ProcessInfo.processInfo.environment["FM_RUN_BAR_ACTIVE_STATE_TESTS"] == "1" {
     exit(BarActiveStateSelfTest.run() ? 0 : 1)
 }

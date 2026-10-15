@@ -24,18 +24,21 @@
 //     `checkTheShellPushesFromOnePlace` source-guards the one call.
 //   - **A real press drew nothing.** The pressed state hung off
 //     `highlight(_:)`, which AppKit's tracking loop never calls on the
-//     control. `checkARealClickDrawsThePressedTile` posts a real click and
-//     reads what the square drew while the loop was running.
+//     control. `checkARealClickDrawsThePressedTile` hands a real mouse-down
+//     to the button and reads what the square drew while AppKit's tracking
+//     loop was running.
 //
 // Run with:
 //   swift build && FM_RUN_BAR_ACTIVE_STATE_TESTS=1 .build/debug/GrandLine; echo $?
 //
 // **Window-backed.** It mounts a real `AppShellController` in a real
-// `OffScreenProbe` window and posts real mouse events, so it is listed in
-// `NEEDS_SESSION`. Every state change is followed by a synchronous layout
-// pass rather than a wait. The real-click cases pump only the events they
-// posted, so a slow runner changes how long they take, not what they see.
-// No modal alert and no drag session is reachable from anything it drives.
+// `OffScreenProbe` window, so it is listed in `NEEDS_SESSION`. Every state
+// change is followed by a synchronous layout pass rather than a wait. The
+// press cases do not depend on the window server delivering anything: the
+// window is never made key or ordered front, the mouse-down goes straight to
+// the button, and the mouse-up sits on this process's own queue for AppKit's
+// tracking loop to take (`pressAndRelease` says why). No modal alert and no
+// drag session is reachable from anything it drives.
 //
 // GL-27: compiled into debug builds only.
 #if FM_SELFTESTS
@@ -310,37 +313,51 @@ enum BarActiveStateSelfTest {
 
     // MARK: 4. A real press
 
+    /// `NSApplication.shared`, never `NSApp` - AGENTS.md's rule.
     private static var app: NSApplication { NSApplication.shared }
 
-    /// AppKit's first `nextEvent` of a process returns nothing useful, so the
-    /// first real click would be dropped without this - the same priming
-    /// `NotificationRowInteractionSelfTest` records.
-    private static func primeTheEventSystem() {
-        while let event = app.nextEvent(matching: .any, until: Date().addingTimeInterval(0.1),
-                                        inMode: .default, dequeue: true) {
-            app.sendEvent(event)
+    /// A real press and release, delivered to `button.mouseDown(with:)` itself.
+    ///
+    /// **Not posted through the window.** The first version of this case
+    /// posted a mouse-down/mouse-up pair to the app's queue and let the app
+    /// dispatch them, which passed locally and failed on CI's windowed lane:
+    /// there the window is not key, and the first click into a non-key window
+    /// is consumed by AppKit's activation and first-mouse handling before the
+    /// button sees it. Which window is key is a property of the runner, not of
+    /// this app, so the case now starts one step further in, at the button's
+    /// own `mouseDown(with:)` - the method this branch overrides, and the one
+    /// `NSWindow.sendEvent` calls for a click on it.
+    ///
+    /// Everything from there on is AppKit's own: `super.mouseDown` runs the
+    /// button's real tracking loop, which dequeues the matching mouse-up
+    /// itself and sends the action. That mouse-up is put on this process's own
+    /// queue first, so the loop finds it immediately, with no window server
+    /// and no wait. The fixture window is deliberately never made key or
+    /// ordered front, which is the runner's situation.
+    ///
+    /// Returns whether the tracking loop consumed its mouse-up, so the case
+    /// can tell "the loop ran and released" from "the loop never ran".
+    @discardableResult
+    private static func pressAndRelease(_ button: NSButton, in window: NSWindow) -> Bool {
+        let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+        func event(_ type: NSEvent.EventType) -> NSEvent? {
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                               timestamp: ProcessInfo.processInfo.systemUptime,
+                               windowNumber: window.windowNumber, context: nil,
+                               eventNumber: 0, clickCount: 1,
+                               pressure: type == .leftMouseDown ? 1 : 0)
         }
-    }
-
-    /// A real left click at the centre of `view`, posted to the app's queue
-    /// and dispatched by the app, so the button's own tracking loop finds its
-    /// own mouse-up. Pumps until the queue is empty rather than for a time.
-    private static func realClick(_ view: NSView, in window: NSWindow) {
-        let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
-        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            guard let event = NSEvent.mouseEvent(
-                with: type, location: point, modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: window.windowNumber, context: nil,
-                eventNumber: 0, clickCount: 1,
-                pressure: type == .leftMouseDown ? 1 : 0) else { continue }
-            app.postEvent(event, atStart: false)
-        }
-        while let event = app.nextEvent(matching: .any, until: Date().addingTimeInterval(0.05),
-                                        inMode: .default, dequeue: true) {
-            app.sendEvent(event)
+        guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { return false }
+        app.postEvent(up, atStart: true)
+        button.mouseDown(with: down)
+        // Anything the loop left behind is drained without waiting, so a
+        // stray mouse-up cannot reach the next case.
+        var consumed = true
+        while let leftover = app.nextEvent(matching: .any, until: .distantPast, inMode: .default, dequeue: true) {
+            if leftover.type == .leftMouseUp { consumed = false }
         }
         window.contentView?.layoutSubtreeIfNeeded()
+        return consumed
     }
 
     private static func checkARealClickDrawsThePressedTile(_ ok: inout Bool) {
@@ -351,10 +368,7 @@ enum BarActiveStateSelfTest {
             DaylightBarIconButton.debugOnPressChange = nil
             window.close()
         }
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-        shell.view.layoutSubtreeIfNeeded()
-        primeTheEventSystem()
+        // Never made key or ordered front - see `pressAndRelease`.
         shell.show(.homeCanvas)
         let bar = shell.bar
 
@@ -373,7 +387,7 @@ enum BarActiveStateSelfTest {
 
         // The overflow control, which draws Hosts and goes straight to it.
         let overflow = bar.debugQuickAccessOverflowButton()
-        realClick(overflow, in: window)
+        check(pressAndRelease(overflow, in: window), "the Hosts square's tracking loop never consumed its mouse-up", &ok)
         let hostsHex = DaylightBarIconButton.tileHex(for: .hosts, in: dusk)
         let wantPressed = tileFill(hex: hostsHex, theme: dusk, steps: DaylightBarIconButton.pressedTileWashSteps)
         guard let seen = pressedFill[ObjectIdentifier(overflow)] else {
@@ -388,7 +402,7 @@ enum BarActiveStateSelfTest {
         // Pressing the square whose page is already open still reads: the
         // pressed ladder is deeper than the active one.
         pressedFill.removeAll()
-        realClick(overflow, in: window)
+        pressAndRelease(overflow, in: window)
         let wantActive = tileFill(hex: hostsHex, theme: dusk, steps: DaylightBarIconButton.activeTileWashSteps)
         if let seenAgain = pressedFill[ObjectIdentifier(overflow)] {
             // Either the deeper wash or the firmer ring has to differ, or the
@@ -457,14 +471,12 @@ enum BarActiveStateSelfTest {
 
         // A real click flips the mode and the glyph with it.
         ThemeManager.shared.setTheme(daylight)
-        window.makeKeyAndOrderFront(nil)
         shell.view.layoutSubtreeIfNeeded()
-        primeTheEventSystem()
         var sawPress = false
         DaylightBarIconButton.debugOnPressChange = { square, pressed in
             if square === toggle && pressed { sawPress = true }
         }
-        realClick(toggle, in: window)
+        check(pressAndRelease(toggle, in: window), "the toggle's tracking loop never consumed its mouse-up", &ok)
         check(sawPress, "a real click on the toggle never entered the pressed state", &ok)
         check(ThemeManager.shared.theme.mode == .dark,
               "a real click on the toggle did not switch to a dark palette", &ok)

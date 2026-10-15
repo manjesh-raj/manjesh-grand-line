@@ -495,7 +495,7 @@ That was three separate causes, not one.
 - **A real press drew nothing.**
   The pressed state hung off `highlight(_:)`.
   AppKit's own tracking loop highlights the button's cell and never calls that on the control, so only `performClick` reached it.
-  Measured with real posted events: removing the new `mouseDown` override makes `BarActiveStateSelfTest` report that a real click "never entered the pressed state".
+  Measured with real mouse events posted through the app: with only the `highlight(_:)` hook, a real click never entered the pressed state.
   Even where it did fire, the only effect was a 2% scale.
 
 The toggle had no state at all to show, and its half-filled circle looked the same in both modes.
@@ -517,7 +517,18 @@ The toggle had no state at all to show, and its half-filled circle looked the sa
 ### Verification
 
 - `FM_RUN_BAR_ACTIVE_STATE_TESTS` (window-backed) opens every pinned destination in Daylight and Dusk and asserts exactly that square is lit, in its own active tile.
-  It also covers Recents, a space pill, the bar's own clicks, a host page, a pin change and a collapse, posts real clicks to read the pressed tile mid-tracking, and checks the toggle's glyph, value and press.
+  It also covers Recents, a space pill, the bar's own clicks, a host page, a pin change and a collapse, reads the pressed tile while AppKit's tracking loop is running, and checks the toggle's glyph, value and press.
+- **The press case's first version failed on CI's windowed lane and passed locally.**
+  It posted a mouse-down/mouse-up pair to the app's queue and let the app dispatch them.
+  On the runner the window is not key, and the first click into a non-key window is consumed by AppKit's activation and first-mouse handling before the button sees it, so "a real click on the Hosts square never entered the pressed state".
+  The later toggle click in the same run passed, which fits that reading.
+  The case now calls the button's own `mouseDown(with:)` with a real event and puts the matching mouse-up on the process's own queue for AppKit's tracking loop to consume.
+  The fixture window is never made key or ordered front, which is the runner's situation, and nothing waits on a clock.
+- **One measurement that changes how to read the injection below.**
+  A stock `NSButton`'s own `mouseDown(with:)`, called directly, returns at once without tracking, because AppKit drives a stock button's press from a gesture recognizer inside `NSWindow.sendEvent`.
+  Overriding `mouseDown` is what makes `super` run the cell tracking loop.
+  So with the override removed, the direct-call case fails twice over: no pressed state, and no action.
+  The posted-event measurement above is the evidence that `highlight(_:)` alone is not enough.
 - `DaylightBarIconTileSelfTest`'s 26-palette legibility sweep now includes the pressed ladder.
 - Six injections each failed the new suite by name: no `mouseDown` override, no overflow branch, no re-apply after a row change, the push moved back into `show(_:)`, no toggle glyph swap, and no pressed restyle.
 - The tour lab gained `bar hover|press|rest <target>` and `renderbar`, which render the bar's states side by side without a real pointer.

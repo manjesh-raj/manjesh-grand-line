@@ -2261,13 +2261,20 @@ class DaylightBarIconButton: NSButton {
 
     /// The press, from a real pointer.
     ///
-    /// `highlight(_:)` alone is not enough: AppKit's own tracking loop
-    /// highlights the button's *cell*, not the control, so a square that only
-    /// listened there showed nothing at all under a real click (measured by
-    /// `BarActiveStateSelfTest` posting real events). This is `HelmButton`'s
-    /// shape - set the state, let `super` run AppKit's tracking loop (so
-    /// drag-out-to-cancel and the action dispatch are untouched), and clear
-    /// it once the loop returns on the mouse-up.
+    /// `highlight(_:)` alone is not enough. A stock `NSButton` takes a real
+    /// press through a gesture recognizer inside `NSWindow.sendEvent` and
+    /// highlights its *cell*, never calling `highlight(_:)` on the control -
+    /// measured with real events posted through the app, where a square that
+    /// only listened there showed nothing under a real click.
+    ///
+    /// This is `HelmButton`'s shape - set the state, let `super` run AppKit's
+    /// tracking loop (so drag-out-to-cancel and the action dispatch are
+    /// untouched), and clear it once the loop returns on the mouse-up. Note
+    /// that overriding `mouseDown` is itself what makes `super` run that loop:
+    /// measured, a stock button's own `mouseDown(with:)` returns at once
+    /// without tracking, and with this override it consumes the mouse-up and
+    /// sends the action. `AppKitAuditSelfTest.test_hoverNeverActivatesAControl`
+    /// still holds with it in place.
     override func mouseDown(with event: NSEvent) {
         setPressed(true)
         super.mouseDown(with: event)
