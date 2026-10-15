@@ -4049,6 +4049,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_HOME_DASHBOARD_VIEW_TESTS"] == "1
 if ProcessInfo.processInfo.environment["FM_RUN_HOME_FIT_TESTS"] == "1" {
     exit(HomeFitSelfTest.run() ? 0 : 1)
 }
+// `fm/grandline-layout-breaks-refresh-reply`: the Fleet reply composer never
+// widens the window, a widened window does not outlive its page, and Home
+// holds its columns and height through a refresh and every loading state.
+// Window-backed (it orders its window in), so listed in NEEDS_SESSION.
+if ProcessInfo.processInfo.environment["FM_RUN_LAYOUT_STABILITY_TESTS"] == "1" {
+    exit(LayoutStabilitySelfTest.run() ? 0 : 1)
+}
 
 // F9 (v1, multi-host command execution): the host-selection logic - tag
 // matching, the never-preselected invariant, the risk gate firing once per

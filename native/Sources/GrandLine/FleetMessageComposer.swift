@@ -28,7 +28,18 @@ final class FleetMessageComposer: NSView, NSTextViewDelegate {
     /// The captain dismissed the composer without sending.
     var onCancel: (() -> Void)?
 
-    private let addressLabel = NSTextField(labelWithString: "")
+    /// Wrapping, never one line: the address carries the open decision's own
+    /// note, which is often a long sentence with a URL in it. As a one-line
+    /// label at the default 750 compression resistance it was a required
+    /// width floor under the whole Fleet page, above the 500 a window holds
+    /// its size at (AGENTS.md gotcha (13)), so opening Reply grew the window
+    /// to the sentence's width - 1746pt for the captain's own decision - and
+    /// a window never shrinks back on its own
+    /// (`fm/grandline-layout-breaks-refresh-reply`).
+    private let addressLabel = NSTextField(wrappingLabelWithString: "")
+    /// The most lines the address wraps to before it truncates. The row above
+    /// it already shows the same note, and the full text is on hover.
+    static let addressMaxLines = 3
     private let card = HelmComposerCard(cornerRadius: HelmMetrics.rRow)
     private let textScroll = NSScrollView()
     private let textView = NSTextView()
@@ -71,10 +82,17 @@ final class FleetMessageComposer: NSView, NSTextViewDelegate {
 
     private func build(address: NSAttributedString?) {
         addressLabel.translatesAutoresizingMaskIntoConstraints = false
-        addressLabel.lineBreakMode = .byTruncatingTail
-        addressLabel.maximumNumberOfLines = 1
+        addressLabel.lineBreakMode = .byWordWrapping
+        addressLabel.maximumNumberOfLines = Self.addressMaxLines
+        addressLabel.cell?.truncatesLastVisibleLine = true
+        addressLabel.isSelectable = false
+        // It never decides the composer's width - the rows stack does - so it
+        // gives way horizontally and wraps at the width `layout()` hands it.
+        addressLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        addressLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         if let address {
             addressLabel.attributedStringValue = address
+            addressLabel.toolTip = address.string
         } else {
             addressLabel.isHidden = true
         }
@@ -88,6 +106,11 @@ final class FleetMessageComposer: NSView, NSTextViewDelegate {
         cardStack.spacing = 0
         cardStack.translatesAutoresizingMaskIntoConstraints = false
         card.contentContainer.addSubview(cardStack)
+        // Over the text view rather than inside its `NSScrollView`, which
+        // tiles its own subviews: added there, the placeholder was drawn about
+        // 2pt from the card's corner, on its border, rather than where typed
+        // text starts.
+        card.contentContainer.addSubview(placeholderLabel)
 
         let outer = NSStackView(views: address == nil ? [card] : [addressLabel, card])
         outer.orientation = .vertical
@@ -97,6 +120,7 @@ final class FleetMessageComposer: NSView, NSTextViewDelegate {
         addSubview(outer)
 
         textScrollHeight = textScroll.heightAnchor.constraint(equalToConstant: Self.minTextHeight)
+        let textOriginX = textView.textContainerInset.width + (textView.textContainer?.lineFragmentPadding ?? 0)
 
         NSLayoutConstraint.activate([
             outer.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -118,9 +142,13 @@ final class FleetMessageComposer: NSView, NSTextViewDelegate {
             // lesson `SRELeadChatView.buildComposer` documents: a required
             // content-size constraint on an orphaned label can resolve to a
             // stale (near-zero) intrinsic width and never re-derive.
-            placeholderLabel.leadingAnchor.constraint(equalTo: textScroll.leadingAnchor, constant: 9),
-            placeholderLabel.topAnchor.constraint(equalTo: textScroll.topAnchor, constant: 9),
-            placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textScroll.trailingAnchor, constant: -9),
+            // Where the first typed glyph lands: the container's inset plus
+            // the line fragment's own padding.
+            placeholderLabel.leadingAnchor.constraint(equalTo: textScroll.leadingAnchor, constant: textOriginX),
+            placeholderLabel.topAnchor.constraint(equalTo: textScroll.topAnchor,
+                                                  constant: textView.textContainerInset.height),
+            placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textScroll.trailingAnchor,
+                                                       constant: -textOriginX),
         ])
 
         // Only when the label is genuinely in the tree. With no address (the
@@ -131,6 +159,18 @@ final class FleetMessageComposer: NSView, NSTextViewDelegate {
         if address != nil {
             addressLabel.widthAnchor.constraint(lessThanOrEqualTo: outer.widthAnchor).isActive = true
         }
+    }
+
+    /// The address's wrap width comes from the composer's own width, which
+    /// the rows stack decides - never from the label's resolved width, which
+    /// is circular (AGENTS.md gotcha (22)).
+    override func layout() {
+        super.layout()
+        guard !addressLabel.isHidden else { return }
+        let wrap = max(0, floor(bounds.width))
+        guard abs(addressLabel.preferredMaxLayoutWidth - wrap) > 0.5 else { return }
+        addressLabel.preferredMaxLayoutWidth = wrap
+        addressLabel.invalidateIntrinsicContentSize()
     }
 
     private func buildTextView() {
@@ -165,7 +205,6 @@ final class FleetMessageComposer: NSView, NSTextViewDelegate {
         placeholderLabel.maximumNumberOfLines = 1
         placeholderLabel.lineBreakMode = .byTruncatingTail
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
-        textScroll.addSubview(placeholderLabel)
     }
 
     private func buildFooter() -> NSView {
@@ -360,6 +399,10 @@ final class FleetMessageComposer: NSView, NSTextViewDelegate {
 extension FleetMessageComposer {
     var debugSendButton: HelmButton { sendButtonForTests }
     var debugTextView: NSTextView { textViewForTests }
+    /// The "Replying to ..." line and the placeholder, for
+    /// `LayoutStabilitySelfTest`'s wrap and alignment checks.
+    var debugAddressLabel: NSTextField { addressLabel }
+    var debugPlaceholderLabel: NSTextField { placeholderLabel }
     var debugStatusText: String? { statusTextForTests }
     func debugNotifyTextChanged() { notifyTextChangedForTests() }
 }

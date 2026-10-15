@@ -273,6 +273,14 @@ final class FleetController: NSViewController {
     /// without a fetch.
     var currentNeedsTasks: [FleetTask] = []
 
+    #if FM_SELFTESTS
+    /// Set by `debugRender(snapshot:mergedPRs:)`: from then on only a debug
+    /// render reaches `render`, so a fetch started by a page visit cannot
+    /// replace a fixture. Stored here because an extension cannot hold one.
+    var debugRendersPinned = false
+    var debugRenderInProgress = false
+    #endif
+
     // Narrow accessors for the F7 extension - `theme`, `accentRows` and
     // `refresh()` are private to this file, and widening them wholesale would
     // hand the extension more than it needs.
@@ -887,7 +895,14 @@ final class FleetController: NSViewController {
         return f
     }()
 
-    private func render(snapshot: FleetSnapshot, mergedPRs: [MergedPR]?, prFetchFailure: String? = nil) {
+    // Not `private` only so this family's debug surface in
+    // `FleetController+Reply.swift` can reach it (GL-36: treat it as private).
+    func render(snapshot: FleetSnapshot, mergedPRs: [MergedPR]?, prFetchFailure: String? = nil) {
+        #if FM_SELFTESTS
+        // `ReviewTourLab`'s `demo decision`: a live refresh landing after the
+        // fixture would replace it, so only the debug render gets through.
+        if debugRendersPinned && !debugRenderInProgress { return }
+        #endif
         if !hasLoadedOnce {
             hasLoadedOnce = true
             loadingContainer.isHidden = true

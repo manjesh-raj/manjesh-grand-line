@@ -115,6 +115,28 @@ enum ReviewTourLab {
         /// Render only the floating bar, so a tour can compare one row of
         /// squares across pages and palettes without the page under it.
         case renderBar(String)
+        /// Put one needs-decision task on the Fleet page whose open decision
+        /// is the captain's own long line (an unbroken sentence with a URL),
+        /// read through the real status-file path from a scratch directory.
+        case demoDecision
+        /// Press the first needs row's Reply (or Cancel) through
+        /// `performClick`, the button's own target/action path.
+        case fleetReply
+        /// Replay the interim push every real Fleet refresh makes: the fast
+        /// snapshot lands first with `mergedPRs: nil`, the PR scan after it.
+        case demoRefresh
+        /// Put one Home card back into its first-launch loading state:
+        /// `claude`, `fleet` or `merge`.
+        case demoLoading(String)
+        /// Print the window's and the showing page's widths, the minimum
+        /// sizes, and any view that reaches past the window's content width.
+        case measureWindow(String)
+        /// Order the window in, still parked off every screen
+        /// (`OffScreenProbeWindow` enforces that). AppKit only re-derives a
+        /// window's frame from its content's constraints while the window is
+        /// on the window list, so this is what lets a tour see a window
+        /// *grow* - which is what the captain's own visible window does.
+        case orderFront
         case comment
     }
 
@@ -134,7 +156,7 @@ enum ReviewTourLab {
             switch self {
             case .unknownVerb(let v):
                 return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, renderbar, menu, wait, "
-                    + "demo, measure, probe, tasks, bar)"
+                    + "demo, measure, measurewindow, orderfront, probe, tasks, bar, fleet)"
             case .badArgument(let a): return "bad argument \"\(a)\""
             case .unknownDestination(let d): return "unknown destination \"\(d)\""
             case .unknownTheme(let t): return "unknown theme \"\(t)\""
@@ -186,6 +208,13 @@ enum ReviewTourLab {
             return .success(.wait(milliseconds: ms))
         case "demo":
             if argument == "briefing" { return .success(.demoBriefing) }
+            if argument == "decision" { return .success(.demoDecision) }
+            if argument == "refresh" { return .success(.demoRefresh) }
+            if argument.hasPrefix("loading ") {
+                let card = String(argument.dropFirst("loading ".count))
+                guard ["claude", "fleet", "merge"].contains(card) else { return .failure(.badArgument(argument)) }
+                return .success(.demoLoading(card))
+            }
             if argument.hasPrefix("attention "),
                let count = Int(argument.dropFirst("attention ".count)), count >= 0 {
                 return .success(.demoAttention(count))
@@ -223,6 +252,16 @@ enum ReviewTourLab {
         case "renderbar":
             guard !argument.isEmpty else { return .failure(.missingArgument("renderbar")) }
             return .success(.renderBar(argument))
+        case "fleet":
+            guard argument == "reply" else {
+                return .failure(argument.isEmpty ? .missingArgument("fleet") : .badArgument(argument))
+            }
+            return .success(.fleetReply)
+        case "orderfront":
+            return .success(.orderFront)
+        case "measurewindow":
+            guard !argument.isEmpty else { return .failure(.missingArgument("measurewindow")) }
+            return .success(.measureWindow(argument))
         default:
             return .failure(.unknownVerb(verb))
         }
@@ -331,6 +370,40 @@ enum ReviewTourLab {
                 } else {
                     log.append("renderbar FAILED \(name) - the bar has no bitmap to cache")
                 }
+            case .demoDecision:
+                seedDemoDecision(shell.debugOverview, scratch: outputDirectory)
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo decision \(demoDecisionTaskID)")
+            case .fleetReply:
+                guard let button = shell.debugOverview.debugReplyButton(taskID: demoDecisionTaskID) else {
+                    log.append("fleet reply FAILED - no Reply button for \(demoDecisionTaskID)")
+                    continue
+                }
+                button.performClick(nil)
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("fleet reply (\(button.title) pressed through performClick)")
+            case .demoRefresh:
+                let canvas = shell.debugHomeCanvas
+                guard let snapshot = canvas.debugFleetSnapshot else {
+                    log.append("demo refresh FAILED - no fleet snapshot applied yet")
+                    continue
+                }
+                canvas.debugInputsPinned = false
+                canvas.applyFleet(snapshot: snapshot, mergedPRs: nil, prFetchFailure: nil)
+                canvas.debugInputsPinned = true
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo refresh (snapshot landed, PR scan still in flight)")
+            case .demoLoading(let card):
+                shell.debugHomeCanvas.debugForgetReading(card)
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo loading \(card)")
+            case .orderFront:
+                window.orderFront(nil)
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("orderfront (parked at \(Int(window.frame.minX)),\(Int(window.frame.minY)))")
+            case .measureWindow(let label):
+                log.append("== measurewindow \(label)")
+                log.append(contentsOf: windowMeasureLines(shell: shell, window: window).map { "  " + $0 })
             case .render(let name):
                 let url = outputDirectory.appendingPathComponent("\(name).png")
                 if writePNG(of: shell.view, to: url) {
@@ -424,6 +497,97 @@ enum ReviewTourLab {
                                resetsAt: now.addingTimeInterval(4 * 86_400), pace: .onPace),
             extraUsage: QuotaCreditWindow(percentUsed: 0, spentUsd: 0, limitUsd: 50),
             latency: 1.2, log: "")))
+    }
+
+    /// The task `demo decision` parks, named as in the captain's screenshot.
+    static let demoDecisionTaskID = "deploy-engine-uiux-board-1791950800"
+
+    /// The captain's own decision line: one long sentence with a URL in it,
+    /// which is what a one-line label cannot break.
+    static let demoDecisionNote = "Round 2 is in the same Lavish board (http://127.0.0.1:4387/session/76371d2d67d88839): "
+        + "controls moved to a hide-able left sidebar, and all 40 parts now have options A to D with a "
+        + "Recommended pick each. Captain: review and choose per part."
+
+    /// `demo decision`: a status file in a scratch `state/` directory under
+    /// `scratch`, read through `FleetActions`' real status-file path, and the
+    /// Fleet page's real render of a snapshot parking that one task.
+    static func seedDemoDecision(_ fleet: FleetController, scratch: URL, note: String = demoDecisionNote) {
+        let state = scratch.appendingPathComponent("demo-firstmate-state", isDirectory: true)
+        try? FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        let line = "needs-decision [at=1791950800] [key=board-review]: \(note)\n"
+        try? line.write(to: state.appendingPathComponent("\(demoDecisionTaskID).status"),
+                        atomically: true, encoding: .utf8)
+        FleetActions.stateDirectoryOverrideForTests = state
+        var task = FleetTask(id: demoDecisionTaskID, repo: demoDecisionTaskID, kind: "ship", pr: nil)
+        task.status = "needs_decision"
+        task.state = "parked"
+        let snapshot = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [task],
+                                     queuedCount: 31, doneCount: 20, projectsCount: 17,
+                                     watcher: WatcherHealth(status: "healthy"))
+        fleet.debugRender(snapshot: snapshot, mergedPRs: [])
+    }
+
+    /// `measurewindow`'s lines. The numbers scenario 2 of
+    /// `fm/grandline-layout-breaks-refresh-reply` is about: how wide the
+    /// window is against what its content asks for, and which views reach
+    /// past it.
+    static func windowMeasureLines(shell: AppShellController, window: NSWindow) -> [String] {
+        shell.view.layoutSubtreeIfNeeded()
+        func f(_ value: CGFloat) -> String { String(format: "%.1f", value) }
+        var out: [String] = []
+        let content = window.contentView?.frame ?? .zero
+        out.append("window \(f(window.frame.width))x\(f(window.frame.height))"
+                   + " content \(f(content.width))x\(f(content.height))")
+        out.append("minSize \(f(window.minSize.width))x\(f(window.minSize.height))"
+                   + " contentMinSize \(f(window.contentMinSize.width))x\(f(window.contentMinSize.height))")
+        let fitting = shell.view.fittingSize
+        out.append("shell \(f(shell.view.frame.width)) fitting \(f(fitting.width))x\(f(fitting.height))")
+        out.append("showing destination width \(shell.showingDestinationWidthForTests.map(f) ?? "-")")
+        // The showing page's scroll view: the visible one with the largest area.
+        func visible(_ view: NSView) -> Bool {
+            var v: NSView? = view
+            while let current = v { if current.isHidden { return false }; v = current.superview }
+            return true
+        }
+        func scrolls(in view: NSView) -> [NSScrollView] {
+            var found: [NSScrollView] = []
+            for sub in view.subviews {
+                if let scroll = sub as? NSScrollView, visible(scroll) { found.append(scroll) }
+                found.append(contentsOf: scrolls(in: sub))
+            }
+            return found
+        }
+        if let page = scrolls(in: shell.view).max(by: {
+            $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+        }) {
+            let doc = page.documentView
+            out.append("page scroll clip \(f(page.contentView.bounds.width))"
+                       + " document \(f(doc?.frame.width ?? 0))x\(f(doc?.frame.height ?? 0))"
+                       + " horizontal overflow \(f((doc?.frame.width ?? 0) - page.contentView.bounds.width))")
+        }
+        let past = viewsPastTheWindow(shell: shell, window: window)
+        out.append(contentsOf: past.isEmpty ? ["nothing reaches past the window"] : past)
+        return out
+    }
+
+    /// Every visible view whose right edge passes the window's content width,
+    /// outermost first, as one line each - the thing pushing the page wider.
+    /// Empty when everything is inside the window.
+    static func viewsPastTheWindow(shell: AppShellController, window: NSWindow, limit: Int = 8) -> [String] {
+        let contentWidth = window.contentView?.frame.width ?? window.frame.width
+        var past: [String] = []
+        func walk(_ view: NSView) {
+            guard !view.isHidden, past.count < limit else { return }
+            let rect = view.convert(view.bounds, to: nil)
+            if rect.maxX > contentWidth + 0.5 {
+                var name = String(describing: type(of: view))
+                if let label = view as? NSTextField { name += " \"\(label.stringValue.prefix(40))\"" }
+                past.append(String(format: "past the window: %@ maxX %.1f width %.1f", name, rect.maxX, rect.width))
+            }
+            view.subviews.forEach(walk)
+        }
+        walk(shell.view)
+        return past
     }
 
     /// `demo briefing`'s record: three clauses, the shape the captain's

@@ -289,6 +289,17 @@ extension FleetController {
         view.layoutSubtreeIfNeeded()
     }
 
+    /// The page's real render against a fabricated snapshot, skipping the
+    /// fetch - the whole page (banner, stats, needs rows) rather than only the
+    /// needs section, so a tour renders what the captain sees.
+    func debugRender(snapshot: FleetSnapshot, mergedPRs: [MergedPR]?) {
+        debugRendersPinned = true
+        debugRenderInProgress = true
+        render(snapshot: snapshot, mergedPRs: mergedPRs)
+        debugRenderInProgress = false
+        view.layoutSubtreeIfNeeded()
+    }
+
     var debugNeedsSectionHidden: Bool { needsSectionView.isHidden }
     var debugNeedsRowCount: Int { needsAccentRows.count }
     var debugOpenReplyTaskID: String? { openReplyTaskID }

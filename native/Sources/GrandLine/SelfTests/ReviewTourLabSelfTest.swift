@@ -78,6 +78,17 @@ enum ReviewTourLabSelfTest {
         check(barBad.count == 4, "a bad state, a bad target and two missing arguments must be 4 errors, "
               + "got \(barBad)", &ok)
 
+        // The layout-break verbs (`fm/grandline-layout-breaks-refresh-reply`).
+        let breaks = "demo decision\nfleet reply\ndemo refresh\ndemo loading merge\nmeasurewindow after\norderfront"
+        let (breakSteps, breakErrors) = ReviewTourLab.parse(tour: breaks)
+        check(breakErrors.isEmpty, "the layout-break verbs must parse clean, got \(breakErrors)", &ok)
+        check(breakSteps == [.demoDecision, .fleetReply, .demoRefresh, .demoLoading("merge"),
+                             .measureWindow("after"), .orderFront],
+              "the layout-break verbs parsed to \(breakSteps)", &ok)
+        let (_, breakBad) = ReviewTourLab.parse(tour: "demo loading briefing\nfleet\nfleet send\nmeasurewindow")
+        check(breakBad.count == 4, "a bad card, a missing and a bad fleet action and a missing label must be "
+              + "4 errors, got \(breakBad)", &ok)
+
         // Every bad line, not just the first: a hand-written tour fixed one
         // error per run is a tool nobody keeps.
         let bad = """
