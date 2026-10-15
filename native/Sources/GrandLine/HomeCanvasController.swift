@@ -333,6 +333,10 @@ final class HomeCanvasController: NSViewController {
     /// its column has left (`dashboardRowViews`). The shelf keeps
     /// `maxPeekRows`.
     private var mergeQueueRowLimit = HelmModuleCard.maxPeekRows
+    /// Whether the hub's Health card lists its services under the ring -
+    /// set by `dashboardRowViews` when its column has the room, never on the
+    /// shelf.
+    private var healthListsServices = false
     /// C1: the content column's preferred width, retuned on every grid
     /// rebuild from the column count the grid actually used.
     private var contentWidthConstraint: NSLayoutConstraint?
@@ -1403,13 +1407,24 @@ final class HomeCanvasController: NSViewController {
         // short - its chip already says whether anyone needs the captain.
         let claude = makeCard(for: .claudeStatus, placement: placement)
         var fleetContent = content(for: .fleet, placement: placement)
-        let healthContent = content(for: .health, placement: placement)
+        var healthContent = content(for: .health, placement: placement)
         let claudeHeight = Self.fittingHeight(of: claude, width: width)
         let healthHeight = Self.fittingHeight(of: Self.probeCard(healthContent), width: width)
-        let fleetHeight = Self.fittingHeight(of: Self.probeCard(fleetContent), width: width)
+        var fleetHeight = Self.fittingHeight(of: Self.probeCard(fleetContent), width: width)
         if claudeHeight + fleetHeight + healthHeight + Self.gridSpacing * 2 > height,
            case let .kpis(_, items) = fleetContent.body {
             fleetContent.body = .kpis(note: nil, items: items)
+            fleetHeight = Self.fittingHeight(of: Self.probeCard(fleetContent), width: width)
+        }
+        // Health lists its services under the ring when the column holds
+        // them; otherwise it stays the ring and its sentence.
+        healthListsServices = true
+        let listed = content(for: .health, placement: placement)
+        healthListsServices = false
+        if case .ringWithLines = listed.body,
+           claudeHeight + fleetHeight + Self.fittingHeight(of: Self.probeCard(listed), width: width)
+            + Self.gridSpacing * 2 <= height {
+            healthContent = listed
         }
         let fleet = makeCard(for: .fleet, content: fleetContent)
         let health = makeCard(for: .health, content: healthContent)
@@ -2552,8 +2567,30 @@ final class HomeCanvasController: NSViewController {
         let failingCount = readings.filter { $0.verdict == .failing }.count
         if failingCount > 0 { content.chip = .bad("\(failingCount) failing") }
         let summary = Self.healthRingSummary(readings)
-        content.body = .ring(value: summary.value, total: summary.total,
-                             title: summary.title, note: summary.note)
+        let lines = Self.healthServiceLines(readings)
+        content.body = healthListsServices && !lines.isEmpty
+            ? .ringWithLines(value: summary.value, total: summary.total,
+                             title: summary.title, note: summary.note, lines: lines)
+            : .ring(value: summary.value, total: summary.total,
+                    title: summary.title, note: summary.note)
+    }
+
+    /// One line per service for the hub's Health list, in the registry's
+    /// order. GL-14 holds per line: a service that has never reported says
+    /// "Not read" and one mid-pass says "Checking" - neither is "Healthy",
+    /// and neither takes a state colour it has not earned.
+    static func healthServiceLines(_ services: [HealthServiceReading]) -> [HelmModulePeekRow] {
+        services.map { service in
+            let (word, state): (String, HelmModuleRowState)
+            switch service.verdict {
+            case .healthy: (word, state) = ("Healthy", .ok)
+            case .degraded: (word, state) = ("Degraded", .warn)
+            case .failing: (word, state) = ("Failing", .bad)
+            case .running: (word, state) = ("Checking", .idle)
+            case .unknown: (word, state) = (HelmReading<String>.unknownCaption, .idle)
+            }
+            return HelmModulePeekRow(state: state, text: service.title, value: word)
+        }
     }
 
     private func fillHosts(_ content: inout HelmModuleCard.Content) {

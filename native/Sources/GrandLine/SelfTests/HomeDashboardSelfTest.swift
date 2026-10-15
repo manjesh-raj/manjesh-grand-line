@@ -45,6 +45,7 @@ enum HomeDashboardSelfTest {
         checkTheReferencesRatio(&ok)
         checkTheNarrowThresholdDiscriminates(&ok)
         checkSentenceList(&ok)
+        checkHealthServiceLinesNeverClaimHealthy(&ok)
 
         if ok {
             print("HomeDashboardSelfTest: all checks passed")
@@ -54,8 +55,9 @@ enum HomeDashboardSelfTest {
         return ok
     }
 
-    /// The reference's own spans, and the gap this app lays cards out with.
-    private static let spans = [7, 5]
+    /// The hub's three equal columns (`fm/grandline-home-fit-implement`), and
+    /// the gap this app lays cards out with.
+    private static let spans = [4, 4, 4]
     private static let gap = HomeCanvasController.gridSpacing
 
     // MARK: 1 - the closure property
@@ -73,10 +75,13 @@ enum HomeDashboardSelfTest {
             let laidOut = widths.reduce(0, +) + gap * CGFloat(widths.count - 1)
             // The fixture's own discriminating power first: two different
             // spans must produce two different widths, or this whole check
-            // would pass against a formula that ignored `span`.
-            check(widths[0] > widths[1],
-                  "a 7-track card should be wider than a 5-track one at \(container), "
-                      + "got \(widths)", &ok)
+            // would pass against a formula that ignored `span`. The hub's own
+            // spans are equal now, so the pair is asked for directly.
+            let five = HelmResponsiveGrid.proportionalWidth(containerWidth: container, span: 5, spacing: gap)
+            let three = HelmResponsiveGrid.proportionalWidth(containerWidth: container, span: 3, spacing: gap)
+            check(five > three,
+                  "a 5-track card should be wider than a 3-track one at \(container), "
+                      + "got \(five) and \(three)", &ok)
             check(abs(laidOut - container) < 0.001,
                   "a row of spans \(spans) at \(container)pt should lay out to exactly "
                       + "\(container), got \(laidOut)", &ok)
@@ -109,15 +114,48 @@ enum HomeDashboardSelfTest {
                                                     minItemWidth: minimum,
                                                     spacing: gap),
               "the dashboard should fit at a 1512pt window's content width", &ok)
+        // And the app's own minimum window (960pt, so 912pt of content):
+        // the three columns must still apply there, or the smallest window
+        // falls back to the wrapping grid, which stacks every card and
+        // cannot fit.
+        check(HelmResponsiveGrid.fitsProportionally(containerWidth: 912,
+                                                    spans: spans,
+                                                    minItemWidth: minimum,
+                                                    spacing: gap),
+              "the three columns should apply at the 960pt minimum window, where a 4-track column is "
+                  + "\(HelmResponsiveGrid.proportionalWidth(containerWidth: 912, span: 4, spacing: gap))pt", &ok)
         // And one narrow enough that the 5-track card is under a single
         // wrapping column, where the reference collapses to one per row.
         check(!HelmResponsiveGrid.fitsProportionally(containerWidth: 500,
                                                      spans: spans,
                                                      minItemWidth: minimum,
                                                      spacing: gap),
-              "the dashboard should decline at 500pt, where a 5-track card is "
-                  + "\(HelmResponsiveGrid.proportionalWidth(containerWidth: 500, span: 5, spacing: gap))pt "
+              "the dashboard should decline at 500pt, where a 4-track column is "
+                  + "\(HelmResponsiveGrid.proportionalWidth(containerWidth: 500, span: 4, spacing: gap))pt "
                   + "against a \(minimum)pt floor", &ok)
+    }
+
+    // MARK: 5 - the Health list's words (GL-14)
+
+    /// One line per service, and a service that has not reported - or is
+    /// mid-pass - never reads "Healthy" or takes a state colour.
+    private static func checkHealthServiceLinesNeverClaimHealthy(_ ok: inout Bool) {
+        typealias Reading = HomeCanvasController.HealthServiceReading
+        let lines = HomeCanvasController.healthServiceLines([
+            Reading(title: "A", verdict: .healthy, hasReported: true),
+            Reading(title: "B", verdict: .degraded, hasReported: true),
+            Reading(title: "C", verdict: .failing, hasReported: true),
+            Reading(title: "D", verdict: .running, hasReported: false),
+            Reading(title: "E", verdict: .unknown, hasReported: false),
+        ])
+        check(lines.map(\.text) == ["A", "B", "C", "D", "E"], "one line per service, in order", &ok)
+        check(lines.map(\.value) == ["Healthy", "Degraded", "Failing", "Checking",
+                                      HelmReading<String>.unknownCaption],
+              "each line says its own state, got \(lines.map(\.value))", &ok)
+        check(lines[3].state == .idle && lines[4].state == .idle,
+              "a service mid-pass or never read takes no state colour", &ok)
+        check(lines[0].state == .ok && lines[1].state == .warn && lines[2].state == .bad,
+              "and a reported one takes its own", &ok)
     }
 
     // MARK: 4 - the session-checks sentence

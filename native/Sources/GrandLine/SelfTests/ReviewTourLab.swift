@@ -324,6 +324,12 @@ enum ReviewTourLab {
                                 url: "https://example.invalid/pr/\(index)", number: index + 1,
                                 title: "Open pull request \(index + 1)", checks: "pending", forge: "github"))
         }
+        // Seven background services that have all reported healthy - the
+        // captain's "7/7 services healthy". The registry is process-global,
+        // and this only ever runs in a tour or a suite process.
+        for service in HealthService.allCases.prefix(7) {
+            ServiceHealthRegistry.shared.recordSuccess(service)
+        }
         canvas.applyFleet(snapshot: snapshot, mergedPRs: prs, prFetchFailure: nil)
         let now = Date()
         canvas.applyQuota(.success(QuotaSnapshot(

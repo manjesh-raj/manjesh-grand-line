@@ -315,6 +315,12 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         case peekRows([HelmModulePeekRow])
         /// A 66pt ring beside a short title and note.
         case ring(value: Int, total: Int, title: String, note: String)
+        /// `.ring`, then one quiet line per item under it - a dot in the
+        /// item's state colour, its name, and its state word. The hub's
+        /// Health card when its page column has room
+        /// (`fm/grandline-home-fit-implement`). The lines are readouts, not
+        /// links: the card itself opens the Health page.
+        case ringWithLines(value: Int, total: Int, title: String, note: String, lines: [HelmModulePeekRow])
         /// A big numeral over a capsule progress bar.
         case progress(value: Int, total: Int, note: String)
         /// One wrapping line of copy.
@@ -1229,6 +1235,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             content = buildPeekRows(Array(rows.prefix(peekRowLimit ?? Self.maxPeekRows)))
         case let .ring(value, total, title, note):
             content = buildRing(value: value, total: total, title: title, note: note)
+        case let .ringWithLines(value, total, title, note, lines):
+            let ring = buildRing(value: value, total: total, title: title, note: note)
+            content = verticalStack([ring, buildStatusLines(lines)], spacing: HelmMetrics.s3)
         case let .progress(value, total, note):
             content = buildProgress(value: value, total: total, note: note)
         case let .note(text, maxLines):
@@ -1839,6 +1848,53 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         // no extra width tie is needed here, and a second one would only be
         // another chance to set a floor.
         let column = verticalStack(stacked, spacing: HelmMetrics.s2 + 2)
+        column.alignment = .leading
+        return column
+    }
+
+    /// `.ringWithLines`' list: one 22pt line per item, painted by the same
+    /// arrays the peek rows use (dot hue, ink title, state-coloured word), so
+    /// a theme change repaints them with no second recipe.
+    private func buildStatusLines(_ lines: [HelmModulePeekRow]) -> NSView {
+        var views: [NSView] = []
+        for line in lines {
+            let dot = NSView()
+            dot.wantsLayer = true
+            dot.layer?.cornerRadius = HelmStatusPill.dotSize / 2
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                dot.widthAnchor.constraint(equalToConstant: HelmStatusPill.dotSize),
+                dot.heightAnchor.constraint(equalToConstant: HelmStatusPill.dotSize),
+            ])
+            dot.setContentHuggingPriority(.required, for: .horizontal)
+            peekDots.append((dot, line.state))
+            let text = NSTextField(labelWithString: line.text)
+            text.font = HelmType.caption()
+            text.lineBreakMode = .byTruncatingTail
+            text.translatesAutoresizingMaskIntoConstraints = false
+            text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            text.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            peekTextLabels.append(text)
+            let value = NSTextField(labelWithString: line.value)
+            value.font = HelmType.chip()
+            value.alignment = .right
+            value.translatesAutoresizingMaskIntoConstraints = false
+            value.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            value.setContentHuggingPriority(HelmDaylightPriority.columnHug, for: .horizontal)
+            peekValueLabels.append((value, line.state))
+            let row = compressibleStack(NSStackView(views: [dot, text, value]))
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.distribution = .fill
+            row.spacing = HelmMetrics.s2
+            row.translatesAutoresizingMaskIntoConstraints = false
+            row.heightAnchor.constraint(equalToConstant: 22).isActive = true
+            row.setAccessibilityElement(true)
+            row.setAccessibilityRole(.staticText)
+            row.setAccessibilityLabel("\(line.text), \(line.value)")
+            views.append(row)
+        }
+        let column = verticalStack(views, spacing: 0)
         column.alignment = .leading
         return column
     }

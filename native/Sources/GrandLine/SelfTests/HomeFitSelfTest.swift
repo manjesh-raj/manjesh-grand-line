@@ -25,6 +25,8 @@
 //   2. **The follow-ups list scrolls inside its card** when its rows do not
 //      fit: the card stays inside the page, the total count is always in the
 //      eyebrow, and a "+N more" cue is shown exactly while rows are clipped.
+//   4. **Health lists its services** under its ring when its column has
+//      room, and stays the ring and its sentence when it does not.
 //   3. **The fallback.** At the minimum window with the Larger text step the
 //      page cannot fit (its columns' required minimums add up to more than
 //      the viewport), and it must scroll as a page rather than clip or push
@@ -72,6 +74,7 @@ enum HomeFitSelfTest {
             checkThePageFits(shell: shell, window: window, &ok)
             checkTheListScrollsInsideItsCard(shell: shell, window: window, &ok)
             checkLargerTextFallsBackToScrolling(shell: shell, window: window, &ok)
+            checkHealthListsServicesWhenThereIsRoom(shell: shell, window: window, &ok)
         }
 
         print(ok ? "HomeFitSelfTest: all checks passed" : "HomeFitSelfTest: FAILED")
@@ -133,6 +136,28 @@ enum HomeFitSelfTest {
                 check(clipped, "fixture: \(rows) rows should not all fit at 960x620", &ok)
             }
         }
+    }
+
+    // MARK: 4. Health lists its services only when its column has room
+
+    /// The demo home has seven services that all reported healthy. At the
+    /// captain's window column 2 has the room, so each gets a line under the
+    /// ring; at the minimum window it does not, and Health stays the ring and
+    /// its sentence rather than pushing the page past the fold.
+    private static func checkHealthListsServicesWhenThereIsRoom(shell: AppShellController, window: NSWindow,
+                                                                _ ok: inout Bool) {
+        let canvas = shell.debugHomeCanvas
+        func healthLines() -> Int? {
+            canvas.moduleCardsForTests.first { $0.anatomyForTests.title == "Health" }?.anatomyForTests.peekRowCount
+        }
+        let services = ServiceHealthRegistry.shared.knownServices().count
+        check(services >= 7, "fixture: the demo home should register seven services, got \(services)", &ok)
+        show(rows: 3, at: sizes[1], shell: shell, window: window)
+        check(healthLines() == services,
+              "at 1512x945 Health should list all \(services) services, got \(healthLines() ?? -1)", &ok)
+        show(rows: 3, at: sizes[0], shell: shell, window: window)
+        check(healthLines() == 0,
+              "at 960x620 Health should be the ring alone, got \(healthLines() ?? -1) lines", &ok)
     }
 
     // MARK: 3. The Larger-text fallback
