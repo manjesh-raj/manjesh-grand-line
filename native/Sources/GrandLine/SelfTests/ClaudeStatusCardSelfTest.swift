@@ -861,6 +861,12 @@ enum ClaudeStatusCardSelfTest {
         if !HomeCanvasController.claudeUsageIsCompact(for: .dashboard(span: 4, width: 293)) {
             fail("a 4-track dashboard card is a third of the row and should be the narrow form", &ok)
         }
+        // And the other direction: a 5-track briefing that is 600pt wide at
+        // the captain's 1512pt window keeps the wide cap it always had.
+        if HomeCanvasController.briefingClauseCap(for: .dashboard(span: 5, width: 600))
+            != HelmModuleCard.maxBriefingClauses {
+            fail("a 600pt-wide 5-track briefing took the one-column clause cap", &ok)
+        }
         if HomeCanvasController.briefingClauseCap(for: .dashboard(span: 7, width: dashboardSevenTrack))
             != HelmModuleCard.maxBriefingClauses {
             fail("a 7-track dashboard briefing took the one-column clause cap - M3's twin", &ok)

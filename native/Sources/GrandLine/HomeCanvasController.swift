@@ -129,13 +129,18 @@ final class HomeCanvasController: NSViewController {
         /// Whether this card is narrower than a span-2 card on the grid that
         /// placed it.
         var isNarrowerThanTwoColumns: Bool {
+            let spanTwo = HomeCanvasController.minModuleWidth * 2 + HomeCanvasController.gridSpacing
             switch self {
             case .shelf(let width):
-                return width + 0.5 < HomeCanvasController.minModuleWidth * 2 + HomeCanvasController.gridSpacing
-            case .dashboard(let span, _):
-                // Half the track grid is the dashboard's analogue of the
-                // shelf's two columns: a 6-track card is two 3-track halves.
-                return span * 2 < HelmResponsiveGrid.dashboardColumns
+                return width + 0.5 < spanTwo
+            case .dashboard(let span, let width):
+                // Narrow only when the track share *and* the width both say
+                // so. Half the track grid is the dashboard's analogue of the
+                // shelf's two columns, which is what keeps a 7-track card at
+                // 525.33pt out of the narrow form (M3); the width half keeps
+                // a 5-track briefing that resolves 600pt wide at the
+                // captain's window in the wide one, as it always was.
+                return span * 2 < HelmResponsiveGrid.dashboardColumns && width + 0.5 < spanTwo
             }
         }
     }
