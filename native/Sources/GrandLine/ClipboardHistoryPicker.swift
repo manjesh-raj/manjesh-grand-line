@@ -1,6 +1,15 @@
 // Grand Line - native macOS app.
 //
-// F3's ⌘⇧V surface: the bar button, the panel, and its rows.
+// F3's ⌘⇧V surface: the panel and its rows.
+//
+// **There is no bar button any more.** The captain asked for the clipboard
+// square to come off the top bar, so the history is reached from the Edit
+// menu's "Clipboard History…" item and its ⌘⇧V chord, and nothing else. The
+// panel still drops down from the same spot on the bar it always did: the
+// bar hands this controller a zero-width anchor where the square used to sit
+// (`DaylightBarController.clipboardHistoryAnchor`). Zero width matters - an
+// anchor with real bounds would make `HelmBarPanel`'s outside-click monitor
+// let clicks on whatever it covered through without closing the panel.
 //
 // **The chrome is `HelmBarPanel`**, which is what the report asks for and what
 // Recents and the bell already are - so this is that file's third consumer
@@ -29,24 +38,14 @@
 
 import AppKit
 
-// MARK: - The bar button
-
-final class ClipboardHistoryButton: DaylightBarIconButton {
-    init() {
-        super.init(symbol: "doc.on.clipboard",
-                   tooltip: "Clipboard History (\u{21E7}\u{2318}V)",
-                   accessibilityLabel: "Clipboard History")
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-}
-
 // MARK: - The controller
 
-/// Owns the button, the panel and the panel's content - the same shape
-/// `RecentDestinationsController` has, for the same reason.
+/// Owns the panel and the panel's content - the same shape
+/// `RecentDestinationsController` has, for the same reason, minus the button.
 final class ClipboardHistoryController: NSObject {
-    let button = ClipboardHistoryButton()
+    /// The view the panel drops down from. Set by the bar once it has built
+    /// its own views; see this file's header for why it is zero-width.
+    weak var anchor: NSView?
 
     private let panel: HelmBarPanel
     private let content: ClipboardHistoryPanelViewController
@@ -70,8 +69,6 @@ final class ClipboardHistoryController: NSObject {
         content = ClipboardHistoryPanelViewController(store: store)
         panel = HelmBarPanel(content: content)
         super.init()
-        button.target = self
-        button.action = #selector(buttonClicked)
         content.onSizeChanged = { [weak self] size in self?.panel.setContentSize(size) }
         content.onRequestClose = { [weak self] in self?.panel.close() }
         content.onPaste = { [weak self] entry in
@@ -139,7 +136,7 @@ final class ClipboardHistoryController: NSObject {
         }
     }
 
-    /// The ⌘⇧V verb, and the button's own click.
+    /// The ⌘⇧V verb.
     ///
     /// GL-09: the history is a disclosure of everything the captain has
     /// copied, and this panel is `.floating` - so it is gated exactly like the
@@ -153,13 +150,16 @@ final class ClipboardHistoryController: NSObject {
         if panel.isShown {
             panel.close()
         } else {
+            guard let anchor else {
+                AppLog.ui.error("clipboard history has no anchor - the bar never installed one")
+                NSSound.beep()
+                return
+            }
             content.reload()
-            panel.show(under: button)
+            panel.show(under: anchor)
             content.focusFilter()
         }
     }
-
-    @objc private func buttonClicked() { toggle() }
 
     #if FM_SELFTESTS
     var debugPanel: HelmBarPanel { panel }

@@ -398,3 +398,39 @@ the captain's.
   a GLOBAL keyDown monitor" plus two more. Every predicate case stays green
   through it, which is the whole reason those structural checks exist - the
   same gap `DictationHotkeySelfTest`'s own tests 10-12 closed for Dictation.
+
+## Clipboard History comes off the top bar
+
+The captain asked for the clipboard square removed from the bar's shortcuts.
+
+### What it was
+
+The square was never a quick-access shortcut.
+It was a fixed bar control sitting between Recents and the history group's separator, built by `DaylightBarController` itself.
+`QuickAccessConfiguration` has no clipboard entry and `RailDestination` has no clipboard case, so no saved layout on any machine ever pinned it.
+
+### What changed
+
+- The square and `ClipboardHistoryButton` are gone.
+  Recents now sits one plain `s2` gap from the history separator, the same gap the separator keeps from the first shortcut.
+- The feature stays.
+  `ClipboardHistoryController` still owns the panel and the one `ClipboardHistoryStore`, and the Edit menu's "Clipboard History…" item on ⇧⌘V is now the only way in.
+- The panel still drops down from the spot it always did.
+  The bar hands the controller `clipboardHistoryAnchor`, a zero-width view on Recents' trailing edge.
+  It is zero-width on purpose: `HelmBarPanel`'s outside-click monitor lets clicks inside the anchor's bounds through, so anchoring on Recents itself would leave the clipboard panel open under a click that opens Recents' panel on top of it.
+  Its zero width comes from pinning both of its edges to Recents' trailing edge, not from a `width == 0`.
+  The first version used the constant, and `DaylightModuleSelfTest.checkBarDoesNotCapWindow` failed it: that sweep refuses any bar width constraint at or above priority 500 (gotcha (13)).
+
+### Saved layouts
+
+Nothing needed migrating, because nothing could have stored it.
+`QuickAccessConfiguration`'s decoder already drops an unknown raw value and keeps the rest in order (GL-01), so a hand-edited preference naming `clipboardHistory` loads cleanly too.
+`NavigationCoherenceSelfTest.checkClipboardHistoryIsNotAShortcut` pins that down with a mixed saved row.
+
+### Verified
+
+- `FM_RUN_BAR_NAV_MODERNIZATION_TESTS`: `test_clipboardHistoryIsOffTheBar` checks that no bar view carries a clipboard label or tooltip, the separator gaps, the anchor's geometry, and that ⌘⇧V's verb opens and closes the real panel under the anchor in an off-screen window.
+- `FM_RUN_NAVIGATION_COHERENCE_TESTS`: the default row, the saved-layout decode and re-encode, and the Edit menu item on ⇧⌘V.
+- Injections, each failing its case by name: an 8pt anchor, a 42pt hole left before the separator, the anchor never installed, a "Clipboard History" button added back to the bar, a decoder that resets the whole row on an unknown entry, and the Edit menu item renamed.
+- Not verified: a real screenshot of the bar.
+  `screencapture` does not work from the agent shell, so the bar's look is asserted through laid-out frames rather than pixels.

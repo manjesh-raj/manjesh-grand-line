@@ -345,9 +345,8 @@ enum DaylightBarIconTileSelfTest {
     /// too - the ring exists to separate a red disc from what is under it, so
     /// a ring left painting the old chrome surface reads as a hairline around
     /// the badge.
-    /// UI-34: Recents, the clipboard history, the theme toggle and the bell
-    /// are app chrome, so they are the same monochrome square as a resting
-    /// shortcut - never a tile. The bell's attention is its badge's job, and
+    /// UI-34: Recents, the theme toggle and the bell are app chrome, so they
+    /// are the same monochrome square as a resting shortcut - never a tile. The bell's attention is its badge's job, and
     /// the badge's ring follows the square it sits on.
     private static func checkTheBarsOwnControlsAreTiled() -> String? {
         for id in ["daylight", "dusk", "ayu-dark", "catppuccin-latte"] {
@@ -359,10 +358,10 @@ enum DaylightBarIconTileSelfTest {
                 ? HelmTheme.nsColor(theme.daylightTokens.inset)
                 : HelmTheme.nsColor(theme.chromeBackgroundHex)
             let owned = bar.debugIconSquares().filter {
-                $0 is RecentDestinationsButton || $0 is DaylightThemeToggleButton || $0 is ClipboardHistoryButton
+                $0 is RecentDestinationsButton || $0 is DaylightThemeToggleButton
             }
-            guard owned.count == 3 else {
-                return "\(theme.id): found \(owned.count) bar-owned squares, expected Recents, Clipboard and the theme toggle"
+            guard owned.count == 2 else {
+                return "\(theme.id): found \(owned.count) bar-owned squares, expected Recents and the theme toggle"
             }
             for button in owned {
                 let name = button.accessibilityLabel() ?? "icon"
