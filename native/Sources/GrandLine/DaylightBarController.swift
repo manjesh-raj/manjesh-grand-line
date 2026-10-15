@@ -330,16 +330,19 @@ final class DaylightBarController: NSViewController {
     /// is - see `RecentDestinationsPopover.swift`'s own header for the
     /// forward-don't-own wiring.
     let recentDestinations = RecentDestinationsController()
-    /// F3: the ⌘⇧V clipboard history, sitting immediately after Recents.
-    ///
-    /// Placed by this bar's own stated convention for a control that is *not*
-    /// a destination shortcut (the theme toggle, Recents): a fixed-size icon
-    /// square with a plain required gap on both sides, which needs no
-    /// window-cap protection of its own (gotcha 13) because its width is
-    /// `DaylightBarIconButton.side` and never moves. It belongs beside Recents
-    /// rather than in the quick-access row because it opens a panel rather
-    /// than navigating anywhere.
+    /// F3: the ⌘⇧V clipboard history. It no longer has a square on this bar -
+    /// the captain asked for it off - so it is reached only from the Edit
+    /// menu's "Clipboard History…" item and its chord. The bar still owns the
+    /// controller (and so the one `ClipboardHistoryStore`, GL-23) and still
+    /// decides where its panel drops down from: `clipboardHistoryAnchor`.
     let clipboardHistory = ClipboardHistoryController()
+    /// Where the clipboard panel drops down from: a zero-width view on
+    /// Recents' trailing edge, so the panel lands where it did when it had a
+    /// square of its own beside Recents. Zero width, not Recents itself:
+    /// `HelmBarPanel`'s outside-click monitor lets clicks inside the anchor's
+    /// bounds through, so anchoring on Recents would leave the clipboard
+    /// panel open under a click that opens Recents' panel on top of it.
+    private let clipboardHistoryAnchor = NSView()
     /// Forwarded, never owned - the bar has no idea what a destination *is*,
     /// exactly as it has no idea what a space means (`onSelectSpace`).
     var onSelectDestination: ((RailDestination) -> Void)?
@@ -518,7 +521,9 @@ final class DaylightBarController: NSViewController {
         bar.addSubview(focusChipHost)
         bar.addSubview(searchPill)
         bar.addSubview(recentDestinations.button)
-        bar.addSubview(clipboardHistory.button)
+        clipboardHistoryAnchor.translatesAutoresizingMaskIntoConstraints = false
+        bar.addSubview(clipboardHistoryAnchor)
+        clipboardHistory.anchor = clipboardHistoryAnchor
         bar.addSubview(historySeparator)
         bar.addSubview(controlsSeparator)
         bar.addSubview(quickAccessRow)
@@ -590,16 +595,18 @@ final class DaylightBarController: NSViewController {
             searchPill.trailingAnchor.constraint(equalTo: recentDestinations.button.leadingAnchor, constant: -HelmMetrics.s2),
             searchPill.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
 
-            recentDestinations.button.trailingAnchor.constraint(equalTo: clipboardHistory.button.leadingAnchor, constant: -HelmMetrics.s2),
+            recentDestinations.button.trailingAnchor.constraint(equalTo: historySeparator.leadingAnchor, constant: -HelmMetrics.s2),
             recentDestinations.button.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
 
-            // UI-38: the clipboard-history button had no size constraint at
-            // all, so it resolved to its intrinsic (empty) size and never
-            // rendered. The same 34pt square as Recents.
-            clipboardHistory.button.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-            clipboardHistory.button.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-            clipboardHistory.button.trailingAnchor.constraint(equalTo: historySeparator.leadingAnchor, constant: -HelmMetrics.s2),
-            clipboardHistory.button.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            // The clipboard panel's anchor: no width, Recents' own height, on
+            // Recents' trailing edge. See `clipboardHistoryAnchor`. Both edges
+            // pin to that one edge rather than a `width == 0`, so the bar
+            // gains no width constraint at all (gotcha (13), which
+            // `DaylightModuleSelfTest.checkBarDoesNotCapWindow` sweeps for).
+            clipboardHistoryAnchor.leadingAnchor.constraint(equalTo: recentDestinations.button.trailingAnchor),
+            clipboardHistoryAnchor.trailingAnchor.constraint(equalTo: recentDestinations.button.trailingAnchor),
+            clipboardHistoryAnchor.topAnchor.constraint(equalTo: recentDestinations.button.topAnchor),
+            clipboardHistoryAnchor.bottomAnchor.constraint(equalTo: recentDestinations.button.bottomAnchor),
             // UI-34: three groups - history | the shortcuts | theme, bell,
             // avatar - with a 1px separator between each.
             historySeparator.trailingAnchor.constraint(equalTo: quickAccessRow.leadingAnchor, constant: -HelmMetrics.s2),
@@ -989,7 +996,6 @@ final class DaylightBarController: NSViewController {
         chain += pills.map { $0.container }
         chain.append(searchPill)
         chain.append(recentDestinations.button)
-        chain.append(clipboardHistory.button)
         chain += quickAccessRowButtons
         chain.append(quickAccessOverflowButton)
         chain.append(themeToggleButton)
@@ -1002,9 +1008,7 @@ final class DaylightBarController: NSViewController {
     /// is deliberately not here - it is a `NotificationBellButton`, which owns
     /// its own badge geometry and its own `applyTheme`.
     private var iconSquares: [DaylightBarIconButton] {
-        // UI-38: the clipboard-history square joins the list now that it
-        // renders - it was missing here too, so it was never themed.
-        [recentDestinations.button, clipboardHistory.button] + quickAccessRowButtons
+        [recentDestinations.button] + quickAccessRowButtons
             + [quickAccessOverflowButton, themeToggleButton]
     }
 
@@ -1515,6 +1519,8 @@ final class DaylightBarController: NSViewController {
     func debugIconSquares() -> [DaylightBarIconButton] { iconSquares }
     /// UI-34's two group separators, and UI-35's avatar radius.
     func debugGroupSeparators() -> [NSView] { [historySeparator, controlsSeparator] }
+    /// Where the ⌘⇧V panel drops down from now the clipboard square is gone.
+    var debugClipboardHistoryAnchor: NSView { clipboardHistoryAnchor }
     var debugAvatarRadius: CGFloat { avatar.layer?.cornerRadius ?? -1 }
 
     /// B5: the bar's three dropdown panels, by name. The avatar's is built in
@@ -2009,9 +2015,8 @@ class DaylightBarIconButton: NSButton {
     /// The hue this button's tile is washed in, or `nil` for a control that
     /// carries no identity at all - which, since
     /// `fm/grandline-topbar-icon-tiles-round2`, is the overflow button while
-    /// it is drawing its generic ellipsis and the clipboard-history button,
-    /// and nothing else. Those keep the plain chrome square; see
-    /// `restyleAsPlainSquare`.
+    /// it is drawing its generic ellipsis, and nothing else. It keeps the
+    /// plain chrome square; see `restyleAsPlainSquare`.
     ///
     /// Recents and the theme toggle are **not** in that set any more: they
     /// are not destinations, but they are not identity-less either, and both

@@ -46,6 +46,7 @@ enum NavigationCoherenceSelfTest {
         ok = checkTheMapIsActuallyReachable() && ok
         ok = checkQuickAccessCapAndOrder() && ok
         ok = checkQuickAccessRoundTrips() && ok
+        ok = checkClipboardHistoryIsNotAShortcut() && ok
         ok = checkContextualNewRouting() && ok
         ok = checkMenuBarShape() && ok
         ok = checkTheAppMenuSaysTheDisplayName() && ok
@@ -469,6 +470,70 @@ enum NavigationCoherenceSelfTest {
     }
 
     // MARK: UX4
+
+    /// The captain asked for Clipboard History off the bar's shortcuts. Its
+    /// square was a fixed bar control rather than a pinnable destination, so
+    /// the removal is in `DaylightBarController` and its window-backed half
+    /// is `BarNavigationModernizationSelfTest.test_clipboardHistoryIsOffTheBar`.
+    /// This is the half that needs no window:
+    ///
+    ///   - the default row has no clipboard entry, and no destination exists
+    ///     that would let Settings pin one back;
+    ///   - a saved layout that names a clipboard entry (from a hand-edited
+    ///     preference, or a build that had one) loads with that entry dropped
+    ///     and every other shortcut kept, in its saved order - and re-saves
+    ///     without it, so it does not come back on a downgrade-upgrade cycle;
+    ///   - the feature is still reachable: the Edit menu's "Clipboard
+    ///     History…" item is still there on ⇧⌘V, because once the square is
+    ///     gone that item is the only way in.
+    private static func checkClipboardHistoryIsNotAShortcut() -> Bool {
+        var ok = true
+        func isClipboard(_ raw: String) -> Bool { raw.localizedCaseInsensitiveContains("clipboard") }
+
+        check(!QuickAccessConfiguration.defaultPinned.map(\.rawValue).contains(where: isClipboard),
+              "the default shortcut row pins a clipboard entry: "
+              + "\(QuickAccessConfiguration.defaultPinned.map(\.rawValue))", &ok)
+        check(!RailDestination.allCases.map(\.rawValue).contains(where: isClipboard),
+              "a clipboard destination exists, so Settings could pin it back onto the bar", &ok)
+        check(!QuickAccessConfiguration().pinned.map(\.rawValue).contains(where: isClipboard),
+              "a fresh install's shortcut row carries a clipboard entry", &ok)
+
+        // A saved row with clipboard entries mixed into real shortcuts, in a
+        // non-default order so a fall-back to the defaults cannot pass.
+        let saved = #"{"pinned":["hosts","clipboardHistory","stickyBoard","clipboard","console","shift"]}"#
+        let expected: [RailDestination] = [.hosts, .stickyBoard, .console, .shift]
+        check(expected != Array(QuickAccessConfiguration.defaultPinned.prefix(expected.count)),
+              "the saved-layout fixture matches the default row's prefix - a reset would pass vacuously", &ok)
+        guard let migrated = try? JSONDecoder().decode(QuickAccessConfiguration.self,
+                                                       from: Data(saved.utf8)) else {
+            fail("a saved shortcut row naming Clipboard History failed to decode at all (GL-01) - "
+                 + "the captain's whole layout would reset to the defaults", &ok)
+            return ok
+        }
+        check(migrated.pinned == expected,
+              "a saved row naming Clipboard History loaded as \(migrated.pinned.map(\.rawValue)), "
+              + "expected \(expected.map(\.rawValue)) - the rest of the layout or its order was lost", &ok)
+        if let data = try? JSONEncoder().encode(migrated),
+           let text = String(data: data, encoding: .utf8) {
+            check(!isClipboard(text), "the migrated row re-saves a clipboard entry: \(text)", &ok)
+        } else {
+            fail("the migrated shortcut row does not re-encode", &ok)
+        }
+
+        guard let menu = buildRealMenuBar() else {
+            fail("could not build the app's menu bar - the Clipboard History reachability check is vacuous", &ok)
+            return ok
+        }
+        let item = allBindings(menu).first { $0.title == "Clipboard History\u{2026}" }
+        check(item != nil,
+              "the Edit menu has no \"Clipboard History…\" item - with the bar square gone the feature is unreachable",
+              &ok)
+        if let item {
+            let wanted = KeyboardShortcutCatalog.keycaps(keyEquivalent: "v", modifiers: [.command, .shift]).joined()
+            check(item.chord == wanted, "Clipboard History is on \(item.chord), expected \(wanted)", &ok)
+        }
+        return ok
+    }
 
     private static func checkContextualNewRouting() -> Bool {
         var ok = true

@@ -68,8 +68,10 @@ enum BarNavigationModernizationSelfTest {
             ("B2/UI-34 a shortcut firms on hover and lights in its own hue while active",
              test_b2ShortcutHoverAndActiveState),
             ("B2 the bell's badge sits on the glyph, inside the tile", test_b2BellBadgeSitsOnTheGlyph),
-            ("UI-34/35/36/38 the bar's groups, one radius, a pressed state, the clipboard square",
+            ("UI-34/35/36 the bar's groups, one radius, a pressed state",
              test_revampBarStructure),
+            ("the clipboard history is off the bar, and ⌘⇧V still opens it under Recents",
+             test_clipboardHistoryIsOffTheBar),
             ("B3 the window's initial focus is the page, not the bar", test_b3InitialFirstResponderIsThePage),
             ("B3 a ring is painted only for focus the captain moved", test_b3FocusRingOnlyForKeyboardFocus),
             ("B4 a navigation animates, and repeating it does not", test_b4TransitionSkippedWhenAlreadyShowing),
@@ -358,6 +360,102 @@ enum BarNavigationModernizationSelfTest {
         guard (bell.accessibilityLabel() ?? "").contains("42") else {
             return "the accessibility label no longer carries the exact count: \(bell.accessibilityLabel() ?? "nil")"
         }
+        return nil
+    }
+
+    /// The captain asked for the clipboard square off the top bar. Three
+    /// things have to hold together, and each fails on its own:
+    ///
+    ///   - nothing on the bar is the clipboard history any more - no square,
+    ///     no focusable control, nothing carrying its symbol or label;
+    ///   - the history group's separator closed up behind it, so Recents sits
+    ///     one plain gap from the separator, the same gap the separator keeps
+    ///     from the first shortcut (a removal that left the old constraint
+    ///     shape would leave a 42pt hole there instead);
+    ///   - the feature is still reachable: ⌘⇧V's verb opens the real panel,
+    ///     dropped down from Recents' trailing edge where the square used to
+    ///     end, and the anchor has no width so it cannot swallow a click.
+    private static func test_clipboardHistoryIsOffTheBar() -> String? {
+        let bar = makeLaidOutBar()
+        // Off-screen, the same fixture `test_b5PanelAnchorsAndDismisses`
+        // uses, so the panel opens nowhere near the captain's display.
+        let window = OffScreenProbe.window(width: 1512, height: 120)
+        window.setFrame(NSRect(x: -20_000, y: 0, width: 1512, height: 120), display: false)
+        window.contentView = bar.view
+        bar.view.layoutSubtreeIfNeeded()
+
+        func everyView(_ root: NSView) -> [NSView] { [root] + root.subviews.flatMap(everyView) }
+        let clipboardish = everyView(bar.view).filter { view in
+            let label = view.accessibilityLabel() ?? ""
+            let tooltip = view.toolTip ?? ""
+            return label.localizedCaseInsensitiveContains("clipboard")
+                || tooltip.localizedCaseInsensitiveContains("clipboard")
+        }
+        // Discriminating power: the same walk does find Recents by its label,
+        // so an empty result above means "no clipboard control", not "this
+        // walk reads no labels at all".
+        guard everyView(bar.view).contains(where: { $0.accessibilityLabel() == "Recently Visited" }) else {
+            return "the view walk found no Recents control by label - the clipboard check below would be vacuous"
+        }
+        guard clipboardish.isEmpty else {
+            return "the bar still carries a clipboard control: "
+                + clipboardish.map { "\(type(of: $0)) '\($0.accessibilityLabel() ?? $0.toolTip ?? "")'" }
+                    .joined(separator: ", ")
+        }
+        guard !bar.keyViewChain.contains(where: { clipboardish.contains($0) }) else {
+            return "the keyboard loop still reaches a clipboard control"
+        }
+
+        guard let recents = bar.debugIconSquares().first(where: { $0 is RecentDestinationsButton }),
+              let firstShortcut = bar.debugDestinationButtons().first else {
+            return "the bar's Recents square or first shortcut is missing"
+        }
+        guard bar.debugIconSquares().first === recents else {
+            return "Recents is no longer the first square in the bar's visual order"
+        }
+        let separator = bar.debugGroupSeparators()[0]
+        func frame(_ v: NSView) -> NSRect { v.convert(v.bounds, to: bar.view) }
+        let before = frame(separator).minX - frame(recents).maxX
+        let after = frame(firstShortcut).minX - frame(separator).maxX
+        let tolerance = 1.0 / window.backingScaleFactor
+        guard abs(before - HelmMetrics.s2) <= tolerance, abs(after - HelmMetrics.s2) <= tolerance else {
+            return "the history separator sits \(before)pt after Recents and \(after)pt before the first "
+                + "shortcut, expected \(HelmMetrics.s2) on both sides"
+        }
+
+        let anchor = bar.debugClipboardHistoryAnchor
+        guard anchor.window === window, frame(anchor).width == 0 else {
+            return "the clipboard panel's anchor is \(frame(anchor)) in \(String(describing: anchor.window)) - it must "
+                + "be a zero-width view in the bar's window"
+        }
+        guard abs(frame(anchor).maxX - frame(recents).maxX) < 0.5,
+              abs(frame(anchor).minY - frame(recents).minY) < 0.5 else {
+            return "the clipboard anchor \(frame(anchor)) is not on Recents' trailing edge \(frame(recents))"
+        }
+
+        // The gate starts locked (the app does), and a locked gate makes ⌘⇧V
+        // beep rather than open - so unlock for the check and put it back.
+        let wasLocked = AppLockGate.shared.isLocked
+        AppLockGate.shared.setLocked(false)
+        defer { AppLockGate.shared.setLocked(wasLocked) }
+        let clipboard = bar.clipboardHistory
+        let panel = clipboard.debugPanel
+        defer { panel.close() }
+        guard !panel.isShown else { return "the clipboard panel is showing before ⌘⇧V opened it" }
+        // The verb the Edit menu's ⌘⇧V item reaches through
+        // `AppShellController.toggleClipboardHistory`.
+        clipboard.toggle()
+        guard panel.isShown else { return "⌘⇧V's toggle did not open the clipboard panel" }
+        guard panel.debugAnchor === anchor else {
+            return "the clipboard panel anchored on \(String(describing: panel.debugAnchor)), not the bar's anchor"
+        }
+        let anchorOnScreen = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+        let panelFrame = panel.debugPanelWindow.frame
+        guard panelFrame.maxY <= anchorOnScreen.minY + 0.5, abs(panelFrame.maxX - anchorOnScreen.maxX) < 0.5 else {
+            return "the clipboard panel at \(panelFrame) is not under Recents' trailing edge \(anchorOnScreen)"
+        }
+        clipboard.toggle()
+        guard !panel.isShown else { return "a second ⌘⇧V did not close the clipboard panel" }
         return nil
     }
 
@@ -701,21 +799,15 @@ enum BarNavigationModernizationSelfTest {
 
     /// The UI/UX revamp's bar, structurally:
     ///
-    ///   - UI-38: the clipboard-history square renders at 34pt (it had no
-    ///     size constraint and resolved to nothing);
     ///   - UI-34: two 1px separators split history | shortcuts | controls,
     ///     in that order along the bar;
     ///   - UI-35: one radius (10) on every square, the avatar and the bell;
     ///   - UI-36: a pressed square compresses, and releases.
+    ///
+    /// UI-38 (the clipboard square's size) is gone with the square itself -
+    /// see `test_clipboardHistoryIsOffTheBar`.
     private static func test_revampBarStructure() -> String? {
         let bar = makeLaidOutBar()
-        guard let clip = bar.debugIconSquares().first(where: { $0 is ClipboardHistoryButton }) else {
-            return "the clipboard-history square is not among the bar's squares"
-        }
-        guard abs(clip.frame.width - DaylightBarIconButton.side) < 0.5,
-              abs(clip.frame.height - DaylightBarIconButton.side) < 0.5 else {
-            return "UI-38: the clipboard square measures \(clip.frame.size), expected a \(DaylightBarIconButton.side)pt square"
-        }
         let separators = bar.debugGroupSeparators()
         guard separators.count == 2, separators.allSatisfy({ $0.frame.height > 0 && $0.frame.width > 0 }) else {
             return "UI-34: expected two laid-out separators, got \(separators.map(\.frame))"
