@@ -1102,6 +1102,9 @@ final class DaylightBarController: NSViewController {
         // it has zero width of its own, and with no overflow button there is
         // nothing on the other side of the gap.
         rowToOverflowGap.constant = (quickAccessCollapsed || !showsOverflow) ? 0 : -HelmMetrics.s2
+        // What the overflow control stands for just changed, and so may
+        // whether it holds the open page.
+        applyActiveDestination()
     }
 
     /// Collapse the shortcut row into `quickAccessOverflowButton`, or put it
@@ -1187,16 +1190,59 @@ final class DaylightBarController: NSViewController {
     ///
     /// Forwarded from `AppShellController` on every navigation - the bar is
     /// told which destination is showing, exactly as it is told which space is
-    /// selected (`setSelectedSpace`), and owns neither piece of state itself.
-    /// `nil` clears every one, which is what a host page (not a
-    /// `RailDestination` at all) and any destination with no shortcut get.
+    /// selected (`setSelectedSpace`). `nil` clears every one, which is what a
+    /// host page (not a `RailDestination` at all) and any destination with no
+    /// shortcut get.
+    ///
+    /// The destination is **kept**, not just pushed through, because the row
+    /// can change under it: a pin or unpin rebuilds every shortcut as a new
+    /// view, and a resize across `quickAccessCollapseWidth` moves the whole
+    /// row into the overflow control. Both used to come back with nothing lit
+    /// until the next navigation; both now re-apply it
+    /// (`applyActiveDestination`).
     func setActiveDestination(_ destination: RailDestination?) {
+        activeDestination = destination
+        applyActiveDestination()
+    }
+
+    /// The destination the bar was last told is showing.
+    private(set) var activeDestination: RailDestination?
+
+    /// The one rule every square follows: **lit while its page is open**.
+    ///
+    /// A shortcut on the row is lit when it is that destination. The overflow
+    /// control is lit when the open page is one of the destinations it stands
+    /// for - which is how Hosts lights at all, because it is the seventh of
+    /// the seven default pins against UX2's cap of six and so is drawn *by
+    /// the overflow control*, never as a `DaylightDestinationButton`. That is
+    /// the captain's "Hosts never shows its colour" report: the old loop only
+    /// asked `DaylightDestinationButton`s. The same rule lights the ellipsis
+    /// while a collapsed row holds the open page. Recents and the theme
+    /// toggle are actions, not places, so they are never lit.
+    private func applyActiveDestination() {
         guard isViewLoaded else { return }
+        let destination = activeDestination
         for button in iconSquares {
-            let isActive = (button as? DaylightDestinationButton)?.destination == destination
-            button.setActiveDestination(destination != nil && isActive)
+            let isActive: Bool
+            if let destination, let shortcut = button as? DaylightDestinationButton {
+                // A collapsed row's shortcuts are hidden, and the overflow
+                // menu below stands for them - one lit square, not two.
+                isActive = !quickAccessCollapsed && shortcut.destination == destination
+            } else if let destination, button === quickAccessOverflowButton {
+                isActive = !quickAccessOverflowButton.isHidden && overflowDestinations.contains(destination)
+            } else {
+                isActive = false
+            }
+            button.setActiveDestination(isActive)
         }
     }
+
+    #if FM_SELFTESTS
+    /// The square that is lit right now, for a suite asserting "exactly one".
+    func debugActiveSquares() -> [DaylightBarIconButton] {
+        iconSquares.filter { $0.isActiveDestination }
+    }
+    #endif
 
     private func buildAvatar() {
         avatar.title = ""
@@ -1844,6 +1890,21 @@ class DaylightBarIconButton: NSButton {
     /// `DaylightBarIconTileSelfTest.checkEveryPaletteTilesLegibly`.
     static let hoverTileWashSteps: [CGFloat] = [0.26, 0.22, 0.18, 0.14, 0.11, 0.08]
     static let activeTileWashSteps: [CGFloat] = [0.38, 0.32, 0.26, 0.20, 0.16, 0.12]
+    /// The pressed ladder, one step deeper than the active one, so a press
+    /// reads on a square whose page is already open as well as on one at
+    /// rest. Same shape and the same contrast correction as the other three.
+    static let pressedTileWashSteps: [CGFloat] = [0.50, 0.42, 0.34, 0.26, 0.20, 0.14]
+
+    /// The tile ring's alpha in the two coloured states. A pressed ring is
+    /// the firmest thing on the row, so the press still reads on a hue whose
+    /// two ladders land on the same faint wash.
+    static let activeTileBorderAlpha: CGFloat = 0.75
+    static let pressedTileBorderAlpha: CGFloat = 1.0
+
+    /// What VoiceOver hears on the square whose page is open. A button has no
+    /// selected state of its own to announce, and the space pills already
+    /// carry their state as a value, so this is the same shape.
+    static let activeAccessibilityValue = "current page"
 
     /// The resting tile's ring alpha, over the tile's own hue.
     ///
@@ -2032,6 +2093,9 @@ class DaylightBarIconButton: NSButton {
     private var isHovering = false
     /// Set by the bar when this button's own destination is the one showing.
     private(set) var isActiveDestination = false
+    /// True while a press is held on this square - a real mouse-down until
+    /// its mouse-up, or AppKit's own `performClick`. See `setPressed`.
+    private(set) var isPressed = false
     private var theme: HelmTheme = ThemeManager.shared.theme
 
     init(symbol: String, tooltip: String, accessibilityLabel: String, hue: HelmDomainHue? = nil,
@@ -2157,6 +2221,7 @@ class DaylightBarIconButton: NSButton {
     func setActiveDestination(_ active: Bool) {
         guard active != isActiveDestination else { return }
         isActiveDestination = active
+        setAccessibilityValue(active ? Self.activeAccessibilityValue : nil)
         restyle()
     }
 
@@ -2174,21 +2239,68 @@ class DaylightBarIconButton: NSButton {
     /// only the active destination's tile takes its hue - the active ladder,
     /// through the same contrast-corrected `tintedSurface` recipe. The set and
     /// the order the captain configured are untouched.
+    ///
+    /// **A press is the one other coloured state**, and it is one rule for
+    /// every square rather than one per control: while it is held the square
+    /// takes its tile at the pressed ladder, deeper than the active one, so
+    /// a press reads on a page that is already open too. A square with no
+    /// identity of its own - the overflow control while it opens a menu -
+    /// presses, and lights, in `chromeTileHue`, the hue the bar's own
+    /// controls already carry.
     private func restyle() {
-        guard let hue, isActiveDestination else {
+        if isPressed {
+            restyleAsTile(hue: hue ?? Self.chromeTileHue, pressed: true)
+        } else if isActiveDestination {
+            restyleAsTile(hue: hue ?? Self.chromeTileHue, pressed: false)
+        } else {
             restyleAsPlainSquare()
-            return
         }
-        restyleAsTile(hue: hue)
     }
 
     // MARK: Pressed (UI-36)
 
-    /// A pressed square compresses to `HelmButton.pressScale`, the same 2%
-    /// every pressable surface in this app takes, about its own centre.
+    /// The press, from a real pointer.
+    ///
+    /// `highlight(_:)` alone is not enough. A stock `NSButton` takes a real
+    /// press through a gesture recognizer inside `NSWindow.sendEvent` and
+    /// highlights its *cell*, never calling `highlight(_:)` on the control -
+    /// measured with real events posted through the app, where a square that
+    /// only listened there showed nothing under a real click.
+    ///
+    /// This is `HelmButton`'s shape - set the state, let `super` run AppKit's
+    /// tracking loop (so drag-out-to-cancel and the action dispatch are
+    /// untouched), and clear it once the loop returns on the mouse-up. Note
+    /// that overriding `mouseDown` is itself what makes `super` run that loop:
+    /// measured, a stock button's own `mouseDown(with:)` returns at once
+    /// without tracking, and with this override it consumes the mouse-up and
+    /// sends the action. `AppKitAuditSelfTest.test_hoverNeverActivatesAControl`
+    /// still holds with it in place.
+    override func mouseDown(with event: NSEvent) {
+        setPressed(true)
+        super.mouseDown(with: event)
+        setPressed(false)
+    }
+
+    /// The press, from `performClick` - which is the path the keyboard's
+    /// Space takes on a focused square, and the one this override existed for
+    /// first.
     override func highlight(_ flag: Bool) {
         super.highlight(flag)
-        let scale = flag ? HelmButton.pressScale : 1
+        setPressed(flag)
+    }
+
+    /// One place for both entry points above. A pressed square takes its
+    /// pressed tile (`restyle`) and compresses to `HelmButton.pressScale`,
+    /// the same 2% every pressable surface in this app takes, about its own
+    /// centre.
+    private func setPressed(_ pressed: Bool) {
+        guard pressed != isPressed else { return }
+        isPressed = pressed
+        restyle()
+        #if FM_SELFTESTS
+        Self.debugOnPressChange?(self, pressed)
+        #endif
+        let scale = pressed ? HelmButton.pressScale : 1
         for view in [iconBackground, iconImageView] {
             view.wantsLayer = true
             guard let layer = view.layer else { continue }
@@ -2255,20 +2367,13 @@ class DaylightBarIconButton: NSButton {
     /// background *appearing*; a tile that is already there deepening by one
     /// step is the ordinary hover response every other tinted surface in this
     /// app gives.
-    private func restyleAsTile(hue: HelmDomainHue) {
+    ///
+    /// Since UI-34 this draws only the two coloured states - the active page
+    /// and a held press. Resting and hover are `restyleAsPlainSquare`.
+    private func restyleAsTile(hue: HelmDomainHue, pressed: Bool) {
         let hex = tileTint?.hex(in: theme) ?? Self.tileHex(for: hue, in: theme)
-        let steps: [CGFloat]
-        let borderAlpha: CGFloat
-        if isActiveDestination {
-            steps = Self.activeTileWashSteps
-            borderAlpha = 0.75
-        } else if isHovering {
-            steps = Self.hoverTileWashSteps
-            borderAlpha = 0.45
-        } else {
-            steps = HelmContrast.tileWashSteps
-            borderAlpha = Self.restingTileBorderAlpha
-        }
+        let steps = pressed ? Self.pressedTileWashSteps : Self.activeTileWashSteps
+        let borderAlpha = pressed ? Self.pressedTileBorderAlpha : Self.activeTileBorderAlpha
         let resolved = HelmContrast.tintedSurface(tintHex: hex,
                                                   theme: theme,
                                                   target: HelmContrast.nonTextTarget,
@@ -2291,19 +2396,60 @@ class DaylightBarIconButton: NSButton {
         restyle()
     }
     var debugIsPressedScale: CGFloat { iconBackground.layer?.transform.m11 ?? 1 }
+    var debugBorderColor: CGColor? { iconBackground.layer?.borderColor }
+    /// Called after a square's pressed state changes and it has restyled, so
+    /// a suite posting a real click can read what the square drew *during*
+    /// AppKit's tracking loop - which no caller outside the loop can see.
+    /// It only observes; the press itself still comes from the real event.
+    static var debugOnPressChange: ((DaylightBarIconButton, Bool) -> Void)?
     #endif
 }
 
+/// The light/dark toggle.
+///
+/// It is an action, not a page, so it never takes the active tile - a
+/// coloured square on this row means "you are here", and the toggle is never
+/// somewhere. It presses like every other square (`DaylightBarIconButton`'s
+/// pressed tile, in `chromeTileHue`), and it says which appearance is on
+/// through its **glyph**: a sun while a light palette is showing, a moon
+/// while a dark one is. That keeps it inside the revamp's language - the
+/// glyph stays monochrome and muted at rest, exactly like its neighbours -
+/// while still answering "which mode am I in" at a glance, which the old
+/// half-filled circle drew identically in both. The glyph shows the mode
+/// that is *on* rather than the one a click would switch to, the convention
+/// macOS's own Control Center uses; the tooltip names the other half.
 final class DaylightThemeToggleButton: DaylightBarIconButton {
+    static let lightSymbol = "sun.max"
+    static let darkSymbol = "moon"
+
     init() {
+        let isDark = ThemeManager.shared.theme.mode == .dark
         // `chromeTileHue`: appearance is the app's own chrome, not a place.
-        super.init(symbol: "circle.lefthalf.filled",
-                   tooltip: "Toggle Light/Dark (⌘⌥T)",
+        super.init(symbol: isDark ? Self.darkSymbol : Self.lightSymbol,
+                   tooltip: Self.tooltip(isDark: isDark),
                    accessibilityLabel: "Toggle Light/Dark",
                    hue: DaylightBarIconButton.chromeTileHue)
+        setAccessibilityValue(Self.accessibilityValue(isDark: isDark))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    override func applyTheme(_ theme: HelmTheme) {
+        let isDark = theme.mode == .dark
+        applyGlyph(symbol: isDark ? Self.darkSymbol : Self.lightSymbol, hue: DaylightBarIconButton.chromeTileHue)
+        toolTip = Self.tooltip(isDark: isDark)
+        setAccessibilityValue(Self.accessibilityValue(isDark: isDark))
+        super.applyTheme(theme)
+    }
+
+    private static func tooltip(isDark: Bool) -> String {
+        isDark ? "Dark appearance - switch to Light (⌘⌥T)" : "Light appearance - switch to Dark (⌘⌥T)"
+    }
+
+    /// What VoiceOver reads after the label: "Toggle Light/Dark, Dark".
+    private static func accessibilityValue(isDark: Bool) -> String {
+        isDark ? "Dark" : "Light"
+    }
 }
 
 /// A one-click jump to a destination, sitting in the bar next to the theme

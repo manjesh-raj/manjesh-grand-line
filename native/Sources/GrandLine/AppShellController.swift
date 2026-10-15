@@ -2262,11 +2262,9 @@ final class AppShellController: NSViewController {
             bar.setSelectedSpace(homeCanvas.selectedSpace)
         }
 
-        // B2: light this destination's own quick-access shortcut, if it has
-        // one, and darken whichever was lit before. Pushed from here for the
-        // same reason `setSelectedSpace` is - the bar draws state, it does not
-        // track navigation.
-        bar.setActiveDestination(dest)
+        // B2: the bar's lit shortcut is pushed from `updateRecentDestinations`
+        // a few lines up, the one call every navigation route makes - not
+        // from here, which the SRE Lead reply-jump bypasses.
 
         // B4: the page arrives rather than teleporting. Nothing above this
         // line knows or cares that it animates; see `animateDestinationEntrance`.
@@ -3327,10 +3325,6 @@ final class AppShellController: NSViewController {
         let wasAlreadyShowing = currentDestinationKind == .host(id: hostID, label: label)
         hideAllDestinations()
         setDestinationVisible(controller.view, true)
-        // B2: a host page is not a `RailDestination` at all, so no quick-access
-        // shortcut corresponds to it - clear whichever was lit rather than
-        // leaving the last visited destination's icon asserting it is current.
-        bar.setActiveDestination(nil)
         // B4: a host page is a drill-in like any other.
         animateDestinationEntrance(controller.view, direction: .drillIn, skip: wasAlreadyShowing)
         // `fm/grandline-recents-navigation`: a saved host's own page is one of
@@ -3458,6 +3452,17 @@ final class AppShellController: NSViewController {
     private func updateRecentDestinations(arriving kind: RecentDestinationKind) {
         recentDestinations.recordNavigation(leaving: currentDestinationKind, arriving: kind)
         currentDestinationKind = kind
+        // B2: light the bar square for this page, and darken whichever was lit
+        // before. Here rather than at each route because this is the one call
+        // they all make - the SRE Lead reply-jump used to bypass the push and
+        // left the previous page's square lit over a host page. A host page is
+        // not a `RailDestination`, so no square stands for it and it clears
+        // the bar. The bar draws state, it does not track navigation.
+        if case .rail(let dest) = kind {
+            bar.setActiveDestination(dest)
+        } else {
+            bar.setActiveDestination(nil)
+        }
         // Review #3 §7: the window title carries the current destination, so
         // Mission Control and the Window menu name a page rather than the app.
         onCurrentDestinationChanged?(kind.title)

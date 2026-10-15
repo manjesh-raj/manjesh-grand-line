@@ -67,6 +67,17 @@ enum ReviewTourLabSelfTest {
         let (_, fitBad) = ReviewTourLab.parse(tour: "demo attention lots\nmeasure\nrenderdoc")
         check(fitBad.count == 3, "a bad count and two missing names must be 3 errors, got \(fitBad)", &ok)
 
+        // The bar verbs (`fm/grandline-bar-active-state`).
+        let barTour = "bar hover hosts\nbar press theme\nbar rest\nrenderbar dusk-hosts"
+        let (barSteps, barErrors) = ReviewTourLab.parse(tour: barTour)
+        check(barErrors.isEmpty, "the bar verbs must parse clean, got \(barErrors)", &ok)
+        check(barSteps == [.barState(.hover, target: "hosts"), .barState(.press, target: "theme"),
+                           .barState(.rest, target: nil), .renderBar("dusk-hosts")],
+              "the bar verbs parsed to \(barSteps)", &ok)
+        let (_, barBad) = ReviewTourLab.parse(tour: "bar wiggle hosts\nbar hover nowhere\nbar press\nrenderbar")
+        check(barBad.count == 4, "a bad state, a bad target and two missing arguments must be 4 errors, "
+              + "got \(barBad)", &ok)
+
         // Every bad line, not just the first: a hand-written tour fixed one
         // error per run is a tool nobody keeps.
         let bad = """
