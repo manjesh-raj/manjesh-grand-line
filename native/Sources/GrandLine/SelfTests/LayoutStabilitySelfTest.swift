@@ -203,13 +203,18 @@ enum LayoutStabilitySelfTest {
                                                            _ ok: inout Bool) {
         let guardrail = shell.windowOverflowGuard
         let savedVisible = guardrail.visibleFrame
-        defer { guardrail.visibleFrame = savedVisible }
+        defer {
+            guardrail.visibleFrame = savedVisible
+            guardrail.disarmForTests()
+        }
         // An `OffScreenProbe` window is on no screen, so the guard is handed a
         // 1512pt one at the window's own parked origin.
         guardrail.visibleFrame = { NSRect(x: $0.frame.minX, y: $0.frame.minY, width: 1512, height: 945) }
+        check(!guardrail.isArmed, "guard: a shell a suite mounts does not arm the guard on its own", &ok)
 
         resize(window, to: NSSize(width: 1000, height: 620), shell: shell)
         resize(window, to: NSSize(width: 960, height: 620), shell: shell)
+        guardrail.arm(for: window)
         shell.show(.overview)
         settle(window, shell)
 

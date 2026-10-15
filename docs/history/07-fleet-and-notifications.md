@@ -1442,6 +1442,9 @@ It remembers the last window frame that fitted the screen's visible area.
 When a resize outside a live resize leaves the window wider than the screen (which a drag, zoom or tiling never does), it logs and restores that frame once, and once more on the next navigation.
 If the content still needs the width, AppKit grows the window again and the guard leaves it, so it cannot loop.
 It is inert in full screen and with no screen, which is every probe window.
+It is armed only for the app's own main window, in `main.swift` beside the theme crossfade.
+The first CI run showed why: the guard cannot tell content growth from a frame the code set on purpose, and on the runner's 1024pt display it "restored" `AppShellBodyWidthSelfTest`'s deliberate 1512pt window to 1024pt in the middle of `widthSelfHealsWhenContentViewDriftsFromTheWindow`.
+Locally the screen is 1512pt wide, so the full run there had passed.
 
 The same composer drew its "Type your answer..." placeholder about 2pt from the card's corner, on its border, which shows in the captain's screenshot too.
 It was a subview of the `NSScrollView`, which tiles its own subviews.

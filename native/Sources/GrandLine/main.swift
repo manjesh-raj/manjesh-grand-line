@@ -821,6 +821,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // which several window-backed self-tests mount and then re-theme -
         // see `ThemeTransition.swift`'s header.
         ThemeManager.shared.transitionCoordinator = ThemeTransitionCoordinator(window: window)
+        // Armed here for the same reason: a window-backed suite sets frames
+        // wider than CI's 1024pt display on purpose, and an armed guard would
+        // put them back (`WindowOverflowGuard`'s header).
+        appShell.windowOverflowGuard.arm(for: window)
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

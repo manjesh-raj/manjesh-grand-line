@@ -25,8 +25,14 @@
 // alone (a visibly wide window beats a resize loop). The next navigation gets
 // one more restore, which is the moment the offending view usually goes away.
 //
-// It is inert with no screen to judge by, which is every off-screen probe
-// window. A suite injects `visibleFrame` instead.
+// **It is armed only for the app's own main window** (`main.swift`, beside
+// the theme crossfade). It cannot tell content growth from a frame the code
+// set on purpose, and window-backed suites set frames wider than the screen
+// all the time: CI's runner has a 1024pt display, and an always-on guard
+// "restored" `AppShellBodyWidthSelfTest`'s deliberate 1512pt window to 1024pt
+// in the middle of a case (measured on this branch's first CI run). A shell a
+// suite or the tour lab mounts never arms it. It is also inert with no screen
+// to judge by. `LayoutStabilitySelfTest` arms it and injects `visibleFrame`.
 
 import AppKit
 
@@ -40,14 +46,36 @@ final class WindowOverflowGuard {
     /// The most recent frame that fitted the visible area.
     private(set) var lastFittingFrame: NSRect?
 
+    /// Off until `arm(for:)`. See the header for why it is opt-in.
+    private(set) var isArmed = false
+
+    /// Start guarding `window`, taking its current frame as the last that
+    /// fitted when it does.
+    func arm(for window: NSWindow) {
+        isArmed = true
+        if let visible = judgeableVisibleFrame(for: window), !Self.overflows(window.frame, visible: visible) {
+            lastFittingFrame = window.frame
+        }
+    }
+
     /// Restores spent since the last navigation. One per navigation, so a
     /// content constraint that still needs the width cannot start a loop.
     private var restoresSinceNavigation = 0
     private static let restoresPerNavigation = 1
 
+    #if FM_SELFTESTS
+    /// Back to the unarmed state a suite's shell starts in, so a case that
+    /// armed it does not leave it guarding the next case's deliberate frames.
+    func disarmForTests() {
+        isArmed = false
+        lastFittingFrame = nil
+        restoresSinceNavigation = 0
+    }
+    #endif
+
     /// Every `NSWindow.didResizeNotification` for the guarded window.
     func windowDidResize(_ window: NSWindow) {
-        guard let visible = judgeableVisibleFrame(for: window) else { return }
+        guard isArmed, let visible = judgeableVisibleFrame(for: window) else { return }
         guard Self.overflows(window.frame, visible: visible) else {
             lastFittingFrame = window.frame
             return
@@ -68,7 +96,7 @@ final class WindowOverflowGuard {
     /// Every navigation. Synchronous: a navigation is not inside a layout pass.
     func destinationDidChange(in window: NSWindow?) {
         restoresSinceNavigation = 0
-        guard let window, let visible = judgeableVisibleFrame(for: window),
+        guard isArmed, let window, let visible = judgeableVisibleFrame(for: window),
               Self.overflows(window.frame, visible: visible) else { return }
         guard spendRestore() else { return }
         restore(window)
@@ -86,7 +114,7 @@ final class WindowOverflowGuard {
     }
 
     private func restore(_ window: NSWindow) {
-        guard let visible = judgeableVisibleFrame(for: window),
+        guard isArmed, let visible = judgeableVisibleFrame(for: window),
               Self.overflows(window.frame, visible: visible) else { return }
         window.setFrame(Self.restoredFrame(current: window.frame, lastFitting: lastFittingFrame,
                                            visible: visible),
