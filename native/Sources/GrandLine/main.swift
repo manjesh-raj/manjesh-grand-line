@@ -3209,6 +3209,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_BAR_NAV_MODERNIZATION_TESTS"] == 
     exit(BarNavigationModernizationSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grandline-bar-active-state`: every bar square lit while its page is
+// open, by every route, and a real press drawing the pressed tile.
+// Window-backed - it posts real mouse events to a mounted shell.
+if ProcessInfo.processInfo.environment["FM_RUN_BAR_ACTIVE_STATE_TESTS"] == "1" {
+    exit(BarActiveStateSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-topbar-icon-tiles`: the same row's shortcuts as coloured
 // tiles - the per-destination hue, its legibility in all 26 palettes, the
 // three states, the controls deliberately left plain, and the guard that the

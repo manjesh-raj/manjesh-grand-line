@@ -78,7 +78,7 @@ enum DaylightBarIconTileSelfTest {
         let cases: [(String, () -> String?)] = [
             ("UI-34: every shortcut is monochrome at rest and wears its own hue when its page shows",
              checkEveryShortcutWearsItsOwnTile),
-            ("the tile is legible in all 26 palettes, in all three states", checkEveryPaletteTilesLegibly),
+            ("the tile is legible in all 26 palettes, in all four states", checkEveryPaletteTilesLegibly),
             ("hover firms the glyph, active lights the tile", checkStatesDeepenTheSameTile),
             ("the terminal shortcut wears Settings' own Terminal tint", checkTerminalShortcutMatchesSettings),
             ("UI-34: the bar's own controls are monochrome, the bell included", checkTheBarsOwnControlsAreTiled),
@@ -172,6 +172,9 @@ enum DaylightBarIconTileSelfTest {
             ("rest", HelmContrast.tileWashSteps),
             ("hover", DaylightBarIconButton.hoverTileWashSteps),
             ("active", DaylightBarIconButton.activeTileWashSteps),
+            // `fm/grandline-bar-active-state`: a held press is the fourth
+            // coloured state, and the deepest, so it is the likeliest to fail.
+            ("pressed", DaylightBarIconButton.pressedTileWashSteps),
         ]
         // Every §2.2 hue, plus every tint a destination borrows instead of its
         // hue. The overrides are not reachable from `HelmDomainHue.allCases`
