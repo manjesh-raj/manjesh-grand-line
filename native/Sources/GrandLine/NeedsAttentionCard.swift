@@ -151,8 +151,7 @@ final class NeedsAttentionCard: NSView {
     private var listFloor: NSLayoutConstraint?
     /// "+N more", while rows are clipped below the visible part of the list.
     private let morePill = NeedsAttentionMorePill()
-    private let moreFade = NSView()
-    private let moreFadeLayer = CAGradientLayer()
+    private let moreFade = NeedsAttentionFadeView()
     /// Scrolling, and the clip or the list changing size, all move the cue.
     private var cueObservers: [NSObjectProtocol] = []
     /// The width the host laid this card out at, which decides the compact
@@ -192,12 +191,22 @@ final class NeedsAttentionCard: NSView {
     /// the card's height with, so a page that has to fit wins; over anything
     /// that merely stretches.
     static let listShowsAllRows = NSLayoutConstraint.Priority(490)
-    /// Below this card width the header drops its subline, the headline wraps
-    /// to two lines, and Refresh is a glyph.
+    /// How hard the notes and the clear strip hold their own height, so a
+    /// stretched card's slack goes to the list - measured: without it the
+    /// clear strip grew to a 160pt grey block at 1512x945.
+    static let footHug = NSLayoutConstraint.Priority(495)
+    /// Below this card width the headline drops to 15pt and wraps to three
+    /// lines, Refresh is a glyph, and the rows shorten their state.
     static let compactHeaderWidth: CGFloat = 420
     /// Below this width the clear strip drops its "Everything else is clear"
     /// lead and keeps only the readings.
     static let clearLeadWidth: CGFloat = 560
+    /// The compact headline's line limit. Three rather than the board's two:
+    /// measured in a 293pt column, the captain's own two-clause verdict
+    /// ("Five things are late, and 1 task need your call.") needs three
+    /// lines at 15pt, and a verdict cut mid-sentence is the one thing the
+    /// compact header exists to avoid.
+    static let compactHeadlineLines = 3
 
     deinit {
         tick?.invalidate()
@@ -300,8 +309,19 @@ final class NeedsAttentionCard: NSView {
         listDocument.translatesAutoresizingMaskIntoConstraints = false
         listDocument.addSubview(list)
         listScroll.documentView = listDocument
-        let showsAll = listScroll.heightAnchor.constraint(equalTo: list.heightAnchor)
+        // Two halves. `>=` at 490 is "show every row unless the host's 499
+        // says otherwise"; `==` at 249 is the list's natural height where
+        // nothing stretches the card (the shelf), so the height is never
+        // ambiguous. Where a host does stretch it, the notes and the clear
+        // strip hug at `footHug` and the list takes the slack, which leaves
+        // the strip at the card's foot.
+        let showsAll = listScroll.heightAnchor.constraint(greaterThanOrEqualTo: list.heightAnchor)
         showsAll.priority = Self.listShowsAllRows
+        let natural = listScroll.heightAnchor.constraint(equalTo: list.heightAnchor)
+        // Under 250, the list stack's own hugging: at 251 this tie pulled
+        // the *list* up to the scroll view's height and stretched its first
+        // row - measured at 1512x945.
+        natural.priority = NSLayoutConstraint.Priority(249)
         let floor = listScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 0)
         NSLayoutConstraint.activate([
             listDocument.leadingAnchor.constraint(equalTo: listScroll.contentView.leadingAnchor),
@@ -312,8 +332,11 @@ final class NeedsAttentionCard: NSView {
             list.topAnchor.constraint(equalTo: listDocument.topAnchor),
             list.bottomAnchor.constraint(equalTo: listDocument.bottomAnchor),
             showsAll,
+            natural,
             floor,
         ])
+        notesStack.setHuggingPriority(Self.footHug, for: .vertical)
+        clearRow.setHuggingPriority(Self.footHug, for: .vertical)
         listShowsAll = showsAll
         listFloor = floor
         listScroll.setAccessibilityRole(.group)
@@ -334,9 +357,7 @@ final class NeedsAttentionCard: NSView {
                                queue: .main) { [weak self] _ in self?.setNeedsCueUpdate() },
         ]
 
-        moreFade.wantsLayer = true
         moreFade.translatesAutoresizingMaskIntoConstraints = false
-        moreFade.layer?.addSublayer(moreFadeLayer)
         moreFade.isHidden = true
         moreFade.setAccessibilityElement(false)
         morePill.isHidden = true
@@ -344,7 +365,6 @@ final class NeedsAttentionCard: NSView {
 
     override func layout() {
         super.layout()
-        moreFadeLayer.frame = moreFade.bounds
         setNeedsCueUpdate()
     }
 
@@ -361,14 +381,19 @@ final class NeedsAttentionCard: NSView {
 
     // MARK: The "+N more" cue
 
+    /// Each row's bottom edge in the list, from the rows' own heights and the
+    /// 1pt hairlines between them - taken at rebuild, so the count below
+    /// never depends on whether the list's stack has placed its rows yet.
+    /// Measured: counted from row frames, the cue was stale one run in three
+    /// after a rebuild that left the list's and the clip's frames unchanged,
+    /// because nothing then re-triggered the count.
+    private var rowBottoms: [CGFloat] = []
+
     /// How many rows lie wholly or partly below the visible part of the list.
     private var rowsBelowTheFold: Int {
         let visible = listScroll.contentView.documentVisibleRect
-        guard list.frame.height > visible.height + 0.5 else { return 0 }
-        return list.rows.filter { row in
-            let frame = row.convert(row.bounds, to: listDocument)
-            return frame.maxY > visible.maxY + 0.5
-        }.count
+        guard let total = rowBottoms.last, total > visible.height + 0.5 else { return 0 }
+        return rowBottoms.filter { $0 > visible.maxY + 0.5 }.count
     }
 
     private var cueUpdatePending = false
@@ -392,7 +417,7 @@ final class NeedsAttentionCard: NSView {
         morePill.isHidden = hidden == 0
         moreFade.isHidden = hidden == 0
         if hidden > 0 { morePill.configure(count: hidden, theme: theme) }
-        let total = list.rows.count
+        let total = rowBottoms.count
         let visible = total - hidden
         listScroll.setAccessibilityLabel(hidden == 0
             ? "Needs attention, \(total) \(total == 1 ? "item" : "items")"
@@ -487,11 +512,14 @@ final class NeedsAttentionCard: NSView {
         clearStrip.layer?.cornerRadius = card.layer?.cornerRadius ?? 0
         clearStrip.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         listScroll.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
-        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
-        moreFadeLayer.colors = [surface.withAlphaComponent(0).cgColor, surface.cgColor]
-        moreFadeLayer.startPoint = CGPoint(x: 0.5, y: 1)
-        moreFadeLayer.endPoint = CGPoint(x: 0.5, y: 0)
+        moreFade.surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
         morePill.applyTheme(theme)
+        if isCompact {
+            // The compact header's headline: 15pt rather than the hero's 19pt,
+            // so a two-clause verdict fits two lines of a 293pt column.
+            // After `header.applyTheme`, which sets the hero face.
+            header.titleLabel.font = HelmType.rounded(HelmType.scaled(15), .heavy)
+        }
     }
 
     private func rebuild() {
@@ -504,6 +532,11 @@ final class NeedsAttentionCard: NSView {
         list.setRows(rows, theme: theme)
         listScroll.isHidden = rows.isEmpty
         listFloor?.constant = Self.floorHeight(of: rows)
+        var bottom: CGFloat = 0
+        rowBottoms = rows.enumerated().map { index, row in
+            bottom += row.fittingSize.height + (index > 0 ? 1 : 0)
+            return bottom
+        }
 
         for view in notesStack.arrangedSubviews {
             notesStack.removeArrangedSubview(view)
@@ -539,32 +572,36 @@ final class NeedsAttentionCard: NSView {
 
     /// The header, in its full or its compact form.
     ///
-    /// Compact is the hero header with its subline dropped, the headline
-    /// wrapping to at most two lines and Refresh as a glyph - so a long
-    /// verdict in a 293pt column is never cut mid-sentence. The headline's
+    /// Compact is the hero header with a 15pt headline wrapping to at most
+    /// three lines and Refresh as a glyph. The subline stays: it is the
+    /// fleet's freshness (UX5), the one thing on the page no other card can
+    /// say, and it costs one caption line in a column whose list absorbs
+    /// the difference. The headline's
     /// wrap width is derived from the host's width, never from the label's
     /// own (gotcha (22)).
     private func configureHeader(_ summary: NeedsAttentionSummary) {
         let compact = isCompact
         header.configure(leading: .tile(symbol: summary.symbol, tint: summary.tint),
                          title: summary.headline, eyebrow: summary.eyebrow,
-                         subline: compact ? nil : subline)
+                         subline: subline)
         let title = header.titleLabel
         title.toolTip = summary.headline
-        if compact {
-            refreshButton.title = ""
-            refreshButton.toolTip = "Refresh"
-            refreshButton.setAccessibilityLabel("Refresh")
+        refreshButton.title = compact ? "" : "Refresh"
+        refreshButton.toolTip = compact ? "Refresh" : nil
+        refreshButton.setAccessibilityLabel("Refresh")
+        if layoutWidth > 0 {
+            // In a page column the headline wraps against the column's own
+            // width. Measured: left on one line at 477pt, the hero label's
+            // 490 compression resistance beat the header stack's clipping
+            // and the verdict ran past the card into the Claude card.
             title.cell?.wraps = true
             title.cell?.truncatesLastVisibleLine = true
-            title.maximumNumberOfLines = 2
+            title.maximumNumberOfLines = compact ? Self.compactHeadlineLines : 2
             title.lineBreakMode = .byWordWrapping
             let actions = refreshButton.isHidden ? 0 : refreshButton.fittingSize.width + HelmMetrics.s3
             title.preferredMaxLayoutWidth = max(80, layoutWidth - HelmMetrics.s4 * 2
                                                 - HelmSectionHeader.tileSide(for: .hero) - HelmMetrics.s3 - actions)
         } else {
-            refreshButton.title = "Refresh"
-            refreshButton.toolTip = nil
             title.cell?.wraps = false
             title.maximumNumberOfLines = 1
             title.lineBreakMode = .byTruncatingTail
@@ -609,6 +646,11 @@ final class NeedsAttentionCard: NSView {
         lead.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         lead.setContentHuggingPriority(.required, for: .horizontal)
         lead.isHidden = !showsLead
+        // In a narrow column the readings stack, one per line, rather than
+        // truncating each other on one line.
+        clearRow.orientation = isCompact ? .vertical : .horizontal
+        clearRow.alignment = isCompact ? .leading : .centerY
+        clearRow.spacing = isCompact ? HelmMetrics.s1 : HelmMetrics.s4
         clearRow.addArrangedSubview(lead)
         for note in notes { clearRow.addArrangedSubview(clearNote(note)) }
     }
@@ -632,6 +674,10 @@ final class NeedsAttentionCard: NSView {
         let pair = NSStackView(views: [glyph, label])
         pair.orientation = .horizontal
         pair.alignment = .centerY
+        // gotcha (10): `.fill`, or a pair stretched to a stacked strip's
+        // width spreads its glyph and its words apart.
+        pair.distribution = .fill
+        glyph.setContentHuggingPriority(.required, for: .horizontal)
         pair.spacing = HelmMetrics.s1
         pair.translatesAutoresizingMaskIntoConstraints = false
         pair.setHuggingPriority(.required, for: .horizontal)
@@ -642,7 +688,7 @@ final class NeedsAttentionCard: NSView {
 
     private func row(for item: NeedsAttentionItem) -> NSView {
         let view = NeedsAttentionRowView(showsCheckbox: !item.kind.isSignal)
-        view.configure(item, theme: theme,
+        view.configure(item, theme: theme, compact: isCompact,
                        onToggle: { [weak self] in self?.onToggleDone?(item) },
                        onOpen: { [weak self] in self?.onOpenItem?(item) })
         return view
@@ -781,8 +827,16 @@ final class NeedsAttentionRowView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    /// - Parameter compact: a narrow column (the 960pt minimum window's
+    ///   293pt). Beside the action there is room for the state's first phrase
+    ///   and little else, so the line becomes "Overdue 27 days" alone - the
+    ///   checkbox or the signal glyph still says what kind of row it is - and
+    ///   the full "Follow-up \u{00B7} Overdue 27 days \u{00B7} since 18 Sep" moves
+    ///   to the row's hover text. Measured: with the kind kept, the state was
+    ///   cut at "Overdue 27".
     func configure(_ item: NeedsAttentionItem,
                    theme: HelmTheme,
+                   compact: Bool = false,
                    onToggle: @escaping () -> Void,
                    onOpen: @escaping () -> Void) {
         self.onToggle = onToggle
@@ -805,9 +859,14 @@ final class NeedsAttentionRowView: NSView {
             // documented fallback, and the nearest thing it has to the
             // reference's severity dot.
             badgeSymbol: item.kind.isSignal ? Self.signalBadgeSymbol(for: item.tone) : nil)
-        content.metaPrefix = item.source
-        content.metaLead = item.chipText
+        let state = item.chipText
+        content.metaPrefix = compact ? nil : item.source
+        content.metaLead = compact ? (state.components(separatedBy: " \u{00B7} ").first ?? state) : state
         content.metaLeadTint = Self.captionTint(for: item.tone)
+        if compact {
+            content.hint = [item.source, state, item.meta].compactMap { $0 }.filter { !$0.isEmpty }
+                .joined(separator: " \u{00B7} ")
+        }
         row.configure(content, theme: theme)
         row.onClick = { [weak self] in self?.onOpen?() }
 
@@ -952,4 +1011,42 @@ final class NeedsAttentionMorePill: NSView {
         onPress?()
         return true
     }
+}
+
+// MARK: - The fade under "+N more"
+
+/// A short fade from clear to the card surface on the list's bottom edge,
+/// so the "+N more" pill reads as sitting over rows that continue. Its own
+/// view so the gradient follows its own bounds in `layout()`.
+final class NeedsAttentionFadeView: NSView {
+    private let gradient = CAGradientLayer()
+    var surface: NSColor = .clear {
+        didSet {
+            gradient.colors = [surface.withAlphaComponent(0).cgColor, surface.cgColor]
+        }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.addSublayer(gradient)
+        // Layer space is unflipped here: y = 1 is the top edge.
+        gradient.startPoint = CGPoint(x: 0.5, y: 1)
+        gradient.endPoint = CGPoint(x: 0.5, y: 0)
+        setAccessibilityElement(false)
+    }
+
+    convenience init() { self.init(frame: .zero) }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        gradient.frame = bounds
+        CATransaction.commit()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

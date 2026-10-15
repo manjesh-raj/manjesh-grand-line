@@ -540,6 +540,12 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// `nil` on every card that shows everything it has, which is all but
         /// one of them.
         var footer: Footer? = nil
+        /// How many `.peekRows` rows this card shows, in place of
+        /// `maxPeekRows`. `nil` - the default - keeps the cap. The hub's
+        /// Merge queue sets it from the height its page column has left
+        /// (`fm/grandline-home-fit-implement`), and says how many it is
+        /// showing in its footer, so a longer list is never a silent cap.
+        var peekRowLimit: Int? = nil
     }
 
     /// See `Content.footer`.
@@ -1168,6 +1174,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             bodyBottomToCard?.isActive = true
         }
 
+        peekRowLimit = content.peekRowLimit
         rebuildBody(content.body)
 
         // GL-16: §6.1's own label spec - "<title>, <subtitle>, <chip text>".
@@ -1184,6 +1191,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
         applyTheme(ThemeManager.shared.theme)
     }
+
+    /// `Content.peekRowLimit`, held for `rebuildBody`.
+    private var peekRowLimit: Int?
 
     private func rebuildBody(_ body: Body) {
         for view in bodyViews { view.removeFromSuperview() }
@@ -1216,7 +1226,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         case let .metric(value, unit, note):
             content = buildMetric(value: value, unit: unit, note: note)
         case let .peekRows(rows):
-            content = buildPeekRows(Array(rows.prefix(Self.maxPeekRows)))
+            content = buildPeekRows(Array(rows.prefix(peekRowLimit ?? Self.maxPeekRows)))
         case let .ring(value, total, title, note):
             content = buildRing(value: value, total: total, title: title, note: note)
         case let .progress(value, total, note):

@@ -24,8 +24,13 @@
 //      page's document is no taller than its viewport.
 //   2. **The follow-ups list scrolls inside its card** when its rows do not
 //      fit: the card stays inside the page, the total count is always in the
-//      eyebrow, a "+N more" cue is shown while rows are clipped, and it goes
-//      away once the last row is scrolled into view.
+//      eyebrow, and a "+N more" cue is shown exactly while rows are clipped.
+//   3. **The fallback.** At the minimum window with the Larger text step the
+//      page cannot fit (its columns' required minimums add up to more than
+//      the viewport), and it must scroll as a page rather than clip or push
+//      the window bigger. The board predicted this case; it is asserted here
+//      so it stays a scroll and never becomes a window-size floor (gotchas
+//      (13) and (15)).
 //
 // GL-27: compiled into debug builds only. Do not remove this guard -
 // `Phase3PolishSelfTest` asserts every file here carries it.
@@ -45,10 +50,6 @@ enum HomeFitSelfTest {
     ]
     static let rowCounts = [0, 3, ReviewTourLab.demoAttentionMaximum]
 
-    /// Off until the three-column page lands. Before it the page cannot fit -
-    /// which is the measurement this suite prints - and a suite that fails on
-    /// every run between two commits of one change guards nothing.
-    static let fitIsEnforced = false
 
     @discardableResult
     static func run() -> Bool {
@@ -69,6 +70,8 @@ enum HomeFitSelfTest {
             ReviewTourLab.seedDemoHome(shell.debugHomeCanvas)
             ReviewTourLab.seedDemoBriefing()
             checkThePageFits(shell: shell, window: window, &ok)
+            checkTheListScrollsInsideItsCard(shell: shell, window: window, &ok)
+            checkLargerTextFallsBackToScrolling(shell: shell, window: window, &ok)
         }
 
         print(ok ? "HomeFitSelfTest: all checks passed" : "HomeFitSelfTest: FAILED")
@@ -90,6 +93,70 @@ enum HomeFitSelfTest {
             canvas.debugRenderNow()
             shell.view.layoutSubtreeIfNeeded()
         }
+    }
+
+    // MARK: 2. The list scrolls inside its card
+
+    private static func checkTheListScrollsInsideItsCard(shell: AppShellController, window: NSWindow,
+                                                         _ ok: inout Bool) {
+        let canvas = shell.debugHomeCanvas
+        let rows = ReviewTourLab.demoAttentionMaximum
+        for size in sizes {
+            show(rows: rows, at: size, shell: shell, window: window)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            let label = "\(Int(size.width))x\(Int(size.height)), \(rows) rows"
+            let card = canvas.attentionCardForTests
+            let scroll = card.debugListScroll
+            let listHeight = scroll.documentView?.frame.height ?? 0
+            let visible = scroll.contentView.bounds.height
+            let clipped = listHeight > visible + 0.5
+            let page = canvas.documentHeightForTests
+            let viewport = canvas.viewportHeightForTests
+            print(String(format: "   %@: list %.1f in %.1f (%@), card %.1f", label, listHeight, visible,
+                         clipped ? "scrolls" : "fits", card.frame.height))
+            check(card.debugEyebrow == "NEEDS ATTENTION \u{00B7} \(rows)",
+                  "\(label): the eyebrow should always carry the total, got \"\(card.debugEyebrow)\"", &ok)
+            check(card.frame.maxY <= page + 0.5 && page <= viewport + 0.5,
+                  "\(label): the card should sit inside a page that fits", &ok)
+            if clipped {
+                check(card.debugMoreCount != nil,
+                      "\(label): rows are clipped but no \"+N more\" cue is shown", &ok)
+                check(visible >= 3 * 53 - 0.5,
+                      "\(label): the list shows \(visible)pt, under its three-row floor", &ok)
+            } else {
+                check(card.debugMoreCount == nil,
+                      "\(label): every row is visible but the cue says +\(card.debugMoreCount ?? 0) more", &ok)
+            }
+            // At the minimum window the worst case must really scroll, or the
+            // checks above never saw the clipped branch.
+            if size.width == 960 {
+                check(clipped, "fixture: \(rows) rows should not all fit at 960x620", &ok)
+            }
+        }
+    }
+
+    // MARK: 3. The Larger-text fallback
+
+    private static func checkLargerTextFallsBackToScrolling(shell: AppShellController, window: NSWindow,
+                                                            _ ok: inout Bool) {
+        let saved = ChromeTextScale.shared.scale
+        defer {
+            ChromeTextScale.shared.setScale(saved)
+            shell.debugHomeCanvas.debugRenderNow()
+        }
+        ChromeTextScale.shared.setScale(ChromeTextScale.maxScale)
+        let size = sizes[0]
+        show(rows: 3, at: size, shell: shell, window: window)
+        let canvas = shell.debugHomeCanvas
+        let page = canvas.documentHeightForTests
+        let viewport = canvas.viewportHeightForTests
+        print(String(format: "   960x620 at Larger text: page %.1f in viewport %.1f", page, viewport))
+        check(abs(window.frame.height - size.height) < 0.5 && abs(window.frame.width - size.width) < 0.5,
+              "Larger text resized the window to \(window.frame.size) - a page that cannot fit must "
+              + "scroll, never become a window-size floor", &ok)
+        check(page > viewport + 0.5,
+              "fixture: at the minimum window with Larger text the page was expected not to fit "
+              + "(page \(page), viewport \(viewport)), so the fallback was never exercised", &ok)
     }
 
     // MARK: 1. The page fits
@@ -117,7 +184,7 @@ enum HomeFitSelfTest {
                 let overflow = page - viewport
                 print(String(format: "   %@: page %.1f in viewport %.1f (%@%.1f)",
                              label, page, viewport, overflow > 0 ? "+" : "", overflow))
-                if fitIsEnforced, overflow > 0.5 {
+                if overflow > 0.5 {
                     fail("\(label): the page is \(page)pt in a \(viewport)pt viewport - "
                          + "\(overflow)pt below the fold", &ok)
                 }

@@ -2934,6 +2934,13 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
                     .font: font, .foregroundColor: muted,
                 ]))
             }
+            // The label's own truncation, carried into the attributed string:
+            // without a paragraph style the runs clip at a word boundary with
+            // no ellipsis, which reads as a complete (and wrong) state -
+            // measured as "Overdue 27" for "Overdue 27 days".
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = metaLabel.lineBreakMode
+            text.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: text.length))
             metaLabel.attributedStringValue = text
         }
         titleAccessory.contentTintColor = muted

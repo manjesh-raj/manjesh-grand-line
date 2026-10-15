@@ -313,6 +313,26 @@ final class HomeCanvasController: NSViewController {
     private var signalCountsToken: BackgroundSignalsPoller.CountsObservation?
     private var windowResizeObserver: NSObjectProtocol?
     private var lastGridWidth: CGFloat = 0
+    /// The height the hub's columns were last budgeted for - see
+    /// `containerWidthMayHaveChanged`.
+    private var lastGridHeight: CGFloat = 0
+    /// `fm/grandline-home-fit-implement`: on the hub the document is held as
+    /// tall as the viewport, at 499 - so the page fits the window and its
+    /// columns' lists absorb the room, while content that genuinely cannot
+    /// fit (the minimum window with Larger text) still wins and the page
+    /// scrolls as a fallback rather than clipping. Off the hub it is
+    /// inactive, and the other spaces stay top-anchored with the leftover
+    /// trailing below. Under `NSLayoutPriorityWindowSizeStayPut`, and inside
+    /// a scroll view, so it can never become a floor on the window (gotchas
+    /// (13) and (15)).
+    private var documentFillsViewport: NSLayoutConstraint?
+    /// The attention card's full-width tie while it sits above the grid
+    /// (every space but the hub's three-column page, where it is column 1).
+    private var attentionWidthTie: NSLayoutConstraint?
+    /// The Merge queue's peek rows on the hub's page, chosen from the height
+    /// its column has left (`dashboardRowViews`). The shelf keeps
+    /// `maxPeekRows`.
+    private var mergeQueueRowLimit = HelmModuleCard.maxPeekRows
     /// C1: the content column's preferred width, retuned on every grid
     /// rebuild from the column count the grid actually used.
     private var contentWidthConstraint: NSLayoutConstraint?
@@ -491,9 +511,14 @@ final class HomeCanvasController: NSViewController {
             stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -HelmMetrics.s5),
 
             heroCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            attentionCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             gridStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
+        let attentionTie = attentionCard.widthAnchor.constraint(equalTo: stack.widthAnchor)
+        attentionTie.isActive = true
+        attentionWidthTie = attentionTie
+        let fills = document.heightAnchor.constraint(equalTo: scroll.contentView.heightAnchor)
+        fills.priority = HelmDaylightPriority.contentTie
+        documentFillsViewport = fills
 
         let contentWidth = stack.widthAnchor.constraint(equalToConstant: HelmResponsiveGrid.fallbackContainerWidth)
         contentWidth.priority = HelmDaylightPriority.contentTie
@@ -1194,12 +1219,16 @@ final class HomeCanvasController: NSViewController {
 
         let available = gridContainerWidth()
         lastGridWidth = available
+        lastGridHeight = gridContainerHeight()
         let modules = visibleModules()
 
         // Overview is hand-placed - see `dashboardRowViews` for why, and for
         // the two conditions under which it declines and this falls through
         // to the wrapping grid below.
-        if usesDashboardLayout,
+        let dashboard = usesDashboardLayout && dashboardRowViewsWouldApply(available: available, modules: modules)
+        placeAttentionCard(inDashboard: dashboard)
+        documentFillsViewport?.isActive = dashboard
+        if dashboard,
            let rows = dashboardRowViews(available: available, modules: modules) {
             // The dashboard uses the full width by construction: its spans
             // sum to the whole track grid, so there is no leftover column to
@@ -1257,62 +1286,104 @@ final class HomeCanvasController: NSViewController {
         }
     }
 
+    /// The attention card is column 1 of the hub's three-column page, and a
+    /// full-width card above the grid everywhere else (where it is hidden
+    /// off the hub, and where the hub falls back to the wrapping grid).
+    /// Moved rather than rebuilt, so its rows, its scroll position and its
+    /// minute tick survive a rebuild.
+    private func placeAttentionCard(inDashboard: Bool) {
+        // `proportionalRow` pins a column's width with a constant on the view
+        // itself, which outlives the row it was made for - so the last
+        // rebuild's pin is dropped before this one adds its own.
+        attentionCard.removeConstraints(attentionCard.constraints.filter {
+            $0.firstItem === attentionCard && $0.secondItem == nil && $0.firstAttribute == .width
+        })
+        if inDashboard {
+            if attentionCard.superview === stack {
+                stack.removeArrangedSubview(attentionCard)
+                attentionCard.removeFromSuperview()
+                attentionWidthTie = nil
+            }
+            return
+        }
+        attentionCard.setLayoutWidth(0)
+        guard attentionCard.superview !== stack else { return }
+        attentionCard.removeFromSuperview()
+        stack.insertArrangedSubview(attentionCard, at: 1)
+        let tie = attentionCard.widthAnchor.constraint(equalTo: stack.widthAnchor)
+        tie.isActive = true
+        attentionWidthTie = tie
+    }
+
     // MARK: Overview's dashboard layout
 
-    /// The hub's five widgets, in the reference's own order and with its own
-    /// track spans.
+    /// The hub's page: the attention card and the five widgets, in three
+    /// equal columns (`fm/grandline-home-fit-implement`, layout A).
     ///
     /// **Why Overview has a hand-placed layout and the other four spaces do
     /// not.** The wrapping grid is right for a shelf of interchangeable
     /// navigation cards, which is what Command, Operations, Stores and
     /// Engineering are: a card there is one of N equivalent doors, and the
     /// window's width should decide how many fit on a line. Overview is not
-    /// that. It is five specific readouts whose relative sizes are the
-    /// design - the Claude card carries a six-row usage report and earns the
-    /// wide column, the Fleet and Health cards carry one figure each and do
-    /// not - and letting the window decide is what produced the ragged
-    /// masonry the captain rejected (at 1512pt the wrapping grid resolved to
-    /// five 255pt columns and packed the same five cards 2+2+1 / 1+1, with
-    /// most of the third row empty).
+    /// that. It is a handful of specific readouts whose placement is the
+    /// design, and letting the window decide is what produced the ragged
+    /// masonry the captain rejected.
     ///
-    /// Two rows of two, at the reference's 7:5. The reference expresses the
-    /// same thing as a twelve-track CSS grid with the Claude card spanning
-    /// two rows; a card spanning two rows *beside a column holding exactly
-    /// those two rows' cards* is the same layout, and this shape is the one
-    /// Auto Layout can state without a second axis of placement.
-    private static let dashboardRows: [[DaylightModule]] = [
-        [.claudeStatus, .briefing],
-        [.mergeQueue, .health],
+    /// **Why three columns rather than the 7:5 rows it replaced.** The
+    /// captain asked for Home to fit the window without scrolling. Stacking
+    /// the attention card above two rows of widgets added their heights
+    /// together, and every attention row pushed the widgets further down:
+    /// measured at the captain's 1512x945 window, the page was 29pt over the
+    /// fold with three rows and 468pt over with ten, and 384pt over at the
+    /// 960x620 minimum. Columns share the height instead of adding it.
+    ///
+    ///   - Column 1 is Needs Attention at the column's full height, its list
+    ///     scrolling inside it.
+    ///   - Column 2 is Claude (the dense usage form), Fleet and Health.
+    ///   - Column 3 is the Morning briefing and the Merge queue.
+    ///
+    /// Each column has exactly one member that absorbs leftover height - the
+    /// attention list, Health, and the Morning briefing - and the rest sit at
+    /// their own height (`dashboardKeepsOwnHeight`). The Merge queue fills
+    /// its column by *row count* instead (`mergeQueueRows`), so what the
+    /// briefing absorbs is less than one row. Measured: with the Merge queue
+    /// as the absorber, its peek list spread that remainder unevenly between
+    /// rows.
+    private static let dashboardColumns: [[DaylightModule]] = [
+        [.claudeStatus, .fleet, .health],
+        [.briefing, .mergeQueue],
     ]
-    /// The right column of row 1: the two cards the reference stacks beside
-    /// the tall Claude card.
-    private static let dashboardStacked: [DaylightModule] = [.briefing, .fleet]
-    /// Track spans out of `HelmResponsiveGrid.dashboardColumns`, per row.
-    private static let dashboardSpans = [7, 5]
+    /// Track spans out of `HelmResponsiveGrid.dashboardColumns`: equal thirds.
+    private static let dashboardSpans = [4, 4, 4]
+    /// A non-absorbing card's preference for its own height. Under the 499
+    /// the row ties each column with, so a column's absorber takes the slack
+    /// rather than a card being stretched, and above nothing else.
+    static let dashboardKeepsOwnHeight = NSLayoutConstraint.Priority(490)
+    /// The fewest Merge queue rows the page shows before it would rather
+    /// scroll.
+    static let mergeQueueMinimumRows = 2
 
     /// Is this space laid out by hand? Only the hub.
     private var usesDashboardLayout: Bool { space == .overview }
 
-    /// Overview's five cards, in the reference's placement.
-    ///
-    /// Returns `nil` when the modules on screen are not the five this layout
-    /// was written for - which is not a defensive flourish: `DaylightModule.
-    /// appearsOnOverview` is a captain-editable list, and a sixth card added
-    /// there must render *somewhere* rather than silently vanish. The caller
-    /// falls back to the wrapping grid, which is what every other space uses
-    /// and what Overview used before.
-    /// The two conditions `dashboardRowViews` takes, as a predicate.
+    /// Whether the hub's own layout applies.
     ///
     /// Split out so the layout and anything asking "is the dashboard on"
     /// cannot answer differently - a `usesDashboard` flag set beside the
     /// build is exactly the shape that drifts.
+    ///
+    /// `nil` from `dashboardRowViews` - the caller falls back to the
+    /// wrapping grid - when the modules on screen are not the five this
+    /// layout was written for. That is not a defensive flourish:
+    /// `DaylightModule.appearsOnOverview` is a captain-editable list, and a
+    /// sixth card added there must render *somewhere* rather than silently
+    /// vanish.
     func dashboardRowViewsWouldApply(available: CGFloat, modules: [DaylightModule]) -> Bool {
-        let expected = Set(Self.dashboardRows.flatMap { $0 } + Self.dashboardStacked)
+        let expected = Set(Self.dashboardColumns.flatMap { $0 })
         guard Set(modules) == expected else { return false }
-        // Under this width a 5-track card is narrower than one wrapping
-        // column, which is the point at which the reference collapses every
-        // widget to full width - so hand back to the wrapping grid, which
-        // already does exactly that.
+        // Under this width a 4-track column is narrower than one wrapping
+        // column, so hand back to the wrapping grid, which stacks every
+        // widget full width. The app's 960pt minimum window keeps it on.
         return HelmResponsiveGrid.fitsProportionally(containerWidth: available,
                                                      spans: Self.dashboardSpans,
                                                      minItemWidth: Self.minModuleWidth,
@@ -1321,58 +1392,129 @@ final class HomeCanvasController: NSViewController {
 
     private func dashboardRowViews(available: CGFloat, modules: [DaylightModule]) -> [NSStackView]? {
         guard dashboardRowViewsWouldApply(available: available, modules: modules) else { return nil }
+        let span = Self.dashboardSpans[0]
+        let width = HelmResponsiveGrid.proportionalWidth(containerWidth: available, span: span,
+                                                         spacing: Self.gridSpacing)
+        let placement = CardPlacement.dashboard(span: span, width: width)
+        let height = gridContainerHeight()
 
-        func card(_ module: DaylightModule, span: Int) -> HelmModuleCard {
-            makeCard(for: module, placement: .dashboard(
-                span: span,
-                width: HelmResponsiveGrid.proportionalWidth(containerWidth: available, span: span,
-                                                            spacing: Self.gridSpacing)))
+        // Column 2: Claude and Fleet at their own height, Health absorbing.
+        // Fleet's sentence is the first thing to go when the column is
+        // short - its chip already says whether anyone needs the captain.
+        let claude = makeCard(for: .claudeStatus, placement: placement)
+        var fleetContent = content(for: .fleet, placement: placement)
+        let healthContent = content(for: .health, placement: placement)
+        let claudeHeight = Self.fittingHeight(of: claude, width: width)
+        let healthHeight = Self.fittingHeight(of: Self.probeCard(healthContent), width: width)
+        let fleetHeight = Self.fittingHeight(of: Self.probeCard(fleetContent), width: width)
+        if claudeHeight + fleetHeight + healthHeight + Self.gridSpacing * 2 > height,
+           case let .kpis(_, items) = fleetContent.body {
+            fleetContent.body = .kpis(note: nil, items: items)
         }
+        let fleet = makeCard(for: .fleet, content: fleetContent)
+        let health = makeCard(for: .health, content: healthContent)
 
-        var rows: [NSStackView] = []
-        for (index, modulesInRow) in Self.dashboardRows.enumerated() {
-            var views: [NSView] = []
-            for (column, module) in modulesInRow.enumerated() {
-                let span = Self.dashboardSpans[column]
-                guard index == 0, column == 1 else {
-                    views.append(card(module, span: span))
-                    continue
-                }
-                // The reference's right-hand column of row 1: two cards
-                // stacked in the space the tall Claude card occupies beside
-                // them. A vertical stack rather than two grid rows, because
-                // that is what makes the stack's *total* height the thing
-                // tied to the Claude card - which is what puts the bottom of
-                // the Fleet card and the bottom of the Claude card on one
-                // line, exactly as the reference draws it.
-                let column = NSStackView(views: Self.dashboardStacked.map { card($0, span: span) })
-                column.orientation = .vertical
-                column.alignment = .leading
-                column.distribution = .fillEqually
-                column.spacing = Self.gridSpacing
-                column.translatesAutoresizingMaskIntoConstraints = false
-                // gotcha (12)+(13): the stack-level APIs, both yielding, or
-                // this column is a window-width floor.
-                column.setHuggingPriority(.defaultLow, for: .horizontal)
-                column.setClippingResistancePriority(.defaultLow, for: .horizontal)
-                for card in column.arrangedSubviews {
-                    let tie = card.widthAnchor.constraint(equalTo: column.widthAnchor)
-                    tie.priority = HelmDaylightPriority.contentTie
-                    tie.isActive = true
-                }
-                views.append(column)
-            }
-            rows.append(HelmResponsiveGrid.proportionalRow(views: views,
-                                                           spans: Self.dashboardSpans,
-                                                           containerWidth: available,
-                                                           spacing: Self.gridSpacing))
+        // Column 3: as many Merge queue rows as the column holds under the
+        // briefing; the briefing takes what is left, below its paragraph.
+        let briefing = makeCard(for: .briefing, placement: placement)
+        let briefingHeight = Self.fittingHeight(of: briefing, width: width)
+        mergeQueueRowLimit = mergeQueueRows(budget: height - briefingHeight - Self.gridSpacing,
+                                            placement: placement, width: width)
+        let merge = makeCard(for: .mergeQueue, placement: placement)
+        mergeQueueRowLimit = HelmModuleCard.maxPeekRows
+
+        attentionCard.setLayoutWidth(width)
+        let row = HelmResponsiveGrid.proportionalRow(
+            views: [attentionCard,
+                    dashboardColumn([claude, fleet, health], absorbing: health, width: width),
+                    dashboardColumn([briefing, merge], absorbing: briefing, width: width)],
+            spans: Self.dashboardSpans,
+            containerWidth: available,
+            spacing: Self.gridSpacing)
+        return [row]
+    }
+
+    /// One page column: a vertical stack whose members fill its width, and
+    /// whose every member but `absorbing` prefers its own height.
+    private func dashboardColumn(_ cards: [NSView], absorbing: NSView, width: CGFloat) -> NSStackView {
+        // Measured before the column exists, while each card is still free
+        // to be laid out alone.
+        let ownHeights = cards.map { $0 === absorbing ? 0 : Self.fittingHeight(of: $0, width: width) }
+        let column = NSStackView(views: cards)
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.distribution = .fill
+        column.spacing = Self.gridSpacing
+        column.translatesAutoresizingMaskIntoConstraints = false
+        // gotcha (12)+(13): the stack-level APIs, both yielding, or this
+        // column is a window-width floor.
+        column.setHuggingPriority(.defaultLow, for: .horizontal)
+        column.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        for (card, ownHeight) in zip(cards, ownHeights) {
+            let tie = card.widthAnchor.constraint(equalTo: column.widthAnchor)
+            tie.priority = HelmDaylightPriority.contentTie
+            tie.isActive = true
+            guard card !== absorbing else { continue }
+            let own = card.heightAnchor.constraint(equalToConstant: ownHeight)
+            own.priority = Self.dashboardKeepsOwnHeight
+            own.isActive = true
         }
-        return rows
+        return column
+    }
+
+    /// How many Merge queue rows fit `budget` points: every one that does,
+    /// and never fewer than `mergeQueueMinimumRows`. Measured from two real
+    /// cards rather than from a row height written down here, so a change to
+    /// the peek row or the footer moves it with them.
+    private func mergeQueueRows(budget: CGFloat, placement: CardPlacement, width: CGFloat) -> Int {
+        let minimum = Self.mergeQueueMinimumRows
+        mergeQueueRowLimit = minimum
+        let first = Self.fittingHeight(of: Self.probeCard(content(for: .mergeQueue, placement: placement)),
+                                       width: width)
+        mergeQueueRowLimit = minimum + 1
+        let second = Self.fittingHeight(of: Self.probeCard(content(for: .mergeQueue, placement: placement)),
+                                        width: width)
+        let perRow = second - first
+        guard perRow > 0.5 else { return minimum }
+        let extra = Int(((budget - first) / perRow).rounded(.down))
+        return max(minimum, minimum + extra)
+    }
+
+    /// A card built only to be measured - not added to `cards`, so it is
+    /// never themed, mounted or handed to a test as one of the page's own.
+    private static func probeCard(_ content: HelmModuleCard.Content) -> HelmModuleCard {
+        let card = HelmModuleCard()
+        card.configure(content)
+        return card
+    }
+
+    /// `view`'s height at `width`, after a real layout pass in a scratch
+    /// host. The pass matters: a wrapping label sets its wrap width in
+    /// `layout()` (gotcha (22)), so a bare `fittingSize` measures Fleet's
+    /// two-line sentence as one line - measured, 6pt over at 960x620.
+    /// `view` must not be in a hierarchy yet; it leaves the host on return.
+    private static func fittingHeight(of view: NSView, width: CGFloat) -> CGFloat {
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 2000))
+        view.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            view.topAnchor.constraint(equalTo: host.topAnchor),
+            view.widthAnchor.constraint(equalToConstant: width),
+        ])
+        host.layoutSubtreeIfNeeded()
+        let height = view.fittingSize.height
+        view.removeFromSuperview()
+        return height
     }
 
     private func makeCard(for module: DaylightModule, placement: CardPlacement) -> HelmModuleCard {
+        makeCard(for: module, content: content(for: module, placement: placement))
+    }
+
+    private func makeCard(for module: DaylightModule, content: HelmModuleCard.Content) -> HelmModuleCard {
         let card = HelmModuleCard()
-        card.configure(content(for: module, placement: placement))
+        card.configure(content)
         card.onOpen = { [weak self] in self?.onOpenDestination?(module.opens) }
         card.onFollowLink = { [weak self] target in self?.follow(target) }
         cards.append(card)
@@ -1437,14 +1579,24 @@ final class HomeCanvasController: NSViewController {
         return usable > 0 ? usable : HelmResponsiveGrid.fallbackContainerWidth
     }
 
+    /// The height the hub's columns share: the viewport less the page's own
+    /// top and bottom margins.
+    private func gridContainerHeight() -> CGFloat {
+        let usable = scroll.contentView.bounds.height - Self.contentTopMargin - HelmMetrics.s5
+        return usable > 0 ? usable : 600
+    }
+
     /// GL-20's gate: only relay out when this page is actually on screen, and
-    /// only when the width genuinely changed. A resize fires many times per
+    /// only when the width (or, on the hub, the height) genuinely changed. A resize fires many times per
     /// drag; rebuilding fifteen cards on every frame of one is the exact
     /// regression `ToolsController` measured (~3.6ms -> ~20ms per frame).
     private func containerWidthMayHaveChanged() {
         guard isViewLoaded, !view.isHidden else { return }
         let width = gridContainerWidth()
-        guard abs(width - lastGridWidth) > 0.5 else { return }
+        // The hub's row counts come from its height as well, so there a
+        // height change rebuilds too; every other space is width-only.
+        let heightChanged = usesDashboardLayout && abs(gridContainerHeight() - lastGridHeight) > 0.5
+        guard abs(width - lastGridWidth) > 0.5 || heightChanged else { return }
         rebuildGrid()
         applyTheme(ThemeManager.shared.theme)
     }
@@ -1784,9 +1936,14 @@ final class HomeCanvasController: NSViewController {
         } else {
             content.chip = Self.claudeChip(for: snapshot)
             if let fetchedAt = quotaFetchedAt {
-                content.subtitle += " \u{00B7} " + (Self.claudeUsesShortLabels(forCardWidth: width)
-                    ? HelmRelativeTime.phrase(since: fetchedAt)
-                    : "updated " + HelmRelativeTime.phrase(since: fetchedAt))
+                // In a narrow column the age moves to the card's hover text
+                // (and so to its VoiceOver help), the shelf's compact rule:
+                // beside the chip and Refresh it truncated to "just...".
+                if Self.claudeUsesShortLabels(forCardWidth: width) {
+                    content.toolTip = Self.claudeUpdatedText(fetchedAt: fetchedAt)
+                } else {
+                    content.subtitle += " \u{00B7} updated " + HelmRelativeTime.phrase(since: fetchedAt)
+                }
             }
         }
         content.body = .usageReportDense(Self.claudeUsageSections(
@@ -2206,7 +2363,8 @@ final class HomeCanvasController: NSViewController {
             content.body = .note("Nothing open. The queue is clear.")
             return
         }
-        let rows = prs.prefix(HelmModuleCard.maxPeekRows).map { pr -> HelmModulePeekRow in
+        content.peekRowLimit = mergeQueueRowLimit
+        let rows = prs.prefix(mergeQueueRowLimit).map { pr -> HelmModulePeekRow in
             let state: HelmModuleRowState
             switch pr.checks {
             case "green": state = .ok

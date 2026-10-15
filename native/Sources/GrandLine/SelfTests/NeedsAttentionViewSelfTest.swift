@@ -115,13 +115,21 @@ enum NeedsAttentionViewSelfTest {
     /// `OffScreenProbe.window(...)`, never a hand-rolled `NSWindow` - a
     /// hand-rolled one is not actually off-screen whatever origin it is given,
     /// and these have been caught live on the captain's own display.
+    ///
+    /// The captain's own 1512x945 by default: since the hub became three
+    /// columns (`fm/grandline-home-fit-implement`) the card is a 477pt
+    /// column there and its full, non-compact form. The second pass is the
+    /// one every hub suite needs - the grid is built from the clip view's
+    /// width, which is only real after the first.
     private static func mount(_ canvas: HomeCanvasController,
-                              size: NSSize = NSSize(width: 1200, height: 900)) -> NSWindow {
+                              size: NSSize = NSSize(width: 1512, height: 945)) -> NSWindow {
         let window = OffScreenProbe.window(size: size, styleMask: [.titled, .resizable])
         window.contentView = canvas.view
         window.orderFront(nil)
-        canvas.debugRenderNow()
-        canvas.view.layoutSubtreeIfNeeded()
+        for _ in 0..<2 {
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+        }
         return window
     }
 
@@ -460,6 +468,35 @@ enum NeedsAttentionViewSelfTest {
         check(card.debugMoreCount == nil, "three rows in 460pt should show no cue", &ok)
         check(card.debugListScroll.forwardsWheelToPage,
               "a list with nothing to scroll should hand wheel events to the page", &ok)
+
+        // The compact form, at the 960pt minimum window's 293pt column: a
+        // 15pt headline wrapping to three lines, Refresh as a glyph that
+        // still says "Refresh" to VoiceOver, the freshness subline kept, and
+        // rows that keep only the state's first phrase with the rest on hover.
+        card.onRefresh = {}
+        card.setLayoutWidth(293)
+        card.layoutSubtreeIfNeeded()
+        check(card.debugIsCompact, "a 293pt card should be in its compact form", &ok)
+        let headline = card.debugHeader.titleLabel
+        check(headline.maximumNumberOfLines == NeedsAttentionCard.compactHeadlineLines
+                && headline.cell?.wraps == true,
+              "the compact headline should wrap to \(NeedsAttentionCard.compactHeadlineLines) lines", &ok)
+        check(card.debugRefreshButton.title.isEmpty
+                && card.debugRefreshButton.accessibilityLabel() == "Refresh",
+              "compact Refresh is a glyph that VoiceOver still calls Refresh", &ok)
+        check(!card.debugSubline.isEmpty, "the compact header keeps the freshness subline", &ok)
+        if let first = card.debugRows.first as? NeedsAttentionRowView {
+            check(first.debugRow.debugMetaText == "Overdue 27 days",
+                  "a compact row keeps the state's first phrase, got \"\(first.debugRow.debugMetaText)\"", &ok)
+            let hover = first.debugRow.debugHitView.toolTip ?? ""
+            check(hover.contains("Follow-up") && hover.contains("since 18 Sep"),
+                  "and the full line moves to its hover text, got \"\(hover)\"", &ok)
+        }
+        card.setLayoutWidth(477)
+        if let first = card.debugRows.first as? NeedsAttentionRowView {
+            check(first.debugRow.debugMetaText == "Follow-up \u{00B7} Overdue 27 days \u{00B7} since 18 Sep",
+                  "at 477pt the row carries the whole N1 line, got \"\(first.debugRow.debugMetaText)\"", &ok)
+        }
         check(card.debugListAccessibilityLabel == "Needs attention, 3 items",
               "an unclipped list's label should not mention visibility, got "
               + "\(card.debugListAccessibilityLabel ?? "nothing")", &ok)
