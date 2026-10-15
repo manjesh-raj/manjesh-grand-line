@@ -315,6 +315,12 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         case peekRows([HelmModulePeekRow])
         /// A 66pt ring beside a short title and note.
         case ring(value: Int, total: Int, title: String, note: String)
+        /// `.ring`, then one quiet line per item under it - a dot in the
+        /// item's state colour, its name, and its state word. The hub's
+        /// Health card when its page column has room
+        /// (`fm/grandline-home-fit-implement`). The lines are readouts, not
+        /// links: the card itself opens the Health page.
+        case ringWithLines(value: Int, total: Int, title: String, note: String, lines: [HelmModulePeekRow])
         /// A big numeral over a capsule progress bar.
         case progress(value: Int, total: Int, note: String)
         /// One wrapping line of copy.
@@ -357,6 +363,22 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// `HomeCanvasController.claudeUsageIsCompact(forCardWidth:)`, which
         /// picks between them at the same span-2 threshold.
         case usageReport([HelmModuleUsageSection], compact: Bool)
+        /// The usage report as one aligned grid with a row per reading and
+        /// no section headers - the form a card in a page column takes when
+        /// the page has to fit its window (`fm/grandline-home-fit-implement`).
+        ///
+        /// Every limit row is `.usageReport`'s own grid row (title, figure,
+        /// bar, reset caption), and a `.spend` section becomes one more row
+        /// in the same grid: its title, its percentage, its bar, and the
+        /// amount against the cap where a limit row has its reset time. The
+        /// spend footnote moves to that row's hover text and VoiceOver help,
+        /// and a `.note` section becomes a stated-gap row (GL-14).
+        ///
+        /// **The section statuses are not drawn.** The host must carry the
+        /// verdict in the card's header chip instead, which is what the
+        /// Claude card already does when it has room (UI-8). Nothing else is
+        /// dropped: every reading and every reset time is still painted.
+        case usageReportDense([HelmModuleUsageSection])
         /// One line of copy over a `HelmKPIStrip` - the Fleet widget's
         /// sentence, then Working / Done today / Queued as plain figures.
         ///
@@ -524,6 +546,12 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// `nil` on every card that shows everything it has, which is all but
         /// one of them.
         var footer: Footer? = nil
+        /// How many `.peekRows` rows this card shows, in place of
+        /// `maxPeekRows`. `nil` - the default - keeps the cap. The hub's
+        /// Merge queue sets it from the height its page column has left
+        /// (`fm/grandline-home-fit-implement`), and says how many it is
+        /// showing in its footer, so a longer list is never a silent cap.
+        var peekRowLimit: Int? = nil
     }
 
     /// See `Content.footer`.
@@ -1152,6 +1180,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             bodyBottomToCard?.isActive = true
         }
 
+        peekRowLimit = content.peekRowLimit
         rebuildBody(content.body)
 
         // GL-16: §6.1's own label spec - "<title>, <subtitle>, <chip text>".
@@ -1168,6 +1197,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
         applyTheme(ThemeManager.shared.theme)
     }
+
+    /// `Content.peekRowLimit`, held for `rebuildBody`.
+    private var peekRowLimit: Int?
 
     private func rebuildBody(_ body: Body) {
         for view in bodyViews { view.removeFromSuperview() }
@@ -1200,9 +1232,12 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         case let .metric(value, unit, note):
             content = buildMetric(value: value, unit: unit, note: note)
         case let .peekRows(rows):
-            content = buildPeekRows(Array(rows.prefix(Self.maxPeekRows)))
+            content = buildPeekRows(Array(rows.prefix(peekRowLimit ?? Self.maxPeekRows)))
         case let .ring(value, total, title, note):
             content = buildRing(value: value, total: total, title: title, note: note)
+        case let .ringWithLines(value, total, title, note, lines):
+            let ring = buildRing(value: value, total: total, title: title, note: note)
+            content = verticalStack([ring, buildStatusLines(lines)], spacing: HelmMetrics.s3)
         case let .progress(value, total, note):
             content = buildProgress(value: value, total: total, note: note)
         case let .note(text, maxLines):
@@ -1211,6 +1246,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             content = buildParagraph(clauses)
         case let .usageReport(sections, compact):
             content = buildUsageReport(sections, compact: compact)
+        case let .usageReportDense(sections):
+            content = buildUsageReportDense(sections)
         case let .kpis(note, items):
             content = buildKPIs(note: note, items: Array(items.prefix(Self.maxTiles)))
         case let .skeleton(rows):
@@ -1405,7 +1442,12 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             value.font = HelmType.chip()
             value.alignment = .right
             value.translatesAutoresizingMaskIntoConstraints = false
-            value.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            // One above the text's 250, so in a narrow card the title
+            // truncates and the state word ("Checks red") survives. At an
+            // equal 250 which one gave way was Auto Layout's tie-break -
+            // measured as "Chec" in a 293pt Merge queue. Still under 500,
+            // so it is never a floor on the window (gotcha (13)).
+            value.setContentCompressionResistancePriority(HelmDaylightPriority.columnHug, for: .horizontal)
             value.setContentHuggingPriority(.required, for: .horizontal)
             peekValueLabels.append((value, row.state))
 
@@ -1744,6 +1786,47 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         return label
     }
 
+    /// `.usageReportDense`: every section's readings as rows of one
+    /// `buildUsageLimitsGrid`, so a spend bar lines up with the limit bars
+    /// above it. A section after the first starts with a little more space
+    /// above it, which is all that is left of its header.
+    private func buildUsageReportDense(_ sections: [HelmModuleUsageSection]) -> NSView {
+        guard !sections.isEmpty else { return noteLabel("Nothing to show yet.") }
+        var rows: [HelmModuleUsageRow] = []
+        var sectionStarts: [Int] = []
+        for section in sections {
+            sectionStarts.append(rows.count)
+            switch section.content {
+            case let .limits(limits):
+                rows += limits
+            case let .spend(spend):
+                let against = [spend.amount, spend.against].compactMap { $0 }.filter { !$0.isEmpty }
+                rows.append(HelmModuleUsageRow(title: section.title,
+                                               value: spend.value ?? "",
+                                               fill: spend.fill,
+                                               state: spend.state,
+                                               caption: against.joined(separator: " "),
+                                               detail: spend.footnote))
+            case let .note(text):
+                rows.append(HelmModuleUsageRow(title: section.title, value: text,
+                                               fill: nil, state: .idle, isGap: true))
+            }
+        }
+        let grid = buildUsageLimitsGrid(rows)
+        if let grid = grid as? NSGridView {
+            // A page column is as narrow as 293pt, where the regular grid's
+            // 12pt gutters left the widest spend caption ("$137.62 of $140")
+            // painting truncated - measured by `ClaudeStatusCardSelfTest`.
+            grid.columnSpacing = HelmMetrics.s2
+            for start in sectionStarts.dropFirst() where start < grid.numberOfRows {
+                grid.row(at: start).topPadding = HelmMetrics.s1
+            }
+        }
+        let column = verticalStack([makeUsageDivider(), grid], spacing: HelmMetrics.s2 + 2)
+        column.alignment = .leading
+        return column
+    }
+
     private func buildUsageReport(_ sections: [HelmModuleUsageSection], compact: Bool) -> NSView {
         guard !sections.isEmpty else { return noteLabel("Nothing to show yet.") }
 
@@ -1770,6 +1853,53 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         // no extra width tie is needed here, and a second one would only be
         // another chance to set a floor.
         let column = verticalStack(stacked, spacing: HelmMetrics.s2 + 2)
+        column.alignment = .leading
+        return column
+    }
+
+    /// `.ringWithLines`' list: one 22pt line per item, painted by the same
+    /// arrays the peek rows use (dot hue, ink title, state-coloured word), so
+    /// a theme change repaints them with no second recipe.
+    private func buildStatusLines(_ lines: [HelmModulePeekRow]) -> NSView {
+        var views: [NSView] = []
+        for line in lines {
+            let dot = NSView()
+            dot.wantsLayer = true
+            dot.layer?.cornerRadius = HelmStatusPill.dotSize / 2
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                dot.widthAnchor.constraint(equalToConstant: HelmStatusPill.dotSize),
+                dot.heightAnchor.constraint(equalToConstant: HelmStatusPill.dotSize),
+            ])
+            dot.setContentHuggingPriority(.required, for: .horizontal)
+            peekDots.append((dot, line.state))
+            let text = NSTextField(labelWithString: line.text)
+            text.font = HelmType.caption()
+            text.lineBreakMode = .byTruncatingTail
+            text.translatesAutoresizingMaskIntoConstraints = false
+            text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            text.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            peekTextLabels.append(text)
+            let value = NSTextField(labelWithString: line.value)
+            value.font = HelmType.chip()
+            value.alignment = .right
+            value.translatesAutoresizingMaskIntoConstraints = false
+            value.setContentCompressionResistancePriority(HelmDaylightPriority.columnHug, for: .horizontal)
+            value.setContentHuggingPriority(HelmDaylightPriority.columnHug, for: .horizontal)
+            peekValueLabels.append((value, line.state))
+            let row = compressibleStack(NSStackView(views: [dot, text, value]))
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.distribution = .fill
+            row.spacing = HelmMetrics.s2
+            row.translatesAutoresizingMaskIntoConstraints = false
+            row.heightAnchor.constraint(equalToConstant: 22).isActive = true
+            row.setAccessibilityElement(true)
+            row.setAccessibilityRole(.staticText)
+            row.setAccessibilityLabel("\(line.text), \(line.value)")
+            views.append(row)
+        }
+        let column = verticalStack(views, spacing: 0)
         column.alignment = .leading
         return column
     }
@@ -2375,6 +2505,11 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// UI-10: the clickable peek rows, so a suite can press one through its
     /// own recognizer.
     var debugPeekRows: [HoverHighlightView] { peekRowViews }
+    /// Each peek or status line's state word, and whether it is painted
+    /// truncated - its own fitting width wider than its frame.
+    var debugPeekValueTruncations: [(text: String, truncated: Bool)] {
+        peekValueLabels.map { ($0.label.stringValue, $0.label.fittingSize.width > $0.label.frame.width + 0.5) }
+    }
     var debugPeekChevronAlphas: [CGFloat] { peekChevrons.map(\.alphaValue) }
     /// A peek row's frame in the inner card's space, for the arbitration check.
     func debugPeekRowFrameInCard(_ index: Int) -> NSRect {

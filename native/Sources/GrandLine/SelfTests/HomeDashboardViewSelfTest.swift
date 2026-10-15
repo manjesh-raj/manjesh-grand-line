@@ -20,13 +20,16 @@
 //      card. The check is that the band is gone *on Overview and only
 //      there* - the four other spaces still head themselves with it, and a
 //      change that hid it everywhere would leave them nameless.
-//   2. **The five widgets are placed, not packed.** Two rows; the Claude
-//      card beside a column of two; Merge queue beside Health. This is the
-//      defect the captain reported - the wrapping grid packed the same five
-//      cards 2+2+1 / 1+1 at his window size, leaving most of a row empty.
-//   3. **The row really is 7:5 and really does fill the page.** Read off the
-//      resolved frames, so a 499 width constraint that AppKit declined to
-//      satisfy fails here rather than looking right in the arithmetic suite.
+//   2. **The five widgets are placed, not packed.** Since
+//      `fm/grandline-home-fit-implement` the hub is one row of three columns:
+//      the attention card, then Claude over Fleet over Health, then the
+//      Morning briefing over the Merge queue. Before that it was two 7:5
+//      rows, and before *that* the wrapping grid packed the same five cards
+//      2+2+1 / 1+1 at the captain's window size.
+//   3. **The columns really are equal thirds and really do fill the page.**
+//      Read off the resolved frames, so a 499 width constraint that AppKit
+//      declined to satisfy fails here rather than looking right in the
+//      arithmetic suite.
 //   4. **It degrades.** Narrow the window past the point a 5-track card
 //      fits and the hand-placed layout must hand back to the wrapping grid
 //      rather than drawing two unreadably narrow columns.
@@ -55,7 +58,7 @@ enum HomeDashboardViewSelfTest {
         var ok = true
         checkTheHubHasOneHeaderCard(&ok)
         checkTheFiveWidgetsArePlaced(&ok)
-        checkTheRowIsSevenToFive(&ok)
+        checkTheColumnsAreEqualThirds(&ok)
         checkItDegradesWhenNarrow(&ok)
         checkTheFleetTilesAndMergeFooter(&ok)
         checkBothThemesPaint(&ok)
@@ -75,7 +78,7 @@ enum HomeDashboardViewSelfTest {
 
     /// The window width the captain uses, which is what the reference was
     /// drawn against.
-    private static let wide = NSSize(width: 1512, height: 1000)
+    private static let wide = NSSize(width: 1512, height: 945)
 
     /// One `ShiftStore` per case, pointed at its own scratch directory - the
     /// same arrangement `NeedsAttentionViewSelfTest` documents, and for its
@@ -196,25 +199,26 @@ enum HomeDashboardViewSelfTest {
                   "the hub at \(Int(wide.width))pt should use the hand-placed dashboard", &ok)
 
             let rows = canvas.gridRowsForTests
-            guard rows.count == 2 else {
-                fail("the dashboard is two rows, got \(rows.count)", &ok)
+            guard rows.count == 1 else {
+                fail("the hub is one row of three columns, got \(rows.count) rows", &ok)
                 return
             }
-            // Row 1 is a card beside a *column* of two, which is what makes
-            // the tall Claude card and the two stacked beside it end on one
-            // line. Asserted by shape, because that structure is the layout.
-            let firstRow = rows[0].arrangedSubviews
-            check(firstRow.count == 2, "row 1 holds two members, got \(firstRow.count)", &ok)
-            check(firstRow.first is HelmModuleCard,
-                  "row 1 leads with a card, got \(type(of: firstRow.first))", &ok)
-            let stacked = firstRow.last as? NSStackView
-            check(stacked?.arrangedSubviews.count == 2,
-                  "row 1's trailing member is a column of two cards, got "
-                      + "\(stacked?.arrangedSubviews.count.description ?? "not a stack")", &ok)
-
-            let secondRow = rows[1].arrangedSubviews
-            check(secondRow.count == 2 && secondRow.allSatisfy { $0 is HelmModuleCard },
-                  "row 2 is two plain cards, got \(secondRow.map { type(of: $0) })", &ok)
+            // Asserted by shape, because that structure is the layout.
+            let columns = rows[0].arrangedSubviews
+            check(columns.count == 3, "the row holds three columns, got \(columns.count)", &ok)
+            check(columns.first === canvas.attentionCardForTests,
+                  "column 1 is the attention card itself, got \(type(of: columns.first))", &ok)
+            func titles(_ view: NSView?) -> [String] {
+                ((view as? NSStackView)?.arrangedSubviews ?? []).compactMap {
+                    ($0 as? HelmModuleCard)?.anatomyForTests.title
+                }
+            }
+            if columns.count == 3 {
+                check(titles(columns[1]) == ["Claude", "Fleet", "Health"],
+                      "column 2 is Claude over Fleet over Health, got \(titles(columns[1]))", &ok)
+                check(titles(columns[2]) == ["Morning briefing", "Merge queue"],
+                      "column 3 is the briefing over the Merge queue, got \(titles(columns[2]))", &ok)
+            }
 
             // Five cards, once - not four with one dropped, and not six.
             check(canvas.moduleCardsForTests.count == 5,
@@ -222,9 +226,9 @@ enum HomeDashboardViewSelfTest {
         }
     }
 
-    // MARK: 3 - the ratio, as resolved
+    // MARK: 3 - equal thirds, as resolved
 
-    private static func checkTheRowIsSevenToFive(_ ok: inout Bool) {
+    private static func checkTheColumnsAreEqualThirds(_ ok: inout Bool) {
         withScratchShift { store in
             let canvas = makeCanvas(store)
             let window = mount(canvas)
@@ -233,31 +237,32 @@ enum HomeDashboardViewSelfTest {
             canvas.debugRenderNow()
             canvas.view.layoutSubtreeIfNeeded()
 
-            guard let row = canvas.gridRowsForTests.first,
-                  row.arrangedSubviews.count == 2 else {
-                fail("no two-member first row to measure", &ok)
+            guard let row = canvas.gridRowsForTests.first, row.arrangedSubviews.count == 3 else {
+                fail("no three-column row to measure", &ok)
                 return
             }
-            let wideWidth = row.arrangedSubviews[0].frame.width
-            let narrowWidth = row.arrangedSubviews[1].frame.width
-            // The fixture's own discriminating power: both must have really
-            // laid out, or the ratio below is 0/0.
-            guard wideWidth > 1, narrowWidth > 1 else {
-                fail("row 1 never laid out (\(wideWidth) x \(narrowWidth)) - "
-                        + "the ratio check would be vacuous", &ok)
+            let widths = row.arrangedSubviews.map(\.frame.width)
+            // The fixture's own discriminating power: every column must have
+            // really laid out, or the comparison below is between zeroes.
+            guard widths.allSatisfy({ $0 > 1 }) else {
+                fail("the columns never laid out (\(widths)) - the check would be vacuous", &ok)
                 return
             }
-            let expectedWide = HelmResponsiveGrid.proportionalWidth(
-                containerWidth: wideWidth + narrowWidth + HomeCanvasController.gridSpacing,
-                span: 7, spacing: HomeCanvasController.gridSpacing)
+            let total = widths.reduce(0, +) + HomeCanvasController.gridSpacing * 2
+            let expected = HelmResponsiveGrid.proportionalWidth(containerWidth: total, span: 4,
+                                                                spacing: HomeCanvasController.gridSpacing)
             // One device pixel of tolerance: AGENTS.md records that a CI
             // runner is 1x and a dev Mac 2x, so an ideal edge on a half point
             // rounds by up to `1 / backingScaleFactor`.
             let tolerance = 1.0 / (window.backingScaleFactor > 0 ? window.backingScaleFactor : 1)
-            check(abs(wideWidth - expectedWide) <= tolerance,
-                  "the leading card should be 7 of 12 tracks (\(expectedWide)), got \(wideWidth)", &ok)
-            check(wideWidth > narrowWidth,
-                  "and wider than the column beside it, got \(wideWidth) vs \(narrowWidth)", &ok)
+            for (index, width) in widths.enumerated() {
+                check(abs(width - expected) <= tolerance,
+                      "column \(index + 1) should be 4 of 12 tracks (\(expected)), got \(width)", &ok)
+            }
+            // And the three columns end on one line - the page's whole height.
+            let heights = row.arrangedSubviews.map(\.frame.height)
+            check((heights.max() ?? 0) - (heights.min() ?? 0) <= tolerance,
+                  "the three columns should be one height, got \(heights)", &ok)
         }
     }
 
@@ -273,7 +278,7 @@ enum HomeDashboardViewSelfTest {
             canvas.view.layoutSubtreeIfNeeded()
 
             check(!canvas.usesDashboardLayoutForTests,
-                  "at 560pt a 5-track card is under the module floor, so the hub must "
+                  "at 560pt a 4-track column is under the module floor, so the hub must "
                       + "hand back to the wrapping grid", &ok)
             // And nothing is lost by doing so - the cards are all still there.
             check(canvas.moduleCardsForTests.count == 5,
@@ -325,7 +330,12 @@ enum HomeDashboardViewSelfTest {
                 fail("exactly one card carries a footer, got \(footers.count)", &ok)
                 return
             }
-            check(footers[0].caption == "Showing \(HelmModuleCard.maxPeekRows) of 33",
+            // The Merge queue shows as many rows as its column holds, and the
+            // footer says exactly how many that is.
+            let shown = canvas.moduleCardsForTests.first { $0.debugFooter != nil }?.debugPeekRows.count ?? 0
+            check(shown >= HomeCanvasController.mergeQueueMinimumRows && shown < 33,
+                  "the Merge queue should show between its minimum and all 33 rows, got \(shown)", &ok)
+            check(footers[0].caption == "Showing \(shown) of 33",
                   "the footer states the truncation, got \"\(footers[0].caption)\"", &ok)
             // UI-10: one link, which names the queue rather than repeating
             // the card's own click as "View all".
@@ -363,8 +373,9 @@ enum HomeDashboardViewSelfTest {
                     return
                 }
                 surfaces[id] = fill
-                check(canvas.gridRowsForTests.count == 2,
-                      "\(id): the dashboard should still be two rows", &ok)
+                check(canvas.gridRowsForTests.count == 1
+                        && canvas.gridRowsForTests.first?.arrangedSubviews.count == 3,
+                      "\(id): the hub should still be one row of three columns", &ok)
             }
         }
         // The discriminating half: the two palettes must actually differ, or
@@ -486,7 +497,8 @@ enum HomeDashboardViewSelfTest {
                 fail("the merge queue card should draw clickable peek rows", &ok)
                 return
             }
-            check(card.debugPeekRows.count == HelmModuleCard.maxPeekRows,
+            // Five PRs all fit the captain's window, so all five are rows.
+            check(card.debugPeekRows.count == 5,
                   "every shown PR should be a clickable row, got \(card.debugPeekRows.count)", &ok)
             check(card.debugPeekRows.allSatisfy(\.isActivatable), "each row should be a button to VoiceOver", &ok)
             check(card.debugPeekChevronAlphas.allSatisfy { $0 == 0 }, "the chevron is hidden at rest", &ok)
@@ -498,7 +510,12 @@ enum HomeDashboardViewSelfTest {
             let frame = card.debugPeekRowFrameInCard(1)
             check(card.debugCardClickWouldBeDeclined(at: NSPoint(x: frame.midX, y: frame.midY)),
                   "a click on a row must not also open the card", &ok)
-            check(!card.debugCardClickWouldBeDeclined(at: NSPoint(x: 40, y: 20)),
+            // A point in the header band, above the first row whichever way
+            // the card's coordinates run - the card now ends at its last row,
+            // so its bottom edge is no longer bare surface.
+            let firstRow = card.debugPeekRowFrameInCard(0)
+            let headerY = card.isFlipped ? firstRow.minY / 2 : (firstRow.maxY + card.bounds.height) / 2
+            check(!card.debugCardClickWouldBeDeclined(at: NSPoint(x: 40, y: headerY)),
                   "a click on the card's own surface still opens it, or the check above cannot fail", &ok)
         }
     }
@@ -560,8 +577,8 @@ enum HomeDashboardViewSelfTest {
             canvas.view.layoutSubtreeIfNeeded()
             if let queue = card("Merge queue") {
                 let anatomy = queue.anatomyForTests
-                check(anatomy.peekRowCount == HelmModuleCard.maxPeekRows,
-                      "a failed scan should keep the last list, got \(anatomy.peekRowCount) rows", &ok)
+                check(anatomy.peekRowCount == 4,
+                      "a failed scan should keep the last list (4 rows), got \(anatomy.peekRowCount) rows", &ok)
                 check(anatomy.chipText == "Can't reach", "and say it cannot reach GitHub", &ok)
                 check(anatomy.subtitle.contains("as of"), "and how old the list is, got \"\(anatomy.subtitle)\"", &ok)
             } else {

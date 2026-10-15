@@ -46,6 +46,7 @@ enum NeedsAttentionViewSelfTest {
         checkOnlyOnTheHub(&ok)
         checkTheRevampRecipe(&ok)
         checkTheSublineTicks(&ok)
+        checkTheListScrollsInsideTheCard(&ok)
 
         if ok {
             print("NeedsAttentionViewSelfTest: all checks passed")
@@ -114,13 +115,21 @@ enum NeedsAttentionViewSelfTest {
     /// `OffScreenProbe.window(...)`, never a hand-rolled `NSWindow` - a
     /// hand-rolled one is not actually off-screen whatever origin it is given,
     /// and these have been caught live on the captain's own display.
+    ///
+    /// The captain's own 1512x945 by default: since the hub became three
+    /// columns (`fm/grandline-home-fit-implement`) the card is a 477pt
+    /// column there and its full, non-compact form. The second pass is the
+    /// one every hub suite needs - the grid is built from the clip view's
+    /// width, which is only real after the first.
     private static func mount(_ canvas: HomeCanvasController,
-                              size: NSSize = NSSize(width: 1200, height: 900)) -> NSWindow {
+                              size: NSSize = NSSize(width: 1512, height: 945)) -> NSWindow {
         let window = OffScreenProbe.window(size: size, styleMask: [.titled, .resizable])
         window.contentView = canvas.view
         window.orderFront(nil)
-        canvas.debugRenderNow()
-        canvas.view.layoutSubtreeIfNeeded()
+        for _ in 0..<2 {
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+        }
         return window
     }
 
@@ -142,14 +151,18 @@ enum NeedsAttentionViewSelfTest {
                   "the overdue task should be painted, got \(painted)", &ok)
             check(painted.contains(where: { $0.contains("Nithin") }),
                   "the pending follow-up should be painted, got \(painted)", &ok)
-            check(painted.contains(where: { $0.hasPrefix("Overdue") && $0.contains("since") }),
-                  "and a row should carry the overdue chip, got \(painted)", &ok)
-
-            // The source labels are `HelmAccentRow` kickers, rendered
-            // uppercase by the component - the mockup's small all-caps label.
+            // N1 (`fm/grandline-home-fit-implement`): the kind and the state
+            // share the meta line under the title - "Follow-up \u{00B7} Overdue
+            // 27 days \u{00B7} since 18 Sep" - and there is no kicker line.
+            check(painted.contains(where: { $0.contains("Overdue") && $0.contains("since") }),
+                  "and a row should carry the overdue state, got \(painted)", &ok)
+            let metas = card.debugAccentRows.map(\.debugMetaText)
+            check(metas.contains(where: { $0.hasPrefix("Task \u{00B7} Overdue") })
+                    && metas.contains(where: { $0.hasPrefix("Follow-up \u{00B7} Overdue") }),
+                  "each row's second line should lead with its kind, then its state, got \(metas)", &ok)
             let kickers = card.debugAccentRows.map(\.debugKickerText)
-            check(kickers.contains("TASK") && kickers.contains("FOLLOW-UP"),
-                  "each row should name its source in caps, got \(kickers)", &ok)
+            check(kickers.allSatisfy(\.isEmpty),
+                  "an N1 row has no kicker line, got \(kickers)", &ok)
 
             check(card.debugEyebrow == "NEEDS ATTENTION \u{00B7} 2",
                   "the eyebrow should count the rows, got \"\(card.debugEyebrow)\"", &ok)
@@ -342,6 +355,156 @@ enum NeedsAttentionViewSelfTest {
         }
     }
 
+    // MARK: 9 - the list scrolls inside the card (`fm/grandline-home-fit-implement`)
+
+    /// The real card, given less height than its rows need the way a page
+    /// column gives it (a 499 tie, under the window's own 500), with the
+    /// captain's ten-row worst case.
+    private static func checkTheListScrollsInsideTheCard(_ ok: inout Bool) {
+        let window = OffScreenProbe.window(width: 700, height: 700, styleMask: [.titled, .resizable])
+        defer { window.orderOut(nil) }
+        let host = FlippedView(frame: NSRect(x: 0, y: 0, width: 700, height: 700))
+        window.contentView = host
+        window.orderFront(nil)
+        let card = NeedsAttentionCard()
+        var opened: NeedsAttentionItem?
+        card.onOpenItem = { opened = $0 }
+        host.addSubview(card)
+        let height = card.heightAnchor.constraint(equalToConstant: 460)
+        height.priority = HelmDaylightPriority.contentTie
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            card.topAnchor.constraint(equalTo: host.topAnchor),
+            card.widthAnchor.constraint(equalToConstant: 477),
+            height,
+        ])
+        card.setLayoutWidth(477)
+        card.render(ReviewTourLab.demoAttentionSummary(count: 10), subline: "Fleet read just now.",
+                    theme: ThemeManager.shared.theme)
+        host.layoutSubtreeIfNeeded()
+        card.layoutSubtreeIfNeeded()
+        // No run-loop pump before reading the cue: it is computed
+        // synchronously, and CI's runner showed a queued update still pending
+        // after one. Reading it straight away is what keeps it that way.
+
+        let scroll = card.debugListScroll
+        let documentHeight = scroll.documentView?.frame.height ?? 0
+        let visibleHeight = scroll.contentView.bounds.height
+        // Discriminating power first: the fixture really is taller than the
+        // room it was given, or every assertion below would pass vacuously.
+        check(card.debugRows.count == 10, "the fixture should draw 10 rows, got \(card.debugRows.count)", &ok)
+        check(documentHeight > visibleHeight + 50,
+              "ten rows (\(documentHeight)pt) should not fit the \(visibleHeight)pt list", &ok)
+        check(abs(card.frame.height - 460) < 1,
+              "the card should take the height its host gave it, got \(card.frame.height)pt", &ok)
+        check(card.debugEyebrow == "NEEDS ATTENTION \u{00B7} 10",
+              "the eyebrow should carry the total, got \"\(card.debugEyebrow)\"", &ok)
+
+        guard let hidden = card.debugMoreCount else {
+            fail("rows are clipped but no \"+N more\" cue is shown", &ok)
+            return
+        }
+        let fullyVisible = card.debugRows.filter { row in
+            row.convert(row.bounds, to: scroll.documentView).maxY <= scroll.contentView.documentVisibleRect.maxY + 0.5
+        }.count
+        check(hidden == 10 - fullyVisible,
+              "the cue says +\(hidden) more but \(10 - fullyVisible) rows are below the fold", &ok)
+        check(card.debugListAccessibilityLabel == "Needs attention, 10 items, \(fullyVisible) visible",
+              "VoiceOver should hear the list as one group with its counts, got "
+              + "\(card.debugListAccessibilityLabel ?? "nothing")", &ok)
+        check(scroll.verticalScroller?.controlSize == .small, "the list's scroller should be the small size", &ok)
+
+        // The pill's own press pages down - through the accessibility press,
+        // which is what VoiceOver and the pill's click both reach.
+        let before = scroll.contentView.bounds.minY
+        _ = card.debugMorePill.accessibilityPerformPress()
+        check(scroll.contentView.bounds.minY > before + 1, "pressing the cue should scroll the list down", &ok)
+
+        // Wheel routing: a clipped list keeps its wheel events. Asserted as
+        // the scroll view's own decision rather than with a posted wheel
+        // event, because a synthetic wheel event does not scroll an
+        // off-screen window's scroll view even when delivered directly -
+        // measured, so a check built on one could never fail.
+        check(!scroll.forwardsWheelToPage, "a clipped list should keep its own wheel events", &ok)
+
+        // Keyboard: with Full Keyboard Access, Tab lands on a row's checkbox
+        // and its Open button (the row's own surface was never a key view).
+        // Focus the last row's Open the way Tab does, and it must scroll its
+        // row into view; then Space presses it.
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
+        if let last = card.debugRows.last as? NeedsAttentionRowView {
+            check(card.debugMoreCount != nil,
+                  "fixture: the last row should start below the fold - \(card.debugCueState)", &ok)
+            window.makeFirstResponder(last.debugActionButton)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            let frame = last.convert(last.bounds, to: scroll.documentView)
+            let visible = scroll.contentView.documentVisibleRect
+            check(frame.maxY <= visible.maxY + 0.5 && frame.minY >= visible.minY - 0.5,
+                  "a focused row should scroll into view - row \(frame), visible \(visible)", &ok)
+            check(card.debugMoreCount == nil, "with the last row in view the cue should go away", &ok)
+            if let space = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                            timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                            characters: " ", charactersIgnoringModifiers: " ",
+                                            isARepeat: false, keyCode: 49) {
+                window.sendEvent(space)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+                check(opened?.id == "signal.claude",
+                      "Space on the focused Open should open its row, opened \(opened?.id ?? "nothing")", &ok)
+            }
+            // VoiceOver reads the row's kind and state, not only its title.
+            let label = last.debugRow.accessibilityLabel() ?? ""
+            check(label.contains("Claude usage") && label.contains("92%"),
+                  "the row's VoiceOver label should carry its kind and state, got \"\(label)\"", &ok)
+        } else {
+            fail("the last row is not an attention row", &ok)
+        }
+
+        // Three rows fit, so nothing is clipped and there is no cue.
+        card.render(ReviewTourLab.demoAttentionSummary(count: 3), subline: "Fleet read just now.",
+                    theme: ThemeManager.shared.theme)
+        card.layoutSubtreeIfNeeded()
+        check(card.debugMoreCount == nil, "three rows in 460pt should show no cue", &ok)
+        check(card.debugListScroll.forwardsWheelToPage,
+              "a list with nothing to scroll should hand wheel events to the page", &ok)
+
+        // The compact form, at the 960pt minimum window's 293pt column: a
+        // 15pt headline wrapping to three lines, Refresh as a glyph that
+        // still says "Refresh" to VoiceOver, the freshness subline kept, and
+        // rows that keep only the state's first phrase with the rest on hover.
+        card.onRefresh = {}
+        card.setLayoutWidth(293)
+        card.layoutSubtreeIfNeeded()
+        check(card.debugIsCompact, "a 293pt card should be in its compact form", &ok)
+        let headline = card.debugHeader.titleLabel
+        check(headline.maximumNumberOfLines == NeedsAttentionCard.compactHeadlineLines
+                && headline.cell?.wraps == true,
+              "the compact headline should wrap to \(NeedsAttentionCard.compactHeadlineLines) lines", &ok)
+        check(card.debugRefreshButton.title.isEmpty
+                && card.debugRefreshButton.accessibilityLabel() == "Refresh",
+              "compact Refresh is a glyph that VoiceOver still calls Refresh", &ok)
+        check(!card.debugSubline.isEmpty, "the compact header keeps the freshness subline", &ok)
+        // Whether the header stays inside a 293pt card is asserted on the
+        // real page by `HomeFitSelfTest`: in this standalone card the wrong
+        // arithmetic still resolved the good way, so a check here could not
+        // fail.
+        if let first = card.debugRows.first as? NeedsAttentionRowView {
+            check(first.debugRow.debugMetaText == "Overdue 27 days",
+                  "a compact row keeps the state's first phrase, got \"\(first.debugRow.debugMetaText)\"", &ok)
+            let hover = first.debugRow.debugHitView.toolTip ?? ""
+            check(hover.contains("Follow-up") && hover.contains("since 18 Sep"),
+                  "and the full line moves to its hover text, got \"\(hover)\"", &ok)
+        }
+        card.setLayoutWidth(477)
+        if let first = card.debugRows.first as? NeedsAttentionRowView {
+            check(first.debugRow.debugMetaText == "Follow-up \u{00B7} Overdue 27 days \u{00B7} since 18 Sep",
+                  "at 477pt the row carries the whole N1 line, got \"\(first.debugRow.debugMetaText)\"", &ok)
+        }
+        check(card.debugListAccessibilityLabel == "Needs attention, 3 items",
+              "an unclipped list's label should not mention visibility, got "
+              + "\(card.debugListAccessibilityLabel ?? "nothing")", &ok)
+    }
+
     // MARK: 7 - the UI/UX revamp's recipe (UI-1 to UI-4)
 
     /// What the revamp changed, read off the painted card:
@@ -369,16 +532,29 @@ enum NeedsAttentionViewSelfTest {
                 check(row.debugChipText == nil, "an attention row carries no pill", &ok)
                 check(row.actionReveal == .onAim, "the row's action is quiet until aimed at", &ok)
             }
-            if let late = rows.first(where: { ($0.debugTrailingCaption ?? "").hasPrefix("Overdue") }),
-               let color = late.debugTrailingCaptionColor {
+            // N1: the state is a run on the meta line, in the critical tint
+            // as legible text - read off the painted attributed string at the
+            // state's own range, and the kind before it stays muted.
+            if let late = rows.first(where: { $0.debugMetaText.contains("Overdue") }) {
+                let meta = late.debugMetaAttributed
+                let stateAt = (meta.string as NSString).range(of: "Overdue").location
                 let red = HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme),
                                                          over: HelmTheme.nsColor(theme.chromeBackgroundHex),
                                                          theme: theme)
-                let a = HelmContrast.components(color), b = HelmContrast.components(red)
-                check(abs(a.0 - b.0) + abs(a.1 - b.1) + abs(a.2 - b.2) < 0.03,
-                      "the overdue caption should be the critical tint as legible text", &ok)
+                if let color = meta.attribute(.foregroundColor, at: stateAt, effectiveRange: nil) as? NSColor,
+                   let kindColor = meta.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor {
+                    let a = HelmContrast.components(color), b = HelmContrast.components(red)
+                    check(abs(a.0 - b.0) + abs(a.1 - b.1) + abs(a.2 - b.2) < 0.03,
+                          "the overdue state should be the critical tint as legible text", &ok)
+                    let k = HelmContrast.components(kindColor), m = HelmContrast.components(HelmTheme.mutedInk(theme))
+                    check(abs(k.0 - m.0) + abs(k.1 - m.1) + abs(k.2 - m.2) < 0.03,
+                          "the kind before the state should stay muted", &ok)
+                } else {
+                    fail("the overdue row's meta line carries no colours", &ok)
+                }
+                check(late.debugTrailingCaption == nil, "an N1 row paints no trailing caption", &ok)
             } else {
-                fail("an overdue row should paint its trailing caption", &ok)
+                fail("an overdue row should paint its state on the meta line", &ok)
             }
 
             // The row itself opens the item, through the row's own press.

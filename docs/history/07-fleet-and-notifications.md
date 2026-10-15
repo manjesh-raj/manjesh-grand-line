@@ -1265,3 +1265,140 @@ space, per AGENTS.md's probe rules) and the PNGs read back and compared
 against the captain's target screenshot.
 The probe was env-gated, lived in `SelfTests/`, and was deleted before the
 commit.
+
+## Home fits the window (`fm/grandline-home-fit-implement`)
+
+The captain asked for Home to be a fixed page that does not scroll down.
+The widgets could shrink to make that work, and when there are several follow-ups the card holding them should scroll on its own.
+They also said the Needs Attention card wasted width: a row's title sat at one end and its status a page-width away at the other.
+A scout measured the page and drew three layouts and three row shapes on a board (`grandline-home-fit-board`).
+The captain picked layout A (three columns) and row shape N1 (two-line rows, the status under the title).
+The other three calls took the board's recommended defaults: the list shows every row that fits (at least three), the small scroller follows the system scroll-bar setting, and Health lists its services when its column has room.
+
+### What was measured before
+
+Measured with the tour lab's new `measure` verb, in a window with the real window's chrome fusion.
+The viewport is the window height less the bar's reserved 76pt.
+
+| Window | Viewport | Page, 3 rows | Page, 10 rows |
+| --- | --- | --- | --- |
+| 960 x 620 (the minimum) | 544 | 928 (+384) | 1367 (+823) |
+| 1512 x 945 (the captain's) | 869 | 898 (+29) | 1337 (+468) |
+| 1920 x 1050 | 974 | 898 (fits by 76) | 1337 (+363) |
+
+Three things drove it.
+Every attention row added 52-69pt to the page, because the card sat above the widgets.
+The 7:5 rows' equal-height ties padded three cards by 117pt between them.
+And at the 960pt minimum the Claude card was built in its 364pt stacked form (finding M3, below).
+
+### What changed
+
+- **M3.** The dashboard built the Claude card 7 of 12 tracks wide, which is 525.33pt at the 960pt minimum window.
+  `claudeUsageIsCompact` compared that with the wrapping shelf's 526pt span-2 width and chose the stacked reflow.
+  Narrow-form decisions now come from a `CardPlacement`: the shelf keeps its width rule, which is exact there, and a dashboard card is narrow only when both its track share and its width say so.
+  The first version judged the dashboard by span alone, which put the 600pt-wide briefing at the captain's window on the one-column clause cap.
+  The render caught it, and `ClaudeStatusCardSelfTest` now asserts both directions.
+  On today's 7:5 page the fix did not change the page height at 960x620, because the column beside the Claude card was 366pt tall on its own.
+  The scout's "88pt" assumed the Claude card set that row's height, and it did not.
+- **Claude's dense form.** `HelmModuleCard` gained `.usageReportDense`: the limits and the extra-usage spend as rows of one aligned grid, with no section headers.
+  The header chip carries the verdict instead.
+  It measures **172pt** at 293, 477 and 613pt (the board estimated about 180pt), against 276pt for the regular grid and 364pt for the stacked form.
+  Below 400pt the names shorten to Session, Week and Fable, the reset time drops its "Resets", and the spend drops its "cap".
+  The long forms stay on hover and VoiceOver.
+  The grid's gutter is 8pt rather than 12pt, because the worst-case "$137.62 of $140" painted truncated at 293pt with 12.
+- **N1 rows.** A Needs Attention row is now the title, then "Follow-up · Overdue 27 days · since 18 Sep" with the state run in its tint.
+  `HelmAccentRow` gained `metaPrefix` (additive, nil by default) for the muted kind before the coloured state.
+  Two shared fixes came with it.
+  The row's VoiceOver label read `meta` but not the coloured lead, so a state shown only there was seen and not heard.
+  And the attributed meta line clipped at a word with no ellipsis ("Overdue 27" for "Overdue 27 days"), because its runs carried no paragraph style.
+- **The list scrolls inside the card.** The rows sit in their own scroll view, which prefers the list's full height at 490 and never shows fewer than three rows.
+  A host that ties the card's height at 499 therefore makes the list scroll, and leftover height goes to the list, so the clear strip stays at the card's foot.
+  While rows are clipped a "+N more" pill sits over a fade on the list's bottom edge.
+  The eyebrow always carries the total, and VoiceOver hears the list as one group ("Needs attention, 11 items, 6 visible").
+  A row whose checkbox or Open takes focus scrolls itself into view.
+  A wheel event over a list with nothing to scroll goes to the page, so the page's own fallback scroll still works with the pointer over the card.
+- **Three columns.** The hub is one row of three equal 4-track columns.
+  Column 1 is Needs Attention, column 2 is Claude over Fleet over Health, and column 3 is the Morning briefing over the Merge queue.
+  On the hub the scroll document is tied to the viewport at 499.
+  Each column has one absorber (the attention list, Health and the briefing), and the other cards keep their own height at 490.
+  The Merge queue shows as many rows as its column holds (at least two) and its footer says how many.
+  Fleet drops its sentence when its column is short.
+  A height change now rebuilds the hub as well as a width change.
+- **Compact attention header.** Below 420pt the headline drops to 15pt and wraps to three lines, Refresh becomes a glyph, and a row keeps only its state's first phrase ("Overdue 27 days") with the full line on hover.
+  The board said to drop the freshness subline there too.
+  It stays, because it is the one fact on the page no other card states (UX5), and the list absorbs the cost of one caption line.
+  The board also said two headline lines; the captain's own three-clause verdict needs more than three at 293pt, so it can still end in an ellipsis there, with the whole sentence in the tooltip.
+- **Health's services.** `HelmModuleCard` gained `.ringWithLines`, the ring and then one 22pt line per service.
+  Health uses it when column 2 has the room, which is the captain's window and up, and stays the ring alone at the minimum window.
+  A service that never reported says "Not read" and one mid-pass says "Checking", and neither takes a state colour.
+
+### Traps this cost a round each
+
+- **A probe card's `fittingSize` measures a wrapping label as one line.**
+  The label sets its wrap width in `layout()` (gotcha (22)), so the page measured Fleet's two-line sentence at 160pt instead of 175pt and came out 6pt over at 960x620.
+  Heights are now measured in a scratch host after a real layout pass.
+- **A hero headline in a column ran past its card.**
+  `HelmSectionHeader`'s 490 compression resistance beat its stack's clipping resistance, so a one-line verdict at 477pt overflowed into the Claude card instead of truncating.
+  The headline now wraps against the column width, passed in by the host.
+- **Slack went to the wrong member twice.**
+  First the clear strip grew into a 160pt grey block, because only the list had a strong height preference.
+  Then a 251 "natural height" tie on the list's scroll view beat the list stack's own 250 hugging and stretched the first row.
+  The strip and the notes now hug at 495, and the natural tie is at 249.
+- **The "+N more" count was stale one run in three.**
+  It read row frames on the next main-queue turn, and after a rebuild that left the list's and the clip view's frames unchanged nothing re-triggered it.
+  The count now comes from row heights cached at rebuild and the clip view's visible rect.
+- **Four equal-priority ties showed only in a 293pt column.**
+  Each rendered right in one pass and wrong in the next, which is what an unbroken tie looks like.
+  The compact headline's wrap width subtracted one of the header row's three 12pt gaps, so the Refresh could be clipped off the card.
+  The header's eyebrow and subline resisted compression at 490, tying their column's clipping resistance, so a long subline could run under the Claude card (they give way at 249 in a column now).
+  A peek row's title and state word both resisted at 250, so the Merge queue could paint "Chec" (the state word is at 251 now).
+  And a clear-strip reading tied the strip row's 250 hugging, so "Claude plan limits comfortable" could truncate with room to spare (251 now).
+- **CI's runner found two more, both green on a 2x Mac.**
+  First, the "+N more" cue was updated on the next main-queue turn, and on the runner that queued update had still not run when the suites read it (the failure message printed it as pending), so the cue was stale.
+  Since the count reads only the clip's visible rect and row heights cached at rebuild, it is now computed synchronously on every scroll, frame change, rebuild and layout.
+  The suites read it with no run-loop pump in between, and putting the async hop back reproduces the runner's failure locally.
+  Second, on the 1x runner a label's intrinsic width rounds up to a whole point, so the compact headline's zero-slack wrap width made the header row 1pt too wide (the Refresh ended at 278 in a 293pt card).
+  The wrap width is floored and a point narrower now.
+  That one could not be reproduced on a 2x Mac, so the CI run is its only check.
+- **A peek list spreads a stretched card's slack unevenly.**
+  With the Merge queue as column 3's absorber, the remainder under one row landed between rows 15 and 17.
+  The briefing absorbs instead, under its paragraph.
+
+### After
+
+| Window | Viewport | Page, 0 / 3 / 11 rows | Attention list at 11 rows |
+| --- | --- | --- | --- |
+| 960 x 620 | 544 | 544 / 544 / 544 | scrolls, 332pt of 593pt |
+| 1512 x 945 | 869 | 869 / 869 / 869 | fits |
+| 1920 x 1050 | 974 | 974 / 974 / 974 | fits |
+
+At the minimum window with the Larger text step the page measures 583.5pt in 544pt, and it scrolls as a page rather than clipping or growing the window.
+That is the fallback the board predicted, and `HomeFitSelfTest` asserts it.
+
+### Verification
+
+`FM_RUN_HOME_FIT_TESTS` is new and window-backed.
+It reaches the bar-reduced viewport by mounting the real shell through `ReviewTourLab.makeOffScreenShell()`, which now applies the real window's chrome fusion, so its `NEEDS_SESSION` entry carries the `session-not-window` marker.
+It asserts the page fits at all nine size and row combinations, that the list scrolls inside its card with the total in the eyebrow and the cue exactly while rows are clipped, the Larger-text fallback, and Health's list appearing only with room.
+`NeedsAttentionViewSelfTest` gained the scroll, keyboard, VoiceOver and compact cases.
+`ClaudeStatusCardSelfTest` gained the dense form at all three widths and the placement rule in both directions.
+`HomeDashboardViewSelfTest` and `HomeDashboardSelfTest` were rewritten for the three-column placement.
+
+Injected regressions, each restored from a copy taken aside:
+
+- the dashboard decided by width again: the 7-track case and its briefing twin failed;
+- the short labels switched off: the dense form failed on a truncated reset caption;
+- the focus scroll removed: the focus and cue checks failed;
+- the cue never shown: the cue check failed;
+- the Merge queue forced to at least 20 rows: the fit check failed at all three 960x620 cases;
+- the header's old one-gap arithmetic and 490 resistance: the header-inside-the-card check failed at 960x620;
+- the peek row's old 250 tie: the truncated-state-word check failed on "Checks green" and "Checks red";
+- the cue's old next-turn update: both cue checks failed exactly as they had on the runner.
+
+Two checks were written and then removed because they could not fail.
+The header check first lived on a standalone 293pt card, where the wrong arithmetic still resolved the good way, so it moved to the real page in `HomeFitSelfTest`.
+And the clear strip's tie does not reproduce in the fit suite's fixture order at all, so that fix is verified by the tour render alone.
+
+What was not verified: a synthetic wheel event does not scroll an off-screen window's scroll view even when delivered directly, so the wheel routing is asserted as the scroll view's own decision.
+An attention row's own surface was never a key view, so Tab reaches a row through its checkbox and its Open button (with Full Keyboard Access on), and Space presses them.
+Whether `controlSize = .small` visibly thins an overlay scroller, and the final look in a real window, are the captain's check.

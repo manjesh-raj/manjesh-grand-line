@@ -65,7 +65,8 @@ enum ClaudeStatusCardSelfTest {
                       checkTheOverallVerdictWeighsTheSpendCap,
                       checkTheRefreshIsWiredToAForcedReading,
                       checkResetTimesAreOfferedOnlyWhereTheyExist,
-                      checkTheResetAffordanceIsReallyWiredToTheCell] {
+                      checkTheResetAffordanceIsReallyWiredToTheCell,
+                      checkTheHubsDenseFormFitsItsColumn] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -124,6 +125,59 @@ enum ClaudeStatusCardSelfTest {
                                   width: CGFloat) -> HelmModuleCard.Body {
         .usageReport(HomeCanvasController.claudeUsageSections(for: snapshot, now: now),
                      compact: HomeCanvasController.claudeUsageIsCompact(forCardWidth: width))
+    }
+
+    // MARK: Home fit - the dense form
+
+    /// `fm/grandline-home-fit-implement`: the hub's Claude card is the dense
+    /// one-grid form at every column width the three-column page produces
+    /// (293pt at the minimum window, 477pt at the captain's, 613pt at
+    /// 1920pt). It must draw every reading, paint no reset caption
+    /// truncated, never clip, and stay well under the stacked form's height -
+    /// which is the whole reason it exists.
+    private static func checkTheHubsDenseFormFitsItsColumn(_ ok: inout Bool) {
+        print("\n-- claude usage: the hub's dense form fits a page column --")
+        let snapshot = resettingSnapshot()
+        let now = fixtureNow()
+        let stacked = mountCard(usageBody(for: snapshot, now: now, width: HomeCanvasController.minModuleWidth),
+                                width: 293, chip: .bad("Near spend cap"))
+        let stackedHeight = stacked.card.anatomyForTests.cardHeight
+        for width in [293.0, 477.0, 613.0] as [CGFloat] {
+            let short = HomeCanvasController.claudeUsesShortLabels(forCardWidth: width)
+            let sections = HomeCanvasController.claudeUsageSections(for: snapshot, now: now,
+                                                                     headerCarriesVerdict: true,
+                                                                     shortLabels: short)
+            let mounted = mountCard(.usageReportDense(sections), width: width, chip: .bad("Near spend cap"))
+            let anatomy = mounted.card.anatomyForTests
+            let titles = anatomy.usageRows.map(\.title)
+            let expected = short ? ["Session", "Week", "Fable", "Extra usage"]
+                                 : ["Session (5h)", "Week", "Fable week", "Extra usage"]
+            if titles != expected {
+                fail("\(Int(width))pt: the dense form drew rows \(titles), expected \(expected)", &ok)
+            }
+            if !anatomy.usageSections.isEmpty {
+                fail("\(Int(width))pt: the dense form drew section headers \(anatomy.usageSections) - the "
+                     + "header chip is where its verdict goes", &ok)
+            }
+            if anatomy.usageTrackFills.count != 4 {
+                fail("\(Int(width))pt: \(anatomy.usageTrackFills.count) bars drawn, expected 4", &ok)
+            }
+            for track in anatomy.usageTrackFills where track.bedWidth < 39.5 {
+                fail("\(Int(width))pt: a bar resolved \(track.bedWidth)pt wide, under its 40pt floor", &ok)
+            }
+            for caption in anatomy.usageCaptions where caption.isTruncated {
+                fail("\(Int(width))pt: the caption \"\(caption.text)\" is painted truncated", &ok)
+            }
+            if anatomy.bodyContentHeight > anatomy.bodyAreaHeight + 0.5 {
+                fail("\(Int(width))pt: the dense report needs \(anatomy.bodyContentHeight)pt of "
+                     + "\(anatomy.bodyAreaHeight)pt - clipped", &ok)
+            }
+            print("   \(Int(width))pt: dense card \(anatomy.cardHeight)pt (stacked \(stackedHeight)pt)")
+            if anatomy.cardHeight > stackedHeight - 120 {
+                fail("\(Int(width))pt: the dense card is \(anatomy.cardHeight)pt against the stacked "
+                     + "\(stackedHeight)pt - it no longer saves the page its height", &ok)
+            }
+        }
     }
 
     // MARK: 1 - the two sections, the rows in the captain's order, the agreed labels
@@ -786,6 +840,36 @@ enum ClaudeStatusCardSelfTest {
         }
         if HomeCanvasController.claudeUsageIsCompact(forCardWidth: spanTwoWidth) {
             fail("a span-2 card asked for the compact reflow - it has the width for the grid", &ok)
+        }
+        // M3: the hub's dashboard decides from its own placement. At the
+        // 960pt minimum window its 7-of-12-track card is 525.33pt - a third
+        // of a point under the shelf's span-2 width - and the width rule
+        // built it as the 364pt degraded card. The fixture's own
+        // discriminating power first: the width rule really does say compact
+        // at that width, so a pass below is about the placement.
+        let dashboardSevenTrack = HelmResponsiveGrid.proportionalWidth(
+            containerWidth: 960 - HomeCanvasController.gutter * 2, span: 7,
+            spacing: HomeCanvasController.gridSpacing)
+        if !HomeCanvasController.claudeUsageIsCompact(forCardWidth: dashboardSevenTrack) {
+            fail("fixture drifted: the shelf's width rule no longer calls a \(dashboardSevenTrack)pt "
+                 + "card compact, so the dashboard case below would pass vacuously", &ok)
+        }
+        if HomeCanvasController.claudeUsageIsCompact(for: .dashboard(span: 7, width: dashboardSevenTrack)) {
+            fail("a 7-track dashboard card (\(dashboardSevenTrack)pt at the minimum window) asked "
+                 + "for the degraded reflow - M3", &ok)
+        }
+        if !HomeCanvasController.claudeUsageIsCompact(for: .dashboard(span: 4, width: 293)) {
+            fail("a 4-track dashboard card is a third of the row and should be the narrow form", &ok)
+        }
+        // And the other direction: a 5-track briefing that is 600pt wide at
+        // the captain's 1512pt window keeps the wide cap it always had.
+        if HomeCanvasController.briefingClauseCap(for: .dashboard(span: 5, width: 600))
+            != HelmModuleCard.maxBriefingClauses {
+            fail("a 600pt-wide 5-track briefing took the one-column clause cap", &ok)
+        }
+        if HomeCanvasController.briefingClauseCap(for: .dashboard(span: 7, width: dashboardSevenTrack))
+            != HelmModuleCard.maxBriefingClauses {
+            fail("a 7-track dashboard briefing took the one-column clause cap - M3's twin", &ok)
         }
 
         let narrow = mountCard(usageBody(for: resettingSnapshot(), now: fixtureNow(),

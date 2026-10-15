@@ -4035,6 +4035,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_MODULE_CARD_HEADER_TESTS"] == "1"
 if ProcessInfo.processInfo.environment["FM_RUN_HOME_DASHBOARD_VIEW_TESTS"] == "1" {
     exit(HomeDashboardViewSelfTest.run() ? 0 : 1)
 }
+// `fm/grandline-home-fit-implement`: the hub fits the window at the three
+// measured sizes and the attention list scrolls inside its own card.
+// Window-backed - it mounts the real shell to read the bar-reduced viewport -
+// so it is listed in `run-all-tests.sh`'s NEEDS_SESSION.
+if ProcessInfo.processInfo.environment["FM_RUN_HOME_FIT_TESTS"] == "1" {
+    exit(HomeFitSelfTest.run() ? 0 : 1)
+}
 
 // F9 (v1, multi-host command execution): the host-selection logic - tag
 // matching, the never-preselected invariant, the risk gate firing once per

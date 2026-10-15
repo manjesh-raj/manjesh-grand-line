@@ -51,6 +51,22 @@ enum ReviewTourLabSelfTest {
                         .menu],
               "the parsed steps do not match the tour, got \(steps)", &ok)
 
+        // The Home fit verbs (`fm/grandline-home-fit-implement`).
+        let fit = """
+        demo attention 11
+        demo briefing
+        measure min-960x620
+        renderdoc page
+        probe
+        """
+        let (fitSteps, fitErrors) = ReviewTourLab.parse(tour: fit)
+        check(fitErrors.isEmpty, "the Home fit verbs must parse clean, got \(fitErrors)", &ok)
+        check(fitSteps == [.demoAttention(11), .demoBriefing, .measure("min-960x620"),
+                           .renderDoc("page"), .probe],
+              "the Home fit verbs parsed to \(fitSteps)", &ok)
+        let (_, fitBad) = ReviewTourLab.parse(tour: "demo attention lots\nmeasure\nrenderdoc")
+        check(fitBad.count == 3, "a bad count and two missing names must be 3 errors, got \(fitBad)", &ok)
+
         // Every bad line, not just the first: a hand-written tour fixed one
         // error per run is a tool nobody keeps.
         let bad = """
