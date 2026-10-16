@@ -153,3 +153,49 @@ They are different domains. The unbundled binary has no bundle identifier, so
 its `UserDefaults` land in `GrandLine`; reading the wrong one is how one
 investigation came to test a theme the captain was not using.
 
+
+## External tools: the redirect block moved files, not programs (polish report B4)
+
+The Grand Line vs Automic Vault polish report (2026-10-16) found its tour of the Vault page running the captain's real `av --version`, `av list` and `av doctor --json`.
+Every redirect in this file moves state the process *owns* - stores, the preference domain, the Keychain prefix.
+None of them reached the programs the app starts, so a test process ran the captain's real tools with the captain's real credentials.
+
+### Measured, with stubs only
+
+Recording stubs named `av`, `brew`, `gh`, `claude`, `herdr`, `no-mistakes` and `quota-axi`, first on `PATH`, logged argv and exited 1.
+`Subprocess.resolveExecutable` looks at `PATH` before its Homebrew fallbacks, so a stub always wins, and nothing real ran.
+A temporary launch log in `Subprocess` caught the absolute-path launches a stub cannot shadow.
+
+- The Vault tour ran `av --version`, `av list`, `av doctor --json`, `brew tap automic-vault/isotopes` (which changes the captain's Homebrew state) and `brew info --cask`.
+- **Every process that mounts the shell** - every tour and most window-backed suites - ran the real `fm-crew-state.sh` from the firstmate home.
+  That script runs `herdr` and `no-mistakes` on its own account: `FM_RUN_HOME_FIT_TESTS` alone recorded 85 `herdr status`, 3 `herdr server --session default`, 3 `herdr pane get` and 1 `no-mistakes axi status`.
+  A full local run of the suite was driving the real fleet tooling on the machine that ran it.
+- The PR scan (`gh pr list`, as the captain) and `quota-axi` queue behind those script calls, so they had not started by the time the measured tour ended; given a few more seconds they would have.
+- With its own guard removed, `VaultSource` went on to run `av inject +GRANDLINE_APP_PASSWORD -- /bin/sh -c ...` and `brew upgrade automic-vault/isotopes/automic-vault` from a test - against the stubs.
+
+### The rule
+
+Two layers, both armed only in a self-test or tour process (the same predicate as the redirect block) and only under `FM_SELFTESTS`.
+
+- `VaultSource` refuses first, at every entry point that runs `av`, `brew` or `open`, so not even a stub `av` runs.
+  Each answer is unknown, never empty (GL-14), and the Vault page says it did not look rather than blaming the approval helper.
+- `Subprocess.run(executable:)` and `launchDetached` - which every other entry point funnels into - refuse the real copies of `ExternalToolGuard.protectedTools` and any script in the firstmate home.
+  A refusal is a `launchFailure` plus one `ExternalToolGuard: refused ...` line on stderr.
+  **A copy in a temp directory still runs**, because that is what a suite's own stub is; about twenty suites fake `claude`, `herdr` or `fm-send.sh` that way.
+
+So a new suite that needs one of these tools writes a stub into a temp directory and points the code at it.
+A new tool that reaches a real account, a shared service or the machine joins `protectedTools`, with its reason in the doc comment.
+
+### Not covered
+
+- Terminal tabs start their program through SwiftTerm's `startProcess`, a PTY fork that does not go through `Subprocess`.
+  None of the measured launches came from there, but it is not guarded.
+- `git` is not protected: suites drive it against scratch repositories, and the git-backed stores are already redirected.
+- The Vault page's Recipe Backup card reads the recipe file in the captain's local `manjesh-config` clone (secret names, never values) - a file read, not a launch.
+
+### Verified
+
+`FM_RUN_EXTERNAL_TOOL_GUARD_TESTS` (pure logic) puts recording stubs first on `PATH`, checks they shadow the real tools before it calls anything, and asserts zero launches through six `VaultSource` entry points and the four `Subprocess` entry points, plus the backstop's rule and that the same stub runs with the guard off.
+It never calls `ensureServiceRunning`: `/usr/bin/open` cannot be shadowed by a stub.
+Confirmed by injection, stubs only: the `VaultSource` layer off fails with 11 recorded launches, the backstop off fails every backstop case by name.
+With the guard in place the same tour and suites recorded zero stub launches, and the full suite passed with nothing relying on a real protected tool.
