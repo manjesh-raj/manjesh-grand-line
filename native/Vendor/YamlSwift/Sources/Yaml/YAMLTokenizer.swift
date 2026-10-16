@@ -120,26 +120,67 @@ extension Yaml {
   }
   
   
+  // GRANDLINE LOCAL PATCH (YamlSwift tokenizer, linear time) - see
+  // Vendor/YamlSwift/README.md's "Local patch: linear-time tokenizer".
+  //
+  // Upstream re-matched every pattern against the *whole remaining text* and
+  // then copied that remainder (`substring(from:)`) for every token, which
+  // bridged a fresh `NSString` each time - O(n) per token, O(n^2) per file.
+  // Measured in Grand Line: a 400-link reading list took ~7s to parse and a
+  // 150-note sticky board ~1.2s. This walks one `NSString` with a moving
+  // offset and matches each pattern within `[offset, end)` instead.
+  //
+  // Measured with a profile, the copy was the smaller half: the cost was
+  // ICU's `find` scanning forward through the whole remaining text for every
+  // pattern that did not match at the current position, even though every
+  // pattern here is anchored with `^`. `.anchored` makes a failing pattern
+  // fail at the offset instead.
+  //
+  // It is the same match, not an approximation of it: `NSRegularExpression`
+  // treats a search range's bounds as the string's own bounds by default
+  // (anchoring bounds on, transparent bounds off), so `^` matches at the
+  // offset, `$` at the end, and no lookaround sees before the offset -
+  // exactly what matching against the copied remainder did. And `.anchored`
+  // changes nothing for a pattern whose every top-level alternative already
+  // begins with `^`, which is true of every pattern this tokenizer uses
+  // (`tokenPatterns`, `dashPattern`, and the two block patterns below) and
+  // must stay true of any added. Ranges are kept absolute and every
+  // substring is cut from the one source string.
   static func tokenize (_ text: String) -> YAMLResult<[TokenMatch]> {
-    var text = text
+    let source = text as NSString
+    let sourceString = source as String
+    let length = source.length
+    var pos = 0
     var matchList: [TokenMatch] = []
     var indents = [0]
     var insideFlow = 0
+
+    func match (_ regex: NSRegularExpression, at offset: Int) -> NSRange {
+      return regex.rangeOfFirstMatch(in: sourceString, options: .anchored,
+                                     range: NSMakeRange(offset, length - offset))
+    }
+    func cut (_ range: NSRange) -> String {
+      return source.substring(with: range)
+    }
+    func remainder (from offset: Int) -> String {
+      return source.substring(from: offset)
+    }
+
     next:
-      while text.endIndex > text.startIndex {
+      while pos < length {
         for tokenPattern in tokenPatterns {
-          let range = Yaml.Regex.matchRange(text, regex: tokenPattern.pattern)
+          let range = match(tokenPattern.pattern, at: pos)
           if range.location != NSNotFound {
             let rangeEnd = range.location + range.length
             switch tokenPattern.type {
-              
+
             case .newLine:
-              let match = (range, text) |> Yaml.Regex.substring
+              let match = cut(range)
               let lastindent = indents.last ?? 0
               let rest = match[match.index(after: match.startIndex)...]
               let spaces = rest.count
               let nestedBlockSequence =
-                Yaml.Regex.matches((rangeEnd, text) |> Yaml.Regex.substring, regex: dashPattern!)
+                matchRangeFound(dashPattern!, at: rangeEnd, in: sourceString, length: length)
               if spaces == lastindent {
                 matchList.append(TokenMatch(.newLine, match))
               } else if spaces > lastindent {
@@ -163,56 +204,66 @@ extension Yaml {
                 }
                 matchList.append(TokenMatch(.newLine, match))
               }
-              
+
             case .dash, .questionMark:
-              let match = (range, text) |> Yaml.Regex.substring
+              let match = cut(range)
               let index = match.index(after: match.startIndex)
               let indent = match.count
               indents.append((indents.last ?? 0) + indent)
               matchList.append(
                 TokenMatch(tokenPattern.type, String(match[..<index])))
               matchList.append(TokenMatch(.indent, String(match[index...])))
-              
+
             case .colonFO:
               if insideFlow > 0 {
                 continue
               }
               fallthrough
-              
+
             case .colonFI:
-              let match = (range, text) |> Yaml.Regex.substring
+              let match = cut(range)
               matchList.append(TokenMatch(.colon, match))
               if insideFlow == 0 {
                 indents.append((indents.last ?? 0) + 1)
                 matchList.append(TokenMatch(.indent, ""))
               }
-              
+
             case .openSB, .openCB:
               insideFlow += 1
-              matchList.append(TokenMatch(tokenPattern.type, (range, text) |> Yaml.Regex.substring))
-              
+              matchList.append(TokenMatch(tokenPattern.type, cut(range)))
+
             case .closeSB, .closeCB:
               insideFlow -= 1
-              matchList.append(TokenMatch(tokenPattern.type, (range, text) |> Yaml.Regex.substring))
-              
+              matchList.append(TokenMatch(tokenPattern.type, cut(range)))
+
             case .literal, .folded:
-              matchList.append(TokenMatch(tokenPattern.type, (range, text) |> Yaml.Regex.substring))
-              text = (rangeEnd, text) |> Yaml.Regex.substring
+              matchList.append(TokenMatch(tokenPattern.type, cut(range)))
+              pos = rangeEnd
               let lastindent = indents.last ?? 0
               let minindent = 1 + lastindent
               let blockPattern = Yaml.Regex.regex(("^(\(bBreak) *)*(\(bBreak)" +
                 "( {\(minindent),})[^ ].*(\(bBreak)( *|\\3.*))*)(?=\(bBreak)|$)"))
-              let (lead, rest) = text |> Yaml.Regex.splitLead(blockPattern!)
-              text = rest
+              // `splitLead`, over the remainder: the matched lead, and the
+              // offset just past it (or no lead, and the offset unchanged).
+              let leadRange = match(blockPattern!, at: pos)
+              let lead: String
+              if leadRange.location == NSNotFound {
+                lead = ""
+              } else {
+                let leadEnd = leadRange.location + leadRange.length
+                lead = cut(NSMakeRange(pos, leadEnd - pos))
+                pos = leadEnd
+              }
               let block = (lead
                 |> Yaml.Regex.replace(Yaml.Regex.regex("^\(bBreak)"), template: "")
                 |> Yaml.Regex.replace(Yaml.Regex.regex("^ {0,\(lastindent)}"), template: "")
                 |> Yaml.Regex.replace(Yaml.Regex.regex("\(bBreak) {0,\(lastindent)}"), template: "\n")
-                ) + (Yaml.Regex.matches(text, regex: Yaml.Regex.regex("^\(bBreak)")) && lead.endIndex > lead.startIndex
+                ) + (matchRangeFound(Yaml.Regex.regex("^\(bBreak)"), at: pos, in: sourceString, length: length)
+                  && lead.endIndex > lead.startIndex
                   ? "\n" : "")
               matchList.append(TokenMatch(.string, block))
               continue next
-              
+
             case .stringFO:
               if insideFlow > 0 {
                 continue
@@ -220,40 +271,38 @@ extension Yaml {
               let indent = (indents.last ?? 0)
               let blockPattern = Yaml.Regex.regex(("^\(bBreak)( *| {\(indent),}" +
                 "\(plainOutPattern))(?=\(bBreak)|$)"))
-              var block = (range, text)
-                |> Yaml.Regex.substring
+              var block = cut(range)
                 |> Yaml.Regex.replace(Yaml.Regex.regex("^[ \\t]+|[ \\t]+$"), template: "")
-              text = (rangeEnd, text) |> Yaml.Regex.substring
+              pos = rangeEnd
               while true {
-                let range = Yaml.Regex.matchRange(text, regex: blockPattern!)
+                let range = match(blockPattern!, at: pos)
                 if range.location == NSNotFound {
                   break
                 }
-                let s = (range, text) |> Yaml.Regex.substring
+                let s = cut(range)
                 block += "\n" +
                   Yaml.Regex.replace(Yaml.Regex.regex("^\(bBreak)[ \\t]*|[ \\t]+$"), template: "")(s)
-                text = (range.location + range.length, text) |> Yaml.Regex.substring
+                pos = range.location + range.length
               }
               matchList.append(TokenMatch(.string, block))
               continue next
-              
+
             case .stringFI:
-              let match = (range, text)
-                |> Yaml.Regex.substring
+              let match = cut(range)
                 |> Yaml.Regex.replace(Yaml.Regex.regex("^[ \\t]|[ \\t]$"), template: "")
               matchList.append(TokenMatch(.string, match))
-              
+
             case .reserved:
-              return fail(escapeErrorContext(text))
-              
+              return fail(escapeErrorContext(remainder(from: pos)))
+
             default:
-              matchList.append(TokenMatch(tokenPattern.type, (range, text) |> Yaml.Regex.substring))
+              matchList.append(TokenMatch(tokenPattern.type, cut(range)))
             }
-            text = (rangeEnd, text) |> Yaml.Regex.substring
+            pos = rangeEnd
             continue next
           }
         }
-        return fail(escapeErrorContext(text))
+        return fail(escapeErrorContext(remainder(from: pos)))
     }
     while indents.count > 1 {
       indents.removeLast()
@@ -261,5 +310,14 @@ extension Yaml {
     }
     matchList.append((.end, ""))
     return lift(matchList)
+  }
+
+  /// Whether `regex` matches at `offset`, over `[offset, end)` - the linear
+  /// patch's stand-in for `Yaml.Regex.matches(substring(from:), regex:)`.
+  private static func matchRangeFound (_ regex: NSRegularExpression?, at offset: Int,
+                                       in string: String, length: Int) -> Bool {
+    guard let regex else { return false }
+    return regex.rangeOfFirstMatch(in: string, options: .anchored,
+                                   range: NSMakeRange(offset, length - offset)).location != NSNotFound
   }
 }
