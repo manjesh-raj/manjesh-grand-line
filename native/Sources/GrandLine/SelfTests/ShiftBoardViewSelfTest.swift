@@ -39,6 +39,8 @@ enum ShiftBoardViewSelfTest {
         // case's own window, first-responder changes and run-loop turns -
         // waits behind that session until the suite's 300s bound kills it.
         checkTheRevampBoard(check)
+        // Also before the drag case, for the same reason.
+        checkTheBoardFitsTheMinimumWindow(check)
 
         withScratchStore { store in
             // Three tasks, one per column, plus one cancelled task that must
@@ -401,6 +403,50 @@ enum ShiftBoardViewSelfTest {
     }
 
     // MARK: Harness
+
+    /// B5 of the Grand Line vs Automic Vault polish report, as verified: the
+    /// report's own symptoms were the tour lab's never-ordered window, but
+    /// verifying them with realistic data found a real one. At 1100pt and
+    /// 960pt the board stayed 924.5pt wide and its Done column ended at maxX
+    /// 1180.5, past the window: the Done lane's empty-state sentence held its
+    /// one-line width at compression resistance 750, the three lanes are tied
+    /// to equal widths, so all three were 297.5pt. It did that while
+    /// *hidden*, because a hidden view still lays out - so the shape that
+    /// shows it is a Done lane holding a card. Both shapes are checked.
+    private static func checkTheBoardFitsTheMinimumWindow(_ check: (Bool, String) -> Void) {
+        for shape in ["every lane holds a card", "every lane is empty"] {
+            withScratchStore { store in
+                if shape == "every lane holds a card" {
+                    _ = seed(store, title: "Renew the staging TLS certificate", status: .todo)
+                    _ = seed(store, title: "Write the release notes", status: .inProgress)
+                    let done = seed(store, title: "Upgrade Postgres on staging", status: .todo)
+                    store.setTaskCompleted(id: done, completed: true)
+                }
+                let controller = ShiftController(store: store)
+                let window = OffScreenProbe.window(width: 960, height: 620, styleMask: [.titled, .resizable])
+                defer { window.orderOut(nil) }
+                window.contentView = controller.view
+                window.orderFront(nil)
+                controller.viewWillAppear()
+                drainMainQueue()
+                controller.debugRender()
+                controller.view.layoutSubtreeIfNeeded()
+
+                let width = window.contentLayoutRect.width
+                var columns: [NSRect] = []
+                func walk(_ view: NSView) {
+                    if view is ShiftBoardColumnView { columns.append(view.convert(view.bounds, to: nil)) }
+                    view.subviews.forEach(walk)
+                }
+                walk(controller.view)
+                check(columns.count == 3, "\(shape): the board shows \(columns.count) columns, expected 3")
+                let reach = columns.map(\.maxX).max() ?? 0
+                check(reach <= width + 0.5,
+                      "\(shape): at the \(width)pt minimum window the board's last column ends at maxX \(reach) - "
+                      + "a lane's own copy is holding the lanes wider than the page")
+            }
+        }
+    }
 
     private static func seed(_ store: ShiftStore, title: String, status: ShiftTaskStatus) -> String {
         var task = ShiftTask.fresh()

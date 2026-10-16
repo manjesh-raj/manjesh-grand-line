@@ -3837,6 +3837,28 @@ final class HelmEmptyState: NSView {
         layer.add(fade, forKey: "entrance.fade")
     }
 
+    /// Lets the body copy give way to the container's width instead of
+    /// setting it.
+    ///
+    /// The body already wraps to this view's own bounds (`layout()`), but at
+    /// the default compression resistance (750) its one-line width is also a
+    /// *floor* on whatever this view sits in - so the container is never
+    /// narrower than the sentence and the wrap width never moves: AGENTS.md
+    /// gotcha (22)'s circular derivation. Measured on the Tasks board (B5 of
+    /// the Grand Line vs Automic Vault polish report): the Done lane's
+    /// "Completed tasks from the last 7 days land here." held all three
+    /// equal-width lanes at 297.5pt, so at 1100pt and 960pt the board needed
+    /// 924.5pt and its Done column ran past the window - even with the empty
+    /// state hidden, since a hidden view still lays out (gotcha (15)).
+    ///
+    /// Opt-in rather than the default because a container whose width only
+    /// its content decides would then clip the copy; a board lane's width is
+    /// decided by the board, which is the case this is for.
+    func letBodyWrapToContainer() {
+        bodyLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        needsLayout = true
+    }
+
     override func layout() {
         super.layout()
         playEntranceIfNeeded()

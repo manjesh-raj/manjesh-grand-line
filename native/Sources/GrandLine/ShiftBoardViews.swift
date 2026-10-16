@@ -808,6 +808,10 @@ final class ShiftBoardColumnView: NSView {
         dropView.addSubview(body)
         dropView.addSubview(emptyState)
         dropView.addSubview(filteredEmptyState)
+        // A lane's width is the board's to decide, never its copy's - see
+        // `HelmEmptyState.letBodyWrapToContainer` (B5 of the polish report).
+        emptyState.letBodyWrapToContainer()
+        filteredEmptyState.letBodyWrapToContainer()
         dropView.addSubview(skeleton)
         emptyState.translatesAutoresizingMaskIntoConstraints = false
         filteredEmptyState.translatesAutoresizingMaskIntoConstraints = false
