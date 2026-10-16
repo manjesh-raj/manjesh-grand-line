@@ -192,27 +192,42 @@ enum FormsModernizationSelfTest {
     // MARK: 3. The primitive F1 depends on
 
     private static func checkLayerAnimationPrimitive(_ ok: inout Bool) {
-        print("\n-- F1: `animateLayers` sets the flag that makes a layer property animate at all --")
-        guard let motion = source("HelmMotion.swift") else {
-            print("  SKIP sources not present next to this binary")
+        print("\n-- F1: `animateLayers` really attaches an animation to a layer property --")
+        // This used to be a source grep for `allowsImplicitAnimation = true`,
+        // and it passed for years while the glow still popped: measured on
+        // macOS 26.7 (P1 of the Grand Line vs Automic Vault polish report),
+        // AppKit's view-backed layer delegate supplies no action for
+        // `borderWidth`, `borderColor` or `shadowOpacity` even with that flag
+        // set. So this reads the product - the animation keys on a real
+        // layer - instead of the mechanism.
+        var problems: [String] = []
+        HelmMotion.reducedOverrideForTests = false
+        defer { HelmMotion.reducedOverrideForTests = nil }
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 40, height: 20))
+        view.wantsLayer = true
+        guard let layer = view.layer else {
+            print("  FAIL a wantsLayer view has no layer")
+            ok = false
             return
         }
-        // Without `allowsImplicitAnimation`, a layer property assigned on a
-        // view-backed layer pops - which is the finding verbatim, and which no
-        // amount of wrapping in `animate` would fix. Source, because the flag
-        // leaves no property to read back afterwards.
-        var problems: [String] = []
-        if !motion.contains("context.allowsImplicitAnimation = true") {
-            problems.append("animateLayers does not set allowsImplicitAnimation")
+        HelmMotion.animateLayers(true, duration: 1, on: [layer]) {
+            layer.borderWidth = 2
+            layer.shadowOpacity = 0.4
+        }
+        let keys = Set(layer.animationKeys() ?? [])
+        if !keys.isSuperset(of: ["borderWidth", "shadowOpacity"]) {
+            problems.append("animateLayers attached \(keys.sorted()) - the focus glow's border and shadow would pop")
         }
         // Reduce Motion still means the end state, instantly.
-        var reduced = false
+        layer.removeAllAnimations()
         HelmMotion.reducedOverrideForTests = true
-        defer { HelmMotion.reducedOverrideForTests = nil }
-        HelmMotion.animateLayers(true, duration: 1) { reduced = true }
-        if !reduced { problems.append("animateLayers skipped its body under Reduce Motion") }
+        HelmMotion.animateLayers(true, duration: 1, on: [layer]) { layer.borderWidth = 3 }
+        if layer.borderWidth != 3 { problems.append("animateLayers skipped its body under Reduce Motion") }
+        if !(layer.animationKeys() ?? []).isEmpty {
+            problems.append("animateLayers animated under Reduce Motion (\(layer.animationKeys() ?? []))")
+        }
         if problems.isEmpty {
-            print("  OK   implicit animation enabled; Reduce Motion still runs the body")
+            print("  OK   border and shadow ease; Reduce Motion lands the end state with nothing animating")
         } else {
             for p in problems { print("  FAIL \(p)") }
             ok = false
