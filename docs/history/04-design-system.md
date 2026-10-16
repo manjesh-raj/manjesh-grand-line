@@ -536,3 +536,64 @@ root cause itself, all three failed fixes above, and the before/after table.
 `screencapture` does not work from this shell, so there is no screenshot of the
 captain's own instance - the evidence is resolved `NSView.frame`s out of a real
 layout pass in a real window, which is this repository's documented substitute.
+
+## Hover, press and entrances that really ease, and one motion table (polish report P1, P8, P10)
+
+The Grand Line vs Automic Vault polish report (2026-10-16) found that the app's hover and press feedback was written to ease over 120ms and never did.
+Its own probe predicted the cause and the fix: the layer properties were written inside a plain `runAnimationGroup` (or a `CATransaction` duration), which a view-backed layer ignores, and `HelmMotion.animateLayers` sets `allowsImplicitAnimation`, which would make them animate.
+
+### What it actually was
+
+The first half was right and the second half was not.
+Measured on macOS 26.7 in a real window: inside a context with `allowsImplicitAnimation = true`, AppKit's view-backed layer delegate answers no action at all for `backgroundColor`, `borderColor`, `borderWidth`, `shadowOpacity` or `transform`.
+It supplies one only for `opacity`, `cornerRadius`, `shadowRadius`, `shadowColor`, `bounds` and `position`.
+So routing the sites through the old `animateLayers` left eleven of the sixteen failing checks still failing, and the field focus glow (F1, the primitive's first caller) had been popping all along: it animated the glow's radius and colour but not its opacity, which is the property that makes it appear.
+
+The same flag was behind every layer travel the app has.
+The page change's 10pt slide, the ⌘K palette's and All Destinations' scale, the toast's rise and dismiss, the dictation HUD's pop, the form sheet's entrance and the bar's scroll-edge shadow each ran only their fade.
+`BarNavigationModernizationSelfTest` asserted "an animation exists on the incoming page" and was green because the fade alone satisfied it - measured, the page's keys were `["opacity"]`.
+
+One more thing the comments had wrong: a view-backed layer anchors at `(0, 0)`, its bottom-left corner, not at its centre.
+`HelmForm`'s sheet entrance said so in a comment and relied on the opposite.
+Every press compression shrank the control towards that corner - 10pt off-centre for a 200pt view at 0.9 - which nobody could see while it snapped.
+
+### The fix
+
+`animateLayers(on:)` now takes the layers it covers.
+It snapshots their animatable properties, runs the body with actions disabled, and adds an explicit ease-out `CABasicAnimation` for each property whose model value changed, starting from the presentation value when an earlier one on the same key is still running.
+That needs no delegate, no window and no run-loop turn, which is also what lets a suite read the animation keys straight after the call.
+`HelmMotion.centredScale` composes a scale about the layer's real centre, and every press and every entrance scale uses it.
+`HelmButton` gained the `highlight(_:)` entry `DaylightBarIconButton` already had, so Space and Return on a focused button show the press as well.
+
+`allowsImplicitAnimation` stays in three places, by name, because there it animates a layout pass (frames, which do have actions): the Kubernetes describe drawer, the SRE Lead pane and the toggle knob.
+
+### The motion table
+
+The report counted nine UI durations in use, two of them tokens.
+There are three now, in `HelmMotion.swift`'s header with the rules for which primitive to use:
+
+- `stateDuration`, 0.12s - a control changing state where it stands.
+- `moveDuration`, 0.18s - something travelling, or one surface changing over to another.
+- `springDuration`, 0.25s - an arrival on the spring, or a first-appearance rise.
+
+Retimed by the migration, each within 0.06s of what it was: the press (0.09 to 0.12), the module card lift (0.14 to 0.12), the scroll-edge hairline (0.14 to 0.12), the bar's scroll-edge shadow (0.16 to 0.12), the toggle knob (0.16 to 0.18), the palette and All Destinations entrances (0.15 to 0.18), the HUD hide (0.2 to 0.18) and the row entrance (0.22 to 0.25).
+The theme crossfade keeps K3's 200ms, and the ambient loops and a toast's dwell time keep their own numbers, each as a named exception.
+
+The report suggested putting the table in AGENTS.md.
+It lives in `HelmMotion.swift` instead, because this task's brief keeps AGENTS.md to corrections, and the source file is where a person reaching for a duration is already looking.
+
+### Verified
+
+- `FM_RUN_HOVER_PRESS_EASING_TESTS` (window-backed) reads `layer.animationKeys()` after each real entry point - `mouseEntered`, `highlight(_:)`, the press path, `HelmInputSurface.apply` - in both Reduce Motion states, and asserts the end state and the centring.
+  On `9871bcd` it failed 16 checks.
+- `FM_RUN_MOTION_TABLE_TESTS` (pure logic, the blocking lane) asserts the table, fails on a literal UI duration or a stray `allowsImplicitAnimation`, fails on an exception that no longer matches anything, and drives `animateLayers` on a plain `CALayer`.
+- Confirmed by injection: the old implicit `animateLayers` fails 13 easing checks, 6 primitive checks and F1's check in `FM_RUN_FORMS_MODERNIZATION_TESTS`; a bare scale fails the centring check; a stray `ctx.duration = 0.3` and a stray flag each fail the table suite by file and line; the old page slide fails B4 with keys `["opacity"]`.
+- Tour-lab renders of Home, Settings and the bar at 960x620, 1100x720 and 1512x950 in Daylight and Dusk are pixel-identical before and after, so no resting layout moved.
+
+Not verified: the motion itself on a real display.
+An off-screen render cannot show an animation, and this shell has no Screen Recording grant, so the evidence is the animation objects on real layers in a real window, not a recording.
+
+### P10 - the process rule this report asked for
+
+For any visible UI change, compare two or three variants on a review board before building, then attach tour-lab renders at three window sizes (the minimum 960x620, 1100x720 and 1512x950) in both theme families to the pull request.
+Automic Vault's own design habit is the source: variants on the same illustrative data, a direction picked, then a native build checked at three sizes.
