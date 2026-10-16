@@ -503,10 +503,6 @@ final class NotificationPanelViewController: NSViewController {
 
     private let headerSeparator = NSView()
 
-    /// Theme-following labels with no repaint path of their own.
-    private var groupHeaders: [NSTextField] = []
-    private var separators: [NSView] = []
-
     /// Which row is selected - the keyboard's cursor, and what a right-click
     /// moves before it opens a menu (the reference does the same, so the menu
     /// is visibly attached to a row).
@@ -749,14 +745,6 @@ final class NotificationPanelViewController: NSViewController {
         if signature == lastRenderSignature { return }
         lastRenderSignature = signature
 
-        for view in listStack.arrangedSubviews {
-            listStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        groupHeaders.removeAll()
-        separators.removeAll()
-        clearsLabels.removeAll()
-
         markAllReadButton.isEnabled = center.unreadCount > 0
         updateFilterTabs(all: all.count, action: all.filter { $0.kind == .actionNeeded }.count)
 
@@ -768,140 +756,100 @@ final class NotificationPanelViewController: NSViewController {
         emptyStateAction.isHidden = !actionCopy
         scroll.isHidden = visible.isEmpty
 
+        var items: [ListItem] = []
         for group in NotificationGroup.allCases {
             let rows = visible.filter { NotificationGroup($0.kind) == group }
             guard !rows.isEmpty else { continue }
-            addGroupHeader(group.title)
+            items.append(.header(group))
             for (index, entry) in rows.enumerated() {
-                addRow(entry, isRead: center.isRead(entry))
+                items.append(.row(entry))
                 if expandedIDs.contains(entry.id), !entry.children.isEmpty {
-                    addChildren(of: entry)
+                    items.append(.children(entry))
                 }
                 // The reference's inset hairline: between rows of one group
                 // only, never after the last one and never between groups
                 // (the next group's own header is the division there).
-                if index < rows.count - 1 { addSeparator() }
+                if index < rows.count - 1 { items.append(.separator(after: entry.id)) }
             }
         }
+        // P2: a reload that changed one entry updates that one row; every
+        // other row, header and hairline stays the same view (`HelmKeyedRows`).
+        listRows.reconcile(items, key: \.key, make: { [weak self] item in
+            self?.makeListView(item, center: center) ?? NSView()
+        }, update: { [weak self] view, item in
+            guard let self, case .row(let entry) = item, let row = view as? NotificationRowView else { return }
+            self.configureRow(row, entry, isRead: center.isRead(entry))
+        })
 
         renderFooter()
         applyTheme(theme)
         updateSize()
     }
 
-    private func addGroupHeader(_ title: String) {
-        let label = NSTextField(labelWithString: title)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        let rule = NSView()
-        rule.wantsLayer = true
-        rule.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(label)
-        container.addSubview(rule)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
-            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -4),
-            rule.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 6),
-            rule.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
-            rule.centerYAnchor.constraint(equalTo: label.centerYAnchor),
-            rule.heightAnchor.constraint(equalToConstant: 1),
-        ])
-        groupHeaders.append(label)
-        separators.append(rule)
-        listStack.addArrangedSubview(container)
-        container.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
+    /// P2: the list, keyed by entry id - each row, its group's header, the
+    /// hairline under it and its expanded children.
+    private lazy var listRows = HelmKeyedRows(stack: listStack)
+
+    private enum ListItem {
+        case header(NotificationGroup)
+        case row(AppNotification)
+        case separator(after: String)
+        case children(AppNotification)
+
+        var key: String {
+            switch self {
+            case .header(let group): return "header:\(group)"
+            case .row(let entry): return "row:\(entry.id)"
+            case .separator(let id): return "separator:\(id)"
+            // What the block shows is part of its key, so changed children
+            // build a fresh block rather than patching one.
+            case .children(let entry):
+                let children = entry.children
+                    .map { "\($0.id)/\($0.name)/\($0.meta)/\($0.actionLabel ?? "-")/\($0.isMonospaced)" }
+                    .joined(separator: ",")
+                return "children:\(entry.id)\u{1f}\(entry.clearCondition)\u{1f}\(children)"
+            }
+        }
     }
 
-    private func addSeparator() {
-        let line = NSView()
-        line.wantsLayer = true
-        line.translatesAutoresizingMaskIntoConstraints = false
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(line)
-        NSLayoutConstraint.activate([
-            // The inset: starts at the text column, the way `NSTableView`'s
-            // inset style reads. A full-width rule between every row makes a
-            // popover read as a form.
-            line.leadingAnchor.constraint(equalTo: container.leadingAnchor,
-                                          constant: NotificationRowMetrics.textColumn),
-            line.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
-            line.topAnchor.constraint(equalTo: container.topAnchor),
-            line.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            line.heightAnchor.constraint(equalToConstant: 1),
-        ])
-        separators.append(line)
-        listStack.addArrangedSubview(container)
-        container.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
+    private func makeListView(_ item: ListItem, center: GrandLineNotificationCenter) -> NSView {
+        switch item {
+        case .header(let group):
+            return NotificationGroupHeaderView(title: group.title)
+        case .separator:
+            return NotificationListSeparatorView()
+        case .row(let entry):
+            let row = NotificationRowView(entry: entry,
+                                          isRead: center.isRead(entry),
+                                          isExpanded: expandedIDs.contains(entry.id),
+                                          isSelected: selectedID == entry.id,
+                                          timeText: entry.timeText ?? NotificationTimeText.relative(entry.date, now: clock()),
+                                          theme: theme)
+            row.translatesAutoresizingMaskIntoConstraints = false
+            return row
+        case .children(let entry):
+            let entryID = entry.id
+            return NotificationChildrenView(entry: entry, theme: theme) { [weak self] childID in
+                self?.performChildAction(childID: childID, ofEntryID: entryID)
+            }
+        }
     }
 
-    private func addRow(_ entry: AppNotification, isRead: Bool) {
-        let row = NotificationRowView(entry: entry,
-                                      isRead: isRead,
-                                      isExpanded: expandedIDs.contains(entry.id),
-                                      isSelected: selectedID == entry.id,
-                                      timeText: entry.timeText ?? NotificationTimeText.relative(entry.date, now: clock()),
-                                      theme: theme)
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.onActivate = { [weak self] in self?.select(entry.id, markingRead: true) }
-        row.onToggleExpanded = { [weak self] in self?.toggleExpanded(entry.id) }
+    /// A row's whole state, for a new row and a kept one alike. The handlers
+    /// are set here too, so a kept row acts on the entry as it is now.
+    private func configureRow(_ row: NotificationRowView, _ entry: AppNotification, isRead: Bool) {
+        row.configure(entry: entry,
+                      isRead: isRead,
+                      isExpanded: expandedIDs.contains(entry.id),
+                      isSelected: selectedID == entry.id,
+                      timeText: entry.timeText ?? NotificationTimeText.relative(entry.date, now: clock()),
+                      theme: theme)
+        let id = entry.id
+        row.onActivate = { [weak self] in self?.select(id, markingRead: true) }
+        row.onToggleExpanded = { [weak self] in self?.toggleExpanded(id) }
         row.onPrimaryAction = { [weak self] in self?.performPrimaryAction(entry) }
         row.onBuildMenu = { [weak self] in self?.contextMenu(for: entry) }
-        listStack.addArrangedSubview(row)
-        row.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
     }
-
-    private func addChildren(of entry: AppNotification) {
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 0
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        for (index, child) in entry.children.enumerated() {
-            if index > 0 {
-                let rule = NSView()
-                rule.wantsLayer = true
-                rule.translatesAutoresizingMaskIntoConstraints = false
-                rule.heightAnchor.constraint(equalToConstant: 1).isActive = true
-                separators.append(rule)
-                stack.addArrangedSubview(rule)
-                rule.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-            }
-            let view = NotificationChildRowView(child: child, theme: theme)
-            view.onAction = { [weak self] in self?.performChildAction(child, of: entry) }
-            stack.addArrangedSubview(view)
-            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
-
-        // The reference's "clears when…" line: the explanation moved out of the
-        // row and under the disclosure, which is the whole point of expanding.
-        let clears = NSTextField(wrappingLabelWithString: entry.clearCondition)
-        clears.translatesAutoresizingMaskIntoConstraints = false
-        clears.font = HelmType.captionSmall()
-        clears.textColor = HelmTheme.mutedInk(theme)
-        clears.isHidden = entry.clearCondition.isEmpty
-        stack.addArrangedSubview(clears)
-        clears.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        clearsLabels.append(clears)
-
-        container.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor,
-                                           constant: NotificationRowMetrics.textColumn),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 2),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6),
-        ])
-        listStack.addArrangedSubview(container)
-        container.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
-    }
-
-    private var clearsLabels: [NSTextField] = []
 
     /// Built once and **retitled** on every reload - `HelmSegmentedTabs`
     /// already owns `setTitle(_:forID:)` "for a tab carrying a live count",
@@ -968,8 +916,12 @@ final class NotificationPanelViewController: NSViewController {
         reload()
     }
 
-    private func performChildAction(_ child: AppNotificationChild, of entry: AppNotification) {
-        guard let perform = child.perform else { return }
+    /// Looked up by id at click time, so a children block kept across
+    /// reloads runs the child's action as the store has it now.
+    private func performChildAction(childID: String, ofEntryID entryID: String) {
+        guard let entry = GrandLineNotificationCenter.shared.entries.first(where: { $0.id == entryID }),
+              let child = entry.children.first(where: { $0.id == childID }),
+              let perform = child.perform else { return }
         perform()
         showToast("\(child.actionLabel ?? "Started"): \(child.name)", undo: nil)
     }
@@ -1175,23 +1127,13 @@ final class NotificationPanelViewController: NSViewController {
         emptyStateAction.applyTheme(theme)
         filterTabs?.applyTheme(theme)
 
-        for header in groupHeaders {
-            header.font = HelmType.kicker()
-            header.textColor = muted
-        }
-        for separator in separators {
-            separator.layer?.backgroundColor = line.withAlphaComponent(0.6).cgColor
-        }
-        for label in clearsLabels {
-            label.font = HelmType.captionSmall()
-            label.textColor = muted
-        }
-        for case let row as NotificationRowView in listStack.arrangedSubviews {
-            row.applyTheme(theme)
-        }
-        for container in listStack.arrangedSubviews {
-            for case let child as NotificationChildRowView in allSubviews(of: container) {
-                child.applyTheme(theme)
+        for view in listStack.arrangedSubviews {
+            switch view {
+            case let row as NotificationRowView: row.applyTheme(theme)
+            case let header as NotificationGroupHeaderView: header.applyTheme(theme)
+            case let rule as NotificationListSeparatorView: rule.applyTheme(theme)
+            case let children as NotificationChildrenView: children.applyTheme(theme)
+            default: break
             }
         }
     }
@@ -1202,7 +1144,12 @@ final class NotificationPanelViewController: NSViewController {
 
     #if FM_SELFTESTS
     var debugRowTitles: [String] { debugRows.map(\.debugTitle) }
-    var debugGroupHeaders: [String] { groupHeaders.map(\.stringValue) }
+    var debugGroupHeaders: [String] {
+        listStack.arrangedSubviews.compactMap { ($0 as? NotificationGroupHeaderView)?.title }
+    }
+    /// Every view in the list, in order - `KeyedRefreshSelfTest` asks whether
+    /// a reload kept the same objects.
+    var debugListViews: [NSView] { listStack.arrangedSubviews }
     var debugRows: [NotificationRowView] { listStack.arrangedSubviews.compactMap { $0 as? NotificationRowView } }
     var debugChildRows: [NotificationChildRowView] {
         listStack.arrangedSubviews.flatMap { allSubviews(of: $0) }.compactMap { $0 as? NotificationChildRowView }
@@ -1299,6 +1246,141 @@ enum NotificationRowMetrics {
 /// accessibility role, the focus ring and the keyboard press (GL-16) - and
 /// `onHoverChange`, which is what swaps the timestamp for the action button
 /// without a second tracking area of its own.
+/// A group's header in the notification list: the kicker and the rule
+/// running out to the edge. A view of its own so the list can keep it across
+/// reloads (P2) and still repaint it on a theme change.
+final class NotificationGroupHeaderView: NSView {
+    private let label: NSTextField
+    private let rule = NSView()
+
+    var title: String { label.stringValue }
+
+    init(title: String) {
+        label = NSTextField(labelWithString: title)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+        rule.wantsLayer = true
+        rule.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        addSubview(rule)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            rule.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 6),
+            rule.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            rule.centerYAnchor.constraint(equalTo: label.centerYAnchor),
+            rule.heightAnchor.constraint(equalToConstant: 1),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    func applyTheme(_ theme: HelmTheme) {
+        label.font = HelmType.kicker()
+        label.textColor = HelmTheme.mutedInk(theme)
+        rule.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
+    }
+}
+
+/// The inset hairline between two rows of one group.
+final class NotificationListSeparatorView: NSView {
+    private let line = NSView()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        line.wantsLayer = true
+        line.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(line)
+        NSLayoutConstraint.activate([
+            // The inset: starts at the text column, the way `NSTableView`'s
+            // inset style reads. A full-width rule between every row makes a
+            // popover read as a form.
+            line.leadingAnchor.constraint(equalTo: leadingAnchor, constant: NotificationRowMetrics.textColumn),
+            line.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            line.topAnchor.constraint(equalTo: topAnchor),
+            line.bottomAnchor.constraint(equalTo: bottomAnchor),
+            line.heightAnchor.constraint(equalToConstant: 1),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    func applyTheme(_ theme: HelmTheme) {
+        line.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
+    }
+}
+
+/// An expanded row's block: its children, each with its own action, and the
+/// "clears when..." line under them.
+final class NotificationChildrenView: NSView {
+    private var rules: [NSView] = []
+    private var childRows: [NotificationChildRowView] = []
+    private let clears: NSTextField
+
+    init(entry: AppNotification, theme: HelmTheme, onAction: @escaping (String) -> Void) {
+        clears = NSTextField(wrappingLabelWithString: entry.clearCondition)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 0
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        for (index, child) in entry.children.enumerated() {
+            if index > 0 {
+                let rule = NSView()
+                rule.wantsLayer = true
+                rule.translatesAutoresizingMaskIntoConstraints = false
+                rule.heightAnchor.constraint(equalToConstant: 1).isActive = true
+                rules.append(rule)
+                stack.addArrangedSubview(rule)
+                rule.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            }
+            let view = NotificationChildRowView(child: child, theme: theme)
+            let childID = child.id
+            view.onAction = { onAction(childID) }
+            childRows.append(view)
+            stack.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+
+        // The reference's "clears when..." line: the explanation moved out of
+        // the row and under the disclosure, which is the whole point of
+        // expanding.
+        clears.translatesAutoresizingMaskIntoConstraints = false
+        clears.isHidden = entry.clearCondition.isEmpty
+        stack.addArrangedSubview(clears)
+        clears.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: NotificationRowMetrics.textColumn),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+        ])
+        applyTheme(theme)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    func applyTheme(_ theme: HelmTheme) {
+        for rule in rules {
+            rule.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
+        }
+        for row in childRows { row.applyTheme(theme) }
+        clears.font = HelmType.captionSmall()
+        clears.textColor = HelmTheme.mutedInk(theme)
+    }
+}
+
 final class NotificationRowView: HoverHighlightView {
     private static let dotSide: CGFloat = 7
 
@@ -1310,11 +1392,11 @@ final class NotificationRowView: HoverHighlightView {
     private let actionButton = HelmButton(title: "", variant: .primary, size: .small)
     private let disclosure = NSButton()
 
-    private let tint: HelmTint
-    private let isWarning: Bool
-    private let isRead: Bool
+    private var tint: HelmTint
+    private var isWarning: Bool
+    private var isRead: Bool
     private var isSelected: Bool
-    private let hasChildren: Bool
+    private var hasChildren: Bool
 
     var onActivate: (() -> Void)?
     var onToggleExpanded: (() -> Void)?
@@ -1331,34 +1413,18 @@ final class NotificationRowView: HoverHighlightView {
         self.isSelected = isSelected
         self.hasChildren = !entry.children.isEmpty
         super.init(frame: .zero)
-        let presentation = NotificationRowPresentation(for: entry)
 
         dot.wantsLayer = true
         dot.layer?.cornerRadius = Self.dotSide / 2
         dot.translatesAutoresizingMaskIntoConstraints = false
-        // The dot means unread and nothing else now - the reference's own
-        // demotion. The source's hue moved to the tile beside it, where a
-        // colour can carry a shape as well.
-        dot.isHidden = isRead
 
-        tile.configure(symbol: presentation.icon, tint: entry.tint, pointSize: 14)
-
-        titleLabel.stringValue = entry.title
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.maximumNumberOfLines = 1
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        // The reference's "Source: detail" - the page's name in front of the
-        // line, which is what lets four rows from four pages read as four
-        // different things at a glance.
-        let detail = entry.source.isEmpty
-            ? entry.subtext
-            : (entry.subtext.isEmpty ? entry.source : "\(entry.source): \(entry.subtext)")
-        detailLabel.stringValue = detail
         detailLabel.lineBreakMode = .byTruncatingTail
         detailLabel.maximumNumberOfLines = 1
-        detailLabel.isHidden = detail.isEmpty
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
         detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
@@ -1372,14 +1438,12 @@ final class NotificationRowView: HoverHighlightView {
         text.setHuggingPriority(.defaultLow, for: .horizontal)
         text.setClippingResistancePriority(.defaultLow, for: .horizontal)
 
-        timeLabel.stringValue = timeText
         timeLabel.font = HelmType.captionSmall()
         timeLabel.alignment = .right
         timeLabel.translatesAutoresizingMaskIntoConstraints = false
         timeLabel.setContentHuggingPriority(.required, for: .horizontal)
         timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        actionButton.title = entry.primaryAction?.label ?? "Open"
         actionButton.target = self
         actionButton.action = #selector(primaryActionClicked)
         actionButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1389,14 +1453,9 @@ final class NotificationRowView: HoverHighlightView {
         disclosure.isBordered = false
         disclosure.title = ""
         disclosure.imagePosition = .imageOnly
-        disclosure.image = NSImage(systemSymbolName: isExpanded ? "chevron.down" : "chevron.right",
-                                   accessibilityDescription: isExpanded ? "Hide details" : "Show details")?
-            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
         disclosure.target = self
         disclosure.action = #selector(disclosureClicked)
         disclosure.translatesAutoresizingMaskIntoConstraints = false
-        disclosure.isHidden = !hasChildren
-        disclosure.setAccessibilityLabel(isExpanded ? "Hide details" : "Show details")
 
         cornerRadius = HelmMetrics.rRow
         addSubview(dot)
@@ -1460,12 +1519,49 @@ final class NotificationRowView: HoverHighlightView {
         // than a colour-derived hook: this row's own fill is a hover
         // highlight, so a colour hook would fire for the wrong reason.
         onHoverChange = { [weak self] hovering in self?.setActionVisible(hovering) }
-        // The initial state goes through the same one function rather than
-        // being set by hand beside it: a selected row has to open already
-        // showing its action *and* already hiding its timestamp, and two
-        // places setting the same pair is how those two halves drift apart.
-        setActionVisible(false)
         addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(activate)))
+        configure(entry: entry, isRead: isRead, isExpanded: isExpanded, isSelected: isSelected,
+                  timeText: timeText, theme: theme)
+    }
+
+    /// Everything about the row that comes from its entry, for a new row and
+    /// for one the list keeps across a reload (P2) alike - which is what
+    /// makes "updated in place" and "built fresh" render the same.
+    func configure(entry: AppNotification, isRead: Bool, isExpanded: Bool, isSelected: Bool,
+                   timeText: String, theme: HelmTheme) {
+        tint = entry.tint
+        isWarning = entry.isWarning
+        self.isRead = isRead
+        self.isSelected = isSelected
+        hasChildren = !entry.children.isEmpty
+        let presentation = NotificationRowPresentation(for: entry)
+
+        // The dot means unread and nothing else now - the reference's own
+        // demotion. The source's hue moved to the tile beside it, where a
+        // colour can carry a shape as well.
+        dot.isHidden = isRead
+        tile.configure(symbol: presentation.icon, tint: entry.tint, pointSize: 14)
+        titleLabel.stringValue = entry.title
+        // The reference's "Source: detail" - the page's name in front of the
+        // line, which is what lets four rows from four pages read as four
+        // different things at a glance.
+        let detail = entry.source.isEmpty
+            ? entry.subtext
+            : (entry.subtext.isEmpty ? entry.source : "\(entry.source): \(entry.subtext)")
+        detailLabel.stringValue = detail
+        detailLabel.isHidden = detail.isEmpty
+        timeLabel.stringValue = timeText
+        actionButton.title = entry.primaryAction?.label ?? "Open"
+        disclosure.image = NSImage(systemSymbolName: isExpanded ? "chevron.down" : "chevron.right",
+                                   accessibilityDescription: isExpanded ? "Hide details" : "Show details")?
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+        disclosure.isHidden = !hasChildren
+        disclosure.setAccessibilityLabel(isExpanded ? "Hide details" : "Show details")
+        // Through the same one function as a hover, rather than set by hand
+        // beside it: a selected row has to show its action *and* hide its
+        // timestamp, and two places setting the same pair is how those two
+        // halves drift apart. A row kept under the pointer keeps its action.
+        setActionVisible(isHovering)
         accessibilityLabelOverride = [entry.title, detail, isRead ? "" : "unread"]
             .filter { !$0.isEmpty }
             .joined(separator: ". ")

@@ -76,9 +76,12 @@ enum NotificationCenterRedesignSelfTest {
     ///
     /// Asserted by **view identity**, which is the only thing that can tell a
     /// rebuild from a repaint: after a redundant `reload()` the row objects
-    /// must be the very same instances, and after a real change they must not
-    /// be. The second half is what stops this passing against a `reload()`
-    /// that simply stopped working.
+    /// must be the very same instances. The second half - a real change still
+    /// reaches the list - is what stops this passing against a `reload()`
+    /// that simply stopped working. Since P2 of the polish report a real
+    /// change no longer rebuilds the list either: the new entry gets a new
+    /// row and the rows already listed are kept (`KeyedRefreshSelfTest`
+    /// covers updates, removals and expansion).
     private static func checkARedundantPublishRebuildsNothing(_ ok: inout Bool) {
         print("\n-- " + "PF3: a publish that changes nothing rebuilds nothing" + " --")
         seed()
@@ -97,7 +100,7 @@ enum NotificationCenterRedesignSelfTest {
               && zip(before, after).allSatisfy { $0 === $1 },
               "a redundant publish rebuilt the row views - PF3 is exactly this", &ok)
 
-        // And the other direction: a real change still rebuilds.
+        // And the other direction: a real change still reaches the list.
         GrandLineNotificationCenter.shared.set(AppNotification(
             id: "pf3-new-row",
             title: "Something genuinely new",
@@ -111,8 +114,11 @@ enum NotificationCenterRedesignSelfTest {
         let changed = content.debugRows
         check(changed.count == before.count + 1,
               "a real publish drew \(changed.count) rows, want \(before.count + 1)", &ok)
-        check(!zip(before, changed).allSatisfy { $0 === $1 },
-              "a real change must still rebuild the list", &ok)
+        let added = changed.filter { row in !before.contains { $0 === row } }
+        check(added.count == 1 && added.first?.debugTitle == "Something genuinely new",
+              "a real publish must draw the new entry in a row of its own, drew \(added.map(\.debugTitle))", &ok)
+        check(before.allSatisfy { row in changed.contains { $0 === row } },
+              "a real publish rebuilt rows that were already listed (P2)", &ok)
     }
 
     // MARK: - Fixture

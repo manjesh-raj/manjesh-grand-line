@@ -33,6 +33,7 @@ enum KeyedRefreshSelfTest {
         var ok = true
         checkHomeRefreshesInPlace(&ok)
         checkFleetRefreshesInPlace(&ok)
+        checkNotificationsRefreshInPlace(&ok)
         print(ok ? "KeyedRefreshSelfTest: all checks passed" : "KeyedRefreshSelfTest: FAILED")
         return ok
     }
@@ -200,6 +201,86 @@ enum KeyedRefreshSelfTest {
         check(fleet.debugOpenReplyComposerView == nil, "the composer outlived its task", &okNeeds)
         if okNeeds { print("  OK   needs-you rows kept by task id, with the open composer, its text and Cancel") }
         ok = ok && okNeeds
+    }
+
+    // MARK: Notifications
+
+    private static func checkNotificationsRefreshInPlace(_ ok: inout Bool) {
+        print("\n-- P2: the notification list updates its rows in place --")
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let center = GrandLineNotificationCenter.shared
+        center.resetForTesting()
+        center.clock = { now }
+        defer { center.resetForTesting() }
+        func publish(_ id: String, _ title: String, subtext: String, kind: AppNotificationKind = .actionNeeded,
+                     children: [AppNotificationChild] = []) {
+            center.set(AppNotification(id: id, title: title, subtext: subtext, source: "Tests",
+                                       clearCondition: "Clears when it is done.", kind: kind, tint: .warn,
+                                       date: now.addingTimeInterval(-60), children: children,
+                                       navigate: {}), id: id)
+        }
+        let kids = [AppNotificationChild(id: "k1", name: "commit.gpgsign", meta: "expected true",
+                                         actionLabel: "Fix", perform: {})]
+        publish("one", "First", subtext: "a")
+        publish("two", "Second", subtext: "b", children: kids)
+        publish("three", "Third", subtext: "c", kind: .informational)
+
+        let controller = NotificationCenterController()
+        let content = controller.debugPanelContent
+        content.clock = { now }
+        let window = OffScreenProbe.window(width: 500, height: 900, styleMask: [.titled])
+        defer { window.orderOut(nil) }
+        let host = NSView(frame: window.contentLayoutRect)
+        window.contentView = host
+        content.view.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(content.view)
+        NSLayoutConstraint.activate([
+            content.view.topAnchor.constraint(equalTo: host.topAnchor),
+            content.view.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+        ])
+        window.orderFront(nil)
+        content.reload()
+        host.layoutSubtreeIfNeeded()
+
+        let views = content.debugListViews.map(ObjectIdentifier.init)
+        let rows = content.debugRows
+        check(rows.count == 3, "the fixture drew \(rows.count) rows, expected 3", &ok)
+        guard rows.count == 3 else { return }
+
+        // One entry's text changes while the pointer is over its row: the same
+        // views are kept, the row says the new text and keeps its hover action.
+        rows[0].debugSetHovering(true)
+        check(rows[0].debugActionVisible, "hovering the first row does not reveal its action", &ok)
+        publish("one", "First, revised", subtext: "a2")
+        content.reload()
+        host.layoutSubtreeIfNeeded()
+        check(content.debugListViews.map(ObjectIdentifier.init) == views,
+              "changing one entry rebuilt the list's views", &ok)
+        check(rows[0].debugTitle == "First, revised" && rows[0].debugDetail == "Tests: a2",
+              "the kept row reads \(rows[0].debugTitle) / \(rows[0].debugDetail)", &ok)
+        check(rows[0].debugActionVisible, "a refresh under the pointer hid the row's hover action", &ok)
+        rows[0].debugSetHovering(false)
+
+        // Read state and expansion are updates too: the dot goes, and the
+        // children block is the only new view.
+        center.setRead(true, id: "one")
+        rows[1].debugClickDisclosure()
+        host.layoutSubtreeIfNeeded()
+        check(!rows[0].debugUnreadDotVisible, "the kept row still shows its unread dot after it was read", &ok)
+        let expanded = content.debugListViews.map(ObjectIdentifier.init)
+        let added = Set(expanded).subtracting(views)
+        check(added.count == 1 && Set(views).isSubset(of: Set(expanded)),
+              "expanding a row should add one view and keep the rest, added \(added.count)", &ok)
+        check(content.debugChildRows.map(\.debugName) == ["commit.gpgsign"],
+              "the expanded row shows children \(content.debugChildRows.map(\.debugName))", &ok)
+
+        // An entry that clears takes its row and its hairline with it.
+        center.set(nil, id: "one")
+        content.reload()
+        host.layoutSubtreeIfNeeded()
+        check(content.debugRows.count == 2 && content.debugRows[0] === rows[1] && content.debugRows[1] === rows[2],
+              "after an entry cleared the rows are not the other two entries' own", &ok)
+        if ok { print("  OK   rows kept by entry id across an edit, a read, an expansion and a removal, hover kept") }
     }
 
     // MARK: Helpers
