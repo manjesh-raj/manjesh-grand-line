@@ -118,20 +118,35 @@ enum HomeFitSelfTest {
     private static func checkAResizeOnAnotherPageReachesHome(shell: AppShellController, window: NSWindow,
                                                               _ ok: inout Bool) {
         print("\n-- B1: a resize while another page shows still reaches Home --")
-        show(rows: 3, at: NSSize(width: 1512, height: 950), shell: shell, window: window)
-        let wideReach = cardFrames(in: shell.debugHomeCanvas.view).map(\.maxX).max() ?? 0
-        // The fixture's own discriminating power: at the wide size the
-        // rightmost card really does reach past where the narrow window ends,
-        // so a grid left at the old width is something this can see.
-        let narrow = NSSize(width: 1100, height: 720)
-        check(wideReach > narrow.width,
-              "at 1512pt the rightmost card ends at \(wideReach) - it would not reach past an 1100pt window, so this proves nothing",
+        // Narrower: a grid left at the old width reaches past the window.
+        replay(from: NSSize(width: 1512, height: 950), to: NSSize(width: 1100, height: 720),
+               shell: shell, window: window, &ok)
+        // Wider: a grid left at the old width sits in the middle of the
+        // window with its narrow-column layout - measured on main, Home came
+        // back from 960 to 1512 still showing 9 of 22 merge rows in compact
+        // cards. Nothing reaches past the window there, so "fills it" is the
+        // half that can see it.
+        replay(from: NSSize(width: 960, height: 620), to: NSSize(width: 1512, height: 950),
+               shell: shell, window: window, &ok)
+    }
+
+    private static func replay(from start: NSSize, to end: NSSize,
+                               shell: AppShellController, window: NSWindow, _ ok: inout Bool) {
+        let label = "\(Int(start.width))x\(Int(start.height)) -> \(Int(end.width))x\(Int(end.height))"
+        show(rows: 3, at: start, shell: shell, window: window)
+        let startReach = cardFrames(in: shell.debugHomeCanvas.view).map(\.maxX).max() ?? 0
+        // The fixture's own discriminating power: the grid's right edge at the
+        // start size is far from where it must be at the end size, so a grid
+        // left behind is something this can see.
+        let endRightEdge = end.width - HomeCanvasController.gutter
+        check(abs(startReach - endRightEdge) > 50,
+              "\(label): the grid's right edge at the start size (\(startReach)) is within 50pt of the end size's - this proves nothing",
               &ok)
 
         shell.show(.settings)
         shell.view.layoutSubtreeIfNeeded()
         var frame = window.frame
-        frame.size = narrow
+        frame.size = end
         window.setFrame(frame, display: false)
         shell.view.layoutSubtreeIfNeeded()
         shell.show(.homeCanvas)
@@ -139,14 +154,19 @@ enum HomeFitSelfTest {
 
         let contentWidth = window.contentLayoutRect.width
         let frames = cardFrames(in: shell.debugHomeCanvas.view)
-        check(!frames.isEmpty, "Home has no module cards after the return", &ok)
+        let reach = frames.map(\.maxX).max() ?? 0
+        check(!frames.isEmpty, "\(label): Home has no module cards after the return", &ok)
         let past = frames.filter { $0.maxX > contentWidth + 0.5 }
         check(past.isEmpty,
-              "back on Home after a resize on Settings, \(past.count) card(s) reach past the \(contentWidth)pt window "
-              + "(rightmost maxX \(past.map(\.maxX).max() ?? 0)) - the grid was built for the old width",
+              "\(label): back on Home after a resize on Settings, \(past.count) card(s) reach past the \(contentWidth)pt window "
+              + "(rightmost maxX \(reach)) - the grid was built for the old width",
               &ok)
-        if past.isEmpty, !frames.isEmpty {
-            print("  OK   every card ends inside the \(contentWidth)pt window (rightmost \(frames.map(\.maxX).max() ?? 0))")
+        check(abs(reach - (contentWidth - HomeCanvasController.gutter)) <= 1,
+              "\(label): back on Home the grid's right edge is at \(reach), expected \(contentWidth - HomeCanvasController.gutter) "
+              + "(the window less the page gutter) - the grid was built for the old width",
+              &ok)
+        if past.isEmpty, abs(reach - (contentWidth - HomeCanvasController.gutter)) <= 1 {
+            print("  OK   \(label): the grid fills the \(contentWidth)pt window and ends at \(reach)")
         }
     }
 
