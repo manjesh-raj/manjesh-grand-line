@@ -284,7 +284,21 @@ final class NotebookController: NSViewController, DaylightDrillActions {
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        reload()
+        // P11: a revisit reads the folder off the main thread and keeps the
+        // page as it was until the read lands. The first read is still the
+        // synchronous one in `loadView`, which has nothing to show without it.
+        reloadInBackground()
+    }
+
+    /// See `HelmBackgroundReload`. Every other caller of `reload()` is a
+    /// write that needs its result at once, and runs it synchronously.
+    private let backgroundReload = HelmBackgroundReload<NotebookFolderRead>(label: "notebook")
+
+    private func reloadInBackground() {
+        let store = self.store
+        backgroundReload.run(read: { NotebookFolderRead(store: store) }) { [weak self] read in
+            self?.apply(read)
+        }
     }
 
     override func viewDidAppear() {
@@ -576,11 +590,16 @@ final class NotebookController: NSViewController, DaylightDrillActions {
     /// Re-reads the corpus, rebuilds the resolver and the index, and redraws
     /// everything that depends on them.
     private func reload() {
-        var overflow = 0
-        pages = store.listPages(overflow: &overflow)
-        overflowPages = overflow
-        resolver = NotebookLinkResolver(pages: pages)
-        index = NotebookBacklinkIndex(pages: pages, resolver: resolver)
+        // A synchronous reload is newer than any read in flight.
+        backgroundReload.invalidate()
+        apply(NotebookFolderRead(store: store))
+    }
+
+    private func apply(_ read: NotebookFolderRead) {
+        pages = read.pages
+        overflowPages = read.overflow
+        resolver = read.resolver
+        index = read.index
         hasRestored = true
 
         rebuildSidebar()
@@ -1239,6 +1258,8 @@ final class NotebookController: NSViewController, DaylightDrillActions {
     func debugToggleRail() { toggleRail() }
     func debugOpen(pageID: String) { open(pageID: pageID) }
     func debugReload() { reload() }
+    func debugReloadInBackground() { reloadInBackground() }
+    var debugBackgroundReload: HelmBackgroundReload<NotebookFolderRead> { backgroundReload }
     func debugNewPage() { newPageTapped() }
     /// X5: the real button's action, so a check drives what a click drives.
     func debugSeedWelcomePage() { seedWelcomePageTapped() }

@@ -225,7 +225,9 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        reload()
+        // P11: a revisit reads the list off the main thread and keeps the page
+        // as it was until the read lands.
+        store.reloadAllInBackground { [weak self] in self?.renderAfterReload() }
     }
 
     deinit {
@@ -422,6 +424,12 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
 
     private func reload() {
         store.reloadAll()
+        renderAfterReload()
+    }
+
+    /// Everything `reload` does once the store holds a fresh read - shared by
+    /// the synchronous reload and the background one (P11).
+    private func renderAfterReload() {
         hasLoaded = true
         lastError = store.isInFailedLoadState
             ? "The reading list file could not be read - nothing new will be written until it is fixed."

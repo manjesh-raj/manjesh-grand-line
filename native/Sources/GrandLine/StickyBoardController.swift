@@ -332,8 +332,13 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         // the file on disk since this destination last mounted - reload and
         // reconcile the view tree with whatever the store now says, rather
         // than trusting a possibly-stale in-memory snapshot from first load.
-        store.reloadAll()
-        rebuildNoteViews()
+        //
+        // P11: read off the main thread; the board keeps the notes it has until
+        // the read lands, then rebuilds from it.
+        store.reloadAllInBackground { [weak self] in
+            self?.rebuildNoteViews()
+            self?.onDrillSubtitleChanged?()
+        }
         onDrillSubtitleChanged?()
     }
 

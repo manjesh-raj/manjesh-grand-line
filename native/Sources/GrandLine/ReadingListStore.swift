@@ -321,10 +321,42 @@ final class ReadingListStore {
         // the titles and icons just fetched. Drain first, always - this is the
         // one place a stale read could quietly undo a coalesced write.
         flush()
-        switch ShiftYaml.readListChecked(path: linksPath, key: "links") {
+        // A synchronous reload is newer than any read in flight (P11).
+        backgroundReload.invalidate()
+        apply(Self.readLinks(path: linksPath))
+    }
+
+    /// P11 of the polish report: the page's revisit. The file is read and
+    /// decoded on a background queue - with the parser fixed this is ~0.3s for
+    /// 400 links, and it was ~7s before - and applied on main in one step,
+    /// then `then` runs. Every write path invalidates a read in flight, so a
+    /// read that began before an edit can never put the old list back.
+    func reloadAllInBackground(then: @escaping () -> Void) {
+        flush()
+        let path = linksPath
+        backgroundReload.run(read: { Self.readLinks(path: path) }) { [weak self] read in
+            self?.apply(read)
+            then()
+        }
+    }
+
+    private let backgroundReload = HelmBackgroundReload<ReadingListRead>(label: "reading-list")
+
+    #if FM_SELFTESTS
+    /// Called with `Thread.isMainThread` at every read of the links file, so
+    /// `PageLoadOffMainSelfTest` can assert where a revisit's read ran.
+    static var debugOnRead: ((Bool) -> Void)?
+    var debugBackgroundReload: HelmBackgroundReload<ReadingListRead> { backgroundReload }
+    #endif
+
+    /// The read half: the file, decoded, and its unknown keys captured.
+    /// Pure, so it can run on any queue.
+    static func readLinks(path: String) -> ReadingListRead {
+        #if FM_SELFTESTS
+        debugOnRead?(Thread.isMainThread)
+        #endif
+        switch ShiftYaml.readListChecked(path: path, key: "links") {
         case .ok(let items):
-            isInFailedLoadState = false
-            iconCache.removeAll()   // PF12: a reload re-reads icons too.
             var decoded: [ReadingLink] = []
             var unreadable: [(sortKey: Date, raw: Yaml)] = []
             for item in items {
@@ -334,6 +366,28 @@ final class ReadingListStore {
                     unreadable.append((Self.addedAtOrDistantFuture(item), item))
                 }
             }
+            // B23 / GL-01's second half. `unreadable` keeps a record this
+            // build cannot decode at all; this keeps the stray *keys* on a
+            // record it decodes perfectly well. Neither covers the other, and
+            // it is the second one that has no symptom: the link keeps
+            // working, and the newer build silently finds its own field gone
+            // every time this one rewrites the file.
+            var passthrough = ShiftYamlPassthrough()
+            passthrough.capture(items, knownKeys: Self.knownKeys)
+            return .ok(links: decoded.sorted { $0.addedAt < $1.addedAt }, unreadable: unreadable, passthrough: passthrough)
+        case .missing:
+            return .missing
+        case .parseFailed:
+            return .parseFailed
+        }
+    }
+
+    /// The state half, on main - including GL-01's backup.
+    private func apply(_ read: ReadingListRead) {
+        switch read {
+        case .ok(let decoded, let unreadable, let captured):
+            isInFailedLoadState = false
+            iconCache.removeAll()   // PF12: a reload re-reads icons too.
             if !unreadable.isEmpty {
                 AppLog.store.info("""
                     Reading list: \(unreadable.count, privacy: .public) record(s) in \
@@ -342,14 +396,8 @@ final class ReadingListStore {
                     """)
             }
             unreadableRecords = unreadable
-            // B23 / GL-01's second half. `unreadableRecords` above keeps a
-            // record this build cannot decode at all; this keeps the stray
-            // *keys* on a record it decodes perfectly well. Neither covers
-            // the other, and it is the second one that has no symptom: the
-            // link keeps working, and the newer build silently finds its own
-            // field gone every time this one rewrites the file.
-            passthrough.capture(items, knownKeys: Self.knownKeys)
-            links = decoded.sorted { $0.addedAt < $1.addedAt }
+            passthrough = captured
+            links = decoded
         case .missing:
             isInFailedLoadState = false
             links = []
@@ -449,6 +497,8 @@ final class ReadingListStore {
     private var pendingMetadataPersist: DispatchWorkItem?
 
     private func schedulePersistForMetadata() {
+        // A write is newer than any read in flight (P11).
+        backgroundReload.invalidate()
         pendingMetadataPersist?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -595,6 +645,7 @@ final class ReadingListStore {
     #endif
 
     private func persist() {
+        backgroundReload.invalidate()
         #if FM_SELFTESTS
         debugPersistCount += 1
         #endif
@@ -690,4 +741,11 @@ final class ReadingListStore {
         default: return .pending
         }
     }
+}
+
+/// One read of the reading list's links file - P11's background read.
+enum ReadingListRead {
+    case ok(links: [ReadingLink], unreadable: [(sortKey: Date, raw: Yaml)], passthrough: ShiftYamlPassthrough)
+    case missing
+    case parseFailed
 }
