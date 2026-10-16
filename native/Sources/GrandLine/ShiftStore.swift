@@ -327,7 +327,11 @@ final class ShiftStore {
     func reloadAllAsync(completion: @escaping () -> Void) {
         let root = self.root
         let generation = mutationGeneration
-        DispatchQueue.global(qos: .userInitiated).async {
+        // On `HelmParseThread`, not a GCD queue: the YAML parser recurses once
+        // per list element and a GCD worker's 512 KB stack overflows on a long
+        // task history (P11 of the polish report measured the same parser
+        // crashing there at 400 records).
+        HelmParseThread.run(label: "tasks") {
             let parsed = Self.parseAll(root: root)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { completion(); return }
