@@ -2203,6 +2203,7 @@ final class AppShellController: NSViewController {
         // the only point where that is still knowable - `hideAllDestinations()`
         // one line down erases it.
         let wasAlreadyShowing = currentDestinationKind == .rail(dest)
+        crossfadeOutgoingPage(unless: wasAlreadyShowing)
         hideAllDestinations()
 
         // GL-37: one table lookup replaces the fifteen-case switch this used
@@ -3346,6 +3347,7 @@ final class AppShellController: NSViewController {
     /// disagree about which of them is showing.
     private func revealHostConsole(_ controller: ConsoleController, hostID: UUID, label: String) {
         let wasAlreadyShowing = currentDestinationKind == .host(id: hostID, label: label)
+        crossfadeOutgoingPage(unless: wasAlreadyShowing)
         hideAllDestinations()
         setDestinationVisible(controller.view, true)
         // B4: a host page is a drill-in like any other.
@@ -3631,6 +3633,21 @@ final class AppShellController: NSViewController {
     private var currentDestinationShowsSessionStrip: Bool {
         guard case .rail(let dest)? = currentDestinationKind else { return true }
         return dest.showsSessionStrip
+    }
+
+    /// P3 of the polish report: installed by `AppDelegate` (see
+    /// `PageCrossfade`'s header for why never by this controller). `nil` means
+    /// the outgoing page cuts, which is what every self-test's shell does.
+    var pageCrossfade: PageCrossfade?
+
+    /// Hand the page on screen now to `pageCrossfade`, before
+    /// `hideAllDestinations` takes it away.
+    private func crossfadeOutgoingPage(unless repeated: Bool) {
+        guard !repeated, let pageCrossfade else { return }
+        guard let page = bodyContainer.subviews.first(where: {
+            !$0.isHidden && destinationPins[ObjectIdentifier($0)] != nil
+        }) else { return }
+        pageCrossfade.crossfade(from: page, in: bodyContainer)
     }
 
     private func hideAllDestinations() {
