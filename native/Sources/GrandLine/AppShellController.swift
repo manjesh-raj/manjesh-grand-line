@@ -2051,6 +2051,8 @@ final class AppShellController: NSViewController {
     /// state the captain sees rather than in their first paint.
     var debugHomeCanvas: HomeCanvasController { homeCanvas }
     var debugSchedules: SchedulesController { schedules }
+    /// P9: a destination's mounted controller, for `SplitSidebarSelfTest`.
+    func debugSlotController(_ dest: RailDestination) -> NSViewController? { mounter.slot(for: dest.slot)?.controller }
     var debugShift: ShiftController { shift }
     /// The Fleet page, for the tour lab's `demo decision` and `fleet reply`.
     var debugOverview: FleetController { overview }
@@ -2902,6 +2904,17 @@ final class AppShellController: NSViewController {
     @objc func runCodeSnippetFromMenu() {
         guard case .rail(.codePreview)? = currentDestinationKindForMenus else { return }
         codePreview.runCodeSnippet()
+    }
+
+    /// P9's Toggle Sidebar (⌥⌘S): collapse or reopen the showing page's
+    /// split-view sidebar, animated. A no-op on a page without one, for
+    /// `runCodeSnippetFromMenu`'s reason - this app implements no
+    /// `validateMenuItem`, so the guard lives here.
+    @objc func toggleSidebarFromMenu() {
+        guard case .rail(let dest)? = currentDestinationKindForMenus,
+              let host = mounter.slot(for: dest.slot)?.controller as? HelmSplitPageHosting,
+              let split = host.splitPage else { return }
+        split.toggleSidebar(nil)
     }
 
     /// Code Preview's ⌘B: show or hide the snippet list. A no-op anywhere

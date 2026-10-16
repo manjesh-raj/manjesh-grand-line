@@ -34,7 +34,7 @@
 
 import AppKit
 
-final class SchedulesController: NSViewController, DaylightDrillActions {
+final class SchedulesController: NSViewController, DaylightDrillActions, HelmSplitPageHosting {
 
     private let scheduleStore: ScheduleStore
 
@@ -137,6 +137,8 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
     /// the page a second column, which is what keeps a row's line length
     /// readable now that the row itself is no longer capped.
     private let sidebar = HelmPageSidebar()
+    /// P9: the page's split view, which holds `sidebar` as a real sidebar.
+    private(set) var splitPage: HelmSplitPage?
 
     /// The one id that is an *action* rather than a filter. `StatusFilter`'s
     /// own raw values cover the rest, so the sidebar and the card agree on
@@ -201,34 +203,39 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(sidebar)
-        root.addSubview(scroll)
+
+        // P9: the column is a real split-view sidebar - draggable, collapsible
+        // and answering Toggle Sidebar - laid out exactly where it was pinned.
+        // **The nav column sits outside the scroll view, deliberately.** It is
+        // navigation, so it has to stay reachable - and "Run History" scrolls
+        // the content to the activity panel, which with the column inside the
+        // document would have scrolled the filters themselves off the top
+        // (seen in a real render before this was moved out).
+        let split = HelmSplitPage(sidebarWidth: HelmMetrics.pageGutter + HelmPageSidebar.width,
+                                  minimum: HelmPageSidebar.width * 0.8,
+                                  maximum: HelmPageSidebar.width * 1.6,
+                                  surface: .pageGround)
+        addChild(split)
+        root.addSubview(split.view)
         NSLayoutConstraint.activate([
-            // **The nav column sits outside the scroll view, deliberately.**
-            // It is navigation, so it has to stay reachable - and "Run History"
-            // scrolls the content to the activity panel, which with the column
-            // inside the document would have scrolled the filters themselves
-            // off the top (seen in a real render before this was moved out).
-            // `CredentialVaultController` pins its own sidebar to the page for
-            // the same reason.
-            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor,
-                                             constant: HelmMetrics.pageGutter),
-            sidebar.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
-            sidebar.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor,
-                                            constant: -HelmMetrics.pageGutter),
+            split.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            split.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            split.view.topAnchor.constraint(equalTo: root.topAnchor),
+            split.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
-        NSLayoutConstraint.activate([
-            // The content takes every point the window gains beyond the column.
-            scroll.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor,
-                                            constant: HelmMetrics.s5 - HelmMetrics.pageGutter),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: root.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            // AGENTS.md gotcha #4: pin the document view to the *clip* view,
-            // never the outer scroll view - see `AutomationController`'s
-            // identical comment for the full reasoning.
-            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-        ])
+        HelmSplitPage.pin(sidebar, in: split.sidebarPane,
+                          insets: NSEdgeInsets(top: 18, left: HelmMetrics.pageGutter,
+                                               bottom: HelmMetrics.pageGutter, right: 0),
+                          bottomIsCeiling: true)
+        // The scroll view started at the column's trailing edge; the divider's
+        // width is taken back so it still does.
+        HelmSplitPage.pin(scroll, in: split.contentPane,
+                          insets: NSEdgeInsets(top: 0, left: -HelmSplitPage.dividerThickness, bottom: 0, right: 0))
+        // AGENTS.md gotcha #4: pin the document view to the *clip* view,
+        // never the outer scroll view - see `AutomationController`'s
+        // identical comment for the full reasoning.
+        content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor).isActive = true
+        splitPage = split
         scrollView = scroll
 
         // **Registered last, after every view this page paints exists.**

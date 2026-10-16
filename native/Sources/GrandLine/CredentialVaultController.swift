@@ -54,7 +54,7 @@
 import AppKit
 import LocalAuthentication
 
-final class CredentialVaultController: NSViewController, DaylightDrillActions {
+final class CredentialVaultController: NSViewController, DaylightDrillActions, HelmSplitPageHosting {
 
     // MARK: State
 
@@ -63,6 +63,8 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     private let unlockView = CredentialVaultUnlockView()
     private let searchField = HelmSearchField(placeholder: "Search titles, accounts and tags")
     private let sidebar = CredentialVaultSidebar()
+    /// P9: the page's split view, which holds `sidebar` as a real sidebar.
+    private(set) var splitPage: HelmSplitPage?
     private let inspector = CredentialVaultInspectorView()
     /// UI-32: the kit's status pill.
     private let clipboardPill = HelmStatusPill()
@@ -289,37 +291,53 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         wireInspector()
 
         list.card.translatesAutoresizingMaskIntoConstraints = false
-        for child in [sidebar, filterRow, list.card, inspector] as [NSView] {
-            container.addSubview(child)
-        }
-
         let gutter = HelmMetrics.pageGutter
         let column = HelmMetrics.s5
+
+        // P9: the category column is a real split-view sidebar - draggable,
+        // collapsible and answering Toggle Sidebar - where it was pinned
+        // before. The search row, the list and the inspector are the content.
+        let split = HelmSplitPage(sidebarWidth: gutter + CredentialVaultSidebar.width,
+                                  minimum: CredentialVaultSidebar.width * 0.8,
+                                  maximum: CredentialVaultSidebar.width * 1.6,
+                                  surface: .pageGround)
+        addChild(split)
+        container.addSubview(split.view)
+        HelmSplitPage.pin(sidebar, in: split.sidebarPane,
+                          insets: NSEdgeInsets(top: HelmMetrics.s4, left: gutter, bottom: gutter, right: 0),
+                          bottomIsCeiling: true)
+        let pane = split.contentPane
+        for child in [filterRow, list.card, inspector] as [NSView] {
+            pane.addSubview(child)
+        }
+        splitPage = split
         let listMinimum = list.card.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.listMinimumWidth)
         listMinimum.priority = HelmDaylightPriority.contentTie
         let inspectorWidth = inspector.widthAnchor.constraint(equalToConstant: CredentialVaultInspectorView.Metrics.width)
 
         NSLayoutConstraint.activate([
-            sidebar.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: gutter),
-            sidebar.topAnchor.constraint(equalTo: container.topAnchor, constant: HelmMetrics.s4),
-            sidebar.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -gutter),
+            split.view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            split.view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            split.view.topAnchor.constraint(equalTo: container.topAnchor),
+            split.view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
             // The search row sits over the list column only, not over the
             // sidebar - searching scopes the list, and a field spanning the nav
             // would imply it searched that too.
-            filterRow.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: column),
+            filterRow.leadingAnchor.constraint(equalTo: pane.leadingAnchor,
+                                               constant: column - HelmSplitPage.dividerThickness),
             filterRow.trailingAnchor.constraint(equalTo: inspector.leadingAnchor, constant: -column),
-            filterRow.topAnchor.constraint(equalTo: container.topAnchor, constant: HelmMetrics.s4),
+            filterRow.topAnchor.constraint(equalTo: pane.topAnchor, constant: HelmMetrics.s4),
 
             list.card.leadingAnchor.constraint(equalTo: filterRow.leadingAnchor),
             list.card.trailingAnchor.constraint(equalTo: filterRow.trailingAnchor),
             list.card.topAnchor.constraint(equalTo: filterRow.bottomAnchor, constant: HelmMetrics.s3),
-            list.card.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -gutter),
+            list.card.bottomAnchor.constraint(equalTo: pane.bottomAnchor, constant: -gutter),
             listMinimum,
 
-            inspector.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -gutter),
-            inspector.topAnchor.constraint(equalTo: container.topAnchor, constant: HelmMetrics.s4),
-            inspector.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -gutter),
+            inspector.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -gutter),
+            inspector.topAnchor.constraint(equalTo: pane.topAnchor, constant: HelmMetrics.s4),
+            inspector.bottomAnchor.constraint(equalTo: pane.bottomAnchor, constant: -gutter),
             inspectorWidth,
         ])
     }

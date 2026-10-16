@@ -48,7 +48,7 @@
 
 import AppKit
 
-final class NotebookController: NSViewController, DaylightDrillActions {
+final class NotebookController: NSViewController, DaylightDrillActions, HelmSplitPageHosting {
 
     // MARK: State
 
@@ -104,6 +104,8 @@ final class NotebookController: NSViewController, DaylightDrillActions {
     /// A boxed panel around the nav was a second bordered surface beside the
     /// page's own cards (Rule 1).
     private let sidebar = HelmPageSidebar()
+    /// P9: the page's split view, which holds `sidebar` as a real sidebar.
+    private(set) var splitPage: HelmSplitPage?
     private lazy var modeTabs = HelmSegmentedTabs(
         items: ViewMode.allCases.map { .init(id: $0.rawValue, title: $0.title) },
         selected: mode.rawValue, size: .compact)
@@ -393,15 +395,28 @@ final class NotebookController: NSViewController, DaylightDrillActions {
                                     actionTitle: "New page",
                                     onAction: { [weak self] in self?.newPageFromMenu() }))
 
-        root.addSubview(sidebar)
-
         buildEditorCard()
         buildPreviewCard()
         buildRail()
 
-        root.addSubview(editorCard)
-        root.addSubview(previewCard)
-        root.addSubview(rail)
+        // P9: the page tree is a real split-view sidebar - draggable,
+        // collapsible and answering Toggle Sidebar - where it was pinned
+        // before. The cards and the rail are the content pane.
+        let split = HelmSplitPage(sidebarWidth: Self.gutter + HelmPageSidebar.width,
+                                  minimum: HelmPageSidebar.width * 0.8,
+                                  maximum: HelmPageSidebar.width * 1.6,
+                                  surface: .pageGround)
+        addChild(split)
+        root.addSubview(split.view)
+        // Gotcha (16): the column's height is still tied to the page, through
+        // the pane's top and bottom insets.
+        HelmSplitPage.pin(sidebar, in: split.sidebarPane,
+                          insets: NSEdgeInsets(top: Self.gutter, left: Self.gutter, bottom: Self.gutter, right: 0))
+        let pane = split.contentPane
+        pane.addSubview(editorCard)
+        pane.addSubview(previewCard)
+        pane.addSubview(rail)
+        splitPage = split
 
         railWidth = rail.widthAnchor.constraint(equalToConstant: Self.railColumnWidth)
         // Gotcha (13): a fixed column's width reaches `bodyContainer` through
@@ -419,25 +434,24 @@ final class NotebookController: NSViewController, DaylightDrillActions {
         editorWidthTie.priority = HelmDaylightPriority.contentTie
 
         NSLayoutConstraint.activate([
-            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.gutter),
-            sidebar.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: Self.gutter),
-            // Gotcha (16): the column's own height is tied to the page, not
-            // left to a low-priority content preference - a container whose
-            // height nothing ties lets its content escape it.
-            sidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.gutter),
+            split.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            split.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            split.view.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            split.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
-            editorCard.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: Self.gutter),
-            editorCard.topAnchor.constraint(equalTo: sidebar.topAnchor),
-            editorCard.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
+            editorCard.leadingAnchor.constraint(equalTo: pane.leadingAnchor,
+                                                constant: Self.gutter - HelmSplitPage.dividerThickness),
+            editorCard.topAnchor.constraint(equalTo: pane.topAnchor, constant: Self.gutter),
+            editorCard.bottomAnchor.constraint(equalTo: pane.bottomAnchor, constant: -Self.gutter),
 
             previewCard.leadingAnchor.constraint(equalTo: editorCard.trailingAnchor, constant: Self.gutter),
-            previewCard.topAnchor.constraint(equalTo: sidebar.topAnchor),
-            previewCard.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
+            previewCard.topAnchor.constraint(equalTo: editorCard.topAnchor),
+            previewCard.bottomAnchor.constraint(equalTo: editorCard.bottomAnchor),
 
             rail.leadingAnchor.constraint(equalTo: previewCard.trailingAnchor, constant: Self.gutter),
-            rail.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -Self.gutter),
-            rail.topAnchor.constraint(equalTo: sidebar.topAnchor),
-            rail.bottomAnchor.constraint(lessThanOrEqualTo: sidebar.bottomAnchor),
+            rail.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -Self.gutter),
+            rail.topAnchor.constraint(equalTo: editorCard.topAnchor),
+            rail.bottomAnchor.constraint(lessThanOrEqualTo: editorCard.bottomAnchor),
             railWidth,
         ])
     }

@@ -19,7 +19,7 @@
 
 import AppKit
 
-final class ShiftController: NSViewController, DaylightDrillActions {
+final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPageHosting {
 
     private let store: ShiftStore
 
@@ -188,7 +188,8 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// `border-right` on its `aside`, and the one thing that makes the column
     /// read as a column rather than as rows floating on the page. Hidden with
     /// the column itself on Weekly Review.
-    private let sidebarDivider = NSView()
+    /// P9: the page's split view, which holds `sidebar` as a real sidebar.
+    private(set) var splitPage: HelmSplitPage?
 
     /// Action rows: these scroll to a panel rather than filtering anything, so
     /// they are `.action` rows and never take the selection.
@@ -222,8 +223,6 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// `isHidden` is not enough on its own - an ordinary hidden `NSView` still
     /// carries its constraints (AGENTS.md gotcha (11)), so the gap it leaves
     /// would stay behind it.
-    private var scrollLeadingWithSidebar: NSLayoutConstraint?
-    private var scrollLeadingFullWidth: NSLayoutConstraint?
 
     private let boardSection = NSStackView()
 
@@ -525,51 +524,44 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(sidebar)
-        sidebarDivider.wantsLayer = true
-        sidebarDivider.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(sidebarDivider)
-        root.addSubview(scroll)
-
+        // P9: the column is a real split-view sidebar - draggable,
+        // collapsible and answering Toggle Sidebar - and the split's divider
+        // is the hairline the page used to draw beside it.
+        //
         // **The column sits outside the scroll view**, the same call
         // `SchedulesController` and `CredentialVaultController` make: it is
         // navigation, so it has to stay reachable, and its own "jump to
         // Follow-ups" row scrolls the content - which with the column inside
         // the document would scroll the column itself off the top.
+        let split = HelmSplitPage(sidebarWidth: HelmMetrics.pageGutter + HelmPageSidebar.width + HelmMetrics.s4,
+                                  minimum: HelmPageSidebar.width * 0.8,
+                                  maximum: HelmPageSidebar.width * 1.6,
+                                  surface: .pageGroundWithEdge)
+        addChild(split)
+        root.addSubview(split.view)
         NSLayoutConstraint.activate([
-            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor,
-                                             constant: HelmMetrics.pageGutter),
-            sidebar.topAnchor.constraint(equalTo: root.topAnchor, constant: 24),
-            // An equality, not `<=` as the other two `HelmPageSidebar` pages
-            // use: this column has a footer, and a footer floating halfway up
-            // an otherwise empty column is not what a footer is. The column's
-            // own content-height constraint is optional (499), so this simply
-            // wins and the nav scrolls if it ever outgrows the page - which is
-            // exactly what a captain with twenty projects needs.
-            sidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor,
-                                            constant: -HelmMetrics.pageGutter),
-
-            sidebarDivider.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor,
-                                                    constant: HelmMetrics.s4),
-            sidebarDivider.widthAnchor.constraint(equalToConstant: 1),
-            sidebarDivider.topAnchor.constraint(equalTo: root.topAnchor),
-            sidebarDivider.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            split.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            split.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            split.view.topAnchor.constraint(equalTo: root.topAnchor),
+            split.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
-
+        // The bottom is an equality, not `<=` as the other two
+        // `HelmPageSidebar` pages use: this column has a footer, and a footer
+        // floating halfway up an otherwise empty column is not what a footer
+        // is. The column's own content-height constraint is optional (499),
+        // so this simply wins and the nav scrolls if it ever outgrows the
+        // page - which is exactly what a captain with twenty projects needs.
+        HelmSplitPage.pin(sidebar, in: split.sidebarPane,
+                          insets: NSEdgeInsets(top: 24, left: HelmMetrics.pageGutter,
+                                               bottom: HelmMetrics.pageGutter, right: HelmMetrics.s4))
         // `contentStack` carries its own `pageGutter` inset inside the scroll,
-        // so the gap between the column and the content is measured from that
-        // rather than added on top of it.
-        let withSidebar = scroll.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor,
-                                                          constant: HelmMetrics.s5 - HelmMetrics.pageGutter)
-        let fullWidth = scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor)
-        withSidebar.isActive = true
-        scrollLeadingWithSidebar = withSidebar
-        scrollLeadingFullWidth = fullWidth
-
+        // so the scroll starts at the column's trailing edge - which is the
+        // hairline's gap and the divider itself back from the content pane.
+        HelmSplitPage.pin(scroll, in: split.contentPane,
+                          insets: NSEdgeInsets(top: 0, left: -(HelmMetrics.s4 + HelmSplitPage.dividerThickness),
+                                               bottom: 0, right: 0))
+        splitPage = split
         NSLayoutConstraint.activate([
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: root.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             // AGENTS.md gotcha #4: the document view is pinned to the *clip*
             // view, never the outer scroll view.
             content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
@@ -1560,11 +1552,9 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         // The column's rows are all about the task board, so it goes with it.
         // Both halves are needed: hiding the view alone would leave its gap
         // behind, since an ordinary hidden `NSView` keeps its constraints.
-        let showsSidebar = view == .dashboard
-        sidebar.isHidden = !showsSidebar
-        sidebarDivider.isHidden = !showsSidebar
-        scrollLeadingWithSidebar?.isActive = showsSidebar
-        scrollLeadingFullWidth?.isActive = !showsSidebar
+        // P9: the split collapses the column, which takes its gap and its
+        // hairline with it, and restores the captain's own choice on return.
+        splitPage?.pageForcesCollapse = view != .dashboard
         if view == .weeklyReview { renderWeeklyReview() }
         applyTheme()
     }
@@ -2425,11 +2415,11 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     // filters nothing looks exactly right.
 
     var debugSidebar: HelmPageSidebar { sidebar }
-    var debugSidebarIsVisible: Bool { !sidebar.isHidden }
+    var debugSidebarIsVisible: Bool { !(splitPage?.isSidebarCollapsed ?? true) && !sidebar.isHiddenOrHasHiddenAncestor }
 
     /// Whether the content currently starts after the column or at the page
     /// edge - the half a plain `isHidden` check cannot see.
-    var debugContentStartsAfterSidebar: Bool { scrollLeadingWithSidebar?.isActive ?? false }
+    var debugContentStartsAfterSidebar: Bool { !(splitPage?.isSidebarCollapsed ?? true) }
 
     /// The scope the page is filtering by right now.
     var debugTaskScope: String { taskScope.rawValue }
@@ -2555,8 +2545,6 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         viewTabs.applyTheme(theme)
         doneWindowNote.textColor = muted
         sidebar.applyTheme(theme)
-        sidebarDivider.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
-            .withAlphaComponent(0.6).cgColor
         boardView.applyTheme(theme)
         calendarView.applyTheme(theme)
 

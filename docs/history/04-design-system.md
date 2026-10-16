@@ -811,3 +811,54 @@ The report counted 21 Merge queue rows on Home and about 17 controls in the bar.
 - a source guard that every peek list on Home goes through the helper or sets its own footer.
 
 Confirmed by injection: a link with no `onOpen` fallback, a helper that sets no footer, and one card reverted to a silent cut each fail by name.
+
+## Real split-view sidebars on seven pages (polish report P9)
+
+Seven pages drew their navigation column as a fixed-width view pinned beside their content: Schedules, Reading List, Notebook, Poneglyph, Hosts, Tasks and Settings.
+Automic Vault's `NavigationSplitView` gives the same column a draggable divider, an animated collapse and the Toggle Sidebar command.
+
+### What changed
+
+- `HelmSplitPage` (an `NSSplitViewController`) holds a page's column in its sidebar pane and the page's content in its content pane.
+  Each page's column opens exactly where it was pinned, and its content starts where it did: a page whose content sat a fixed distance after the column subtracts the 1pt divider.
+- **No sidebar material.** The report suggested `NSSplitViewItem(sidebarWithViewController:)`.
+  That item puts the sidebar material behind the pane, which composites against the desktop (gotcha (8)) and drew as a black band in an off-screen render of Schedules, with the column's rows missing.
+  So the sidebar is a plain split item, the page paints it (the page ground, or `sidePanelFill` for Settings' band), and `HelmSplitPage` supplies `toggleSidebar(_:)` itself.
+- **The divider.** It is clear where the column floats on the page and the gutter separates it, and it is the page's own hairline on Tasks.
+  Settings keeps its band and edge views (its suites read both); the edge is hit-transparent so the divider under it still drags.
+- **Priorities, measured rather than chosen.**
+  The divider moved with the sidebar held at 489 and did not at 495, so the holding priority is 489.
+  At the default 250, Settings' two `contentTie` grow ties pushed its column to its 214pt minimum or its 381pt maximum depending on the window width, so those ties sit at `contentGrowPriority` (480).
+  `HelmPageSidebar` held its own `208 @ 499`, which pinned the divider against a drag, so inside a pane it yields that preference (`yieldWidthToContainer`).
+- **Settings no longer needs `visibleCentreNudge`.** Its scroll area began under the band, so a centred column was nudged half the overlap right.
+  The scroll area now starts at the content pane, the clip view's centre is the visible centre, and the column lands on the same points.
+- **Tasks' column belongs to its board.** `pageForcesCollapse` puts it away on Weekly Review and brings it back on the board, without forgetting a collapse the captain chose.
+- **Toggle Sidebar** is in the Go menu on ⌥⌘S, routed through the shell like Code Preview's ⌘B.
+  The system's ⌃⌘S is already Show Hosts here.
+- Widths are not saved across launches: `NSSplitView.autosaveName` writes `UserDefaults.standard`, which every suite here must stay out of (`AppDefaults.store`).
+
+### Found on the way, and fixed separately
+
+Two empty states held a one-line sentence at compression resistance 750, and both mattered at the 960pt minimum on `main` as well:
+
+- Schedules' grew the window to 1055pt (`SchedulesRedesignSelfTest` now checks the minimum window holds);
+- Notebook's editor overlay squeezed the page tree to 192pt.
+
+Both now wrap to their containers (`letBodyWrapToContainer`).
+
+### Verified
+
+`FM_RUN_SPLIT_SIDEBAR_TESTS` (window-backed) drives the real shell:
+
+- each of the seven pages opens with its column at its old width, and the 960pt window holds on every one;
+- the shell's Toggle Sidebar collapses each column, gives the content the room, and reopens it at its width;
+- a divider moved to 300pt holds through a window resize and stops at its maximum;
+- Tasks puts its column away on Weekly Review, refuses to reopen it there, brings it back on the board, and keeps the captain's own collapse across the trip;
+- the command does nothing on a page without a split.
+
+`HostsRedesignSelfTest`'s window-floor sweep now expects two declared 499 columns rather than three, and asserts the nav column's own preference is the yielded one.
+Confirmed by injection: the default 250 holding priority, no yield, a dead Toggle Sidebar action and a forced collapse that forgets the captain's choice each fail by name.
+
+Renders of Home and the seven pages at 960x620, 1100x720 and 1512x950 in Daylight and Dusk, against `f3a552f`: all 34 at 1100 and 1512, and Home at 960, are pixel-identical.
+The 14 page renders at 960 differ in size because `main`'s Schedules defect leaves the window at 1055pt; on this branch every one is 960pt.
+Not verified: dragging the divider with a real mouse, and the collapse animation on a real display.

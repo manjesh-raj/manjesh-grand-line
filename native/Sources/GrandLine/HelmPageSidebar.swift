@@ -317,6 +317,18 @@ final class HelmPageSidebar: NSView {
         let columnWidth = widthAnchor.constraint(equalToConstant: Self.width)
         columnWidth.priority = HelmDaylightPriority.contentTie
         columnWidth.isActive = true
+        self.columnWidth = columnWidth
+    }
+
+    private var columnWidth: NSLayoutConstraint?
+
+    /// P9: in a split view's sidebar pane the pane decides the column's
+    /// width - the captain drags it. The column's own 499 preference for
+    /// `width` would otherwise hold the divider where it is (measured: a
+    /// drag to 300pt left the column at 232). Dropped to the lowest band, so
+    /// it still says what the column would be with nothing else to go on.
+    func yieldWidthToContainer() {
+        columnWidth?.priority = NSLayoutConstraint.Priority(150)
     }
 
     // MARK: Composition

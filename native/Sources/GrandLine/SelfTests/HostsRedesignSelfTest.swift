@@ -248,15 +248,30 @@ enum HostsRedesignSelfTest {
         // with AppKit's synthesized constraints filtered out (see
         // `widthConstraintsAtOrAbove`), a filter that was one step too greedy
         // would find *nothing* and this whole check would pass vacuously
-        // forever. So the same sweep is run one point lower, where the three
-        // real column constraints live, and it has to find all three.
+        // forever. So the same sweep is run one point lower, where the real
+        // column constraints live, and it has to find them.
+        //
+        // Two, not three, since P9 of the polish report: the nav column sits
+        // in a split view's sidebar pane, and its own `width` preference
+        // yields to the pane (`HelmPageSidebar.yieldWidthToContainer`) - held
+        // at 499 it pinned the divider, so a drag could not move it. The
+        // sweep run once more, from the bottom, still has to find that one,
+        // below the split's holding priority, which is what keeps it from
+        // being either a window floor or a fixed column.
         let declared = widthConstraintsAtOrAbove(HelmDaylightPriority.contentTie,
                                                  in: controller.view,
-                                                 matching: columnWidths)
-        if declared.count != 3 {
+                                                 matching: [HostsSideStack.width, HostsController.contentMinimumWidth])
+        if declared.count != 2 {
             fail("the sweep found \(declared.count) declared column constraint(s) at "
-                 + "\(HelmDaylightPriority.contentTie.rawValue), want the nav column, the side "
-                 + "column and the content minimum: \(declared)", &ok)
+                 + "\(HelmDaylightPriority.contentTie.rawValue), want the side column and the "
+                 + "content minimum: \(declared)", &ok)
+        }
+        let navPreference = widthConstraintsAtOrAbove(NSLayoutConstraint.Priority(1),
+                                                      in: controller.view,
+                                                      matching: [HelmPageSidebar.width])
+        if navPreference.count != 1 || navPreference.contains(where: { !$0.hasSuffix("@ 150.0") }) {
+            fail("the nav column's own width preference is \(navPreference), want one, yielded below "
+                 + "the split's holding priority \(HelmSplitPage.sidebarHoldingPriority.rawValue)", &ok)
         }
 
         // **The page must genuinely hold a narrow window**, and the way that
