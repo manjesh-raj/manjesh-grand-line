@@ -465,7 +465,8 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         refreshButton.isEnabled = false
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let tasks = FleetDataSource.parseTasks(forceRefresh: forceRefresh)
-            let fetched = OpenPRsSource.fetchDetailed()
+            // P11: one scan shared with Fleet (`OpenPRsSource.fetchShared`).
+            let fetched = OpenPRsSource.fetchShared(forceRefresh: forceRefresh)
             let merged = FleetDataSource.mergedPRs(openPRs: fetched.prs, tasks: tasks)
             DispatchQueue.main.async {
                 guard let self else { return }

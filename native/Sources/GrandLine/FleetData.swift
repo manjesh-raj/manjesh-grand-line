@@ -491,6 +491,81 @@ enum OpenPRsSource {
         fetchDetailed().prs
     }
 
+    // MARK: One shared scan (P11 of the polish report)
+
+    /// The PR scan Fleet and Review both run, shared.
+    ///
+    /// They each used to run their own - a network round trip per clone - so a
+    /// visit to both, or one Home Refresh that refreshes Fleet and Review
+    /// together, scanned every clone twice. Now:
+    ///
+    /// - a caller that arrives while a scan is running **joins it** instead of
+    ///   starting a second;
+    /// - an automatic refresh reuses a clean result younger than
+    ///   `sharedMaxAge`;
+    /// - the captain's own Refresh (`forceRefresh`) never takes a cached result
+    ///   - it starts a scan, or joins the one already running;
+    /// - a degraded result is never cached, so the next caller retries.
+    ///
+    /// Blocks the calling thread, which is always a background one (both
+    /// callers run it from `DispatchQueue.global`). Safe from any thread.
+    static func fetchShared(forceRefresh: Bool = false, now: () -> Date = Date.init) -> FetchResult {
+        shared.lock.lock()
+        if !forceRefresh, let cached = shared.cached, now().timeIntervalSince(cached.at) < sharedMaxAge {
+            shared.lock.unlock()
+            return cached.result
+        }
+        if let running = shared.inFlight {
+            shared.lock.unlock()
+            running.wait()
+            shared.lock.lock()
+            let result = shared.lastResult ?? FetchResult()
+            shared.lock.unlock()
+            return result
+        }
+        let running = DispatchGroup()
+        running.enter()
+        shared.inFlight = running
+        shared.lock.unlock()
+
+        #if FM_SELFTESTS
+        let result = debugFetcher?() ?? fetchDetailed()
+        #else
+        let result = fetchDetailed()
+        #endif
+
+        shared.lock.lock()
+        shared.lastResult = result
+        shared.cached = result.isDegraded ? nil : (now(), result)
+        shared.inFlight = nil
+        shared.lock.unlock()
+        running.leave()
+        return result
+    }
+
+    /// How long an automatic refresh may reuse a clean scan.
+    static let sharedMaxAge: TimeInterval = 30
+
+    private final class SharedScan {
+        let lock = NSLock()
+        var cached: (at: Date, result: FetchResult)?
+        var lastResult: FetchResult?
+        var inFlight: DispatchGroup?
+    }
+    private static let shared = SharedScan()
+
+    #if FM_SELFTESTS
+    /// Stands in for the real per-clone scan, so `FleetDataSelfTest` can count
+    /// how many scans the shared path really runs.
+    static var debugFetcher: (() -> FetchResult)?
+    static func debugResetSharedScan() {
+        shared.lock.lock()
+        shared.cached = nil
+        shared.lastResult = nil
+        shared.lock.unlock()
+    }
+    #endif
+
     static func fetchDetailed() -> FetchResult {
         guard let clones = try? FileManager.default.contentsOfDirectory(
             at: FirstmateHome.projects, includingPropertiesForKeys: [.isDirectoryKey]

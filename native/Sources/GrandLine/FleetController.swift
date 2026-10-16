@@ -864,7 +864,8 @@ final class FleetController: NSViewController {
                 guard let self else { return }
                 self.render(snapshot: snapshot, mergedPRs: nil)
             }
-            let fetched = OpenPRsSource.fetchDetailed()
+            // P11: one scan shared with Review (`OpenPRsSource.fetchShared`).
+            let fetched = OpenPRsSource.fetchShared(forceRefresh: forceRefresh)
             let merged = FleetDataSource.mergedPRs(openPRs: fetched.prs, tasks: snapshot.tasks)
             DispatchQueue.main.async {
                 guard let self else { return }
