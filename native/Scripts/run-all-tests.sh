@@ -307,6 +307,9 @@ NEEDS_SESSION=(
   # P3's panel fades, outgoing-page crossfade and kept scroll position: real
   # windows, a real shell and its real viewWillAppear/viewWillDisappear.
   "FM_RUN_PANEL_AND_PAGE_MOTION_TESTS"
+  # P11: the four pages' revisit reads run off the main thread - real
+  # controllers in a real window, with their real viewWillAppear.
+  "FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS"
   # The session switcher mounts a real `AppShellController` in a real window.
   "FM_RUN_SESSION_SWITCHER_TESTS"
   # The status pill's one-treatment-per-status guarantee: mounts the real

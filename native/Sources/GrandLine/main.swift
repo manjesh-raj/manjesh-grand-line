@@ -3255,6 +3255,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_PANEL_AND_PAGE_MOTION_TESTS"] == 
     exit(PanelAndPageMotionSelfTest.run() ? 0 : 1)
 }
 
+// P11 of the same report: the four pages that read their store on the main
+// thread in viewWillAppear read it off the main thread instead. Window-backed.
+// See PageLoadOffMainSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS"] == "1" {
+    exit(PageLoadOffMainSelfTest.run() ? 0 : 1)
+}
+
 // P8 of the same report: the one motion table (`HelmMotion.swift`'s header),
 // a guard against literal UI durations and against `allowsImplicitAnimation`
 // on a layer property, and `animateLayers` on a plain layer. Pure logic.
