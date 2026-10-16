@@ -20,3 +20,38 @@ The native Swift cockpit (`native/`) is the only app in this repo. The old Pytho
 - **Second SwiftTerm patch: truecolor de-emphasised text (cockpit-native-fixes5).** The `dimmedColor` patch above only fires for the SGR-2 "faint" attribute - some tools de-emphasise text via a literal 24-bit truecolor foreground instead (`ESC[38;2;r;g;bm`), which carries no theme awareness at all since the child process chose concrete RGB bytes with no idea what background they'd land on. Confirmed live via `tmux capture-pane -e` on a real firstmate session: Claude Code renders its own status lines ("Searched for N files...") as `ESC[38;2;153;153;153m`, not SGR-2 dim - ~6.7:1 contrast on a dark theme (fine) but ~2.55:1 on light (illegible), and `getAttributes`'s `.dim` branch never touches it. `getAttributes` (`Apple/AppleTerminalView.swift`) now also checks `attribute.fg` for the `.trueColor` case and calls the new `NSColor.legibleColor(against:)`/`UIColor.legibleColor(against:)` (`Mac/MacExtensions.swift` / `iOS/iOSExtensions.swift`, backed by `Dimming.contrastFixBlendFraction`), which remaps *any* truecolor foreground that doesn't already meet the contrast floor - self-gating (no-op once contrast is sufficient) and hue-preserving (blends toward whichever of black/white the color can reach the most contrast against, not simply "toward its own background" like the dim patch - that direction has to be chosen by evaluating both endpoints, since a foreground already close to one extreme has almost no headroom left in that direction). See `native/Vendor/SwiftTerm/README.md`'s "Second patch" section.
 - **Third SwiftTerm patch: wrap redraw boundary (`fm/grandline-terminal-wrap-duplicate-char`).** A captain-reported bug where a long line's wrapped continuation row could show a stray duplicate of the original line's leading (colored) character. Extensive testing ruled out `Buffer`/`Terminal`'s own wrap and reflow logic (`insertAsciiRun`, `insertCharacter`, `reflowNarrower`) and a fresh full-render bitmap as sources of *content*-level duplication - all correct in every scenario tried. The actual fix targets a real asymmetry in `TerminalView.updateDisplay`'s invalidation-rect math: it already extended a partial redraw's dirty rect down by one cell when the range didn't reach the last screen row (to catch descender/tall-glyph overhang), but had no symmetric upward extension for a range that didn't start at the first screen row - exactly a wrap's continuation row's shape. Extracted into a pure, testable `TerminalView.invalidationRegion(...)` and fixed symmetrically; see `native/Vendor/SwiftTerm/README.md`'s "Third patch" section for the full investigation, including the explicit caveat that this could not be proven live in a sandboxed, display-less environment (`cacheDisplay` bypasses incremental redraw, which is exactly the class of bug this fix targets) - covered by `TerminalWrapRedrawSelfTest.swift`'s geometry-only self-test, not a visual repro.
 - **Sixth SwiftTerm patch: an unused `withUnsafeBytes` result (`fm/grandline-swiftterm-unsafebytes-warning-fix`).** A captain rebuild with `build_native_app.sh` printed two warnings out of the vendored tree, both from `Apple/Metal/MetalTerminalRenderer.swift`'s vertex-buffer uploads (`BufferPool.makeBuffer<T>` and the renderer's own `makeStaticBuffer<T>`): `result of call to 'withUnsafeBytes' is unused`. Both read `vertices.withUnsafeBytes { raw in memcpy(...) }`, and `memcpy` returns its destination pointer - so the single-expression closure infers that pointer as its result type and `withUnsafeBytes` hands back a value nobody wants. The fix is one `_ = ` per site. Unlike patches 1-5 this one has no "no upstream seam" justification and does not claim one: it is a diagnostics gap, and a warning emitted inside a file simply cannot be silenced from outside it. Nothing about the copy changed. Recorded as patch 6 in `native/Vendor/SwiftTerm/README.md` and guarded by `VendoredPatchesSelfTest`, which asserts the two call sites **by count** rather than by presence - a re-apply that fixes one and misses the other would pass a `contains` check while the build stayed dirty, and both injections (drop one, drop both) were confirmed to fail the suite by name.
+
+## Page loads off the main thread, a linear-time YAML parser, and a Tasks crash (polish report P11)
+
+The polish report named four pages that read their whole store on the main thread in `viewWillAppear`: Notebook, Commands, Sticky Board and Reading List.
+Measured with realistic scratch stores, a revisit held the main thread for 615ms (1500-page notebook), 725ms (292 commands), 1156ms (150 sticky notes) and 8.2s (400 reading-list links).
+Splitting each revisit into read and render showed the read was most of it - and for the two YAML-backed stores the read was the vendored parser.
+
+### The YAML parser was O(n^2), three times over
+
+Found one after another with `sample`, each fix leaving the next on top of the profile:
+
+1. The tokenizer copied the remaining text for every token (`substring(from:)`).
+2. Every pattern's `rangeOfFirstMatch` is ICU's `find`, which scans forward through the whole remaining text for a match starting anywhere, even though every pattern is anchored with `^`. `.anchored` fixed that, and it was the bigger half of the tokenizer's cost - fixing (1) alone measured no change at all.
+3. The parser's `Context.advance` copied the remaining token array for every token.
+
+After all three the reading list's read went from about 7s to 0.28s and the sticky board's from 1.2s to 0.11s.
+Proved to be the same parse by running the old and new tokenizers side by side over 97 documents, and dumping the parse of 96 documents before and after the parser change.
+`Vendor/YamlSwift/README.md` records the patch and its re-apply steps; `FM_RUN_VENDORED_PATCHES_TESTS` guards it.
+
+### Off the main thread
+
+`HelmBackgroundReload` is the one shape: the read runs off main, the result lands in one step, a newer reload supersedes an older one, and a write invalidates a read in flight so it cannot undo the write (GL-01).
+Each store's reload is split into a pure read and a main-thread apply that keeps GL-01's backups and failed-load state.
+The first load stays synchronous; a revisit now holds the main thread for 0.0-0.1ms on three of the four pages, and ~130ms on Commands, which is its render of what it already has.
+
+### The Tasks page could crash
+
+Moving the reads off main crashed the first run: the YAML parser recurses once per list element, and a GCD worker's stack is 512 KB against the main thread's 8 MB.
+`ShiftStore.reloadAllAsync` - the Tasks page's own off-main parse - had always run on a GCD queue, and with 1500 active tasks it crashed with `EXC_BAD_ACCESS` in `___chkstk_darwin`.
+Every off-main parse now runs on `HelmParseThread`, a thread with a 16 MB stack.
+`FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS` parses a 1500-task store through `reloadAllAsync`, and crashes with the GCD queue put back.
+
+### One PR scan
+
+Fleet and Review each ran their own per-clone PR scan; `OpenPRsSource.fetchShared` shares one, with a 30s cache for automatic refreshes, never for the captain's Refresh, and never for a degraded result.

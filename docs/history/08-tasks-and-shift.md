@@ -170,3 +170,19 @@
 - **`HelmPageSidebar.debugSelectedRowIDs` reads the rows that are actually rendering selected, not the ids `select(_:inGroup:)` was handed** - and that distinction is what makes the group check real: `select` stores an id whether or not a row in that group carries it, so a check reading the stored value **passed against the injected regression** that put project rows back in the default group. Read what is painted.
 - **`debugFooterBottomGap` measures from `minY`**: this view is not flipped, so reading `maxY` measures the distance to the *top* and reports a correctly placed footer as 870pt out of place. And "the footer sits at the column's bottom" is not the whole property - it holds even for a column left hugging its content, so the case also asserts the column itself reaches the page's bottom inset.
 - **Verified** with `swift build` (clean debug and release, zero warnings in this app's sources), the release binary confirmed to carry no `FM_RUN_*` strings, the full suite, and real off-screen renders of the real mounted page on `dusk`/`helm-light`/`daylight` at 0, 5 and 25 projects - **without launching the app**, per the README's worktree rule. Re-verified after rebasing onto `fm/grand-line-hosts-sidebar-restore`, which is the one branch that has ever conflicted with this component: the resolution was to re-apply this change on top of main's file rather than take either side, and the Hosts column was re-rendered off-screen as well as re-run, since its rows were the ones moved into a scroll view underneath. **Seven injected regressions each reproduced by name** (scripted file copies, never `git stash`): the per-project rows dropped (which reported the shipped bug verbatim), project rows in the default selection group, the chip row left behind, a dot painted with a fixed hue, the footer links unwired, the column's width made required (caught by `AppShellBodyWidthSelfTest` across every destination), and the column left hugging its content.
+
+## B5 verified: the empty Tasks page was a tour-lab artefact, the narrow board was not (polish report)
+
+The polish report's off-screen render of the Tasks page in an empty store showed board skeletons that never resolved, "+ Add task" clipped by the skeleton, two cards with an icon but no title, and a "Back to Projects" drill view under the page.
+
+**Those symptoms are the tour lab, not the app.**
+A window that has never been ordered in gets no `viewWillAppear` on an unhide (measured in `fm/grandline-home-width-need-copy`), and this page loads in `viewWillAppear`.
+The same tour with `orderfront` - which is what the real app's window is - renders the empty store correctly, and so does a realistic one (the tour lab's new `demo tasks` verb).
+Without `orderfront` the realistic store shows the same symptoms: a header saying "7 open" over a board of skeletons at 0.
+
+**Verifying with realistic data found a real defect.**
+At 1100pt and 960pt the board stayed 924.5pt wide and its Done column ended at maxX 1180.5, past the window.
+The Done lane's empty-state sentence ("Completed tasks from the last 7 days land here.") held its one-line width at compression resistance 750 - even while hidden, because a hidden view still lays out (gotcha (15)) - and the three lanes are tied to equal widths, so all three were 297.5pt.
+It was gotcha (22)'s circular derivation: `HelmEmptyState` already wrapped its body to its own bounds, and its own bounds were decided by its body.
+`HelmEmptyState.letBodyWrapToContainer()` lets the body give way instead; the board's lanes opt in.
+`FM_RUN_SHIFT_BOARD_VIEW_TESTS` mounts the page at the 960pt minimum with a Done lane holding a card and with every lane empty, and fails at maxX 1180.5 without the fix.
