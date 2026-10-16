@@ -808,6 +808,7 @@ final class CompactTodayPane: NSView {
     private let column = NSStackView()
 
     private var rows: [CompactTaskRowView] = []
+    private lazy var rowRows = HelmKeyedRows(stack: rowsStack)
     private var theme: HelmTheme = ThemeManager.shared.theme
 
     override init(frame frameRect: NSRect) {
@@ -866,17 +867,17 @@ final class CompactTodayPane: NSView {
         // mandatory rule for a headless suite, and this is the loop a suite
         // drives hardest.
         autoreleasepool {
-            for row in rows {
-                rowsStack.removeArrangedSubview(row)
-                row.removeFromSuperview()
-            }
-            rows = digest.rows.map { model in
+            // P2: keyed by task id, so a refresh updates the rows in place
+            // rather than rebuilding them under the captain's pointer.
+            rowRows.reconcile(digest.rows, key: \.id, make: { model in
                 let row = CompactTaskRowView(model: model)
-                row.onToggle = { [weak self] in self?.onSetTaskCompleted?(model.id, true) }
-                rowsStack.addArrangedSubview(row)
-                row.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true
+                let id = model.id
+                row.onToggle = { [weak self] in self?.onSetTaskCompleted?(id, true) }
                 return row
-            }
+            }, update: { view, model in
+                (view as? CompactTaskRowView)?.configure(model)
+            })
+            rows = rowRows.orderedRows.compactMap { $0 as? CompactTaskRowView }
         }
 
         rowsStack.isHidden = digest.isEmpty
@@ -947,6 +948,7 @@ final class CompactNotesPane: NSView {
     private let column = NSStackView()
 
     private var rows: [CompactNoteRowView] = []
+    private lazy var rowRows = HelmKeyedRows(stack: rowsStack)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -983,17 +985,16 @@ final class CompactNotesPane: NSView {
 
     func present(_ notes: [CompactNoteRow], theme: HelmTheme) {
         autoreleasepool {
-            for row in rows {
-                rowsStack.removeArrangedSubview(row)
-                row.removeFromSuperview()
-            }
-            rows = notes.map { model in
+            // P2: keyed by note id, the same as the Today tab's rows.
+            rowRows.reconcile(notes, key: \.id, make: { model in
                 let row = CompactNoteRowView(model: model)
-                row.onClick = { [weak self] in self?.onRevealNote?(model.id) }
-                rowsStack.addArrangedSubview(row)
-                row.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true
+                let id = model.id
+                row.onClick = { [weak self] in self?.onRevealNote?(id) }
                 return row
-            }
+            }, update: { view, model in
+                (view as? CompactNoteRowView)?.configure(model)
+            })
+            rows = rowRows.orderedRows.compactMap { $0 as? CompactNoteRowView }
         }
         rowsStack.isHidden = notes.isEmpty
         emptyState.isHidden = !notes.isEmpty
@@ -1172,7 +1173,7 @@ final class CompactTaskRowView: HoverHighlightView {
     private let checkbox = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
-    private let model: CompactTaskRow
+    private var model: CompactTaskRow
 
     init(model: CompactTaskRow) {
         self.model = model
@@ -1180,7 +1181,6 @@ final class CompactTaskRowView: HoverHighlightView {
         translatesAutoresizingMaskIntoConstraints = false
         cornerRadius = HelmMetrics.rChip + 1
         accessibilityRoleOverride = .checkBox
-        accessibilityLabelOverride = "\(model.title) - \(model.detail)"
         accessibilityValueOverride = "not done"
         onAccessibilityPress = { [weak self] in self?.onToggle?() }
         addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clicked)))
@@ -1193,11 +1193,9 @@ final class CompactTaskRowView: HoverHighlightView {
         titleLabel.font = .systemFont(ofSize: HelmType.scaled(12.5), weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.stringValue = model.title
         detailLabel.font = HelmType.captionSmall()
         detailLabel.lineBreakMode = .byTruncatingTail
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailLabel.stringValue = model.detail
 
         let text = NSStackView(views: [titleLabel, detailLabel])
         text.orientation = .vertical
@@ -1222,9 +1220,20 @@ final class CompactTaskRowView: HoverHighlightView {
         checkbox.setContentCompressionResistancePriority(.required, for: .horizontal)
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        configure(model)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// The row's text from its model, for a new row and a kept one (P2)
+    /// alike. The urgency colours follow on the next `applyTheme`, which the
+    /// pane runs after every refresh.
+    func configure(_ model: CompactTaskRow) {
+        self.model = model
+        titleLabel.stringValue = model.title
+        detailLabel.stringValue = model.detail
+        accessibilityLabelOverride = "\(model.title) - \(model.detail)"
+    }
 
     @objc private func clicked() { onToggle?() }
 
@@ -1291,7 +1300,7 @@ final class CompactNoteRowView: HoverHighlightView {
     private let swatch = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
-    private let model: CompactNoteRow
+    private var model: CompactNoteRow
 
     init(model: CompactNoteRow) {
         self.model = model
@@ -1299,28 +1308,19 @@ final class CompactNoteRowView: HoverHighlightView {
         translatesAutoresizingMaskIntoConstraints = false
         cornerRadius = HelmMetrics.rChip + 1
         accessibilityRoleOverride = .button
-        accessibilityLabelOverride = "\(model.title) - \(model.detail)"
         onAccessibilityPress = { [weak self] in self?.onClick?() }
         addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clicked)))
 
         swatch.wantsLayer = true
         swatch.translatesAutoresizingMaskIntoConstraints = false
         swatch.layer?.cornerRadius = 3
-        // The note's own paper colour, so the row carries the same identity
-        // the board does - a literal hex the captain chose, which no
-        // `HelmTint` case honestly describes (the distinction
-        // `IconTileView.literalHex` already draws).
-        swatch.layer?.backgroundColor = HelmTheme.nsColor(model.color.paperHex).cgColor
 
         titleLabel.font = .systemFont(ofSize: HelmType.scaled(12.5), weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.stringValue = model.title
         detailLabel.font = HelmType.captionSmall()
         detailLabel.lineBreakMode = .byTruncatingTail
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailLabel.stringValue = model.detail
-        detailLabel.isHidden = model.detail.isEmpty
 
         let text = NSStackView(views: [titleLabel, detailLabel])
         text.orientation = .vertical
@@ -1343,9 +1343,25 @@ final class CompactNoteRowView: HoverHighlightView {
         swatch.setContentCompressionResistancePriority(.required, for: .horizontal)
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        configure(model)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// The row's content from its model, for a new row and a kept one (P2)
+    /// alike.
+    func configure(_ model: CompactNoteRow) {
+        self.model = model
+        // The note's own paper colour, so the row carries the same identity
+        // the board does - a literal hex the captain chose, which no
+        // `HelmTint` case honestly describes (the distinction
+        // `IconTileView.literalHex` already draws).
+        swatch.layer?.backgroundColor = HelmTheme.nsColor(model.color.paperHex).cgColor
+        titleLabel.stringValue = model.title
+        detailLabel.stringValue = model.detail
+        detailLabel.isHidden = model.detail.isEmpty
+        accessibilityLabelOverride = "\(model.title) - \(model.detail)"
+    }
 
     @objc private func clicked() { onClick?() }
 

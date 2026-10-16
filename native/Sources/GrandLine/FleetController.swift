@@ -286,10 +286,14 @@ final class FleetController: NSViewController {
     // hand the extension more than it needs.
     var currentTheme: HelmTheme { theme }
     /// The needs-your-call rows keep their own list rather than joining
-    /// `accentRows`: that one is cleared by `render`, while these are also
-    /// rebuilt whenever a composer opens or closes, and a shared array would
-    /// accumulate orphaned rows across those re-lays.
+    /// `accentRows`: the two are reconciled by different keyed lists, and each
+    /// array is reset from its own list's rows on every pass.
     var needsAccentRows: [HelmAccentRow] = []
+    /// P2: the "needs you" list, keyed by task id (`rebuildNeedsRows`).
+    lazy var needsRows = HelmKeyedRows(stack: needsStack)
+    /// Each row's Reply button, by task id, so a reused row's button can be
+    /// flipped between Reply and Cancel in place.
+    var needsReplyButtons: [String: HelmButton] = [:]
     func applyThemeFromReply() { applyTheme() }
     /// F7: a reply the captain just sent may have resolved a decision, so
     /// this re-reads for real rather than from the coalescing window.
@@ -619,13 +623,12 @@ final class FleetController: NSViewController {
             tile.onClick = onClick
             tile.toolTip = "View in Review"
         }
-        statTiles.append(tile)
         return tile
     }
 
-    /// Rebuilt from scratch on every refresh, so this list is cleared and
-    /// repopulated in `rebuildStats`. Each tile themes itself; this only exists
-    /// so `applyTheme` can hand every live tile the new theme.
+    /// The live tiles, kept in step with `statTileRows` by `rebuildStats`.
+    /// Each tile themes itself; this only exists so `applyTheme` can hand
+    /// every live tile the new theme.
     private var statTiles: [HelmStatTile] = []
 
     /// The "In flight" section: a plain heading (round glyph + title + count
@@ -920,9 +923,6 @@ final class FleetController: NSViewController {
             inFlightSectionView.isHidden = false
         }
 
-        accentRows.removeAll()
-        emptyStates.removeAll()
-
         let working = snapshot.tasks.filter { $0.status == "working" }
         let needs = snapshot.tasks.filter { $0.status == "needs_decision" || $0.status == "blocked" }
         onNeedsDecisionCountChanged?(needs.count)
@@ -993,12 +993,6 @@ final class FleetController: NSViewController {
 
     private func rebuildStats(working: Int, ready: Int, snapshot: FleetSnapshot,
                               prFetchFailure: String? = nil) {
-        for v in statsRow.arrangedSubviews {
-            statsRow.removeArrangedSubview(v)
-            v.removeFromSuperview()
-        }
-        statTiles.removeAll()
-
         let watcherLabel: String
         switch snapshot.watcher.status {
         case "healthy": watcherLabel = "watcher healthy"
@@ -1020,36 +1014,65 @@ final class FleetController: NSViewController {
         case "stale": watcherTint = .warn
         default: watcherTint = .neutral
         }
-        statsRow.addArrangedSubview(statTile(icon: "clock", value: "\(working)", label: "working"))
-        // GL-14: "\u{2014}" (an em dash), not "0", when the scan failed - the
-        // tile is still clickable so the captain can go to Review and see the
-        // real reason there.
-        statsRow.addArrangedSubview(statTile(
-            icon: prFetchFailure == nil ? "arrow.triangle.pull" : "wifi.exclamationmark",
-            value: prFetchFailure == nil ? "\(ready)" : "\u{2014}",
-            label: prFetchFailure == nil ? "ready to merge" : "PRs unavailable",
-            tint: prFetchFailure == nil ? .accent : .warn,
-            onClick: { [weak self] in self?.onNavigateToReview?() }))
-        statsRow.addArrangedSubview(statTile(icon: "line.3.horizontal", value: "\(snapshot.queuedCount)", label: "queued"))
-        statsRow.addArrangedSubview(statTile(icon: "checkmark.circle", value: "\(snapshot.doneCount)", label: "done today", tint: .good))
-        statsRow.addArrangedSubview(statTile(icon: "shippingbox", value: "\(snapshot.projectsCount)", label: "projects"))
-        statsRow.addArrangedSubview(statTile(icon: "waveform.path.ecg", value: snapshot.watcher.status == "healthy" ? "OK" : "\u{2014}", label: watcherLabel, tint: watcherTint))
+        let items: [StatTileItem] = [
+            StatTileItem(key: "working", icon: "clock", value: "\(working)", label: "working"),
+            // GL-14: "\u{2014}" (an em dash), not "0", when the scan failed -
+            // the tile is still clickable so the captain can go to Review and
+            // see the real reason there.
+            StatTileItem(key: "ready",
+                         icon: prFetchFailure == nil ? "arrow.triangle.pull" : "wifi.exclamationmark",
+                         value: prFetchFailure == nil ? "\(ready)" : "\u{2014}",
+                         label: prFetchFailure == nil ? "ready to merge" : "PRs unavailable",
+                         tint: prFetchFailure == nil ? .accent : .warn,
+                         opensReview: true),
+            StatTileItem(key: "queued", icon: "line.3.horizontal", value: "\(snapshot.queuedCount)", label: "queued"),
+            StatTileItem(key: "done", icon: "checkmark.circle", value: "\(snapshot.doneCount)", label: "done today", tint: .good),
+            StatTileItem(key: "projects", icon: "shippingbox", value: "\(snapshot.projectsCount)", label: "projects"),
+            StatTileItem(key: "watcher", icon: "waveform.path.ecg",
+                         value: snapshot.watcher.status == "healthy" ? "OK" : "\u{2014}",
+                         label: watcherLabel, tint: watcherTint),
+        ]
+        // P2: the six tiles are built once and updated in place on every
+        // refresh, rather than torn down and rebuilt (`HelmKeyedRows`).
+        statTileRows.reconcile(items, key: \.key, make: { [weak self] item in
+            self?.statTile(icon: item.icon, value: item.value, label: item.label, tint: item.tint,
+                           onClick: item.opensReview ? { [weak self] in self?.onNavigateToReview?() } : nil)
+                ?? NSView()
+        }, update: { [weak self] view, item in
+            guard let self, let tile = view as? HelmStatTile else { return }
+            tile.value = item.value
+            tile.caption = item.label
+            tile.setSymbol(item.icon, theme: self.theme)
+            tile.setTint(item.tint, theme: self.theme)
+        }, tiesWidth: false)
+        statTiles = statTileRows.orderedRows.compactMap { $0 as? HelmStatTile }
     }
 
+    private struct StatTileItem {
+        let key: String
+        let icon: String
+        let value: String
+        let label: String
+        var tint: HelmTint? = nil
+        var opensReview = false
+    }
+
+    private lazy var statTileRows = HelmKeyedRows(stack: statsRow)
+    private lazy var inFlightRows = HelmKeyedRows(stack: inFlightStack)
+
     private func rebuildTaskRows(into stack: NSStackView, tasks: [FleetTask], emptyTitle: String, emptyBody: String) {
-        for v in stack.arrangedSubviews {
-            stack.removeArrangedSubview(v)
-            v.removeFromSuperview()
-        }
-        if tasks.isEmpty {
-            stack.addArrangedSubview(emptyStateView(icon: "tray", title: emptyTitle, body: emptyBody))
-            return
-        }
-        for task in tasks {
-            let row = taskRowView(task)
-            stack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
+        // P2: keyed by task id - a task still in flight keeps its row and is
+        // updated in place; only a task that started builds one, and only one
+        // that stopped loses it (`HelmKeyedRows`).
+        inFlightRows.reconcile(tasks, key: \.id, make: { _ in
+            HelmAccentRow(hover: false)
+        }, update: { [weak self] view, task in
+            guard let self, let row = view as? HelmAccentRow else { return }
+            self.configureTaskRow(row, task)
+        }, placeholder: { [weak self] in
+            self?.emptyStateView(icon: "tray", title: emptyTitle, body: emptyBody) ?? NSView()
+        })
+        accentRows = inFlightRows.orderedRows.compactMap { $0 as? HelmAccentRow }
     }
 
     /// One `HelmEmptyState` - the app's shared empty state
@@ -1064,8 +1087,8 @@ final class FleetController: NSViewController {
         return empty
     }
 
-    /// Rebuilt with the lists on every render; each state themes itself, so this
-    /// only exists to reach the live ones from `applyTheme`.
+    /// Each empty state is built once (a list's placeholder) and themes
+    /// itself; this only exists to reach the live ones from `applyTheme`.
     private var emptyStates: [HelmEmptyState] = []
 
     /// One "In flight" row, built from the app's shared `HelmAccentRow`
@@ -1078,9 +1101,8 @@ final class FleetController: NSViewController {
     ///
     /// `hover: false` and no `onClick`: these rows are a read-only readout,
     /// exactly as before this migration.
-    private func taskRowView(_ task: FleetTask) -> NSView {
+    private func configureTaskRow(_ row: HelmAccentRow, _ task: FleetTask) {
         let visuals = taskVisuals(task)
-        let row = HelmAccentRow(hover: false)
         let detail = task.detail.isEmpty ? "source: \(task.source)" : task.detail
         row.configure(HelmAccentRow.Content(
             tint: visuals.tint,
@@ -1092,12 +1114,10 @@ final class FleetController: NSViewController {
             badgeSymbol: visuals.symbol,
             chipText: visuals.label
         ), theme: theme)
-        accentRows.append(row)
-        return row
     }
 
-    /// Live `HelmAccentRow`s, so a theme change re-tints them. They are
-    /// rebuilt on every `render()`, so this is cleared alongside the stack.
+    /// Live `HelmAccentRow`s, so a theme change re-tints them. Kept in step
+    /// with `inFlightRows` on every render.
     private var accentRows: [HelmAccentRow] = []
 
     /// Returns a `HelmTint` rather than a raw hex: the row's accent bar,
@@ -1361,5 +1381,11 @@ final class FleetController: NSViewController {
 
     /// Every stat tile as rendered. See `ReviewController.debugStatTiles`.
     var debugStatTiles: [(value: String, caption: String)] { statTiles.map { $0.debugMetric } }
+
+    /// The live views themselves, for `KeyedRefreshSelfTest` - which asks
+    /// whether a refresh kept the same objects rather than what they say.
+    var debugStatTileViews: [NSView] { statsRow.arrangedSubviews }
+    var debugInFlightRowViews: [NSView] { inFlightStack.arrangedSubviews }
+    var debugNeedsRowViews: [NSView] { needsStack.arrangedSubviews }
     #endif
 }

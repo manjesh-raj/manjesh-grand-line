@@ -751,7 +751,9 @@ class HoverHighlightView: NSView, NSGestureRecognizerDelegate {
     /// the same shape of hook for its own rows.
     var onHoverChange: ((Bool) -> Void)?
 
-    private var isHovering = false
+    /// Whether the pointer is over the view now - so a view reconfigured in
+    /// place (P2) can keep a hover-dependent state it would otherwise reset.
+    private(set) var isHovering = false
     private var trackingArea: NSTrackingArea?
 
     // MARK: Accessibility and keyboard (GL-16)

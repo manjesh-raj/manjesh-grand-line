@@ -310,6 +310,9 @@ NEEDS_SESSION=(
   # P11: the four pages' revisit reads run off the main thread - real
   # controllers in a real window, with their real viewWillAppear.
   "FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS"
+  # P2: a refresh keeps the same row and card objects - real controllers in
+  # a real window.
+  "FM_RUN_KEYED_REFRESH_TESTS"
   # The session switcher mounts a real `AppShellController` in a real window.
   "FM_RUN_SESSION_SWITCHER_TESTS"
   # The status pill's one-treatment-per-status guarantee: mounts the real

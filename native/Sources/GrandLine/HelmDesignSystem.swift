@@ -3421,6 +3421,15 @@ final class HelmStatTile: NSView {
         applyTheme(theme)
     }
 
+    /// Swap the glyph in place - P2's refresh updates a tile rather than
+    /// building a new one, and Fleet's "ready to merge" tile changes glyph
+    /// when the PR scan fails.
+    func setSymbol(_ symbol: String, theme: HelmTheme) {
+        guard symbol != iconSymbol else { return }
+        iconSymbol = symbol
+        applyTheme(theme)
+    }
+
     func applyTheme(_ theme: HelmTheme) {
         HelmCard.applyCardSurface(to: self, theme: theme, cornerRadius: HelmMetrics.rRow,
                                   daylightRadius: HelmMetrics.rRow)

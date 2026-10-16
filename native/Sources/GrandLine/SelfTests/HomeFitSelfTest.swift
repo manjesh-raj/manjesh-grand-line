@@ -161,9 +161,15 @@ enum HomeFitSelfTest {
               "\(label): back on Home after a resize on Settings, \(past.count) card(s) reach past the \(contentWidth)pt window "
               + "(rightmost maxX \(reach)) - the grid was built for the old width",
               &ok)
-        check(abs(reach - (contentWidth - HomeCanvasController.gutter)) <= 1,
-              "\(label): back on Home the grid's right edge is at \(reach), expected \(contentWidth - HomeCanvasController.gutter) "
-              + "(the window less the page gutter) - the grid was built for the old width",
+        // The grid fills the clip view less the page gutters - the window
+        // less the gutter where scrollers overlay, and one scroller narrower
+        // where a legacy scroller takes width (a Mac set to always show
+        // scroll bars; measured: 17pt here). Either way, a grid built for the
+        // old width ends somewhere else.
+        let expectedReach = HomeCanvasController.gutter + shell.debugHomeCanvas.debugGridWidths.container
+        check(abs(reach - expectedReach) <= 1,
+              "\(label): back on Home the grid's right edge is at \(reach), expected \(expectedReach) "
+              + "(the clip view less the page gutter) - the grid was built for the old width",
               &ok)
         if past.isEmpty, abs(reach - (contentWidth - HomeCanvasController.gutter)) <= 1 {
             print("  OK   \(label): the grid fills the \(contentWidth)pt window and ends at \(reach)")

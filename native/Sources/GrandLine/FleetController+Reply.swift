@@ -77,16 +77,11 @@ extension FleetController {
         return section
     }
 
-    /// Rebuild the needs-decision/blocked rows. An already-open composer is
-    /// re-inserted rather than rebuilt, so a refresh landing mid-sentence
-    /// (Refresh, or simply navigating back to Overview) never discards what
-    /// the captain has typed.
+    /// Show the needs-decision/blocked rows. A parked task keeps its row,
+    /// and an already-open composer keeps its place under it, so a refresh
+    /// landing mid-sentence (Refresh, or simply navigating back to Overview)
+    /// never discards what the captain has typed.
     func rebuildNeedsRows(_ tasks: [FleetTask]) {
-        for v in needsStack.arrangedSubviews {
-            needsStack.removeArrangedSubview(v)
-            v.removeFromSuperview()
-        }
-        needsAccentRows.removeAll()
         needsCountLabel.stringValue = "\(tasks.count)"
         // The section is a list of things needing an answer; with none, the
         // banner directly above already says "nothing needs you right now",
@@ -95,28 +90,54 @@ extension FleetController {
         needsSectionView.isHidden = tasks.isEmpty
         if tasks.isEmpty {
             closeReplyComposer()
-            return
         }
         // A composer whose task is no longer parked has nothing to answer.
         if let open = openReplyTaskID, !tasks.contains(where: { $0.id == open }) {
             closeReplyComposer()
         }
+        // P2: keyed by task id, with the open composer as its own entry right
+        // under its task. A task still parked keeps its row - and an open
+        // composer keeps whatever the captain has typed into it - across a
+        // refresh, rather than every row being rebuilt (`HelmKeyedRows`).
+        var items: [NeedsItem] = []
         for task in tasks {
-            let row = needsRowView(task)
-            needsStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: needsStack.widthAnchor).isActive = true
+            items.append(.task(task))
             if task.id == openReplyTaskID, let composer = openReplyComposer {
-                needsStack.addArrangedSubview(composer)
-                composer.widthAnchor.constraint(equalTo: needsStack.widthAnchor).isActive = true
+                items.append(.composer(taskID: task.id, view: composer))
+            }
+        }
+        needsRows.reconcile(items, key: \.key, make: { [weak self] item in
+            switch item {
+            case .task(let task): return self?.needsRowView(task) ?? NSView()
+            case .composer(_, let view): return view
+            }
+        }, update: { [weak self] view, item in
+            guard let self, case .task(let task) = item, let row = view as? HelmAccentRow else { return }
+            self.configureNeedsRow(row, task)
+        })
+        needsAccentRows = needsRows.orderedRows.compactMap { $0 as? HelmAccentRow }
+        let listed = Set(tasks.map(\.id))
+        needsReplyButtons = needsReplyButtons.filter { listed.contains($0.key) }
+    }
+
+    enum NeedsItem {
+        case task(FleetTask)
+        case composer(taskID: String, view: NSView)
+
+        var key: String {
+            switch self {
+            case .task(let task): return "task:\(task.id)"
+            // The view's own identity, not the task's: a composer closed and
+            // reopened between two refreshes is a new view, and a key by task
+            // would hand back the old one.
+            case .composer(_, let view): return "composer:\(ObjectIdentifier(view))"
             }
         }
     }
 
     private func needsRowView(_ task: FleetTask) -> NSView {
-        let blocked = task.status == "blocked"
-        let reply = HelmButton(title: openReplyTaskID == task.id ? "Cancel" : "Reply",
-                               variant: .secondary, size: .small,
-                               symbol: openReplyTaskID == task.id ? "xmark" : "arrowshape.turn.up.left")
+        let reply = HelmButton(title: "Reply", variant: .secondary, size: .small,
+                               symbol: "arrowshape.turn.up.left")
         reply.identifier = NSUserInterfaceItemIdentifier("fleet.reply.\(task.id)")
         reply.toolTip = "Answer \(task.id) in the crew's own session"
         reply.target = self
@@ -125,6 +146,19 @@ extension FleetController {
         reply.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let row = HelmAccentRow(trailingAccessory: reply, hover: false)
+        needsReplyButtons[task.id] = reply
+        return row
+    }
+
+    /// Configure a "needs you" row for `task` - new or reused - including
+    /// its Reply / Cancel button, which follows whether its composer is open.
+    private func configureNeedsRow(_ row: HelmAccentRow, _ task: FleetTask) {
+        let blocked = task.status == "blocked"
+        if let reply = needsReplyButtons[task.id] {
+            let open = openReplyTaskID == task.id
+            reply.title = open ? "Cancel" : "Reply"
+            reply.symbolName = open ? "xmark" : "arrowshape.turn.up.left"
+        }
         row.configure(HelmAccentRow.Content(
             tint: blocked ? .critical : .warn,
             kicker: blocked ? "Blocked \u{00B7} \(task.id)" : "Needs decision \u{00B7} \(task.id)",
@@ -133,8 +167,6 @@ extension FleetController {
             badgeSymbol: blocked ? "xmark.octagon.fill" : "exclamationmark.triangle.fill",
             chipText: blocked ? "blocked" : "needs you"
         ), theme: currentTheme)
-        needsAccentRows.append(row)
-        return row
     }
 
     /// The row's second line: the crew's own words where there are any (the
