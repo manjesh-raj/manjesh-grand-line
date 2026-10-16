@@ -75,6 +75,8 @@ enum HomeFitSelfTest {
             checkTheListScrollsInsideItsCard(shell: shell, window: window, &ok)
             checkLargerTextFallsBackToScrolling(shell: shell, window: window, &ok)
             checkHealthListsServicesWhenThereIsRoom(shell: shell, window: window, &ok)
+            // Last: it leaves the window at its smaller size.
+            checkAResizeOnAnotherPageReachesHome(shell: shell, window: window, &ok)
         }
 
         print(ok ? "HomeFitSelfTest: all checks passed" : "HomeFitSelfTest: FAILED")
@@ -96,6 +98,69 @@ enum HomeFitSelfTest {
             canvas.debugRenderNow()
             shell.view.layoutSubtreeIfNeeded()
         }
+    }
+
+    // MARK: 5. A resize on another page still reaches Home
+
+    /// The polish report's B1, in the tour it was found with: Home at
+    /// 1512x950, go to Settings, resize to 1100x720, come back. Home's grid is
+    /// built from its own clip width, its resize observer is gated off while
+    /// it is hidden (GL-20), and on the way back `viewWillAppear` rebuilt the
+    /// grid **before** the page had been laid out at its new width - so the
+    /// Morning briefing column stayed at maxX 1488 in an 1100pt window.
+    ///
+    /// No `debugRenderNow()` and no second pass here, deliberately: the
+    /// fixture above lays out twice to settle a fresh grid, and doing that on
+    /// the return would re-render Home at the right width and hide the bug.
+    /// One `layoutSubtreeIfNeeded()`, which is what the next display cycle
+    /// does in the real app. The window is ordered in (`run()`), which is what
+    /// makes AppKit send `viewWillAppear` on the unhide at all.
+    private static func checkAResizeOnAnotherPageReachesHome(shell: AppShellController, window: NSWindow,
+                                                              _ ok: inout Bool) {
+        print("\n-- B1: a resize while another page shows still reaches Home --")
+        show(rows: 3, at: NSSize(width: 1512, height: 950), shell: shell, window: window)
+        let wideReach = cardFrames(in: shell.debugHomeCanvas.view).map(\.maxX).max() ?? 0
+        // The fixture's own discriminating power: at the wide size the
+        // rightmost card really does reach past where the narrow window ends,
+        // so a grid left at the old width is something this can see.
+        let narrow = NSSize(width: 1100, height: 720)
+        check(wideReach > narrow.width,
+              "at 1512pt the rightmost card ends at \(wideReach) - it would not reach past an 1100pt window, so this proves nothing",
+              &ok)
+
+        shell.show(.settings)
+        shell.view.layoutSubtreeIfNeeded()
+        var frame = window.frame
+        frame.size = narrow
+        window.setFrame(frame, display: false)
+        shell.view.layoutSubtreeIfNeeded()
+        shell.show(.homeCanvas)
+        shell.view.layoutSubtreeIfNeeded()
+
+        let contentWidth = window.contentLayoutRect.width
+        let frames = cardFrames(in: shell.debugHomeCanvas.view)
+        check(!frames.isEmpty, "Home has no module cards after the return", &ok)
+        let past = frames.filter { $0.maxX > contentWidth + 0.5 }
+        check(past.isEmpty,
+              "back on Home after a resize on Settings, \(past.count) card(s) reach past the \(contentWidth)pt window "
+              + "(rightmost maxX \(past.map(\.maxX).max() ?? 0)) - the grid was built for the old width",
+              &ok)
+        if past.isEmpty, !frames.isEmpty {
+            print("  OK   every card ends inside the \(contentWidth)pt window (rightmost \(frames.map(\.maxX).max() ?? 0))")
+        }
+    }
+
+    /// Every module card under `root`, in window coordinates.
+    private static func cardFrames(in root: NSView) -> [NSRect] {
+        var out: [NSRect] = []
+        func walk(_ view: NSView) {
+            if view is HelmModuleCard, !view.isHiddenOrHasHiddenAncestor {
+                out.append(view.convert(view.bounds, to: nil))
+            }
+            view.subviews.forEach(walk)
+        }
+        walk(root)
+        return out
     }
 
     // MARK: 2. The list scrolls inside its card
