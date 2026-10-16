@@ -3269,6 +3269,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_BOUNDED_SUMMARY_TESTS"] == "1" {
     exit(BoundedSummarySelfTest.run() ? 0 : 1)
 }
 
+// P6 of the same report: the compact-mode status item's right-click menu.
+// Pure logic. See StatusMenuSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_STATUS_MENU_TESTS"] == "1" {
+    exit(StatusMenuSelfTest.run() ? 0 : 1)
+}
+
 // P5 of the same report: keyboard parity for hand-built lists, bar panels
 // and form sheets. Window-backed. See KeyboardParitySelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_KEYBOARD_PARITY_TESTS"] == "1" {

@@ -310,6 +310,9 @@ final class CompactModeController: NSObject, NSPopoverDelegate {
             button.toolTip = "Grand Line"
             button.target = self
             button.action = #selector(iconClicked)
+            // P6: a right-click reaches the same action, which routes it to
+            // the menu (`CompactModeClickRoute`).
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
         popover.contentViewController = content
@@ -436,6 +439,16 @@ final class CompactModeController: NSObject, NSPopoverDelegate {
 
     @objc private func iconClicked() {
         guard let button = statusItem.button else { return }
+        let event = NSApp?.currentEvent
+        if CompactModeClickRoute.route(for: event?.type, modifiers: event?.modifierFlags ?? []) == .menu {
+            showStatusMenu()
+            return
+        }
+        showPopover(from: button)
+    }
+
+    /// The popover, or closes it when it is open - a left-click's job.
+    private func showPopover(from button: NSStatusBarButton) {
         if popover.isShown {
             popover.performClose(nil)
             return
@@ -481,6 +494,52 @@ final class CompactModeController: NSObject, NSPopoverDelegate {
         }
         prepareToShow()
         return true
+    }
+
+    // MARK: The right-click menu (P6)
+
+    /// Opened by setting the item's menu for one click and handing it the
+    /// click, which is what lets macOS place and track it like any other
+    /// status menu - then cleared, so the next left-click is the popover's.
+    private func showStatusMenu() {
+        guard let button = statusItem.button else { return }
+        if popover.isShown { popover.performClose(nil) }
+        statusItem.menu = buildStatusMenu()
+        button.performClick(nil)
+        statusItem.menu = nil
+    }
+
+    /// The menu, built from the same providers the popover reads - see
+    /// `CompactModeStatusMenu`.
+    func buildStatusMenu() -> NSMenu {
+        let needsYou = GrandLineNotificationCenter.shared.entries
+            .filter { $0.kind == .actionNeeded }
+            .map { entry -> (title: String, open: () -> Void) in
+                (entry.title, { [weak self] in
+                    // The page the entry is about lives in the window.
+                    self?.onOpenFullWindow?()
+                    entry.navigate()
+                })
+            }
+        return CompactModeStatusMenu.build(.init(
+            isUnlocked: AppLockGate.shared.allows(.compactModeMenu),
+            needsYou: needsYou,
+            dueToday: content.todayProvider?().rows ?? [],
+            onCompleteTask: { [weak self] id in self?.content.onSetTaskCompleted?(id, true) },
+            onOpenTasks: { [weak self] in self?.content.onOpenTasks?() },
+            onAskCrew: { [weak self] in self?.showPopover(on: .crew) },
+            onShowPopover: { [weak self] in self?.showPopover(on: nil) },
+            onOpenFullWindow: { [weak self] in self?.onOpenFullWindow?() },
+            onOpenSettings: { [weak self] in self?.onOpenSettings?() }))
+    }
+
+    /// The popover from the menu, optionally on one tab. `nil` keeps whichever
+    /// tab it last showed.
+    private func showPopover(on tab: CompactModeTab?) {
+        guard let button = statusItem.button, !popover.isShown else { return }
+        let unlocked = prepareContentToShow()
+        if unlocked, let tab { content.select(tab) }
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
 
     /// ⌃⌥G. Toggles rather than opens, matching what the footer advertises.
