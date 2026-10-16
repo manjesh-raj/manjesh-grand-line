@@ -128,12 +128,20 @@ final class HealthController: NSViewController, DaylightDrillActions {
         healthCard.onOpenDestination = { [weak self] dest in self?.onNavigateToDestination?(dest) }
     }
 
+    private let scrollMemory = HelmScrollMemory()
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        scrollMemory.remember(scrollView)
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
         // P3: only when it would change what is on screen - see
         // `HealthCardView.refreshIfNeeded(theme:)`.
         healthCard.refreshIfNeeded(theme: theme)
-        scrollToTop()
+        // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
+        scrollMemory.restore(scrollView) { scrollToTop() }
     }
 
     /// P2: the theme observer's rebuild, skipped while this page is not the

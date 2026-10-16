@@ -579,11 +579,19 @@ final class HomeCanvasController: NSViewController {
         applyTheme(ThemeManager.shared.theme)
     }
 
+    private let scrollMemory = HelmScrollMemory()
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        scrollMemory.remember(scroll)
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
         render()
         view.layoutSubtreeIfNeeded()
-        scrollToTop()
+        // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
+        scrollMemory.restore(scroll) { scrollToTop() }
     }
 
 

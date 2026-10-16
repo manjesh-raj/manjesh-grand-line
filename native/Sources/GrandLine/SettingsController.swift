@@ -1105,6 +1105,13 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         return usable > 0 ? usable : HelmResponsiveGrid.fallbackContainerWidth
     }
 
+    private let scrollMemory = HelmScrollMemory()
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        scrollMemory.remember(scrollView)
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
         refreshFromSettings()
@@ -1113,7 +1120,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             checkSudoTouchID()
         }
         if selectedCategory == .gmail { checkGoogleCalendarsIfNeeded() }
-        scrollToTop()
+        // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
+        scrollMemory.restore(scrollView) { scrollToTop() }
     }
 
     /// The document view (`content`, a `FlippedView`) puts y=0 at its top,

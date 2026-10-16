@@ -265,9 +265,17 @@ final class ToolsController: NSViewController, DaylightDrillActions, TabShortcut
         applyTheme()
     }
 
+    private let scrollMemory = HelmScrollMemory()
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        scrollMemory.remember(scrollView)
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
-        scrollToTop()
+        // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
+        scrollMemory.restore(scrollView) { scrollToTop() }
     }
 
     override func viewDidAppear() {

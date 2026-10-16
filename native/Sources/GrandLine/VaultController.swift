@@ -260,6 +260,13 @@ final class VaultController: NSViewController, DaylightDrillActions {
             rebuild()
         }
     }
+    private let scrollMemory = HelmScrollMemory()
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        scrollMemory.remember(scroll)
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
         if needsThemeRebuild {
@@ -267,7 +274,8 @@ final class VaultController: NSViewController, DaylightDrillActions {
             if hasLoadedOnce { renderAll() }
         }
         view.layoutSubtreeIfNeeded()
-        scrollToTop()
+        // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
+        scrollMemory.restore(scroll) { scrollToTop() }
         refresh()
     }
 

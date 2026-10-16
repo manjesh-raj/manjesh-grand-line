@@ -228,10 +228,13 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         renderStats()
     }
 
+    private let scrollMemory = HelmScrollMemory()
+
     override func viewWillAppear() {
         super.viewWillAppear()
         view.layoutSubtreeIfNeeded()
-        scrollToTop()
+        // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
+        scrollMemory.restore(scrollView) { scrollToTop() }
         renderStats()
         lastCheckedTimer?.invalidate()
         let ticker = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
@@ -250,6 +253,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
+        scrollMemory.remember(scrollView)
         lastCheckedTimer?.invalidate()
         lastCheckedTimer = nil
     }
