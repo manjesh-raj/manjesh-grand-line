@@ -309,6 +309,15 @@ final class HomeCanvasController: NSViewController {
     private let gridStack = NSStackView()
 
     private var cards: [HelmModuleCard] = []
+    /// P2: the page's cards by module, the placement each was built for, and
+    /// the layout they were built into - so a render that changes only data
+    /// reconfigures these cards in place instead of rebuilding the grid.
+    private var cardsByModule: [DaylightModule: HelmModuleCard] = [:]
+    private var cardPlacements: [DaylightModule: CardPlacement] = [:]
+    private var gridLayoutKey: GridLayoutKey?
+    /// The hub's own-height preferences (`dashboardColumn`), by module, so
+    /// an in-place refresh can move them with the content.
+    private var dashboardOwnHeights: [DaylightModule: NSLayoutConstraint] = [:]
     private var themeToken: ThemeObservation?
     private var signalCountsToken: BackgroundSignalsPoller.CountsObservation?
     private var windowResizeObserver: NSObjectProtocol?
@@ -1222,13 +1231,22 @@ final class HomeCanvasController: NSViewController {
         DaylightModule.canvasOrder.filter { $0.isVisible(in: space) }
     }
 
-    private func rebuildGrid() {
-        for row in gridStack.arrangedSubviews {
-            gridStack.removeArrangedSubview(row)
-            row.removeFromSuperview()
-        }
-        cards.removeAll()
+    /// What a built grid depends on besides its cards' data. Two renders with
+    /// the same key lay out identically, so the second can reuse the first's
+    /// cards (P2).
+    private struct GridLayoutKey: Equatable {
+        var space: DaylightSpace
+        var modules: [DaylightModule]
+        var dashboard: Bool
+        var width: CGFloat
+        /// The hub's columns are budgeted from the height; the shelf's are not.
+        var height: CGFloat
+        /// The shelf's height-exempt cards' own heights, which the grid
+        /// states as floors when it builds a row - a change means a rebuild.
+        var exemptHeights: [CGFloat]
+    }
 
+    private func rebuildGrid() {
         let available = gridContainerWidth()
         lastGridWidth = available
         lastGridHeight = gridContainerHeight()
@@ -1238,6 +1256,23 @@ final class HomeCanvasController: NSViewController {
         // the two conditions under which it declines and this falls through
         // to the wrapping grid below.
         let dashboard = usesDashboardLayout && dashboardRowViewsWouldApply(available: available, modules: modules)
+
+        // P2: a render that changed only data keeps the grid and its cards.
+        // Rebuilding them is what made Home flash on every fleet refresh and
+        // dropped a card's hover; it also re-registered every card's theme
+        // observer and re-solved the whole grid.
+        if refreshGridInPlace(available: available, modules: modules, dashboard: dashboard) { return }
+
+        for row in gridStack.arrangedSubviews {
+            gridStack.removeArrangedSubview(row)
+            row.removeFromSuperview()
+        }
+        cards.removeAll()
+        cardsByModule.removeAll()
+        cardPlacements.removeAll()
+        dashboardOwnHeights.removeAll()
+        gridLayoutKey = nil
+
         placeAttentionCard(inDashboard: dashboard)
         documentFillsViewport?.isActive = dashboard
         if dashboard,
@@ -1251,6 +1286,8 @@ final class HomeCanvasController: NSViewController {
                 gridStack.addArrangedSubview(row)
                 row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
             }
+            gridLayoutKey = GridLayoutKey(space: space, modules: modules, dashboard: true,
+                                          width: available, height: lastGridHeight, exemptHeights: [])
             return
         }
 
@@ -1295,6 +1332,61 @@ final class HomeCanvasController: NSViewController {
         for row in rows {
             gridStack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
+        }
+        if Set(cardsByModule.keys) == Set(modules) {
+            gridLayoutKey = GridLayoutKey(space: space, modules: modules, dashboard: false,
+                                          width: available, height: 0,
+                                          exemptHeights: shelfExemptHeights(modules) { self.content(for: $0, placement: $1) })
+        }
+    }
+
+    /// P2: reconfigure the grid's existing cards when nothing about the
+    /// layout changed. `false` when the grid has to be rebuilt instead.
+    ///
+    /// Every card is configured from scratch from fresh content, exactly as
+    /// a new card would be, so "refreshed in place" and "built fresh" render
+    /// the same; only the card objects - their chrome, hover state and theme
+    /// observers - and the rows holding them survive.
+    private func refreshGridInPlace(available: CGFloat, modules: [DaylightModule], dashboard: Bool) -> Bool {
+        guard let previous = gridLayoutKey, previous.space == space, previous.modules == modules,
+              previous.dashboard == dashboard, abs(previous.width - available) <= 0.5,
+              Set(cardsByModule.keys) == Set(modules) else { return false }
+        if dashboard {
+            guard abs(previous.height - lastGridHeight) <= 0.5 else { return false }
+            let plan = dashboardPlan(available: available)
+            for module in modules {
+                guard let content = plan.contents[module] else { return false }
+                cardsByModule[module]?.configure(content)
+            }
+            // The column's own-height preferences follow the content, which
+            // is everything a rebuild would have re-measured.
+            for (module, height) in plan.ownHeights {
+                dashboardOwnHeights[module]?.constant = height
+            }
+            return true
+        }
+        var contents: [DaylightModule: HelmModuleCard.Content] = [:]
+        for module in modules {
+            guard let placement = cardPlacements[module] else { return false }
+            contents[module] = content(for: module, placement: placement)
+        }
+        let exempt = shelfExemptHeights(modules) { module, _ in contents[module]! }
+        guard exempt.count == previous.exemptHeights.count,
+              zip(exempt, previous.exemptHeights).allSatisfy({ abs($0 - $1) <= 0.5 }) else { return false }
+        for module in modules {
+            if let content = contents[module] { cardsByModule[module]?.configure(content) }
+        }
+        return true
+    }
+
+    /// The fitting height of each shelf card exempt from its row's height
+    /// tie, measured the way `HelmResponsiveGrid.spanningRows` measures the
+    /// floor it states for one.
+    private func shelfExemptHeights(_ modules: [DaylightModule],
+                                    content: (DaylightModule, CardPlacement) -> HelmModuleCard.Content) -> [CGFloat] {
+        modules.filter(\.sizesToOwnContent).compactMap { module in
+            guard let placement = cardPlacements[module] else { return nil }
+            return Self.probeCard(content(module, placement)).fittingSize.height
         }
     }
 
@@ -1402,8 +1494,18 @@ final class HomeCanvasController: NSViewController {
                                                      spacing: Self.gridSpacing)
     }
 
-    private func dashboardRowViews(available: CGFloat, modules: [DaylightModule]) -> [NSStackView]? {
-        guard dashboardRowViewsWouldApply(available: available, modules: modules) else { return nil }
+    /// Everything the hub's layout decides from the data: each card's
+    /// content (Fleet's note trimmed or not, Health listing its services or
+    /// not, how many Merge queue rows fit) and the own height of each card
+    /// that does not absorb its column's slack. Measured from probe cards, so
+    /// a build and an in-place refresh (P2) agree on every number.
+    private struct DashboardPlan {
+        var width: CGFloat
+        var contents: [DaylightModule: HelmModuleCard.Content]
+        var ownHeights: [DaylightModule: CGFloat]
+    }
+
+    private func dashboardPlan(available: CGFloat) -> DashboardPlan {
         let span = Self.dashboardSpans[0]
         let width = HelmResponsiveGrid.proportionalWidth(containerWidth: available, span: span,
                                                          spacing: Self.gridSpacing)
@@ -1413,10 +1515,10 @@ final class HomeCanvasController: NSViewController {
         // Column 2: Claude and Fleet at their own height, Health absorbing.
         // Fleet's sentence is the first thing to go when the column is
         // short - its chip already says whether anyone needs the captain.
-        let claude = makeCard(for: .claudeStatus, placement: placement)
+        let claudeContent = content(for: .claudeStatus, placement: placement)
         var fleetContent = content(for: .fleet, placement: placement)
         var healthContent = content(for: .health, placement: placement)
-        let claudeHeight = Self.fittingHeight(of: claude, width: width)
+        let claudeHeight = Self.fittingHeight(of: Self.probeCard(claudeContent), width: width)
         let healthHeight = Self.fittingHeight(of: Self.probeCard(healthContent), width: width)
         var fleetHeight = Self.fittingHeight(of: Self.probeCard(fleetContent), width: width)
         if claudeHeight + fleetHeight + healthHeight + Self.gridSpacing * 2 > height,
@@ -1434,23 +1536,45 @@ final class HomeCanvasController: NSViewController {
             + Self.gridSpacing * 2 <= height {
             healthContent = listed
         }
-        let fleet = makeCard(for: .fleet, content: fleetContent)
-        let health = makeCard(for: .health, content: healthContent)
 
         // Column 3: as many Merge queue rows as the column holds under the
         // briefing; the briefing takes what is left, below its paragraph.
-        let briefing = makeCard(for: .briefing, placement: placement)
-        let briefingHeight = Self.fittingHeight(of: briefing, width: width)
+        let briefingContent = content(for: .briefing, placement: placement)
+        let briefingHeight = Self.fittingHeight(of: Self.probeCard(briefingContent), width: width)
         mergeQueueRowLimit = mergeQueueRows(budget: height - briefingHeight - Self.gridSpacing,
                                             placement: placement, width: width)
-        let merge = makeCard(for: .mergeQueue, placement: placement)
+        let mergeContent = content(for: .mergeQueue, placement: placement)
         mergeQueueRowLimit = HelmModuleCard.maxPeekRows
+        let mergeHeight = Self.fittingHeight(of: Self.probeCard(mergeContent), width: width)
 
-        attentionCard.setLayoutWidth(width)
+        return DashboardPlan(
+            width: width,
+            contents: [.claudeStatus: claudeContent, .fleet: fleetContent, .health: healthContent,
+                       .briefing: briefingContent, .mergeQueue: mergeContent],
+            ownHeights: [.claudeStatus: claudeHeight, .fleet: fleetHeight, .mergeQueue: mergeHeight])
+    }
+
+    private func dashboardRowViews(available: CGFloat, modules: [DaylightModule]) -> [NSStackView]? {
+        guard dashboardRowViewsWouldApply(available: available, modules: modules) else { return nil }
+        let plan = dashboardPlan(available: available)
+        let placement = CardPlacement.dashboard(span: Self.dashboardSpans[0], width: plan.width)
+        func card(_ module: DaylightModule) -> HelmModuleCard {
+            makeCard(for: module, content: plan.contents[module] ?? content(for: module, placement: placement),
+                     placement: placement)
+        }
+        let claude = card(.claudeStatus)
+        let fleet = card(.fleet)
+        let health = card(.health)
+        let briefing = card(.briefing)
+        let merge = card(.mergeQueue)
+
+        attentionCard.setLayoutWidth(plan.width)
         let row = HelmResponsiveGrid.proportionalRow(
             views: [attentionCard,
-                    dashboardColumn([claude, fleet, health], absorbing: health, width: width),
-                    dashboardColumn([briefing, merge], absorbing: briefing, width: width)],
+                    dashboardColumn([(.claudeStatus, claude), (.fleet, fleet), (.health, health)],
+                                    absorbing: .health, ownHeights: plan.ownHeights, width: plan.width),
+                    dashboardColumn([(.briefing, briefing), (.mergeQueue, merge)],
+                                    absorbing: .briefing, ownHeights: plan.ownHeights, width: plan.width)],
             spans: Self.dashboardSpans,
             containerWidth: available,
             spacing: Self.gridSpacing)
@@ -1459,11 +1583,9 @@ final class HomeCanvasController: NSViewController {
 
     /// One page column: a vertical stack whose members fill its width, and
     /// whose every member but `absorbing` prefers its own height.
-    private func dashboardColumn(_ cards: [NSView], absorbing: NSView, width: CGFloat) -> NSStackView {
-        // Measured before the column exists, while each card is still free
-        // to be laid out alone.
-        let ownHeights = cards.map { $0 === absorbing ? 0 : Self.fittingHeight(of: $0, width: width) }
-        let column = NSStackView(views: cards)
+    private func dashboardColumn(_ members: [(DaylightModule, HelmModuleCard)], absorbing: DaylightModule,
+                                 ownHeights: [DaylightModule: CGFloat], width: CGFloat) -> NSStackView {
+        let column = NSStackView(views: members.map(\.1))
         column.orientation = .vertical
         column.alignment = .leading
         column.distribution = .fill
@@ -1473,14 +1595,15 @@ final class HomeCanvasController: NSViewController {
         // column is a window-width floor.
         column.setHuggingPriority(.defaultLow, for: .horizontal)
         column.setClippingResistancePriority(.defaultLow, for: .horizontal)
-        for (card, ownHeight) in zip(cards, ownHeights) {
+        for (module, card) in members {
             let tie = card.widthAnchor.constraint(equalTo: column.widthAnchor)
             tie.priority = HelmDaylightPriority.contentTie
             tie.isActive = true
-            guard card !== absorbing else { continue }
+            guard module != absorbing, let ownHeight = ownHeights[module] else { continue }
             let own = card.heightAnchor.constraint(equalToConstant: ownHeight)
             own.priority = Self.dashboardKeepsOwnHeight
             own.isActive = true
+            dashboardOwnHeights[module] = own
         }
         return column
     }
@@ -1532,15 +1655,18 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func makeCard(for module: DaylightModule, placement: CardPlacement) -> HelmModuleCard {
-        makeCard(for: module, content: content(for: module, placement: placement))
+        makeCard(for: module, content: content(for: module, placement: placement), placement: placement)
     }
 
-    private func makeCard(for module: DaylightModule, content: HelmModuleCard.Content) -> HelmModuleCard {
+    private func makeCard(for module: DaylightModule, content: HelmModuleCard.Content,
+                          placement: CardPlacement) -> HelmModuleCard {
         let card = HelmModuleCard()
         card.configure(content)
         card.onOpen = { [weak self] in self?.onOpenDestination?(module.opens) }
         card.onFollowLink = { [weak self] target in self?.follow(target) }
         cards.append(card)
+        cardsByModule[module] = card
+        cardPlacements[module] = placement
         return card
     }
 
@@ -3251,6 +3377,12 @@ final class HomeCanvasController: NSViewController {
     /// self-test can establish a known starting state before driving the
     /// signal it is actually testing.
     func debugRenderNow() { render() }
+    /// P2: render with the in-place path closed, so a suite can compare a
+    /// grid refreshed in place with one built fresh from the same data.
+    func debugRebuildGridFromScratch() {
+        gridLayoutKey = nil
+        render()
+    }
     /// `ReviewTourLab`'s `demo home`: once its fixture is applied, later live
     /// fleet and quota readings are ignored, so a render is deterministic.
     var debugInputsPinned = false
