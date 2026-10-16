@@ -693,3 +693,25 @@ That click then landed in the next case and failed whatever that case checked.
 A new row's fade adds main-thread work, which made a quiet 50ms come round sooner.
 The helper now pumps until its own click has been dispatched, with the deadline only as an upper bound: 0 failures in 25 under the same load.
 The assertions are unchanged, and a row whose click does nothing still fails "a real click on the row body marks it read".
+
+### Found by CI: Home did not follow its clip view
+
+The first CI run of this branch failed `KeyedRefreshSelfTest`'s fresh-build comparison.
+The in-place cards were 380pt wide and a fresh build's were 375pt, in every column.
+The runner's scroller became a legacy scroller after Home had rendered, which narrowed the clip view by a scroller's width (1172pt to 1155pt of grid) without resizing the window.
+Home only re-laid its grid on a window resize, so the grid stayed too wide, under the scroller track, until the next render.
+That was already true on `main`, and the comparison exposed it.
+
+Locally the same thing was hidden by luck.
+Home's resize observer is registered for every window, and a bar panel resizing elsewhere in the process happened to re-lay Home's grid.
+
+The fix has two parts.
+Home's resize handler now acts only on its own window's resize.
+Home also observes its clip view's frame and re-lays the grid on the next main-queue turn, through the same staleness check.
+`KeyedRefreshSelfTest.checkHomeFollowsAClipWidthChange` switches Home's scroller to legacy after a render and allows one main-queue turn.
+Without the clip observer it fails with CI's own numbers, "the grid is still 1172.0pt wide in a 1155.0pt container".
+The refresh case pins the legacy style before seeding, so a runner switching style mid-case cannot cause a legitimate rebuild inside the refresh it measures.
+
+`HomeFitSelfTest`'s right-edge check expected "the window less the page gutter".
+It failed on `main` as well as here when run with `-AppleShowScrollBars Always` (an argument-domain setting for that one process), off by exactly the 17pt a legacy scroller takes.
+It now expects the clip view less the page gutter, and a width-blind in-place path still fails it in both scroller modes.
