@@ -196,13 +196,20 @@ enum Toast {
             pill.alphaValue = 1
         } else {
             pill.wantsLayer = true
-            pill.layer?.transform = CATransform3DMakeTranslation(0, -riseDistance, 0)
+            HelmMotion.withoutActions {
+                pill.layer?.transform = CATransform3DMakeTranslation(0, -riseDistance, 0)
+            }
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = HelmMotion.springDuration
                 context.timingFunction = HelmMotion.spring()
-                context.allowsImplicitAnimation = true
-                pill.layer?.transform = CATransform3DIdentity
                 pill.animator().alphaValue = 1
+                // The rise is a layer `transform`, which `allowsImplicitAnimation`
+                // does not animate on a view-backed layer (measured, P1 of the
+                // polish report) - it used to snap while only the fade ran.
+                HelmMotion.animateLayers(duration: HelmMotion.springDuration,
+                                         timing: HelmMotion.spring(), on: [pill.layer]) {
+                    pill.layer?.transform = CATransform3DIdentity
+                }
             }
         }
 
@@ -214,9 +221,10 @@ enum Toast {
                 return
             }
             NSAnimationContext.runAnimationGroup({ ctx in
-                ctx.duration = 0.25
-                ctx.allowsImplicitAnimation = true
-                pill.layer?.transform = CATransform3DMakeTranslation(0, -riseDistance, 0)
+                ctx.duration = HelmMotion.springDuration
+                HelmMotion.animateLayers(duration: HelmMotion.springDuration, on: [pill.layer]) {
+                    pill.layer?.transform = CATransform3DMakeTranslation(0, -riseDistance, 0)
+                }
                 pill.animator().alphaValue = 0
             }, completionHandler: {
                 pill.removeFromSuperview()

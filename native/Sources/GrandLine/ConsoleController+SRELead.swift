@@ -576,7 +576,7 @@ extension ConsoleController {
         // when it is added to one, and arrives at the same geometry.
         guard view.window != nil else { return }
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.18
+            ctx.duration = HelmMotion.moveDuration
             ctx.allowsImplicitAnimation = true
             view.layoutSubtreeIfNeeded()
         }
