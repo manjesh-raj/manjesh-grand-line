@@ -3248,6 +3248,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_HOVER_PRESS_EASING_TESTS"] == "1"
     exit(HoverPressEasingSelfTest.run() ? 0 : 1)
 }
 
+// P3 of the same report: panels and page changes that move both ways, and
+// pages that keep the captain's place. Window-backed.
+// See PanelAndPageMotionSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_PANEL_AND_PAGE_MOTION_TESTS"] == "1" {
+    exit(PanelAndPageMotionSelfTest.run() ? 0 : 1)
+}
+
 // P8 of the same report: the one motion table (`HelmMotion.swift`'s header),
 // a guard against literal UI durations and against `allowsImplicitAnimation`
 // on a layer property, and `animateLayers` on a plain layer. Pure logic.

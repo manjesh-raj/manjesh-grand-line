@@ -304,6 +304,9 @@ NEEDS_SESSION=(
   # P1's hover and press easing: an implicit layer action is resolved by the
   # view's own layer delegate, inside a real window.
   "FM_RUN_HOVER_PRESS_EASING_TESTS"
+  # P3's panel fades, outgoing-page crossfade and kept scroll position: real
+  # windows, a real shell and its real viewWillAppear/viewWillDisappear.
+  "FM_RUN_PANEL_AND_PAGE_MOTION_TESTS"
   # The session switcher mounts a real `AppShellController` in a real window.
   "FM_RUN_SESSION_SWITCHER_TESTS"
   # The status pill's one-treatment-per-status guarantee: mounts the real
