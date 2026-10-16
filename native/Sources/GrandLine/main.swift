@@ -821,6 +821,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // which several window-backed self-tests mount and then re-theme -
         // see `ThemeTransition.swift`'s header.
         ThemeManager.shared.transitionCoordinator = ThemeTransitionCoordinator(window: window)
+        // Armed here for the same reason: a window-backed suite sets frames
+        // wider than CI's 1024pt display on purpose, and an armed guard would
+        // put them back (`WindowOverflowGuard`'s header).
+        appShell.windowOverflowGuard.arm(for: window)
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -4048,6 +4052,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_HOME_DASHBOARD_VIEW_TESTS"] == "1
 // so it is listed in `run-all-tests.sh`'s NEEDS_SESSION.
 if ProcessInfo.processInfo.environment["FM_RUN_HOME_FIT_TESTS"] == "1" {
     exit(HomeFitSelfTest.run() ? 0 : 1)
+}
+// `fm/grandline-layout-breaks-refresh-reply`: the Fleet reply composer never
+// widens the window, a widened window does not outlive its page, and Home
+// holds its columns and height through a refresh and every loading state.
+// Window-backed (it orders its window in), so listed in NEEDS_SESSION.
+if ProcessInfo.processInfo.environment["FM_RUN_LAYOUT_STABILITY_TESTS"] == "1" {
+    exit(LayoutStabilitySelfTest.run() ? 0 : 1)
 }
 
 // F9 (v1, multi-host command execution): the host-selection logic - tag

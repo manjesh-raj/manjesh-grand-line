@@ -2355,6 +2355,16 @@ final class HomeCanvasController: NSViewController {
             prs = last
             stale = lastGoodPRsAt
             content.toolTip = "GitHub did not answer: \(failure)"
+        } else if let last = lastGoodPRs {
+            // A refresh in flight. Every Fleet refresh pushes its fast
+            // snapshot with `mergedPRs: nil` and the slow PR scan seconds
+            // later, so falling through to the skeleton here put the hub
+            // back into its loading layout on every Refresh and every Fleet
+            // visit: the Merge queue dropped to three skeleton rows and the
+            // Morning briefing above it stretched to absorb the column
+            // (`fm/grandline-layout-breaks-refresh-reply`, 139pt to 600pt at
+            // 1512x945). The last list stays until the new one lands.
+            prs = last
         } else if let failure = prFetchFailure {
             content.subtitle = "not read"
             content.chip = .warn("Can't reach")
@@ -2364,7 +2374,12 @@ final class HomeCanvasController: NSViewController {
         } else {
             content.subtitle = "reading"
             content.toolTip = "Reading open pull requests\u{2026}"
-            content.body = .skeleton(rows: 3)
+            // As many placeholder rows as the loaded list would get: on the
+            // hub `mergeQueueRows` measures this very card to fill its
+            // column, so a first launch's skeleton holds the column at the
+            // loaded height instead of handing it to the briefing. On the
+            // shelf the limit is `maxPeekRows`, the three it always was.
+            content.body = .skeleton(rows: mergeQueueRowLimit)
             return
         }
         let ready = FleetDataSource.readyToMerge(prs)
@@ -3237,6 +3252,23 @@ final class HomeCanvasController: NSViewController {
     func debugApplyTheme(_ theme: HelmTheme) { applyTheme(theme) }
 
     #if FM_SELFTESTS
+    /// Put one card's reading back to "not read yet", the state a first
+    /// launch paints before that reading lands - `claude`, `fleet` or `merge`
+    /// (which also forgets the last good PR list, as on a first launch).
+    /// Renders synchronously, like `debugRenderNow`.
+    func debugForgetReading(_ card: String) {
+        switch card {
+        case "claude": quotaSnapshot = nil; quotaFailure = nil
+        case "fleet": fleetSnapshot = nil
+        case "merge": mergedPRs = nil; prFetchFailure = nil; lastGoodPRs = nil; lastGoodPRsAt = nil
+        default: return
+        }
+        render()
+    }
+    /// The fleet snapshot the page last applied, so the tour lab's
+    /// `demo refresh` can replay the interim push a real refresh makes.
+    var debugFleetSnapshot: FleetSnapshot? { fleetSnapshot }
+
     /// A fabricated attention summary, rendered in place of the one the
     /// digest would compose. The tour lab's `demo attention N` and
     /// `HomeFitSelfTest` use it to put an exact number of rows on the page

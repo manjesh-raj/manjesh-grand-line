@@ -239,6 +239,9 @@ final class AppShellController: NSViewController {
     /// `connectHost`/`removeHostConsole` can add and remove host pages after
     /// the initial layout pass.
     private let bodyContainer = NSView()
+    /// Puts the window back inside its screen when a page's content pushed it
+    /// past the edge (`fm/grandline-layout-breaks-refresh-reply`).
+    let windowOverflowGuard = WindowOverflowGuard()
 
     /// GL-37: the destination table plus the lazy-mount mechanics - see
     /// `DestinationRegistry.swift`. `unowned self` rather than `weak`: this
@@ -881,8 +884,9 @@ final class AppShellController: NSViewController {
         windowResizeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification, object: nil, queue: .main
         ) { [weak self] note in
-            guard let self, (note.object as? NSWindow) === self.view.window else { return }
+            guard let self, let window = note.object as? NSWindow, window === self.view.window else { return }
             self.reassertBodyContainerWidthTie()
+            self.windowOverflowGuard.windowDidResize(window)
         }
 
         hostsPanel.onAddOrEdit = { [weak self] host in self?.onPresentHostEditor?(host) }
@@ -2036,6 +2040,8 @@ final class AppShellController: NSViewController {
     /// state the captain sees rather than in their first paint.
     var debugHomeCanvas: HomeCanvasController { homeCanvas }
     var debugShift: ShiftController { shift }
+    /// The Fleet page, for the tour lab's `demo decision` and `fleet reply`.
+    var debugOverview: FleetController { overview }
     #endif
 
     func debugSeedHostConsole(_ controller: ConsoleController, hostID: UUID) {
@@ -3466,6 +3472,9 @@ final class AppShellController: NSViewController {
         // Review #3 §7: the window title carries the current destination, so
         // Mission Control and the Window menu name a page rather than the app.
         onCurrentDestinationChanged?(kind.title)
+        // A page that pushed the window past its screen is usually the page
+        // being left - see `WindowOverflowGuard`.
+        windowOverflowGuard.destinationDidChange(in: view.window)
         // F2: every navigation path funnels through here, so this is the one
         // hook that keeps the saved session current without a timer. The app
         // delegate's own handler writes only when the state actually changed.

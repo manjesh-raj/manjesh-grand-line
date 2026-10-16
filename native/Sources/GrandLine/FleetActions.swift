@@ -230,8 +230,22 @@ enum FleetActions {
     // MARK: Decision keys for one task
 
     static func statusFileURL(taskID: String) -> URL {
-        FirstmateHome.state.appendingPathComponent("\(taskID).status")
+        #if FM_SELFTESTS
+        if let directory = stateDirectoryOverrideForTests {
+            return directory.appendingPathComponent("\(taskID).status")
+        }
+        #endif
+        return FirstmateHome.state.appendingPathComponent("\(taskID).status")
     }
+
+    #if FM_SELFTESTS
+    /// Test seam: a scratch `state/` directory to read status files from, so
+    /// a suite or a tour can open the reply composer against a decision with
+    /// known text without touching the captain's real firstmate home.
+    /// `FirstmateHome.root` is a `static let` resolved once, so setting
+    /// `FM_HOME` from inside a process is too late to rely on.
+    static var stateDirectoryOverrideForTests: URL?
+    #endif
 
     /// Every still-open decision on `taskID`, read live from its status file.
     static func openDecisions(taskID: String) -> [FleetDecision] {

@@ -1402,3 +1402,92 @@ And the clear strip's tie does not reproduce in the fit suite's fixture order at
 What was not verified: a synthetic wheel event does not scroll an off-screen window's scroll view even when delivered directly, so the wheel routing is asserted as the scroll view's own decision.
 An attention row's own surface was never a key view, so Tab reaches a row through its checkbox and its Open button (with Full Keyboard Access on), and Space presses them.
 Whether `controlSize = .small` visibly thins an overlay scroller, and the final look in a real window, are the captain's check.
+
+## Two layout breaks: Home on refresh, and the window after Reply (`fm/grandline-layout-breaks-refresh-reply`)
+
+The captain reported two scenarios with screenshots.
+Refreshing Home left the Merge queue on its loading skeleton and the Morning briefing stretched tall over an empty area.
+Opening Reply on a Fleet decision ran the page and the top bar past the window's right edge, and the Command page was still cut off afterwards.
+They turned out to be two separate causes.
+
+### Reproduction
+
+Both were reproduced in the tour lab with new verbs, never in the captain's app.
+`demo decision` parks a task whose open decision is the captain's own line, read through `FleetActions`' real status-file path from a scratch directory (`FleetActions.stateDirectoryOverrideForTests`).
+`fleet reply` presses the row's real Reply through `performClick`.
+`demo refresh` replays the interim push every real Fleet refresh makes, and `demo loading <card>` puts a Home card back into its first-launch state.
+`measurewindow` prints the window, the minimum sizes, the shell's fitting width and any view past the window's edge.
+`orderfront` orders the probe window in, still parked off every screen, and it turned out to matter: AppKit only grows a window from its content's constraints while the window is on the window list, in the window-level layout pass (`window.layoutIfNeeded()`), not in `shell.view.layoutSubtreeIfNeeded()`.
+Without both, the window's width never moves and a check on it cannot fail.
+
+### Scenario 2: Reply widened the window
+
+The trigger is the composer's "Replying to ..." line.
+It carries the open decision's note, which for the captain was a long sentence with a URL.
+It was a one-line label at the default 750 compression resistance, tied by a required `<=` to its stack, and every tie from there to the window is required (the document is pinned to the clip view's width).
+750 beats the 500 a window holds its size at (AGENTS.md gotcha (13)), so the label's single-line width became the window's minimum.
+
+Measured with the window ordered in: opening Reply grew the window from 960 to 1746pt and from 1512 to 1746pt.
+At 1920 nothing happened, because the window was already wider than the line.
+That is the masking condition: a short note, or a wide window, hides it.
+The window stayed at 1746pt after Cancel and after navigating to Home, because AppKit never shrinks a window on its own.
+On the captain's 1512pt screen that put the right edge off screen, which is the Command page screenshot.
+A 600-character URL with no spaces grew the window to 4697pt.
+
+The fix wraps the line instead: a wrapping label at low horizontal compression resistance, at most three lines, with its wrap width from the composer's own width (gotcha (22)) and the full text on hover.
+The decision row above it already truncated, because its text stack yields at 250, and is unchanged.
+
+The backstop is `WindowOverflowGuard`.
+It remembers the last window frame that fitted the screen's visible area.
+When a resize outside a live resize leaves the window wider than the screen (which a drag, zoom or tiling never does), it logs and restores that frame once, and once more on the next navigation.
+If the content still needs the width, AppKit grows the window again and the guard leaves it, so it cannot loop.
+It is inert in full screen and with no screen, which is every probe window.
+It is armed only for the app's own main window, in `main.swift` beside the theme crossfade.
+The first CI run showed why: the guard cannot tell content growth from a frame the code set on purpose, and on the runner's 1024pt display it "restored" `AppShellBodyWidthSelfTest`'s deliberate 1512pt window to 1024pt in the middle of `widthSelfHealsWhenContentViewDriftsFromTheWindow`.
+Locally the screen is 1512pt wide, so the full run there had passed.
+
+The same composer drew its "Type your answer..." placeholder about 2pt from the card's corner, on its border, which shows in the captain's screenshot too.
+It was a subview of the `NSScrollView`, which tiles its own subviews.
+It now sits over the text view, pinned to where the first typed glyph lands.
+`SRELeadChatView` uses the same placeholder pattern and was left alone, since it is out of this task's scope.
+
+### Scenario 1: Home's Merge queue on refresh
+
+Every Fleet refresh (Home's Refresh button, every Fleet visit and the launch refresh) renders twice.
+The fast snapshot comes first with `mergedPRs: nil`, and the PR scan a few seconds later.
+Home showed its three-row skeleton for the first push, and on the three-column page the Morning briefing absorbs whatever its column has left, so the briefing stretched.
+
+| Window | Loaded briefing / Merge queue | During the refresh, before | During the refresh, after |
+| --- | --- | --- | --- |
+| 960 x 620 | 138 / 358 | 275 / 221 | 138 / 358 |
+| 1512 x 945 | 139 / 682 | 600 / 221 | 139 / 682 |
+| 1920 x 1050 | 260 / 666 | 705 / 221 | 260 / 666 |
+
+Column widths and the page height did not move in any of these.
+The captain's screenshot looks shifted as well: its columns are about 8.5pt wider than in the healthy one.
+That does not reproduce from a refresh, and the most likely explanation is a window already widened by scenario 2.
+
+The fix keeps the last PR list while a refresh is in flight, so a refresh never puts the hub back into a loading state.
+On a first launch, with no list yet, the skeleton gets as many rows as the loaded list would.
+`mergeQueueRows` already measures the real card to fill its column, so the skeleton holds the column at the loaded height and the briefing absorbs less than one row (33pt at 960x620, 8pt at 1512x945).
+Claude's and Fleet's first-launch skeletons measure 169pt against 172pt and 124 to 160pt loaded, and Health absorbs the difference, so they were left as they are.
+
+### Verification
+
+`FM_RUN_LAYOUT_STABILITY_TESTS` is new and window-backed, and it orders its window in.
+It opens Reply with the captain's line and with an unbroken 600-character URL at 960x620 and 1512x945, and asserts that the window keeps its width, the shell's fitting width does not grow, nothing reaches past the window, the line wraps within three lines, and the placeholder sits at the text's origin.
+It grows the window with a deliberately over-wide view and asserts that navigating away restores it.
+At 960x620, 1512x945 and 1920x1050, it asserts that the interim refresh push leaves every column width, the page height and every card's height unchanged.
+It also asserts that each first-launch loading state keeps the columns and the page height, and that the briefing absorbs less than a row more than it does when loaded.
+
+Injected regressions, each restored from a copy taken aside:
+
+- the one-line label: 14 checks failed, including the window growing to 1746pt and to 4697pt;
+- the skeleton during an in-flight refresh: the card-height checks failed at all three sizes;
+- three skeleton rows on first load: the briefing checks failed (137, 476 and 581pt absorbed);
+- no restore on navigation: the guard check failed with the window still at 2000pt;
+- the placeholder back inside the scroll view: the alignment check failed at (2, 0).
+
+What was not verified: no real window was opened, so the guard's restore against a real screen's visible frame, and how it looks to the captain, are their check.
+The guard's restore from inside a resize runs on the next main-queue turn, which the suite does not pump.
+Only the restore on navigation is asserted.
