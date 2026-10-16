@@ -45,6 +45,7 @@ enum SchedulesRedesignSelfTest {
         checkRunHistoryIsAnActionNotAFilter(&ok)
         checkRowsUseTheFullWidth(&ok)
         checkSurfacesFollowTheLiveTheme(&ok)
+        checkTheMinimumWindowHoldsWithNoSchedules(&ok)
         print(ok ? "\nPASS" : "\nFAIL")
         return ok
     }
@@ -751,6 +752,34 @@ extension SchedulesRedesignSelfTest {
               "a theme switch while the page is hidden should still repaint its schedules card", &ok)
         controller.view.isHidden = false
         window.orderOut(nil)
+    }
+
+    /// Found while moving this page's column into a split view (P9 of the
+    /// polish report), and present on `main` too: with no schedules, the
+    /// empty state's one-line sentence held its width at compression
+    /// resistance 750, above the window's own 500, so opening Schedules in
+    /// the 960pt minimum window grew the window to 1055pt (gotcha (13)). The
+    /// empty states now wrap to the page's width.
+    private static func checkTheMinimumWindowHoldsWithNoSchedules(_ ok: inout Bool) {
+        print("\n-- the 960pt minimum window holds on an empty Schedules page --")
+        let (window, shell) = ReviewTourLab.makeOffScreenShell()
+        defer { window.orderOut(nil) }
+        window.orderFront(nil)
+        var frame = window.frame
+        frame.size = NSSize(width: 960, height: 620)
+        window.setFrame(frame, display: true)
+        shell.show(.schedules)
+        shell.view.layoutSubtreeIfNeeded()
+        // AppKit re-derives a window's frame from its content on a pass of
+        // the run loop, not inside `layoutSubtreeIfNeeded` - the tour lab saw
+        // the growth only after a `wait`. Let it turn; a page that holds the
+        // window passes however long this is.
+        let settle = Date().addingTimeInterval(0.6)
+        while Date() < settle { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        check(shell.debugSchedules.debugVisibleScheduleRowCount == 0,
+              "the scratch store has schedules - the empty state this checks is not showing", &ok)
+        check(abs(window.frame.width - 960) < 0.5,
+              "opening an empty Schedules page grew the 960pt window to \(window.frame.width)pt", &ok)
     }
 }
 

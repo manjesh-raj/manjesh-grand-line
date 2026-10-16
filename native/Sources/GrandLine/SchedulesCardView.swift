@@ -389,6 +389,10 @@ final class SchedulesCardView: NSObject {
     }
 
     private func addFullWidth(_ view: NSView) {
+        // The list's width is the page's, never the sentence's: an empty
+        // state's one-line copy at compression 750 was a floor on the window
+        // (measured: a 960pt window grew to 1055pt on this page). Gotcha (13).
+        (view as? HelmEmptyState)?.letBodyWrapToContainer()
         rowsStack.addArrangedSubview(view)
         view.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true
     }

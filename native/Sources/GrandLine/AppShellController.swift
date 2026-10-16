@@ -2050,6 +2050,7 @@ final class AppShellController: NSViewController {
     /// and `tasks <view>` verbs - so a tour can render both pages in the
     /// state the captain sees rather than in their first paint.
     var debugHomeCanvas: HomeCanvasController { homeCanvas }
+    var debugSchedules: SchedulesController { schedules }
     var debugShift: ShiftController { shift }
     /// The Fleet page, for the tour lab's `demo decision` and `fleet reply`.
     var debugOverview: FleetController { overview }

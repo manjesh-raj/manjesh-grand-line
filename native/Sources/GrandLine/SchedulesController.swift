@@ -476,6 +476,8 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
             view.removeFromSuperview()
         }
         func add(_ view: NSView) {
+            // The same floor as `SchedulesCardView.addFullWidth` notes.
+            (view as? HelmEmptyState)?.letBodyWrapToContainer()
             activityStack.addArrangedSubview(view)
             view.widthAnchor.constraint(equalTo: activityStack.widthAnchor).isActive = true
         }
