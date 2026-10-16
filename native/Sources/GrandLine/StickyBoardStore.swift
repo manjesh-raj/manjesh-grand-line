@@ -500,9 +500,42 @@ final class StickyBoardStore {
         // A queued write holds edits that are only in memory; re-reading the
         // file first would silently discard them.
         flushPendingWrite()
-        switch ShiftYaml.readListChecked(path: notesPath, key: "notes") {
+        // A synchronous reload is newer than any read in flight (P11).
+        backgroundReload.invalidate()
+        apply(Self.readNotes(path: notesPath))
+    }
+
+    /// P11 of the polish report: the page's revisit. The file is read and
+    /// decoded on a background queue and applied on main in one step, then
+    /// `then` runs; until then the board keeps the notes it has. Every write
+    /// path (`schedulePersist`, `persist`) invalidates a read in flight, so a
+    /// read that began before an edit can never put the old notes back.
+    func reloadAllInBackground(then: @escaping () -> Void) {
+        flushPendingWrite()
+        let path = notesPath
+        backgroundReload.run(read: { Self.readNotes(path: path) }) { [weak self] read in
+            self?.apply(read)
+            then()
+        }
+    }
+
+    private let backgroundReload = HelmBackgroundReload<StickyNotesRead>(label: "sticky-board")
+
+    #if FM_SELFTESTS
+    /// Called with `Thread.isMainThread` at every read of the notes file, so
+    /// `PageLoadOffMainSelfTest` can assert where a revisit's read ran.
+    static var debugOnRead: ((Bool) -> Void)?
+    var debugBackgroundReload: HelmBackgroundReload<StickyNotesRead> { backgroundReload }
+    #endif
+
+    /// The read half of a reload: the file, decoded. Pure - it touches
+    /// nothing this store holds, so it can run on any queue.
+    static func readNotes(path: String) -> StickyNotesRead {
+        #if FM_SELFTESTS
+        debugOnRead?(Thread.isMainThread)
+        #endif
+        switch ShiftYaml.readListChecked(path: path, key: "notes") {
         case .ok(let items):
-            isInFailedLoadState = false
             var decoded: [StickyNote] = []
             var unreadable: [(sortKey: Date, raw: Yaml)] = []
             var extras: [String: [(key: Yaml, value: Yaml)]] = [:]
@@ -516,6 +549,19 @@ final class StickyBoardStore {
                     unreadable.append((Self.createdAtOrDistantFuture(item), item))
                 }
             }
+            return .ok(notes: decoded.sorted { $0.createdAt < $1.createdAt }, unreadable: unreadable, passthrough: extras)
+        case .missing:
+            return .missing
+        case .parseFailed:
+            return .parseFailed
+        }
+    }
+
+    /// The state half of a reload, on main - including GL-01's backup.
+    private func apply(_ read: StickyNotesRead) {
+        switch read {
+        case .ok(let decoded, let unreadable, let extras):
+            isInFailedLoadState = false
             if !unreadable.isEmpty {
                 AppLog.store.info("""
                     Sticky Board: \(unreadable.count, privacy: .public) note record(s) in \
@@ -525,7 +571,7 @@ final class StickyBoardStore {
             }
             unreadableRecords = unreadable
             passthrough = extras
-            notes = decoded.sorted { $0.createdAt < $1.createdAt }
+            notes = decoded
         case .missing:
             isInFailedLoadState = false
             notes = []
@@ -765,6 +811,8 @@ final class StickyBoardStore {
     /// Queue a write for `persistDebounce` from now, replacing any already
     /// queued. For the high-frequency callers only (text, title).
     private func schedulePersist() {
+        // An edit is newer than any read in flight (P11).
+        backgroundReload.invalidate()
         pendingPersist?.cancel()
         let item = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -818,6 +866,7 @@ final class StickyBoardStore {
     #endif
 
     private func persist() {
+        backgroundReload.invalidate()
         #if FM_SELFTESTS
         debugPersistCount += 1
         #endif
@@ -967,4 +1016,12 @@ final class StickyBoardStore {
             return StickyChecklistItem(id: id, text: text, isDone: done)
         }
     }
+}
+
+/// One read of the Sticky Board's notes file - P11's background read.
+enum StickyNotesRead {
+    case ok(notes: [StickyNote], unreadable: [(sortKey: Date, raw: Yaml)],
+            passthrough: [String: [(key: Yaml, value: Yaml)]])
+    case missing
+    case parseFailed
 }

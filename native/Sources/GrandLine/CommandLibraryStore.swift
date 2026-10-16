@@ -139,7 +139,63 @@ final class CommandLibraryStore {
         // An explicit reload always re-reads, and implies the library is
         // loaded from here on.
         isLoaded = true
+        backgroundReload.invalidate()
         reloadAll(reusing: nil)
+    }
+
+    /// P11 of the polish report: the Commands page's revisit. Reads the whole
+    /// library on a background queue - it measured ~0.45s for a 292-command
+    /// library on the main thread - and applies it on main in one step, then
+    /// calls `then`. Until then every accessor keeps answering from what was
+    /// already loaded.
+    ///
+    /// The first load stays synchronous (`ensureLoaded` may seed the starter
+    /// library, which writes files, and a page has nothing to show without
+    /// it). Every write goes through `persist`, which invalidates a read in
+    /// flight, so a read that started before an edit cannot put the old
+    /// library back (`HelmBackgroundReload`).
+    func reloadAllInBackground(then: @escaping () -> Void) {
+        guard isLoaded else {
+            ensureLoaded()
+            then()
+            return
+        }
+        let root = self.root
+        backgroundReload.run(read: { Self.readLibrary(root: root) }) { [weak self] read in
+            guard let self else { return }
+            self.storedCommands = read.commands
+            self.storedConfig = read.config
+            self.storedFavoriteIDs = read.favoriteIDs
+            self.storedRecentUsage = read.recentUsage
+            then()
+        }
+    }
+
+    private let backgroundReload = HelmBackgroundReload<CommandLibraryRead>(label: "commands")
+
+    #if FM_SELFTESTS
+    /// Called with `Thread.isMainThread` at every library scan, so
+    /// `PageLoadOffMainSelfTest` can assert where a revisit's read ran.
+    static var debugOnRead: ((Bool) -> Void)?
+    var debugBackgroundReload: HelmBackgroundReload<CommandLibraryRead> { backgroundReload }
+    #endif
+
+    /// The four files `reloadAll` reads, as one value - pure, so it can run on
+    /// any queue. A fresh store over the same root does the scan, which reads
+    /// only `root` and the file manager.
+    private static func readLibrary(root: URL) -> CommandLibraryRead {
+        let reader = CommandLibraryStore(readingOnly: root)
+        return CommandLibraryRead(
+            commands: reader.scanCommands(),
+            config: CommandLibraryYaml.readConfig(path: reader.configPath),
+            favoriteIDs: CommandLibraryYaml.readFavorites(path: reader.favoritesPath),
+            recentUsage: CommandLibraryYaml.readRecentUsage(path: reader.recentUsagePath))
+    }
+
+    /// A store that only reads: no git sync, no directory creation, no seed.
+    private init(readingOnly root: URL) {
+        self.root = root
+        self.gitSync = nil
     }
 
     /// `reusing` is the scan `seedIfEmpty` already performed, when it did not
@@ -173,6 +229,9 @@ final class CommandLibraryStore {
     /// it also cannot make the library look empty unless the root read failed
     /// too, so the root check is the one that matters here.
     private func scanCommandsChecked() -> (commands: [DevOpsCommand], enumerationFailed: Bool) {
+        #if FM_SELFTESTS
+        Self.debugOnRead?(Thread.isMainThread)
+        #endif
         guard let categoryDirs = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
             AppLog.store.error("command library: could not enumerate \(self.root.path, privacy: .public) - not seeding (GL-21)")
             return ([], true)
@@ -416,6 +475,8 @@ final class CommandLibraryStore {
     /// meant the UI confirmed a save that never happened and the command was
     /// gone at next launch.
     private func persist(what: String, path: String, _ write: () throws -> Void) {
+        // A write is newer than any read in flight (P11).
+        backgroundReload.invalidate()
         do {
             try write()
             PersistenceFailureReporter.reportSuccess()
@@ -464,4 +525,12 @@ final class CommandLibraryStore {
         gitSync?.markDirty()
         return nil
     }
+}
+
+/// One read of the command library - P11's background read.
+struct CommandLibraryRead {
+    let commands: [DevOpsCommand]
+    let config: CommandLibraryConfig
+    let favoriteIDs: Set<String>
+    let recentUsage: [CommandLibraryUsageEntry]
 }

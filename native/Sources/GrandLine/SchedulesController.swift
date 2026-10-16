@@ -255,10 +255,18 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         }
     }
 
+    private let scrollMemory = HelmScrollMemory()
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        scrollMemory.remember(scrollView)
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
         refreshSchedulesIfNeeded()
-        scrollToTop()
+        // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
+        scrollMemory.restore(scrollView) { scrollToTop() }
     }
 
     private func scrollToTop() {

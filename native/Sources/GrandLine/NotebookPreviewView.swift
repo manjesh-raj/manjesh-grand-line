@@ -153,6 +153,11 @@ final class NotebookPreviewView: NSView {
             size: .compact,
             hue: RailDestination.notebook.domainHue)
         state.applyTheme(theme)
+        // Its width is the preview's (`add`), never its copy's - see
+        // `HelmEmptyState.letBodyWrapToContainer`. The sentence held the
+        // preview, and through the editor/preview width tie the whole page, at
+        // its one-line width.
+        state.letBodyWrapToContainer()
         emptyState = state
         add(state)
     }

@@ -334,6 +334,13 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         renderInvestigation()
     }
 
+    private let scrollMemory = HelmScrollMemory()
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        scrollMemory.remember(scroll)
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
         // AGENTS.md gotcha (9): force the pending layout pass before touching
@@ -341,7 +348,8 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         // true until now) doesn't rest the short document against the bottom
         // of the clip view.
         view.layoutSubtreeIfNeeded()
-        scrollToTop()
+        // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
+        scrollMemory.restore(scroll) { scrollToTop() }
         reloadHistory()
     }
 

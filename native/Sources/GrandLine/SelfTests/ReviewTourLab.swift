@@ -90,6 +90,12 @@ enum ReviewTourLab {
         case demoAttention(Int)
         /// Seed a three-clause Morning briefing.
         case demoBriefing
+        /// Seed the Tasks page's (scratch) store with the shapes a real
+        /// captain's has: three projects, open tasks across statuses,
+        /// priorities, due dates and tags, a recently completed one, and
+        /// follow-ups. Through `ShiftStore`'s own API, so the files on disk
+        /// are the real format rather than a hand-written copy of it.
+        case demoTasks
         /// Print the Home page's geometry (`debugMeasureLines`) under a label.
         case measure(String)
         /// Print module-card heights at the widths Home's columns take.
@@ -208,6 +214,7 @@ enum ReviewTourLab {
             return .success(.wait(milliseconds: ms))
         case "demo":
             if argument == "briefing" { return .success(.demoBriefing) }
+            if argument == "tasks" { return .success(.demoTasks) }
             if argument == "decision" { return .success(.demoDecision) }
             if argument == "refresh" { return .success(.demoRefresh) }
             if argument.hasPrefix("loading ") {
@@ -329,6 +336,10 @@ enum ReviewTourLab {
                 RunLoop.main.run(until: Date().addingTimeInterval(Double(milliseconds) / 1000))
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("wait \(milliseconds)ms")
+            case .demoTasks:
+                seedDemoTasks(shell.shiftStore)
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo tasks")
             case .demoHome:
                 seedDemoHome(shell.debugHomeCanvas)
                 shell.view.layoutSubtreeIfNeeded()
@@ -770,6 +781,56 @@ enum ReviewTourLab {
     /// The same shell a window-backed suite mounts, in an `OffScreenProbe`
     /// window - never a hand-rolled `NSWindow`, which is not actually
     /// off-screen whatever origin it is given.
+    /// See `Step.demoTasks`. Dates are relative to today so "due today" and
+    /// "overdue" stay true whenever the tour runs.
+    static func seedDemoTasks(_ store: ShiftStore) {
+        let calendar = Calendar.current
+        func day(_ offset: Int) -> String {
+            let date = calendar.date(byAdding: .day, value: offset, to: Date()) ?? Date()
+            let parts = calendar.dateComponents([.year, .month, .day], from: date)
+            return String(format: "%04d-%02d-%02d", parts.year ?? 2026, parts.month ?? 1, parts.day ?? 1)
+        }
+        func project(_ name: String, _ status: ShiftProjectStatus) -> ShiftProject {
+            var p = ShiftProject.fresh()
+            p.name = name
+            p.status = status
+            store.addProject(p)
+            return p
+        }
+        let infra = project("Infra hardening", .inProgress)
+        let release = project("Release 4.20", .inProgress)
+        let hiring = project("SRE hiring", .notStarted)
+        func task(_ title: String, _ status: ShiftTaskStatus, _ priority: ShiftPriority,
+                  due: Int?, project: ShiftProject?, tags: [String] = []) -> ShiftTask {
+            var t = ShiftTask.fresh()
+            t.title = title
+            t.status = status
+            t.priority = priority
+            t.dueDate = due.map(day)
+            t.projectID = project?.id
+            t.tags = tags
+            store.addTask(t)
+            return t
+        }
+        _ = task("Renew the staging TLS certificate", .todo, .high, due: -2, project: infra, tags: ["infra"])
+        _ = task("Rotate the CI deploy key", .todo, .high, due: 0, project: infra, tags: ["security"])
+        _ = task("Write the 4.20 release notes", .inProgress, .normal, due: 1, project: release)
+        _ = task("Cut the 4.20 release branch", .todo, .normal, due: 3, project: release, tags: ["release"])
+        _ = task("Review the on-call runbook", .inProgress, .low, due: nil, project: nil)
+        _ = task("Draft the SRE job description", .todo, .normal, due: 7, project: hiring)
+        _ = task("Book the quarterly DR drill", .todo, .low, due: 14, project: nil, tags: ["ops"])
+        let done = task("Upgrade Postgres on staging", .todo, .normal, due: -1, project: infra)
+        store.setTaskCompleted(id: done.id, completed: true)
+        func followUp(_ title: String, due: Int) {
+            var f = ShiftFollowUp.fresh()
+            f.title = title
+            f.followUpAt = day(due)
+            store.addFollowUp(f)
+        }
+        followUp("Follow up with Nithin on SRE bot response reviews", due: -3)
+        followUp("Check the AWS Backup failure notification", due: 0)
+    }
+
     static func makeOffScreenShell() -> (window: NSWindow, shell: AppShellController) {
         let window = OffScreenProbe.window(width: 1512, height: 950, styleMask: [.titled, .resizable])
         // The real window's chrome fusion (`main.swift`), so the shell's view

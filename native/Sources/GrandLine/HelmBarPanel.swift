@@ -136,7 +136,13 @@ final class HelmBarPanel {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
     }
 
-    var isShown: Bool { panel.isVisible }
+    /// Open as far as the owner is concerned. Set at once by `show`/`close`,
+    /// so a toggle and a suite read the new state synchronously while the
+    /// fade (P3) is still drawing. Also requires the window to really be up:
+    /// `AppLockGate` orders a secondary window out behind this type's back,
+    /// and that must still read as closed.
+    var isShown: Bool { isOpen && panel.isVisible }
+    private var isOpen = false
 
     /// Resize to the content's own fitting size - the same call the popovers
     /// made through `NSPopover.contentSize`, so each panel controller's
@@ -159,14 +165,21 @@ final class HelmBarPanel {
         // `HoverHighlightView`, whose tracking area is `.activeInKeyWindow`,
         // so a non-key panel would render rows that never highlight. The ⌘K
         // palette makes the same call for the same reason.
+        isOpen = true
         panel.makeKeyAndOrderFront(nil)
+        HelmMotion.fadeIn(window: panel)
         installClickMonitors()
     }
 
     func close() {
         guard isShown else { return }
-        panel.orderOut(nil)
+        isOpen = false
         removeClickMonitors()
+        // P3: fades out rather than vanishing, and only then orders out - but
+        // the panel is closed now, for every reader, and takes no more clicks.
+        HelmMotion.fadeOut(window: panel, stillClosed: { [weak self] in self?.isOpen == false }) { [weak self] in
+            self?.panel.orderOut(nil)
+        }
         onClose?()
     }
 

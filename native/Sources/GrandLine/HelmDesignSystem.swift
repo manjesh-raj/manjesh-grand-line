@@ -3658,6 +3658,15 @@ final class HelmEmptyState: NSView {
         bodyLabel.alignment = .center
         bodyLabel.lineBreakMode = .byWordWrapping
         bodyLabel.maximumNumberOfLines = 0
+        // A `.standard` state's copy is capped at 360pt (`layout()`), so wrap
+        // at the cap from the start. Left at 0 until the first layout pass, the
+        // body reported its whole sentence as one line - 605pt for the
+        // Notebook's editor overlay - while this view's bounds were still ~4pt,
+        // and at compression resistance 750 that was enough to widen the
+        // window before a later pass could wrap it (AGENTS.md gotchas (13) and
+        // (22); measured in the polish report's P11 work, where Notebook at
+        // 960pt grew the window to 1265pt).
+        if size == .standard { bodyLabel.preferredMaxLayoutWidth = Self.standardBodyCap }
         bodyLabel.stringValue = body
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -3837,10 +3846,35 @@ final class HelmEmptyState: NSView {
         layer.add(fade, forKey: "entrance.fade")
     }
 
+    /// A `.standard` state's widest line of body copy.
+    static let standardBodyCap: CGFloat = 360
+
+    /// Lets the body copy give way to the container's width instead of
+    /// setting it.
+    ///
+    /// The body already wraps to this view's own bounds (`layout()`), but at
+    /// the default compression resistance (750) its one-line width is also a
+    /// *floor* on whatever this view sits in - so the container is never
+    /// narrower than the sentence and the wrap width never moves: AGENTS.md
+    /// gotcha (22)'s circular derivation. Measured on the Tasks board (B5 of
+    /// the Grand Line vs Automic Vault polish report): the Done lane's
+    /// "Completed tasks from the last 7 days land here." held all three
+    /// equal-width lanes at 297.5pt, so at 1100pt and 960pt the board needed
+    /// 924.5pt and its Done column ran past the window - even with the empty
+    /// state hidden, since a hidden view still lays out (gotcha (15)).
+    ///
+    /// Opt-in rather than the default because a container whose width only
+    /// its content decides would then clip the copy; a board lane's width is
+    /// decided by the board, which is the case this is for.
+    func letBodyWrapToContainer() {
+        bodyLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        needsLayout = true
+    }
+
     override func layout() {
         super.layout()
         playEntranceIfNeeded()
-        let cap: CGFloat = size == .standard ? 360 : .greatestFiniteMagnitude
+        let cap: CGFloat = size == .standard ? Self.standardBodyCap : .greatestFiniteMagnitude
         let available = min(bounds.width - 2 * HelmMetrics.s3, cap)
         if available > 0, bodyLabel.preferredMaxLayoutWidth != available {
             bodyLabel.preferredMaxLayoutWidth = available

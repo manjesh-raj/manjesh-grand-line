@@ -265,6 +265,13 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         }
     }
 
+    private let scrollMemory = HelmScrollMemory()
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        scrollMemory.remember(scroll)
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
         // cockpit-native-fixes5: force the pending Auto Layout pass before
@@ -273,7 +280,8 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         // first appearance (isHidden was true, so this view was never laid
         // out until right now, in the same tick as this call).
         view.layoutSubtreeIfNeeded()
-        scrollToTop()
+        // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
+        scrollMemory.restore(scroll) { scrollToTop() }
         refresh()
     }
 
@@ -457,7 +465,8 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         refreshButton.isEnabled = false
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let tasks = FleetDataSource.parseTasks(forceRefresh: forceRefresh)
-            let fetched = OpenPRsSource.fetchDetailed()
+            // P11: one scan shared with Fleet (`OpenPRsSource.fetchShared`).
+            let fetched = OpenPRsSource.fetchShared(forceRefresh: forceRefresh)
             let merged = FleetDataSource.mergedPRs(openPRs: fetched.prs, tasks: tasks)
             DispatchQueue.main.async {
                 guard let self else { return }

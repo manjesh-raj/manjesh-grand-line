@@ -51,10 +51,65 @@ enum FleetDataSelfTest {
         checkClassify(&ok)
         checkDegradedFetch(&ok)
         checkNeedsYouCopyAgrees(&ok)
+        checkThePRScanIsShared(&ok)
         print(ok ? "FleetDataSelfTest: all checks passed" : "FleetDataSelfTest: FAILED")
         return ok
     }
 
+
+    // MARK: One shared PR scan (P11)
+
+    /// Fleet and Review each ran their own per-clone PR scan; they share one
+    /// now (`OpenPRsSource.fetchShared`). The real scan is replaced by a
+    /// counting stand-in so this measures the sharing, not the network.
+    private static func checkThePRScanIsShared(_ ok: inout Bool) {
+        print("\n-- P11: Fleet and Review share one PR scan --")
+        let lock = NSLock()
+        var scans = 0
+        var degradeNext = false
+        OpenPRsSource.debugResetSharedScan()
+        OpenPRsSource.debugFetcher = {
+            lock.lock(); scans += 1; let degrade = degradeNext; lock.unlock()
+            Thread.sleep(forTimeInterval: 0.2)   // long enough for a second caller to arrive
+            var result = OpenPRsSource.FetchResult()
+            if degrade { result.failedRepos = ["one-repo"] }
+            return result
+        }
+        defer {
+            OpenPRsSource.debugFetcher = nil
+            OpenPRsSource.debugResetSharedScan()
+        }
+
+        // Two callers at once - Fleet's and Review's refresh - run one scan.
+        let both = DispatchGroup()
+        for _ in 0..<2 {
+            both.enter()
+            DispatchQueue.global().async { _ = OpenPRsSource.fetchShared(); both.leave() }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        both.wait()
+        check(scans == 1, "two callers at once ran \(scans) scans - the second should join the first", &ok)
+
+        // A page visit right after reuses the clean result.
+        _ = OpenPRsSource.fetchShared()
+        check(scans == 1, "an automatic refresh within \(OpenPRsSource.sharedMaxAge)s ran a scan of its own", &ok)
+
+        // The captain's Refresh never takes a cached result.
+        _ = OpenPRsSource.fetchShared(forceRefresh: true)
+        check(scans == 2, "a forced refresh took the cached result (\(scans) scans)", &ok)
+
+        // And after the cache window, an automatic refresh scans again.
+        _ = OpenPRsSource.fetchShared(now: { Date().addingTimeInterval(OpenPRsSource.sharedMaxAge + 1) })
+        check(scans == 3, "an automatic refresh after the cache window did not scan (\(scans) scans)", &ok)
+
+        // A degraded scan is never cached: the next caller retries.
+        lock.lock(); degradeNext = true; lock.unlock()
+        _ = OpenPRsSource.fetchShared(forceRefresh: true)
+        lock.lock(); degradeNext = false; lock.unlock()
+        _ = OpenPRsSource.fetchShared()
+        check(scans == 5, "a degraded scan was cached and the next caller did not retry (\(scans) scans)", &ok)
+        if ok { print("  OK   joined, cached, forced, expired and degraded all behave") }
+    }
 
     // MARK: The "needs you" headline
 

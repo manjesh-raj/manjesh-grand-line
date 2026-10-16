@@ -659,10 +659,18 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         rebuildProjectsGrid()
     }
 
+    private let scrollMemory = HelmScrollMemory()
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        scrollMemory.remember(scroll)
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
         view.layoutSubtreeIfNeeded()
-        scrollToTop()
+        // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
+        scrollMemory.restore(scroll) { scrollToTop() }
         // P3 (`data/grand-line-e2e-audit/report.md`): the four YAML files are
         // parsed off the main thread now, so a tab switch is not four
         // synchronous file parses before the page can draw (measured at 92ms

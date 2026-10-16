@@ -238,13 +238,21 @@ final class DailyOverviewController: NSViewController {
 
     @objc private func openSettings() { onNavigateToDestination?(.settings) }
 
+    private let scrollMemory = HelmScrollMemory()
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        scrollMemory.remember(scroll)
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
         // cockpit-native-fixes5: force the pending layout pass before reading
         // or setting the scroll position - on the first appearance this view's
         // constraints resolve in the same tick.
         view.layoutSubtreeIfNeeded()
-        scrollToTop()
+        // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
+        scrollMemory.restore(scroll) { scrollToTop() }
         // Recomputed on every appearance rather than cached for the day, for
         // F20's own reason: it is an in-memory scan of stores the app already
         // holds, and a review that still said "2 due" after both were ticked

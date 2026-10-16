@@ -418,6 +418,13 @@ final class FleetController: NSViewController {
         }
     }
 
+    private let scrollMemory = HelmScrollMemory()
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        scrollMemory.remember(scroll)
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
         // cockpit-native-fixes5: force the pending Auto Layout pass to run
@@ -428,7 +435,8 @@ final class FleetController: NSViewController {
         // `scrollToTop()` below could act on stale (pre-layout) geometry. On
         // every later appearance this is a cheap no-op (already resolved).
         view.layoutSubtreeIfNeeded()
-        scrollToTop()
+        // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
+        scrollMemory.restore(scroll) { scrollToTop() }
         // F12: a briefing already generated today renders immediately from the
         // persisted record - the AI call is not repeated on every visit, and
         // the card does not flicker in behind the fleet fetch.
@@ -856,7 +864,8 @@ final class FleetController: NSViewController {
                 guard let self else { return }
                 self.render(snapshot: snapshot, mergedPRs: nil)
             }
-            let fetched = OpenPRsSource.fetchDetailed()
+            // P11: one scan shared with Review (`OpenPRsSource.fetchShared`).
+            let fetched = OpenPRsSource.fetchShared(forceRefresh: forceRefresh)
             let merged = FleetDataSource.mergedPRs(openPRs: fetched.prs, tasks: snapshot.tasks)
             DispatchQueue.main.async {
                 guard let self else { return }

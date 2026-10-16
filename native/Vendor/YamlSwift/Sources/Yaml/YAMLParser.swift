@@ -6,11 +6,25 @@ private typealias Resulter = Yaml
 extension Yaml {
 
 struct Context {
-  let tokens: [Yaml.TokenMatch]
+  // GRANDLINE LOCAL PATCH (YamlSwift parser, linear time) - see
+  // Vendor/YamlSwift/README.md's "Local patch: linear-time tokenizer and
+  // parser". Upstream held the remaining tokens as an array and `advance`
+  // copied it and removed the first element - O(n) per token, O(n^2) per
+  // document. The context now shares one token array and moves a position
+  // along it; `tokens` is the same remaining run, as a slice.
+  let base: [Yaml.TokenMatch]
+  let position: Int
   let aliases: [String.SubSequence: Yaml]
 
+  var tokens: ArraySlice<Yaml.TokenMatch> { base[position...] }
+
   init (_ tokens: [Yaml.TokenMatch], _ aliases: [String.SubSequence: Yaml] = [:]) {
-    self.tokens = tokens
+    self.init(base: tokens, position: 0, aliases)
+  }
+
+  init (base: [Yaml.TokenMatch], position: Int, _ aliases: [String.SubSequence: Yaml]) {
+    self.base = base
+    self.position = position
     self.aliases = aliases
   }
 
@@ -36,7 +50,7 @@ struct Context {
             var updatedAliases = [String.SubSequence: Yaml]()
 
             if case let .value(context) = header {
-                updatedTokens = context.tokens
+                updatedTokens = Array(context.tokens)
                 updatedAliases = context.aliases
 
                 var foundComment = true
@@ -158,19 +172,17 @@ private func getValue (_ cv: ContextValue) -> Yaml {
 
 
 private func peekType (_ context: Context) -> Yaml.TokenType {
-  return context.tokens[0].type
+  return context.base[context.position].type
 }
 
 
 private func peekMatch (_ context: Context) -> String {
-  return context.tokens[0].match
+  return context.base[context.position].match
 }
 
 
 private func advance (_ context: Context) -> Context {
-  var tokens = context.tokens
-  tokens.remove(at: 0)
-  return Context(tokens, context.aliases)
+  return Context(base: context.base, position: context.position + 1, context.aliases)
 }
 
 private func ignoreSpace (_ context: Context) -> Context {
@@ -213,7 +225,7 @@ private func recreateText (_ string: String, context: Context) -> String {
 }
 
 private func parseHeader (_ context: Context) -> YAMLResult<Context> {
-  return parseHeader(true)(Context(context.tokens, [:]))
+  return parseHeader(true)(Context(base: context.base, position: context.position, [:]))
 }
 
 private func parseHeader (_ yamlAllowed: Bool) -> (Context) -> YAMLResult<Context> {
@@ -378,7 +390,7 @@ private func addAlias (_ name: String.SubSequence) -> (Yaml) -> (Context) -> Con
     return { context in
       var aliases = context.aliases
       aliases[name] = value
-      return Context(context.tokens, aliases)
+      return Context(base: context.base, position: context.position, aliases)
     }
   }
 }
@@ -588,7 +600,7 @@ private func parseString (_ context: Context) -> YAMLResult<ContextValue> {
 private func parseBlockMapOrString (_ context: Context) -> YAMLResult<ContextValue> {
   let match = peekMatch(context)
   // should spaces before colon be ignored?
-  return context.tokens[1].type != .colon || Yaml.Regex.matches(match, regex: Yaml.Regex.regex("\n"))
+  return context.base[context.position + 1].type != .colon || Yaml.Regex.matches(match, regex: Yaml.Regex.regex("\n"))
       ? parseString(context)
       : parseBlockMap(context)
 }

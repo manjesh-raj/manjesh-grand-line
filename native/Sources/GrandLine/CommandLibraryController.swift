@@ -147,7 +147,8 @@ final class CommandLibraryController: NSViewController, DaylightDrillActions {
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        page.reloadAndRender()
+        // P11: the library is re-read off the main thread on a revisit.
+        page.reloadInBackgroundAndRender { [weak self] in self?.onDrillSubtitleChanged?() }
         onDrillSubtitleChanged?()
     }
 

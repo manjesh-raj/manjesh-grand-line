@@ -118,7 +118,7 @@ final class ThemeTransitionCoordinator {
 
         let image = NSImage(size: bounds.size)
         image.addRepresentation(rep)
-        let overlay = ThemeSnapshotOverlay(frame: bounds)
+        let overlay = HitTransparentSnapshotView(frame: bounds)
         overlay.image = image
         overlay.imageScaling = .scaleAxesIndependently
         content.addSubview(overlay, positioned: .above, relativeTo: nil)
@@ -149,7 +149,7 @@ final class ThemeTransitionCoordinator {
     #if FM_SELFTESTS
     /// Is the fading snapshot transparent to the mouse? A 200ms window in
     /// which every click lands on a picture is a real defect, not a cosmetic
-    /// one - see `ThemeSnapshotOverlay`.
+    /// one - see `HitTransparentSnapshotView`.
     var debugOverlayIsHitTestTransparent: Bool {
         guard let overlay = liveOverlay, let content = overlay.superview else { return false }
         return overlay.hitTest(NSPoint(x: content.bounds.midX, y: content.bounds.midY)) == nil
@@ -162,7 +162,8 @@ final class ThemeTransitionCoordinator {
 }
 
 /// The fading snapshot itself - an image view that is transparent to the
-/// mouse.
+/// mouse. Shared with `PageCrossfade`, which fades the outgoing page the same
+/// way (P3 of the Grand Line vs Automic Vault polish report).
 ///
 /// **Load-bearing, not a tidy-up**, and the same lesson `ConsoleCardChrome`
 /// records for the same shape: this view covers the entire content view for
@@ -171,6 +172,6 @@ final class ThemeTransitionCoordinator {
 /// re-themed control underneath - the app would go briefly dead on every
 /// theme change. Disabling the control is not enough to rely on: `hitTest` is
 /// what AppKit routes mouse and scroll events by.
-private final class ThemeSnapshotOverlay: NSImageView {
+final class HitTransparentSnapshotView: NSImageView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

@@ -821,6 +821,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // which several window-backed self-tests mount and then re-theme -
         // see `ThemeTransition.swift`'s header.
         ThemeManager.shared.transitionCoordinator = ThemeTransitionCoordinator(window: window)
+        // P3 of the polish report: the outgoing page fades too. Installed here
+        // and nowhere else, for the same reason (`PageCrossfade`'s header).
+        appShell.pageCrossfade = PageCrossfade()
         // Armed here for the same reason: a window-backed suite sets frames
         // wider than CI's 1024pt display on purpose, and an armed guard would
         // put them back (`WindowOverflowGuard`'s header).
@@ -3243,6 +3246,20 @@ if ProcessInfo.processInfo.environment["FM_RUN_CANVAS_LISTS_CONTROLS_TESTS"] == 
 // See HoverPressEasingSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_HOVER_PRESS_EASING_TESTS"] == "1" {
     exit(HoverPressEasingSelfTest.run() ? 0 : 1)
+}
+
+// P3 of the same report: panels and page changes that move both ways, and
+// pages that keep the captain's place. Window-backed.
+// See PanelAndPageMotionSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_PANEL_AND_PAGE_MOTION_TESTS"] == "1" {
+    exit(PanelAndPageMotionSelfTest.run() ? 0 : 1)
+}
+
+// P11 of the same report: the four pages that read their store on the main
+// thread in viewWillAppear read it off the main thread instead. Window-backed.
+// See PageLoadOffMainSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS"] == "1" {
+    exit(PageLoadOffMainSelfTest.run() ? 0 : 1)
 }
 
 // P8 of the same report: the one motion table (`HelmMotion.swift`'s header),

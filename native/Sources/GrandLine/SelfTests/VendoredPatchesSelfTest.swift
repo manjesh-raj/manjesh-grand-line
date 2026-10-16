@@ -1,7 +1,8 @@
 // Grand Line - native macOS app.
 //
 // Permanent guard on the seven local patches carried in
-// `native/Vendor/SwiftTerm` (P9 of full review #3). Run with:
+// `native/Vendor/SwiftTerm` (P9 of full review #3), and on the three carried
+// in `native/Vendor/YamlSwift`. Run with:
 //
 //   swift build && FM_RUN_VENDORED_PATCHES_TESTS=1 .build/debug/GrandLine; echo $?
 //
@@ -118,10 +119,51 @@ enum VendoredPatchesSelfTest {
         checkEveryPatchIsStillPresent(vendor, &ok)
         checkBothWithUnsafeBytesCallsDiscardTheirResult(vendor, &ok)
         checkTheUpstreamCheckIsRecorded(vendor, &ok)
+        checkTheYamlSwiftPatchesArePresent(vendor.deletingLastPathComponent().appendingPathComponent("YamlSwift"), &ok)
 
         print(ok ? "VendoredPatchesSelfTest: all checks passed"
                  : "VendoredPatchesSelfTest: FAILURES")
         return ok
+    }
+
+    /// The three local patches in `native/Vendor/YamlSwift` (its README has
+    /// the re-apply notes). Same rule as SwiftTerm's: a marker is code the
+    /// patch cannot exist without, matched with comments stripped.
+    ///
+    /// The two linear-time patches are the polish report's P11: without them a
+    /// 400-link reading list took ~7s to parse and a 150-note sticky board
+    /// ~1.2s, on the main thread, and a re-sync that dropped either would bring
+    /// that back with every behavioural suite still green - the parse is
+    /// identical either way, only its cost changes.
+    private static let yamlSwiftPatches: [(name: String, file: String, marker: String)] = [
+        ("YamlOrderedMap", "Sources/Yaml/YAMLOrderedMap.swift", "struct YamlOrderedMap"),
+        ("YamlOrderedMap", "Sources/Yaml/Yaml.swift", "case dictionary(YamlOrderedMap)"),
+        ("linear-time tokenizer (anchored matching)", "Sources/Yaml/YAMLTokenizer.swift", "options: .anchored"),
+        ("linear-time tokenizer (moving offset)", "Sources/Yaml/YAMLTokenizer.swift", "pos = rangeEnd"),
+        ("linear-time parser (shared token array)", "Sources/Yaml/YAMLParser.swift", "position: context.position + 1"),
+    ]
+
+    private static func checkTheYamlSwiftPatchesArePresent(_ vendor: URL, _ ok: inout Bool) {
+        var sitesRead = 0
+        for patch in yamlSwiftPatches {
+            guard let raw = try? String(contentsOf: vendor.appendingPathComponent(patch.file), encoding: .utf8) else {
+                print("  FAIL YamlSwift \(patch.name): \(patch.file) is unreadable")
+                ok = false
+                continue
+            }
+            sitesRead += 1
+            if strippingComments(raw).contains(patch.marker) {
+                print("  OK   YamlSwift \(patch.name)")
+            } else {
+                print("  FAIL YamlSwift \(patch.name): \(patch.file) no longer contains \"\(patch.marker)\" - "
+                      + "a re-sync dropped it; see Vendor/YamlSwift/README.md")
+                ok = false
+            }
+        }
+        if sitesRead == 0 {
+            print("  FAIL no YamlSwift file could be read - the check proved nothing")
+            ok = false
+        }
     }
 
     /// `native/Vendor/SwiftTerm`.

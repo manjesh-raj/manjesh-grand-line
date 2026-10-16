@@ -419,6 +419,16 @@ final class CommandLibraryPageView: NSObject {
         render()
     }
 
+    /// P11: the revisit path - render what is loaded now, then re-render
+    /// once the library has been re-read off the main thread.
+    func reloadInBackgroundAndRender(then: @escaping () -> Void = {}) {
+        render()
+        store.reloadAllInBackground { [weak self] in
+            self?.render()
+            then()
+        }
+    }
+
     /// F5 (`fm/grandline-feature-f5-command-palette-expansion`): reveal one
     /// command from outside this page - the command palette's action for a
     /// command that still needs a parameter filled in, which is why the

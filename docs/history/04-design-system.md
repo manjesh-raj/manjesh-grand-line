@@ -597,3 +597,32 @@ An off-screen render cannot show an animation, and this shell has no Screen Reco
 
 For any visible UI change, compare two or three variants on a review board before building, then attach tour-lab renders at three window sizes (the minimum 960x620, 1100x720 and 1512x950) in both theme families to the pull request.
 Automic Vault's own design habit is the source: variants on the same illustrative data, a direction picked, then a native build checked at three sizes.
+
+## Panels and pages that move both ways, and keep the captain's place (polish report P3)
+
+The polish report found that the bar's dropdowns, `HelmConfirm` and Quick Capture appeared and vanished in a single frame, that a page change faded the incoming page in but hid the outgoing one at once, and that fourteen pages scrolled back to the top on every visit.
+
+### What changed
+
+- `HelmMotion.fadeIn(window:)` and `fadeOut(window:stillClosed:orderOut:)` fade a panel window on the motion table's move duration, instantly under Reduce Motion.
+  A leaving window stops taking clicks the moment it starts fading, and is ordered out only once the fade lands - unless the owner reopened it, which `stillClosed` reports.
+- `HelmBarPanel.isShown` is now the panel's logical state and flips the moment `show` or `close` is called, while the pixels fade.
+  It also requires the window to be on screen, because `AppLockGate` orders a secondary window out behind its owner's back.
+- `HelmConfirm` runs a modal session, where a window `animator()` is not promised to advance, so its entrance fades the content layer through `HelmMotion.fadeInContent(of:)`, an explicit Core Animation animation.
+  Its exit uses the window fade once the session has ended.
+- Quick Capture's three exits go through one `dismiss()`.
+- `PageCrossfade` lays a hit-transparent picture of the outgoing page over the body and fades it out - `ThemeTransitionCoordinator`'s technique, and the snapshot view is now shared (`HitTransparentSnapshotView`).
+  It is skipped for a navigation to the page already showing, under Reduce Motion, and over a visible `WKWebView`.
+  Like the theme crossfade it is installed by `applicationDidFinishLaunching` only, so suites that mount a shell keep measuring a plain cut.
+- `HelmScrollMemory` keeps a page's scroll position across a visit elsewhere.
+  "Unless its data changed" is one signal for every page: the scroll document's height when the page was left.
+  Same height, same offset; otherwise the page scrolls to the top as before.
+  AppKit sends `viewWillDisappear` when the shell hides a page (measured), which is where the offset is recorded.
+
+### Verified
+
+`FM_RUN_PANEL_AND_PAGE_MOTION_TESTS` (window-backed) drives the fades on real windows, the bar panel's synchronous state in both Reduce Motion states, the crossfade on a real shell, and Settings keeping y 120 across a visit to Updates.
+Quick Capture and `HelmConfirm` are covered as primitives plus source guards, because Quick Capture positions itself on the real main screen and `HelmConfirm` is modal, and neither belongs in a window-backed suite.
+Confirmed by injection: the old instant close, a page with an unconditional `scrollToTop()`, and a `show(_:)` with no crossfade call each fail by name.
+
+Not verified: how the fades look on a real display.

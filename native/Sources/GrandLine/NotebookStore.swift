@@ -383,11 +383,20 @@ final class NotebookStore {
     /// a bug.
     func listPages() -> [NotebookPage] { listPages(overflow: nil) }
 
+    #if FM_SELFTESTS
+    /// Called with `Thread.isMainThread` at every folder walk, so
+    /// `PageLoadOffMainSelfTest` can assert where a revisit's read ran.
+    static var debugOnRead: ((Bool) -> Void)?
+    #endif
+
     /// The same read, reporting how many pages were past `maxPages`.
     ///
     /// GL-35's cap with GL-14's honesty: a caller that wants to *say* "showing
     /// 2000 of 2143" can, and the one that does not still gets a bounded list.
     func listPages(overflow: UnsafeMutablePointer<Int>?) -> [NotebookPage] {
+        #if FM_SELFTESTS
+        Self.debugOnRead?(Thread.isMainThread)
+        #endif
         var found: [URL] = []
         var skipped = 0
         collectMarkdown(in: root, depth: 0, into: &found, skipped: &skipped)
@@ -671,5 +680,25 @@ final class NotebookStore {
             .trimmingCharacters(in: .whitespaces)
         guard let first = words.first else { return slug }
         return String(first).uppercased() + words.dropFirst()
+    }
+}
+
+/// One read of the notebook folder and everything derived from it - P11's
+/// background read. Pure: it walks files and builds values, and touches
+/// nothing the page owns.
+struct NotebookFolderRead {
+    let pages: [NotebookPage]
+    let overflow: Int
+    let resolver: NotebookLinkResolver
+    let index: NotebookBacklinkIndex
+
+    init(store: NotebookStore) {
+        var overflow = 0
+        let pages = store.listPages(overflow: &overflow)
+        let resolver = NotebookLinkResolver(pages: pages)
+        self.pages = pages
+        self.overflow = overflow
+        self.resolver = resolver
+        self.index = NotebookBacklinkIndex(pages: pages, resolver: resolver)
     }
 }
