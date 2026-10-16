@@ -142,6 +142,70 @@ enum HelmMotion {
         CATransaction.commit()
     }
 
+    /// Brings a panel window in with a short fade - the motion table's
+    /// "a panel appearing" row. Call it right after ordering the window in.
+    ///
+    /// P3 of the Grand Line vs Automic Vault polish report: the bar's
+    /// dropdowns, the confirm sheet and Quick Capture each appeared and
+    /// vanished in a single frame. Instant under Reduce Motion.
+    static func fadeIn(window: NSWindow) {
+        window.ignoresMouseEvents = false
+        guard !isReduced else {
+            window.alphaValue = 1
+            return
+        }
+        window.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = moveDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            window.animator().alphaValue = 1
+        }
+    }
+
+    /// The same entrance for a window whose run loop is a **modal session**
+    /// (`HelmConfirm`): fades the content view's layer rather than the
+    /// window. A window `animator()` is driven from the run loop and is not
+    /// promised to advance inside `NSApp.runModal`; an explicit Core
+    /// Animation animation runs on the render server whatever mode the loop
+    /// is in. The window's own shadow arrives at once, which on a dialog this
+    /// size reads as the dialog settling rather than as a pop.
+    static func fadeInContent(of window: NSWindow) {
+        guard !isReduced, let content = window.contentView else { return }
+        content.wantsLayer = true
+        guard let layer = content.layer else { return }
+        withoutActions { layer.opacity = 0 }
+        animateLayers(duration: moveDuration, on: [layer]) { layer.opacity = 1 }
+    }
+
+    /// Takes a panel window out with a short fade, then runs `orderOut`.
+    ///
+    /// **The caller's own state must already say "closed"** when this is
+    /// called - this only owns the pixels. The window stops taking clicks at
+    /// once, so a click during the fade reaches whatever is behind it, and
+    /// `orderOut` runs on the fade's completion. A caller that reopens the
+    /// window before that lands passes `stillClosed`, so the completion does
+    /// not take down a window that is meant to be up again. Instant under
+    /// Reduce Motion.
+    static func fadeOut(window: NSWindow, stillClosed: @escaping () -> Bool = { true },
+                        orderOut: @escaping () -> Void) {
+        guard !isReduced, window.isVisible else {
+            orderOut()
+            window.alphaValue = 1
+            return
+        }
+        window.ignoresMouseEvents = true
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = moveDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            window.animator().alphaValue = 0
+        }, completionHandler: {
+            guard stillClosed() else { return }
+            orderOut()
+            window.alphaValue = 1
+            window.ignoresMouseEvents = false
+        })
+    }
+
     /// The app's one spring curve.
     ///
     /// The audit's motion spec is explicit that there are "two curves total -

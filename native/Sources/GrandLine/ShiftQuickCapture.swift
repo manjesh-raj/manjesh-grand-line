@@ -555,8 +555,25 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         // frontmost (that's the whole point of a global hotkey) - `orderFront`
         // alone would show the panel behind the still-frontmost app.
         NSApp.activate(ignoringOtherApps: true)
+        isOpen = true
         window.makeKeyAndOrderFront(nil)
+        HelmMotion.fadeIn(window: window)
         window.makeFirstResponder(inputField)
+    }
+
+    /// Open as far as this controller is concerned - set at once by
+    /// `present`/`dismiss`, while the fade-out (P3) is still drawing.
+    private var isOpen = false
+
+    /// The one way out, from every path (Escape, a hand-off, a filed capture's
+    /// confirmation). P3 of the polish report: fades rather than vanishing,
+    /// and orders out once the fade lands unless the captain reopened it.
+    private func dismiss() {
+        guard let window else { return }
+        isOpen = false
+        HelmMotion.fadeOut(window: window, stillClosed: { [weak self] in self?.isOpen == false }) { [weak window] in
+            window?.orderOut(nil)
+        }
     }
 
     // MARK: The chips
@@ -628,7 +645,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
             file(to: CaptureRouter.defaultDestination(for: CaptureRouter.draft(from: inputField.stringValue)))
             return true
         case #selector(NSResponder.cancelOperation(_:)):
-            window?.orderOut(nil)
+            dismiss()
             return true
         default:
             return false
@@ -654,7 +671,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
             finish(with: destination.confirmation)
         case .handedOff:
             onCaptured?(destination)
-            window?.orderOut(nil)
+            dismiss()
         case .refused(let why):
             show(status: why, isError: true)
         }
@@ -663,7 +680,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
     private func finish(with message: String) {
         show(status: message, isError: false)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
-            self?.window?.orderOut(nil)
+            self?.dismiss()
         }
     }
 

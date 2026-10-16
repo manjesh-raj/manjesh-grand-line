@@ -221,8 +221,14 @@ enum HelmConfirm {
         // The session has to be ended from the button handler above, never by
         // the panel closing on its own - a modal session left running is an
         // app that no longer responds to anything.
+        // P3 of the polish report: the dialog fades in and out rather than
+        // popping. The entrance fades the content's layer because the run loop
+        // is about to be a modal session (`HelmMotion.fadeInContent`); the
+        // exit fades the window once the session has ended. The answer is
+        // returned at once either way - the fade only owns the pixels.
+        HelmMotion.fadeInContent(of: panel)
         NSApp.runModal(for: panel)
-        panel.orderOut(nil)
+        HelmMotion.fadeOut(window: panel) { panel.orderOut(nil) }
         return answer
     }
 }
