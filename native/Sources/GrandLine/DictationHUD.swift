@@ -289,17 +289,26 @@ final class DictationHUDController {
         // time would turn a two-second overlay into a jittery one.
         if !wasVisible, !HelmMotion.isReduced, let content = panel.contentView {
             content.wantsLayer = true
-            content.layer?.transform = CATransform3DMakeScale(Self.popInScale, Self.popInScale, 1)
+            if let layer = content.layer {
+                HelmMotion.withoutActions {
+                    layer.transform = HelmMotion.centredScale(Self.popInScale, of: layer)
+                }
+            }
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = HelmMotion.springDuration
                 ctx.timingFunction = HelmMotion.spring()
-                ctx.allowsImplicitAnimation = true
-                content.layer?.transform = CATransform3DIdentity
                 panel.animator().alphaValue = 1
+                // The pop is a layer `transform`, which `allowsImplicitAnimation`
+                // does not animate on a view-backed layer (measured, P1 of the
+                // polish report).
+                HelmMotion.animateLayers(duration: HelmMotion.springDuration,
+                                         timing: HelmMotion.spring(), on: [content.layer]) {
+                    content.layer?.transform = CATransform3DIdentity
+                }
             }
         } else {
             NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.12
+                ctx.duration = HelmMotion.stateDuration
                 panel.animator().alphaValue = 1
             }
         }
@@ -318,7 +327,7 @@ final class DictationHUDController {
         stopPulsing()
         guard let panel, panel.isVisible else { return }
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.2
+            ctx.duration = HelmMotion.moveDuration
             panel.animator().alphaValue = 0
         }, completionHandler: { [weak panel] in
             panel?.orderOut(nil)

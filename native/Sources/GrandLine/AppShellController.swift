@@ -2304,7 +2304,7 @@ final class AppShellController: NSViewController {
 
     /// §3B B4's spec, measured from its own text: "a 150-200ms crossfade + 8-12pt
     /// slide".
-    static let destinationTransitionDuration: TimeInterval = 0.18
+    static let destinationTransitionDuration: TimeInterval = HelmMotion.moveDuration
     static let destinationTransitionOffset: CGFloat = 10
 
     #if FM_SELFTESTS
@@ -2387,9 +2387,15 @@ final class AppShellController: NSViewController {
             // curves"). A spring belongs on a gesture-driven or interruptible
             // move; a 180pt-per-second settle into place does not need one.
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            context.allowsImplicitAnimation = true
             destinationView.animator().alphaValue = 1
-            destinationView.layer?.transform = CATransform3DIdentity
+            // The slide is a *layer* property, which `allowsImplicitAnimation`
+            // does not animate on a view-backed layer (measured, P1 of the
+            // polish report): it used to land in one frame while only the
+            // fade ran. `animateLayers` attaches the travel explicitly.
+            HelmMotion.animateLayers(duration: Self.destinationTransitionDuration,
+                                     on: [destinationView.layer]) {
+                destinationView.layer?.transform = CATransform3DIdentity
+            }
         }
     }
 

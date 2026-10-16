@@ -528,7 +528,9 @@ enum HelmInputSurface {
     ///   - animated: F1 - `true` only when this call is a genuine focus
     ///     *transition*. Every one of these properties lives on a view-backed
     ///     layer, which pops by default (see `HelmMotion.animateLayers`), and
-    ///     the finding is specifically that the glow pops in. Defaulted off so
+    ///     the finding is specifically that the glow pops in. It kept popping
+    ///     until the polish report's P1 made that primitive attach explicit
+    ///     animations to the layers named here. Defaulted off so
     ///     the other reason this runs - a theme change, which re-applies every
     ///     field in the window at once - stays instant: cross-fading the whole
     ///     form's chrome on a palette switch is the churn Phase 6 removed from
@@ -537,7 +539,8 @@ enum HelmInputSurface {
                       theme: HelmTheme, focused: Bool,
                       hue: HelmDomainHue? = nil, isRow: Bool = false,
                       animated: Bool = false) {
-        HelmMotion.animateLayers(animated, duration: focusTransitionDuration) {
+        HelmMotion.animateLayers(animated, duration: focusTransitionDuration,
+                                 on: [chrome.layer, shadowHost?.layer]) {
             applyChrome(chrome: chrome, shadowHost: shadowHost, theme: theme,
                         focused: focused, hue: hue, isRow: isRow)
         }

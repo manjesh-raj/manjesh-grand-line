@@ -2356,18 +2356,24 @@ final class HelmFormSheet: NSView {
         guard !HelmMotion.isReduced else { return }
         wantsLayer = true
         guard let layer else { return }
-        // A plain scale, no anchor-point correction: AppKit gives a
-        // layer-backed view's layer an anchor point of (0.5, 0.5), so this
-        // scales about the centre - the same assumption `HoverHighlightView`'s
-        // press compression already relies on.
-        layer.transform = CATransform3DMakeScale(Self.entranceScale, Self.entranceScale, 1)
+        // About the centre. This used to be a plain scale on the belief that
+        // AppKit anchors a view-backed layer at (0.5, 0.5); measured on macOS
+        // 26.7 it anchors at (0, 0), the bottom-left corner, so the sheet grew
+        // out of that corner. `centredScale` reads the real anchor.
+        HelmMotion.withoutActions {
+            layer.transform = HelmMotion.centredScale(Self.entranceScale, of: layer)
+        }
         alphaValue = 0
         NSAnimationContext.runAnimationGroup { context in
             context.duration = HelmMotion.springDuration
             context.timingFunction = HelmMotion.spring()
-            context.allowsImplicitAnimation = true
-            layer.transform = CATransform3DIdentity
             animator().alphaValue = 1
+            // A layer `transform`: `allowsImplicitAnimation` does not animate
+            // it on a view-backed layer, so it is attached explicitly.
+            HelmMotion.animateLayers(duration: HelmMotion.springDuration,
+                                     timing: HelmMotion.spring(), on: [layer]) {
+                layer.transform = CATransform3DIdentity
+            }
         }
     }
 
@@ -2621,7 +2627,7 @@ final class HelmToggle: NSControl {
     /// the knob is vertically centred rather than positioned by a second
     /// literal.
     static var knobInset: CGFloat { (pillHeight - knobSide) / 2 }
-    static let animationDuration: TimeInterval = 0.16
+    static let animationDuration: TimeInterval = HelmMotion.moveDuration
 
     /// Fired on any change the captain made - a click, a keyboard press, or a
     /// VoiceOver activation. Not fired by `isOn`'s setter, so a caller

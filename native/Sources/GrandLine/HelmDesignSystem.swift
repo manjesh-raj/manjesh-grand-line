@@ -1268,16 +1268,11 @@ final class HelmButton: NSButton {
     // MARK: Press / hover feedback
 
     override func mouseDown(with event: NSEvent) {
-        isPressed = true
-        // E1: only a *state* change animates. A theme switch and the first
-        // paint stay instant - a page whose every button cross-faded on a
-        // theme change would read as a glitch, not as polish.
-        restyle(animated: true)
+        setPressed(true)
         // `super` runs AppKit's own tracking loop, so click-cancel-by-dragging
         // -out and the action dispatch itself stay exactly as they were.
         super.mouseDown(with: event)
-        isPressed = false
-        restyle(animated: true)
+        setPressed(false)
     }
 
     override func updateTrackingAreas() {
@@ -1654,24 +1649,48 @@ final class HelmButton: NSButton {
     /// transition; a theme change, a title change and the first paint all
     /// stay instant, which is what keeps a theme switch from cross-fading
     /// every button on the page at once.
-    static let stateChangeDuration: TimeInterval = 0.12
+    static let stateChangeDuration: TimeInterval = HelmMotion.stateDuration
     /// The approved visual's "2% press compression".
     static let pressScale: CGFloat = 0.98
 
     private func restyle(animated: Bool = false) {
         // The layer's own fill/border writes below are implicit-animation
-        // free for a view-backed layer, so easing them means asking.
+        // free for a view-backed layer, so easing them means asking - through
+        // `animateLayers`, naming the layers. This used to open a
+        // `CATransaction` with a duration instead, which a view-backed layer
+        // ignores: P1 of the polish report measured `animationKeys() == []`
+        // on every hover, and `HoverPressEasingSelfTest` is the guard. The
+        // gradient ramp is named too, so a Daylight `.primary` eases with it.
         let ease = animated && !HelmMotion.isReduced
         if ease {
-            CATransaction.begin()
-            CATransaction.setAnimationDuration(Self.stateChangeDuration)
-            CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+            HelmMotion.animateLayers(duration: Self.stateChangeDuration,
+                                     on: [layer, fillGradientInstalled ? fillGradient : nil]) { restyleBody() }
+        } else {
+            restyleBody()
         }
-        defer {
-            if ease { CATransaction.commit() }
-            applyPressTransform(animated: ease)
-        }
-        restyleBody()
+        applyPressTransform(animated: ease)
+    }
+
+    /// The press from `performClick` - the path Space and Return take on a
+    /// focused button, and the one a suite can drive without a real mouse.
+    ///
+    /// A real click does not come through here: `NSButton` highlights its
+    /// *cell* from the tracking loop, never calling `highlight(_:)` on the
+    /// control (measured on `DaylightBarIconButton`, which has the same
+    /// override), so `mouseDown` keeps its own entry and both meet in
+    /// `setPressed`.
+    override func highlight(_ flag: Bool) {
+        super.highlight(flag)
+        setPressed(flag)
+    }
+
+    private func setPressed(_ pressed: Bool) {
+        guard pressed != isPressed else { return }
+        isPressed = pressed
+        // E1: only a *state* change animates. A theme switch and the first
+        // paint stay instant - a page whose every button cross-faded on a
+        // theme change would read as a glitch, not as polish.
+        restyle(animated: true)
     }
 
     #if FM_SELFTESTS
@@ -1689,11 +1708,11 @@ final class HelmButton: NSButton {
     private func applyPressTransform(animated: Bool) {
         guard let layer else { return }
         let scale = (isPressed && isEnabled && !HelmMotion.isReduced) ? Self.pressScale : 1
-        let target = CATransform3DMakeScale(scale, scale, 1)
+        // About the button's centre, not the layer's bottom-left anchor.
+        let target = HelmMotion.centredScale(scale, of: layer)
         guard !CATransform3DEqualToTransform(layer.transform, target) else { return }
         guard animated else { layer.transform = target; return }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.stateChangeDuration
+        HelmMotion.animateLayers(duration: Self.stateChangeDuration, on: [layer]) {
             layer.transform = target
         }
     }
@@ -2368,7 +2387,7 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
                         duration: Self.actionRevealDuration, animated: animated)
     }
 
-    static let actionRevealDuration: TimeInterval = 0.12
+    static let actionRevealDuration: TimeInterval = HelmMotion.stateDuration
 
     /// D1's discoverability floor: a list this short or shorter keeps every
     /// row's actions visible.
@@ -3569,8 +3588,9 @@ final class HelmEmptyState: NSView {
         return true
     }
 
-    /// D4's entrance: "a 250ms fade+rise on first appearance".
-    static let entranceDuration: TimeInterval = 0.25
+    /// D4's entrance: "a 250ms fade+rise on first appearance" - the motion
+    /// table's arrival row.
+    static let entranceDuration: TimeInterval = HelmMotion.springDuration
     static let entranceRise: CGFloat = 8
     private var hasPlayedEntrance = false
 

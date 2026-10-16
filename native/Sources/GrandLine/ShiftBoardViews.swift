@@ -389,7 +389,7 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
         let image = liftedSnapshot()
         let pad = Self.liftPadding
         item.setDraggingFrame(bounds.insetBy(dx: -pad, dy: -pad), contents: image)
-        HelmMotion.fade(self, to: Self.draggingAlpha, duration: 0.12, animated: true)
+        HelmMotion.fade(self, to: Self.draggingAlpha, duration: HelmMotion.stateDuration, animated: true)
         beginDraggingSession(with: [item], event: event, source: self)
     }
 
@@ -433,7 +433,7 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
 
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         isDraggingCard = false
-        HelmMotion.fade(self, to: 1, duration: 0.12, animated: true)
+        HelmMotion.fade(self, to: 1, duration: HelmMotion.stateDuration, animated: true)
     }
 
     // MARK: Pointer-free equivalents

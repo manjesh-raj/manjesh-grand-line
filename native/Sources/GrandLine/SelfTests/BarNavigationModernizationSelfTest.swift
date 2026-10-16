@@ -560,6 +560,13 @@ enum BarNavigationModernizationSelfTest {
             guard !(layer.animationKeys() ?? []).isEmpty else {
                 return "no animation was added to the incoming page's layer - the navigation is still a hard cut"
             }
+            // The fade alone used to satisfy the check above while the slide
+            // landed in one frame (`allowsImplicitAnimation` does not animate
+            // a view-backed layer's `transform`), so the slide is asked for
+            // by name.
+            guard (layer.animationKeys() ?? []).contains("transform") else {
+                return "the incoming page fades but does not slide (keys \(layer.animationKeys() ?? []))"
+            }
 
             // Now the finding's own explicit requirement.
             shell.show(.review)

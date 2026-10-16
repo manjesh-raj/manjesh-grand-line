@@ -320,12 +320,16 @@ final class AllDestinationsOverlayController: NSWindowController {
             content.alphaValue = 1
             return
         }
-        layer.transform = CATransform3DMakeScale(0.97, 0.97, 1)
+        HelmMotion.withoutActions {
+            layer.transform = HelmMotion.centredScale(0.97, of: layer)
+        }
         content.alphaValue = 0
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.15
+            context.duration = HelmMotion.moveDuration
             content.animator().alphaValue = 1
-            layer.transform = CATransform3DIdentity
+            HelmMotion.animateLayers(duration: HelmMotion.moveDuration, on: [layer]) {
+                layer.transform = CATransform3DIdentity
+            }
         }
     }
 

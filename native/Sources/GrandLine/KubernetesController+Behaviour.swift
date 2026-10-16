@@ -746,7 +746,7 @@ extension KubernetesController {
         // title had no room at all.
         describeDrawer.needsLayout = true
         relayoutDescribeContent()
-        HelmMotion.animate(duration: 0.18) { [weak self] in
+        HelmMotion.animate(duration: HelmMotion.moveDuration) { [weak self] in
             guard let self else { return }
             NSAnimationContext.current.allowsImplicitAnimation = true
             self.clusterContainer.layoutSubtreeIfNeeded()
@@ -754,7 +754,7 @@ extension KubernetesController {
         if !open {
             // Hide only once the slide has finished, so the panel is seen
             // leaving rather than vanishing.
-            let delay = HelmMotion.isReduced ? 0 : 0.18
+            let delay = HelmMotion.isReduced ? 0 : HelmMotion.moveDuration
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self, self.describeWidthConstraint.constant == 0 else { return }
                 self.describeDrawer.isHidden = true

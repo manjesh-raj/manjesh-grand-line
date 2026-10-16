@@ -27,7 +27,7 @@ import AppKit
 final class HelmScrollEdgeHairline {
 
     static let thickness: CGFloat = 1
-    static let fadeDuration: TimeInterval = 0.14
+    static let fadeDuration: TimeInterval = HelmMotion.stateDuration
 
     private let line = NSView()
     private let observer = ScrollEdgeObserver()
@@ -110,7 +110,7 @@ enum HelmRowEntrance {
     /// "capped" - beyond this many rows the stagger stops accumulating, so a
     /// 50-row list does not spend a second and a half introducing itself.
     static let maxStaggeredRows = 8
-    static let duration: TimeInterval = 0.22
+    static let duration: TimeInterval = HelmMotion.springDuration
     static let rise: CGFloat = 6
 
     /// How long row `row` waits before its entrance starts.

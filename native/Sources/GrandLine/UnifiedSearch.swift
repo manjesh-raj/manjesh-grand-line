@@ -349,18 +349,24 @@ final class UnifiedSearchController: NSWindowController {
             content.alphaValue = 1
             return
         }
-        layer.transform = CATransform3DMakeScale(Self.entranceScale, Self.entranceScale, 1)
+        // About the centre: a view-backed layer's anchor is its bottom-left
+        // corner (measured), so a bare scale would grow the palette out of
+        // that corner.
+        HelmMotion.withoutActions {
+            layer.transform = HelmMotion.centredScale(Self.entranceScale, of: layer)
+        }
         content.alphaValue = 0
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.entranceDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            context.allowsImplicitAnimation = true
-            layer.transform = CATransform3DIdentity
             content.animator().alphaValue = 1
+            HelmMotion.animateLayers(duration: Self.entranceDuration, on: [layer]) {
+                layer.transform = CATransform3DIdentity
+            }
         }
     }
 
-    static let entranceDuration: TimeInterval = 0.15
+    static let entranceDuration: TimeInterval = HelmMotion.moveDuration
     static let entranceScale: CGFloat = 0.97
 
     private func installOutsideClickMonitors() {
