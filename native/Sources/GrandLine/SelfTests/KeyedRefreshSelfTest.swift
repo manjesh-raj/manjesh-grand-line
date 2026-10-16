@@ -32,6 +32,7 @@ enum KeyedRefreshSelfTest {
         NSApplication.shared.setActivationPolicy(.accessory)
         var ok = true
         checkHomeRefreshesInPlace(&ok)
+        checkHomeFollowsAClipWidthChange(&ok)
         checkFleetRefreshesInPlace(&ok)
         checkNotificationsRefreshInPlace(&ok)
         checkTasksBoardRefreshesInPlace(&ok)
@@ -49,6 +50,12 @@ enum KeyedRefreshSelfTest {
         window.orderFront(nil)
         shell.show(.homeCanvas)
         let canvas = shell.debugHomeCanvas
+        // Pinned to the legacy scroller a CI runner ends up with. A runner
+        // can switch scroller style after launch, which narrows the clip and
+        // (correctly) rebuilds the grid - so without the pin this case could
+        // see a legitimate rebuild in the middle of the refresh it measures.
+        // The switch itself is `checkHomeFollowsAClipWidthChange`'s case.
+        canvas.debugSetScrollerStyle(.legacy)
         ReviewTourLab.seedDemoHome(canvas)
         canvas.debugRenderNow()
         shell.view.layoutSubtreeIfNeeded()
@@ -102,6 +109,46 @@ enum KeyedRefreshSelfTest {
         let afterVisit = canvas.moduleCardsForTests.map(ObjectIdentifier.init)
         check(afterVisit == rebuiltIDs, "a revisit rebuilt Home's cards", &ok)
         if ok { print("  OK   \(before.count) cards kept across a fleet refresh and a revisit, updated, and laid out as a fresh build") }
+    }
+
+    /// Found by this suite on CI: a runner's scroller turned legacy after Home
+    /// had rendered, which narrowed the clip view by a scroller's width
+    /// without resizing the window. Home only re-laid its grid on a window
+    /// resize, so its cards stayed 15pt too wide and ran under the scroller
+    /// track until the next render. The same happens on a Mac set to always
+    /// show scroll bars when a page's content first overflows.
+    private static func checkHomeFollowsAClipWidthChange(_ ok: inout Bool) {
+        print("\n-- P2: Home re-lays its grid when the clip narrows without a resize --")
+        let (window, shell) = ReviewTourLab.makeOffScreenShell()
+        defer { window.orderOut(nil) }
+        window.orderFront(nil)
+        shell.show(.homeCanvas)
+        let canvas = shell.debugHomeCanvas
+        canvas.debugSetScrollerStyle(.overlay)
+        ReviewTourLab.seedDemoHome(canvas)
+        canvas.debugRenderNow()
+        shell.view.layoutSubtreeIfNeeded()
+        let start = canvas.debugGridWidths
+        check(abs(start.built - start.container) <= 0.5,
+              "the fixture's grid was built for \(start.built)pt in a \(start.container)pt container", &ok)
+
+        canvas.debugSetScrollerStyle(.legacy)
+        shell.view.layoutSubtreeIfNeeded()
+        let narrowed = canvas.debugGridWidths.container
+        // Discriminating power: the legacy scroller really took width.
+        check(narrowed < start.container - 5,
+              "a legacy scroller did not narrow the container (\(start.container) -> \(narrowed))", &ok)
+        // One main-queue turn, and no more: a longer pump lets an unrelated
+        // window's resize reach Home's global resize observer, which is the
+        // luck this check must not depend on (CI did not have it).
+        var turned = false
+        DispatchQueue.main.async { turned = true }
+        pump(timeout: 2.0) { turned }
+        shell.view.layoutSubtreeIfNeeded()
+        let after = canvas.debugGridWidths
+        check(abs(after.built - after.container) <= 0.5,
+              "the grid is still \(after.built)pt wide in a \(after.container)pt container", &ok)
+        if ok { print("  OK   the grid followed the clip from \(start.container)pt to \(after.container)pt") }
     }
 
     // MARK: Fleet

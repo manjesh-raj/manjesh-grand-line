@@ -321,6 +321,7 @@ final class HomeCanvasController: NSViewController {
     private var themeToken: ThemeObservation?
     private var signalCountsToken: BackgroundSignalsPoller.CountsObservation?
     private var windowResizeObserver: NSObjectProtocol?
+    private var clipResizeObserver: NSObjectProtocol?
     private var lastGridWidth: CGFloat = 0
     /// The height the hub's columns were last budgeted for - see
     /// `containerWidthMayHaveChanged`.
@@ -372,6 +373,7 @@ final class HomeCanvasController: NSViewController {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
         if let signalCountsToken { BackgroundSignalsPoller.shared.unobserveCounts(signalCountsToken) }
         if let windowResizeObserver { NotificationCenter.default.removeObserver(windowResizeObserver) }
+        if let clipResizeObserver { NotificationCenter.default.removeObserver(clipResizeObserver) }
     }
 
     // MARK: Build
@@ -542,10 +544,31 @@ final class HomeCanvasController: NSViewController {
         // `ToolsController.containerWidthMayHaveChanged` is, and gated on
         // visibility inside the handler for the same measured reason - a
         // resize while another destination is showing must not pay for this
-        // page's relayout.
+        // page's relayout. Only this page's own window counts: a bar panel
+        // or popover resizing cannot change this grid's width, and letting
+        // one through is how a stale grid got corrected by luck on one
+        // machine and not on another (P2, `KeyedRefreshSelfTest`).
         windowResizeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification, object: nil, queue: .main
-        ) { [weak self] _ in self?.containerWidthMayHaveChanged() }
+        ) { [weak self] note in
+            guard let self, (note.object as? NSWindow) === self.view.window else { return }
+            self.containerWidthMayHaveChanged()
+        }
+        // The clip view can narrow without the window resizing: a legacy
+        // scroller appears when the content first overflows on a Mac set to
+        // always show scroll bars, or the system's scroller style changes
+        // after launch (measured on a CI runner - the grid stayed 15pt too
+        // wide, under the scroller track, until the next render). On the next
+        // main-queue turn rather than inside the layout pass that moved the
+        // clip, and through the same staleness check, so it converges: a
+        // narrower grid is never shorter, so it cannot hide the scroller
+        // that narrowed it.
+        scroll.contentView.postsFrameChangedNotifications = true
+        clipResizeObserver = NotificationCenter.default.addObserver(
+            forName: NSView.frameDidChangeNotification, object: scroll.contentView, queue: .main
+        ) { [weak self] _ in
+            DispatchQueue.main.async { self?.containerWidthMayHaveChanged() }
+        }
 
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
 
@@ -3384,6 +3407,11 @@ final class HomeCanvasController: NSViewController {
         gridLayoutKey = nil
         render()
     }
+    /// The scroller style a runner may switch to after launch, which narrows
+    /// the clip view without resizing the window.
+    func debugSetScrollerStyle(_ style: NSScroller.Style) { scroll.scrollerStyle = style }
+    /// The width the grid was last built for, and the width it has now.
+    var debugGridWidths: (built: CGFloat, container: CGFloat) { (lastGridWidth, gridContainerWidth()) }
     /// `ReviewTourLab`'s `demo home`: once its fixture is applied, later live
     /// fleet and quota readings are ignored, so a render is deterministic.
     var debugInputsPinned = false
