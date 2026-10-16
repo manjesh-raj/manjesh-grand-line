@@ -34,6 +34,7 @@ enum KeyedRefreshSelfTest {
         checkHomeRefreshesInPlace(&ok)
         checkFleetRefreshesInPlace(&ok)
         checkNotificationsRefreshInPlace(&ok)
+        checkTasksBoardRefreshesInPlace(&ok)
         print(ok ? "KeyedRefreshSelfTest: all checks passed" : "KeyedRefreshSelfTest: FAILED")
         return ok
     }
@@ -281,6 +282,63 @@ enum KeyedRefreshSelfTest {
         check(content.debugRows.count == 2 && content.debugRows[0] === rows[1] && content.debugRows[1] === rows[2],
               "after an entry cleared the rows are not the other two entries' own", &ok)
         if ok { print("  OK   rows kept by entry id across an edit, a read, an expansion and a removal, hover kept") }
+    }
+
+    // MARK: Tasks board
+
+    private static func checkTasksBoardRefreshesInPlace(_ ok: inout Bool) {
+        print("\n-- P2: the Tasks board updates its cards in place --")
+        func task(_ id: String, _ title: String, status: ShiftTaskStatus = .todo) -> ShiftTask {
+            ShiftTask(id: id, title: title, description: "", status: status, priority: .normal,
+                      dueDate: nil, dueTime: nil, projectID: nil, tags: [],
+                      createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
+                      completedAt: nil, notes: nil, subtasks: [], hasAttachment: false)
+        }
+        let theme = ThemeManager.shared.theme
+        let board = ShiftBoardView()
+        let window = OffScreenProbe.window(width: 1100, height: 800, styleMask: [.titled, .resizable])
+        defer { window.orderOut(nil) }
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 800))
+        window.contentView = host
+        board.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(board)
+        NSLayoutConstraint.activate([
+            board.topAnchor.constraint(equalTo: host.topAnchor),
+            board.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            board.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+        ])
+        window.orderFront(nil)
+        board.setTasks([.backlog: [task("a", "Write the runbook"), task("b", "Rotate the keys")],
+                        .inProgress: [task("c", "Ship the fix", status: .inProgress)]],
+                       projects: [], theme: theme)
+        host.layoutSubtreeIfNeeded()
+        let backlog = board.debugColumn(.backlog)?.debugCardViews ?? []
+        let doing = board.debugColumn(.inProgress)?.debugCardViews ?? []
+        check(backlog.count == 2 && doing.count == 1,
+              "the fixture shows \(backlog.count) and \(doing.count) cards, expected 2 and 1", &ok)
+        guard backlog.count == 2, doing.count == 1 else { return }
+        window.makeFirstResponder(backlog[0])
+        check(window.firstResponder === backlog[0], "the first card did not take the keyboard", &ok)
+
+        // A refresh: a renamed card, a new card, and one moved to Done.
+        board.setTasks([.backlog: [task("a", "Write the incident runbook"), task("d", "Renew the cert")],
+                        .inProgress: [task("c", "Ship the fix", status: .inProgress)],
+                        .done: [task("b", "Rotate the keys", status: .completed)]],
+                       projects: [], theme: theme)
+        host.layoutSubtreeIfNeeded()
+        let backlogAfter = board.debugColumn(.backlog)?.debugCardViews ?? []
+        check(backlogAfter.first === backlog[0], "a refresh rebuilt a card whose task stayed in its lane", &ok)
+        check(backlog[0].debugRow.debugTitle == "Write the incident runbook",
+              "the kept card reads \(backlog[0].debugRow.debugTitle)", &ok)
+        check(window.firstResponder === backlog[0], "a refresh took the keyboard off the focused card", &ok)
+        check(board.debugColumn(.inProgress)?.debugCardViews.first === doing[0],
+              "a refresh rebuilt an unchanged lane's card", &ok)
+        check(backlogAfter.count == 2 && backlogAfter[1] !== backlog[1]
+              && backlogAfter[1].debugRow.debugTitle == "Renew the cert",
+              "the new task does not have a card of its own in Backlog", &ok)
+        let done = board.debugColumn(.done)?.debugCardViews ?? []
+        check(done.count == 1 && done[0].taskID == "b", "the moved task is not in Done", &ok)
+        if ok { print("  OK   cards kept by task id across a rename, an insert and a move, with keyboard focus") }
     }
 
     // MARK: Helpers

@@ -696,6 +696,7 @@ final class ShiftBoardColumnView: NSView {
     private let addButton = HelmButton(title: "Add task", variant: .quiet, size: .small, symbol: "plus")
 
     private var cardViews: [ShiftBoardCardView] = []
+    private lazy var cardRows = HelmKeyedRows(stack: cardsStack)
     private var bodyHeight: NSLayoutConstraint?
     private var theme: HelmTheme = ThemeManager.shared.theme
 
@@ -898,33 +899,33 @@ final class ShiftBoardColumnView: NSView {
         }
     }
 
-    /// Rebuilds this column's cards. Called on every board render - the cards
-    /// are cheap (`HelmAccentRow` is handed its theme rather than observing
-    /// one, so a rebuilt card registers nothing), and the bounded count is
-    /// what keeps the stack-of-permanent-rows shape safe here.
+    /// Shows this column's cards. Called on every board render.
+    ///
+    /// P2: keyed by task id - a task still in this lane keeps its card and is
+    /// reconfigured in place, only a task that arrived builds one, and only
+    /// one that left loses its card (`HelmKeyedRows`). So a refresh does not
+    /// flash the lane, and a card under the pointer keeps its hover.
     func setTasks(_ tasks: [ShiftTask], projects: [String: ShiftProject], theme: HelmTheme) {
         self.theme = theme
-        for view in cardsStack.arrangedSubviews {
-            cardsStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        cardViews.removeAll()
-
-        for task in tasks.prefix(Self.maxCards) {
+        cardRows.reconcile(Array(tasks.prefix(Self.maxCards)), key: \.id, make: { task in
             let cardView = ShiftBoardCardView()
+            // The handlers name the task by id, which is the card's key, so
+            // they stay right for as long as the card is kept.
+            let id = task.id
+            cardView.onOpen = { [weak self] in self?.onOpenTask?(id) }
+            cardView.onMove = { [weak self] target in self?.onMoveTask?(id, target) }
+            cardView.onDelete = { [weak self] in self?.onDeleteTask?(id) }
+            cardView.onPushDue = { [weak self] option in self?.onPushTaskDue?(id, option) }
+            cardView.onStartFocus = { [weak self] minutes in self?.onStartFocusTask?(id, minutes) }
+            return cardView
+        }, update: { [weak self] view, task in
+            guard let self, let cardView = view as? ShiftBoardCardView else { return }
             cardView.configure(task: task,
                                project: task.projectID.flatMap { projects[$0] },
-                               column: column,
+                               column: self.column,
                                theme: theme)
-            cardView.onOpen = { [weak self] in self?.onOpenTask?(task.id) }
-            cardView.onMove = { [weak self] target in self?.onMoveTask?(task.id, target) }
-            cardView.onDelete = { [weak self] in self?.onDeleteTask?(task.id) }
-            cardView.onPushDue = { [weak self] option in self?.onPushTaskDue?(task.id, option) }
-            cardView.onStartFocus = { [weak self] minutes in self?.onStartFocusTask?(task.id, minutes) }
-            cardsStack.addArrangedSubview(cardView)
-            cardView.widthAnchor.constraint(equalTo: cardsStack.widthAnchor).isActive = true
-            cardViews.append(cardView)
-        }
+        })
+        cardViews = cardRows.orderedRows.compactMap { $0 as? ShiftBoardCardView }
 
         header.countLabel.stringValue = "\(tasks.count)"
         let hidden = max(0, tasks.count - Self.maxCards)
