@@ -95,8 +95,43 @@ enum VaultSource {
     /// Reuses `UpdatesSource.check`/`.update` verbatim - the exact same brew
     /// cask logic the Updates and Bootstrap pages already run for this same
     /// catalog entry, never a second implementation.
-    static func checkInstall() -> CheckOutcome { UpdatesSource.check(dependencyItem) }
-    static func updateInstall() -> UpdateOutcome { UpdatesSource.update(dependencyItem) }
+    static func checkInstall() -> CheckOutcome {
+        if isolated("brew") {
+            return CheckOutcome(installedLabel: "\u{2014}", latestLabel: nil, status: .checkFailed,
+                                detail: isolationNote, log: "")
+        }
+        return UpdatesSource.check(dependencyItem)
+    }
+    static func updateInstall() -> UpdateOutcome {
+        if isolated("brew") {
+            return UpdateOutcome(ok: false, newVersionLabel: nil, detail: isolationNote, log: "")
+        }
+        return UpdatesSource.update(dependencyItem)
+    }
+
+    // MARK: Isolation (B4)
+
+    /// B4 of the Grand Line vs Automic Vault polish report: a self-test or
+    /// tour process never runs `av` - not the real one and not a stub on
+    /// `PATH`. The tour lab visiting this page used to run the captain's real
+    /// `av --version`, `av list` and `av doctor --json`, and `av list` is the
+    /// read that can put Automic Vault's approval prompt on their screen.
+    ///
+    /// This is deliberately *above* `ExternalToolGuard`, which still lets a
+    /// stub in a temp directory run: nothing this page reads is a fixture a
+    /// suite needs, so here even a stub is refused, and
+    /// `ExternalToolGuardSelfTest` asserts zero launches against one.
+    ///
+    /// Every refusal reads as unknown, never as empty - GL-14: "0 secrets"
+    /// from a process that did not look would be a false statement.
+    private static func isolated(_ tool: String) -> Bool {
+        guard ExternalToolGuard.isActive else { return false }
+        ExternalToolGuard.report("Automic Vault is never read from a self-test or tour process",
+                                 executable: tool, argumentCount: 0)
+        return true
+    }
+
+    static let isolationNote = "Not read - this is a self-test or tour process, which never runs Automic Vault's av"
 
     /// Full read-only snapshot: whether `av` is on PATH, every saved secret
     /// name (`av list`), and every registered launcher tool's hardening
@@ -104,6 +139,9 @@ enum VaultSource {
     /// use of the sibling `av hardeners --json`). Safe to call from a
     /// background queue; never touches the main thread.
     static func loadSnapshot() -> VaultSnapshot {
+        if isolated("av") {
+            return VaultSnapshot(availability: .checkFailed(isolationNote), secrets: nil, tools: nil, log: isolationNote)
+        }
         guard let av = resolveExecutable("av") else {
             // Not a failed read: `av` genuinely is not here, which the page
             // states on its own. Empty rather than nil.
@@ -173,6 +211,7 @@ enum VaultSource {
     /// attention" (GL-14). `av doctor` exits non-zero whenever it has issues
     /// to report, so the parse is the test here too, never the exit code.
     static func loadToolStatus() -> [VaultTool]? {
+        if isolated("av") { return nil }
         guard let av = resolveExecutable("av") else { return nil }
         return parseDoctorTools(run(av, ["doctor", "--json"]).stdout)
     }
@@ -362,6 +401,8 @@ enum VaultSource {
     /// state - and never blocks: `open` returns almost immediately
     /// regardless of whether the launched app has finished starting.
     static func ensureServiceRunning() {
+        // Starting Automic Vault's approval service launches its app.
+        if isolated("open") { return }
         guard !isServiceRunning() else { return }
         Subprocess.run(executable: "/usr/bin/open",
                        arguments: ["-g", "-a", "Automic Vault"],
@@ -380,6 +421,9 @@ enum VaultSource {
     /// makes, just without the heavier `--version`/`doctor --json` calls the
     /// full Vault-page snapshot also needs.
     static func checkAppPasswordConfigured() -> AppPasswordAvailability {
+        // Unknown, not "not installed" or "not configured": this process did
+        // not look.
+        if isolated("av") { return .transientFailure }
         guard let av = resolveExecutable("av") else { return .avUnavailable }
         guard let result = runWithTimeout(av, ["list"], timeout: appPasswordCheckTimeout) else {
             // Didn't return at all within the timeout - see
@@ -412,6 +456,7 @@ enum VaultSource {
     /// environment, never spliced into the shell command text or argv, so it
     /// never appears in a process listing's command column.
     static func verifyAppPassword(_ typed: String) -> Bool {
+        if isolated("av") { return false }
         guard let av = resolveExecutable("av") else { return false }
         // The typed candidate travels as an environment variable, never argv -
         // `Subprocess`'s `extraEnv` is the one channel for that, and its own

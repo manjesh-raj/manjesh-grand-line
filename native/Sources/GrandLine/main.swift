@@ -3614,6 +3614,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_STARTUP_SNIPPET_GATE_TESTS"] == "
     exit(StartupSnippetGateSelfTest.run() ? 0 : 1)
 }
 
+// B4 of the Grand Line vs Automic Vault polish report: a self-test or tour
+// process never starts the captain's real `av`, `brew`, `gh`, `herdr` or
+// firstmate scripts. Recording stubs first on PATH, asserting zero launches.
+// Pure logic. See ExternalToolGuardSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_EXTERNAL_TOOL_GUARD_TESTS"] == "1" {
+    exit(ExternalToolGuardSelfTest.run() ? 0 : 1)
+}
+
 // GL-29 (Phase 3): `FleetDataSource`/`OpenPRsSource` - the pair behind Overview
 // and Review, including the merge action's argv. See
 // `FleetDataSelfTest.swift`'s header.
