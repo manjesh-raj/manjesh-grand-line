@@ -770,6 +770,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// cards from *every* rebuild cycle over a long, repeated session
     /// actually deallocate, rather than inferring it from one proxy signal.
     static var debugLiveInstanceCount = 0
+    /// P7: the card surface's border, as painted.
+    var debugSurfaceBorderColor: CGColor? { card.layer?.borderColor }
     #endif
 
     override init(frame frameRect: NSRect) {

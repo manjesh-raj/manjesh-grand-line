@@ -89,7 +89,8 @@ enum HelmField {
     /// The field border opacity - the same step fainter than the card outline
     /// that `HelmCard.dividerAlpha` uses, so a field inside a card reads as
     /// nested rather than as a second card.
-    static let borderAlpha: CGFloat = 0.5
+    /// Full strength under Increase Contrast (P7).
+    static var borderAlpha: CGFloat { HelmDisplayAccessibility.edgeAlpha(0.5) }
 
     /// A larger single-line well, for the one place an input *is* the surface:
     /// the ⌘K palette's query line and ⌥Space quick capture, both of which are
@@ -157,9 +158,9 @@ enum HelmField {
     /// it would erase the only edge a white-on-paper well has (the same
     /// reasoning `HelmCard.applyCardSurface` records for the card outline).
     static func border(_ theme: HelmTheme) -> NSColor {
-        theme.isDaylight
+        HelmDisplayAccessibility.strengthenedEdge(theme.isDaylight
             ? HelmTheme.nsColor(theme.chromeLineHex)
-            : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(borderAlpha)
+            : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(borderAlpha), theme: theme)
     }
 
     /// The colour text takes **on a field**, which is not the same as ink on

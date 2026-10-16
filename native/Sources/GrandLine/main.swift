@@ -3262,6 +3262,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS"] == "1"
     exit(PageLoadOffMainSelfTest.run() ? 0 : 1)
 }
 
+// P7 of the same report: Increase Contrast and Reduce Transparency, read
+// through HelmDisplayAccessibility. Window-backed. See
+// DisplayAccessibilitySelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DISPLAY_ACCESSIBILITY_TESTS"] == "1" {
+    exit(DisplayAccessibilitySelfTest.run() ? 0 : 1)
+}
+
 // P2 of the same report: a refresh updates rows and cards in place, keeping
 // the same objects. Window-backed. See KeyedRefreshSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_KEYED_REFRESH_TESTS"] == "1" {

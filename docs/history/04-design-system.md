@@ -715,3 +715,37 @@ The refresh case pins the legacy style before seeding, so a runner switching sty
 `HomeFitSelfTest`'s right-edge check expected "the window less the page gutter".
 It failed on `main` as well as here when run with `-AppleShowScrollBars Always` (an argument-domain setting for that one process), off by exactly the 17pt a legacy scroller takes.
 It now expects the clip view less the page gutter, and a width-blind in-place path still fails it in both scroller modes.
+
+## Increase Contrast and Reduce Transparency (polish report P7)
+
+The app read Reduce Motion through `HelmMotion.isReduced` and ignored the two other settings in Accessibility > Display.
+
+### What changed
+
+- `HelmDisplayAccessibility` (in `HelmMotion.swift`) reads Increase Contrast and Reduce Transparency, fresh every time, with test overrides.
+- Under Increase Contrast, the shared edge tokens go to full strength: `HelmCard.borderAlpha` and `dividerAlpha`, `HelmAccentRow.borderAlpha` and `HelmField.borderAlpha`.
+  The shared edge colours also step 40% toward the theme's ink (`strengthenedEdge`): the card outline, the card divider, the flat-row border, the field border and the side-panel edge.
+  Daylight's edges were already at full alpha, so alpha alone would have changed nothing there.
+- Under Reduce Transparency, the bar drops its material and paints its opaque surface, as it already did on the legacy palettes.
+  Every other `NSVisualEffectView` is left to AppKit, which renders a material opaque under this setting by itself.
+  The bar is the one place a translucent tint sits over a material, so it has to choose.
+- `ThemeManager` re-fires every theme observer when the display options change, through the same `reapplyCurrentTheme` a text-size change uses.
+
+### A dead observer, twice
+
+macOS posts `accessibilityDisplayOptionsDidChangeNotification` to `NSWorkspace`'s own notification center.
+The dictation HUD and the lock screen both observed it on `NotificationCenter.default`, where it never arrives.
+So toggling Reduce Motion with either one showing did nothing until the next state change.
+Both now go through `HelmDisplayAccessibility.observeChanges`, and a source guard fails the run on an observer of this notification on the default center.
+
+### Verified
+
+`FM_RUN_DISPLAY_ACCESSIBILITY_TESTS` (window-backed) asserts what is painted, in both states of each setting:
+
+- 78 edges (card, field and side panel in all 26 palettes) are opaque and measurably stronger against their surface under Increase Contrast;
+- the Daylight bar shows its material and a 0.72 fill normally, and hides the material with an opaque fill under Reduce Transparency;
+- a mounted module card repaints its edge from the `NSWorkspace` notification alone;
+- no source observes the notification on the default center (it found the lock screen's).
+
+Confirmed by injection: no strengthening, a bar that ignores Reduce Transparency, and a `ThemeManager` with no observer each fail by name.
+Not verified: the system settings themselves, which no API can set, and how the strengthened edges look on a real display.
