@@ -293,6 +293,14 @@ enum Subprocess {
     ) -> SubprocessResult {
         _ = ignoreSIGPIPE
         let name = label ?? (executable as NSString).lastPathComponent
+        // B4: a self-test or tour process never starts the captain's own
+        // tools. Refused as a launch failure, which every caller already
+        // handles as "not available". See `ExternalToolGuard`.
+        if let reason = ExternalToolGuard.refusal(executable: executable, arguments: arguments) {
+            ExternalToolGuard.report(reason, executable: executable, argumentCount: arguments.count)
+            log.error("\(name, privacy: .public) refused in a self-test or tour process")
+            return .launchFailure("refused in a self-test or tour process: \(reason)")
+        }
         let started = Date()
 
         let proc = Process()
@@ -631,6 +639,11 @@ enum Subprocess {
     ) -> Bool {
         _ = ignoreSIGPIPE
         let name = label ?? (executable as NSString).lastPathComponent
+        if let reason = ExternalToolGuard.refusal(executable: executable, arguments: arguments) {
+            ExternalToolGuard.report(reason, executable: executable, argumentCount: arguments.count)
+            log.error("\(name, privacy: .public) refused in a self-test or tour process")
+            return false
+        }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: executable)
         proc.arguments = arguments
