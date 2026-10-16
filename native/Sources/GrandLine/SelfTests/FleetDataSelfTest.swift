@@ -50,10 +50,32 @@ enum FleetDataSelfTest {
         checkParseRemote(&ok)
         checkClassify(&ok)
         checkDegradedFetch(&ok)
+        checkNeedsYouCopyAgrees(&ok)
         print(ok ? "FleetDataSelfTest: all checks passed" : "FleetDataSelfTest: FAILED")
         return ok
     }
 
+
+    // MARK: The "needs you" headline
+
+    /// The polish report's B3: the headline read "1 task need your call".
+    /// Both counts, because a fix that only special-cased one would still
+    /// read wrong at the other.
+    private static func checkNeedsYouCopyAgrees(_ ok: inout Bool) {
+        print("\n-- the needs-you headline agrees with its count --")
+        func waiting(_ count: Int) -> [FleetTask] {
+            (0..<count).map { index in
+                var task = FleetTask(id: "t\(index)", repo: "manjesh-grand-line", kind: "ship", pr: nil)
+                task.status = "needs_decision"
+                return task
+            }
+        }
+        let one = FleetGreeting.answer(tasks: waiting(1), readyCount: 0, prFetchFailure: nil, homeOk: true)
+        check(one.title == "1 task needs your call", "one waiting task reads \"\(one.title)\"", &ok)
+        let two = FleetGreeting.answer(tasks: waiting(2), readyCount: 0, prFetchFailure: nil, homeOk: true)
+        check(two.title == "2 tasks need your call", "two waiting tasks read \"\(two.title)\"", &ok)
+        if ok { print("  OK   \"1 task needs\", \"2 tasks need\"") }
+    }
 
     // MARK: mergedPRs
 

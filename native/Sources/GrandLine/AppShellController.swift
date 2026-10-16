@@ -1652,6 +1652,17 @@ final class AppShellController: NSViewController {
             // the one way this could read as a layout bug rather than as a
             // saving.
             for pin in pins where !pin.isActive { pin.isActive = true }
+            // And lay the page out at the container's *current* size before
+            // it is shown. Unhiding is what makes AppKit send the page its
+            // `viewWillAppear`, synchronously, and a page whose pins were
+            // only just re-activated still holds the frame it had when it
+            // was hidden. Home's `viewWillAppear` rebuilds its grid from its
+            // own clip width, so after a resize on another page it built the
+            // grid for the old width and nothing rebuilt it: the polish
+            // report's B1, measured as a Morning briefing column at maxX
+            // 1488 in an 1100pt window. The page itself, not the container,
+            // so the other mounted pages are not laid out for nothing.
+            destinationView.layoutSubtreeIfNeeded()
             destinationView.isHidden = false
             destinationView.needsLayout = true
         } else {

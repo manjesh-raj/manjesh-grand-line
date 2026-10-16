@@ -901,7 +901,9 @@ enum FleetGreeting {
         return Answer(
             tint: .warn,
             kicker: "Needs you",
-            title: "\(needs.count) task\(needs.count > 1 ? "s" : "") need your call",
+            // The verb agrees with the count: "1 task needs", "2 tasks need"
+            // (the polish report's B3 caught the singular reading "need").
+            title: needs.count == 1 ? "1 task needs your call" : "\(needs.count) tasks need your call",
             meta: bits.joined(separator: " \u{00B7} ") + " - the crew is holding for you.",
             badgeSymbol: "exclamationmark.triangle.fill",
             isSetupPrompt: false,

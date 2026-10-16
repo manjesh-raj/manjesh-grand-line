@@ -75,6 +75,8 @@ enum HomeFitSelfTest {
             checkTheListScrollsInsideItsCard(shell: shell, window: window, &ok)
             checkLargerTextFallsBackToScrolling(shell: shell, window: window, &ok)
             checkHealthListsServicesWhenThereIsRoom(shell: shell, window: window, &ok)
+            // Last: it leaves the window at its smaller size.
+            checkAResizeOnAnotherPageReachesHome(shell: shell, window: window, &ok)
         }
 
         print(ok ? "HomeFitSelfTest: all checks passed" : "HomeFitSelfTest: FAILED")
@@ -96,6 +98,89 @@ enum HomeFitSelfTest {
             canvas.debugRenderNow()
             shell.view.layoutSubtreeIfNeeded()
         }
+    }
+
+    // MARK: 5. A resize on another page still reaches Home
+
+    /// The polish report's B1, in the tour it was found with: Home at
+    /// 1512x950, go to Settings, resize to 1100x720, come back. Home's grid is
+    /// built from its own clip width, its resize observer is gated off while
+    /// it is hidden (GL-20), and on the way back `viewWillAppear` rebuilt the
+    /// grid **before** the page had been laid out at its new width - so the
+    /// Morning briefing column stayed at maxX 1488 in an 1100pt window.
+    ///
+    /// No `debugRenderNow()` and no second pass here, deliberately: the
+    /// fixture above lays out twice to settle a fresh grid, and doing that on
+    /// the return would re-render Home at the right width and hide the bug.
+    /// One `layoutSubtreeIfNeeded()`, which is what the next display cycle
+    /// does in the real app. The window is ordered in (`run()`), which is what
+    /// makes AppKit send `viewWillAppear` on the unhide at all.
+    private static func checkAResizeOnAnotherPageReachesHome(shell: AppShellController, window: NSWindow,
+                                                              _ ok: inout Bool) {
+        print("\n-- B1: a resize while another page shows still reaches Home --")
+        // Narrower: a grid left at the old width reaches past the window.
+        replay(from: NSSize(width: 1512, height: 950), to: NSSize(width: 1100, height: 720),
+               shell: shell, window: window, &ok)
+        // Wider: a grid left at the old width sits in the middle of the
+        // window with its narrow-column layout - measured on main, Home came
+        // back from 960 to 1512 still showing 9 of 22 merge rows in compact
+        // cards. Nothing reaches past the window there, so "fills it" is the
+        // half that can see it.
+        replay(from: NSSize(width: 960, height: 620), to: NSSize(width: 1512, height: 950),
+               shell: shell, window: window, &ok)
+    }
+
+    private static func replay(from start: NSSize, to end: NSSize,
+                               shell: AppShellController, window: NSWindow, _ ok: inout Bool) {
+        let label = "\(Int(start.width))x\(Int(start.height)) -> \(Int(end.width))x\(Int(end.height))"
+        show(rows: 3, at: start, shell: shell, window: window)
+        let startReach = cardFrames(in: shell.debugHomeCanvas.view).map(\.maxX).max() ?? 0
+        // The fixture's own discriminating power: the grid's right edge at the
+        // start size is far from where it must be at the end size, so a grid
+        // left behind is something this can see.
+        let endRightEdge = end.width - HomeCanvasController.gutter
+        check(abs(startReach - endRightEdge) > 50,
+              "\(label): the grid's right edge at the start size (\(startReach)) is within 50pt of the end size's - this proves nothing",
+              &ok)
+
+        shell.show(.settings)
+        shell.view.layoutSubtreeIfNeeded()
+        var frame = window.frame
+        frame.size = end
+        window.setFrame(frame, display: false)
+        shell.view.layoutSubtreeIfNeeded()
+        shell.show(.homeCanvas)
+        shell.view.layoutSubtreeIfNeeded()
+
+        let contentWidth = window.contentLayoutRect.width
+        let frames = cardFrames(in: shell.debugHomeCanvas.view)
+        let reach = frames.map(\.maxX).max() ?? 0
+        check(!frames.isEmpty, "\(label): Home has no module cards after the return", &ok)
+        let past = frames.filter { $0.maxX > contentWidth + 0.5 }
+        check(past.isEmpty,
+              "\(label): back on Home after a resize on Settings, \(past.count) card(s) reach past the \(contentWidth)pt window "
+              + "(rightmost maxX \(reach)) - the grid was built for the old width",
+              &ok)
+        check(abs(reach - (contentWidth - HomeCanvasController.gutter)) <= 1,
+              "\(label): back on Home the grid's right edge is at \(reach), expected \(contentWidth - HomeCanvasController.gutter) "
+              + "(the window less the page gutter) - the grid was built for the old width",
+              &ok)
+        if past.isEmpty, abs(reach - (contentWidth - HomeCanvasController.gutter)) <= 1 {
+            print("  OK   \(label): the grid fills the \(contentWidth)pt window and ends at \(reach)")
+        }
+    }
+
+    /// Every module card under `root`, in window coordinates.
+    private static func cardFrames(in root: NSView) -> [NSRect] {
+        var out: [NSRect] = []
+        func walk(_ view: NSView) {
+            if view is HelmModuleCard, !view.isHiddenOrHasHiddenAncestor {
+                out.append(view.convert(view.bounds, to: nil))
+            }
+            view.subviews.forEach(walk)
+        }
+        walk(root)
+        return out
     }
 
     // MARK: 2. The list scrolls inside its card
