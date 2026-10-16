@@ -203,7 +203,7 @@ final class NeedsAttentionCard: NSView {
     static let clearLeadWidth: CGFloat = 560
     /// The compact headline's line limit. Three rather than the board's two:
     /// measured in a 293pt column, the captain's own two-clause verdict
-    /// ("Five things are late, and 1 task need your call.") needs three
+    /// ("Five things are late, and 1 task needs your call.") needs three
     /// lines at 15pt, and a verdict cut mid-sentence is the one thing the
     /// compact header exists to avoid.
     static let compactHeadlineLines = 3
