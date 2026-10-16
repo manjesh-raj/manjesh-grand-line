@@ -148,6 +148,11 @@ final class VaultController: NSViewController, DaylightDrillActions {
             return "Automic Vault isn't installed on this machine yet"
         }
         guard let secrets, let tools else {
+            // B4: a self-test or tour process never runs `av`, so the honest
+            // reason is that, not a helper the captain should go restart. A
+            // tour render of this page must not send a reviewer looking for a
+            // fault that is not there. Never true in the app the captain runs.
+            if hasLoadedOnce, ExternalToolGuard.isActive { return VaultSource.isolationNote }
             // B1: three genuinely different things, said differently.
             return hasLoadedOnce
                 ? "Couldn\u{2019}t read Automic Vault - its approval helper may not be running"
@@ -579,7 +584,9 @@ final class VaultController: NSViewController, DaylightDrillActions {
         // which is the thing the captain actually has to go restart.
         addEmptyState(to: stack,
                       symbol: "exclamationmark.triangle",
-                      text: "Couldn\u{2019}t read \(noun) from Automic Vault. Its approval helper may not be running - check the \u{201c}Automic Vault\u{201d} menu bar app, then Refresh.")
+                      text: ExternalToolGuard.isActive
+                          ? "\(VaultSource.isolationNote)."
+                          : "Couldn\u{2019}t read \(noun) from Automic Vault. Its approval helper may not be running - check the \u{201c}Automic Vault\u{201d} menu bar app, then Refresh.")
     }
 
     /// D3's placeholder for a card whose list has not arrived.
