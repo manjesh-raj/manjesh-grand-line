@@ -68,3 +68,37 @@
 - **`screencapture` works from an agent shell on this machine now**, which AGENTS.md's "Verifying native UI bugs without a real screenshot" section says it does not. Screen Recording has since been granted to the shell, so real screenshots and real per-window captures are available; the env-gated-instrumentation substitute is still the right tool for geometry, but it is no longer the only one. `screencapture -x` (whole screen) and `screencapture -x -o -l <id>` (one window, alpha preserved) both return real content.
 - **Verified** by `swift build`, `FM_RUN_FULL_SCREEN_MENU_BAR_FILL_TESTS` and the full `./Scripts/run-all-tests.sh`, plus the live probe-app captures above in Dusk and Daylight (before: `(0,0,0)` for the top 33pt; after: the theme's own ground, `(25,26,31)` and `(244,242,235)` respectively, from row 0 down to the bar). **Three injected regressions reproduced by name** (file copies, never `git stash`): the level lowered to 23 (fails both the level check and the constraining check), the hover yield unhooked (fails the yield check twice), and the non-full-screen early return removed (fails the "no fill outside full screen" check). A fourth candidate - an explicit `constrainFrameRect` override - was **removed rather than kept**: measured, level 25 already exempts the panel, so the override could not fail and this file's own "a check that cannot fail is worse than no check" applies to the code as well as the test.
 - **Not verified**: the live half was measured on the *probe* app (`Scripts/build-probe-app.sh`), never by driving the captain's own instance, and the probe is `LSUIElement` so it has no menu bar of its own to reveal - the reveal was confirmed by the system titlebar sliding down, not by seeing menu titles. The Settings page specifically was not captured under the fix: navigating the probe to Settings blocks on a Keychain ACL prompt (`GoogleOAuthClientStore.read`) because each probe build is a new ad-hoc signature. Neither gap is about the band, which is page-independent by construction.
+
+## A page comes back at the window's size (polish report B1)
+
+The Grand Line vs Automic Vault polish report (2026-10-16) found Home keeping a stale layout after a resize on another page.
+Tour: Home at 1512x950, go to Settings, resize to 1100x720, go back to Home.
+The Morning briefing and Merge queue column ended at maxX 1488 in an 1100pt window.
+
+### What it actually was
+
+The report's likely cause was right, and measuring it showed two more things.
+
+- `AppShellController.setDestinationVisible` re-activates a page's pins and unhides it in the same breath.
+  Unhiding is what makes AppKit send the page's `viewWillAppear`, synchronously, and at that moment the page still holds the frame it had when it was hidden.
+  Home's `viewWillAppear` rebuilds its grid from its own clip width, so it read 1512 while its container was already 1100.
+  Its resize observer had skipped the resize because the page was hidden (GL-20), so nothing rebuilt it afterwards.
+- The same thing happens in the other direction.
+  Back from 960 to 1512, Home kept its 960 grid in the middle of the window, with compact cards and 9 of 22 merge rows.
+  Nothing reaches past the window there, so a "past the window" probe alone cannot see it.
+- In a window that has never been ordered in, AppKit sends no `viewWillAppear` at all on an unhide.
+  The tour lab's default window is one of those, so a tour that does not start with `orderfront` never re-renders any page on return.
+  That is a property of the lab rather than of the app; the reproduction that matches the real app orders the window in.
+
+### The fix
+
+The shell lays the page out (`destinationView.layoutSubtreeIfNeeded()`) after re-pinning it and before unhiding it.
+Every page's `viewWillAppear` now sees its real size, not only Home's.
+Only the page itself is laid out, not the container, so the other mounted pages are not laid out for nothing (gotcha (15)).
+
+### Verified
+
+`FM_RUN_HOME_FIT_TESTS` replays the tour in both directions, with no extra render call on the way back, since one would re-render Home at the right width and hide the bug.
+It checks that no card reaches past the window and that the grid's right edge is the window less the page gutter.
+Confirmed by injection: without the shell's layout line it fails 1512->1100 at maxX 1488 and 960->1512 at a right edge of 1212 against 1488.
+Tour-lab renders in Daylight and Dusk for 1512->1100, 1512->960 and 960->1512 measure "nothing reaches past the window" on the branch and the report's numbers on `f863645`.
