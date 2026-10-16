@@ -245,6 +245,14 @@ enum PageLoadOffMainSelfTest {
         check(store.links.contains { $0.url.contains("arrived-from-a-pull") },
               "the link that arrived on disk never reached the list", &ok)
 
+        // A revisit that finds nothing changed keeps the cards it has.
+        let rebuildsBefore = controller.debugGridRebuildCount
+        _ = revisit(controller)
+        store.debugBackgroundReload.debugDrainQueue()
+        pump(timeout: 0.3) { false }
+        check(controller.debugGridRebuildCount == rebuildsBefore,
+              "an unchanged revisit rebuilt the card grid \(controller.debugGridRebuildCount - rebuildsBefore) time(s)", &ok)
+
         // An edit while a read is in flight.
         store.reloadAllInBackground {}
         _ = store.add("https://example.com/saved-while-a-read-was-in-flight")

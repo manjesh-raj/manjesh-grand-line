@@ -226,8 +226,16 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
     override func viewWillAppear() {
         super.viewWillAppear()
         // P11: a revisit reads the list off the main thread and keeps the page
-        // as it was until the read lands.
-        store.reloadAllInBackground { [weak self] in self?.renderAfterReload() }
+        // as it was until the read lands - and when the read finds nothing
+        // changed, keeps the cards it has. Rebuilding 400 cards costs ~1.3s on
+        // the main thread, which on an unchanged revisit bought nothing.
+        let before = store.links
+        let wasFailed = store.isInFailedLoadState
+        store.reloadAllInBackground { [weak self] in
+            guard let self else { return }
+            if self.hasLoaded, self.store.links == before, self.store.isInFailedLoadState == wasFailed { return }
+            self.renderAfterReload()
+        }
     }
 
     deinit {
@@ -721,7 +729,16 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
         sidebar.select(filter.id)
     }
 
+    #if FM_SELFTESTS
+    /// How many times the card grid has been rebuilt, for
+    /// `PageLoadOffMainSelfTest`'s unchanged-revisit check.
+    private(set) var debugGridRebuildCount = 0
+    #endif
+
     private func rebuildGrid() {
+        #if FM_SELFTESTS
+        debugGridRebuildCount += 1
+        #endif
         for row in gridStack.arrangedSubviews {
             gridStack.removeArrangedSubview(row)
             row.removeFromSuperview()
