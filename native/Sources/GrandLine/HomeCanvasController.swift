@@ -355,10 +355,10 @@ final class HomeCanvasController: NSViewController {
     /// nature: `ServiceHealthRegistry` reports `markRunning` and then a
     /// verdict for each service in a poller pass, and a single dictation goes
     /// recording -> transcribing -> cleaning up -> ready in a few seconds.
-    /// A render rebuilds fifteen cards, so answering every one of those
-    /// individually would be real, visible work for a page whose content only
-    /// changes once. One flag plus a main-queue hop collapses a burst into a
-    /// single rebuild.
+    /// A render reconfigures every card (and rebuilds them when the layout
+    /// changed), so answering every one of those individually would be real,
+    /// visible work for a page whose content only changes once. One flag plus
+    /// a main-queue hop collapses a burst into a single render.
     private var renderPending = false
 
     init(sources: Sources) {
@@ -1767,7 +1767,8 @@ final class HomeCanvasController: NSViewController {
     private func refreshQuotaTapped() {
         guard !isRefreshingQuota else { return }
         isRefreshingQuota = true
-        // `setNeedsRender`, not `render()`: a render rebuilds every card, and
+        // `setNeedsRender`, not `render()`: a render can rebuild every card
+        // (it does whenever the layout changed), and
         // this is running *inside* the button's own target/action - tearing
         // the button out of the view hierarchy from its own action is the
         // shape of bug this codebase has already paid for once

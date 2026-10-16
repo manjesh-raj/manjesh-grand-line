@@ -626,3 +626,61 @@ Quick Capture and `HelmConfirm` are covered as primitives plus source guards, be
 Confirmed by injection: the old instant close, a page with an unconditional `scrollToTop()`, and a `show(_:)` with no crossfade call each fail by name.
 
 Not verified: how the fades look on a real display.
+
+## Refresh in place instead of rebuilding (polish report P2)
+
+The polish report found that most of this app's lists were an `NSStackView` emptied and refilled on every refresh.
+Home rebuilt its whole grid on every render and every visit, Fleet rebuilt its stat tiles and task rows, and the Tasks board, the notification list and the compact popover rebuilt their rows.
+A rebuilt row loses its hover, its keyboard focus and anything typed into it, re-solves its constraints, and makes the list flash.
+
+### What changed
+
+- `HelmKeyedRows` is the one reconciler for that shape.
+  Rows are keyed by a stable id.
+  A key still in the list keeps its row and is updated in place, only a new key builds a row, and only a key that left removes one.
+  Rows are moved only when their order changed.
+  After the first fill, a new row fades in on the motion table's state duration (instant under Reduce Motion).
+  A row that leaves goes at once, so the stack's arranged subviews always match the data synchronously, which is what suites and the key view loop read.
+- The `update` closure must configure a row completely from its item, because it runs for new and kept rows alike.
+  That is what makes "updated in place" and "built fresh" render the same.
+  So each row type that lacked one gained a `configure`: `NotificationRowView`, `CompactTaskRowView` and `CompactNoteRowView`.
+  `HelmStatTile` gained `setSymbol`.
+- A kept row under the pointer has to keep its hover-dependent state, so `HoverHighlightView.isHovering` is now readable (`private(set)`).
+  `NotificationRowView.configure` uses it to keep its hover action showing.
+- Handlers on a kept row must not capture a stale item.
+  The board and the compact rows capture only the id, which is their key.
+  The notification row's handlers are reset in `configure`, and an expanded children block looks its child up by id at click time.
+- Home is not a list, so it does not use the reconciler.
+  `HomeCanvasController.rebuildGrid` records a `GridLayoutKey` (space, modules, dashboard or shelf, width, the hub's height, and the shelf's height-exempt cards' own heights).
+  A render with the same key reconfigures the existing cards and moves the hub's own-height constants with the content.
+  Anything else rebuilds as before.
+  The hub's data-dependent decisions (Fleet's note, Health's service list, the Merge queue's row count) moved into one `dashboardPlan`, measured from probe cards, so a build and an in-place refresh agree on every number.
+
+### Measured
+
+Median wall time of one refresh, 30 refreshes each, debug build, off-screen windows:
+
+| Surface | Before | After |
+| --- | --- | --- |
+| Home (a fleet refresh, demo data) | 146ms | 122ms |
+| Fleet (12 in-flight tasks, one changes) | 51ms | 16ms |
+| Notifications (20 entries, one changes) | 70ms | 29ms |
+| Tasks board (3 lanes of 8 cards, one changes) | 71ms | 10ms |
+
+Home's in-place refresh still spends about 70ms in the plan's probe-card measurements.
+Reusing one measuring card for all of them was tried and was slower (about 105ms), because reconfiguring a card that already has a body costs more than building a new one.
+
+### Verified
+
+`FM_RUN_KEYED_REFRESH_TESTS` (window-backed) asserts identity, not timing: the same card and row objects survive a real refresh, show the new data, and a new or removed item gets or loses its own row.
+Home's case also asserts that its in-place grid lays out exactly like a fresh build, card by card.
+`NotificationCenterRedesignSelfTest`'s PF3 check used to assert that a real change rebuilds the list, and now asserts that the new entry gets its own row and the rows already listed are kept.
+
+Confirmed by injection:
+
+- Home's own-height constants left unchanged on an in-place refresh: two cards' frames differ from a fresh build (469 vs 164pt, 429 vs 124pt tall).
+- A fresh reconciler per refresh (the old rebuild), in Fleet's needs-you list, the notification list, the board and the compact panes: each fails its identity checks by name.
+- The notification row resetting its hover in `configure`, the needs-you button not flipping to Cancel, and a compact row not taking its new model: each fails by name.
+
+Tour-lab renders of Home, Home after `demo refresh`, Fleet with an open reply, and the Tasks board, at 960x620, 1100x720 and 1512x950 in Daylight and Dusk, are pixel-identical before and after, and so is every `measurewindow` reading.
+Not verified: how a new row's fade looks on a real display, and the notification and compact popovers in a real `NSPopover`.

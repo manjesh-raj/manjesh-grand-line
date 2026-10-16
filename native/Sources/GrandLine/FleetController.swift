@@ -286,9 +286,8 @@ final class FleetController: NSViewController {
     // hand the extension more than it needs.
     var currentTheme: HelmTheme { theme }
     /// The needs-your-call rows keep their own list rather than joining
-    /// `accentRows`: that one is cleared by `render`, while these are also
-    /// rebuilt whenever a composer opens or closes, and a shared array would
-    /// accumulate orphaned rows across those re-lays.
+    /// `accentRows`: the two are reconciled by different keyed lists, and each
+    /// array is reset from its own list's rows on every pass.
     var needsAccentRows: [HelmAccentRow] = []
     /// P2: the "needs you" list, keyed by task id (`rebuildNeedsRows`).
     lazy var needsRows = HelmKeyedRows(stack: needsStack)

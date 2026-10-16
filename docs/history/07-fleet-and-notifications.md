@@ -1491,3 +1491,17 @@ Injected regressions, each restored from a copy taken aside:
 What was not verified: no real window was opened, so the guard's restore against a real screen's visible frame, and how it looks to the captain, are their check.
 The guard's restore from inside a resize runs on the next main-queue turn, which the suite does not pump.
 Only the restore on navigation is asserted.
+
+## Fleet, Home and the notification list refresh in place (polish report P2)
+
+The shared mechanism is `HelmKeyedRows`, and the full account is in [`04-design-system.md`](04-design-system.md)'s P2 section.
+What is specific to these surfaces:
+
+- Fleet's six stat tiles, its in-flight rows and its needs-you rows are keyed (by tile and by task id).
+  An open Reply composer is its own entry, keyed by the composer view's identity rather than by its task, so a composer closed and reopened between two refreshes is the new view.
+  A kept needs-you row flips its own button between Reply and Cancel through `needsReplyButtons`.
+- Home keeps its module cards whenever the layout key is unchanged, which covers a fleet refresh and a revisit.
+  A resize, a space change or a change in the shelf's height-exempt card still rebuilds.
+- The notification list keys rows, group headers, hairlines and expanded children by entry id.
+  The headers, hairlines and children blocks became small view classes (`NotificationGroupHeaderView`, `NotificationListSeparatorView`, `NotificationChildrenView`) so a kept one can still be repainted on a theme change.
+  PF3's signature short-circuit is unchanged and still runs first.

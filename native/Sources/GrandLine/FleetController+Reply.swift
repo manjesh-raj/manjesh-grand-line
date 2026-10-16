@@ -77,10 +77,10 @@ extension FleetController {
         return section
     }
 
-    /// Rebuild the needs-decision/blocked rows. An already-open composer is
-    /// re-inserted rather than rebuilt, so a refresh landing mid-sentence
-    /// (Refresh, or simply navigating back to Overview) never discards what
-    /// the captain has typed.
+    /// Show the needs-decision/blocked rows. A parked task keeps its row,
+    /// and an already-open composer keeps its place under it, so a refresh
+    /// landing mid-sentence (Refresh, or simply navigating back to Overview)
+    /// never discards what the captain has typed.
     func rebuildNeedsRows(_ tasks: [FleetTask]) {
         needsCountLabel.stringValue = "\(tasks.count)"
         // The section is a list of things needing an answer; with none, the

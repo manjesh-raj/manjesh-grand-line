@@ -674,11 +674,10 @@ final class NotificationPanelViewController: NSViewController {
 
     // MARK: - Building the list
 
-    /// Rebuilds every row from the current store state. Always small by design
-    /// (see this file's header), so a full rebuild on every change stays
-    /// simpler and cheaper than an incremental diff - what the redesign added
-    /// is that selection and expansion survive it, because both live in this
-    /// controller rather than in the views being thrown away.
+    /// Draws the list from the current store state. Selection and expansion
+    /// live in this controller rather than in the row views, and since P2 of
+    /// the polish report the views themselves are kept too: rows are keyed by
+    /// entry id (`listRows`), so a change to one entry updates that one row.
     /// PF3 of the 2026-09-25 full review: the store re-notifies every observer
     /// on **every** publish - and every source re-publishes its own freshly
     /// computed truth on every poll - so with the panel open this tore down and
@@ -686,14 +685,13 @@ final class NotificationPanelViewController: NSViewController {
     /// expanded child view several times a minute, almost always to draw
     /// exactly the same list again.
     ///
-    /// A full rebuild is still the right shape for a list this small (see the
-    /// note on `reload()`), so what changed is *when* one happens: `reload()`
-    /// now computes a signature of everything it would draw and returns
-    /// without touching a view when it matches the last one. Anything that
-    /// genuinely alters the rendered list - an entry's text, its read or
-    /// expanded or selected state, the filter, the counts in the tabs and the
-    /// footer, the relative timestamp ticking over, the theme - is in the
-    /// signature, so a real change still rebuilds exactly as before.
+    /// What changed first was *when* the list is touched at all: `reload()`
+    /// computes a signature of everything it would draw and returns without
+    /// touching a view when it matches the last one. Anything that genuinely
+    /// alters the rendered list - an entry's text, its read or expanded or
+    /// selected state, the filter, the counts in the tabs and the footer, the
+    /// relative timestamp ticking over, the theme - is in the signature, so a
+    /// real change still reaches the list, which then updates in place.
     private var lastRenderSignature: String?
 
     /// What `reload()` would draw, as one comparable value.
