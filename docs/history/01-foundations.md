@@ -55,3 +55,14 @@ Every off-main parse now runs on `HelmParseThread`, a thread with a 16 MB stack.
 ### One PR scan
 
 Fleet and Review each ran their own per-clone PR scan; `OpenPRsSource.fetchShared` shares one, with a 30s cache for automatic refreshes, never for the captain's Refresh, and never for a degraded result.
+
+### Found while rendering it: a Notebook visit widened the window
+
+Before-and-after renders at the 960pt minimum showed a Notebook visit growing the whole window to 1265pt - on `main` on the first visit, and with the background read on every revisit too, because its apply rebuilt the page after it was already on screen.
+Two `HelmEmptyState` bodies held their one-line width at compression resistance 750, above the window's 500 (gotcha (13)).
+The editor overlay's was gotcha (22)'s first-pass form: a `.standard` state's wrap width stayed 0 until its first layout pass, during which its bounds were ~4pt, so it reported a 605pt line.
+A `.standard` state now wraps at its 360pt cap from `init`, and the preview's empty state wraps to the preview.
+`FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS` visits Notebook twice at 960pt and fails at 1265pt without the fix.
+
+Not fixed: the Commands page also grows a 960pt window, to 965pt, on `main` as well as here.
+Its empty detail state was ruled out by experiment; the cause is still open.
