@@ -3262,6 +3262,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS"] == "1"
     exit(PageLoadOffMainSelfTest.run() ? 0 : 1)
 }
 
+// P4 of the same report: the density rule - every module card is a bounded
+// summary that says when it shows fewer rows than it has. Pure logic. See
+// BoundedSummarySelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_BOUNDED_SUMMARY_TESTS"] == "1" {
+    exit(BoundedSummarySelfTest.run() ? 0 : 1)
+}
+
 // P5 of the same report: keyboard parity for hand-built lists, bar panels
 // and form sheets. Window-backed. See KeyboardParitySelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_KEYBOARD_PARITY_TESTS"] == "1" {

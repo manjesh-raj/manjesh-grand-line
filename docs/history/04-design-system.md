@@ -780,3 +780,34 @@ Not verified: the system settings themselves, which no API can set, and how the 
 
 Confirmed by injection: no arrow handling in `HelmFlatList`, a plain view for the peek list, and an `onClick` that does not set the press each fail by name.
 Not verified: VoiceOver itself, and Tab order with Full Keyboard Access on.
+
+## The density rule: bounded summaries (polish report P4)
+
+The report counted 21 Merge queue rows on Home and about 17 controls in the bar.
+
+### What changed
+
+- `HelmModuleCard.Content.setBoundedPeekRows(_:total:limit:)` is the rule in one place.
+  A card shows at most its row budget (`maxPeekRows`, or 2 where a card already chose two).
+  When it has more than it shows, it says so - "Showing 3 of 12" - with a "View all 12" link.
+  The link opens the card's own page: a footer link with no handler of its own now runs the card's `onOpen`.
+- Ten of Home's peek cards cut their lists to three or two rows and said nothing: Console, Hosts, Schedules, Notebook, Reading List, Runbooks, Postmortems, Sticky Board, Code Preview and the Command Library.
+  All ten now go through the helper.
+- The Merge queue already followed the rule.
+  On the hub it budgets its rows from the height its column has left and says "Showing 21 of 22" with "All 22 open".
+  That height budget is the hub's fit-the-window design (`fm/grandline-home-fit-implement`), and it is also what Automic Vault does ("a row budget computed from the available height").
+  A fixed cap there would leave the column's absorber, the Morning briefing, as a tall empty card, so it is unchanged.
+- The bar is unchanged, on purpose.
+  Its quick-access row is the captain's own configuration (`QuickAccessConfiguration`), capped at six visible tiles with the rest in the overflow menu and ⌘K.
+  Review U4 once trimmed it, and the captain had Console, Hosts and Poneglyph restored.
+  Moving tiles off it again is the captain's call, not a density default.
+
+### Verified
+
+`FM_RUN_BOUNDED_SUMMARY_TESTS` (pure logic, so it guards CI's blocking lane):
+
+- the helper shows the budget and footers "Showing 3 of 12 / View all 12", draws no footer when nothing is hidden, and honours a two-row budget, read off a real card's painted labels;
+- "View all" runs the card's own open through `performClick`;
+- a source guard that every peek list on Home goes through the helper or sets its own footer.
+
+Confirmed by injection: a link with no `onOpen` fallback, a helper that sets no footer, and one card reverted to a silent cut each fail by name.

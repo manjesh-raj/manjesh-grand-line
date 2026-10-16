@@ -543,8 +543,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// is the same class of omission GL-14 is about, one step milder -
         /// not an unknown drawn as a zero, but a truncation drawn as a whole.
         ///
-        /// `nil` on every card that shows everything it has, which is all but
-        /// one of them.
+        /// `nil` on every card that shows everything it has. Since P4 of the
+        /// polish report every card that shows fewer rows than it has sets
+        /// one, through `setBoundedPeekRows`.
         var footer: Footer? = nil
         /// How many `.peekRows` rows this card shows, in place of
         /// `maxPeekRows`. `nil` - the default - keeps the cap. The hub's
@@ -552,6 +553,20 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// (`fm/grandline-home-fit-implement`), and says how many it is
         /// showing in its footer, so a longer list is never a silent cap.
         var peekRowLimit: Int? = nil
+
+        /// P4 of the polish report, the density rule: a card is a bounded
+        /// summary. It shows at most `limit` rows, and when it has more than
+        /// that it says so - "Showing 3 of 12" - with a link to all of them,
+        /// which opens the card's own page.
+        ///
+        /// `rows` may already be cut down (a caller with a long list maps
+        /// only what it shows); `total` is how many there really are.
+        mutating func setBoundedPeekRows(_ rows: [HelmModulePeekRow], total: Int,
+                                         limit: Int = HelmModuleCard.maxPeekRows) {
+            let shown = Array(rows.prefix(limit))
+            body = .peekRows(shown)
+            footer = total > shown.count ? .viewAll(shown: shown.count, total: total) : nil
+        }
     }
 
     /// See `Content.footer`.
@@ -570,6 +585,13 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             self.caption = caption
             self.actionTitle = actionTitle
             self.handler = handler
+        }
+
+        /// P4's footer for a card showing `shown` of `total`. With no
+        /// `handler`, its link opens the card itself - the page that holds
+        /// the whole list.
+        static func viewAll(shown: Int, total: Int) -> Footer {
+            Footer(caption: "Showing \(shown) of \(total)", actionTitle: "View all \(total)")
         }
     }
 
@@ -770,6 +792,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// cards from *every* rebuild cycle over a long, repeated session
     /// actually deallocate, rather than inferring it from one proxy signal.
     static var debugLiveInstanceCount = 0
+    var debugFooterActionButton: NSButton { footerAction }
     /// P7: the card surface's border, as painted.
     var debugSurfaceBorderColor: CGColor? { card.layer?.borderColor }
     #endif
@@ -1113,7 +1136,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         statusColumn.isHidden = !hasChip && !hasCaption
     }
 
-    @objc private func footerActionTapped() { footerActionHandler?() }
+    /// A footer link with no handler of its own opens the card (P4's
+    /// "View all"), which is the page that holds the whole list.
+    @objc private func footerActionTapped() { (footerActionHandler ?? onOpen)?() }
 
     // MARK: Configure
 
