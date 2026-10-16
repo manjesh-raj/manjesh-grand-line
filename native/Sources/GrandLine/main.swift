@@ -3262,6 +3262,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS"] == "1"
     exit(PageLoadOffMainSelfTest.run() ? 0 : 1)
 }
 
+// P2 of the same report: a refresh updates rows and cards in place, keeping
+// the same objects. Window-backed. See KeyedRefreshSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_KEYED_REFRESH_TESTS"] == "1" {
+    exit(KeyedRefreshSelfTest.run() ? 0 : 1)
+}
+
 // P8 of the same report: the one motion table (`HelmMotion.swift`'s header),
 // a guard against literal UI durations and against `allowsImplicitAnimation`
 // on a layer property, and `animateLayers` on a plain layer. Pure logic.
