@@ -2088,7 +2088,10 @@ enum DaylightModuleSelfTest {
             // itself is proven by `debugCountsObserverCount` above (which is
             // what actually failed when the subscription was removed) and by
             // the fan-out count in 1c below.
-            drainMainQueue()
+            pumpMainQueue {
+                guard let a = card(.bootstrap) else { return false }
+                return a.chipText == "Current" && !a.metricTexts.isEmpty
+            }
 
             if let a = card(.bootstrap) {
                 if a.chipText != "Current" {
@@ -2185,7 +2188,7 @@ enum DaylightModuleSelfTest {
             poller.debugSetLastCompletedPassAt(Date())
             poller.debugSetCounts(.init(toolUpdates: 0, forkDrift: 0, vaultAttention: 2,
                                         setupDrift: 0, vaultSecrets: 7))
-            drainMainQueue()
+            pumpMainQueue { card(.vault)?.metricTexts.first == "7" }
 
             if let a = card(.vault) {
                 if a.metricTexts.first != "7" {
@@ -2200,17 +2203,17 @@ enum DaylightModuleSelfTest {
             // where Dictation lives.
             shell.selectSpace(.stores)
             for status in [DictationStatus.recording, .needsMicrophone, .ready] {
-                shell.setDictationEngineStatus(status)
-                drainMainQueue()
-                guard let a = card(.dictation) else {
-                    fail("no Dictation card rendered", &ok)
-                    break
-                }
                 let expected: String
                 switch status {
                 case .recording: expected = status.title
                 case .ready: expected = "Ready"
                 default: expected = "Needs access"
+                }
+                shell.setDictationEngineStatus(status)
+                pumpMainQueue { card(.dictation)?.chipText == expected }
+                guard let a = card(.dictation) else {
+                    fail("no Dictation card rendered", &ok)
+                    break
                 }
                 if a.chipText != expected {
                     fail("Dictation chip is \(a.chipText ?? "nil") after the engine reported "
@@ -2278,6 +2281,22 @@ enum DaylightModuleSelfTest {
     /// `sleep` would not run them at all.
     private static func drainMainQueue() {
         for _ in 0..<4 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+    }
+
+    /// Pumps the main run loop until `landed()` holds, bounded by
+    /// `timeout`. For a check that waits on the canvas's own coalesced render
+    /// (`setNeedsRender` runs it on a later main-queue turn): a fixed
+    /// `drainMainQueue()` is 40ms of pumping, and on CI's slower window-backed
+    /// runner that once ended before the render ran, failing "Dictation chip
+    /// is Needs access after the engine reported ready" with the wiring
+    /// intact (PR #504's first run). This waits for the event rather than for
+    /// time; the assertion after it is unchanged, so wiring that never renders
+    /// still fails - after `timeout` instead of after 40ms.
+    private static func pumpMainQueue(timeout: TimeInterval = 2, until landed: () -> Bool) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !landed(), Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
     }
