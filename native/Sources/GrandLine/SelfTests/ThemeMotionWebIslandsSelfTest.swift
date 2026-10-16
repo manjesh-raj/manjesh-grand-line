@@ -457,8 +457,13 @@ enum ThemeMotionWebIslandsSelfTest {
         // this app's motion runs through - still took AppKit's default. A
         // source guard because `NSAnimationContext`'s timing function is not
         // readable back off a completed animation group.
+        //
+        // `animateLayers` is the exception, and is asserted on the product
+        // rather than the source: since the polish report's P1 it attaches an
+        // explicit `CABasicAnimation` per changed property, and that object
+        // carries its curve, so the curve *is* readable back.
         var bodies: [String: String] = [:]
-        for name in ["fade", "animate", "animateLayers"] {
+        for name in ["fade", "animate"] {
             guard let start = source.range(of: "static func \(name)(") else { continue }
             let rest = source[start.upperBound...]
             let end = rest.range(of: "\n    }") ?? rest.startIndex..<rest.startIndex
@@ -472,8 +477,25 @@ enum ThemeMotionWebIslandsSelfTest {
                 ok = false
             }
         }
-        if bodies.count != 3 {
-            print("  FAIL expected to find fade/animate/animateLayers, found \(bodies.count)")
+        if bodies.count != 2 {
+            print("  FAIL expected to find fade/animate, found \(bodies.count)")
+            ok = false
+        }
+        HelmMotion.reducedOverrideForTests = false
+        let probe = CALayer()
+        HelmMotion.animateLayers(duration: HelmMotion.stateDuration, on: [probe]) { probe.opacity = 0.5 }
+        HelmMotion.reducedOverrideForTests = nil
+        let easeOut = CAMediaTimingFunction(name: .easeOut)
+        if let curve = (probe.animation(forKey: "opacity") as? CABasicAnimation)?.timingFunction,
+           (1...2).allSatisfy({ index in
+               var a: [Float] = [0, 0], b: [Float] = [0, 0]
+               curve.getControlPoint(at: index, values: &a)
+               easeOut.getControlPoint(at: index, values: &b)
+               return abs(a[0] - b[0]) < 0.0001 && abs(a[1] - b[1]) < 0.0001
+           }) {
+            print("  OK   HelmMotion.animateLayers' animations carry the ease-out")
+        } else {
+            print("  FAIL HelmMotion.animateLayers' animation does not carry the spec's ease-out - it takes AppKit's default ease, which is exactly what section 3L's spec is about")
             ok = false
         }
         // The spec's two curves still exist and are still two.
