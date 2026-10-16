@@ -2406,7 +2406,14 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
     /// interaction lives elsewhere (a table's own double-click, a nested
     /// control) - which is also why `hover` is a separate argument: a hover
     /// highlight on a row that does nothing is a lie.
-    var onClick: (() -> Void)?
+    ///
+    /// P5: the same action is the card's keyboard and VoiceOver press, so a
+    /// clickable row takes Tab focus and answers Return and Space - GL-16's
+    /// rule for a clickable row. The mouse still goes through this row's own
+    /// recognizer, which arbitrates with any nested control (gotcha (20)).
+    var onClick: (() -> Void)? {
+        didSet { card.onAccessibilityPress = onClick }
+    }
 
     /// - Parameters:
     ///   - chipPlacement: see `ChipPlacement`.

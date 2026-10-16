@@ -3442,6 +3442,8 @@ final class HomeCanvasController: NSViewController {
     /// digest would compose. The tour lab's `demo attention N` and
     /// `HomeFitSelfTest` use it to put an exact number of rows on the page
     /// without seeding a Tasks store with dated tasks.
+    /// P5: the attention card's rows, as its list holds them.
+    var debugAttentionRows: [NSView] { attentionCard.debugRows }
     var debugAttentionOverride: NeedsAttentionSummary?
     var debugAttentionSubline = "1 decision waiting - the crew is holding for you."
     /// The scroll view's document, for a render of the whole page rather

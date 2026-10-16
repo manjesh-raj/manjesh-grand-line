@@ -749,3 +749,34 @@ Both now go through `HelmDisplayAccessibility.observeChanges`, and a source guar
 
 Confirmed by injection: no strengthening, a bar that ignores Reduce Transparency, and a `ThemeManager` with no observer each fail by name.
 Not verified: the system settings themselves, which no API can set, and how the strengthened edges look on a real display.
+
+## Keyboard parity for hand-built lists, panels and sheets (polish report P5)
+
+### What changed
+
+- `HelmListNavigation` moves the keyboard between a hand-built list's rows on Up and Down, the way a table does.
+  A focused `HoverHighlightView` row handles Return and Space itself and passes every other key up the responder chain, so the list that owns the rows sees the arrows.
+  It moves to the previous or next row that can take the keyboard: the row itself, or its first focusable descendant.
+  At either end the key is consumed and nothing moves, as in a table.
+  A modified arrow (Command-Down and so on) is left alone, and the arrows' own Fn and numeric-pad flags are ignored (gotcha (21)).
+- `HelmFlatList` uses it, which covers Home's Needs Attention list and Weekly Review's pushed-back list.
+  A module card's peek rows sit in a `HelmKeyboardListView`, which covers the Merge queue and every other peek list.
+- **Home's attention rows could not take the keyboard at all.**
+  `HelmAccentRow.onClick` drove only the row's own click recognizer, so its inner `HoverHighlightView` was never activatable.
+  Its only other targets were buttons, which macOS leaves out of the Tab order unless Full Keyboard Access is on.
+  `onClick` now also sets the card's `onAccessibilityPress`, so every clickable accent row takes Tab focus, answers Return and Space, and can be pressed by VoiceOver - GL-16's rule for a clickable row.
+- Escape on every `HelmBarPanel` and the default and cancel keys on every `HelmFormSheet` already worked.
+  They were never asserted through a real key event, so they are now.
+
+### Verified
+
+`FM_RUN_KEYBOARD_PARITY_TESTS` (window-backed) sends real key events through the window's own dispatch:
+
+- a `HelmFlatList`: Down, Down into a nested focusable control, clamped at the end, Up, then Return and Space pressing the focused row, and Command-Down left alone;
+- Home with the tour's realistic data: four attention rows and thirteen Merge queue peek rows, in both directions;
+- a `HelmBarPanel` closing on Escape, with and without a field focused;
+- a form sheet's Save on Return (and on Command-Return where the sheet asks for it) and Cancel on Escape, through `performKeyEquivalent`;
+- a source guard that all twelve form sheets take their footer, and so their keys, from `setFooter`.
+
+Confirmed by injection: no arrow handling in `HelmFlatList`, a plain view for the peek list, and an `onClick` that does not set the press each fail by name.
+Not verified: VoiceOver itself, and Tab order with Full Keyboard Access on.

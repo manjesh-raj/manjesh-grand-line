@@ -1395,7 +1395,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     private func buildPeekRows(_ rows: [HelmModulePeekRow]) -> NSView {
         guard !rows.isEmpty else { return verticalStack([noteLabel("Nothing to show yet.")], spacing: 0) }
         let inset = Self.horizontalInset
-        let list = NSView()
+        let list = HelmKeyboardListView()   // P5: Up and Down between the rows
         list.translatesAutoresizingMaskIntoConstraints = false
         var previous: NSView?
         func place(_ view: NSView) {
