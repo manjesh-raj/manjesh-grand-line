@@ -684,3 +684,12 @@ Confirmed by injection:
 
 Tour-lab renders of Home, Home after `demo refresh`, Fleet with an open reply, and the Tasks board, at 960x620, 1100x720 and 1512x950 in Daylight and Dusk, are pixel-identical before and after, and so is every `measurewindow` reading.
 Not verified: how a new row's fade looks on a real display, and the notification and compact popovers in a real `NSPopover`.
+
+`NotificationRowInteractionSelfTest` was already flaky before this change: it failed 1 time in 25 under CPU load on `1e75b79`.
+On this branch, under the same load, it failed 9 times in 25.
+Instrumenting its click helper showed why.
+The helper stopped pumping events after the first quiet 50ms, so under load a posted click could still be queued when the case read its result.
+That click then landed in the next case and failed whatever that case checked.
+A new row's fade adds main-thread work, which made a quiet 50ms come round sooner.
+The helper now pumps until its own click has been dispatched, with the deadline only as an upper bound: 0 failures in 25 under the same load.
+The assertions are unchanged, and a row whose click does nothing still fails "a real click on the row body marks it read".

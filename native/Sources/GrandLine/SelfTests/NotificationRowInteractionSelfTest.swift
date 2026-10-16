@@ -143,12 +143,25 @@ enum NotificationRowInteractionSelfTest {
                 pressure: type == .leftMouseDown ? 1 : 0) else { continue }
             app.postEvent(event, atStart: false)
         }
-        let deadline = Date().addingTimeInterval(1.0)
+        // Pump until the click itself has been dispatched, not merely until
+        // the queue goes quiet for 50ms. Measured: under CPU load a quiet
+        // 50ms came round while the posted pair was still queued, so the
+        // click went unhandled here and landed in the *next* case instead -
+        // which failed whichever check came next ("a second real click
+        // collapses it again", even "no row"). The deadline is a bound, not
+        // a wait: an idle machine leaves this loop as soon as it did before.
+        let deadline = Date().addingTimeInterval(5.0)
         while Date() < deadline {
-            guard let event = app.nextEvent(matching: .any,
-                                            until: Date().addingTimeInterval(0.05),
-                                            inMode: .default, dequeue: true) else { break }
-            app.sendEvent(event)
+            if let event = app.nextEvent(matching: .any,
+                                         until: Date().addingTimeInterval(0.05),
+                                         inMode: .default, dequeue: true) {
+                app.sendEvent(event)
+                continue
+            }
+            let clickStillQueued = app.nextEvent(matching: [.leftMouseDown, .leftMouseUp],
+                                                 until: .distantPast,
+                                                 inMode: .default, dequeue: false) != nil
+            if !clickStillQueued { break }
         }
     }
 
