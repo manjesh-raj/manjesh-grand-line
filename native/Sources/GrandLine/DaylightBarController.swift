@@ -879,11 +879,11 @@ final class DaylightBarController: NSViewController {
             HelmMotion.withoutImplicitAnimation(apply)
             return
         }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.16
-            context.allowsImplicitAnimation = true
-            apply()
-        }
+        // `shadowOpacity` and `borderColor` are two of the layer properties
+        // `allowsImplicitAnimation` does not animate on a view-backed layer
+        // (measured, P1 of the polish report), so this used to ease only the
+        // shadow's radius and snap the rest.
+        HelmMotion.animateLayers(duration: HelmMotion.stateDuration, on: [layer], apply)
     }
 
     /// Everything the shell knows about the page the bar is naming.
@@ -2296,22 +2296,24 @@ class DaylightBarIconButton: NSButton {
     private func setPressed(_ pressed: Bool) {
         guard pressed != isPressed else { return }
         isPressed = pressed
-        restyle()
+        let scale = pressed ? HelmButton.pressScale : 1
+        // The tile's fill and border and the compression are all *layer*
+        // properties, so they ease together through `animateLayers` - inside
+        // `animate` they landed in one frame (P1 of the polish report,
+        // `HoverPressEasingSelfTest`). Reduce Motion gets the end state
+        // instantly there.
+        for view in [iconBackground, iconImageView] { view.wantsLayer = true }
+        HelmMotion.animateLayers(duration: HelmMotion.stateDuration,
+                                 on: [iconBackground.layer, iconImageView.layer]) {
+            restyle()
+            for view in [iconBackground, iconImageView] {
+                guard let layer = view.layer else { continue }
+                layer.transform = HelmMotion.centredScale(scale, of: layer)
+            }
+        }
         #if FM_SELFTESTS
         Self.debugOnPressChange?(self, pressed)
         #endif
-        let scale = pressed ? HelmButton.pressScale : 1
-        for view in [iconBackground, iconImageView] {
-            view.wantsLayer = true
-            guard let layer = view.layer else { continue }
-            let w = view.bounds.width / 2, h = view.bounds.height / 2
-            var t = CATransform3DMakeTranslation(w, h, 0)
-            t = CATransform3DScale(t, scale, scale, 1)
-            t = CATransform3DTranslate(t, -w, -h, 0)
-            HelmMotion.animate(!HelmMotion.isReduced, duration: HelmButton.stateChangeDuration) {
-                layer.transform = t
-            }
-        }
     }
 
     /// The bar's resting language since the UI/UX revamp's UI-34: every

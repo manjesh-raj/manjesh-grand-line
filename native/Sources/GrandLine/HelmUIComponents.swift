@@ -831,9 +831,9 @@ class HoverHighlightView: NSView, NSGestureRecognizerDelegate {
     /// so a suite can assert the *composition* of press and hover rather than
     /// the local-monitor plumbing.
     func debugSetPressed(_ pressed: Bool) {
-        guard pressed != isPressed else { return }
-        isPressed = pressed
-        applyPressTransform(animated: !HelmMotion.isReduced)
+        // The real path the local event monitor takes, so a suite measures
+        // what a click does rather than a copy of it.
+        setPressed(pressed)
     }
     var debugIsPressed: Bool { isPressed }
     var debugIsHovering: Bool { isHovering }
@@ -1060,27 +1060,36 @@ class HoverHighlightView: NSView, NSGestureRecognizerDelegate {
 
     /// Composes `baseTransform` (the owner's, e.g. a card's hover lift) with
     /// the press compression, and is the only writer of `layer.transform`.
+    ///
+    /// The compression is about the view's centre (`HelmMotion.centredScale`),
+    /// not the layer's bottom-left anchor.
+    ///
+    /// `animated: false` writes the property bare rather than suppressing
+    /// actions, on purpose: that is the `baseTransform` path, and the owner
+    /// writing it (a module card's hover lift) has already opened its own
+    /// `animateLayers` context for it to ease inside.
     private func applyPressTransform(animated: Bool) {
         guard let layer else { return }
-        let scale = isPressed ? pressScale : 1
-        let next = CATransform3DScale(baseTransform, scale, scale, 1)
-        // Reduce Motion gets the end state instantly - never the same motion,
-        // slower (`HelmMotion`'s own rule).
-        HelmMotion.animate(animated, duration: Self.pressDuration) {
+        let next = HelmMotion.centredScale(isPressed ? pressScale : 1, of: layer, after: baseTransform)
+        guard animated else {
+            layer.transform = next
+            return
+        }
+        // A layer property: `animateLayers`, never `animate` - see the motion
+        // table in `HelmMotion.swift`. Reduce Motion gets the end state
+        // instantly there.
+        HelmMotion.animateLayers(duration: HelmMotion.stateDuration, on: [layer]) {
             layer.transform = next
         }
     }
 
-    static let pressDuration: TimeInterval = 0.09
-
     private func setBackground(_ color: NSColor, animated: Bool) {
         guard let layer else { return }
-        guard animated, !HelmMotion.isReduced else {
+        guard animated else {
             layer.backgroundColor = color.cgColor
             return
         }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
+        HelmMotion.animateLayers(duration: HelmMotion.stateDuration, on: [layer]) {
             layer.backgroundColor = color.cgColor
         }
     }

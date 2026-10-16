@@ -301,6 +301,9 @@ NEEDS_SESSION=(
   # The same audit's C/D/E: hover, press, focus-within and a real scroll
   # offset are each a question about a real window.
   "FM_RUN_CANVAS_LISTS_CONTROLS_TESTS"
+  # P1's hover and press easing: an implicit layer action is resolved by the
+  # view's own layer delegate, inside a real window.
+  "FM_RUN_HOVER_PRESS_EASING_TESTS"
   # The session switcher mounts a real `AppShellController` in a real window.
   "FM_RUN_SESSION_SWITCHER_TESTS"
   # The status pill's one-treatment-per-status guarantee: mounts the real

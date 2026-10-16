@@ -3237,6 +3237,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_CANVAS_LISTS_CONTROLS_TESTS"] == 
     exit(CanvasListsControlsSelfTest.run() ? 0 : 1)
 }
 
+// P1 of the Grand Line vs Automic Vault polish report: hover and press
+// feedback that really eases, measured as `layer.animationKeys()` straight
+// after the real entry point, in both Reduce Motion states. Window-backed.
+// See HoverPressEasingSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_HOVER_PRESS_EASING_TESTS"] == "1" {
+    exit(HoverPressEasingSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grand-line-hosts-page-redesign`: the redesigned Hosts page's two-column
 // layout, and that every panel beside the list is fed by a real store rather
 // than the reference mockup's demo data. Window-backed (it mounts the real

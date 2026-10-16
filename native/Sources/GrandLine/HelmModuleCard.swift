@@ -581,7 +581,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// §6.1's hover translate. Skipped under Reduce Motion - the shadow swap
     /// alone is acceptable motion, per that section's own note.
     static let hoverLift: CGFloat = 3
-    static let hoverDuration: TimeInterval = 0.14
+    static let hoverDuration: TimeInterval = HelmMotion.stateDuration
 
     /// C2's "scale 0.985 ... on mouse-down". The approved visual calls it
     /// "a 2% press compression", so 0.98 - the midpoint of the two, and the
@@ -2079,20 +2079,26 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
     private func applyHoverState(animated: Bool) {
         let theme = ThemeManager.shared.theme
-        applyShadow(theme, raised: isHovering)
         // §6.1: the shadow swap always happens; the 3pt translate is skipped
         // under Reduce Motion, which that section explicitly allows.
         let allowMotion = !HelmMotion.isReduced
         // AppKit's y grows upward in an unflipped view, so lifting a card is a
         // *positive* translate.
         let lift: CGFloat = (isHovering && allowMotion) ? Self.hoverLift : 0
-        // C2: the lift is handed to the card's own `baseTransform` rather than
-        // written straight onto `card.layer.transform`, because the press
-        // compression now writes that same property. `HoverHighlightView` is
-        // the single owner and composes the two, so a card pressed while
-        // hovered reads as lifted *and* compressed instead of one state
-        // silently cancelling the other.
-        HelmMotion.animate(animated && allowMotion, duration: Self.hoverDuration) {
+        // Both the shadow and the lift are *layer* properties, so this is
+        // `animateLayers`: inside `animate` they landed in one frame, which
+        // is P1 of the polish report (`HoverPressEasingSelfTest`). Under
+        // Reduce Motion it lands the end state instantly - the shadow swap
+        // still happens, with no motion.
+        HelmMotion.animateLayers(animated, duration: Self.hoverDuration, on: [layer, card.layer]) {
+            applyShadow(theme, raised: isHovering)
+            // C2: the lift is handed to the card's own `baseTransform` rather
+            // than written straight onto `card.layer.transform`, because the
+            // press compression now writes that same property.
+            // `HoverHighlightView` is the single owner and composes the two,
+            // so a card pressed while hovered reads as lifted *and*
+            // compressed instead of one state silently cancelling the other.
+            // Its `baseTransform` write is bare, so it eases in this context.
             card.baseTransform = CATransform3DMakeTranslation(0, lift, 0)
         }
     }
