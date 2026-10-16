@@ -42,6 +42,7 @@ enum PageLoadOffMainSelfTest {
         checkStickyBoard(&ok)
         checkReadingList(&ok)
         checkALongTaskListParsesOffMain(&ok)
+        checkNotebookKeepsTheMinimumWindow(&ok)
         print(ok ? "PageLoadOffMainSelfTest: all checks passed" : "PageLoadOffMainSelfTest: FAILED")
         return ok
     }
@@ -285,6 +286,40 @@ enum PageLoadOffMainSelfTest {
         check(landed, "the off-main parse of 1500 tasks never landed", &ok)
         check(store.activeTasks.count == 1500, "the off-main parse loaded \(store.activeTasks.count) of 1500 tasks", &ok)
         if ok { print("  OK   1500 tasks parsed on HelmParseThread and applied") }
+    }
+
+    // MARK: Notebook at the minimum window
+
+    /// Found while rendering this work at three sizes: a Notebook visit at
+    /// the 960pt minimum grew the whole window to 1265pt - on `main` on the
+    /// first visit, and with the background read on every revisit too, since
+    /// its apply rebuilt the page after it was on screen. Two `HelmEmptyState`
+    /// bodies held their one-line width at compression resistance 750, above
+    /// the window's 500 (gotcha (13)): the editor overlay's because its wrap
+    /// width was still 0 on the first layout pass, the preview's because its
+    /// copy set its width instead of its container (gotcha (22)).
+    private static func checkNotebookKeepsTheMinimumWindow(_ ok: inout Bool) {
+        print("\n-- P11: a Notebook visit at the 960pt minimum never widens the window --")
+        let (window, shell) = ReviewTourLab.makeOffScreenShell()
+        defer { window.orderOut(nil) }
+        var frame = window.frame
+        frame.size = NSSize(width: 960, height: 620)
+        window.setFrame(frame, display: false)
+        window.orderFront(nil)
+        shell.show(.homeCanvas)
+        shell.view.layoutSubtreeIfNeeded()
+        for visit in ["first visit", "revisit"] {
+            shell.show(.notebook)
+            shell.view.layoutSubtreeIfNeeded()
+            // Let the background read land and the page settle.
+            pump(timeout: 1.0) { false }
+            shell.view.layoutSubtreeIfNeeded()
+            check(window.frame.width <= 960.5,
+                  "Notebook's \(visit) at the 960pt minimum widened the window to \(window.frame.width)pt", &ok)
+            shell.show(.homeCanvas)
+            shell.view.layoutSubtreeIfNeeded()
+        }
+        if ok { print("  OK   the window stayed 960pt across a first visit and a revisit") }
     }
 
     // MARK: Helpers
