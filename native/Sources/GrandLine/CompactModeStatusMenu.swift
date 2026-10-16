@@ -94,8 +94,8 @@ enum CompactModeStatusMenu {
         } else {
             for task in inputs.dueToday.prefix(rowLimit) {
                 let item = NSMenuItem(title: task.title, action: nil, keyEquivalent: "")
-                item.image = NSImage(systemSymbolName: task.urgency == .overdue ? "exclamationmark.circle" : "circle",
-                                     accessibilityDescription: nil)
+                item.image = HelmSymbol.image(task.urgency == .overdue ? "exclamationmark.circle" : "circle",
+                                              pointSize: 13, weight: .regular)
                 item.toolTip = task.detail
                 let submenu = NSMenu(title: task.title)
                 let id = task.id
@@ -154,7 +154,7 @@ final class HelmMenuAction: NSObject {
         let box = HelmMenuAction(run)
         item.target = box
         item.representedObject = box
-        if let symbol { item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
+        if let symbol { item.image = HelmSymbol.image(symbol, pointSize: 13, weight: .regular) }
         return item
     }
 

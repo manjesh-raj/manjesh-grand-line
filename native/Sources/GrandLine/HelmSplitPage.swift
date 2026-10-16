@@ -209,9 +209,11 @@ final class HelmSplitPage: NSSplitViewController {
     private func setSidebarCollapsed(_ collapsed: Bool, animated: Bool) {
         guard sidebarItem.isCollapsed != collapsed else { return }
         if animated, !HelmMotion.isReduced {
+            // The split item's own animator proxy, which is how AppKit
+            // animates a collapse - not `allowsImplicitAnimation`, which the
+            // motion table bans (it does not animate layer properties).
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = HelmMotion.moveDuration
-                context.allowsImplicitAnimation = true
                 sidebarItem.animator().isCollapsed = collapsed
             }
         } else {
