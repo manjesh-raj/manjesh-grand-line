@@ -35,6 +35,7 @@ enum KeyedRefreshSelfTest {
         checkFleetRefreshesInPlace(&ok)
         checkNotificationsRefreshInPlace(&ok)
         checkTasksBoardRefreshesInPlace(&ok)
+        checkCompactPopoverRefreshesInPlace(&ok)
         print(ok ? "KeyedRefreshSelfTest: all checks passed" : "KeyedRefreshSelfTest: FAILED")
         return ok
     }
@@ -339,6 +340,67 @@ enum KeyedRefreshSelfTest {
         let done = board.debugColumn(.done)?.debugCardViews ?? []
         check(done.count == 1 && done[0].taskID == "b", "the moved task is not in Done", &ok)
         if ok { print("  OK   cards kept by task id across a rename, an insert and a move, with keyboard focus") }
+    }
+
+    // MARK: Compact popover
+
+    private static func checkCompactPopoverRefreshesInPlace(_ ok: inout Bool) {
+        print("\n-- P2: the compact popover updates its rows in place --")
+        let theme = ThemeManager.shared.theme
+        let window = OffScreenProbe.window(width: 360, height: 600, styleMask: [.titled])
+        defer { window.orderOut(nil) }
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 600))
+        window.contentView = host
+        let today = CompactTodayPane()
+        let notes = CompactNotesPane()
+        let column = NSStackView(views: [today, notes])
+        column.orientation = .vertical
+        column.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(column)
+        NSLayoutConstraint.activate([
+            column.topAnchor.constraint(equalTo: host.topAnchor),
+            column.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            column.widthAnchor.constraint(equalToConstant: 360),
+        ])
+        window.orderFront(nil)
+
+        func digest(_ rows: [CompactTaskRow]) -> CompactTodayDigest {
+            CompactTodayDigest(rows: rows, overdueCount: rows.filter { $0.urgency == .overdue }.count,
+                               focusChip: nil, followUpChip: nil)
+        }
+        today.present(digest([CompactTaskRow(id: "t1", title: "Renew the cert", detail: "tomorrow", urgency: .later),
+                              CompactTaskRow(id: "t2", title: "Rotate the keys", detail: "due today", urgency: .today)]),
+                      theme: theme)
+        notes.present([CompactNoteRow(id: "n1", title: "Invoice fee", detail: "call the bank", color: .yellow),
+                       CompactNoteRow(id: "n2", title: "Trip", detail: "1 of 3 done", color: .pink)], theme: theme)
+        host.layoutSubtreeIfNeeded()
+        let taskRows = today.debugRows
+        let noteRows = notes.debugRows
+        check(taskRows.count == 2 && noteRows.count == 2,
+              "the fixture shows \(taskRows.count) task and \(noteRows.count) note rows, expected 2 and 2", &ok)
+        guard taskRows.count == 2, noteRows.count == 2 else { return }
+        let laterColor = taskRows[0].debugCheckboxBorderColor
+
+        // A day later: the first task is overdue, the second was done, a third
+        // is new; a note's checklist moved on.
+        today.present(digest([CompactTaskRow(id: "t1", title: "Renew the cert", detail: "overdue", urgency: .overdue),
+                              CompactTaskRow(id: "t3", title: "Review the values", detail: "tomorrow", urgency: .later)]),
+                      theme: theme)
+        notes.present([CompactNoteRow(id: "n1", title: "Invoice fee", detail: "call the bank", color: .yellow),
+                       CompactNoteRow(id: "n2", title: "Trip", detail: "2 of 3 done", color: .pink)], theme: theme)
+        host.layoutSubtreeIfNeeded()
+        let tasksAfter = today.debugRows
+        check(tasksAfter.first === taskRows[0], "a refresh rebuilt the Today row whose task is still listed", &ok)
+        check(tasksAfter.count == 2 && tasksAfter[1] !== taskRows[1] && tasksAfter[1].debugTitle == "Review the values",
+              "the Today tab does not show the new task in a row of its own", &ok)
+        check(taskRows[0].debugDetail == "overdue" && taskRows[0].debugUrgency == .overdue,
+              "the kept Today row reads \(taskRows[0].debugDetail)", &ok)
+        check(!taskRows[0].debugCheckboxBorderColor.isEqual(laterColor),
+              "the kept row's checkbox was not repainted for its new urgency", &ok)
+        check(notes.debugRows.map(ObjectIdentifier.init) == noteRows.map(ObjectIdentifier.init),
+              "a refresh rebuilt the Notes rows", &ok)
+        check(noteRows[1].debugDetail == "2 of 3 done", "the kept note row reads \(noteRows[1].debugDetail)", &ok)
+        if ok { print("  OK   Today and Notes rows kept by id, updated, repainted, inserted and removed") }
     }
 
     // MARK: Helpers
