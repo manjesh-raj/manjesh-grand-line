@@ -1193,6 +1193,12 @@ final class NotebookController: NSViewController, DaylightDrillActions {
                                    size: .standard, accessory: accessory,
                                    hue: RailDestination.notebook.domainHue)
         state.translatesAutoresizingMaskIntoConstraints = false
+        // The card's width is the page's, never the sentence's: the one-line
+        // copy at compression 750 held the editor card - and through the
+        // equal-width tie, the preview - wide enough at the 960pt minimum to
+        // squeeze the page tree's column (to 192pt on `main`, and to its
+        // split-view minimum after P9).
+        state.letBodyWrapToContainer()
         editorOverlay.addSubview(state)
         NSLayoutConstraint.activate([
             state.centerXAnchor.constraint(equalTo: editorOverlay.centerXAnchor),
