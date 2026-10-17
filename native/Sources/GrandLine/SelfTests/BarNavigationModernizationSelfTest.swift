@@ -98,6 +98,13 @@ enum BarNavigationModernizationSelfTest {
     // MARK: B1 - the material
 
     private static func test_b1BarMaterialPerThemeFamily() -> String? {
+        // Pinned off, the way Reduce Motion is pinned rather than inherited
+        // (AGENTS.md: a GitHub runner's display settings are not a dev Mac's).
+        // Since P7 the bar drops its material under Reduce Transparency, and
+        // a runner with it on failed this case with "shows no material".
+        // That branch is `DisplayAccessibilitySelfTest`'s to assert.
+        HelmDisplayAccessibility.reduceTransparencyOverrideForTests = false
+        defer { HelmDisplayAccessibility.reduceTransparencyOverrideForTests = nil }
         let bar = DaylightBarController()
         bar.loadView()
         // 1512, the captain's own screen width, deliberately above
