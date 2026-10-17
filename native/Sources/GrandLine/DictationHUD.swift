@@ -165,17 +165,16 @@ final class DictationHUDController {
     private var reduceMotionObserver: NSObjectProtocol?
 
     init() {
-        reduceMotionObserver = NotificationCenter.default.addObserver(
-            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
-            object: nil, queue: .main
-        ) { [weak self] _ in
+        // P7: on `NSWorkspace`'s notification center, which is where macOS
+        // posts this - registered on the default center it never fired.
+        reduceMotionObserver = HelmDisplayAccessibility.observeChanges { [weak self] in
             self?.applyPulseAnimation()
         }
     }
 
     deinit {
         if let reduceMotionObserver {
-            NotificationCenter.default.removeObserver(reduceMotionObserver)
+            HelmDisplayAccessibility.stopObserving(reduceMotionObserver)
         }
     }
 

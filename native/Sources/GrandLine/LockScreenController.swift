@@ -908,7 +908,7 @@ final class LockScreenController: NSViewController {
     }
 
     private var animationsStarted = false
-    private var reduceMotionObserver: Any?
+    private var reduceMotionObserver: NSObjectProtocol?
 
     /// GL-16: the two animations below (the boat's bob and the wave's drift)
     /// loop forever, and this screen is *mandatory* - a captain who has turned
@@ -973,10 +973,10 @@ final class LockScreenController: NSViewController {
         // Observe live changes so toggling Reduce Motion while the lock screen
         // is up takes effect, rather than only on the next launch.
         if reduceMotionObserver == nil {
-            reduceMotionObserver = NotificationCenter.default.addObserver(
-                forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
-                object: nil, queue: .main
-            ) { [weak self] _ in
+            // P7: on `NSWorkspace`'s notification center, which is where
+            // macOS posts this - registered on the default center it never
+            // fired.
+            reduceMotionObserver = HelmDisplayAccessibility.observeChanges { [weak self] in
                 self?.applyMotionPreference()
             }
         }
@@ -1068,7 +1068,7 @@ final class LockScreenController: NSViewController {
 
     deinit {
         if let reduceMotionObserver {
-            NotificationCenter.default.removeObserver(reduceMotionObserver)
+            HelmDisplayAccessibility.stopObserving(reduceMotionObserver)
         }
     }
 

@@ -590,3 +590,40 @@ rasterised layout pass from AppKit's own engine, not a screenshot of the
 running popover, and an `NSPopover`'s own arrow and background chrome are drawn
 by AppKit around the content view rather than by this code, so they are not in
 the render.
+
+## A native menu on right-click (polish report P6)
+
+The polish report proposed the Automic Vault shape: one status item whose click opens a live `NSMenu`, with the rich popover one item away.
+That reverses this file's own founding decision ("Four tabs, not a menu"), so it went to the captain.
+**The captain's decision: a left-click keeps opening the four-tab popover, and a right-click or a control-click opens a native menu.**
+
+### What shipped
+
+- `CompactModeClickRoute` decides: a right-click, or a left-click with Control held, is the menu.
+  Every other click, and ⌃⌥G (which has no mouse event), is the popover.
+- `CompactModeStatusMenu` builds the menu fresh on every open, from the same providers the popover reads:
+  - **Needs you**: the notification center's action-needed entries, each raising the window and opening what it is about;
+  - **Due today**: the Today tab's own digest, each task with a Mark Done / Open in Tasks submenu;
+  - **Crew**: Ask the Crew…, which opens the popover on its Crew tab;
+  - Show Popover, Open Grand Line, Settings….
+  Sections carry their counts, and a section lists at most five rows and then says how many it left out (P4's rule).
+  On macOS 14 the headers are the system's own `NSMenuItem.sectionHeader`; on 13 they are disabled items.
+- The menu opens through the status item's own menu slot for one click, so macOS places and tracks it, and the slot is cleared again so the next left-click is the popover's.
+- GL-09: a new `AppLockedSurface.compactModeMenu`.
+  Locked, the menu shows "Grand Line is locked", Unlock… (the popover's own unlock form) and Open Grand Line, and none of the captain's data.
+- `HelmMenuAction` is now the app's one closure-carrying menu item.
+  The notification panel's private copy was promoted rather than duplicated.
+
+The per-feature status items (outside compact mode) are unchanged.
+
+### Verified
+
+`FM_RUN_STATUS_MENU_TESTS` (pure logic, so it guards CI's blocking lane) builds the menu and never opens it, since opening one is a modal tracking loop:
+
+- the click route for left, right, control and command clicks, and for the hotkey's no-event case;
+- every section, count, the five-row budget and "View all 7 in Tasks", the empty-day wording, and every item picked through its real target and action;
+- the locked menu, from the builder and from the real controller with `AppLockGate` locked;
+- the controller listing action-needed entries and not informational ones.
+
+Confirmed by injection: no control-click route, no action-needed filter, and a menu that ignores the lock each fail by name.
+Not verified: the menu on a real menu bar, which needs a running app with a real status item. That live half is the captain's own check.

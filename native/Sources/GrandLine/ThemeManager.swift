@@ -156,7 +156,16 @@ final class ThemeManager {
         } else {
             theme = Self.fallbackTheme
         }
+        // P7: Increase Contrast and Reduce Transparency change what the
+        // shared edge and bar helpers return without changing the theme, so
+        // a change re-fires every theme observer - the same "repaint
+        // yourself" path a text-size change uses.
+        displayOptionsToken = HelmDisplayAccessibility.observeChanges { [weak self] in
+            self?.reapplyCurrentTheme()
+        }
     }
+
+    private var displayOptionsToken: NSObjectProtocol?
 
     /// Whether this install has ever stored a palette choice.
     ///
@@ -205,9 +214,12 @@ final class ThemeManager {
     /// re-flowing reads as a glitch rather than a transition. See
     /// `ThemeTransition.swift`'s header.
     ///
-    /// Not to be used for anything else: a *theme* change goes through
-    /// `setTheme`, and an observer that repaints on a no-op theme change is
-    /// doing so because something genuinely font-level moved underneath it.
+    /// The one other caller is a change to the display options (P7):
+    /// Increase Contrast and Reduce Transparency move what
+    /// `HelmDisplayAccessibility` returns in the same way. Not to be used for
+    /// anything else: a *theme* change goes through `setTheme`, and an
+    /// observer that repaints on a no-op theme change is doing so because
+    /// something genuinely font- or display-level moved underneath it.
     func reapplyCurrentTheme() {
         observers.forEach { $0.fn(theme) }
     }

@@ -522,9 +522,75 @@ final class HelmFlatList: NSView {
             : (base.blended(withFraction: 0.06, of: HelmTheme.nsColor(theme.chromeInkHex)) ?? base)
     }
 
+    /// P5: Up and Down move between the rows, the way a table does.
+    /// Return and Space already press a focused row (`HoverHighlightView`).
+    override func keyDown(with event: NSEvent) {
+        if HelmListNavigation.handle(event, rows: rows) { return }
+        super.keyDown(with: event)
+    }
+
     #if FM_SELFTESTS
     var debugSeparatorCount: Int { separators.count }
     #endif
+}
+
+// MARK: - Arrow keys in a custom list
+
+/// P5 of the Grand Line vs Automic Vault polish report: Up and Down between
+/// the rows of a list this app builds from views rather than from an
+/// `NSTableView`.
+///
+/// A focused row (a `HoverHighlightView`) handles Return and Space itself
+/// and passes every other key up the responder chain, so the list that owns
+/// the rows sees the arrows. It moves the keyboard to the previous or next
+/// row that can take it - the row itself, or its first control when the row
+/// is not focusable but carries one (a "Start" button). At either end the key
+/// is consumed and nothing moves, as in a table, rather than beeping.
+enum HelmListNavigation {
+
+    /// Whether `event` was an arrow this handled.
+    static func handle(_ event: NSEvent, rows: [NSView]) -> Bool {
+        let step: Int
+        switch event.keyCode {
+        case 125: step = 1    // Down
+        case 126: step = -1   // Up
+        default: return false
+        }
+        guard event.modifierFlags.intersection(KeyChord.relevantModifierMask).isEmpty,
+              let window = rows.first?.window,
+              let responder = window.firstResponder as? NSView,
+              let current = rows.firstIndex(where: { responder === $0 || responder.isDescendant(of: $0) })
+        else { return false }
+        var index = current + step
+        while rows.indices.contains(index) {
+            if let target = focusTarget(in: rows[index]) {
+                window.makeFirstResponder(target)
+                target.scrollToVisible(target.bounds)
+                return true
+            }
+            index += step
+        }
+        return true
+    }
+
+    /// The view in `row` that takes the keyboard: the row itself, or its
+    /// first descendant that can.
+    static func focusTarget(in row: NSView) -> NSView? {
+        if row.canBecomeKeyView { return row }
+        for sub in row.subviews {
+            if let found = focusTarget(in: sub) { return found }
+        }
+        return nil
+    }
+}
+
+/// A plain container whose subviews are a list's rows, for a list laid out
+/// by hand rather than through `HelmFlatList` - a module card's peek rows.
+final class HelmKeyboardListView: NSView {
+    override func keyDown(with event: NSEvent) {
+        if HelmListNavigation.handle(event, rows: subviews) { return }
+        super.keyDown(with: event)
+    }
 }
 
 // MARK: - HelmReading

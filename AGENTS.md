@@ -835,15 +835,16 @@ guards it.
 Three consequences:
 
 - **Two constraints at 499 tie**, and Auto Layout breaks the tie itself.
-  `HelmPageSidebar`'s own `width == 208` sits at 499, so a page whose content
-  column is **capped** must pin that content to the page by a constant rather
-  than chaining it to the sidebar's trailing edge - otherwise the slack lands in
-  the column and the nav rows render wider than the component's own width.
+  A page's nav column lives in a `HelmSplitPage` now, which settles it by
+  rank rather than by tie: the split holds the sidebar at 489 (under the
+  divider-drag priority, measured), `HelmPageSidebar` yields its own `208`
+  preference inside a pane, and a page's grow tie that could move the divider
+  sits at `HelmSplitPage.contentGrowPriority` (480).
 - **A capped column is centred, never left-pinned**, and the centre to measure
-  against is the *visible* one: the scroll area starts under the sidebar panel,
-  so centring on the clip view lands the column half that overlap off.
-  `SettingsController.visibleCentreNudge` derives the correction from the two
-  constraints rather than writing a number.
+  against is the *visible* one. In a split page the scroll area starts at the
+  content pane, so the clip view's centre is the visible centre; Settings'
+  old `visibleCentreNudge` existed only because its scroll area started under
+  the band.
 - **A content hugging priority travels the same chain as a width *ceiling*.**
   Wherever a required equality ties a container to its content, one `.required`
   hug on a label inside says "never wider than my text" about the container too

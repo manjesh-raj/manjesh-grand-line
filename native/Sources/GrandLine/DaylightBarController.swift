@@ -752,6 +752,9 @@ final class DaylightBarController: NSViewController {
     /// rendered text and its real `isHidden`/frame rather than re-deriving
     /// them from the timer it is supposed to be showing.
     var debugFocusChip: FocusTimerChip { focusChip }
+    /// P7: whether the bar is drawing its translucent material, and its fill.
+    var debugMaterialIsShown: Bool { !materialView.isHidden }
+    var debugBarFill: CGColor? { bar.layer?.backgroundColor }
     var debugFocusChipIsVisible: Bool { !focusChip.isHidden }
     /// The chip's *host stack*, which is what actually gives (and gives
     /// back) width on the bar - a hidden arranged subview keeps its own
@@ -1441,8 +1444,11 @@ final class DaylightBarController: NSViewController {
         // B1: on the Daylight family the fill is a tint *over* the material;
         // on the twelve legacy palettes the material is not there at all and
         // this is the same opaque fill it has always been.
-        materialView.isHidden = !theme.isDaylight
-        bar.layer?.backgroundColor = theme.isDaylight
+        // P7: under Reduce Transparency the material goes and the fill is
+        // the opaque surface, exactly as on the legacy palettes.
+        let translucent = theme.isDaylight && !HelmDisplayAccessibility.reduceTransparency
+        materialView.isHidden = !translucent
+        bar.layer?.backgroundColor = translucent
             ? surface.withAlphaComponent(Self.daylightFillAlpha).cgColor
             : surface.cgColor
         // A3: the border and the elevation both depend on whether the

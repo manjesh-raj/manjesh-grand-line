@@ -977,11 +977,7 @@ final class NotificationPanelViewController: NSViewController {
     }
 
     private func menuItem(_ title: String, _ run: @escaping () -> Void) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: #selector(NotificationMenuAction.fire(_:)), keyEquivalent: "")
-        let box = NotificationMenuAction(run)
-        item.target = box
-        item.representedObject = box
-        return item
+        HelmMenuAction.item(title, run)
     }
 
     @objc private func markAllReadClicked() {
@@ -1200,15 +1196,6 @@ final class NotificationPanelViewController: NSViewController {
         return handleListKey(event)
     }
     #endif
-}
-
-/// Carries a closure into an `NSMenuItem`'s target, which AppKit requires to
-/// be an object. One box per item, retained by the item's own
-/// `representedObject` - a menu built fresh per right-click has no other owner.
-private final class NotificationMenuAction: NSObject {
-    private let run: () -> Void
-    init(_ run: @escaping () -> Void) { self.run = run }
-    @objc func fire(_ sender: Any?) { run() }
 }
 
 /// The scrolling list's document view: flipped (gotcha (9)) and the first

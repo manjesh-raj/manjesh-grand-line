@@ -53,7 +53,7 @@
 import AppKit
 import WebKit
 
-final class ReadingListController: NSViewController, DaylightDrillActions {
+final class ReadingListController: NSViewController, DaylightDrillActions, HelmSplitPageHosting {
 
     /// The bell entry a failed git sync leaves, cleared by the next sync that
     /// works. A stable id is what lets a recurring failure update one entry
@@ -97,6 +97,8 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
     /// A boxed panel around the nav was a second bordered surface beside the
     /// page's own cards (Rule 1).
     private let sidebar = HelmPageSidebar()
+    /// P9: the page's split view, which holds `sidebar` as a real sidebar.
+    private(set) var splitPage: HelmSplitPage?
 
     private let gridScroll = NSScrollView()
     private let gridDocument = FlippedView()
@@ -296,7 +298,6 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
             self.filter = picked
             self.rebuildGrid()
         }
-        root.addSubview(sidebar)
 
         gridScroll.translatesAutoresizingMaskIntoConstraints = false
         gridScroll.drawsBackground = false
@@ -308,7 +309,6 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
         // every scroll-backed page here uses it.
         gridDocument.translatesAutoresizingMaskIntoConstraints = false
         gridScroll.documentView = gridDocument
-        root.addSubview(gridScroll)
 
         gridStack.orientation = .vertical
         gridStack.alignment = .leading
@@ -324,19 +324,31 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
         dropHintCard.onClick = { [weak self] in self?.pasteTapped() }
         gridDocument.addSubview(dropHintCard)
 
-        NSLayoutConstraint.activate([
-            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.gutter),
-            sidebar.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: Self.gutter),
-            // Gotcha (16): the column's own height is tied to the page rather
-            // than left to a low-priority content preference - a container
-            // whose height nothing ties lets its content escape it, and that
-            // shipped once as a panel drawn over the app's top bar.
-            sidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.gutter),
+        // P9: the column is a real split-view sidebar - draggable, collapsible
+        // and answering Toggle Sidebar - at the place it was pinned before.
+        // Gotcha (16): the column's height is still tied to the page (the
+        // pane's top and bottom insets) rather than left to a low-priority
+        // content preference - a container whose height nothing ties lets its
+        // content escape it, and that shipped once as a panel drawn over the
+        // app's top bar.
+        let split = HelmSplitPage(sidebarWidth: Self.gutter + HelmPageSidebar.width,
+                                  minimum: HelmPageSidebar.width * 0.8,
+                                  maximum: HelmPageSidebar.width * 1.6,
+                                  surface: .pageGround)
+        addChild(split)
+        root.addSubview(split.view)
+        HelmSplitPage.pin(sidebar, in: split.sidebarPane,
+                          insets: NSEdgeInsets(top: Self.gutter, left: Self.gutter, bottom: Self.gutter, right: 0))
+        HelmSplitPage.pin(gridScroll, in: split.contentPane,
+                          insets: NSEdgeInsets(top: Self.gutter, left: Self.gutter - HelmSplitPage.dividerThickness,
+                                               bottom: Self.gutter, right: Self.gutter))
+        splitPage = split
 
-            gridScroll.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: Self.gutter),
-            gridScroll.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -Self.gutter),
-            gridScroll.topAnchor.constraint(equalTo: sidebar.topAnchor),
-            gridScroll.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
+        NSLayoutConstraint.activate([
+            split.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            split.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            split.view.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            split.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
             // Gotcha (4): the document pins to the **clip** view, never the
             // scroll view - a non-overlay scroller reserves a real ~15pt track

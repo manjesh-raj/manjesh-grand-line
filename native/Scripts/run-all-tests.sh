@@ -313,6 +313,12 @@ NEEDS_SESSION=(
   # P2: a refresh keeps the same row and card objects - real controllers in
   # a real window.
   "FM_RUN_KEYED_REFRESH_TESTS"
+  # P9: seven pages in a real shell.
+  "FM_RUN_SPLIT_SIDEBAR_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
+  # P5: real key events through real windows; Home via the tour lab shell.
+  "FM_RUN_KEYBOARD_PARITY_TESTS"
+  # P7: the bar is checked inside a real shell.
+  "FM_RUN_DISPLAY_ACCESSIBILITY_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
   # The session switcher mounts a real `AppShellController` in a real window.
   "FM_RUN_SESSION_SWITCHER_TESTS"
   # The status pill's one-treatment-per-status guarantee: mounts the real

@@ -288,9 +288,9 @@ struct HelmTheme {
     /// rather than a second copy of them, so the column's edge and a card's
     /// edge are one idiom and cannot drift apart.
     static func sidePanelEdge(_ theme: HelmTheme) -> NSColor {
-        theme.isDaylight
+        HelmDisplayAccessibility.strengthenedEdge(theme.isDaylight
             ? nsColor(theme.daylightTokens.hair)
-            : nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.borderAlpha)
+            : nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.borderAlpha), theme: theme)
     }
 
     private static let mutedAlphaCache = MutedAlphaCache()

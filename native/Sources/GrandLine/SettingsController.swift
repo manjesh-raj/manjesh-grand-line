@@ -41,7 +41,7 @@
 
 import AppKit
 
-final class SettingsController: NSViewController, DaylightDrillActions {
+final class SettingsController: NSViewController, DaylightDrillActions, HelmSplitPageHosting {
 
     // MARK: - Structure
 
@@ -380,7 +380,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// ground, which is a different (and worse) shape than the one being
     /// asked for. The band is the page's own composition, so the page owns it.
     private let sidebarPanel = NSView()
-    private let sidebarEdge = NSView()
+    private let sidebarEdge = HelmHitTransparentView()
     private let sidebarColumn = NSStackView()
     private let searchField = HelmSearchField(placeholder: "Search settings")
     private let sidebar = HelmPageSidebar()
@@ -410,24 +410,17 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     private var toolbarWidthCap: NSLayoutConstraint!
     private var scrollView: NSScrollView!
 
-    /// How far to nudge a centred column right of the scroll area's own
-    /// centre, so that it is centred in the space the captain can actually
-    /// *see*.
-    ///
-    /// The scroll area does not start where the sidebar appears to end. Its
-    /// leading edge is `sidebarColumn.trailing`, while `sidebarPanel` paints
-    /// a further `pageGutter` past that column plus a 1pt `sidebarEdge` rule
-    /// on top - so the first `pageGutter + 1` points of the scroll area are
-    /// underneath the panel. Centring on the clip view alone therefore lands
-    /// the column half that overlap left of the visible centre: measured at a
-    /// 1400pt window, 219pt of visible margin on the left against 244pt on
-    /// the right. Half the overlap puts both at 244.
-    ///
-    /// Derived from the two constraints that create the overlap
-    /// (`sidebarPanel.trailing == sidebarColumn.trailing + pageGutter`, and
-    /// `sidebarEdge.width == 1`) rather than written as a number, so moving
-    /// either one cannot leave this behind.
-    private static let visibleCentreNudge = (HelmMetrics.pageGutter + 1) / 2
+    /// P9: the page's split view. Its sidebar pane holds the band and the
+    /// nav column; its divider sits under `sidebarEdge`.
+    private(set) var splitPage: HelmSplitPage?
+
+    // There used to be a `visibleCentreNudge` here: the scroll area began at
+    // the nav column's trailing edge, so its first `pageGutter + 1` points
+    // sat under the band and its edge, and a centred column had to be pushed
+    // half that overlap right to be centred in what the captain could see.
+    // Since P9 the scroll area starts at the split's content pane - the
+    // visible edge - so the clip view's own centre is the visible centre and
+    // the column lands on exactly the points the nudge used to put it on.
 
     /// The container width the page's wrapping labels were last laid out
     /// against, so a resize that did not move it costs a float compare
@@ -603,8 +596,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         pageWidthCap = pageContainer.widthAnchor
             .constraint(lessThanOrEqualToConstant: selectedCategory.contentMaxWidth)
         NSLayoutConstraint.activate([
-            pageContainer.centerXAnchor.constraint(equalTo: content.centerXAnchor,
-                                                   constant: Self.visibleCentreNudge),
+            pageContainer.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             pageContainer.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor,
                                                    constant: HelmMetrics.pageGutter),
             pageContainer.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor,
@@ -623,7 +615,9 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         let widthGrow = pageContainer.widthAnchor
             .constraint(equalTo: content.widthAnchor,
                         constant: -2 * HelmMetrics.pageGutter)
-        widthGrow.priority = HelmDaylightPriority.contentTie
+        // Under the split's sidebar holding priority, or a capped column's
+        // unmet grow tie moves the divider instead (P9, `HelmSplitPage`).
+        widthGrow.priority = HelmSplitPage.contentGrowPriority
         widthGrow.isActive = true
 
         let scroll = NSScrollView()
@@ -642,9 +636,30 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         sidebarPanel.translatesAutoresizingMaskIntoConstraints = false
         sidebarEdge.wantsLayer = true
         sidebarEdge.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(sidebarPanel)
+        // P9: the band is a real split-view sidebar - draggable, collapsible
+        // and answering Toggle Sidebar. The split sits under the page's own
+        // toolbar and scroll area; the band and the nav column fill its
+        // sidebar pane, so the column widens with the divider.
+        let split = HelmSplitPage(sidebarWidth: HelmMetrics.pageGutter * 2 + HelmPageSidebar.width,
+                                  minimum: HelmMetrics.pageGutter * 2 + HelmPageSidebar.width * 0.8,
+                                  maximum: HelmMetrics.pageGutter * 2 + HelmPageSidebar.width * 1.6,
+                                  surface: .pageGround)
+        addChild(split)
+        root.addSubview(split.view)
+        HelmSplitPage.pin(sidebarPanel, in: split.sidebarPane, insets: NSEdgeInsets())
+        // **The nav column sits outside the scroll view**, so scrolling a
+        // long page (Terminal is nine recorders) never carries the page list
+        // off the top with it. Its bottom is an equality, not `<=`: the column
+        // has a footer, and `HelmPageSidebar.setFooter` pins that footer to
+        // the column's own bottom edge - which only reaches the page's bottom
+        // if the page says so (see that method's own note).
+        HelmSplitPage.pin(sidebarColumn, in: split.sidebarPane,
+                          insets: NSEdgeInsets(top: HelmMetrics.s3, left: HelmMetrics.pageGutter,
+                                               bottom: HelmMetrics.pageGutter, right: HelmMetrics.pageGutter))
+        splitPage = split
+        // The edge rule is painted over the divider rather than by it, and
+        // lets every click through, so the divider underneath still drags.
         root.addSubview(sidebarEdge)
-        root.addSubview(sidebarColumn)
         root.addSubview(toolbar)
         root.addSubview(scroll)
 
@@ -661,47 +676,22 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             // or to the column's own already-fixed width, so gotcha (13)'s
             // "a required content constraint over priority 500 resizes the
             // window" does not apply.
-            sidebarPanel.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            sidebarPanel.topAnchor.constraint(equalTo: root.topAnchor),
-            sidebarPanel.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            sidebarPanel.trailingAnchor.constraint(equalTo: sidebarColumn.trailingAnchor,
-                                                   constant: HelmMetrics.pageGutter),
-            sidebarEdge.leadingAnchor.constraint(equalTo: sidebarPanel.trailingAnchor),
+            split.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            split.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            split.view.topAnchor.constraint(equalTo: root.topAnchor),
+            split.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            sidebarEdge.leadingAnchor.constraint(equalTo: split.sidebarPane.trailingAnchor),
             sidebarEdge.widthAnchor.constraint(equalToConstant: 1),
             sidebarEdge.topAnchor.constraint(equalTo: root.topAnchor),
             sidebarEdge.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
-            // **The nav column sits outside the scroll view**, so scrolling a
-            // long page (Terminal is nine recorders) never carries the page
-            // list off the top with it.
-            sidebarColumn.leadingAnchor.constraint(equalTo: root.leadingAnchor,
-                                                   constant: HelmMetrics.pageGutter),
-            sidebarColumn.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s3),
-            // Required, not `<=`: the column has a footer, and
-            // `HelmPageSidebar.setFooter` pins that footer to the column's own
-            // bottom edge - which only reaches the page's bottom if the page
-            // says so (see that method's own note).
-            sidebarColumn.bottomAnchor.constraint(equalTo: root.bottomAnchor,
-                                                  constant: -HelmMetrics.pageGutter),
-            sidebarColumn.widthAnchor.constraint(equalToConstant: HelmPageSidebar.width),
-
-            // Measured from the page, not from the column's trailing edge.
-            // `HelmPageSidebar`'s own width constraint sits at `contentTie`
-            // (499) so it can never be a window-width floor, which means it
-            // merely *ties* with another 499 constraint rather than beating
-            // it - and this page's content column is capped, so at a wide
-            // window there is real slack in the row. Chaining the two let
-            // that slack widen the column instead (measured at 303pt against
-            // the component's own 208, `fm/grandline-settings-page-sidebar-
-            // redesign`). A constant leaves the column's width uncontested.
             // The same capped-and-centered shape the content column uses a
             // few lines up (see `pageWidthCap`), expressed against the clip
             // view so the header and the column it heads share *both* edges
             // rather than only their right one. A required `leading ==` here
             // would left-pin the header while the column below it centres,
             // which is the drift these two blocks exist to prevent.
-            toolbar.centerXAnchor.constraint(equalTo: scroll.contentView.centerXAnchor,
-                                             constant: Self.visibleCentreNudge),
+            toolbar.centerXAnchor.constraint(equalTo: scroll.contentView.centerXAnchor),
             toolbar.leadingAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.leadingAnchor,
                                              constant: HelmMetrics.pageGutter),
             // **The toolbar ends where the content column ends, not where
@@ -737,10 +727,9 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             toolbar.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s3),
             toolbar.heightAnchor.constraint(equalToConstant: 30),
 
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor,
-                                            constant: HelmMetrics.pageGutter + HelmPageSidebar.width
-                                                + HelmMetrics.s5 - HelmMetrics.pageGutter),
-            sidebarColumn.trailingAnchor.constraint(lessThanOrEqualTo: scroll.leadingAnchor),
+            // The visible edge: the split's content pane, past the band and
+            // its rule - see the note where `visibleCentreNudge` used to be.
+            scroll.leadingAnchor.constraint(equalTo: split.contentPane.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scroll.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: HelmMetrics.s2),
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
@@ -763,7 +752,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         let toolbarWidthGrow = toolbar.widthAnchor
             .constraint(equalTo: scroll.contentView.widthAnchor,
                         constant: -2 * HelmMetrics.pageGutter)
-        toolbarWidthGrow.priority = HelmDaylightPriority.contentTie
+        toolbarWidthGrow.priority = HelmSplitPage.contentGrowPriority
         toolbarWidthGrow.isActive = true
 
         mountPage(selectedCategory)

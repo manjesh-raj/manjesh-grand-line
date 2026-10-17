@@ -415,3 +415,80 @@ enum HelmMotion {
         }
     }
 }
+
+/// P7 of the Grand Line vs Automic Vault polish report: the two other
+/// display settings in Accessibility > Display, read in one place beside
+/// `HelmMotion.isReduced`.
+///
+/// - **Increase Contrast** strengthens this app's hairlines and borders: the
+///   shared border alphas go to full strength, and the shared edge colours
+///   step toward the theme's ink (`strengthenedEdge`).
+/// - **Reduce Transparency** drops the bar's material for its opaque fill.
+///   Every other `NSVisualEffectView` here is left to AppKit, which already
+///   renders a material opaque under this setting; the bar is the one place
+///   a translucent tint is layered *over* a material, so it has to choose.
+///
+/// Both are read fresh every time, like `isReduced`. A change reaches the
+/// whole app through `ThemeManager`, which re-fires every theme observer
+/// when macOS posts `accessibilityDisplayOptionsDidChangeNotification`.
+enum HelmDisplayAccessibility {
+    static var increaseContrast: Bool {
+        #if FM_SELFTESTS
+        if let forced = increaseContrastOverrideForTests { return forced }
+        #endif
+        return NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+    }
+
+    static var reduceTransparency: Bool {
+        #if FM_SELFTESTS
+        if let forced = reduceTransparencyOverrideForTests { return forced }
+        #endif
+        return NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+    }
+
+    #if FM_SELFTESTS
+    /// Force the answers so a suite can drive both states of the real paint
+    /// paths. Every user restores `nil`.
+    static var increaseContrastOverrideForTests: Bool?
+    static var reduceTransparencyOverrideForTests: Bool?
+    #endif
+
+    /// A border or hairline opacity: `base` normally, full strength under
+    /// Increase Contrast.
+    static func edgeAlpha(_ base: CGFloat) -> CGFloat {
+        increaseContrast ? 1 : base
+    }
+
+    /// How far an edge colour moves toward the theme's ink under Increase
+    /// Contrast.
+    static let contrastEdgeFraction: CGFloat = 0.4
+
+    /// A border or hairline colour: unchanged normally, and under Increase
+    /// Contrast fully opaque and pulled `contrastEdgeFraction` of the way
+    /// toward the theme's ink - so an edge that was barely a step off its
+    /// surface becomes a clear line, in light and dark palettes alike.
+    static func strengthenedEdge(_ color: NSColor, theme: HelmTheme) -> NSColor {
+        guard increaseContrast else { return color }
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let opaque = color.withAlphaComponent(1)
+        return opaque.blended(withFraction: contrastEdgeFraction, of: ink) ?? opaque
+    }
+
+    /// Observe a change to any of the display options (Reduce Motion,
+    /// Increase Contrast, Reduce Transparency).
+    ///
+    /// macOS posts this notification to **`NSWorkspace`'s own** notification
+    /// center, not to `NotificationCenter.default`; an observer registered on
+    /// the default center never fires, which is how the dictation HUD's
+    /// Reduce Motion observer went dead.
+    static func observeChanges(_ fn: @escaping () -> Void) -> NSObjectProtocol {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil, queue: .main
+        ) { _ in fn() }
+    }
+
+    static func stopObserving(_ token: NSObjectProtocol) {
+        NSWorkspace.shared.notificationCenter.removeObserver(token)
+    }
+}

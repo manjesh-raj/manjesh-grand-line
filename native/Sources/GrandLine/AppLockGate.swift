@@ -236,6 +236,13 @@ enum AppLockedSurface {
     /// compact mode there is no window for the lock overlay to cover, so
     /// this gate is the whole of the lock.
     case compactModePopover
+    /// P6: the compact-mode status item's right-click menu.
+    ///
+    /// Its own case rather than `compactModePopover`'s, per this file's
+    /// header rule: the menu lists the same tasks and alerts by a different
+    /// path, and a suite asserting the popover's gate would pass with this
+    /// one deleted. Locked, the menu shows only the ways back in.
+    case compactModeMenu
 
     // MARK: F21 - App Intents
 

@@ -64,7 +64,7 @@ enum HostsTab: String, CaseIterable {
     }
 }
 
-final class HostsController: NSViewController, DaylightDrillActions {
+final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPageHosting {
 
     private let hostStore: HostStore
     private let keyStore: SSHKeyStore
@@ -193,6 +193,8 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// A boxed panel around the nav was a second bordered surface beside the
     /// page's own cards (Rule 1).
     private let sidebar = HelmPageSidebar()
+    /// P9: the page's split view, which holds `sidebar` as a real sidebar.
+    private(set) var splitPage: HelmSplitPage?
     private let keychainCard = HostsKeychainCard()
     private let userRow = HostsUserRow()
 
@@ -377,7 +379,6 @@ final class HostsController: NSViewController, DaylightDrillActions {
         // anchors: activating a constraint between two views with no common
         // ancestor throws (`fm/grandline-docs-no-window-fix`'s own finding).
         root.addSubview(sideStack)
-        root.addSubview(sidebar)
         root.addSubview(workspacePanel)
         root.addSubview(quickActionsPanel)
         buildSidebar()
@@ -421,19 +422,38 @@ final class HostsController: NSViewController, DaylightDrillActions {
             column.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s5),
             column.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -HelmMetrics.pageGutter),
 
-            // The nav column sits at the page's leading edge; everything else
-            // starts after it. A `HelmPageSidebar` is deliberately **outside**
-            // any scroll view the page has, for the reason `SchedulesController`
-            // records: it is navigation, so it has to stay reachable.
-            sidebar.leadingAnchor.constraint(equalTo: column.leadingAnchor),
-            sidebar.topAnchor.constraint(equalTo: column.topAnchor),
-            // A **required** `==`, not the `<=` Poneglyph and Schedules use:
-            // this column carries a bottom-anchored footer (the keychain card
-            // and the user row), and that footer only reaches the page's
-            // bottom if the column does - see `HelmPageSidebar.setFooter`.
-            sidebar.bottomAnchor.constraint(equalTo: column.bottomAnchor),
-
         ])
+
+        // P9: the nav column is a real split-view sidebar - draggable,
+        // collapsible and answering Toggle Sidebar - where it was pinned
+        // before. It sits at the page's leading edge, and everything else
+        // starts after the split's content pane, so the page follows the
+        // divider. A `HelmPageSidebar` is deliberately **outside** any scroll
+        // view the page has, for the reason `SchedulesController` records: it
+        // is navigation, so it has to stay reachable.
+        //
+        // The split sits *under* the page's own views, which keep their
+        // layout guides on `root`; only the sidebar moves into it.
+        let split = HelmSplitPage(sidebarWidth: HelmMetrics.pageGutter + HelmPageSidebar.width,
+                                  minimum: HelmPageSidebar.width * 0.8,
+                                  maximum: HelmPageSidebar.width * 1.6,
+                                  surface: .pageGround)
+        addChild(split)
+        root.addSubview(split.view, positioned: .below, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            split.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            split.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            split.view.topAnchor.constraint(equalTo: root.topAnchor),
+            split.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+        ])
+        // The bottom is an equality, not the `<=` Poneglyph and Schedules use:
+        // this column carries a bottom-anchored footer (the keychain card and
+        // the user row), and that footer only reaches the page's bottom if the
+        // column does - see `HelmPageSidebar.setFooter`.
+        HelmSplitPage.pin(sidebar, in: split.sidebarPane,
+                          insets: NSEdgeInsets(top: HelmMetrics.s5, left: HelmMetrics.pageGutter,
+                                               bottom: HelmMetrics.pageGutter, right: 0))
+        splitPage = split
 
         // The page is two columns: the tab's own content, and the permanent
         // right-hand panel stack - the reference mockup's own `.grid`
@@ -465,7 +485,8 @@ final class HostsController: NSViewController, DaylightDrillActions {
         contentToInspector = toInspector
         contentToGutter = toGutter
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: HelmMetrics.s4),
+            content.leadingAnchor.constraint(equalTo: split.contentPane.leadingAnchor,
+                                             constant: HelmMetrics.s4 - HelmSplitPage.dividerThickness),
             content.topAnchor.constraint(equalTo: column.topAnchor),
             content.bottomAnchor.constraint(equalTo: column.bottomAnchor),
             toGutter,

@@ -2643,9 +2643,11 @@ final class HomeCanvasController: NSViewController {
         content.subtitle = rows.isEmpty ? "no tabs open" : "\(rows.count) tab\(rows.count == 1 ? "" : "s") open"
         let connected = connectedHostIDs?() ?? []
         if !connected.isEmpty { content.chip = .mute("\(connected.count) host live") }
-        content.body = rows.isEmpty
-            ? .note("Open a shell, or connect a saved host.")
-            : .peekRows(Array(rows.prefix(HelmModuleCard.maxPeekRows)))
+        if rows.isEmpty {
+            content.body = .note("Open a shell, or connect a saved host.")
+        } else {
+            content.setBoundedPeekRows(rows, total: rows.count)
+        }
     }
 
     /// One service as the Health ring's summary needs to see it.
@@ -2784,7 +2786,7 @@ final class HomeCanvasController: NSViewController {
                               text: host.label,
                               value: connected.contains(host.id) ? "live" : "idle")
         }
-        content.body = .peekRows(Array(rows))
+        content.setBoundedPeekRows(Array(rows), total: hosts.count)
     }
 
     // MARK: The four Setup sub-pages
@@ -2969,7 +2971,7 @@ final class HomeCanvasController: NSViewController {
                                      text: schedule.action.title,
                                      value: schedule.isEnabled ? schedule.cadence.displayString : "paused")
         }
-        content.body = .peekRows(Array(rows))
+        content.setBoundedPeekRows(Array(rows), total: schedules.count)
     }
 
     private func fillLogAnalyzer(_ content: inout HelmModuleCard.Content) {
@@ -3124,7 +3126,7 @@ final class HomeCanvasController: NSViewController {
                                   text: page.title,
                                   value: page.isDailyNote ? "daily note" : page.folder)
             }
-        content.body = .peekRows(Array(rows))
+        content.setBoundedPeekRows(Array(rows), total: pages.count, limit: 2)
     }
 
     /// F4's reading list card: what is still waiting, and the two most
@@ -3155,7 +3157,7 @@ final class HomeCanvasController: NSViewController {
                                   text: link.displayTitle,
                                   value: link.host)
             }
-        content.body = .peekRows(Array(rows))
+        content.setBoundedPeekRows(Array(rows), total: links.count, limit: 2)
     }
 
     /// The runbook peek rows this card used to show under `.docs` before the
@@ -3177,7 +3179,7 @@ final class HomeCanvasController: NSViewController {
                               text: runbook.title,
                               value: DocsRunbookMetadata.runbookSubtitle(runbook) ?? "")
         }
-        content.body = .peekRows(Array(rows))
+        content.setBoundedPeekRows(Array(rows), total: runbooks.count, limit: 2)
     }
 
     /// The Postmortems sibling of `fillRunbooks` above - same shape, reading
@@ -3198,7 +3200,7 @@ final class HomeCanvasController: NSViewController {
                               text: postmortem.title,
                               value: DocsRunbookMetadata.postmortemSubtitle(postmortem) ?? "")
         }
-        content.body = .peekRows(Array(rows))
+        content.setBoundedPeekRows(Array(rows), total: postmortems.count, limit: 2)
     }
 
     private func fillDictation(_ content: inout HelmModuleCard.Content) {
@@ -3266,7 +3268,7 @@ final class HomeCanvasController: NSViewController {
             return
         }
         content.chip = .mute(newest.count == 1 ? "1 note" : "\(newest.count) notes")
-        content.body = .peekRows(newest.prefix(HelmModuleCard.maxPeekRows).map { note in
+        content.setBoundedPeekRows(newest.prefix(HelmModuleCard.maxPeekRows).map { note in
             HelmModulePeekRow(state: .idle,
                               // The same title-or-first-line fallback ⌘K's own
                               // sticky rows use, so one note reads the same way
@@ -3275,7 +3277,7 @@ final class HomeCanvasController: NSViewController {
                               // The colour is the one thing a captain
                               // actually sorts these by on the board itself.
                               value: note.color.rawValue.capitalized)
-        })
+        }, total: newest.count)
     }
 
     /// `names()` rather than `list()`: this needs "how many, and what are they
@@ -3294,11 +3296,11 @@ final class HomeCanvasController: NSViewController {
             return
         }
         content.chip = .mute(names.count == 1 ? "1 snippet" : "\(names.count) snippets")
-        content.body = .peekRows(names.prefix(HelmModuleCard.maxPeekRows).map {
+        content.setBoundedPeekRows(names.prefix(HelmModuleCard.maxPeekRows).map {
             HelmModulePeekRow(state: .idle,
                               text: $0,
                               value: CodePreviewLanguage.forFilename($0).displayName)
-        })
+        }, total: names.count)
     }
 
     /// Reads the store's already-loaded `commands` array and its favourites -
@@ -3321,9 +3323,9 @@ final class HomeCanvasController: NSViewController {
                                    note: "Nothing run yet - open the library to find one.")
             return
         }
-        content.body = .peekRows(recent.map {
+        content.setBoundedPeekRows(recent.map {
             HelmModulePeekRow(state: .idle, text: $0.name, value: $0.category)
-        })
+        }, total: total)
     }
 
     /// Spelled out rather than reaching through `sources` inline, purely so
@@ -3442,6 +3444,8 @@ final class HomeCanvasController: NSViewController {
     /// digest would compose. The tour lab's `demo attention N` and
     /// `HomeFitSelfTest` use it to put an exact number of rows on the page
     /// without seeding a Tasks store with dated tasks.
+    /// P5: the attention card's rows, as its list holds them.
+    var debugAttentionRows: [NSView] { attentionCard.debugRows }
     var debugAttentionOverride: NeedsAttentionSummary?
     var debugAttentionSubline = "1 decision waiting - the crew is holding for you."
     /// The scroll view's document, for a render of the whole page rather

@@ -718,9 +718,9 @@ final class HelmCard: NSView {
         // §6.5's `hairRow` under the header, which is a *lighter* line than
         // the card's own outline (the pre-Daylight themes get the same effect
         // by damping `chromeLineHex`).
-        divider.layer?.backgroundColor = theme.isDaylight
-            ? HelmTheme.nsColor(theme.daylightTokens.hairRow).cgColor
-            : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(Self.dividerAlpha).cgColor
+        divider.layer?.backgroundColor = HelmDisplayAccessibility.strengthenedEdge(theme.isDaylight
+            ? HelmTheme.nsColor(theme.daylightTokens.hairRow)
+            : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(Self.dividerAlpha), theme: theme).cgColor
         applyDaylightElevation(theme)
         applyAttentionEdge(theme)
         headerTile?.applyTheme(theme)
@@ -827,9 +827,9 @@ final class HelmCard: NSView {
         view.layer?.cornerRadius = theme.isDaylight ? (daylightRadius ?? HelmMetrics.dModule) : cornerRadius
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         view.layer?.borderWidth = 1
-        view.layer?.borderColor = theme.isDaylight
-            ? HelmTheme.nsColor(theme.chromeLineHex).cgColor
-            : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(borderAlpha).cgColor
+        view.layer?.borderColor = HelmDisplayAccessibility.strengthenedEdge(theme.isDaylight
+            ? HelmTheme.nsColor(theme.chromeLineHex)
+            : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(borderAlpha), theme: theme).cgColor
     }
 
     /// The card border opacity. `chromeBackgroundHex == backgroundHex` in
@@ -837,11 +837,13 @@ final class HelmCard: NSView {
     /// `tokyo-night-light`), so in those the border is the *only* thing
     /// separating a card from the page - it carries real load, and is not
     /// decoration to be faded away.
-    static let borderAlpha: CGFloat = 0.6
+    /// Full strength under Increase Contrast (P7).
+    static var borderAlpha: CGFloat { HelmDisplayAccessibility.edgeAlpha(0.6) }
 
     /// The header/body divider opacity - one step fainter than the card's own
     /// outline, so the card reads as one object rather than two stacked ones.
-    static let dividerAlpha: CGFloat = 0.5
+    /// Full strength under Increase Contrast (P7).
+    static var dividerAlpha: CGFloat { HelmDisplayAccessibility.edgeAlpha(0.5) }
 
     // MARK: Elevation
 
@@ -2238,7 +2240,8 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
     /// rather than decoration: it is the only thing separating a row from its
     /// container in the three themes where `chromeBackgroundHex ==
     /// backgroundHex`, exactly as for `HelmCard`.
-    static let borderAlpha: CGFloat = 0.4
+    /// Full strength under Increase Contrast (P7).
+    static var borderAlpha: CGFloat { HelmDisplayAccessibility.edgeAlpha(0.4) }
 
     /// How far a selected row's card fill is pulled toward the theme accent,
     /// and the alpha of its accent stroke. Both are `HelmTableRowView`'s own
@@ -2403,7 +2406,14 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
     /// interaction lives elsewhere (a table's own double-click, a nested
     /// control) - which is also why `hover` is a separate argument: a hover
     /// highlight on a row that does nothing is a lie.
-    var onClick: (() -> Void)?
+    ///
+    /// P5: the same action is the card's keyboard and VoiceOver press, so a
+    /// clickable row takes Tab focus and answers Return and Space - GL-16's
+    /// rule for a clickable row. The mouse still goes through this row's own
+    /// recognizer, which arbitrates with any nested control (gotcha (20)).
+    var onClick: (() -> Void)? {
+        didSet { card.onAccessibilityPress = onClick }
+    }
 
     /// - Parameters:
     ///   - chipPlacement: see `ChipPlacement`.
@@ -3005,9 +3015,10 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
                 card.hoverColor = hoverEnabled ? flatHover : resting
                 if style == .cardFlat {
                     card.layer?.borderWidth = 1
-                    card.layer?.borderColor = (theme.isDaylight
+                    card.layer?.borderColor = HelmDisplayAccessibility.strengthenedEdge(theme.isDaylight
                         ? HelmTheme.nsColor(theme.chromeLineHex)
-                        : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.borderAlpha)).cgColor
+                        : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.borderAlpha),
+                        theme: theme).cgColor
                 } else {
                     card.layer?.borderWidth = 0
                 }

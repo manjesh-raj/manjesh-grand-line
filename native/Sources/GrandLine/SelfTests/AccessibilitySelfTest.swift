@@ -397,9 +397,15 @@ enum AccessibilitySelfTest {
                 fail("\(file) has a looping/animated surface but never checks Reduce Motion", &ok)
             }
             // `HelmUIComponents`' hover fade is a one-shot on a real event, so
-            // it needs the check but not a change observer.
+            // it needs the check but not a change observer. P7 centralised
+            // the observer too: `HelmDisplayAccessibility.observeChanges`
+            // registers on `NSWorkspace`'s center, which is where macOS posts
+            // the change (two observers on the default center had been dead).
+            // Either spelling is an observer; `DisplayAccessibilitySelfTest`
+            // fails one on the wrong center.
             if file != "HelmUIComponents.swift",
-               !text.contains("accessibilityDisplayOptionsDidChangeNotification") {
+               !text.contains("accessibilityDisplayOptionsDidChangeNotification"),
+               !text.contains("HelmDisplayAccessibility.observeChanges") {
                 fail("\(file) checks Reduce Motion but never observes changes to it - the setting would need a relaunch", &ok)
             }
         }

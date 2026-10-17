@@ -715,3 +715,150 @@ The refresh case pins the legacy style before seeding, so a runner switching sty
 `HomeFitSelfTest`'s right-edge check expected "the window less the page gutter".
 It failed on `main` as well as here when run with `-AppleShowScrollBars Always` (an argument-domain setting for that one process), off by exactly the 17pt a legacy scroller takes.
 It now expects the clip view less the page gutter, and a width-blind in-place path still fails it in both scroller modes.
+
+## Increase Contrast and Reduce Transparency (polish report P7)
+
+The app read Reduce Motion through `HelmMotion.isReduced` and ignored the two other settings in Accessibility > Display.
+
+### What changed
+
+- `HelmDisplayAccessibility` (in `HelmMotion.swift`) reads Increase Contrast and Reduce Transparency, fresh every time, with test overrides.
+- Under Increase Contrast, the shared edge tokens go to full strength: `HelmCard.borderAlpha` and `dividerAlpha`, `HelmAccentRow.borderAlpha` and `HelmField.borderAlpha`.
+  The shared edge colours also step 40% toward the theme's ink (`strengthenedEdge`): the card outline, the card divider, the flat-row border, the field border and the side-panel edge.
+  Daylight's edges were already at full alpha, so alpha alone would have changed nothing there.
+- Under Reduce Transparency, the bar drops its material and paints its opaque surface, as it already did on the legacy palettes.
+  Every other `NSVisualEffectView` is left to AppKit, which renders a material opaque under this setting by itself.
+  The bar is the one place a translucent tint sits over a material, so it has to choose.
+- `ThemeManager` re-fires every theme observer when the display options change, through the same `reapplyCurrentTheme` a text-size change uses.
+
+### A dead observer, twice
+
+macOS posts `accessibilityDisplayOptionsDidChangeNotification` to `NSWorkspace`'s own notification center.
+The dictation HUD and the lock screen both observed it on `NotificationCenter.default`, where it never arrives.
+So toggling Reduce Motion with either one showing did nothing until the next state change.
+Both now go through `HelmDisplayAccessibility.observeChanges`, and a source guard fails the run on an observer of this notification on the default center.
+
+### Verified
+
+`FM_RUN_DISPLAY_ACCESSIBILITY_TESTS` (window-backed) asserts what is painted, in both states of each setting:
+
+- 78 edges (card, field and side panel in all 26 palettes) are opaque and measurably stronger against their surface under Increase Contrast;
+- the Daylight bar shows its material and a 0.72 fill normally, and hides the material with an opaque fill under Reduce Transparency;
+- a mounted module card repaints its edge from the `NSWorkspace` notification alone;
+- no source observes the notification on the default center (it found the lock screen's).
+
+Confirmed by injection: no strengthening, a bar that ignores Reduce Transparency, and a `ThemeManager` with no observer each fail by name.
+Not verified: the system settings themselves, which no API can set, and how the strengthened edges look on a real display.
+
+## Keyboard parity for hand-built lists, panels and sheets (polish report P5)
+
+### What changed
+
+- `HelmListNavigation` moves the keyboard between a hand-built list's rows on Up and Down, the way a table does.
+  A focused `HoverHighlightView` row handles Return and Space itself and passes every other key up the responder chain, so the list that owns the rows sees the arrows.
+  It moves to the previous or next row that can take the keyboard: the row itself, or its first focusable descendant.
+  At either end the key is consumed and nothing moves, as in a table.
+  A modified arrow (Command-Down and so on) is left alone, and the arrows' own Fn and numeric-pad flags are ignored (gotcha (21)).
+- `HelmFlatList` uses it, which covers Home's Needs Attention list and Weekly Review's pushed-back list.
+  A module card's peek rows sit in a `HelmKeyboardListView`, which covers the Merge queue and every other peek list.
+- **Home's attention rows could not take the keyboard at all.**
+  `HelmAccentRow.onClick` drove only the row's own click recognizer, so its inner `HoverHighlightView` was never activatable.
+  Its only other targets were buttons, which macOS leaves out of the Tab order unless Full Keyboard Access is on.
+  `onClick` now also sets the card's `onAccessibilityPress`, so every clickable accent row takes Tab focus, answers Return and Space, and can be pressed by VoiceOver - GL-16's rule for a clickable row.
+- Escape on every `HelmBarPanel` and the default and cancel keys on every `HelmFormSheet` already worked.
+  They were never asserted through a real key event, so they are now.
+
+### Verified
+
+`FM_RUN_KEYBOARD_PARITY_TESTS` (window-backed) sends real key events through the window's own dispatch:
+
+- a `HelmFlatList`: Down, Down into a nested focusable control, clamped at the end, Up, then Return and Space pressing the focused row, and Command-Down left alone;
+- Home with the tour's realistic data: four attention rows and thirteen Merge queue peek rows, in both directions;
+- a `HelmBarPanel` closing on Escape, with and without a field focused;
+- a form sheet's Save on Return (and on Command-Return where the sheet asks for it) and Cancel on Escape, through `performKeyEquivalent`;
+- a source guard that all twelve form sheets take their footer, and so their keys, from `setFooter`.
+
+Confirmed by injection: no arrow handling in `HelmFlatList`, a plain view for the peek list, and an `onClick` that does not set the press each fail by name.
+Not verified: VoiceOver itself, and Tab order with Full Keyboard Access on.
+
+## The density rule: bounded summaries (polish report P4)
+
+The report counted 21 Merge queue rows on Home and about 17 controls in the bar.
+
+### What changed
+
+- `HelmModuleCard.Content.setBoundedPeekRows(_:total:limit:)` is the rule in one place.
+  A card shows at most its row budget (`maxPeekRows`, or 2 where a card already chose two).
+  When it has more than it shows, it says so - "Showing 3 of 12" - with a "View all 12" link.
+  The link opens the card's own page: a footer link with no handler of its own now runs the card's `onOpen`.
+- Ten of Home's peek cards cut their lists to three or two rows and said nothing: Console, Hosts, Schedules, Notebook, Reading List, Runbooks, Postmortems, Sticky Board, Code Preview and the Command Library.
+  All ten now go through the helper.
+- The Merge queue already followed the rule.
+  On the hub it budgets its rows from the height its column has left and says "Showing 21 of 22" with "All 22 open".
+  That height budget is the hub's fit-the-window design (`fm/grandline-home-fit-implement`), and it is also what Automic Vault does ("a row budget computed from the available height").
+  A fixed cap there would leave the column's absorber, the Morning briefing, as a tall empty card, so it is unchanged.
+- The bar is unchanged, on purpose.
+  Its quick-access row is the captain's own configuration (`QuickAccessConfiguration`), capped at six visible tiles with the rest in the overflow menu and ⌘K.
+  Review U4 once trimmed it, and the captain had Console, Hosts and Poneglyph restored.
+  Moving tiles off it again is the captain's call, not a density default.
+
+### Verified
+
+`FM_RUN_BOUNDED_SUMMARY_TESTS` (pure logic, so it guards CI's blocking lane):
+
+- the helper shows the budget and footers "Showing 3 of 12 / View all 12", draws no footer when nothing is hidden, and honours a two-row budget, read off a real card's painted labels;
+- "View all" runs the card's own open through `performClick`;
+- a source guard that every peek list on Home goes through the helper or sets its own footer.
+
+Confirmed by injection: a link with no `onOpen` fallback, a helper that sets no footer, and one card reverted to a silent cut each fail by name.
+
+## Real split-view sidebars on seven pages (polish report P9)
+
+Seven pages drew their navigation column as a fixed-width view pinned beside their content: Schedules, Reading List, Notebook, Poneglyph, Hosts, Tasks and Settings.
+Automic Vault's `NavigationSplitView` gives the same column a draggable divider, an animated collapse and the Toggle Sidebar command.
+
+### What changed
+
+- `HelmSplitPage` (an `NSSplitViewController`) holds a page's column in its sidebar pane and the page's content in its content pane.
+  Each page's column opens exactly where it was pinned, and its content starts where it did: a page whose content sat a fixed distance after the column subtracts the 1pt divider.
+- **No sidebar material.** The report suggested `NSSplitViewItem(sidebarWithViewController:)`.
+  That item puts the sidebar material behind the pane, which composites against the desktop (gotcha (8)) and drew as a black band in an off-screen render of Schedules, with the column's rows missing.
+  So the sidebar is a plain split item, the page paints it (the page ground, or `sidePanelFill` for Settings' band), and `HelmSplitPage` supplies `toggleSidebar(_:)` itself.
+- **The divider.** It is clear where the column floats on the page and the gutter separates it, and it is the page's own hairline on Tasks.
+  Settings keeps its band and edge views (its suites read both); the edge is hit-transparent so the divider under it still drags.
+- **Priorities, measured rather than chosen.**
+  The divider moved with the sidebar held at 489 and did not at 495, so the holding priority is 489.
+  At the default 250, Settings' two `contentTie` grow ties pushed its column to its 214pt minimum or its 381pt maximum depending on the window width, so those ties sit at `contentGrowPriority` (480).
+  `HelmPageSidebar` held its own `208 @ 499`, which pinned the divider against a drag, so inside a pane it yields that preference (`yieldWidthToContainer`).
+- **Settings no longer needs `visibleCentreNudge`.** Its scroll area began under the band, so a centred column was nudged half the overlap right.
+  The scroll area now starts at the content pane, the clip view's centre is the visible centre, and the column lands on the same points.
+- **Tasks' column belongs to its board.** `pageForcesCollapse` puts it away on Weekly Review and brings it back on the board, without forgetting a collapse the captain chose.
+- **Toggle Sidebar** is in the Go menu on ⌥⌘S, routed through the shell like Code Preview's ⌘B.
+  The system's ⌃⌘S is already Show Hosts here.
+- Widths are not saved across launches: `NSSplitView.autosaveName` writes `UserDefaults.standard`, which every suite here must stay out of (`AppDefaults.store`).
+
+### Found on the way, and fixed separately
+
+Two empty states held a one-line sentence at compression resistance 750, and both mattered at the 960pt minimum on `main` as well:
+
+- Schedules' grew the window to 1055pt (`SchedulesRedesignSelfTest` now checks the minimum window holds);
+- Notebook's editor overlay squeezed the page tree to 192pt.
+
+Both now wrap to their containers (`letBodyWrapToContainer`).
+
+### Verified
+
+`FM_RUN_SPLIT_SIDEBAR_TESTS` (window-backed) drives the real shell:
+
+- each of the seven pages opens with its column at its old width, and the 960pt window holds on every one;
+- the shell's Toggle Sidebar collapses each column, gives the content the room, and reopens it at its width;
+- a divider moved to 300pt holds through a window resize and stops at its maximum;
+- Tasks puts its column away on Weekly Review, refuses to reopen it there, brings it back on the board, and keeps the captain's own collapse across the trip;
+- the command does nothing on a page without a split.
+
+`HostsRedesignSelfTest`'s window-floor sweep now expects two declared 499 columns rather than three, and asserts the nav column's own preference is the yielded one.
+Confirmed by injection: the default 250 holding priority, no yield, a dead Toggle Sidebar action and a forced collapse that forgets the captain's choice each fail by name.
+
+Renders of Home and the seven pages at 960x620, 1100x720 and 1512x950 in Daylight and Dusk, against `f3a552f`: all 34 at 1100 and 1512, and Home at 960, are pixel-identical.
+The 14 page renders at 960 differ in size because `main`'s Schedules defect leaves the window at 1055pt; on this branch every one is 960pt.
+Not verified: dragging the divider with a real mouse, and the collapse animation on a real display.

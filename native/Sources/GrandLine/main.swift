@@ -2182,6 +2182,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             goMenu.addItem(item)
         }
         goMenu.addItem(NSMenuItem.separator())
+        // P9: the standard sidebar command for the seven pages whose column is
+        // a real split-view sidebar. Not the system's ⌃⌘S, which this app
+        // already gives to Show Hosts; ⌥⌘S was checked free against this
+        // file's chords, which `NavigationCoherenceSelfTest` enforces.
+        let toggleSidebarItem = NSMenuItem(title: "Toggle Sidebar",
+                                           action: #selector(AppShellController.toggleSidebarFromMenu),
+                                           keyEquivalent: "s").withSymbol("sidebar.left")
+        toggleSidebarItem.keyEquivalentModifierMask = [.command, .option]
+        toggleSidebarItem.target = menuTarget
+        goMenu.addItem(toggleSidebarItem)
+        goMenu.addItem(NSMenuItem.separator())
         let allDestinationsItem = NSMenuItem(title: "All Destinations\u{2026}",
                                              action: #selector(AppDelegate.showAllDestinations),
                                              keyEquivalent: "d").withSymbol("square.grid.3x3")
@@ -3260,6 +3271,38 @@ if ProcessInfo.processInfo.environment["FM_RUN_PANEL_AND_PAGE_MOTION_TESTS"] == 
 // See PageLoadOffMainSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS"] == "1" {
     exit(PageLoadOffMainSelfTest.run() ? 0 : 1)
+}
+
+// P4 of the same report: the density rule - every module card is a bounded
+// summary that says when it shows fewer rows than it has. Pure logic. See
+// BoundedSummarySelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_BOUNDED_SUMMARY_TESTS"] == "1" {
+    exit(BoundedSummarySelfTest.run() ? 0 : 1)
+}
+
+// P9 of the same report: seven pages' columns as real split-view sidebars.
+// Window-backed. See SplitSidebarSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SPLIT_SIDEBAR_TESTS"] == "1" {
+    exit(SplitSidebarSelfTest.run() ? 0 : 1)
+}
+
+// P6 of the same report: the compact-mode status item's right-click menu.
+// Pure logic. See StatusMenuSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_STATUS_MENU_TESTS"] == "1" {
+    exit(StatusMenuSelfTest.run() ? 0 : 1)
+}
+
+// P5 of the same report: keyboard parity for hand-built lists, bar panels
+// and form sheets. Window-backed. See KeyboardParitySelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_KEYBOARD_PARITY_TESTS"] == "1" {
+    exit(KeyboardParitySelfTest.run() ? 0 : 1)
+}
+
+// P7 of the same report: Increase Contrast and Reduce Transparency, read
+// through HelmDisplayAccessibility. Window-backed. See
+// DisplayAccessibilitySelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DISPLAY_ACCESSIBILITY_TESTS"] == "1" {
+    exit(DisplayAccessibilitySelfTest.run() ? 0 : 1)
 }
 
 // P2 of the same report: a refresh updates rows and cards in place, keeping
