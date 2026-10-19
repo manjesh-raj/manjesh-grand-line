@@ -313,6 +313,25 @@ final class ShiftGitSync {
         }
     }
 
+    /// Stop the periodic pull. The shared instance lives for the process, so
+    /// nothing calls this today; it exists so an instance that does not
+    /// (a suite's, or one owned by a future module) can be torn down.
+    func stopPeriodicPull() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        pullTimer?.invalidate()
+        pullTimer = nil
+    }
+
+    deinit {
+        // REL-30: the pull timer captured `self` weakly, so a released
+        // instance left a timer firing every five minutes into nothing.
+        // Invalidated on main, where it was scheduled, from whatever thread
+        // the last reference happened to drop on.
+        if let pullTimer {
+            DispatchQueue.main.async { pullTimer.invalidate() }
+        }
+    }
+
     // MARK: Local-write -> debounced commit+push
 
     /// Called by `ShiftStore` right after a local YAML write has already
@@ -369,6 +388,8 @@ final class ShiftGitSync {
 
     #if FM_SELFTESTS
     var hasPendingCommitForTests: Bool { queue.sync { pendingCommit != nil } }
+    /// REL-30: the periodic pull's timer, so a suite can watch its lifetime.
+    var debugPullTimer: Timer? { pullTimer }
     #endif
 
     // MARK: Synchronous core (used directly by tests; wrapped above for

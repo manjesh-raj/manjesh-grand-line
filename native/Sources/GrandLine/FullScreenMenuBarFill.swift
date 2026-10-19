@@ -136,6 +136,9 @@ final class FullScreenMenuBarFill {
     deinit {
         observers.forEach(NotificationCenter.default.removeObserver)
         if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
+        // REL-30: a fill released while the pointer was in the strip left its
+        // 0.2s poll running for the life of the process.
+        yieldPoll?.invalidate()
         panel?.orderOut(nil)
     }
 
@@ -251,5 +254,8 @@ final class FullScreenMenuBarFill {
     /// the real entry point, not the helper behind it (AGENTS.md's `debug*`
     /// hook convention).
     var debugPanelContentView: NSView? { panel?.contentView }
+
+    /// REL-30: the poll that runs while the fill is yielding.
+    var debugYieldPoll: Timer? { yieldPoll }
     #endif
 }

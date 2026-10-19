@@ -176,6 +176,9 @@ final class DictationHUDController {
         if let reduceMotionObserver {
             HelmDisplayAccessibility.stopObserving(reduceMotionObserver)
         }
+        // REL-30: the waveform's frame timer is only stopped by a state
+        // change, so a HUD released mid-dictation left it running.
+        variableTimer?.invalidate()
     }
 
     /// Set the moment a real `.recording` status is seen, cleared the moment
@@ -543,6 +546,8 @@ final class DictationHUDController {
         variableTimer != nil || iconView.layer?.animation(forKey: Self.pulseAnimationKey) != nil
     }
     var debugUsesVariableColor: Bool { variableTimer != nil }
+    /// REL-30: the waveform's frame timer, so a suite can watch its lifetime.
+    var debugVariableTimer: Timer? { variableTimer }
 
     /// Review #3 §7: the pill, so a test can assert it is a real system-HUD
     /// material rather than a flat fill in the app's own tones. Building the
