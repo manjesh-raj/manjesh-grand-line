@@ -185,11 +185,14 @@ enum SRELead {
         }
         let python = resolvePython3() ?? "/usr/bin/python3"
 
-        let scratchDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("fm-sre-lead-\(UUID().uuidString)", isDirectory: true)
-        let bridgeDir = scratchDir.appendingPathComponent("bridge", isDirectory: true)
+        // Under the data root, not the temporary directory: the MCP config
+        // and the kubectl output in `bridge/` were readable from a Code
+        // Preview snippet there (SEC-01 of the full review).
+        let scratchDir: URL
+        let bridgeDir: URL
         do {
-            try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            scratchDir = try AppPaths.makePrivateScratchDirectory(prefix: "fm-sre-lead")
+            bridgeDir = scratchDir.appendingPathComponent("bridge", isDirectory: true)
             try FileManager.default.createDirectory(at: bridgeDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         } catch {
             return .failure(SRELeadSetupError(message: "could not create scratch directory: \(error.localizedDescription)"))

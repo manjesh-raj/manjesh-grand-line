@@ -157,6 +157,7 @@ These tables are **complete in both directions**, and that is a check rather tha
 | `FM_SCRATCHPAD_FILE` | `scratchpad.json` (the Tools > Scratchpad tabs' saved pads, keyed by tab name) |
 | `FM_WIDGET_DIR` | Where the app publishes `widget-snapshot.json` and reads the widgets' queued taps from. Defaults to the App Group container the WidgetKit extension reads (`~/Library/Group Containers/group.com.manjesh.grandline.native/GrandLineWidgets/`) - see `native/Widgets/README.md` |
 | `FM_CLIPBOARD_HISTORY_FILE` | The encrypted clipboard history (`clipboard-history.sealed`) |
+| `FM_PRIVATE_SCRATCH_DIR` | Where a materialized SSH key (for `ssh -i`) and SRE Lead's per-session MCP config and kubectl bridge live while in use (`AppPaths.privateScratchFolder()`, default `private-scratch/` under the data root). Kept out of the temporary directory because Code Preview snippets must not read it |
 | `FM_CAPTURE_INBOX_FILE` | The capture log behind Today's "Captured today" card (`capture-inbox.json`) - one row per filed ⌥Space capture, never the captured content's own store |
 | `FM_GOOGLE_OAUTH_CLIENT_ID` | The Google OAuth client ID the Gmail settings sign-in uses, overriding the one stored in the Keychain. There is no built-in default - a client ID comes from your own Google Cloud project (see `docs/history/43-google-accounts.md`) |
 | `FM_GOOGLE_OAUTH_CLIENT_SECRET` | The matching client secret, when the Google Cloud client has one. Only read alongside `FM_GOOGLE_OAUTH_CLIENT_ID` |

@@ -106,6 +106,52 @@ enum AppPaths {
             .appendingPathComponent(applicationSupportFolderName, isDirectory: true)
     }
 
+    /// The narrow override for `privateScratchFolder()`, which wins over
+    /// `FM_SCRATCH_ROOT` like every store's own variable does.
+    static let privateScratchVariable = "FM_PRIVATE_SCRATCH_DIR"
+
+    /// Where plaintext that has to sit on disk while something else uses it
+    /// lives - a materialized SSH key for `ssh -i`, SRE Lead's MCP config and
+    /// kubectl bridge: `FM_PRIVATE_SCRATCH_DIR`, else
+    /// `dataRoot()/private-scratch`.
+    static func privateScratchFolder(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> URL {
+        if let override = environment[privateScratchVariable], !override.isEmpty {
+            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
+        }
+        return dataRoot(environment: environment)
+            .appendingPathComponent("private-scratch", isDirectory: true)
+    }
+
+    /// A fresh 0700 directory, named `<prefix>-<uuid>`, inside a 0700
+    /// `privateScratchFolder()`. The caller removes it when done.
+    ///
+    /// SEC-01 (full review): these used to live under
+    /// `FileManager.temporaryDirectory`, which Code Preview's sandbox profile
+    /// did not deny, so a snippet run as the captain's own uid could read a
+    /// decrypted SSH key. The data root sits under the home directory, which
+    /// that profile denies outright. The folder is also excluded from Time
+    /// Machine, which the temporary directory always was, so a key that a
+    /// crash leaves behind never reaches a backup.
+    static func makePrivateScratchDirectory(prefix: String,
+                                            in folder: URL = privateScratchFolder(),
+                                            fileManager: FileManager = .default) throws -> URL {
+        var parent = folder
+        try fileManager.createDirectory(at: parent, withIntermediateDirectories: true,
+                                        attributes: [.posixPermissions: 0o700])
+        // `createDirectory` leaves an existing folder's mode alone, so it is
+        // set again rather than trusted.
+        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: parent.path)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try parent.setResourceValues(values)
+        let dir = parent.appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: dir, withIntermediateDirectories: false,
+                                        attributes: [.posixPermissions: 0o700])
+        return dir
+    }
+
     /// True when this process has been pointed at a scratch root - i.e. it is
     /// a probe, a suite or a lab build rather than the captain's own instance.
     ///

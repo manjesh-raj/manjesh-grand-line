@@ -20,7 +20,8 @@ enum SSHKeyMaterializer {
     }
 
     /// Read `key`'s private key blob out of the Keychain and write it to a
-    /// private, 0600 temp file so `ssh -i` has a path to point at.
+    /// private, 0600 file under `AppPaths.makePrivateScratchDirectory` so
+    /// `ssh -i` has a path to point at.
     ///
     /// **Call this off the main thread** (GL-25): the Keychain read presents
     /// the Touch ID / passcode sheet and blocks until it is answered - see
@@ -33,11 +34,10 @@ enum SSHKeyMaterializer {
         context.localizedReason = "Unlock \"\(key.label)\" to connect"
         let privateKey = try KeychainKeyStore.loadPrivateKey(id: key.id, context: context)
 
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("fm-cockpit-key-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]
-        )
+        // Under the data root, not the temporary directory: Code Preview's
+        // sandbox denies the home directory, and the temporary root used to be
+        // readable from a snippet (SEC-01 of the full review).
+        let dir = try AppPaths.makePrivateScratchDirectory(prefix: "fm-cockpit-key")
 
         let keyPath = dir.appendingPathComponent("identity")
         try privateKey.write(to: keyPath, options: .atomic)
@@ -54,12 +54,12 @@ enum SSHKeyMaterializer {
 
     /// Remove a materialized key's whole scratch directory (the identity file
     /// and, if present, its `-cert.pub`). Best-effort: a crash between
-    /// materializing and cleaning up leaves a 0700 temp dir under `/tmp`,
-    /// which is an accepted tradeoff - the directory is unreadable by any
-    /// other account and the OS reaps `/tmp` on its own, whereas a
-    /// launch-time sweep would have to tell "abandoned" from "in use by
-    /// another tab" and could delete the identity file out from under a live
-    /// `ssh`. (This used to cite `TmuxMirror`'s own stale-`cockpit_*`-group
+    /// materializing and cleaning up leaves a 0700 directory under
+    /// `AppPaths.privateScratchFolder()`, which is an accepted tradeoff - the
+    /// directory is unreadable by any other account and excluded from Time
+    /// Machine, whereas a launch-time sweep would have to tell "abandoned"
+    /// from "in use by another tab" and could delete the identity file out
+    /// from under a live `ssh`. (This used to cite `TmuxMirror`'s own stale-`cockpit_*`-group
     /// tradeoff as the precedent; that type is gone - the review's L10.)
     static func cleanup(privateKeyPath: String) {
         let dir = (privateKeyPath as NSString).deletingLastPathComponent

@@ -172,6 +172,18 @@ under the sandbox is not new. It is the global write denial, and the old profile
 shell recipe. Deleting the denial line fails it (and the profile-text checks), and deleting the
 metadata allow fails its node start check.
 
+The profile change closes the class. The instances were closed too: `SSHKeyMaterializer` and
+`SRELead.setUp` now make their per-use directories through `AppPaths.makePrivateScratchDirectory`,
+a 0700 directory inside `AppPaths.privateScratchFolder()` (`private-scratch/` under the data root,
+which the home denial already covers). The folder is forced to 0700 even when it already existed, and
+it is excluded from Time Machine, which the temporary directory always was, so a key a crash leaves
+behind never reaches a backup. It has its own narrow `FM_PRIVATE_SCRATCH_DIR` override, and
+`main.swift`'s self-test block sets it, because `SRELeadPerTabSelfTest` drives the real `setUp`.
+`SRELeadBridgeSelfTest` asserts the modes, the backup exclusion and the override order, plus a
+source guard that neither file reaches the temporary directory again. `SSHKeyGenerator`'s short-lived
+`ssh-keygen` scratch was left where it is: it exists only while `ssh-keygen` runs, and the profile
+denial covers it.
+
 ### Four things that were measured rather than reasoned
 
 - **`NSString`/`URL.resolvingSymlinksInPath` does not resolve a `/var/folders` temp path**, because it
