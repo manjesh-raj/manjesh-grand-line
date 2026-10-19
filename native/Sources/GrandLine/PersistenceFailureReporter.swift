@@ -184,8 +184,8 @@ enum AtomicWrite {
 /// file is safe and why nothing noticed it had been loosened. Every store that
 /// writes through `AtomicWrite.data(..., sensitive: true)` now also reads
 /// through `StoreLoadFailure.decodeJSON(..., sensitive: true)`, which chmods
-/// before the read; `HostStore` keeps its own hand-rolled load path and calls
-/// `SensitiveFile.restrict` there directly.
+/// before the read - `HostStore` included, since REL-21 retired its
+/// hand-rolled copy of the load path.
 enum SensitiveFile {
 
     /// Owner read/write only.

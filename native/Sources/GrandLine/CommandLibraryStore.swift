@@ -61,6 +61,12 @@ final class CommandLibraryStore {
     private var storedFavoriteIDs: Set<String> = []
     private var storedRecentUsage: [CommandLibraryUsageEntry] = []
 
+    /// REL-21: `favorites.yaml` / `recent.yaml` paths whose last read found a
+    /// file this process could not read or parse. `persist` refuses to
+    /// write over them until a later read succeeds - an unreadable favourites
+    /// file used to read as "no favourites", and the next star rewrote it.
+    private(set) var unwritablePaths: Set<String> = []
+
     var commands: [DevOpsCommand] {
         ensureLoaded()
         return storedCommands
@@ -165,8 +171,10 @@ final class CommandLibraryStore {
             guard let self else { return }
             self.storedCommands = read.commands
             self.storedConfig = read.config
-            self.storedFavoriteIDs = read.favoriteIDs
-            self.storedRecentUsage = read.recentUsage
+            self.storedFavoriteIDs = read.favoriteIDs.value
+            self.storedRecentUsage = read.recentUsage.value
+            self.noteChecked(read.favoriteIDs.failed, path: self.favoritesPath)
+            self.noteChecked(read.recentUsage.failed, path: self.recentUsagePath)
             then()
         }
     }
@@ -203,8 +211,24 @@ final class CommandLibraryStore {
     private func reloadAll(reusing scanned: [DevOpsCommand]?) {
         storedCommands = scanned ?? scanCommands()
         storedConfig = CommandLibraryYaml.readConfig(path: configPath)
-        storedFavoriteIDs = CommandLibraryYaml.readFavorites(path: favoritesPath)
-        storedRecentUsage = CommandLibraryYaml.readRecentUsage(path: recentUsagePath)
+        let favorites = CommandLibraryYaml.readFavorites(path: favoritesPath)
+        let recent = CommandLibraryYaml.readRecentUsage(path: recentUsagePath)
+        storedFavoriteIDs = favorites.value
+        storedRecentUsage = recent.value
+        noteChecked(favorites.failed, path: favoritesPath)
+        noteChecked(recent.failed, path: recentUsagePath)
+    }
+
+    /// Records one checked read: a failure backs the file up once and keeps
+    /// writes off it, and a later good read clears that.
+    private func noteChecked(_ failed: Bool, path: String) {
+        if failed {
+            if unwritablePaths.insert(path).inserted {
+                StoreLoadFailure.backUp(URL(fileURLWithPath: path), failure: "could not be read or parsed")
+            }
+        } else {
+            unwritablePaths.remove(path)
+        }
     }
 
     // MARK: Scanning
@@ -477,6 +501,12 @@ final class CommandLibraryStore {
     private func persist(what: String, path: String, _ write: () throws -> Void) {
         // A write is newer than any read in flight (P11).
         backgroundReload.invalidate()
+        if unwritablePaths.contains(path) {
+            var status = StoreLoadFailure.LoadStatus.clean
+            status.unreadableReason = "it could not be read or parsed"
+            _ = StoreLoadFailure.refusesWrite(status, what: what, url: URL(fileURLWithPath: path))
+            return
+        }
         do {
             try write()
             PersistenceFailureReporter.reportSuccess()
@@ -531,6 +561,6 @@ final class CommandLibraryStore {
 struct CommandLibraryRead {
     let commands: [DevOpsCommand]
     let config: CommandLibraryConfig
-    let favoriteIDs: Set<String>
-    let recentUsage: [CommandLibraryUsageEntry]
+    let favoriteIDs: CommandLibraryYaml.CheckedRead<Set<String>>
+    let recentUsage: CommandLibraryYaml.CheckedRead<[CommandLibraryUsageEntry]>
 }

@@ -24,7 +24,12 @@ final class HostStore {
     /// "a corrupted file was just discarded" without this. A caller (e.g.
     /// `AppDelegate`) should surface this once, then it plays no further role -
     /// it is not cleared on a later successful `persist()`.
-    private(set) var loadFailureBackupPath: String?
+    var loadFailureBackupPath: String? { loadStatus.backupPath }
+
+    /// What `load()` found (GL-01 / REL-21). A `hosts.json` that could not be
+    /// read at all, or failed to decode and could not be copied aside, keeps
+    /// every write off it - see `StoreLoadFailure.LoadStatus`.
+    private(set) var loadStatus = StoreLoadFailure.LoadStatus.clean
 
     /// Fired after any mutation - the Hosts sidebar and the rail's per-host
     /// icons (Fix 3, fixes4) both need to hear about every add/rename/delete,
@@ -98,49 +103,30 @@ final class HostStore {
 
     // MARK: Disk
 
+    /// The file exists but isn't valid `[Host]` JSON: it is backed up before
+    /// proceeding with an empty list, so the very next `persist()` (the first
+    /// host add/edit/delete) doesn't atomically overwrite it. A file that
+    /// cannot be read at all (REL-21) used to come back as "no hosts saved"
+    /// here, with no backup, and the next edit replaced it; it now keeps the
+    /// write off the file instead.
+    ///
+    /// M3's read half (review bug B37) is the `sensitive: true`: a file this
+    /// store writes at 0600 can come back 0644 from a restore, a migration or
+    /// a `git checkout` on a synced copy, and nothing rewrites it until the
+    /// captain's next host edit. This store kept a hand-rolled copy of this
+    /// whole path until REL-21, and that copy is where the read error
+    /// collapsed into absence.
     private func load() {
-        // M3's read half (review bug B37): a file this store writes at 0600
-        // can come back 0644 from anything that recreates it outside this app
-        // - a restore, a migration, a `git checkout` on a synced copy - and
-        // nothing rewrites it until the captain's next host edit. Same
-        // contract as `StoreLoadFailure.decodeJSON(sensitive:)`, which this
-        // store's own hand-rolled load path predates.
-        SensitiveFile.restrict(fileURL)
-        guard let data = try? Data(contentsOf: fileURL) else {
-            hosts = []
-            return
-        }
-        if let decoded = try? JSONDecoder().decode([Host].self, from: data) {
-            hosts = decoded
-            return
-        }
-        // The file exists but isn't valid `[Host]` JSON - back it up before
-        // proceeding with an empty list, so the very next `persist()` (the
-        // first host add/edit/delete) doesn't atomically overwrite it and
-        // permanently discard whatever was actually in there.
-        hosts = []
-        let backupURL = fileURL.deletingLastPathComponent()
-            .appendingPathComponent("hosts.json.corrupt-\(Int(Date().timeIntervalSince1970))")
-        do {
-            try FileManager.default.copyItem(at: fileURL, to: backupURL)
-            // M3: `copyItem` carries the source's mode across, so a `hosts.json`
-            // written by a pre-M3 build backs up as 0644 - and nothing ever
-            // rewrites a `.corrupt-` file, so it would keep that mode forever.
-            //
-            // This store keeps its own backup path rather than using
-            // `StoreLoadFailure.backUp` (it predates that helper, and its own
-            // logging is a little more specific), which is exactly why the fix
-            // has to be applied here too - a self-test case caught this second
-            // copy of the same code.
-            SensitiveFile.restrict(backupURL)
-            loadFailureBackupPath = backupURL.path
-            AppLog.store.error("hosts.json failed to decode - backed up to \(backupURL.path, privacy: .public)")
-        } catch {
-            AppLog.store.critical("hosts.json failed to decode AND could not be backed up: \(error.localizedDescription, privacy: .public)")
-        }
+        hosts = StoreLoadFailure.decodeJSON(
+            [Host].self, at: fileURL, label: "hosts.json", sensitive: true, status: &loadStatus
+        ) ?? []
     }
 
     private func persist() {
+        if StoreLoadFailure.refusesWrite(loadStatus, what: "saved hosts", url: fileURL) {
+            changeHandlers.forEach { $0.fn() }
+            return
+        }
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

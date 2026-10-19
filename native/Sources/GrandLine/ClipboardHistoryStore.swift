@@ -380,6 +380,11 @@ final class ClipboardHistoryStore {
     /// zero", and an unreadable history is not an empty one, GL-01).
     private(set) var loadFailed = false
 
+    /// What `load()` found on disk (REL-21). `loadFailed` above is also set
+    /// by a failed *write* and cleared by a good one, so it cannot be what
+    /// keeps a write off a file this process never read; this can.
+    private(set) var loadStatus = StoreLoadFailure.LoadStatus.clean
+
     /// Files this store has shelved beside `fileURL` because it could not open
     /// them (`clipboard-history.sealed.corrupt-<epoch>`), newest first.
     ///
@@ -429,13 +434,24 @@ final class ClipboardHistoryStore {
             loadFailed = true
             return
         }
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
-        guard let box = try? Data(contentsOf: fileURL) else {
-            // GL-01: "file missing" and "file present but unreadable" are
-            // different states, and this is the second one.
-            loadFailed = true
-            AppLog.ui.error("clipboard history: the file exists but could not be read")
+        let box: Data
+        switch StoreLoadFailure.read(fileURL) {
+        case .absent:
             return
+        case .unreadable(let error):
+            // GL-01: "file missing" and "file present but unreadable" are
+            // different states, and this is the second one. REL-21: it also
+            // keeps every write off the file - `persist()` used to check only
+            // for a key, so the next copy replaced a history it never read.
+            loadFailed = true
+            loadStatus.unreadableReason = error.localizedDescription
+            loadStatus.backupPath = StoreLoadFailure.backUp(fileURL, label: "clipboard history",
+                                                            failure: "could not be read")
+            AppLog.ui.error("clipboard history: the file exists but could not be read")
+            refreshShelvedBackups()
+            return
+        case .data(let data):
+            box = data
         }
         do {
             entries = try CredentialVaultCrypto.open([ClipboardHistoryEntry].self,
@@ -451,8 +467,17 @@ final class ClipboardHistoryStore {
             // GL-01 again: back it up before the next write overwrites it.
             loadFailed = true
             let backup = fileURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))")
-            try? FileManager.default.moveItem(at: fileURL, to: backup)
-            AppLog.ui.error("clipboard history: could not open the sealed file - kept a copy at \(backup.lastPathComponent, privacy: .public)")
+            do {
+                try FileManager.default.moveItem(at: fileURL, to: backup)
+                loadStatus.backupPath = backup.path
+                AppLog.ui.error("clipboard history: could not open the sealed file - kept a copy at \(backup.lastPathComponent, privacy: .public)")
+            } catch {
+                // REL-21: this was a `try?`, and the next line logged "kept a
+                // copy" either way. The file is still in place and nothing
+                // else holds its bytes, so no write may replace it.
+                loadStatus.unpreserved = true
+                AppLog.ui.error("clipboard history: could not open the sealed file, and could not move it aside: \(error.localizedDescription, privacy: .public) - leaving it in place and saving nothing over it")
+            }
             refreshShelvedBackups()
         }
     }
@@ -616,6 +641,7 @@ final class ClipboardHistoryStore {
     private func persist() {
         defer { onChange?() }
         guard key != nil else { return }
+        if StoreLoadFailure.refusesWrite(loadStatus, what: "clipboard history", url: fileURL) { return }
         pendingLock.lock()
         pendingSequence &+= 1
         pendingEntries = entries

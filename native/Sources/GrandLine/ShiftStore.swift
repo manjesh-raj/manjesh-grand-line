@@ -428,10 +428,15 @@ final class ShiftStore {
             noteLoadOK(settingsPath)
             settings = ShiftYaml.settings(from: doc)
         case .missing:
-            // Genuine first run - write the scaffold, as before.
+            // Genuine first run - write the scaffold, as before. REL-21: but
+            // not while any list in the same folder failed to read. A store
+            // that cannot read its task list is not on a first run, and the
+            // load is the one moment nothing has asked it to write anything.
             noteLoadOK(settingsPath)
             settings = ShiftSettings()
-            writeMappingGuarded(path: settingsPath, doc: ShiftYaml.toYaml(settings))
+            if loadFailurePaths.isEmpty {
+                writeMappingGuarded(path: settingsPath, doc: ShiftYaml.toYaml(settings))
+            }
         case .parseFailed:
             // GL-01: do NOT overwrite a settings file we could not read.
             noteLoadFailure(settingsPath)

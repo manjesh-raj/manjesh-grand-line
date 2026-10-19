@@ -294,6 +294,11 @@ enum ShiftYaml {
     /// to lose. A file that parses but has no `key` in it is `.ok([])`: the
     /// document is intact and legitimately holds no items (that is exactly
     /// what `writeList` produces for an empty list).
+    ///
+    /// `.parseFailed` also covers a file that exists but cannot be read at
+    /// all, or whose bytes are not UTF-8 (REL-21): there is real data there
+    /// that this process cannot understand, which is the state that case
+    /// already means to every caller.
     enum ListRead {
         case ok([Yaml])
         case missing
@@ -334,7 +339,7 @@ enum ShiftYaml {
     }
 
     static func readListChecked(path: String, key: String) -> ListRead {
-        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return .missing }
+        guard let text = readTextChecked(path: path) else { return .parseFailed }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .missing }
         guard let doc = try? Yaml.load(text) else { return .parseFailed }
         // A non-null document that is not a mapping at all (a bare scalar, a
@@ -342,6 +347,28 @@ enum ShiftYaml {
         // so treat it as damage rather than as an empty list.
         guard let dict = doc.dictionary else { return .parseFailed }
         return .ok(dict[str(key)]?.array ?? [])
+    }
+
+    /// The text of `path` for the two checked readers above: `""` for a file
+    /// that does not exist (which they read as `.missing`), and `nil` for one
+    /// that exists but cannot be read or is not UTF-8.
+    ///
+    /// REL-21: both readers used `try? String(contentsOfFile:encoding:)`,
+    /// which returns `nil` for a missing file, a permission error, an I/O
+    /// error and a single Latin-1 byte alike, and they read all four as
+    /// `.missing`. `ShiftStore` then wrote a fresh `settings.yaml` over a real
+    /// one at load, and the Reading List and the Sticky Board started empty
+    /// and overwrote their file on the next edit. An unreadable file now
+    /// reads as `.parseFailed` - "present, and this process cannot understand
+    /// it" - which every caller already backs up and refuses to write over.
+    private static func readTextChecked(path: String) -> String? {
+        switch StoreLoadFailure.readText(URL(fileURLWithPath: path)) {
+        case .absent: return ""
+        case .text(let text): return text
+        case .unreadable(let reason):
+            AppLog.store.error("\(path, privacy: .public) could not be read: \(reason, privacy: .public)")
+            return nil
+        }
     }
 
     /// Serializes `items` under `key` as one YAML document and writes it to
@@ -372,7 +399,7 @@ enum ShiftYaml {
     }
 
     static func readMappingChecked(path: String) -> MappingRead {
-        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return .missing }
+        guard let text = readTextChecked(path: path) else { return .parseFailed }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .missing }
         guard let doc = try? Yaml.load(text), doc.dictionary != nil else { return .parseFailed }
         return .ok(doc)

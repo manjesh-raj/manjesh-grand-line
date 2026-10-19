@@ -78,15 +78,19 @@ enum SessionRestoreStore {
     /// a bad trade for a LOW finding.
     static func load(defaults: UserDefaults = .standard) -> SessionRestoreState? {
         let url = storeURL()
-        if FileManager.default.fileExists(atPath: url.path) {
-            // GL-01: an undecodable file is backed up rather than silently
-            // read as "no saved session", which would otherwise look exactly
-            // like a first launch and then be overwritten by the next save.
-            var backup: String?
-            return StoreLoadFailure.decodeJSON(
-                SessionRestoreState.self, at: url, label: "session-restore.json",
-                sensitive: true, didBackUp: &backup
-            )
+        // GL-01: an undecodable file is backed up rather than silently read
+        // as "no saved session", which would otherwise look exactly like a
+        // first launch and then be overwritten by the next save. REL-21: a
+        // file that cannot be read at all is not "no saved session" either,
+        // and `save` refuses to replace it until a later load reads it.
+        var status = StoreLoadFailure.LoadStatus.clean
+        let decoded = StoreLoadFailure.decodeJSON(
+            SessionRestoreState.self, at: url, label: "session-restore.json",
+            sensitive: true, status: &status
+        )
+        setLastLoadStatus(status, for: url)
+        if decoded != nil || status != .clean || FileManager.default.fileExists(atPath: url.path) {
+            return decoded
         }
         guard let legacy = defaults.data(forKey: legacyDefaultsKey),
               let decoded = try? JSONDecoder().decode(SessionRestoreState.self, from: legacy) else {
@@ -104,6 +108,9 @@ enum SessionRestoreStore {
     @discardableResult
     static func save(_ state: SessionRestoreState?) -> Bool {
         let url = storeURL()
+        if StoreLoadFailure.refusesWrite(lastLoadStatus(for: url), what: "the session restore state", url: url) {
+            return false
+        }
         guard let state else {
             try? FileManager.default.removeItem(at: url)
             return true
@@ -125,5 +132,28 @@ enum SessionRestoreStore {
             PersistenceFailureReporter.report(what: "the session restore state", path: url.path, error: error)
             return false
         }
+    }
+
+    // MARK: - Load status (REL-21)
+
+    /// What the last `load` of each path found. This enum caches no state,
+    /// but the write guard needs one fact from the read: whether the file
+    /// on disk could be read at all. Keyed by path so a suite pointing
+    /// `FM_SESSION_RESTORE_FILE` at a scratch file never inherits another
+    /// file's verdict. Behind a lock because `AppSettings` is reachable from
+    /// any thread (GL-28).
+    private static let statusLock = NSLock()
+    private static var lastLoadStatuses: [String: StoreLoadFailure.LoadStatus] = [:]
+
+    private static func setLastLoadStatus(_ status: StoreLoadFailure.LoadStatus, for url: URL) {
+        statusLock.lock()
+        defer { statusLock.unlock() }
+        lastLoadStatuses[url.path] = status
+    }
+
+    static func lastLoadStatus(for url: URL) -> StoreLoadFailure.LoadStatus {
+        statusLock.lock()
+        defer { statusLock.unlock() }
+        return lastLoadStatuses[url.path] ?? .clean
     }
 }

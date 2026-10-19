@@ -42,9 +42,17 @@ final class DictationStore {
     private(set) var history: [DictationHistoryEntry] = []
     private(set) var vocabulary: [String] = []
 
+    /// What each `load*()` found (GL-01 / REL-21), one per file. A file that
+    /// could not be read at all, or failed to decode and could not be copied
+    /// aside, keeps every write off that file.
+    private(set) var historyLoadStatus = StoreLoadFailure.LoadStatus.clean
+    private(set) var vocabularyLoadStatus = StoreLoadFailure.LoadStatus.clean
+
     /// Backup paths written by `load*()` when a file existed but would not
     /// decode (GL-01) - one per file, so a run that hits both is visible.
-    private(set) var loadFailureBackupPaths: [String] = []
+    var loadFailureBackupPaths: [String] {
+        [historyLoadStatus.backupPath, vocabularyLoadStatus.backupPath].compactMap { $0 }
+    }
 
     /// Fired after any mutation to either list - `DictationController`
     /// observes while visible, matching `HostStore.observe`'s "list of
@@ -177,13 +185,11 @@ final class DictationStore {
     /// `StoreLoadFailure`'s header. Without this a single unreadable
     /// `history.json` was silently replaced by a one-entry file.
     private func loadHistory() {
-        var backup: String?
         history = StoreLoadFailure.decodeJSON(
             [DictationHistoryEntry].self, at: historyURL,
             decoder: Self.dateFormatDecoder, label: "history.json",
-            sensitive: true, didBackUp: &backup
+            sensitive: true, status: &historyLoadStatus
         ) ?? []
-        if let backup { loadFailureBackupPaths.append(backup) }
         // GL-35: an already-oversized file (written before the cap existed) is
         // trimmed on load rather than only on the next dictation, so the very
         // first rewrite after upgrading is already the small one.
@@ -194,12 +200,10 @@ final class DictationStore {
     }
 
     private func loadVocabulary() {
-        var backup: String?
         vocabulary = StoreLoadFailure.decodeJSON(
             [String].self, at: vocabularyURL, label: "vocabulary.json",
-            sensitive: true, didBackUp: &backup
+            sensitive: true, status: &vocabularyLoadStatus
         ) ?? []
-        if let backup { loadFailureBackupPaths.append(backup) }
     }
 
     private func persistHistory() {
@@ -213,6 +217,13 @@ final class DictationStore {
     }
 
     private func persist<T: Encodable>(_ value: T, to url: URL, encoder: JSONEncoder) {
+        let isVocabulary = url == vocabularyURL
+        if StoreLoadFailure.refusesWrite(isVocabulary ? vocabularyLoadStatus : historyLoadStatus,
+                                         what: isVocabulary ? "dictation vocabulary" : "dictation history",
+                                         url: url) {
+            changeHandlers.forEach { $0.fn() }
+            return
+        }
         do {
             // S10 (review security finding): a dictation transcript is
             // whatever the captain said, which is as sensitive as anything

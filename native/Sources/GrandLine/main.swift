@@ -309,8 +309,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Finding 4 (cockpit-audit-core): a corrupted hosts.json comes up as
         // an empty list with no other signal - surface that once here rather
         // than letting the captain mistake it for "nothing saved yet".
-        if let backupPath = hostStore.loadFailureBackupPath {
-            appShell.showToast("Couldn't read saved hosts - backed up the old file to \((backupPath as NSString).lastPathComponent)")
+        if let notice = StoreLoadFailure.notice(for: hostStore.loadStatus, what: "saved hosts") {
+            appShell.showToast(notice)
         }
         // GL-01: the same treatment for the three stores that used to fail
         // *silently*. Backing the file up is the durability half; saying so is
@@ -321,24 +321,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Keys first and most emphatically: losing key metadata orphans the
         // Keychain blobs those entries pointed at, and nothing else can clean
         // them up afterwards.
+        //
+        // REL-21: a file that could not be read at all is reported here too,
+        // with the sentence that matches what the store now does about it -
+        // it leaves the file alone rather than backing it up and moving on.
         var storeFailureNotices: [String] = []
-        if let backupPath = keyStore.loadFailureBackupPath {
-            storeFailureNotices.append("Couldn't read saved SSH keys - backed up to \((backupPath as NSString).lastPathComponent). "
-                + "Keychain entries for those keys are still there.")
+        if let notice = StoreLoadFailure.notice(for: keyStore.loadStatus, what: "saved SSH keys") {
+            storeFailureNotices.append(notice + ". Keychain entries for those keys are still there.")
         }
-        if let backupPath = snippetStore.loadFailureBackupPath {
-            storeFailureNotices.append("Couldn't read saved snippets - backed up to \((backupPath as NSString).lastPathComponent)")
+        if let notice = StoreLoadFailure.notice(for: snippetStore.loadStatus, what: "saved snippets") {
+            storeFailureNotices.append(notice)
         }
-        for backupPath in dictationStore.loadFailureBackupPaths {
-            storeFailureNotices.append("Couldn't read a dictation file - backed up to \((backupPath as NSString).lastPathComponent)")
+        for status in [dictationStore.historyLoadStatus, dictationStore.vocabularyLoadStatus] {
+            if let notice = StoreLoadFailure.notice(for: status, what: "a dictation file") {
+                storeFailureNotices.append(notice)
+            }
         }
         // F11: same treatment for schedules. Worth saying out loud rather than
         // silently starting with none, because an unreadable file means every
         // scheduled run stops happening with nothing else anywhere reporting
         // it - the schedules simply are not there to be due.
-        if let backupPath = scheduleStore.loadFailureBackupPath {
-            storeFailureNotices.append("Couldn't read saved schedules - backed up to \((backupPath as NSString).lastPathComponent). "
-                + "Nothing is scheduled until they are set up again.")
+        if let notice = StoreLoadFailure.notice(for: scheduleStore.loadStatus, what: "saved schedules") {
+            storeFailureNotices.append(notice + ". Nothing is scheduled until they are set up again.")
         }
         for (index, notice) in storeFailureNotices.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5 + Double(index) * 4) { [weak self] in

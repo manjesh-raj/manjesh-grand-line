@@ -36,6 +36,7 @@
 // asserts that every file in this directory carries it.
 #if FM_SELFTESTS
 
+import AppKit
 import Foundation
 import Yaml
 
@@ -67,6 +68,7 @@ enum StoreDurabilitySelfTest {
         aCorruptBackupOfASensitiveStoreIsOwnerOnly(scratch: scratch)
         aLoosenedSensitiveFileIsTightenedOnRead(scratch: scratch)
         s10PersonalStoresAreOwnerOnly(scratch: scratch)
+        rel21UnreadableFilesAreNeverOverwritten(scratch: scratch)
 
         print(failures.isEmpty
             ? "== PASS (store durability) =="
@@ -253,6 +255,229 @@ enum StoreDurabilitySelfTest {
             let afterRepair = (try? String(contentsOf: active, encoding: .utf8)) ?? ""
             check(afterRepair.contains("task-four"), "writes resume once the file parses again")
         }
+    }
+
+    // MARK: - REL-21: a file that cannot be read is not a missing file
+
+    /// REL-21 of the 2026-10 end-to-end review. Every store below used to
+    /// read a permission error, an I/O error or a non-UTF-8 byte as "no file
+    /// yet", start empty, and replace the file on its next write with no
+    /// backup. Each case makes a real file unreadable (or not UTF-8), writes
+    /// through the store, and then proves the original bytes are still on
+    /// disk and the refusal reached the captain.
+    private static func rel21UnreadableFilesAreNeverOverwritten(scratch: URL) {
+        print("- REL-21: an unreadable or non-UTF-8 store file is never overwritten")
+        let root = scratch.appendingPathComponent("rel21", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        PersistenceFailureReporter.resetForTests()
+
+        let sshKeys = root.appendingPathComponent("keys.json")
+        withUnreadableFile(sshKeys, bytes: Data(#"[{"label":"prod-ed25519"}]"#.utf8), label: "SSHKeyStore") {
+            withEnv(["FM_KEYS_FILE": sshKeys.path]) {
+                let store = SSHKeyStore()
+                check(store.loadStatus.unreadableReason != nil, "SSHKeyStore: the load says the file could not be read")
+                check(StoreLoadFailure.notice(for: store.loadStatus, what: "saved SSH keys") != nil,
+                      "SSHKeyStore: the launch notice reports it")
+                store.add(SSHKey(label: "new-key", type: .ed25519, publicKey: "ssh-ed25519 AAAA",
+                                 fingerprint: "SHA256:x", certificate: nil))
+            }
+        }
+        checkRefusalReported(sshKeys, label: "SSHKeyStore")
+
+        let snippets = root.appendingPathComponent("snippets.json")
+        withUnreadableFile(snippets, bytes: Data(#"[{"label":"attach"}]"#.utf8), label: "SnippetStore") {
+            withEnv(["FM_SNIPPETS_FILE": snippets.path]) {
+                let store = SnippetStore()
+                check(store.loadStatus.refusesWrites, "SnippetStore: the load refuses writes")
+                store.add(Snippet(label: "fresh", command: "echo hi"))
+            }
+        }
+        checkRefusalReported(snippets, label: "SnippetStore")
+
+        let schedules = root.appendingPathComponent("schedules.json")
+        withUnreadableFile(schedules, bytes: Data(#"[{"action":"driftCheck"}]"#.utf8), label: "ScheduleStore") {
+            withEnv(["FM_SCHEDULES_FILE": schedules.path]) {
+                let store = ScheduleStore()
+                check(store.loadStatus.refusesWrites, "ScheduleStore: the load refuses writes")
+                store.add(AutomationSchedule(action: .driftCheck, cadence: .daily(hour: 2, minute: 0)))
+            }
+        }
+        checkRefusalReported(schedules, label: "ScheduleStore")
+
+        let scratchpad = root.appendingPathComponent("scratchpad.json")
+        withUnreadableFile(scratchpad, bytes: Data(#"{"pad":{"text":"keep me"}}"#.utf8), label: "ScratchpadStore") {
+            let store = ScratchpadStore(fileURL: scratchpad)
+            check(store.loadStatus.refusesWrites, "ScratchpadStore: the load refuses writes")
+            store.save("overwrite attempt", for: "pad")
+        }
+        checkRefusalReported(scratchpad, label: "ScratchpadStore")
+
+        let dictationDir = root.appendingPathComponent("dictation", isDirectory: true)
+        let history = dictationDir.appendingPathComponent("history.json")
+        withUnreadableFile(history, bytes: Data(#"[{"text":"deploy the api"}]"#.utf8), label: "DictationStore") {
+            withEnv(["FM_DICTATION_DIR": dictationDir.path]) {
+                let store = DictationStore()
+                check(store.historyLoadStatus.refusesWrites, "DictationStore: the history load refuses writes")
+                store.recordHistory(text: "a brand new transcript", durationSeconds: 1, date: Date())
+            }
+        }
+        checkRefusalReported(history, label: "DictationStore")
+
+        let hosts = root.appendingPathComponent("hosts.json")
+        withUnreadableFile(hosts, bytes: Data(#"[{"label":"Prod bastion"}]"#.utf8), label: "HostStore") {
+            withEnv(["FM_HOSTS_FILE": hosts.path]) {
+                let store = HostStore()
+                check(store.loadStatus.refusesWrites, "HostStore: the load refuses writes")
+                store.add(Host(label: "Dev bastion", address: "dev.example.invalid"))
+            }
+        }
+        checkRefusalReported(hosts, label: "HostStore")
+
+        let sessionRestore = root.appendingPathComponent("session-restore.json")
+        withUnreadableFile(sessionRestore, bytes: Data(#"{"destination":"vault"}"#.utf8), label: "SessionRestoreStore") {
+            withEnv(["FM_SESSION_RESTORE_FILE": sessionRestore.path]) {
+                let defaults = UserDefaults(suiteName: "fm-rel21-\(UUID().uuidString)") ?? AppDefaults.store
+                check(SessionRestoreStore.load(defaults: defaults) == nil, "SessionRestoreStore: an unreadable file loads as nothing")
+                check(SessionRestoreStore.lastLoadStatus(for: sessionRestore).refusesWrites,
+                      "SessionRestoreStore: the load refuses writes")
+                let state = SessionRestoreState(destination: RailDestination.vault.rawValue, consoleTabs: [])
+                check(!SessionRestoreStore.save(state), "SessionRestoreStore: save reports that nothing was written")
+                check(!SessionRestoreStore.save(nil), "SessionRestoreStore: clearing does not delete the file either")
+            }
+        }
+        checkRefusalReported(sessionRestore, label: "SessionRestoreStore")
+
+        let clipboard = root.appendingPathComponent("clipboard-history.sealed")
+        withUnreadableFile(clipboard, bytes: Data([0x01, 0x02, 0x03, 0x04]), label: "ClipboardHistoryStore") {
+            guard let key = ClipboardHistoryKey.ephemeralKey() else {
+                check(false, "ClipboardHistoryStore: a throwaway key could be built")
+                return
+            }
+            let store = ClipboardHistoryStore(fileURL: clipboard, key: key)
+            check(store.loadFailed, "ClipboardHistoryStore: the picker is told the load failed")
+            check(store.loadStatus.refusesWrites, "ClipboardHistoryStore: the load refuses writes")
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name("grandline-rel21-\(UUID().uuidString)"))
+            pasteboard.clearContents()
+            pasteboard.setString("a fresh copy", forType: .string)
+            store.record(from: pasteboard)
+            store.flush()
+            pasteboard.releaseGlobally()
+        }
+        checkRefusalReported(clipboard, label: "ClipboardHistoryStore")
+
+        // The clipboard's other GL-01 path: a sealed file this key cannot open
+        // is moved aside, and that move was a `try?` followed by a log line
+        // saying a copy was kept. A directory that refuses the rename leaves
+        // the file in place with no copy anywhere, so no write may replace it.
+        let lockedDir = root.appendingPathComponent("clipboard-locked", isDirectory: true)
+        let sealed = lockedDir.appendingPathComponent("clipboard-history.sealed")
+        try? FileManager.default.createDirectory(at: lockedDir, withIntermediateDirectories: true)
+        try? Data(repeating: 0x5A, count: 64).write(to: sealed)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: lockedDir.path)
+        if let key = ClipboardHistoryKey.ephemeralKey() {
+            let store = ClipboardHistoryStore(fileURL: sealed, key: key)
+            check(store.loadStatus.unpreserved,
+                  "ClipboardHistoryStore: a sealed file that could not be moved aside is marked as held nowhere else")
+            check(store.loadStatus.refusesWrites,
+                  "ClipboardHistoryStore: and no write may replace it")
+        } else {
+            check(false, "ClipboardHistoryStore: a throwaway key could be built")
+        }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: lockedDir.path)
+
+        // The YAML stores: a Latin-1 byte (the read fault that needs no
+        // permission change at all) and a permission error.
+        let shiftRoot = root.appendingPathComponent("shift", isDirectory: true)
+        let settings = shiftRoot.appendingPathComponent("settings.yaml")
+        let latin1Settings = SelfTestFaults.latin1YAML(key: "settings", id: "s")
+        try? FileManager.default.createDirectory(at: shiftRoot, withIntermediateDirectories: true)
+        try? latin1Settings.write(to: settings)
+        check(String(data: latin1Settings, encoding: .utf8) == nil, "ShiftStore: the fixture really is not UTF-8")
+        if case .parseFailed = ShiftYaml.readMappingChecked(path: settings.path) {
+            check(true, "ShiftYaml: a non-UTF-8 settings file reads as .parseFailed, not .missing")
+        } else {
+            check(false, "ShiftYaml: a non-UTF-8 settings file reads as .parseFailed, not .missing")
+        }
+        let active = shiftRoot.appendingPathComponent("tasks/active.yaml")
+        withUnreadableFile(active, bytes: Data("\"tasks\":\n  - \"id\": \"real\"\n".utf8), label: "ShiftStore active.yaml") {
+            withEnv(["FM_SHIFT_DIR": shiftRoot.path]) {
+                let store = ShiftStore()
+                check(store.isInFailedLoadState, "ShiftStore: an unreadable task list is a failed load")
+                var task = ShiftTask.fresh()
+                task.id = "written-after-the-failure"
+                task.title = "Must not land"
+                store.addTask(task)
+            }
+        }
+        check(SelfTestFaults.bytes(of: settings) == latin1Settings,
+              "ShiftStore: a non-UTF-8 settings.yaml is not replaced by defaults at load")
+
+        let readingRoot = root.appendingPathComponent("reading", isDirectory: true)
+        let links = readingRoot.appendingPathComponent("links.yaml")
+        let latin1Links = SelfTestFaults.latin1YAML(key: "links", id: "l1")
+        try? FileManager.default.createDirectory(at: readingRoot, withIntermediateDirectories: true)
+        try? latin1Links.write(to: links)
+        let reading = ReadingListStore(root: readingRoot)
+        check(reading.isInFailedLoadState, "ReadingListStore: a non-UTF-8 links file is a failed load")
+        reading.add("https://example.invalid/rel21")
+        reading.flush()
+        check(SelfTestFaults.bytes(of: links) == latin1Links, "ReadingListStore: the non-UTF-8 file still holds its bytes")
+
+        let stickyRoot = root.appendingPathComponent("sticky", isDirectory: true)
+        let notes = stickyRoot.appendingPathComponent("notes.yaml")
+        withUnreadableFile(notes, bytes: Data("\"notes\":\n  - \"id\": \"n1\"\n".utf8), label: "StickyBoardStore") {
+            let sticky = StickyBoardStore(root: stickyRoot)
+            check(sticky.isInFailedLoadState, "StickyBoardStore: an unreadable notes file is a failed load")
+            sticky.addNote(text: "must not land", color: .yellow, x: 0, y: 0, rotationDegrees: 0)
+            sticky.flushPendingWrite()
+        }
+
+        let commandsRoot = root.appendingPathComponent("commands", isDirectory: true)
+        let favorites = commandsRoot.appendingPathComponent("favorites.yaml")
+        let latin1Favorites = SelfTestFaults.latin1YAML(key: "favorites", id: "f1")
+        try? FileManager.default.createDirectory(at: commandsRoot, withIntermediateDirectories: true)
+        try? latin1Favorites.write(to: favorites)
+        let recent = commandsRoot.appendingPathComponent("recent.yaml")
+        withUnreadableFile(recent, bytes: Data("\"recent\":\n  - \"id\": \"r1\"\n".utf8), label: "CommandLibraryStore recent.yaml") {
+            withEnv(["FM_COMMAND_LIBRARY_DIR": commandsRoot.path]) {
+                let library = CommandLibraryStore()
+                let anyID = library.commands.first?.id ?? "seeded-command"
+                check(library.unwritablePaths.contains(favorites.path),
+                      "CommandLibraryStore: a non-UTF-8 favorites file keeps writes off it")
+                check(library.unwritablePaths.contains(recent.path),
+                      "CommandLibraryStore: an unreadable recent file keeps writes off it")
+                library.toggleFavorite(anyID)
+                library.recordUsage(anyID)
+            }
+        }
+        check(SelfTestFaults.bytes(of: favorites) == latin1Favorites,
+              "CommandLibraryStore: the non-UTF-8 favorites file still holds its bytes after a star")
+    }
+
+    /// Writes `bytes` to `file`, makes it unreadable, runs `body`, then
+    /// restores it and proves the bytes are the original ones.
+    private static func withUnreadableFile(_ file: URL, bytes: Data, label: String, _ body: () -> Void) {
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? bytes.write(to: file)
+        guard SelfTestFaults.makeUnreadable(file) else {
+            SelfTestFaults.restoreReadable(file)
+            check(false, "\(label): the fault injection took (this process can no longer read the file)")
+            return
+        }
+        body()
+        SelfTestFaults.restoreReadable(file)
+        check(SelfTestFaults.bytes(of: file) == bytes,
+              "\(label): the unreadable file still holds its original bytes after a write through the store")
+    }
+
+    /// The refusal reached `PersistenceFailureReporter`, which is what the
+    /// Health card and the Notification Center read.
+    private static func checkRefusalReported(_ file: URL, label: String) {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        let reported = PersistenceFailureReporter.recent.contains {
+            $0.path == file.path && $0.reason.contains("left untouched")
+        }
+        check(reported, "\(label): the refused write is reported to the captain")
     }
 
     // MARK: - GL-21
