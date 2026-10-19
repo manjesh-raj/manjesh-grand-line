@@ -99,8 +99,8 @@ directory, with:
 - **stdin on `/dev/null`** and **output capped at 256 KB**, with the cap stated in the pane when it bites.
 
 **What it is not, stated because the difference is the whole point.** The profile is `(allow default)`
-with denials layered on top, not an allowlist. Reads outside the home directory - `/usr`, `/etc`,
-`/tmp`, another mounted volume - still succeed, and the interpreter runs as the captain with the
+with denials layered on top, not an allowlist. Reads outside the home directory and the per-user
+temporary and cache roots - `/usr`, `/etc`, `/tmp`, another mounted volume - still succeed, and the interpreter runs as the captain with the
 captain's own privileges. It stops a snippet destroying or leaking the captain's data. It is not a
 virtual machine, and a local exploit of `sandbox-exec` itself is out of scope. An allowlist was
 considered and rejected: the set of paths a working interpreter touches differs per tool, per version
@@ -141,6 +141,36 @@ and the copy is still confined by this same profile and still cannot reach `laun
 with its own discriminating check - the signal case starts a real victim process, confirms it alive
 first, and confirms it still alive afterwards, because "nothing was killed" is also what "there was
 nothing to kill" looks like. Removing the denials from the profile fails four of them.
+
+### SEC-01: the per-user temporary root was readable
+
+The 2026-10 end-to-end review found the home denial did not cover `FileManager.temporaryDirectory`,
+which resolves to `/private/var/folders/<xx>/<hash>/T`, outside `$HOME`. That is where other parts of
+this app kept plaintext for a while: `SSHKeyMaterializer` wrote a decrypted SSH key there for as long
+as its tab was open, and SRE Lead kept its MCP config and kubectl bridge output there. The files were
+0600, but a snippet runs as the captain's own uid, so the mode bits did not stop it. A snippet's own
+scratch directory sits under the same root, and `cat ../fm-cockpit-key-*/identity` printed the key.
+
+The profile now denies `file-read*` on the resolved temporary root and on the per-user cache root
+(`_CS_DARWIN_USER_CACHE_DIR`, the `C` directory beside it), passed in from `CodeRunner` through
+`CodeSandbox.userTemporaryRoots()` the way `home` is. The scratch directory's own allow comes after
+those denials, because a sandbox profile's later rule wins.
+
+One measured cost, and the fix for it. The first version stopped `node` from starting at all:
+node resolves its entry script with `realpath`, which `lstat`s every ancestor, and the `subpath`
+denial covers the root directory itself, so it died with `EPERM, lstat '.../T'`. Python, bash, zsh
+and swift were unaffected. The profile now gives back `file-read-metadata` on the **literal**
+directories between the root and the scratch directory (the root and the run's own `gl-run-*`
+directory), which lets a `stat` succeed and lists nothing inside them. A `subpath` there would have
+handed the whole root back.
+
+The `xcrun_db` "couldn't create cache file" line that `/usr/bin/python3` and `/usr/bin/swift` print
+under the sandbox is not new. It is the global write denial, and the old profile printed it too.
+
+`CodeRunnerSelfTest.checkTemporaryRootsAreUnreadable` writes a dummy marker under each root at
+0700/0600, reads it back unsandboxed, and then runs `/bin/cat` on it through the real `CodeRunner`
+shell recipe. Deleting the denial line fails it (and the profile-text checks), and deleting the
+metadata allow fails its node start check.
 
 ### Four things that were measured rather than reasoned
 
