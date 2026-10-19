@@ -160,6 +160,7 @@ enum SRELeadBridgeSelfTest {
             ("commandPolicyTablesStillMatchThePythonScript", test_commandPolicyTablesMatchTheScript),
             ("privateScratchIsA0700FolderOutsideBackups", test_privateScratchIsA0700FolderOutsideBackups),
             ("keyAndSRELeadScratchStayOutOfTheTemporaryDirectory", test_keyAndSRELeadScratchStayOutOfTheTemporaryDirectory),
+            ("kubectlScriptOverrideAndSourceWalkAreDebugOnly", test_kubectlScriptOverrideAndSourceWalkAreDebugOnly),
         ]
 
         var failures = 0
@@ -905,6 +906,53 @@ enum SRELeadBridgeSelfTest {
             if !code.contains("AppPaths.makePrivateScratchDirectory(") {
                 return "\(name) no longer makes its scratch directory through AppPaths.makePrivateScratchDirectory"
             }
+        }
+        return nil
+    }
+
+    /// SEC-05 (full review). `resolveKubectlScript` picks the MCP server SRE
+    /// Lead's `claude` runs, so in a release build it must only ever be the
+    /// bundled copy: the `FM_SRE_KUBECTL_SCRIPT` override and the walk up the
+    /// source tree are compiled in for debug builds only. A release binary
+    /// runs no suite, so this can only be asserted on the source.
+    private static func test_kubectlScriptOverrideAndSourceWalkAreDebugOnly(with _: URL) -> String? {
+        guard let sources = SelfTestSources.appSourceDirectory(),
+              let text = try? String(contentsOf: sources.appendingPathComponent("SRELead.swift"), encoding: .utf8)
+        else {
+            return "could not read SRELead.swift - this check would pass vacuously"
+        }
+        let code = text.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> Substring in
+                guard let comment = line.range(of: "//") else { return line }
+                return line[..<comment.lowerBound]
+            }
+            .joined(separator: "\n")
+        guard let start = code.range(of: "static func resolveKubectlScript()"),
+              let end = code.range(of: "\n    }\n", range: start.upperBound..<code.endIndex) else {
+            return "could not find resolveKubectlScript() in SRELead.swift"
+        }
+        let body = code[start.upperBound..<end.lowerBound]
+        guard let open = body.range(of: "#if FM_SELFTESTS"),
+              let close = body.range(of: "#endif", range: open.upperBound..<body.endIndex) else {
+            return "resolveKubectlScript() must keep the override and the source walk inside #if FM_SELFTESTS"
+        }
+        let guarded = body[open.upperBound..<close.lowerBound]
+        let unguarded = String(body[..<open.lowerBound]) + String(body[close.upperBound...])
+        for marker in ["\"FM_SRE_KUBECTL_SCRIPT\"", "currentDirectoryPath"] {
+            guard guarded.contains(marker) else {
+                return "\(marker) is no longer inside resolveKubectlScript()'s #if FM_SELFTESTS block"
+            }
+            if unguarded.contains(marker) {
+                return "\(marker) is reachable outside #if FM_SELFTESTS - a release build would honour it"
+            }
+        }
+        guard unguarded.contains("Bundle.main.resourceURL") else {
+            return "the bundled copy must stay the release build's one source"
+        }
+        // The variable must not be read anywhere else in the file either.
+        let reads = code.components(separatedBy: "\"FM_SRE_KUBECTL_SCRIPT\"").count - 1
+        guard reads == 1 else {
+            return "FM_SRE_KUBECTL_SCRIPT is read \(reads) times in SRELead.swift - only the guarded read may exist"
         }
         return nil
     }

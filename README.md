@@ -199,7 +199,7 @@ Read by the scripts and the suites rather than by the app, and listed for the sa
 | `FM_SHELL_CWD` | Working directory for new shell tabs (wins over Settings) |
 | `FM_CAPTAIN` | The name the fleet pages greet (default `Manjesh`) |
 | `FM_BLOCK_VIEW_ENABLED` | Enables Block View at all (still needs a per-host opt-in) |
-| `FM_SRE_KUBECTL_SCRIPT` | Path to SRE Lead's read-only kubectl MCP server, instead of the bundled `sre_kubectl_mcp.py` |
+| `FM_SRE_KUBECTL_SCRIPT` | Path to SRE Lead's read-only kubectl MCP server, instead of the bundled `sre_kubectl_mcp.py`. **Debug builds only** - a release build uses the bundled copy and ignores this, along with the source-tree fallback |
 | `FM_LUFFY_STORES_SCRIPT` | Path to the Straw Hat crew's read-only store MCP server, instead of the bundled `luffy_stores_mcp.py` |
 | `FM_APP_LOCK_IDLE_SECONDS` | Idle re-lock threshold (default 1h) - verification only |
 | `FM_APP_LOCK_SESSION_SECONDS` | Hard-logout threshold (default 12h) - verification only |

@@ -306,12 +306,20 @@ enum SRELead {
     /// walks up from the current working directory looking for
     /// `native/Scripts/sre_kubectl_mcp.py`, mirroring how `FirstmateHome`
     /// tries a list of candidates rather than assuming one fixed layout).
+    ///
+    /// **The override and the walk are debug-build only** (SEC-05 of the
+    /// 2026-10 full review). The script this returns is the MCP server SRE
+    /// Lead's `claude` runs, so in the shipped app it must be the one in the
+    /// bundle. An environment variable or a `native/Scripts/` directory above
+    /// the launch directory would otherwise hand that role to any file the
+    /// same user can write.
     private static func resolveKubectlScript() -> String? {
         let fm = FileManager.default
         if let resourceURL = Bundle.main.resourceURL {
             let candidate = resourceURL.appendingPathComponent("sre_kubectl_mcp.py").path
             if fm.isReadableFile(atPath: candidate) { return candidate }
         }
+        #if FM_SELFTESTS
         if let override = ProcessInfo.processInfo.environment["FM_SRE_KUBECTL_SCRIPT"], fm.isReadableFile(atPath: override) {
             return override
         }
@@ -323,6 +331,7 @@ enum SRELead {
             if parent == dir { break }
             dir = parent
         }
+        #endif
         return nil
     }
 }
