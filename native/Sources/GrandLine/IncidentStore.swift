@@ -336,10 +336,11 @@ final class IncidentStore {
 
     private func write(_ incident: Incident) -> Bool {
         let dir = directory(forID: incident.id) ?? newDirectory(for: incident)
+        let path = dir.appendingPathComponent("incident.yaml").path
         do {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-            try ShiftYamlBridge.writeMapping(path: dir.appendingPathComponent("incident.yaml").path,
-                                             doc: yaml(incident))
+            try ShiftYamlBridge.writeMapping(path: path,
+                                             doc: Self.carryingForward(yaml(incident), from: path))
         } catch {
             PersistenceFailureReporter.report(what: "incident record", path: dir.path, error: error)
             return false
@@ -372,6 +373,60 @@ final class IncidentStore {
             return .dictionary(e)
         })
         return .dictionary(m)
+    }
+
+    /// The top-level keys `yaml(_:)` writes - anything else in the file came
+    /// from another build and is carried forward.
+    static let knownKeys: Set<String> = [
+        "id", "title", "host_id", "host_label", "status", "started_at", "ended_at", "has_rca", "timeline",
+    ]
+
+    /// REL-22: `fresh` plus what the record on disk holds that this build
+    /// cannot represent - timeline entries it cannot decode (an unknown
+    /// `kind` from a newer build) and top-level keys it does not write.
+    ///
+    /// Every write here rewrites `incident.yaml` whole from the `Incident`
+    /// model, and the model has nowhere to keep either, so the first append
+    /// after a newer build wrote the file deleted its entries. They are read
+    /// back off disk at write time rather than cached at load, so nothing has
+    /// to thread them through `Incident` and a write always carries what is
+    /// on disk now. A carried entry goes back in time order among the rest.
+    static func carryingForward(_ fresh: Yaml, from path: String) -> Yaml {
+        guard var out = fresh.dictionary,
+              let onDisk = ShiftYamlBridge.readMapping(path: path)?.dictionary else { return fresh }
+        let timelineKey = ShiftYamlBridge.key("timeline")
+        let carried = (onDisk[timelineKey]?.array ?? []).filter { entry(from: $0) == nil }
+        if !carried.isEmpty {
+            func at(_ item: Yaml) -> Date {
+                ShiftYamlBridge.date(item.dictionary?[ShiftYamlBridge.key("at")]) ?? .distantFuture
+            }
+            let merged = (out[timelineKey]?.array ?? []) + carried
+            out[timelineKey] = .array(merged.enumerated()
+                .sorted { a, b in
+                    let (ta, tb) = (at(a.element), at(b.element))
+                    return ta == tb ? a.offset < b.offset : ta < tb
+                }
+                .map(\.element))
+        }
+        for pair in onDisk.pairs {
+            if case .string(let name, _) = pair.key, knownKeys.contains(name) { continue }
+            if out[pair.key] == nil { out[pair.key] = pair.value }
+        }
+        return .dictionary(out)
+    }
+
+    /// One timeline entry, or `nil` for an entry this build cannot represent.
+    static func entry(from raw: Yaml) -> IncidentTimelineEntry? {
+        guard let e = raw.dictionary,
+              let kind = IncidentEntryKind(rawValue: ShiftYamlBridge.string(e["kind"]) ?? ""),
+              let title = ShiftYamlBridge.string(e["title"]) else { return nil }
+        return IncidentTimelineEntry(id: ShiftYamlBridge.string(e["id"]) ?? UUID().uuidString,
+                                     at: ShiftYamlBridge.date(e["at"]) ?? Date(),
+                                     kind: kind,
+                                     title: title,
+                                     detail: ShiftYamlBridge.string(e["detail"]),
+                                     reference: ShiftYamlBridge.string(e["reference"]),
+                                     artifact: ShiftYamlBridge.string(e["artifact"]).flatMap(Self.safeArtifactName))
     }
 
     /// A directory tree that does not exist yet genuinely holds no incidents;
@@ -425,18 +480,9 @@ final class IncidentStore {
               let dict = doc.dictionary,
               let id = ShiftYamlBridge.string(dict["id"]) else { return nil }
 
-        let entries: [IncidentTimelineEntry] = (dict["timeline"]?.array ?? []).compactMap { raw in
-            guard let e = raw.dictionary,
-                  let kind = IncidentEntryKind(rawValue: ShiftYamlBridge.string(e["kind"]) ?? ""),
-                  let title = ShiftYamlBridge.string(e["title"]) else { return nil }
-            return IncidentTimelineEntry(id: ShiftYamlBridge.string(e["id"]) ?? UUID().uuidString,
-                                         at: ShiftYamlBridge.date(e["at"]) ?? Date(),
-                                         kind: kind,
-                                         title: title,
-                                         detail: ShiftYamlBridge.string(e["detail"]),
-                                         reference: ShiftYamlBridge.string(e["reference"]),
-                                         artifact: ShiftYamlBridge.string(e["artifact"]).flatMap(Self.safeArtifactName))
-        }
+        // An entry this build cannot represent is left out of the model and
+        // carried forward on the next write (`carryingForward`, REL-22).
+        let entries: [IncidentTimelineEntry] = (dict["timeline"]?.array ?? []).compactMap(Self.entry(from:))
 
         let hasRCA = dict["has_rca"]?.bool ?? false
         var rca: String?

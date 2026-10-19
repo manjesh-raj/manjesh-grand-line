@@ -321,6 +321,29 @@ struct PortForwardRule: Codable, Identifiable, Equatable {
     }
 }
 
+/// REL-22 / GL-01: every field decodes with `decodeIfPresent` and the same
+/// default the property declares. The synthesised decoder required every key,
+/// so one field added to a rule would have made every existing `hosts.json`
+/// undecodable - backed up and emptied - which is exactly the failure GL-01
+/// records for `Host` itself. In an extension so the memberwise initialiser
+/// the editor uses survives.
+extension PortForwardRule {
+    private enum DecodingKeys: String, CodingKey {
+        case id, kind, bindAddress, listenPort, destHost, destPort
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: DecodingKeys.self)
+        self.init()
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? id
+        kind = try c.decodeIfPresent(Kind.self, forKey: .kind) ?? kind
+        bindAddress = try c.decodeIfPresent(String.self, forKey: .bindAddress) ?? bindAddress
+        listenPort = try c.decodeIfPresent(Int.self, forKey: .listenPort) ?? listenPort
+        destHost = try c.decodeIfPresent(String.self, forKey: .destHost) ?? destHost
+        destPort = try c.decodeIfPresent(Int.self, forKey: .destPort) ?? destPort
+    }
+}
+
 /// Static bits shared across the host UI: the `ssh` binary, the icon palette, and
 /// the accent palette. The icons are SF Symbols (already used for the toolbar
 /// buttons) and the accents are drawn from the Helm palette so a host harmonises

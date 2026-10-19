@@ -156,11 +156,41 @@ struct ShiftConflictSet {
 
     var autoMergeNotes: [ShiftAutoMergeNote] = []
 
+    /// REL-22: what the rewrite must carry that the decoded records cannot,
+    /// per record kind. Missing for a kind means nothing to carry.
+    var preserved: [ShiftRecordKind: ShiftConflictPreserved] = [:]
+
     var totalConflictCount: Int { taskConflicts.count + followUpConflicts.count + projectConflicts.count }
     var hasConflicts: Bool { totalConflictCount > 0 }
 
     var affectedFileCount: Int {
         [!taskConflicts.isEmpty, !followUpConflicts.isEmpty, !projectConflicts.isEmpty].filter { $0 }.count
+    }
+}
+
+/// REL-22: the parts of one list file that the record-level merge cannot see,
+/// read from both sides. The conflict-resolution rewrite used to serialise the
+/// final records from their structs alone, which dropped every key this build
+/// does not write from every task, follow-up and project in the file - and
+/// every record it could not decode - on every resolved merge.
+struct ShiftConflictPreserved {
+    var local = ShiftYamlPassthrough()
+    var remote = ShiftYamlPassthrough()
+    /// Records either side's file holds that this build cannot decode, kept
+    /// verbatim. A record both sides hold appears once.
+    var unreadable: [Yaml] = []
+
+    /// The final file's items: each record carrying every unknown key either
+    /// side had for it, and the undecodable records after them. A key both
+    /// sides carry takes the remote value, except for a record the captain
+    /// chose to keep locally (`localWins`), where their side wins throughout.
+    func items<T: ShiftConflictRecordType>(_ records: [T], localWins: Set<String>,
+                                           toYaml: (T) -> Yaml) -> [Yaml] {
+        let remoteFirst = local.overlaid(with: remote)
+        let localFirst = remote.overlaid(with: local)
+        return records.map { record in
+            (localWins.contains(record.id) ? localFirst : remoteFirst).merged(toYaml(record), id: record.id)
+        } + unreadable
     }
 }
 

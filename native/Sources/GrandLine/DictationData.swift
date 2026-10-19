@@ -31,6 +31,20 @@ struct DictationHistoryEntry: Codable, Equatable, Identifiable {
         self.durationSeconds = durationSeconds
         self.text = text
     }
+
+    /// REL-22 / GL-01: `decodeIfPresent` with a default for every field, so
+    /// a field added later cannot make an existing `history.json` decode as
+    /// a whole-file failure (backed up and emptied). An entry with no text
+    /// is still kept rather than failing the file: the list shows it empty.
+    private enum DecodingKeys: String, CodingKey { case id, date, durationSeconds, text }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: DecodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        date = try c.decodeIfPresent(Date.self, forKey: .date) ?? Date(timeIntervalSince1970: 0)
+        durationSeconds = try c.decodeIfPresent(Double.self, forKey: .durationSeconds) ?? 0
+        text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+    }
 }
 
 /// The whole data layer for Dictation's history + vocabulary, mirroring

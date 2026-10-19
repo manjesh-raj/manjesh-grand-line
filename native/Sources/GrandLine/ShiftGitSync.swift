@@ -815,10 +815,20 @@ final class ShiftGitSync {
                 return false
             }
         }
+        // REL-22: through each side's passthrough, so a key this build does
+        // not write survives the merge on every record, and a record this
+        // build cannot decode survives it at all.
+        let keptLocally = Set(choices.filter { $0.value == .keepLocal }.keys)
+        let taskItems = (set.preserved[.task] ?? ShiftConflictPreserved())
+            .items(finalTasks, localWins: keptLocally, toYaml: ShiftYaml.toYaml)
+        let followUpItems = (set.preserved[.followUp] ?? ShiftConflictPreserved())
+            .items(finalFollowUps, localWins: keptLocally, toYaml: ShiftYaml.toYaml)
+        let projectItems = (set.preserved[.project] ?? ShiftConflictPreserved())
+            .items(finalProjects, localWins: keptLocally, toYaml: ShiftYaml.toYaml)
         do {
-            try ShiftYaml.writeList(path: dataRoot.appendingPathComponent("tasks/active.yaml").path, key: "tasks", items: finalTasks.map(ShiftYaml.toYaml))
-            try ShiftYaml.writeList(path: dataRoot.appendingPathComponent("follow-ups/follow-ups.yaml").path, key: "follow_ups", items: finalFollowUps.map(ShiftYaml.toYaml))
-            try ShiftYaml.writeList(path: dataRoot.appendingPathComponent("projects/projects.yaml").path, key: "projects", items: finalProjects.map(ShiftYaml.toYaml))
+            try ShiftYaml.writeList(path: dataRoot.appendingPathComponent("tasks/active.yaml").path, key: "tasks", items: taskItems)
+            try ShiftYaml.writeList(path: dataRoot.appendingPathComponent("follow-ups/follow-ups.yaml").path, key: "follow_ups", items: followUpItems)
+            try ShiftYaml.writeList(path: dataRoot.appendingPathComponent("projects/projects.yaml").path, key: "projects", items: projectItems)
         } catch {
             _ = runGit(["merge", "--abort"], cwd: workingTree, authenticated: false)
             setStatus(.failed("Could not write resolved files: \(error)"))
@@ -908,49 +918,77 @@ final class ShiftGitSync {
         var set = ShiftConflictSet()
 
         let taskPath = "\(Self.shiftSubpath)/tasks/active.yaml"
-        guard let baseTaskRecords = loadRecords(ref: base, path: taskPath, key: "tasks", parse: ShiftYaml.task),
-              let localTaskRecords = loadRecords(ref: "HEAD", path: taskPath, key: "tasks", parse: ShiftYaml.task),
-              let remoteTaskRecords = loadRecords(ref: "origin/\(branch)", path: taskPath, key: "tasks", parse: ShiftYaml.task)
+        guard let baseTasks = loadRecords(ref: base, path: taskPath, key: "tasks", parse: ShiftYaml.task),
+              let localTasks = loadRecords(ref: "HEAD", path: taskPath, key: "tasks", parse: ShiftYaml.task),
+              let remoteTasks = loadRecords(ref: "origin/\(branch)", path: taskPath, key: "tasks", parse: ShiftYaml.task)
         else { return nil }
         let taskMerge = ShiftThreeWayMerge.run(
             kind: .task,
-            base: baseTaskRecords,
-            local: localTaskRecords,
-            remote: remoteTaskRecords
+            base: baseTasks.records,
+            local: localTasks.records,
+            remote: remoteTasks.records
         )
         set.taskConflicts = taskMerge.conflicts
         set.resolvedTasks = taskMerge.resolved
+        set.preserved[.task] = Self.preserved(local: localTasks, remote: remoteTasks,
+                                              knownKeys: ShiftYaml.taskKnownKeys)
 
         let followUpPath = "\(Self.shiftSubpath)/follow-ups/follow-ups.yaml"
-        guard let baseFollowUpRecords = loadRecords(ref: base, path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp),
-              let localFollowUpRecords = loadRecords(ref: "HEAD", path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp),
-              let remoteFollowUpRecords = loadRecords(ref: "origin/\(branch)", path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp)
+        guard let baseFollowUps = loadRecords(ref: base, path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp),
+              let localFollowUps = loadRecords(ref: "HEAD", path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp),
+              let remoteFollowUps = loadRecords(ref: "origin/\(branch)", path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp)
         else { return nil }
         let followUpMerge = ShiftThreeWayMerge.run(
             kind: .followUp,
-            base: baseFollowUpRecords,
-            local: localFollowUpRecords,
-            remote: remoteFollowUpRecords
+            base: baseFollowUps.records,
+            local: localFollowUps.records,
+            remote: remoteFollowUps.records
         )
         set.followUpConflicts = followUpMerge.conflicts
         set.resolvedFollowUps = followUpMerge.resolved
+        set.preserved[.followUp] = Self.preserved(local: localFollowUps, remote: remoteFollowUps,
+                                                  knownKeys: ShiftYaml.followUpKnownKeys)
 
         let projectPath = "\(Self.shiftSubpath)/projects/projects.yaml"
-        guard let baseProjectRecords = loadRecords(ref: base, path: projectPath, key: "projects", parse: ShiftYaml.project),
-              let localProjectRecords = loadRecords(ref: "HEAD", path: projectPath, key: "projects", parse: ShiftYaml.project),
-              let remoteProjectRecords = loadRecords(ref: "origin/\(branch)", path: projectPath, key: "projects", parse: ShiftYaml.project)
+        guard let baseProjects = loadRecords(ref: base, path: projectPath, key: "projects", parse: ShiftYaml.project),
+              let localProjects = loadRecords(ref: "HEAD", path: projectPath, key: "projects", parse: ShiftYaml.project),
+              let remoteProjects = loadRecords(ref: "origin/\(branch)", path: projectPath, key: "projects", parse: ShiftYaml.project)
         else { return nil }
         let projectMerge = ShiftThreeWayMerge.run(
             kind: .project,
-            base: baseProjectRecords,
-            local: localProjectRecords,
-            remote: remoteProjectRecords
+            base: baseProjects.records,
+            local: localProjects.records,
+            remote: remoteProjects.records
         )
         set.projectConflicts = projectMerge.conflicts
         set.resolvedProjects = projectMerge.resolved
+        set.preserved[.project] = Self.preserved(local: localProjects, remote: remoteProjects,
+                                                 knownKeys: ShiftYaml.projectKnownKeys)
 
         set.autoMergeNotes = taskMerge.notes + followUpMerge.notes + projectMerge.notes
         return set
+    }
+
+    /// One revision of a list file: the records this build decodes, and the
+    /// raw items they came from.
+    private struct LoadedRecords<T> {
+        let records: [T]
+        let raw: [Yaml]
+        let parse: (Yaml) -> T?
+    }
+
+    /// REL-22: the unknown keys on each side, and the records neither side's
+    /// decoder accepts, deduplicated so a record both sides carry is written
+    /// once.
+    private static func preserved<T>(local: LoadedRecords<T>, remote: LoadedRecords<T>,
+                                     knownKeys: Set<String>) -> ShiftConflictPreserved {
+        var out = ShiftConflictPreserved()
+        out.local.capture(local.raw, knownKeys: knownKeys)
+        out.remote.capture(remote.raw, knownKeys: knownKeys)
+        for item in local.raw + remote.raw where local.parse(item) == nil {
+            if !out.unreadable.contains(item) { out.unreadable.append(item) }
+        }
+        return out
     }
 
     /// `git show <ref>:<path>`.
@@ -965,12 +1003,15 @@ final class ShiftGitSync {
     /// the captain's tasks as deleted remotely and pushed that deletion.
     /// GL-01 and GL-14, in the one place where the cost is the whole task
     /// list.
-    private func loadRecords<T>(ref: String, path: String, key: String, parse: (Yaml) -> T?) -> [T]? {
+    private func loadRecords<T>(ref: String, path: String, key: String,
+                                parse: @escaping (Yaml) -> T?) -> LoadedRecords<T>? {
         let result = runGit(["show", "\(ref):\(path)"], cwd: workingTree, authenticated: false)
         // A non-zero status here is "no such path at that revision", which
         // `git show` reports the same way for a genuinely absent file. Empty
         // output is an empty file.
-        guard result.status == 0, !result.stdout.isEmpty else { return [] }
+        guard result.status == 0, !result.stdout.isEmpty else {
+            return LoadedRecords(records: [], raw: [], parse: parse)
+        }
         guard let doc = try? Yaml.load(result.stdout) else {
             AppLog.store.error("Tasks: \(path, privacy: .public) at \(ref, privacy: .public) will not parse - refusing to treat it as empty")
             return nil
@@ -980,7 +1021,7 @@ final class ShiftGitSync {
             return nil
         }
         let arr = dictionary[.string(key, quoted: .double)]?.array ?? []
-        return arr.compactMap(parse)
+        return LoadedRecords(records: arr.compactMap(parse), raw: arr, parse: parse)
     }
 
     /// `git status --short -- GrandLineDocs/personal-tasks` lines - what decides whether

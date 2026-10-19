@@ -63,6 +63,41 @@ struct ShiftYamlPassthrough {
         extras = found
     }
 
+    /// Adds one record's unknown keys, replacing any already kept for its
+    /// id - for a record that moves into this file from another one (a task
+    /// reopened out of a completed-month file), so the move does not drop
+    /// what the other file carried.
+    mutating func absorb(_ item: Yaml, knownKeys: Set<String>, idKey: String = "id") {
+        var one = ShiftYamlPassthrough()
+        one.capture([item], knownKeys: knownKeys, idKey: idKey)
+        for (id, pairs) in one.extras { extras[id] = pairs }
+    }
+
+    /// Overlays `other`'s kept keys on this one's, `other` winning a key both
+    /// carry for the same record. The conflict-resolution rewrite reads two
+    /// sides of one file and needs every unknown key either side carried.
+    func overlaid(with other: ShiftYamlPassthrough) -> ShiftYamlPassthrough {
+        var out = self
+        for (id, pairs) in other.extras {
+            var merged = out.extras[id] ?? []
+            for pair in pairs {
+                merged.removeAll { $0.key == pair.key }
+                merged.append(pair)
+            }
+            out.extras[id] = merged
+        }
+        return out
+    }
+
+    /// The identity of a raw record, or `nil` for one without a usable id -
+    /// shared by every rewrite that edits a file one record at a time.
+    static func recordID(_ item: Yaml, idKey: String = "id") -> String? {
+        guard case .string(let id, _)? = item.dictionary?[ShiftYamlBridge.key(idKey)], !id.isEmpty else {
+            return nil
+        }
+        return id
+    }
+
     /// Appends whatever was kept for `id` to a freshly serialised record.
     ///
     /// Appended **last**, so this build's own keys keep their established

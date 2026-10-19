@@ -69,6 +69,9 @@ enum StoreDurabilitySelfTest {
         aLoosenedSensitiveFileIsTightenedOnRead(scratch: scratch)
         s10PersonalStoresAreOwnerOnly(scratch: scratch)
         rel21UnreadableFilesAreNeverOverwritten(scratch: scratch)
+        rel22ShiftRewritesKeepWhatTheyCannotRead(scratch: scratch)
+        rel22IncidentRewritesKeepWhatTheyCannotRead(scratch: scratch)
+        rel22NestedTypesDecodeWithoutEveryKey()
 
         print(failures.isEmpty
             ? "== PASS (store durability) =="
@@ -452,6 +455,168 @@ enum StoreDurabilitySelfTest {
         }
         check(SelfTestFaults.bytes(of: favorites) == latin1Favorites,
               "CommandLibraryStore: the non-UTF-8 favorites file still holds its bytes after a star")
+    }
+
+    // MARK: - REL-22: a rewrite keeps what this build cannot read
+
+    private static func yamlString(_ item: Yaml?, _ key: String) -> String? {
+        guard case .string(let value, _)? = item?.dictionary?[.string(key, quoted: .double)] else { return nil }
+        return value
+    }
+
+    private static func record(_ items: [Yaml], id: String) -> Yaml? {
+        items.first { yamlString($0, "id") == id }
+    }
+
+    /// REL-22: completing and reopening a task rewrote the completed-month
+    /// file and the activity log from decoded structs (dropping every unknown
+    /// key and every record without an id), and the active list dropped
+    /// whole records it could not decode on the next edit.
+    private static func rel22ShiftRewritesKeepWhatTheyCannotRead(scratch: URL) {
+        print("- REL-22: Shift's rewrites keep unknown keys and undecodable records")
+        let root = scratch.appendingPathComponent("rel22-shift", isDirectory: true)
+        let now = Date()
+        let month: String = {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM"
+            f.calendar = Calendar(identifier: .gregorian)
+            f.timeZone = TimeZone.current
+            return f.string(from: now)
+        }()
+        let active = root.appendingPathComponent("tasks/active.yaml")
+        let completed = root.appendingPathComponent("tasks/completed/\(month).yaml")
+        let activity = root.appendingPathComponent("activity/\(month).yaml")
+        for url in [active, completed, activity] {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
+        try? """
+        "tasks":
+          - "id": "task-a"
+            "title": "Finish me"
+            "status": "todo"
+            "priority": "normal"
+            "future_field": "a-extra"
+          - "title": "orphan active record"
+        """.write(to: active, atomically: true, encoding: .utf8)
+        try? """
+        "tasks":
+          - "id": "task-c"
+            "title": "Done earlier"
+            "status": "completed"
+            "priority": "normal"
+            "future_field": "c-extra"
+          - "title": "orphan completed record"
+        """.write(to: completed, atomically: true, encoding: .utf8)
+        try? """
+        "activity":
+          - "summary": "orphan activity record"
+        """.write(to: activity, atomically: true, encoding: .utf8)
+
+        withEnv(["FM_SHIFT_DIR": root.path]) {
+            let store = ShiftStore()
+            check(store.activeTasks.map(\.id) == ["task-a"], "REL-22: the fixture loads one decodable active task")
+            store.setTaskCompleted(id: "task-a", completed: true, now: now)
+
+            let activeAfter = ShiftYaml.readList(path: active.path, key: "tasks")
+            check(activeAfter.contains { yamlString($0, "title") == "orphan active record" },
+                  "REL-22: an active record this build cannot decode survives an edit to the list")
+            let completedAfter = ShiftYaml.readList(path: completed.path, key: "tasks")
+            check(yamlString(record(completedAfter, id: "task-c"), "future_field") == "c-extra",
+                  "REL-22: completing one task keeps another completed task's unknown key")
+            check(completedAfter.contains { yamlString($0, "title") == "orphan completed record" },
+                  "REL-22: completing one task keeps a completed record this build cannot decode")
+            check(yamlString(record(completedAfter, id: "task-a"), "future_field") == "a-extra",
+                  "REL-22: the completed task carries its own unknown key into the month file")
+            let activityAfter = ShiftYaml.readList(path: activity.path, key: "activity")
+            check(activityAfter.contains { yamlString($0, "summary") == "orphan activity record" },
+                  "REL-22: logging activity keeps an activity record this build cannot decode")
+            check(activityAfter.count == 2, "REL-22: the completion was logged next to it, got \(activityAfter.count)")
+
+            store.setTaskCompleted(id: "task-c", completed: false, now: now)
+            let reopened = ShiftYaml.readList(path: active.path, key: "tasks")
+            check(yamlString(record(reopened, id: "task-c"), "future_field") == "c-extra",
+                  "REL-22: a reopened task carries its unknown key back into the active list")
+            let completedFinal = ShiftYaml.readList(path: completed.path, key: "tasks")
+            check(record(completedFinal, id: "task-c") == nil, "REL-22: the reopened task left the month file")
+            check(completedFinal.contains { yamlString($0, "title") == "orphan completed record" },
+                  "REL-22: removing a task from the month file keeps the undecodable record")
+        }
+    }
+
+    /// REL-22: an incident timeline entry this build cannot decode (an
+    /// unknown `kind`) and a top-level key it does not write were lost on the
+    /// next append, because every write rewrites the file from the model.
+    private static func rel22IncidentRewritesKeepWhatTheyCannotRead(scratch: URL) {
+        print("- REL-22: an incident append keeps an unknown entry kind and an unknown key")
+        let root = scratch.appendingPathComponent("rel22-incidents", isDirectory: true)
+        let store = IncidentStore(root: root)
+        guard case .success(let incident) = store.start(title: "Disk full", hostID: "host-1", hostLabel: "prod") else {
+            check(false, "REL-22: the incident fixture starts")
+            return
+        }
+        let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL }.filter { $0.lastPathComponent == "incident.yaml" } ?? []
+        guard let file = files.first, var doc = ShiftYamlBridge.readMapping(path: file.path)?.dictionary else {
+            check(false, "REL-22: the incident file is on disk")
+            return
+        }
+        var future = YamlOrderedMap()
+        future[.string("id", quoted: .double)] = .string("future-entry", quoted: .double)
+        future[.string("at", quoted: .double)] = .string("2020-01-01T00:00:00Z", quoted: .double)
+        future[.string("kind", quoted: .double)] = .string("pagerAck", quoted: .double)
+        future[.string("title", quoted: .double)] = .string("Acknowledged in PagerDuty", quoted: .double)
+        doc[.string("timeline", quoted: .double)] = .array([.dictionary(future)])
+        doc[.string("future_key", quoted: .double)] = .string("kept", quoted: .double)
+        try? ShiftYamlBridge.writeMapping(path: file.path, doc: .dictionary(doc))
+        store.invalidateCache()
+
+        check(store.append(IncidentTimelineEntry(kind: .note, title: "Cleared /var/log"), to: incident.id),
+              "REL-22: the append succeeds")
+        let after = ShiftYamlBridge.readMapping(path: file.path)?.dictionary
+        let timeline = after?[.string("timeline", quoted: .double)]?.array ?? []
+        check(timeline.contains { yamlString($0, "id") == "future-entry" },
+              "REL-22: a timeline entry of a kind this build does not know survives an append")
+        check(timeline.contains { yamlString($0, "title") == "Cleared /var/log" }, "REL-22: the new entry is written too")
+        check(yamlString(timeline.first, "id") == "future-entry", "REL-22: the carried entry keeps its time order")
+        check(yamlString(after.map { .dictionary($0) }, "future_key") == "kept",
+              "REL-22: a top-level key this build does not write survives an append")
+    }
+
+    /// REL-22 / GL-01: four nested `Codable` types used synthesised decoders,
+    /// so one field added to any of them would make every existing file that
+    /// holds one undecodable as a whole - backed up and emptied.
+    private static func rel22NestedTypesDecodeWithoutEveryKey() {
+        print("- REL-22: nested Codable types decode a record that lacks a field")
+        let decoder = JSONDecoder()
+        let rule = try? decoder.decode(PortForwardRule.self, from: Data(#"{"kind":"local","listenPort":5432}"#.utf8))
+        check(rule?.listenPort == 5432 && rule?.destPort == 80,
+              "REL-22: a PortForwardRule without destHost/destPort/bindAddress/id decodes with defaults")
+
+        let isoDecoder = JSONDecoder()
+        isoDecoder.dateDecodingStrategy = .iso8601
+        let entry = try? isoDecoder.decode(DictationHistoryEntry.self,
+                                           from: Data(#"{"text":"deploy","date":"2026-01-01T00:00:00Z"}"#.utf8))
+        check(entry?.text == "deploy" && entry?.durationSeconds == 0,
+              "REL-22: a DictationHistoryEntry without id/durationSeconds decodes with defaults")
+
+        let explanation = try? decoder.decode(ScheduleFailureExplanation.self,
+                                              from: Data(#"{"whatFailed":"The backup did not push."}"#.utf8))
+        check(explanation?.whatFailed == "The backup did not push." && explanation?.whatToDo == "",
+              "REL-22: a ScheduleFailureExplanation without why/whatToDo decodes")
+
+        let cadence = try? decoder.decode(ScheduleCadence.self, from: Data(#"{"weekly":{"weekday":1,"hour":6}}"#.utf8))
+        check(cadence == .weekly(weekday: 1, hour: 6, minute: 0),
+              "REL-22: a ScheduleCadence payload without minute decodes, got \(String(describing: cadence))")
+
+        // The on-disk shape is unchanged, so a file this build writes still
+        // reads on the build before it.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let written = (try? encoder.encode(ScheduleCadence.daily(hour: 2, minute: 30))).flatMap { String(data: $0, encoding: .utf8) }
+        check(written == #"{"daily":{"hour":2,"minute":30}}"#,
+              "REL-22: a cadence still encodes in the synthesised shape, got \(String(describing: written))")
+        let roundTrip = try? decoder.decode(ScheduleCadence.self, from: Data((written ?? "").utf8))
+        check(roundTrip == .daily(hour: 2, minute: 30), "REL-22: and decodes back to itself")
     }
 
     /// Writes `bytes` to `file`, makes it unreadable, runs `body`, then
