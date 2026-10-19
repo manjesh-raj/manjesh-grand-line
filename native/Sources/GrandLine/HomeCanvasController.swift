@@ -870,11 +870,22 @@ final class HomeCanvasController: NSViewController {
     /// answer or the card can count a verdict it is not showing.
     private func overviewAnswer() -> FleetGreeting.Answer? {
         fleetSnapshot.map {
-            FleetGreeting.answer(tasks: $0.tasks,
-                                 readyCount: mergedPRs.map(FleetDataSource.readyToMergeCount) ?? 0,
-                                 prFetchFailure: prFetchFailure,
-                                 homeOk: $0.homeOk)
+            FleetGreeting.answer(tasks: $0.tasks, prs: prReading, homeOk: $0.homeOk)
         }
+    }
+
+    /// REL-04: the PR half of the verdict, read the way `fillMergeQueue`
+    /// already reads it. Every Fleet refresh pushes its fast snapshot with no
+    /// PR list and no failure, and this used to turn that into "0 PRs ready
+    /// to merge" in the good tint for the length of every scan - while the
+    /// Merge queue card directly below kept the last good list. A scan in
+    /// flight now keeps the last good count, and with none yet it says it
+    /// is still checking. A failed scan still says so rather than quoting
+    /// the old count as current.
+    private var prReading: FleetDataSource.PRReadyReading {
+        if let prFetchFailure { return .failed(prFetchFailure) }
+        if let prs = mergedPRs ?? lastGoodPRs { return .value(FleetDataSource.readyToMergeCount(prs)) }
+        return .scanning
     }
 
     // MARK: Needs Attention (the captain's move of Today's Due Today)
@@ -3373,6 +3384,8 @@ final class HomeCanvasController: NSViewController {
     /// on the real page rather than a card it built itself - which is what
     /// proves the wiring as well as the render.
     var attentionCardForTests: NeedsAttentionCard { attentionCard }
+    /// REL-04: the verdict the hub's header and attention row are built from.
+    var overviewAnswerForTests: FleetGreeting.Answer? { overviewAnswer() }
     var attentionCardHiddenForTests: Bool { attentionCard.isHidden }
     var greetingForTests: (title: String, subtitle: String, kicker: String) {
         (greetingLabel.stringValue, subtitleLabel.stringValue, kickerLabel.stringValue)
