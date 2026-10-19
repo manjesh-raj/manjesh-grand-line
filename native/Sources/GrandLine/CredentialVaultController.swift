@@ -614,23 +614,22 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
 
     private func createVault(_ password: String) {
         unlockView.setBusy(true)
-        // `createVault` runs PBKDF2 synchronously, so it goes off the main
-        // thread for the same reason `unlock` does - at 600k rounds this is
-        // hundreds of milliseconds, which would visibly freeze the window.
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        // The store derives off the main thread (PBKDF2 at 600k rounds is
+        // hundreds of milliseconds) and makes every mutation, the write and
+        // `onChange` back on main (REL-20). This controller used to run the
+        // whole store call on a background queue, which rebuilt this page
+        // off the main thread through `store.onChange`.
+        store.createVault(masterPassword: password) { [weak self] result in
             guard let self else { return }
-            let result = self.store.createVault(masterPassword: password)
-            DispatchQueue.main.async {
-                self.unlockView.setBusy(false)
-                switch result {
-                case .success:
-                    self.unlockView.clearPasswordFields()
-                    self.noteInteraction()
-                    self.render()
-                    Toast.show(in: self.view, message: "Poneglyph created")
-                case .failure(let error):
-                    self.unlockView.showMessage(error.localizedDescription)
-                }
+            self.unlockView.setBusy(false)
+            switch result {
+            case .success:
+                self.unlockView.clearPasswordFields()
+                self.noteInteraction()
+                self.render()
+                Toast.show(in: self.view, message: "Poneglyph created")
+            case .failure(let error):
+                self.unlockView.showMessage(error.localizedDescription)
             }
         }
     }

@@ -62,6 +62,7 @@ enum CredentialVaultSelfTest {
         checkPasswordChange(scratch: scratch, check)
         checkPasswordChangeRollsBackOnWriteFailure(scratch: scratch, check)
         checkPasswordChangeStaysOnMain(scratch: scratch, check)
+        checkVaultCreationStaysOnMain(scratch: scratch, check)
         checkClipboardChangeCountGuard(check)
         checkLockClearsTheClipboard(scratch: scratch, check)
         checkClipboardSourceGuards(check)
@@ -865,6 +866,59 @@ enum CredentialVaultSelfTest {
               "the rollback must not capture-and-restore the Touch ID flag - that is L5's defect")
         check(code.contains("settings.touchIDUnlockEnabled = false"),
               "...it must force it off instead")
+    }
+
+    /// REL-20: creating a vault mutates the store, writes it and fires
+    /// `onChange` - which is `CredentialVaultController.render()` - on the
+    /// **main thread**, with only the derivation off it. The controller used
+    /// to run the whole create on `DispatchQueue.global`, so every one of
+    /// those ran on a background thread on the vault's first-run path.
+    /// `onChange` fires from the same statement sequence as the mutation, so
+    /// asserting its thread asserts the mutation's.
+    private static func checkVaultCreationStaysOnMain(scratch: URL, _ check: (Bool, String) -> Void) {
+        let store = CredentialVaultStore(root: scratch.appendingPathComponent("create-threading", isDirectory: true))
+        var onChangeThreads: [Bool] = []
+        store.onChange = { onChangeThreads.append(Thread.isMainThread) }
+        var completionOnMain: Bool?
+        var result: Result<Void, Error>?
+        waitFor(timeout: 30) { done in
+            store.createVault(masterPassword: "create-threading-password") { r in
+                completionOnMain = Thread.isMainThread
+                result = r
+                done()
+            }
+            // The call returns before the derivation finishes: nothing has
+            // been mutated yet, so the page cannot render a half-made vault.
+            check(!store.isUnlocked, "REL-20: the create must not be unlocked before the derivation hops back")
+        }
+        store.onChange = nil
+        guard case .success = result else {
+            check(false, "REL-20: the create should have succeeded, got \(String(describing: result))")
+            return
+        }
+        check(completionOnMain == true,
+              "REL-20: the completion must be delivered on main, was \(String(describing: completionOnMain))")
+        check(!onChangeThreads.isEmpty, "REL-20: a successful create must fire onChange")
+        check(onChangeThreads.allSatisfy { $0 },
+              "REL-20: onChange is render(); every fire must be on the main thread, got \(onChangeThreads)")
+        check(store.isUnlocked && store.loadState() == .present,
+              "REL-20: the created vault is unlocked and on disk")
+
+        // A second create over the same root is refused on main, before any
+        // derivation, rather than racing a vault that already exists.
+        var secondOnMain: Bool?
+        var second: Result<Void, Error>?
+        waitFor(timeout: 30) { done in
+            store.createVault(masterPassword: "another-password") { r in
+                secondOnMain = Thread.isMainThread
+                second = r
+                done()
+            }
+        }
+        if case .success = second {
+            check(false, "REL-20: a second create over an existing vault must be refused")
+        }
+        check(secondOnMain == true, "REL-20: the refusal is delivered on main too")
     }
 
     /// A password change must mutate state and fire `onChange` on the **main
