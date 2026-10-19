@@ -223,14 +223,19 @@ enum CommandLibraryAISelfTest {
             return "the round trip did not recover the suggested template, got \(String(describing: reply.suggestedTemplate))"
         }
 
-        // The fake script records the argv it was given, so this proves the
-        // prompt genuinely travelled as an argv element - never through a
-        // shell, which is what makes a template containing backticks or
-        // `$(...)` inert.
+        // The fake script records its argv and its stdin, so this proves the
+        // prompt genuinely reached claude on stdin - never through a shell,
+        // which is what makes a template containing backticks or `$(...)`
+        // inert, and never in argv, which `ps` shows (SEC-02).
         let recorded = (try? String(contentsOf: script.deletingPathExtension().appendingPathExtension("argv"),
                                     encoding: .utf8)) ?? ""
-        guard recorded.contains("{{deployment}}") else {
-            return "the prompt did not reach claude as an argument, recorded: \(recorded)"
+        let prompt = (try? String(contentsOf: script.deletingPathExtension().appendingPathExtension("prompt"),
+                                  encoding: .utf8)) ?? ""
+        guard prompt.contains("{{deployment}}") else {
+            return "the prompt did not reach claude on stdin, recorded: \(prompt)"
+        }
+        guard !recorded.contains("{{deployment}}") else {
+            return "the prompt must not travel in argv, recorded: \(recorded)"
         }
         return nil
     }
@@ -439,8 +444,8 @@ enum CommandLibraryAISelfTest {
     }
 
     /// A disposable fake `claude` that answers with one JSON object and
-    /// records the argv it was given, so a test can prove the prompt
-    /// travelled as an argument rather than through a shell.
+    /// records the argv and the stdin it was given, so a test can prove the
+    /// prompt travelled on stdin rather than in argv or through a shell.
     private static func writeFakeClaude(result: String, isError: Bool) -> URL {
         let obj: [String: Any] = ["result": result, "is_error": isError]
         let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
@@ -452,10 +457,12 @@ enum CommandLibraryAISelfTest {
         let dir = FileManager.default.temporaryDirectory
         let path = dir.appendingPathComponent("fake-claude-cmdlib-\(UUID().uuidString).sh")
         let argvPath = path.deletingPathExtension().appendingPathExtension("argv").path
+        let promptPath = path.deletingPathExtension().appendingPathExtension("prompt").path
         let escaped = rawOutput.replacingOccurrences(of: "'", with: "'\\''")
         let script = """
         #!/bin/sh
         printf '%s' "$*" > '\(argvPath)'
+        cat > '\(promptPath)'
         printf '%s' '\(escaped)'
         exit \(exitCode)
         """

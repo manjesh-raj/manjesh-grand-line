@@ -112,15 +112,16 @@ enum SRELeadPerTabSelfTest {
     private static let processEndedMarker = "[process ended"
 
     /// A fake `claude -p ... --output-format json` stand-in: echoes the
-    /// question it was asked (`-p <question>` is always argv[1]/argv[2])
-    /// back inside `result`, so two tabs asking different questions produce
+    /// question it was asked (read from stdin, where `ClaudeOneShot` sends the
+    /// prompt) back inside `result`, so two tabs asking different questions produce
     /// distinguishable replies without needing a real model or cluster.
     private static func writeFakeClaude() -> URL {
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("fake-claude-per-tab-\(UUID().uuidString).sh")
         let script = """
         #!/bin/sh
-        printf '{"result": "reply-to: %s", "is_error": false, "session_id": "fake-session-%s"}' "$2" "$2"
+        Q=$(cat)
+        printf '{"result": "reply-to: %s", "is_error": false, "session_id": "fake-session-%s"}' "$Q" "$Q"
         """
         try? script.write(to: path, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)

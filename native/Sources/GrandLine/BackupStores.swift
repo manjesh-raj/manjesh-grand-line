@@ -644,7 +644,13 @@ enum BackupStoreImport {
                 }
                 let target = root.appendingPathComponent(entry.path)
                 do {
-                    try AtomicWrite.data(data, to: target)
+                    // SEC-04 (full review): on a fresh machine this restore is
+                    // the first write into these trees, so whatever mode it
+                    // leaves is the mode they keep until the owning store next
+                    // writes. Without `sensitive:` that was 0755 directories
+                    // and 0644 files - notebook pages and task text readable
+                    // by any other local account.
+                    try AtomicWrite.data(data, to: target, sensitive: true)
                     written += 1
                 } catch {
                     failed += 1

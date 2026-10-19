@@ -185,11 +185,14 @@ enum SRELead {
         }
         let python = resolvePython3() ?? "/usr/bin/python3"
 
-        let scratchDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("fm-sre-lead-\(UUID().uuidString)", isDirectory: true)
-        let bridgeDir = scratchDir.appendingPathComponent("bridge", isDirectory: true)
+        // Under the data root, not the temporary directory: the MCP config
+        // and the kubectl output in `bridge/` were readable from a Code
+        // Preview snippet there (SEC-01 of the full review).
+        let scratchDir: URL
+        let bridgeDir: URL
         do {
-            try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            scratchDir = try AppPaths.makePrivateScratchDirectory(prefix: "fm-sre-lead")
+            bridgeDir = scratchDir.appendingPathComponent("bridge", isDirectory: true)
             try FileManager.default.createDirectory(at: bridgeDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         } catch {
             return .failure(SRELeadSetupError(message: "could not create scratch directory: \(error.localizedDescription)"))
@@ -303,12 +306,20 @@ enum SRELead {
     /// walks up from the current working directory looking for
     /// `native/Scripts/sre_kubectl_mcp.py`, mirroring how `FirstmateHome`
     /// tries a list of candidates rather than assuming one fixed layout).
+    ///
+    /// **The override and the walk are debug-build only** (SEC-05 of the
+    /// 2026-10 full review). The script this returns is the MCP server SRE
+    /// Lead's `claude` runs, so in the shipped app it must be the one in the
+    /// bundle. An environment variable or a `native/Scripts/` directory above
+    /// the launch directory would otherwise hand that role to any file the
+    /// same user can write.
     private static func resolveKubectlScript() -> String? {
         let fm = FileManager.default
         if let resourceURL = Bundle.main.resourceURL {
             let candidate = resourceURL.appendingPathComponent("sre_kubectl_mcp.py").path
             if fm.isReadableFile(atPath: candidate) { return candidate }
         }
+        #if FM_SELFTESTS
         if let override = ProcessInfo.processInfo.environment["FM_SRE_KUBECTL_SCRIPT"], fm.isReadableFile(atPath: override) {
             return override
         }
@@ -320,6 +331,7 @@ enum SRELead {
             if parent == dir { break }
             dir = parent
         }
+        #endif
         return nil
     }
 }

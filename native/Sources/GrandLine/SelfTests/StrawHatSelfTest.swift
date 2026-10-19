@@ -768,10 +768,12 @@ enum StrawHatSelfTest {
 
         let argv = readArgv(log)
         let printable = printableArgv(log)
-        // The captain's message travels as its own argv element - never
-        // through a shell - which is what makes a message containing
-        // backticks or `$(...)` inert.
-        check(argv.contains("hello"), "the message is passed as an argv element, got \(printable)", &ok)
+        // The captain's message travels on stdin - never through a shell,
+        // which is what makes a message containing backticks or `$(...)`
+        // inert, and never in argv, which `ps` shows to every process of the
+        // same user (SEC-02).
+        check(readPrompt(log) == "hello", "the message is the prompt on stdin, got \"\(readPrompt(log))\"", &ok)
+        check(!argv.contains("hello"), "the message must not travel in argv, got \(printable)", &ok)
         check(argv.contains("--append-system-prompt"), "the persona is attached, got \(printable)", &ok)
         check(argv.contains(StrawHatCrew.persona), "the persona attached is the real one", &ok)
         check(argv.contains("--output-format") && argv.contains("json"),
@@ -807,7 +809,7 @@ enum StrawHatSelfTest {
 
         let argv = readArgv(log) // the log holds the LAST invocation
         let printable = printableArgv(log)
-        check(argv.contains("second"), "the log should hold the second turn, got \(printable)", &ok)
+        check(readPrompt(log) == "second", "the log should hold the second turn, got \"\(readPrompt(log))\"", &ok)
         guard let resumeIndex = argv.firstIndex(of: "--resume") else {
             check(false, "the second turn must pass --resume, got \(printable)", &ok)
             return
@@ -816,7 +818,7 @@ enum StrawHatSelfTest {
               "--resume must carry the first turn's own session id, got \(printable)", &ok)
         // A resumed turn carries no recap - the session already holds the
         // history, and sending it twice would pay for it twice.
-        check(!argv.contains { $0.contains("[RECAP") },
+        check(!readPrompt(log).contains("[RECAP") && !argv.contains { $0.contains("[RECAP") },
               "an ordinary resumed turn must not carry a recap", &ok)
 
         // Third turn: still threading, not just the second.
@@ -867,11 +869,12 @@ enum StrawHatSelfTest {
         // The whole point: recovering must not cost the conversation. Without
         // the recap the model would answer "who was I supposed to ask?" with
         // no idea what came before.
-        check(argv.contains { $0.contains("[RECAP") },
-              "the recovery retry must carry a transcript recap, got \(printable)", &ok)
-        check(argv.contains { $0.contains("remind me what I said about the login bug") },
+        let retryPrompt = readPrompt(log)
+        check(retryPrompt.contains("[RECAP"),
+              "the recovery retry must carry a transcript recap, got argv \(printable) and prompt \"\(retryPrompt)\"", &ok)
+        check(retryPrompt.contains("remind me what I said about the login bug"),
               "the recap must contain the earlier turn's real text", &ok)
-        check(argv.contains { $0.contains("and who was I supposed to ask?") },
+        check(retryPrompt.contains("and who was I supposed to ask?"),
               "the recovery retry must still carry the captain's live message", &ok)
     }
 
@@ -2248,6 +2251,13 @@ enum StrawHatSelfTest {
         return parts
     }
 
+    /// The prompt the last invocation read from stdin - `ClaudeOneShot` sends
+    /// it there rather than in argv (SEC-02), so the captain's message and any
+    /// recap are asserted here.
+    private static func readPrompt(_ log: URL) -> String {
+        (try? String(contentsOf: URL(fileURLWithPath: log.path + ".prompt"), encoding: .utf8)) ?? ""
+    }
+
     /// The same argv with the ~2.5KB persona collapsed to a marker. A failure
     /// message that dumps the whole persona buries the one thing it is trying
     /// to say - found the first time an injected regression was verified here.
@@ -2262,12 +2272,14 @@ enum StrawHatSelfTest {
         return String(data: data, encoding: .utf8) ?? "{}"
     }
 
-    /// A fake `claude` that records its own argv NUL-separated and prints one
+    /// A fake `claude` that records its own argv NUL-separated, records the
+    /// prompt it read from stdin beside it (`readPrompt`), and prints one
     /// `--output-format json` payload.
     private static func writeFakeClaude(reply: String, argvLog: URL, sessionID: String? = nil) -> URL {
         let payload = fakeClaudePayload(reply: reply, sessionID: sessionID)
         return writeScript("""
         printf '%s\\0' "$@" > "\(argvLog.path)"
+        cat > "\(argvLog.path).prompt"
         printf '%s\\n' '\(shellSingleQuoted(payload))'
         exit 0
         """)
@@ -2281,6 +2293,7 @@ enum StrawHatSelfTest {
             .replacingOccurrences(of: "\"is_error\":false", with: "\"is_error\":true")
         return writeScript("""
         printf '%s\\0' "$@" > "\(argvLog.path)"
+        cat > "\(argvLog.path).prompt"
         for arg in "$@"; do
           if [ "$arg" = "--resume" ]; then
             printf '%s\\n' '\(shellSingleQuoted(bad))'

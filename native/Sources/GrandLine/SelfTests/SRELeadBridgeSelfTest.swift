@@ -158,6 +158,9 @@ enum SRELeadBridgeSelfTest {
             ("commandPolicyRefusesEveryDangerousShape", test_commandPolicyRefusesEveryDangerousShape),
             ("commandPolicyAcceptsEveryShapeTheScriptReallyProduces", test_commandPolicyAcceptsRealCommands),
             ("commandPolicyTablesStillMatchThePythonScript", test_commandPolicyTablesMatchTheScript),
+            ("privateScratchIsA0700FolderOutsideBackups", test_privateScratchIsA0700FolderOutsideBackups),
+            ("keyAndSRELeadScratchStayOutOfTheTemporaryDirectory", test_keyAndSRELeadScratchStayOutOfTheTemporaryDirectory),
+            ("kubectlScriptOverrideAndSourceWalkAreDebugOnly", test_kubectlScriptOverrideAndSourceWalkAreDebugOnly),
         ]
 
         var failures = 0
@@ -822,6 +825,138 @@ enum SRELeadBridgeSelfTest {
     /// deny/allow tables and not in `SRELeadBridgeCommandPolicy`'s restated
     /// version. Skips loudly if the script cannot be found, per the
     /// source-grepping convention.
+    // MARK: SEC-01 - where SRE Lead's (and the SSH key's) plaintext lives
+
+    /// The directory `SRELead.setUp` and `SSHKeyMaterializer` now write into.
+    /// Driven with this case's own scratch folder, so it never touches the
+    /// captain's data root. The folder is pre-created at 0755 first, because
+    /// "already existed with a looser mode" is the case `createDirectory`
+    /// alone would leave wrong.
+    private static func test_privateScratchIsA0700FolderOutsideBackups(with dir: URL) -> String? {
+        let fm = FileManager.default
+        let folder = dir.appendingPathComponent("private-scratch", isDirectory: true)
+        do {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true,
+                                   attributes: [.posixPermissions: 0o755])
+        } catch {
+            return "could not pre-create the folder: \(error)"
+        }
+        func mode(_ url: URL) -> Int? {
+            (try? fm.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber)?.intValue
+        }
+        guard mode(folder) == 0o755 else {
+            return "the fixture folder should start at 0755, or the 0700 check is vacuous"
+        }
+        let made: URL
+        do {
+            made = try AppPaths.makePrivateScratchDirectory(prefix: "fm-sre-lead", in: folder)
+        } catch {
+            return "makePrivateScratchDirectory threw: \(error)"
+        }
+        guard made.deletingLastPathComponent().standardizedFileURL.path == folder.standardizedFileURL.path,
+              made.lastPathComponent.hasPrefix("fm-sre-lead-") else {
+            return "expected a fm-sre-lead-<uuid> directory inside \(folder.path), got \(made.path)"
+        }
+        guard mode(folder) == 0o700 else {
+            return "the private-scratch folder must be forced to 0700, it is \(String(mode(folder) ?? -1, radix: 8))"
+        }
+        guard mode(made) == 0o700 else {
+            return "the per-session directory must be 0700, it is \(String(mode(made) ?? -1, radix: 8))"
+        }
+        let excluded = (try? folder.resourceValues(forKeys: [.isExcludedFromBackupKey]))?.isExcludedFromBackup
+        guard excluded == true else {
+            return "the private-scratch folder must be excluded from Time Machine, got \(String(describing: excluded))"
+        }
+        // The default must follow the data root, and the narrow variable must
+        // win over it, the same as every store's own override.
+        let rooted = AppPaths.privateScratchFolder(environment: [AppPaths.scratchRootVariable: "/tmp/gl-root"])
+        guard rooted.path == "/tmp/gl-root/private-scratch" else {
+            return "the default must nest under the data root, got \(rooted.path)"
+        }
+        let narrow = AppPaths.privateScratchFolder(environment: [
+            AppPaths.scratchRootVariable: "/tmp/gl-root", AppPaths.privateScratchVariable: "/tmp/gl-narrow",
+        ])
+        guard narrow.path == "/tmp/gl-narrow" else {
+            return "FM_PRIVATE_SCRATCH_DIR must win over FM_SCRATCH_ROOT, got \(narrow.path)"
+        }
+        return nil
+    }
+
+    /// SEC-01's source half. The temporary directory is readable from a Code
+    /// Preview snippet unless the profile says otherwise, so the two places
+    /// that leave plaintext on disk must not go back there. Comments are
+    /// stripped so the notes explaining the move do not satisfy or trip it.
+    private static func test_keyAndSRELeadScratchStayOutOfTheTemporaryDirectory(with _: URL) -> String? {
+        guard let sources = SelfTestSources.appSourceDirectory() else {
+            return "could not resolve the app source directory - this check would pass vacuously"
+        }
+        for name in ["SSHKeyMaterializer.swift", "SRELead.swift"] {
+            guard let text = try? String(contentsOf: sources.appendingPathComponent(name), encoding: .utf8) else {
+                return "could not read \(name) - this check would pass vacuously"
+            }
+            let code = text.split(separator: "\n", omittingEmptySubsequences: false)
+                .map { line -> Substring in
+                    guard let comment = line.range(of: "//") else { return line }
+                    return line[..<comment.lowerBound]
+                }
+                .joined(separator: "\n")
+            if code.contains("temporaryDirectory") || code.contains("NSTemporaryDirectory") {
+                return "\(name) writes under the temporary directory again - a Code Preview snippet can read it there"
+            }
+            if !code.contains("AppPaths.makePrivateScratchDirectory(") {
+                return "\(name) no longer makes its scratch directory through AppPaths.makePrivateScratchDirectory"
+            }
+        }
+        return nil
+    }
+
+    /// SEC-05 (full review). `resolveKubectlScript` picks the MCP server SRE
+    /// Lead's `claude` runs, so in a release build it must only ever be the
+    /// bundled copy: the `FM_SRE_KUBECTL_SCRIPT` override and the walk up the
+    /// source tree are compiled in for debug builds only. A release binary
+    /// runs no suite, so this can only be asserted on the source.
+    private static func test_kubectlScriptOverrideAndSourceWalkAreDebugOnly(with _: URL) -> String? {
+        guard let sources = SelfTestSources.appSourceDirectory(),
+              let text = try? String(contentsOf: sources.appendingPathComponent("SRELead.swift"), encoding: .utf8)
+        else {
+            return "could not read SRELead.swift - this check would pass vacuously"
+        }
+        let code = text.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> Substring in
+                guard let comment = line.range(of: "//") else { return line }
+                return line[..<comment.lowerBound]
+            }
+            .joined(separator: "\n")
+        guard let start = code.range(of: "static func resolveKubectlScript()"),
+              let end = code.range(of: "\n    }\n", range: start.upperBound..<code.endIndex) else {
+            return "could not find resolveKubectlScript() in SRELead.swift"
+        }
+        let body = code[start.upperBound..<end.lowerBound]
+        guard let open = body.range(of: "#if FM_SELFTESTS"),
+              let close = body.range(of: "#endif", range: open.upperBound..<body.endIndex) else {
+            return "resolveKubectlScript() must keep the override and the source walk inside #if FM_SELFTESTS"
+        }
+        let guarded = body[open.upperBound..<close.lowerBound]
+        let unguarded = String(body[..<open.lowerBound]) + String(body[close.upperBound...])
+        for marker in ["\"FM_SRE_KUBECTL_SCRIPT\"", "currentDirectoryPath"] {
+            guard guarded.contains(marker) else {
+                return "\(marker) is no longer inside resolveKubectlScript()'s #if FM_SELFTESTS block"
+            }
+            if unguarded.contains(marker) {
+                return "\(marker) is reachable outside #if FM_SELFTESTS - a release build would honour it"
+            }
+        }
+        guard unguarded.contains("Bundle.main.resourceURL") else {
+            return "the bundled copy must stay the release build's one source"
+        }
+        // The variable must not be read anywhere else in the file either.
+        let reads = code.components(separatedBy: "\"FM_SRE_KUBECTL_SCRIPT\"").count - 1
+        guard reads == 1 else {
+            return "FM_SRE_KUBECTL_SCRIPT is read \(reads) times in SRELead.swift - only the guarded read may exist"
+        }
+        return nil
+    }
+
     private static func test_commandPolicyTablesMatchTheScript(with _: URL) -> String? {
         guard let sources = SelfTestSources.appSourceDirectory() else {
             return "could not resolve the app source directory - this check would pass vacuously"

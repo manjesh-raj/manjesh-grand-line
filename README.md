@@ -157,6 +157,7 @@ These tables are **complete in both directions**, and that is a check rather tha
 | `FM_SCRATCHPAD_FILE` | `scratchpad.json` (the Tools > Scratchpad tabs' saved pads, keyed by tab name) |
 | `FM_WIDGET_DIR` | Where the app publishes `widget-snapshot.json` and reads the widgets' queued taps from. Defaults to the App Group container the WidgetKit extension reads (`~/Library/Group Containers/group.com.manjesh.grandline.native/GrandLineWidgets/`) - see `native/Widgets/README.md` |
 | `FM_CLIPBOARD_HISTORY_FILE` | The encrypted clipboard history (`clipboard-history.sealed`) |
+| `FM_PRIVATE_SCRATCH_DIR` | Where a materialized SSH key (for `ssh -i`) and SRE Lead's per-session MCP config and kubectl bridge live while in use (`AppPaths.privateScratchFolder()`, default `private-scratch/` under the data root). Kept out of the temporary directory because Code Preview snippets must not read it |
 | `FM_CAPTURE_INBOX_FILE` | The capture log behind Today's "Captured today" card (`capture-inbox.json`) - one row per filed ⌥Space capture, never the captured content's own store |
 | `FM_GOOGLE_OAUTH_CLIENT_ID` | The Google OAuth client ID the Gmail settings sign-in uses, overriding the one stored in the Keychain. There is no built-in default - a client ID comes from your own Google Cloud project (see `docs/history/43-google-accounts.md`) |
 | `FM_GOOGLE_OAUTH_CLIENT_SECRET` | The matching client secret, when the Google Cloud client has one. Only read alongside `FM_GOOGLE_OAUTH_CLIENT_ID` |
@@ -198,7 +199,7 @@ Read by the scripts and the suites rather than by the app, and listed for the sa
 | `FM_SHELL_CWD` | Working directory for new shell tabs (wins over Settings) |
 | `FM_CAPTAIN` | The name the fleet pages greet (default `Manjesh`) |
 | `FM_BLOCK_VIEW_ENABLED` | Enables Block View at all (still needs a per-host opt-in) |
-| `FM_SRE_KUBECTL_SCRIPT` | Path to SRE Lead's read-only kubectl MCP server, instead of the bundled `sre_kubectl_mcp.py` |
+| `FM_SRE_KUBECTL_SCRIPT` | Path to SRE Lead's read-only kubectl MCP server, instead of the bundled `sre_kubectl_mcp.py`. **Debug builds only** - a release build uses the bundled copy and ignores this, along with the source-tree fallback |
 | `FM_LUFFY_STORES_SCRIPT` | Path to the Straw Hat crew's read-only store MCP server, instead of the bundled `luffy_stores_mcp.py` |
 | `FM_APP_LOCK_IDLE_SECONDS` | Idle re-lock threshold (default 1h) - verification only |
 | `FM_APP_LOCK_SESSION_SECONDS` | Hard-logout threshold (default 12h) - verification only |

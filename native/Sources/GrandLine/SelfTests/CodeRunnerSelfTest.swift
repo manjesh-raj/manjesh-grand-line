@@ -56,6 +56,7 @@ enum CodeRunnerSelfTest {
         checkOutputCap(check)
         checkWording(check)
         checkRealSandboxedRun(check)
+        checkTemporaryRootsAreUnreadable(check)
 
         print(ok ? "CodeRunnerSelfTest: OK" : "CodeRunnerSelfTest: FAILURES")
         return ok
@@ -188,22 +189,50 @@ enum CodeRunnerSelfTest {
     // MARK: The sandbox
 
     private static func checkProfileDenials(_ check: (Bool, String) -> Void) {
+        let roots = ["/private/var/folders/xx/yy/T", "/private/var/folders/xx/yy/C"]
         let untrusted = CodeSandbox.profile(trust: .untrustedCode,
-                                            writable: "/private/tmp/w", home: "/Users/cap")
+                                            writable: "/private/var/folders/xx/yy/T/gl-run/work",
+                                            home: "/Users/cap", temporaryRoots: roots)
         check(untrusted.contains("(deny network*)"),
               "an untrusted run's profile must deny the network")
         check(untrusted.contains("(deny file-write*)"),
               "an untrusted run's profile must deny writes by default")
         check(untrusted.contains("(deny file-read* (subpath \"/Users/cap\"))"),
               "an untrusted run's profile must deny reading the home directory:\n\(untrusted)")
-        check(untrusted.contains("(allow file-read* file-write* (subpath \"/private/tmp/w\"))"),
+        check(untrusted.contains("(allow file-read* file-write* (subpath \"/private/var/folders/xx/yy/T/gl-run/work\"))"),
               "the scratch directory must be the one writable path")
+        // SEC-01: the per-user temporary and cache roots hold other parts of
+        // the app's plaintext (a materialized SSH key, SRE Lead's scratch), so
+        // a snippet must not read them - and the scratch directory lives inside
+        // the first one, so its allow has to come *after* the denial or the
+        // run cannot read its own script.
+        for root in roots {
+            let denial = "(deny file-read* (subpath \"\(root)\"))"
+            check(untrusted.contains(denial),
+                  "an untrusted run's profile must deny reading \(root):\n\(untrusted)")
+            if let denyIndex = untrusted.range(of: denial),
+               let allowIndex = untrusted.range(of: "(allow file-read* file-write* (subpath \"/private/var/folders/xx/yy/T/gl-run/work\"))") {
+                check(denyIndex.lowerBound < allowIndex.lowerBound,
+                      "the scratch-directory allow must come after the \(root) read denial, "
+                      + "or the denial wins and the run cannot read its own script")
+            }
+        }
+        // Node stats every ancestor of its entry script and refused to start
+        // without this - measured. It must name exactly those directories as
+        // literals: a `subpath` here would hand the whole root back.
+        check(untrusted.contains("(allow file-read-metadata (literal \"/private/var/folders/xx/yy/T/gl-run\") "
+                                 + "(literal \"/private/var/folders/xx/yy/T\"))"),
+              "the scratch directory's ancestors must stay stat-able, or node cannot start:\n\(untrusted)")
+        check(!untrusted.contains("(allow file-read-metadata (subpath"),
+              "the ancestors' metadata allow must be literal paths, never a subpath")
+        check(CodeSandbox.scratchAncestors(of: "/private/tmp/w", within: roots).isEmpty,
+              "a scratch directory outside every root needs no metadata allow")
         // Ordering is not cosmetic: a sandbox profile's later rules win, so an
         // allow for the scratch directory that came *before* the global write
         // denial would be overridden and the run would fail inside its own
         // temp dir.
         if let denyIndex = untrusted.range(of: "(deny file-write*)"),
-           let allowIndex = untrusted.range(of: "(allow file-read* file-write* (subpath \"/private/tmp/w\"))") {
+           let allowIndex = untrusted.range(of: "(allow file-read* file-write* (subpath \"/private/var/folders/xx/yy/T/gl-run/work\"))") {
             check(denyIndex.lowerBound < allowIndex.lowerBound,
                   "the scratch-directory allow must come after the global write denial, "
                   + "or the later denial wins and nothing can be written")
@@ -217,7 +246,8 @@ enum CodeRunnerSelfTest {
         // The formatter level differs in exactly one way, and that difference
         // is the point of having two levels.
         let tool = CodeSandbox.profile(trust: .installedTool,
-                                       writable: "/private/tmp/w", home: "/Users/cap")
+                                       writable: "/private/var/folders/xx/yy/T/gl-fmt/work",
+                                       home: "/Users/cap", temporaryRoots: roots)
         check(tool.contains("(deny network*)"), "a formatter must still be denied the network")
         check(tool.contains("(deny file-write*)"), "a formatter must still be denied writes")
         check(!tool.contains("(deny file-read* (subpath \"/Users/cap\"))"),
@@ -232,7 +262,8 @@ enum CodeRunnerSelfTest {
         check(CodeSandbox.quote("/tmp/a\\b") == "\"/tmp/a\\\\b\"",
               "a backslash in a path must be escaped, got \(CodeSandbox.quote("/tmp/a\\b"))")
         let profile = CodeSandbox.profile(trust: .untrustedCode,
-                                          writable: "/tmp/w\"x", home: "/Users/cap")
+                                          writable: "/tmp/w\"x", home: "/Users/cap",
+                                          temporaryRoots: ["/var/t\"y"])
         // Every line's quotes must balance, which is the property the escaping
         // exists to preserve.
         for line in profile.split(separator: "\n") {
@@ -727,6 +758,77 @@ enum CodeRunnerSelfTest {
               "the victim process was killed from inside the sandbox - the signal denial did not hold")
     }
 
+    /// SEC-01 (full review), against a real run through `CodeRunner` rather
+    /// than the profile text: a snippet must not read what other parts of the
+    /// app leave under the per-user temporary root (a materialized SSH key,
+    /// SRE Lead's scratch) or the cache root beside it.
+    ///
+    /// Driven through the shell recipe, so it needs nothing but `bash` and
+    /// runs on every machine, CI included. The markers are dummy text written
+    /// by this suite at the same 0700/0600 modes the key materializer uses -
+    /// modes do not stop a same-uid read, which is the whole finding. Each
+    /// marker is read back unsandboxed first, so a pass cannot mean "there was
+    /// nothing to read".
+    private static func checkTemporaryRootsAreUnreadable(_ check: (Bool, String) -> Void) {
+        guard CodeSandbox.isAvailable else {
+            check(false, "\(CodeSandbox.sandboxExecPath) is missing - every run would be refused")
+            return
+        }
+        CodeToolInventory.shared.probeEverything()
+        guard CodeToolInventory.shared.runner(for: "shell") != nil else {
+            print("  SKIP no bash or zsh on PATH - the temporary-root denial cannot be run")
+            return
+        }
+        let roots = CodeSandbox.userTemporaryRoots()
+        check(roots.count == 2,
+              "expected the temporary root and the cache root, got \(roots)")
+        let fm = FileManager.default
+        let runner = CodeRunner()
+        for root in roots {
+            let directory = URL(fileURLWithPath: root)
+                .appendingPathComponent("gl-sec01-\(UUID().uuidString.prefix(8))", isDirectory: true)
+            defer { try? fm.removeItem(at: directory) }
+            let marker = directory.appendingPathComponent("identity")
+            let secret = "GL-SEC01-DUMMY-\(UUID().uuidString.prefix(8))"
+            do {
+                try fm.createDirectory(at: directory, withIntermediateDirectories: true,
+                                       attributes: [.posixPermissions: 0o700])
+                try Data(secret.utf8).write(to: marker)
+                try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: marker.path)
+            } catch {
+                check(false, "could not write the marker under \(root): \(error)")
+                continue
+            }
+            let unsandboxed = (try? String(contentsOf: marker, encoding: .utf8)) ?? ""
+            check(unsandboxed == secret,
+                  "the marker under \(root) should read back unsandboxed - the denial check is vacuous otherwise")
+
+            let quoted = "'" + marker.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+            let outcome = waitForRun(runner, """
+                echo "run started"
+                /bin/cat \(quoted)
+                echo "cat exit $?"
+                """, "shell")
+            let output = outcome?.output ?? ""
+            check(output.contains("run started"),
+                  "the shell run must start at all, or the denial passes for the wrong reason, got \(describe(outcome))")
+            check(!output.contains(secret),
+                  "a snippet must not read a file under \(root), got \(output)")
+            check(output.contains("cat exit 1") && output.contains("Operation not permitted"),
+                  "/bin/cat of a file under \(root) must be denied by the sandbox, got \(output)")
+        }
+
+        // The denial must not cost an interpreter its start. Node is the one
+        // that measured it: its `realpath` stats every ancestor of the script.
+        guard CodeToolInventory.shared.runner(for: "javascript") != nil else {
+            print("  SKIP no node or deno on PATH - the javascript start check cannot run")
+            return
+        }
+        let node = waitForRun(runner, "console.log('node started', 1 + 1)", "javascript")
+        check(node?.kind == .ok && node?.output.contains("node started 2") == true,
+              "a javascript snippet must still start under the temporary-root denial, got \(describe(node))")
+    }
+
     /// The claim that makes this feature safe to have at all: a runaway script
     /// is a pause, not a wedged app.
     ///
@@ -748,7 +850,9 @@ enum CodeRunnerSelfTest {
         try? Data("while True:\n    pass\n".utf8).write(to: script)
         let profileURL = root.appendingPathComponent("profile.sb")
         try? Data(CodeSandbox.profile(trust: .untrustedCode, writable: workPath,
-                                      home: homePath).utf8).write(to: profileURL)
+                                      home: homePath,
+                                      temporaryRoots: CodeSandbox.userTemporaryRoots()).utf8)
+            .write(to: profileURL)
 
         let started = Date()
         let result = Subprocess.run(

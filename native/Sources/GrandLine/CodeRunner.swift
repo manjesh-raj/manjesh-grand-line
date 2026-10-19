@@ -28,7 +28,10 @@
 //   * **denies reading the captain's home directory**, which is where the
 //     credentials worth stealing live (`~/.ssh`, `~/.aws`, the app's own
 //     stores). The one exception is the interpreter's own install prefix, so a
-//     `node` under `~/.nvm` still starts.
+//     `node` under `~/.nvm` still starts;
+//   * **denies reading the per-user temporary and cache roots** outside the
+//     run's own scratch directory, because other parts of this app (and other
+//     apps) keep plaintext there for a while - SEC-01 of the full review.
 //
 // On top of the profile:
 //
@@ -45,12 +48,13 @@
 //
 // What it is **not**, stated plainly because the difference matters: the
 // profile is `(allow default)` with denials layered on top, not an allowlist.
-// Reads outside the captain's home - `/usr`, `/etc`, `/tmp`, another mounted
-// volume - still succeed, and the interpreter runs as the captain's own user
-// with the captain's own privileges. It stops a script from destroying or
-// leaking the captain's data. It is not a jail, and a determined local exploit
-// of `sandbox-exec` itself is out of scope. If `sandbox-exec` cannot be found
-// the run is **refused**, never silently downgraded to an unconfined one.
+// Reads outside the captain's home and those two roots - `/usr`, `/etc`,
+// `/tmp`, another mounted volume - still succeed, and the interpreter runs as
+// the captain's own user with the captain's own privileges. It stops a script
+// from destroying or leaking the captain's data. It is not a jail, and a
+// determined local exploit of `sandbox-exec` itself is out of scope. If
+// `sandbox-exec` cannot be found the run is **refused**, never silently
+// downgraded to an unconfined one.
 //
 // ## Why the argv is a template rather than a closure
 //
@@ -503,12 +507,17 @@ enum CodeSandbox {
     ///     denial inside the directory that was supposed to be writable -
     ///     measured, and the reason `CodeRunner` resolves before it builds.
     ///   - home: the captain's home directory, resolved the same way.
+    ///   - temporaryRoots: the per-user temporary and cache roots
+    ///     (`userTemporaryRoots()`), resolved the same way. `writable` lives
+    ///     inside the first of them, which is why its allow has to come after
+    ///     these denials.
     ///   - readablePrefixes: paths inside `home` that must stay readable -
     ///     an interpreter installed under `~/.nvm` or `~/.rbenv` cannot start
     ///     otherwise.
     static func profile(trust: Trust,
                         writable: String,
                         home: String,
+                        temporaryRoots: [String],
                         readablePrefixes: [String] = []) -> String {
         var lines = [
             "(version 1)",
@@ -527,6 +536,29 @@ enum CodeSandbox {
         lines.append(contentsOf: escapeDenials)
         if trust == .untrustedCode {
             lines.append("(deny file-read* (subpath \(quote(home))))")
+            // SEC-01 (full review): the home denial alone left the per-user
+            // temporary root readable, and that is where other parts of this
+            // app keep plaintext for a while - a materialized SSH key while its
+            // tab is open, SRE Lead's MCP config and kubectl output. A snippet
+            // runs as the captain's own uid, so the 0700/0600 modes on those
+            // files did not stop it. Measured: `cat ../fm-cockpit-key-*/identity`
+            // from a snippet's own scratch directory printed the key. The
+            // scratch directory is inside this root, so its allow below must
+            // stay *after* these lines - a sandbox profile's later rule wins.
+            for root in temporaryRoots where root != "/" {
+                lines.append("(deny file-read* (subpath \(quote(root))))")
+            }
+            // The one read those denials must give back: `lstat` on each
+            // directory between a root and the scratch directory. Node resolves
+            // its entry script with `realpath`, which stats every ancestor, and
+            // measured, it refused to start with EPERM on the temporary root
+            // itself. A `literal` metadata allow names exactly those
+            // directories and lists nothing inside them.
+            let ancestors = scratchAncestors(of: writable, within: temporaryRoots)
+            if !ancestors.isEmpty {
+                let literals = ancestors.map { "(literal \(quote($0)))" }.joined(separator: " ")
+                lines.append("(allow file-read-metadata \(literals))")
+            }
         }
         for prefix in readablePrefixes {
             lines.append("(allow file-read* (subpath \(quote(prefix))))")
@@ -691,6 +723,38 @@ enum CodeSandbox {
         // a case worth trading the denial for.
         guard root.count > home.count, root.hasPrefix(home + "/") else { return [] }
         return [root]
+    }
+
+    /// Every directory from a root that contains `writable` down to
+    /// `writable`'s parent, root included. Empty when `writable` is in none of
+    /// them.
+    static func scratchAncestors(of writable: String, within roots: [String]) -> [String] {
+        var ancestors: [String] = []
+        for root in roots where root != "/" && writable.hasPrefix(root + "/") {
+            var path = (writable as NSString).deletingLastPathComponent
+            while path.count >= root.count {
+                ancestors.append(path)
+                path = (path as NSString).deletingLastPathComponent
+            }
+        }
+        return ancestors
+    }
+
+    /// The per-user roots a snippet must not read: the temporary directory
+    /// this app (and every other app of the captain's) writes scratch under,
+    /// and the per-user cache directory beside it. Both symlink-resolved, for
+    /// the same reason `writable` is.
+    static func userTemporaryRoots() -> [String] {
+        var roots = [realPath(FileManager.default.temporaryDirectory.path)]
+        let length = confstr(_CS_DARWIN_USER_CACHE_DIR, nil, 0)
+        if length > 0 {
+            var buffer = [CChar](repeating: 0, count: length)
+            if confstr(_CS_DARWIN_USER_CACHE_DIR, &buffer, length) > 0 {
+                roots.append(realPath(String(cString: buffer)))
+            }
+        }
+        var seen = Set<String>()
+        return roots.filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
     /// `realpath(3)`, because Foundation's own resolver is wrong for exactly
@@ -901,6 +965,7 @@ final class CodeRunner {
         let profileURL = root.appendingPathComponent("profile.sb")
         let profile = CodeSandbox.profile(
             trust: .untrustedCode, writable: workPath, home: homePath,
+            temporaryRoots: CodeSandbox.userTemporaryRoots(),
             readablePrefixes: CodeSandbox.readablePrefixes(forExecutableAt: executable,
                                                            home: homePath))
         do {
@@ -1000,7 +1065,8 @@ final class CodeRunner {
                 // the home directory, and reading is the only thing it gains
                 // over a snippet run.
                 try Data(CodeSandbox.profile(trust: .installedTool, writable: workPath,
-                                             home: homePath).utf8)
+                                             home: homePath,
+                                             temporaryRoots: CodeSandbox.userTemporaryRoots()).utf8)
                     .write(to: profileURL, options: .atomic)
 
                 let result = Subprocess.run(

@@ -2533,6 +2533,14 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     if (ProcessInfo.processInfo.environment["FM_DOTFILES_AUTOSYNC_PATH"] ?? "").isEmpty {
         setenv("FM_DOTFILES_AUTOSYNC_PATH", scratchRoot.appendingPathComponent("dotfiles-autosync", isDirectory: true).path, 1)
     }
+    // SEC-01 (full review): `SSHKeyMaterializer` and `SRELead.setUp` make
+    // their scratch directories under `AppPaths.privateScratchFolder()`, which
+    // is the captain's real Application Support folder by default, and
+    // `SRELeadPerTabSelfTest` drives the real `setUp`.
+    if (ProcessInfo.processInfo.environment[AppPaths.privateScratchVariable] ?? "").isEmpty {
+        setenv(AppPaths.privateScratchVariable,
+               scratchRoot.appendingPathComponent("private-scratch", isDirectory: true).path, 1)
+    }
     if (ProcessInfo.processInfo.environment["FM_STICKY_BOARD_DIR"] ?? "").isEmpty {
         setenv("FM_STICKY_BOARD_DIR", scratchRoot.appendingPathComponent("sticky-board", isDirectory: true).path, 1)
     }

@@ -122,16 +122,16 @@ enum DictationCleanupSelfTest {
         }
 
         // 10. `rewrite(_:vocabulary:)` actually threads the vocabulary list
-        //     into the real prompt argv sent to `claude` - not just into the
+        //     into the real prompt sent to `claude` - not just into the
         //     pure `prompt(for:vocabulary:)` function tested above. A fake
-        //     `claude` that records its own argv (the prompt travels as one
-        //     argv element - see `ClaudeOneShot.swift`'s header) is what
+        //     `claude` that records its own stdin (the prompt travels on
+        //     stdin - see `ClaudeOneShot.swift`'s header) is what
         //     proves the call site wiring, not just the prompt builder in
         //     isolation; without this, a regression that forgot to pass
         //     `vocabulary:` through at the `rewrite` call site would pass
         //     every case above and still ship the captain's original bug.
         do {
-            let script = writeFakeClaudeCapturingArgv(outputJSON: #"{"result": "a herdr session", "is_error": false}"#)
+            let script = writeFakeClaudeCapturingPrompt(outputJSON: #"{"result": "a herdr session", "is_error": false}"#)
             defer { try? FileManager.default.removeItem(at: script.deletingLastPathComponent()) }
             DictationCleanup.claudePathOverrideForTests = script.path
             let box = OutcomeBox()
@@ -144,10 +144,10 @@ enum DictationCleanupSelfTest {
             waitFor(box)
             check(box.outcome == .success("a herdr session"), "expected the corrected result to pass through, got \(String(describing: box.outcome))", &ok)
 
-            let argvPath = script.deletingLastPathComponent().appendingPathComponent("argv.txt")
-            let sentArgv = (try? String(contentsOf: argvPath, encoding: .utf8)) ?? ""
-            check(sentArgv.contains("herdr"), "the vocabulary word should reach the real prompt sent to claude, got argv:\n\(sentArgv)", &ok)
-            check(sentArgv.lowercased().contains("phonetic"), "the correction instruction should reach the real prompt sent to claude", &ok)
+            let promptPath = script.deletingLastPathComponent().appendingPathComponent("prompt.txt")
+            let sentPrompt = (try? String(contentsOf: promptPath, encoding: .utf8)) ?? ""
+            check(sentPrompt.contains("herdr"), "the vocabulary word should reach the real prompt sent to claude, got:\n\(sentPrompt)", &ok)
+            check(sentPrompt.lowercased().contains("phonetic"), "the correction instruction should reach the real prompt sent to claude", &ok)
         }
 
         // 11. The counterpart to case 10: with no vocabulary passed (the
@@ -155,7 +155,7 @@ enum DictationCleanupSelfTest {
         //     instruction - proving the omission from case 8 also holds
         //     through the real call site, not just the pure prompt builder.
         do {
-            let script = writeFakeClaudeCapturingArgv(outputJSON: #"{"result": "a clean sentence", "is_error": false}"#)
+            let script = writeFakeClaudeCapturingPrompt(outputJSON: #"{"result": "a clean sentence", "is_error": false}"#)
             defer { try? FileManager.default.removeItem(at: script.deletingLastPathComponent()) }
             DictationCleanup.claudePathOverrideForTests = script.path
             let box = OutcomeBox()
@@ -168,9 +168,12 @@ enum DictationCleanupSelfTest {
             waitFor(box)
             check(box.outcome == .success("a clean sentence"), "expected the plain rewrite to still work with no vocabulary passed", &ok)
 
-            let argvPath = script.deletingLastPathComponent().appendingPathComponent("argv.txt")
-            let sentArgv = (try? String(contentsOf: argvPath, encoding: .utf8)) ?? ""
-            check(!sentArgv.lowercased().contains("vocabulary"), "no vocabulary passed should mean no vocabulary section in the real sent prompt, got argv:\n\(sentArgv)", &ok)
+            let promptPath = script.deletingLastPathComponent().appendingPathComponent("prompt.txt")
+            let sentPrompt = (try? String(contentsOf: promptPath, encoding: .utf8)) ?? ""
+            // Non-vacuity first: an absent or empty capture also "contains no
+            // vocabulary section".
+            check(sentPrompt.contains("some rough transcript"), "the real sent prompt should have been captured, got:\n\(sentPrompt)", &ok)
+            check(!sentPrompt.lowercased().contains("vocabulary"), "no vocabulary passed should mean no vocabulary section in the real sent prompt, got:\n\(sentPrompt)", &ok)
         }
 
         // 12. No-over-correction, exercised as a round trip: when the
@@ -215,22 +218,22 @@ enum DictationCleanupSelfTest {
         return path
     }
 
-    /// A fake `claude` that, before printing its canned output, dumps its own
-    /// real argv (the prompt travels as one argv element - `-p <prompt>`, see
-    /// `ClaudeOneShot.swift`'s header) to a sibling `argv.txt` file - this is
-    /// what proves what `rewrite` actually sent, not just what
-    /// `prompt(for:vocabulary:)` would build in isolation. Its own directory
-    /// (not just the script) so `argv.txt` has somewhere stable to live -
-    /// callers remove the whole directory in their own `defer`.
-    private static func writeFakeClaudeCapturingArgv(outputJSON: String) -> URL {
+    /// A fake `claude` that, before printing its canned output, dumps the
+    /// prompt it was really sent (on stdin - see `ClaudeOneShot.swift`'s
+    /// header) to a sibling `prompt.txt` file - this is what proves what
+    /// `rewrite` actually sent, not just what `prompt(for:vocabulary:)` would
+    /// build in isolation. Its own directory (not just the script) so
+    /// `prompt.txt` has somewhere stable to live - callers remove the whole
+    /// directory in their own `defer`.
+    private static func writeFakeClaudeCapturingPrompt(outputJSON: String) -> URL {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("grandline-dictation-cleanup-argv-\(UUID().uuidString)")
+            .appendingPathComponent("grandline-dictation-cleanup-prompt-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let path = dir.appendingPathComponent("claude")
         let escaped = (outputJSON + "\n").replacingOccurrences(of: "'", with: "'\\''")
         let script = """
         #!/bin/sh
-        printf '%s\\n' "$@" > "$(dirname "$0")/argv.txt"
+        cat > "$(dirname "$0")/prompt.txt"
         printf '%s' '\(escaped)'
         exit 0
         """
@@ -295,8 +298,8 @@ enum DictationCleanupSelfTest {
         var outcome: RewriteOutcome?
     }
 
-    /// Shared with the two argv-capturing cases above, which build their own
-    /// `rewrite` calls directly (to keep the fake-script/argv-file setup
+    /// Shared with the two prompt-capturing cases above, which build their own
+    /// `rewrite` calls directly (to keep the fake-script/prompt-file setup
     /// local to each case) but still need the same non-blocking wait - see
     /// `runRewriteSync`'s own doc comment for why this pumps the run loop
     /// rather than blocking on a semaphore.
