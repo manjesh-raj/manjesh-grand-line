@@ -186,7 +186,12 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// rather than by an `NSScrollView` this page does not have. Built in
     /// `loadView` once `editorCard` exists.
     private var scrollEdge: HelmScrollEdgeHairline?
-    private let webView = CodePreviewWebView()
+    /// PERF-01: `lazy`, so the web view - its configuration, its content
+    /// controller and its non-persistent data store - is allocated by
+    /// `loadView`, its first real use, rather than when this controller is
+    /// constructed. `activate()` already deferred loading content; this
+    /// defers the object as well.
+    private lazy var webView = CodePreviewWebView()
     private let overlay = NSView()
     private var overlayState: HelmEmptyState?
 

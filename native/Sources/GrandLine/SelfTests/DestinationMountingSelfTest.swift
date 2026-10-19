@@ -106,6 +106,10 @@ enum DestinationMountingSelfTest {
             ("everyDestinationForcesItsOwnAppearance", test_everyDestinationForcesItsOwnAppearance),
             ("windowTitleFollowsTheShowingDestination", test_windowTitleFollowsTheShowingDestination),
             ("theShellBuildsOneRunbookStoreAndOneLogAnalyzerStore", test_theShellBuildsOneRunbookStoreAndOneLogAnalyzerStore),
+            ("theLaunchConstructsNoLazyPage", test_theLaunchConstructsNoLazyPage),
+            ("aFirstVisitConstructsExactlyThePageAskedFor", test_aFirstVisitConstructsExactlyThePageAskedFor),
+            ("reachInsThatDoNotNavigateBuildNothing", test_reachInsThatDoNotNavigateBuildNothing),
+            ("theLaunchReadsNoYamlStoreOnTheMainThread", test_theLaunchReadsNoYamlStoreOnTheMainThread),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -289,6 +293,120 @@ enum DestinationMountingSelfTest {
             }
             return nil
         }
+    }
+
+    // MARK: PERF-01 - construction, not only mounting, is lazy
+
+    /// The whole of PERF-01: a launch builds the four eager pages and no
+    /// other. `mountedDestinationSlotsForTests` cannot see this - a page can
+    /// be constructed without being mounted - so it reads the shell's own
+    /// record of which lazy controllers exist.
+    private static func test_theLaunchConstructsNoLazyPage() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+            let built = shell.builtLazyDestinationsForTests
+            guard built.isEmpty else {
+                return "the launch constructed lazy pages: \(built.map(\.rawValue).sorted())"
+            }
+            return nil
+        }
+    }
+
+    /// The slot's controller closure is what builds a page, and it builds
+    /// that page and no other - a page's own initialiser reaching into a
+    /// sibling would build two.
+    private static func test_aFirstVisitConstructsExactlyThePageAskedFor() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+            for destination in [RailDestination.tools, .stickyBoard, .settings, .hosts] {
+                let before = shell.builtLazyDestinationsForTests
+                shell.show(destination)
+                let added = shell.builtLazyDestinationsForTests.subtracting(before)
+                guard added == [destination.slot] else {
+                    return "a first visit to \(destination.slot.rawValue) constructed "
+                        + "\(added.map(\.rawValue).sorted()) rather than exactly that page"
+                }
+            }
+            return nil
+        }
+    }
+
+    /// Everything the app delegate calls on the shell without navigating -
+    /// the quit-time flushes, the per-navigation session capture, the
+    /// dictation engine's status fan-out and the vault's menu-bar readers -
+    /// must answer for an unbuilt page without building it. Each of these
+    /// used to read a page property directly, which would now construct it.
+    private static func test_reachInsThatDoNotNavigateBuildNothing() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+            _ = shell.captureSessionState()
+            shell.setDictationEngineStatus(.recording)
+            _ = shell.poneglyphQuickCodes
+            _ = shell.poneglyphIsUnlocked
+            shell.shutdownStickyBoard()
+            shell.shutdownScratchpads()
+            shell.shutdownReadingList()
+            shell.shutdownCodePreview()
+            shell.shutdownNotebook()
+            shell.shutdownCredentialVault()
+            shell.shutdownStrawHatCrew()
+            let built = shell.builtLazyDestinationsForTests
+            guard built.isEmpty else {
+                return "a reach-in that does not navigate constructed: \(built.map(\.rawValue).sorted())"
+            }
+            return nil
+        }
+    }
+
+    /// PERF-01's store half: the reading list and the sticky board read their
+    /// YAML off the main thread at launch, so the launch itself - the shell's
+    /// `init`, `loadView` and the canvas's first render - reads neither file
+    /// on the main thread. The canvas states the gap instead, and the read
+    /// that does happen lands on the parse thread.
+    private static func test_theLaunchReadsNoYamlStoreOnTheMainThread() -> String? {
+        withScratchEnv {
+            let reads = ReadLog()
+            ReadingListStore.debugOnRead = { onMain in reads.record("links.yaml", onMain: onMain) }
+            StickyBoardStore.debugOnRead = { onMain in reads.record("notes.yaml", onMain: onMain) }
+            defer {
+                ReadingListStore.debugOnRead = nil
+                StickyBoardStore.debugOnRead = nil
+            }
+            let (_, shell) = makeMountedShell()
+            // The two cards themselves live in the Stores space, which the
+            // launch does not show - so render it too, before the read lands.
+            shell.homeCanvasForTests.select(space: .stores)
+            shell.homeCanvasForTests.debugRenderNow()
+            let onMain = reads.mainThreadReads
+            guard onMain.isEmpty else {
+                return "the launch read \(onMain.sorted()) on the main thread"
+            }
+            // And the read that does happen ran on the parse thread. Waited
+            // for on the reload's own queue rather than by pumping the main
+            // run loop, which in this suite would also run every earlier
+            // case's queued page refreshes against windows already torn down.
+            // `LaunchPathSelfTest` covers the apply half on main.
+            shell.readingListStore.debugBackgroundReload.debugDrainQueue()
+            shell.stickyBoardStore.debugBackgroundReload.debugDrainQueue()
+            guard reads.backgroundReads.contains("links.yaml"), reads.backgroundReads.contains("notes.yaml") else {
+                return "the first load did not read on the parse thread: \(reads.backgroundReads.sorted())"
+            }
+            return nil
+        }
+    }
+
+    /// A thread-safe log for a `debugOnRead` hook, which fires on the parse
+    /// thread as well as on main.
+    private final class ReadLog {
+        private let lock = NSLock()
+        private var main: [String] = []
+        private var background: [String] = []
+        func record(_ file: String, onMain: Bool) {
+            lock.lock(); defer { lock.unlock() }
+            if onMain { main.append(file) } else { background.append(file) }
+        }
+        var mainThreadReads: [String] { lock.lock(); defer { lock.unlock() }; return main }
+        var backgroundReads: [String] { lock.lock(); defer { lock.unlock() }; return background }
     }
 
     private static func test_firstVisitMountsOneSlot() -> String? {

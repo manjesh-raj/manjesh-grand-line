@@ -75,7 +75,18 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     /// both serve stale rows to the palette and become a second writer to one
     /// file - unlike the read-through-on-demand stores (`DocsRunbookStore`)
     /// where an independent copy is genuinely free.
-    let store = StickyBoardStore()
+    ///
+    /// PERF-01: the shell builds it and hands it in, so the canvas, ⌘K, the
+    /// crew and the widgets can read it while this page is still unbuilt.
+    /// The default keeps a page built on its own (a suite) working.
+    let store: StickyBoardStore
+
+    init(store: StickyBoardStore = StickyBoardStore()) {
+        self.store = store
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     /// Daylight §7's card around a scrollable content surface - the same
     /// treatment `WhiteboardController.canvasCard`/Docs' playbook card use.

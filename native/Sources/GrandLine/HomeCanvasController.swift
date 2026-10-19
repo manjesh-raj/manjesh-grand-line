@@ -732,6 +732,15 @@ final class HomeCanvasController: NSViewController {
         setNeedsRender()
     }
 
+    /// PERF-01: the reading list or the sticky board finished its first,
+    /// off-main read. Their cards said "reading" until now; this puts the
+    /// contents there. Not gated on visibility, like `applyStrawHat`: the
+    /// render itself is what waits.
+    func storeDidLoad() {
+        guard isViewLoaded else { return }
+        setNeedsRender()
+    }
+
     func applyDictationStatus(_ status: DictationStatus) {
         pushedDictationStatus = status
         guard isViewLoaded, !view.isHidden else { return }
@@ -846,7 +855,10 @@ final class HomeCanvasController: NSViewController {
         // showing it over a list would put "Nothing is saved here yet" under
         // a headline counting rows - measured in an off-screen render, where
         // it read as two cards' worth of copy disagreeing with each other.
-        if !hasItems, nothingUrgent,
+        // PERF-01: an unloaded sticky board is not an empty one, so the
+        // first-run invitation waits for the store rather than reading the
+        // file before the first frame (or claiming "nothing is saved").
+        if !hasItems, nothingUrgent, sources.stickyBoardStore.isLoaded,
            let firstRun = Self.firstRunHeroCopy(hosts: sources.hostStore.hosts.count,
                                                 tasks: sources.shiftStore.activeTasks.count,
                                                 notes: sources.stickyBoardStore.activeNotes.count) {
@@ -3147,8 +3159,16 @@ final class HomeCanvasController: NSViewController {
     /// showing "0 unread", and a link whose title has not been fetched yet
     /// shows its host rather than a blank row pretending to be a headline.
     private func fillReadingList(_ content: inout HelmModuleCard.Content) {
-        let links = sources.readingListStore.links
         content.subtitle = "links saved to read"
+        // PERF-01: the store reads its file off the main thread at launch.
+        // Until that lands this card states the gap (GL-14) rather than
+        // either reading the file here, before the first frame, or calling
+        // an unread list empty. `storeDidLoad()` re-renders it.
+        guard sources.readingListStore.isLoaded else {
+            content.body = .note("Reading your saved links\u{2026}")
+            return
+        }
+        let links = sources.readingListStore.links
         guard !links.isEmpty else {
             content.body = .note("Nothing saved yet. Paste a URL here, or press \u{2318}6 in the "
                                  + "\u{2325}Space capture panel, and it lands here as a card.")
@@ -3273,6 +3293,12 @@ final class HomeCanvasController: NSViewController {
         // `activeNotes`, not every note: UX10 gave the board an archive, and a
         // hub peek that counted archived notes would report a board fuller
         // than the one the captain sees.
+        // PERF-01: the same gap the reading list card states, for the same
+        // reason - see `fillReadingList`.
+        guard sources.stickyBoardStore.isLoaded else {
+            content.body = .note("Reading your notes\u{2026}")
+            return
+        }
         let newest = sources.stickyBoardStore.activeNotes.sorted { $0.createdAt > $1.createdAt }
         guard !newest.isEmpty else {
             content.body = .note("Jot down a thought on a colored sticky note, anywhere on the board.")

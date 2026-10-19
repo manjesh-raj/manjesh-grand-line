@@ -339,7 +339,50 @@ final class StickyBoardStore {
     /// convention as `ShiftStore.gitSync`/`DocsRunbookStore.gitSync`.
     let gitSync: StickyBoardGitSync?
 
-    private(set) var notes: [StickyNote] = []
+    /// Every note, oldest first. Reading it before the first load has landed
+    /// loads synchronously (`ensureLoaded()`), so a store started with
+    /// `loadsInBackground` can never be read as an empty board.
+    private(set) var notes: [StickyNote] {
+        get { ensureLoaded(); return loadedNotes }
+        set { loadedNotes = newValue }
+    }
+    private var loadedNotes: [StickyNote] = []
+
+    // MARK: The first load (PERF-01)
+    //
+    // The 2026-10 end-to-end review's PERF-01: this store used to parse
+    // `notes.yaml` in `init`, which the shell runs before the window exists.
+    // A store built with `loadsInBackground` starts empty and reads the file
+    // through `HelmBackgroundReload` instead - the same off-main read every
+    // page revisit already uses.
+    //
+    // Correctness does not depend on that read winning any race. `notes`,
+    // `isInFailedLoadState` and `unreadableRecordCount` all load
+    // synchronously when read before it lands, and every write path reads
+    // `notes` before it changes anything, so the worst an early reader can do
+    // is pay for the read the background thread was about to do - never see
+    // an empty board, and never write one over the file. The synchronous load
+    // invalidates the background read, so the file is never applied twice.
+
+    /// Whether this store's contents have been read from disk yet. A reader
+    /// that must not pay for that read on the main thread (the Home canvas,
+    /// before the first frame) asks this first.
+    private(set) var isLoaded = false
+
+    private var loadHandlers: [() -> Void] = []
+
+    /// Runs `handler` once the first load has been applied - now, if it
+    /// already has.
+    func whenLoaded(_ handler: @escaping () -> Void) {
+        guard !isLoaded else { handler(); return }
+        loadHandlers.append(handler)
+    }
+
+    /// Reads the file now if no load has been applied yet.
+    private func ensureLoaded() {
+        guard !isLoaded else { return }
+        reloadAll()
+    }
 
     /// The notes on the board - review #3's UX10.
     ///
@@ -391,7 +434,11 @@ final class StickyBoardStore {
     /// could not parse. While true, every write is refused and the git-sync
     /// debounce is never armed - nothing local is overwritten and nothing
     /// unreadable is propagated off-machine.
-    private(set) var isInFailedLoadState = false
+    private(set) var isInFailedLoadState: Bool {
+        get { ensureLoaded(); return failedLoadState }
+        set { failedLoadState = newValue }
+    }
+    private var failedLoadState = false
 
     /// Records read from `notes.yaml` that this build could not decode, kept
     /// verbatim so `persist()` can write them straight back.
@@ -420,7 +467,7 @@ final class StickyBoardStore {
 
     /// How many records the last successful read could not decode. Zero on a
     /// healthy board; a self-test asserts it, and it is worth knowing about.
-    var unreadableRecordCount: Int { unreadableRecords.count }
+    var unreadableRecordCount: Int { ensureLoaded(); return unreadableRecords.count }
 
     /// Keys this build writes for a note. Anything else found on a record
     /// this build **could** decode is preserved verbatim - see `passthrough`.
@@ -481,7 +528,12 @@ final class StickyBoardStore {
 
     /// `nil` when `FM_STICKY_BOARD_DIR` overrides `root` and the notes
     /// themselves are unset (every self-test, plain local-only use).
-    init() {
+    convenience init() { self.init(loadsInBackground: false) }
+
+    /// `loadsInBackground`: start empty and read the file off the main thread
+    /// (PERF-01 - see "The first load" above). The shell builds its one
+    /// instance this way; everything else reads synchronously, as before.
+    init(loadsInBackground: Bool) {
         let env = ProcessInfo.processInfo.environment
         if let override = env["FM_STICKY_BOARD_DIR"], !override.isEmpty {
             root = URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
@@ -497,7 +549,11 @@ final class StickyBoardStore {
             gitSync = sync
         }
         try? fm.createDirectory(at: root, withIntermediateDirectories: true)
-        reloadAll()
+        if loadsInBackground {
+            reloadAllInBackground(then: {})
+        } else {
+            reloadAll()
+        }
     }
 
     /// Test seam: an explicitly-rooted, git-free store, mirroring
@@ -573,6 +629,10 @@ final class StickyBoardStore {
 
     /// The state half of a reload, on main - including GL-01's backup.
     private func apply(_ read: StickyNotesRead) {
+        // First, so a getter read inside this method does not start a second
+        // synchronous load of the file this one is applying.
+        let isFirstLoad = !isLoaded
+        isLoaded = true
         switch read {
         case .ok(let decoded, let unreadable, let extras):
             isInFailedLoadState = false
@@ -601,6 +661,11 @@ final class StickyBoardStore {
             // must never be read as "there are now zero notes".
         }
         notifyChanged()
+        if isFirstLoad {
+            let handlers = loadHandlers
+            loadHandlers = []
+            handlers.forEach { $0() }
+        }
     }
 
     // MARK: Writing

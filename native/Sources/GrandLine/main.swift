@@ -38,8 +38,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // two floating SSH Keys / Snippets windows into one destination with
     // three segmented tabs, so this is now the only controller for all three
     // stores' browsing/editing surfaces.
-    lazy var hostsPanel = HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore)
-    lazy var settingsController = SettingsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
+    ///
+    /// PERF-01: built on the Hosts page's first use rather than at launch -
+    /// the shell takes it as an autoclosure - so its wiring lives in
+    /// `wireHostsPanel` rather than in `applicationDidFinishLaunching`, where
+    /// assigning a callback would have built it.
+    lazy var hostsPanel: HostsController = {
+        let panel = HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore)
+        wireHostsPanel(panel)
+        return panel
+    }()
+    /// PERF-01: the same shape as `hostsPanel`, for the same reason.
+    lazy var settingsController: SettingsController = {
+        let settings = SettingsController(hostStore: hostStore, keyStore: keyStore,
+                                          snippetStore: snippetStore, dictationStore: dictationStore)
+        wireSettings(settings)
+        return settings
+    }()
     lazy var shiftMenuBar = ShiftMenuBarController(store: shiftStore)
     // `fm/straw-hat-menubar-quick-chat-popover`: the crew's own status item,
     // mirroring `shiftMenuBar`'s shape. `onAsk`/`onOpenFullChat` are wired
@@ -228,7 +243,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let keyStore = self.keyStore
         let snippetStore = self.snippetStore
         return AppShellController(
-            hostsPanel: hostsPanel, console: console, settings: settingsController,
+            // PERF-01: both are autoclosures - evaluated on each page's first
+            // use, not here.
+            hostsPanel: self.hostsPanel, console: console, settings: self.settingsController,
             hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: shiftStore,
             dictationStore: dictationStore, commandLibraryStore: commandLibraryStore,
             scheduleStore: scheduleStore,
@@ -244,24 +261,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// tear down that host's dedicated page rather than leaving it stranded.
     private var knownHostIDs: Set<UUID> = []
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        // F2: read the saved session BEFORE anything else, because launch
-        // itself navigates. `AppShellController.loadView` ends with a real
-        // `show(...)` (GL-31's landing decision), which reaches
-        // `updateRecentDestinations` - and once `onSessionStateChanged` is
-        // wired further down, that path *writes*. Reading here rather than at
-        // the point of use removes the ordering dependency entirely: moving
-        // the wiring earlier, which is an easy and invisible mistake, can no
-        // longer clobber the state with "wherever launch happened to land"
-        // before it has been restored.
-        let savedSession = AppSettings.shared.sessionRestoreState
-
+    /// The Hosts page's app-delegate wiring, run once as the page is built
+    /// (PERF-01 - see `hostsPanel`).
+    private func wireHostsPanel(_ panel: HostsController) {
         // Connect action from the panel: a saved host (has an id) reaches its
         // own dedicated page (Fix 1) - the same one its rail icon opens, via
         // `connectToHost` below; an ad-hoc quick-connect (no saved identity to
         // pin a page to) still opens as a plain tab in the shared Firstmate
         // console, same as before Fix 1.
-        hostsPanel.onConnect = { [weak self] hostID, label, args, accentHex, keyID, startupSnippetID in
+        panel.onConnect = { [weak self] hostID, label, args, accentHex, keyID, startupSnippetID in
             guard let self else { return }
             if let hostID, let host = self.hostStore.host(id: hostID) {
                 self.connectToHost(host)
@@ -274,7 +282,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // the console has always opened at startup, now also reachable from
         // the Hosts list. Unaffected by Fix 1: it's the one destination that
         // deliberately stays on the shared `console`, never a dedicated page.
-        hostsPanel.onConnectPinned = { [weak self] in
+        panel.onConnectPinned = { [weak self] in
             guard let self else { return }
             self.console.openFirstmateHost()
             self.appShell.show(.console)
@@ -282,15 +290,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The Hosts page's own quick-actions panel names ⌘K; this is what
         // makes the button do what its label says. Forwarded rather than
         // reached for - that page has never known what an `AppDelegate` is.
-        hostsPanel.onOpenCommandPalette = { [weak self] in self?.showUnifiedSearch() }
+        panel.onOpenCommandPalette = { [weak self] in self?.showUnifiedSearch() }
         // The Hosts sidebar's TOOLS rows and its user row. Every one opens
         // something that really exists - see `HostsController.onOpenActivity`
         // for why a nav row with nothing behind it is absent here rather than
         // drawn inert.
-        hostsPanel.onOpenActivity = { [weak self] in self?.appShell.openFleetLog() }
-        hostsPanel.onOpenCommands = { [weak self] in self?.appShell.show(.commandLibrary) }
-        hostsPanel.onOpenSettings = { [weak self] in self?.appShell.show(.settings) }
-        hostsPanel.onLogout = { [weak self] in self?.appShell.requestLogout() }
+        panel.onOpenActivity = { [weak self] in self?.appShell.openFleetLog() }
+        panel.onOpenCommands = { [weak self] in self?.appShell.show(.commandLibrary) }
+        panel.onOpenSettings = { [weak self] in self?.appShell.show(.settings) }
+        panel.onLogout = { [weak self] in self?.appShell.requestLogout() }
+        panel.snippetExpansionState = { [weak self] in
+            guard let self else { return (enabled: false, trusted: false, armed: false, triggerCount: 0) }
+            return (enabled: AppSettings.shared.snippetExpansionEnabled,
+                    trusted: self.snippetExpander.isAccessibilityTrusted,
+                    armed: self.snippetExpander.isArmed,
+                    triggerCount: self.snippetExpander.armedTriggerCount)
+        }
+        panel.onSnippetExpansionToggled = { [weak self] enabled in
+            AppSettings.shared.snippetExpansionEnabled = enabled
+            // The settings write alone would leave the monitors exactly as
+            // they were - the same trap `DictationHotkey.updateShortcut`'s own
+            // header records for the shortcut recorder.
+            self?.snippetExpander.refresh()
+            // Turning it on is the first moment this feature genuinely needs
+            // the permission, which is when this app asks for it (Dictation's
+            // own rule). It is the same single grant, so this is a silent
+            // no-op for a captain who already granted it for ⌥Space.
+            if enabled { self?.snippetExpander.requestPermissionIfNeeded() }
+        }
+        panel.onRequestAccessibilityTrust = { [weak self] in
+            self?.snippetExpander.requestPermissionIfNeeded()
+        }
+    }
+
+    /// Settings' app-delegate wiring, run once as the page is built (PERF-01 -
+    /// see `settingsController`).
+    private func wireSettings(_ settings: SettingsController) {
+        // Settings > Terminal's font-size stepper (Fix 3) talks straight to
+        // the live console; Appearance goes through `ThemeManager` directly
+        // since every theme-aware view already observes it.
+        settings.onFontSizeStep = { [weak self] delta in
+            self?.console.stepFontSize(by: delta)
+        }
+        // Settings > Security points at the vault rather than drawing the
+        // vault's own controls: they live sealed inside the encrypted file,
+        // and AGENTS.md is explicit that anything reaching the vault from
+        // outside the vault page goes through the vault's own unlock.
+        settings.onNavigate = { [weak self] destination in
+            self?.appShell.show(destination)
+        }
+        // Settings' three toggles. One callback for all three - see
+        // `SettingsController.compactModeToggled`.
+        settings.onCompactModeSettingsChanged = { [weak self] in
+            self?.compactMode.refresh()
+        }
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // F2: read the saved session BEFORE anything else, because launch
+        // itself navigates. `AppShellController.loadView` ends with a real
+        // `show(...)` (GL-31's landing decision), which reaches
+        // `updateRecentDestinations` - and once `onSessionStateChanged` is
+        // wired further down, that path *writes*. Reading here rather than at
+        // the point of use removes the ordering dependency entirely: moving
+        // the wiring earlier, which is an easy and invisible mistake, can no
+        // longer clobber the state with "wherever launch happened to land"
+        // before it has been restored.
+        let savedSession = AppSettings.shared.sessionRestoreState
+
         // Nav-redesign task, item 3: Add/Edit Host is a dedicated full-page
         // window, not a sheet on this ~240pt-wide panel.
         appShell.onPresentHostEditor = { [weak self] host in
@@ -384,19 +451,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // console's active tab.
         appShell.onRunSnippet = { [weak self] snippet in
             self?.console.runSnippetInActiveTab(snippet)
-        }
-        // Settings > Terminal's font-size stepper (Fix 3) talks straight to
-        // the live console; Appearance goes through `ThemeManager` directly
-        // since every theme-aware view already observes it.
-        settingsController.onFontSizeStep = { [weak self] delta in
-            self?.console.stepFontSize(by: delta)
-        }
-        // Settings > Security points at the vault rather than drawing the
-        // vault's own controls: they live sealed inside the encrypted file,
-        // and AGENTS.md is explicit that anything reaching the vault from
-        // outside the vault page goes through the vault's own unlock.
-        settingsController.onNavigate = { [weak self] destination in
-            self?.appShell.show(destination)
         }
 
         // `fm/grandline-settings-page-redesign`: Settings > Appearance's
@@ -655,33 +709,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // F12. Three wirings, all of them "ask the one place that knows":
         // whether a terminal is on screen (the `.consoleOnly` scope's whole
-        // question), the store's own change signal, and the page's card.
+        // question), the store's own change signal, and the page's card (in
+        // `wireHostsPanel`, since PERF-01 builds that page on first use).
         snippetExpander.isConsoleFocusedProvider = { [weak self] in
             self?.appShell.isTerminalDestinationShowing ?? false
         }
         snippetStore.observe { [weak self] in self?.snippetExpander.rebuildTable() }
-        hostsPanel.snippetExpansionState = { [weak self] in
-            guard let self else { return (enabled: false, trusted: false, armed: false, triggerCount: 0) }
-            return (enabled: AppSettings.shared.snippetExpansionEnabled,
-                    trusted: self.snippetExpander.isAccessibilityTrusted,
-                    armed: self.snippetExpander.isArmed,
-                    triggerCount: self.snippetExpander.armedTriggerCount)
-        }
-        hostsPanel.onSnippetExpansionToggled = { [weak self] enabled in
-            AppSettings.shared.snippetExpansionEnabled = enabled
-            // The settings write alone would leave the monitors exactly as
-            // they were - the same trap `DictationHotkey.updateShortcut`'s own
-            // header records for the shortcut recorder.
-            self?.snippetExpander.refresh()
-            // Turning it on is the first moment this feature genuinely needs
-            // the permission, which is when this app asks for it (Dictation's
-            // own rule). It is the same single grant, so this is a silent
-            // no-op for a captain who already granted it for ⌥Space.
-            if enabled { self?.snippetExpander.requestPermissionIfNeeded() }
-        }
-        hostsPanel.onRequestAccessibilityTrust = { [weak self] in
-            self?.snippetExpander.requestPermissionIfNeeded()
-        }
         // Off by default, so on a fresh install this installs nothing at all.
         snippetExpander.refresh()
 
@@ -1171,11 +1204,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.poneglyphMenuBar.setStatusItemVisible(visible)
         }
 
-        // Settings' three toggles. One callback for all three - see
-        // `SettingsController.compactModeToggled`.
-        settingsController.onCompactModeSettingsChanged = { [weak self] in
-            self?.compactMode.refresh()
-        }
 
         // A task completed, added or deleted anywhere in the app moves this
         // badge. GL-24's shape: the observer re-derives one count and

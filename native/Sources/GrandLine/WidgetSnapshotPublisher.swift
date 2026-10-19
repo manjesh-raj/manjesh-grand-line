@@ -140,7 +140,11 @@ final class WidgetSnapshotPublisher {
         let snapshot = Self.snapshot(
             tasks: shiftStore.activeTasks,
             followUps: shiftStore.followUps,
-            notes: stickyStore.activeNotes,
+            // A locked snapshot carries no notes, so a locked publish does not
+            // read them - which matters at launch (PERF-01): the app starts
+            // locked, and reading `activeNotes` here would read the sticky
+            // board's file on the main thread ahead of its own background load.
+            notes: locked ? [] : stickyStore.activeNotes,
             now: clock(),
             availability: locked ? .locked : .ready,
             appearance: ThemeManager.shared.theme.mode == .light ? .light : .dark,
