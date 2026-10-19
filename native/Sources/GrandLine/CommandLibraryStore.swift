@@ -474,18 +474,30 @@ final class CommandLibraryStore {
             id: newID, name: name, description: description, category: category, subcategory: subcategory,
             commandTemplate: commandTemplate, parameters: parameters, tags: tags, risk: risk
         )
-        if newID != id {
-            try? fm.removeItem(atPath: filePath(for: id))
-            migrateID(from: id, to: newID)
+        // REL-24: write the new file first, then remove the old one. A move
+        // used to delete the old file with a `try?` before the write, so a
+        // failed write lost the command, and a failed delete left the same
+        // command in two categories with nothing saying so.
+        let written = persist(what: "command \"\(updated.name)\"", path: filePath(for: newID)) {
+            try CommandLibraryYaml.writeCommand(updated, path: filePath(for: newID))
         }
-        persist(what: "command \"\(updated.name)\"", path: filePath(for: newID)) { try CommandLibraryYaml.writeCommand(updated, path: filePath(for: newID)) }
+        guard written else { return nil }
+        if newID != id {
+            let oldURL = URL(fileURLWithPath: filePath(for: id))
+            if PersistenceFailureReporter.removeItem(at: oldURL, what: "the old copy of command \"\(updated.name)\"") {
+                migrateID(from: id, to: newID)
+            }
+        }
         gitSync?.markDirty()
         reloadAll()
         return updated
     }
 
     func deleteCommand(id: String) {
-        try? fm.removeItem(atPath: filePath(for: id))
+        // REL-24: a delete that fails leaves the command where it was, so its
+        // favourite and recent entries stay with it.
+        guard PersistenceFailureReporter.removeItem(at: URL(fileURLWithPath: filePath(for: id)),
+                                                    what: "command \"\(id)\"") else { return }
         favoriteIDs.remove(id)
         persist(what: "favourites", path: favoritesPath) { try CommandLibraryYaml.writeFavorites(favoriteIDs, path: favoritesPath) }
         recentUsage.removeAll { $0.id == id }
@@ -498,20 +510,23 @@ final class CommandLibraryStore {
     /// here was `try?`, so a full disk or a vanished `FM_COMMAND_LIBRARY_DIR`
     /// meant the UI confirmed a save that never happened and the command was
     /// gone at next launch.
-    private func persist(what: String, path: String, _ write: () throws -> Void) {
+    @discardableResult
+    private func persist(what: String, path: String, _ write: () throws -> Void) -> Bool {
         // A write is newer than any read in flight (P11).
         backgroundReload.invalidate()
         if unwritablePaths.contains(path) {
             var status = StoreLoadFailure.LoadStatus.clean
             status.unreadableReason = "it could not be read or parsed"
             _ = StoreLoadFailure.refusesWrite(status, what: what, url: URL(fileURLWithPath: path))
-            return
+            return false
         }
         do {
             try write()
             PersistenceFailureReporter.reportSuccess()
+            return true
         } catch {
             PersistenceFailureReporter.report(what: what, path: path, error: error)
+            return false
         }
     }
 

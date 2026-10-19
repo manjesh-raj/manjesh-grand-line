@@ -142,51 +142,51 @@ final class LogAnalyzerStore {
     /// Writes (or removes) an investigation according to its own
     /// `storage` field. Returns the directory written, or nil for
     /// `.doNotSave`.
+    ///
+    /// A previously-saved copy is always replaced whole, so changing the
+    /// storage choice downward genuinely deletes content rather than leaving
+    /// `analysis.md`/`evidence/` orphaned next to a now-metadata-only
+    /// `investigation.yaml`.
+    ///
+    /// **REL-24: write, then replace.** This used to delete the saved copy
+    /// with a `try?` and then write the new one, swallowing any write error
+    /// - so a failed re-save (a full disk, a permissions change, a name that
+    /// collides) lost the investigation outright and said nothing. The new
+    /// copy is now written to a hidden staging folder first; only once it is
+    /// complete is the old copy moved aside, the new one moved into place,
+    /// and the old one removed. Any failure puts the old copy back, reports
+    /// through `PersistenceFailureReporter`, and returns `nil`.
     @discardableResult
     func save(_ investigation: LogInvestigation) -> URL? {
         defer { invalidateHistoryCache() }
-        // A previously-saved copy is always removed first, so changing the
-        // storage choice downward genuinely deletes content rather than
-        // leaving `analysis.md`/`evidence/` orphaned next to a now-metadata-
-        // only `investigation.yaml`.
         let existingDirectory = directory(forID: investigation.id)
-        if let existingDirectory {
-            try? fm.removeItem(at: existingDirectory)
-        }
         // F6: whether this save is the investigation's first. `save` also runs
         // on every later edit and re-save of the same investigation, and the
         // captain's log wants "saved investigation X" once, not once per edit.
         let isFirstSave = existingDirectory == nil
 
         guard investigation.storage != .doNotSave else {
+            if let existingDirectory,
+               !PersistenceFailureReporter.removeItem(at: existingDirectory, what: "investigation \"\(investigation.title)\"") {
+                return nil
+            }
             gitSync?.markDirty()
             return nil
         }
 
         let dir = newDirectory(for: investigation)
+        // Hidden, so a history scan (`.skipsHiddenFiles`) never lists a
+        // half-written save.
+        let staging = dir.deletingLastPathComponent()
+            .appendingPathComponent(".\(dir.lastPathComponent).saving-\(UUID().uuidString)", isDirectory: true)
         do {
-            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-            try ShiftYamlBridge.writeMapping(path: dir.appendingPathComponent("investigation.yaml").path,
-                                             doc: metadataYaml(investigation))
-
-            if investigation.storage == .complete {
-                // S10: an investigation quotes production log text, which is
-                // the most likely place in this app for a leaked token or a
-                // customer identifier to be sitting in plain sight.
-                let analysis = LogAnalyzerArtifacts.fullAnalysisText(investigation)
-                try AtomicWrite.text(analysis, to: dir.appendingPathComponent("analysis.md"), sensitive: true)
-
-                let evidenceDir = dir.appendingPathComponent("evidence", isDirectory: true)
-                try fm.createDirectory(at: evidenceDir, withIntermediateDirectories: true)
-                for (index, item) in investigation.evidence.enumerated() {
-                    let name = String(format: "%02d-%@.log", index + 1, Self.slugify(item.label))
-                    try AtomicWrite.text(item.text, to: evidenceDir.appendingPathComponent(name),
-                                         sensitive: true)
-                }
-            }
+            try writeInvestigation(investigation, into: staging)
         } catch {
+            PersistenceFailureReporter.report(what: "investigation \"\(investigation.title)\"", path: dir.path, error: error)
+            PersistenceFailureReporter.removeItem(at: staging, what: "an unfinished investigation save")
             return nil
         }
+        guard replace(existingDirectory, with: staging, at: dir, title: investigation.title) else { return nil }
 
         gitSync?.markDirty()
         // F6 (fleet history / captain's log): appended here, after the write
@@ -206,11 +206,73 @@ final class LogAnalyzerStore {
         return dir
     }
 
-    /// Removes a saved investigation entirely.
+    /// Moves a finished `staging` folder to `dir`, replacing `existing` (the
+    /// previously saved copy, which may or may not be at `dir`). The old copy
+    /// is moved aside rather than deleted until the new one is in place, and
+    /// is moved back if that fails. Returns whether the new copy landed.
+    private func replace(_ existing: URL?, with staging: URL, at dir: URL, title: String) -> Bool {
+        let what = "investigation \"\(title)\""
+        var setAside: URL?
+        if let existing {
+            let aside = existing.deletingLastPathComponent()
+                .appendingPathComponent(".\(existing.lastPathComponent).replaced-\(UUID().uuidString)", isDirectory: true)
+            do {
+                try fm.moveItem(at: existing, to: aside)
+                setAside = aside
+            } catch {
+                PersistenceFailureReporter.report(what: what, path: existing.path, error: error)
+                PersistenceFailureReporter.removeItem(at: staging, what: "an unfinished investigation save")
+                return false
+            }
+        }
+        do {
+            try fm.moveItem(at: staging, to: dir)
+        } catch {
+            PersistenceFailureReporter.report(what: what, path: dir.path, error: error)
+            PersistenceFailureReporter.removeItem(at: staging, what: "an unfinished investigation save")
+            if let setAside, let existing {
+                do {
+                    try fm.moveItem(at: setAside, to: existing)
+                } catch {
+                    PersistenceFailureReporter.report(what: "the previous copy of \(what), kept at \(setAside.lastPathComponent)",
+                                                      path: existing.path, error: error)
+                }
+            }
+            return false
+        }
+        if let setAside {
+            PersistenceFailureReporter.removeItem(at: setAside, what: "the previous copy of \(what)")
+        }
+        return true
+    }
+
+    /// Writes one investigation's files into `dir`, which must not exist yet.
+    private func writeInvestigation(_ investigation: LogInvestigation, into dir: URL) throws {
+        try fm.createDirectory(at: dir.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: false)
+        try ShiftYamlBridge.writeMapping(path: dir.appendingPathComponent("investigation.yaml").path,
+                                         doc: metadataYaml(investigation))
+        guard investigation.storage == .complete else { return }
+        // S10: an investigation quotes production log text, which is the
+        // most likely place in this app for a leaked token or a customer
+        // identifier to be sitting in plain sight.
+        let analysis = LogAnalyzerArtifacts.fullAnalysisText(investigation)
+        try AtomicWrite.text(analysis, to: dir.appendingPathComponent("analysis.md"), sensitive: true)
+
+        let evidenceDir = dir.appendingPathComponent("evidence", isDirectory: true)
+        try fm.createDirectory(at: evidenceDir, withIntermediateDirectories: true)
+        for (index, item) in investigation.evidence.enumerated() {
+            let name = String(format: "%02d-%@.log", index + 1, Self.slugify(item.label))
+            try AtomicWrite.text(item.text, to: evidenceDir.appendingPathComponent(name), sensitive: true)
+        }
+    }
+
+    /// Removes a saved investigation entirely. REL-24: reported, never a
+    /// silent `try?` - a failed delete brings it back in History.
     func delete(id: String) {
         guard let dir = directory(forID: id) else { return }
-        try? fm.removeItem(at: dir)
-        invalidateHistoryCache()
+        defer { invalidateHistoryCache() }
+        guard PersistenceFailureReporter.removeItem(at: dir, what: "investigation \(id)") else { return }
         gitSync?.markDirty()
     }
 

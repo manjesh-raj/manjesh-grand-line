@@ -1067,9 +1067,10 @@ final class ShiftStore {
 
     /// Deletes a task's attachment file, if any - a no-op if there isn't
     /// one. Never fails the caller: a missing file here just means there was
-    /// nothing to remove.
+    /// nothing to remove. Any other failure is reported (REL-24) - it leaves
+    /// an orphaned image in the git-synced tree.
     private func removeAttachmentFile(taskID: String) {
-        try? FileManager.default.removeItem(at: attachmentURL(forTaskID: taskID))
+        PersistenceFailureReporter.removeItem(at: attachmentURL(forTaskID: taskID), what: "task attachment")
     }
 
     /// Applies a captain's attachment decision (from the task editor sheet)

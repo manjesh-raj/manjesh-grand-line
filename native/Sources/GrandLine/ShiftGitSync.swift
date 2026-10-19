@@ -414,8 +414,34 @@ final class ShiftGitSync {
                 setStatus(.failed("Could not clone \(remoteURL): \(clone.stderr.isEmpty ? "unknown error" : clone.stderr). Working locally offline."))
                 return false
             }
-            salvageRacedLocalWrites(from: workingTree.appendingPathComponent(Self.shiftSubpath), into: tempClone.appendingPathComponent(Self.shiftSubpath))
-            try? fm.removeItem(at: workingTree)
+            // REL-24: copy, verify, then remove. The salvage was a `try?` per
+            // file and the old tree was deleted either way, so a file that
+            // failed to copy was destroyed with it. When anything did not
+            // copy, the old tree is moved aside rather than deleted.
+            let salvaged = salvageRacedLocalWrites(from: workingTree.appendingPathComponent(Self.shiftSubpath),
+                                                   into: tempClone.appendingPathComponent(Self.shiftSubpath))
+            if fm.fileExists(atPath: workingTree.path) {
+                if salvaged {
+                    guard PersistenceFailureReporter.removeItem(at: workingTree, what: "the tasks folder replaced by a fresh clone") else {
+                        PersistenceFailureReporter.removeItem(at: tempClone, what: "an unused tasks clone")
+                        setStatus(.failed("Could not replace \(workingTree.path) with the fresh clone. Working locally offline."))
+                        return false
+                    }
+                } else {
+                    let keptAside = workingTree.deletingLastPathComponent()
+                        .appendingPathComponent("\(workingTree.lastPathComponent).unsalvaged-\(Int(Date().timeIntervalSince1970))", isDirectory: true)
+                    do {
+                        try fm.moveItem(at: workingTree, to: keptAside)
+                        AppLog.store.error("tasks clone: some local files could not be copied into the fresh clone - kept the old folder at \(keptAside.path, privacy: .public)")
+                    } catch {
+                        PersistenceFailureReporter.report(what: "local task files that could not be copied into the fresh clone",
+                                                          path: workingTree.path, error: error)
+                        PersistenceFailureReporter.removeItem(at: tempClone, what: "an unused tasks clone")
+                        setStatus(.failed("Could not copy local files into the fresh clone. Working locally offline."))
+                        return false
+                    }
+                }
+            }
             do {
                 try fm.moveItem(at: tempClone, to: workingTree)
             } catch {
@@ -440,7 +466,12 @@ final class ShiftGitSync {
     /// this walks every file rather than special-casing that one name, so it
     /// stays correct if that race window is ever hit with real task data in
     /// it too.
-    private func salvageRacedLocalWrites(from raced: URL, into cloned: URL) {
+    ///
+    /// Returns whether every file that needed copying was copied and reads
+    /// back byte-for-byte (REL-24). A copy that fails is reported, and the
+    /// caller then keeps the old folder rather than deleting it.
+    @discardableResult
+    private func salvageRacedLocalWrites(from raced: URL, into cloned: URL) -> Bool {
         let fm = FileManager.default
         // `enumerator(at:)` can hand back paths resolved through a symlinked
         // ancestor (e.g. macOS's own `/tmp` -> `/private/tmp`) even when
@@ -452,7 +483,9 @@ final class ShiftGitSync {
         // `privatesettings.yaml`). Resolving both sides through
         // `resolvingSymlinksInPath` first keeps them on the same footing.
         let racedResolved = (raced.path as NSString).resolvingSymlinksInPath
-        guard let enumerator = fm.enumerator(at: raced, includingPropertiesForKeys: [.isRegularFileKey]) else { return }
+        guard fm.fileExists(atPath: raced.path) else { return true }
+        guard let enumerator = fm.enumerator(at: raced, includingPropertiesForKeys: [.isRegularFileKey]) else { return false }
+        var allCopied = true
         for case let file as URL in enumerator {
             guard (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
             let fileResolved = (file.path as NSString).resolvingSymlinksInPath
@@ -460,9 +493,36 @@ final class ShiftGitSync {
             let relative = String(fileResolved.dropFirst(racedResolved.count + 1))
             let destination = cloned.appendingPathComponent(relative)
             guard !fm.fileExists(atPath: destination.path) else { continue }
-            try? fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? fm.copyItem(at: file, to: destination)
+            if !Self.copyVerified(file, to: destination, what: "local task file \(relative)") { allCopied = false }
         }
+        return allCopied
+    }
+
+    /// REL-24: one copy that is reported when it fails and read back before
+    /// it counts - what both migrations here need before they may remove or
+    /// move aside the original.
+    static func copyVerified(_ source: URL, to destination: URL, what: String) -> Bool {
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: source, to: destination)
+        } catch {
+            PersistenceFailureReporter.report(what: what, path: destination.path, error: error)
+            return false
+        }
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: source.path, isDirectory: &isDirectory) else { return false }
+        if isDirectory.boolValue {
+            return fm.contentsEqual(atPath: source.path, andPath: destination.path)
+        }
+        guard let original = try? Data(contentsOf: source),
+              let copied = try? Data(contentsOf: destination), original == copied else {
+            PersistenceFailureReporter.report(
+                what: what, path: destination.path,
+                error: CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "the copy does not match the original"]))
+            return false
+        }
+        return true
     }
 
     /// Migrates the *repo's own* layout from a top-level `personal-tasks/`
@@ -548,15 +608,27 @@ final class ShiftGitSync {
         let legacy = ShiftGitSync.legacyLocalRoot()
         guard fm.fileExists(atPath: legacy.appendingPathComponent("tasks/active.yaml").path) else { return }
         guard !fm.fileExists(atPath: dataRoot.appendingPathComponent("tasks/active.yaml").path) else { return }
+        // REL-24: every copy is checked, and the legacy folder is only moved
+        // aside once they all landed. It used to be moved aside after a run
+        // of `try?` copies, so a copy that failed left the data in a folder
+        // that the next launch no longer looks at, with nothing saying so.
+        var allCopied = true
         for entry in ["tasks", "follow-ups", "projects", "notes", "activity", "settings.yaml"] {
             let src = legacy.appendingPathComponent(entry)
             guard fm.fileExists(atPath: src.path) else { continue }
             let dst = dataRoot.appendingPathComponent(entry)
-            try? fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? fm.copyItem(at: src, to: dst)
+            if !Self.copyVerified(src, to: dst, what: "legacy task data (\(entry))") { allCopied = false }
+        }
+        guard allCopied else {
+            AppLog.store.error("legacy task data: not every file copied - leaving \(legacy.path, privacy: .public) in place")
+            return
         }
         let migratedMarker = legacy.deletingLastPathComponent().appendingPathComponent("shift.migrated-\(Int(Date().timeIntervalSince1970))")
-        try? fm.moveItem(at: legacy, to: migratedMarker)
+        do {
+            try fm.moveItem(at: legacy, to: migratedMarker)
+        } catch {
+            PersistenceFailureReporter.report(what: "the migrated legacy task folder", path: legacy.path, error: error)
+        }
     }
 
     /// `git add -A -- GrandLineDocs/personal-tasks && git commit && git push`,

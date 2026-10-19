@@ -72,6 +72,7 @@ enum StoreDurabilitySelfTest {
         rel22ShiftRewritesKeepWhatTheyCannotRead(scratch: scratch)
         rel22IncidentRewritesKeepWhatTheyCannotRead(scratch: scratch)
         rel22NestedTypesDecodeWithoutEveryKey()
+        rel24FailedDeletesAndSavesAreReportedAndLoseNothing(scratch: scratch)
 
         print(failures.isEmpty
             ? "== PASS (store durability) =="
@@ -617,6 +618,131 @@ enum StoreDurabilitySelfTest {
               "REL-22: a cadence still encodes in the synthesised shape, got \(String(describing: written))")
         let roundTrip = try? decoder.decode(ScheduleCadence.self, from: Data((written ?? "").utf8))
         check(roundTrip == .daily(hour: 2, minute: 30), "REL-22: and decodes back to itself")
+    }
+
+    // MARK: - REL-24: a failed delete or save is reported and loses nothing
+
+    private static func reported(_ path: String, containing what: String) -> Bool {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        return PersistenceFailureReporter.recent.contains { $0.path.hasPrefix(path) || $0.what.contains(what) }
+    }
+
+    /// Runs `body` with `directory` made read-only (so nothing inside it can
+    /// be removed or created), then restores it.
+    private static func withReadOnlyDirectory(_ directory: URL, _ body: () -> Void) {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.path)
+        body()
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
+    }
+
+    private static func rel24FailedDeletesAndSavesAreReportedAndLoseNothing(scratch: URL) {
+        print("- REL-24: failed deletes and saves are reported, and lose nothing")
+        let root = scratch.appendingPathComponent("rel24", isDirectory: true)
+        PersistenceFailureReporter.resetForTests()
+
+        // Log Analyzer: a re-save that cannot land must leave the saved copy.
+        let analyzerRoot = root.appendingPathComponent("log-analyzer", isDirectory: true)
+        withEnv(["FM_LOG_ANALYZER_DIR": analyzerRoot.path]) {
+            let store = LogAnalyzerStore()
+            let text = "ERROR disk full on /var/log"
+            var investigation = LogInvestigation(title: "Alpha outage")
+            investigation.evidence = [LogEvidenceItem(
+                label: "kubectl logs", origin: .terminal, text: text,
+                detection: LogAnalyzerController.buildLocalAnalysis(text: text, override: nil).detection,
+                redactionCount: 0)]
+            investigation.storage = .complete
+            guard let first = store.save(investigation) else {
+                check(false, "REL-24: the Log Analyzer fixture saves")
+                return
+            }
+            // A regular file where the renamed save's folder would go makes
+            // the write fail after the old code had already deleted the copy.
+            let blocked = first.deletingLastPathComponent()
+                .appendingPathComponent(first.lastPathComponent.replacingOccurrences(of: "alpha-outage", with: "beta-outage"))
+            check(blocked != first, "REL-24: the renamed save targets a different folder (the fixture is not vacuous)")
+            try? Data("not a folder".utf8).write(to: blocked)
+            investigation.title = "Beta outage"
+            check(store.save(investigation) == nil, "REL-24: a re-save that cannot land reports failure")
+            store.invalidateHistoryCache()
+            let kept = store.load(id: investigation.id)
+            check(kept?.title == "Alpha outage" && kept?.evidence.first?.text == text,
+                  "REL-24: the previously saved investigation survives a failed re-save, got \(String(describing: kept?.title))")
+            check(reported(blocked.path, containing: "Beta outage"), "REL-24: the failed re-save is reported")
+            try? FileManager.default.removeItem(at: blocked)
+
+            // A delete that cannot happen is reported, and the record stays.
+            // The folder itself is read-only, so `removeItem` fails on its
+            // first child rather than emptying it first.
+            PersistenceFailureReporter.resetForTests()
+            withReadOnlyDirectory(first) {
+                store.delete(id: investigation.id)
+            }
+            store.invalidateHistoryCache()
+            check(store.load(id: investigation.id) != nil, "REL-24: an investigation whose delete failed is still there")
+            check(reported(first.path, containing: "investigation"),
+                  "REL-24: the failed investigation delete is reported")
+        }
+
+        // Notebook, runbooks: a failed delete is reported.
+        PersistenceFailureReporter.resetForTests()
+        let notebookRoot = root.appendingPathComponent("notebook", isDirectory: true)
+        let notebook = NotebookStore(root: notebookRoot)
+        let page = notebook.createPage(title: "Kept page", content: "# Kept page\n")
+        withReadOnlyDirectory(notebookRoot) { notebook.deletePage(id: page.id) }
+        check(reported(notebookRoot.path, containing: "notebook page"), "REL-24: a failed notebook delete is reported")
+
+        PersistenceFailureReporter.resetForTests()
+        let runbooksRoot = root.appendingPathComponent("runbooks", isDirectory: true)
+        withEnv(["FM_DOCS_RUNBOOKS_DIR": runbooksRoot.path]) {
+            let runbooks = DocsRunbookStore()
+            let runbook = runbooks.createRunbook(title: "Kept runbook", content: "# Kept runbook\n")
+            withReadOnlyDirectory(runbooksRoot) { runbooks.deleteRunbook(id: runbook.id) }
+            check(reported(runbooksRoot.path, containing: "runbook"), "REL-24: a failed runbook delete is reported")
+        }
+
+        // Command library: a move whose write fails keeps the old file, and a
+        // failed delete keeps the command and its favourite.
+        PersistenceFailureReporter.resetForTests()
+        let commandsRoot = root.appendingPathComponent("commands", isDirectory: true)
+        withEnv(["FM_COMMAND_LIBRARY_DIR": commandsRoot.path]) {
+            let library = CommandLibraryStore()
+            let command = library.createCommand(name: "Disk usage", description: "", category: "rel24-source",
+                                                subcategory: nil, commandTemplate: "df -h", parameters: [],
+                                                tags: [], risk: .readOnly)
+            library.toggleFavorite(command.id)
+            let sourceDir = commandsRoot.appendingPathComponent("rel24-source", isDirectory: true)
+            let targetDir = commandsRoot.appendingPathComponent("rel24-target", isDirectory: true)
+            try? FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
+            withReadOnlyDirectory(targetDir) {
+                _ = library.updateCommand(id: command.id, name: "Disk usage", description: "", category: "rel24-target",
+                                          subcategory: nil, commandTemplate: "df -h", parameters: [], tags: [], risk: .readOnly)
+            }
+            let oldFile = sourceDir.appendingPathComponent((command.id as NSString).lastPathComponent + ".yaml")
+            check(FileManager.default.fileExists(atPath: oldFile.path),
+                  "REL-24: a command move whose write failed keeps the original file")
+            check(library.command(id: command.id) != nil, "REL-24: and the command is still listed under its old id")
+
+            withReadOnlyDirectory(sourceDir) { library.deleteCommand(id: command.id) }
+            check(library.command(id: command.id) != nil, "REL-24: a command whose delete failed is still listed")
+            check(library.favoriteIDs.contains(command.id), "REL-24: and it keeps its favourite")
+            check(reported(sourceDir.path, containing: "command"), "REL-24: the failed command delete is reported")
+        }
+
+        // Tasks: a failed attachment removal is reported.
+        PersistenceFailureReporter.resetForTests()
+        let shiftRoot = root.appendingPathComponent("shift", isDirectory: true)
+        withEnv(["FM_SHIFT_DIR": shiftRoot.path]) {
+            let store = ShiftStore()
+            var task = ShiftTask.fresh()
+            task.id = "rel24-attached"
+            task.title = "Has a screenshot"
+            store.addTask(task, attachment: .set(Data([0x89, 0x50, 0x4E, 0x47])))
+            let attachments = shiftRoot.appendingPathComponent("attachments", isDirectory: true)
+            check(FileManager.default.fileExists(atPath: attachments.appendingPathComponent("rel24-attached.png").path),
+                  "REL-24: the attachment fixture is on disk")
+            withReadOnlyDirectory(attachments) { _ = store.deleteTask(id: "rel24-attached") }
+            check(reported(attachments.path, containing: "task attachment"), "REL-24: a failed attachment removal is reported")
+        }
     }
 
     /// Writes `bytes` to `file`, makes it unreadable, runs `body`, then

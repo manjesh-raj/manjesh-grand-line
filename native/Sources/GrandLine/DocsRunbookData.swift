@@ -494,7 +494,8 @@ final class DocsRunbookStore {
 
     func deleteRunbook(id: String) {
         let url = root.appendingPathComponent("\(id).md")
-        try? fm.removeItem(at: url)
+        // REL-24: reported, never a silent `try?`.
+        guard PersistenceFailureReporter.removeItem(at: url, what: "runbook \"\(id)\"") else { return }
         gitSync?.markDirty()
     }
 

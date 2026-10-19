@@ -92,6 +92,30 @@ enum PersistenceFailureReporter {
         NotificationSources.setPersistenceFailure(count: 0, detail: "")
     }
 
+    /// REL-24: the one delete a store makes. "Already gone" is the one
+    /// failure that is success - the caller's intent holds - so it reports
+    /// nothing; anything else is reported like a failed write and returns
+    /// `false`, so a caller that must not carry on (a move whose old copy
+    /// would be left behind, a record that would come back) can stop.
+    ///
+    /// Before this, every delete path but Code Preview's was a `try?`, so a
+    /// delete that failed left a record the UI had already removed to come
+    /// back on the next launch, and on the next machine through git, with
+    /// nothing saying why. `CodePreviewStore.delete(name:)` is the shape.
+    @discardableResult
+    static func removeItem(at url: URL, what: String) -> Bool {
+        do {
+            try FileManager.default.removeItem(at: url)
+            return true
+        } catch let error as NSError where error.domain == NSCocoaErrorDomain
+            && error.code == CocoaError.fileNoSuchFile.rawValue {
+            return true
+        } catch {
+            report(what: what, path: url.path, error: error)
+            return false
+        }
+    }
+
     /// Test seam only - `Phase2HardeningSelfTest` drives real failures through
     /// `report` and needs a clean slate between cases.
     static func resetForTests() {
