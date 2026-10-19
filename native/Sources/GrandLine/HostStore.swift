@@ -67,7 +67,7 @@ final class HostStore {
 
     /// `~/Library/Application Support/GrandLine/hosts.json`, overridable
     /// via `FM_HOSTS_FILE` (handy for tests / a scratch profile set).
-    private static func storeURL() -> URL {
+    static func storeURL() -> URL {
         if let override = ProcessInfo.processInfo.environment["FM_HOSTS_FILE"], !override.isEmpty {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
         }

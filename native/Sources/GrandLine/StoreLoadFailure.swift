@@ -88,6 +88,23 @@ enum StoreLoadFailure {
         }
     }
 
+    // MARK: - Counting without loading (REL-29)
+
+    /// How many records a JSON-array store holds, read without becoming that
+    /// store: no `chmod`, no `.corrupt-` backup, no write of any kind. `nil`
+    /// when the file is missing, unreadable or not a JSON array.
+    ///
+    /// For a background reader that only needs a number. The signals poller
+    /// used to build a whole `HostStore()` and `SnippetStore()` on a global
+    /// queue for two counts, and a store's load backs up a file it cannot
+    /// decode - so the poller could race the live main-thread store over the
+    /// same file, shelving it from the wrong thread.
+    static func peekArrayCount(at url: URL) -> Int? {
+        guard let data = try? Data(contentsOf: url), !data.isEmpty,
+              let array = (try? JSONSerialization.jsonObject(with: data)) as? [Any] else { return nil }
+        return array.count
+    }
+
     // MARK: - Reading (REL-21)
 
     /// One read of a store's file, with "not there" and "there but this

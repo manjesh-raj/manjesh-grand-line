@@ -43,6 +43,7 @@ enum BackgroundSignalsSelfTest {
     static func run() -> Bool {
         var ok = true
         checkPassAdmission(&ok)
+        checkSetupCountsNeverLoadAStore(&ok)
         checkLatchRelease(&ok)
         checkHealthVerdicts(&ok)
         checkNoUnattendedAvList(&ok)
@@ -54,6 +55,47 @@ enum BackgroundSignalsSelfTest {
 
 
     // MARK: GL-03 - the latch
+
+    /// REL-29: the poller counts saved hosts and snippets on its background
+    /// queue. It used to build a `HostStore()` and a `SnippetStore()` there,
+    /// whose load backs up an undecodable file (and chmods it) from the
+    /// wrong thread while the live store owns it. The count must leave a
+    /// corrupt file exactly as it found it.
+    private static func checkSetupCountsNeverLoadAStore(_ ok: inout Bool) {
+        print("\n-- REL-29: the setup counts read the files without loading a store --")
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("fm-rel29-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let hosts = dir.appendingPathComponent("hosts.json")
+        let snippets = dir.appendingPathComponent("snippets.json")
+        try? Data(#"[{"label":"truncated"#.utf8).write(to: hosts)
+        try? Data(#"[{"label":"a","command":"ls"},{"label":"b","command":"pwd"}]"#.utf8).write(to: snippets)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: hosts.path)
+
+        let names = ["FM_HOSTS_FILE": hosts.path, "FM_SNIPPETS_FILE": snippets.path]
+        var previous: [String: String?] = [:]
+        for (key, value) in names {
+            previous[key] = ProcessInfo.processInfo.environment[key]
+            setenv(key, value, 1)
+        }
+        let counts = BackgroundSignalsPoller.restoredConfigCounts()
+        for (key, old) in previous {
+            if let old { setenv(key, old, 1) } else { unsetenv(key) }
+        }
+
+        let siblings = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        if siblings.contains(where: { $0.hasPrefix("hosts.json.corrupt-") }) {
+            fail("REL-29: counting backed up the corrupt hosts.json - it loaded a store, got \(siblings)", &ok)
+        }
+        let mode = (try? FileManager.default.attributesOfItem(atPath: hosts.path)[.posixPermissions] as? NSNumber)?.intValue
+        if mode != 0o644 {
+            fail("REL-29: counting changed the mode of hosts.json to \(String(describing: mode).description) - it loaded a store", &ok)
+        }
+        if counts.hosts != 0 || counts.snippets != 2 {
+            fail("REL-29: expected 0 hosts (unreadable) and 2 snippets, got \(counts)", &ok)
+        }
+    }
 
     private static func checkPassAdmission(_ ok: inout Bool) {
         print("\n-- pass admission (GL-03: the latch is not a one-way door) --")

@@ -45,7 +45,7 @@ final class SnippetStore {
 
     /// `~/Library/Application Support/GrandLine/snippets.json`,
     /// overridable via `FM_SNIPPETS_FILE` (handy for tests / a scratch set).
-    private static func storeURL() -> URL {
+    static func storeURL() -> URL {
         if let override = ProcessInfo.processInfo.environment["FM_SNIPPETS_FILE"], !override.isEmpty {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
         }
