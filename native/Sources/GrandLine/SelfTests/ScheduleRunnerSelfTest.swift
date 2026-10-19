@@ -50,6 +50,7 @@ enum ScheduleRunnerSelfTest {
         checkRunHistoryPersistsAndFilters(&ok)
         checkHealthSeedingFromHistory(&ok)
         checkRunLogIsRedactedOnPersist(&ok)
+        checkAWedgedRunCannotEndANewerOne(&ok)
         print(ok ? "ScheduleRunnerSelfTest: all checks passed" : "ScheduleRunnerSelfTest: FAILED")
         return ok
     }
@@ -893,6 +894,86 @@ enum ScheduleRunnerSelfTest {
     }
 
     // MARK: Scratch helpers
+
+    // MARK: REL-06 - a pass id on the run latch
+
+    /// A small fixture for driving a real runner with a stand-in action:
+    /// one daily schedule created two days ago, so today's occurrence is due.
+    private static func runnerFixture(_ name: String) -> (ScheduleRunner, ScheduleStore, ScheduleRunHistoryStore)? {
+        guard let dir = scratchDir() else { return nil }
+        setenv("FM_SCHEDULES_FILE", dir.appendingPathComponent("\(name).json").path, 1)
+        let store = ScheduleStore(calendar: utc)
+        store.add(AutomationSchedule(action: .driftCheck, cadence: .daily(hour: 0, minute: 0)),
+                  now: Date().addingTimeInterval(-2 * 86_400))
+        let history = ScheduleRunHistoryStore(directory: dir.appendingPathComponent("history", isDirectory: true))
+        return (ScheduleRunner.makeForTests(store: store, historyStore: history, calendar: utc), store, history)
+    }
+
+    private static func pumpMain(until done: () -> Bool, timeout: TimeInterval = 5) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !done(), Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+    }
+
+    /// REL-06: the watchdog clears a wedged run's latch so a new run can
+    /// start. The wedged run's own completion used to clear the latch again
+    /// and record its result unconditionally - ending the newer run's
+    /// "Running..." state, disarming its watchdog, and landing the older
+    /// verdict after the newer run had started.
+    private static func checkAWedgedRunCannotEndANewerOne(_ ok: inout Bool) {
+        print("\n-- REL-06: a run the watchdog gave up on cannot end a newer run --")
+        guard let (runner, store, history) = runnerFixture("rel06") else {
+            fail("REL-06: could not build the runner fixture", &ok)
+            return
+        }
+        let started = DispatchSemaphore(value: 0)
+        let releaseWedged = DispatchSemaphore(value: 0)
+        let releaseNewer = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var calls = 0
+        ScheduleRunner.actionOverrideForTests = { _ in
+            lock.lock(); calls += 1; let call = calls; lock.unlock()
+            started.signal()
+            (call == 1 ? releaseWedged : releaseNewer).wait()
+            return ScheduleActionResult(verdict: .clean, summary: call == 1 ? "wedged run" : "newer run")
+        }
+        defer {
+            ScheduleRunner.actionOverrideForTests = nil
+            releaseWedged.signal()
+            releaseNewer.signal()
+        }
+
+        runner.tick(now: Date())
+        guard started.wait(timeout: .now() + 5) == .success else {
+            fail("REL-06: the first run never started (the schedule was not due)", &ok)
+            return
+        }
+        // Past the 10-minute watchdog: the latch is released and the same
+        // occurrence, still unrecorded, starts again.
+        runner.tick(now: Date().addingTimeInterval(11 * 60))
+        if !runner.isBusy { fail("REL-06: the run after the watchdog should be running", &ok) }
+
+        // The wedged run finishes late; the newer one is now executing.
+        releaseWedged.signal()
+        _ = started.wait(timeout: .now() + 5)
+        pumpMain(until: { false }, timeout: 0.3)
+        if !runner.isBusy {
+            fail("REL-06: the wedged run's late completion ended the newer run's Running state", &ok)
+        }
+        if store.schedules.first?.lastRun != nil {
+            fail("REL-06: the wedged run's verdict landed on the schedule while the newer run was still going: \(String(describing: store.schedules.first?.lastRun?.summary))", &ok)
+        }
+
+        releaseNewer.signal()
+        pumpMain(until: { !runner.isBusy })
+        if store.schedules.first?.lastRun?.summary != "newer run" {
+            fail("REL-06: the schedule should carry the newer run's result, got \(String(describing: store.schedules.first?.lastRun?.summary))", &ok)
+        }
+        if !history.allEntries().contains(where: { $0.summary.hasPrefix("Finished late") }) {
+            fail("REL-06: the late run should still be kept in history, marked late", &ok)
+        }
+    }
 
     private static func scratchDir() -> URL? {
         let dir = FileManager.default.temporaryDirectory

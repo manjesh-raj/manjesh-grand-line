@@ -133,6 +133,12 @@ final class ScheduleRunner {
     private var timer: Timer?
     private var isRunning = false
     private var runStartedAt: Date?
+    /// REL-06, GL-03's pass id: the run the latch belongs to. The watchdog
+    /// clears it, and a run's completion only touches the latch and the
+    /// schedule's record while it is still the current run - so a wedged run
+    /// that finally finishes cannot end a newer run's "Running..." state,
+    /// disarm its watchdog, or land its older verdict over the newer one.
+    private var currentRunID: UUID?
     private let queue = DispatchQueue(label: "com.manjesh.grandline.schedule-runner", qos: .utility)
 
     /// Set by whoever owns the shell at launch, so the notification entry a run
@@ -233,6 +239,8 @@ final class ScheduleRunner {
                 "A scheduled run has been going for \(age)s without finishing.")
             isRunning = false
             runStartedAt = nil
+            runningScheduleID = nil
+            currentRunID = nil
         }
 
         // Only the first due schedule per tick. The next tick picks up the
@@ -272,6 +280,8 @@ final class ScheduleRunner {
     private(set) var runningScheduleID: UUID?
 
     private func execute(_ schedule: AutomationSchedule, occurrence: Date?) {
+        let runID = UUID()
+        currentRunID = runID
         isRunning = true
         runStartedAt = Date()
         runningScheduleID = schedule.id
@@ -282,9 +292,14 @@ final class ScheduleRunner {
         let action = schedule.action
         let stores = backupStores
         queue.async { [weak self] in
-            let result = ScheduleActions.run(action, backupStores: stores)
+            let result = Self.runAction(action, backupStores: stores)
             DispatchQueue.main.async {
                 guard let self else { return }
+                guard self.currentRunID == runID else {
+                    self.recordAbandonedRun(schedule: schedule, action: action, result: result)
+                    return
+                }
+                self.currentRunID = nil
                 self.isRunning = false
                 self.runStartedAt = nil
                 self.runningScheduleID = nil
@@ -330,6 +345,57 @@ final class ScheduleRunner {
             }
         }
     }
+}
+
+extension ScheduleRunner {
+
+    /// A run the watchdog already gave up on, finishing late. It is kept in
+    /// the run history - it did happen, and its log may say why it hung - but
+    /// marked as late, and it touches neither the latch nor the schedule's
+    /// last result nor the Health card, all of which now belong to whatever
+    /// ran after it (REL-06).
+    fileprivate func recordAbandonedRun(schedule: AutomationSchedule, action: ScheduledActionKind,
+                                        result: ScheduleActionResult) {
+        AppLog.poller.error("""
+            schedules: \(action.rawValue, privacy: .public) finished after the watchdog gave up on it - \
+            kept in history only
+            """)
+        historyStore?.append(ScheduleRunHistoryEntry(
+            scheduleID: schedule.id,
+            at: Date(),
+            verdict: result.verdict,
+            summary: "Finished late, after the watchdog gave up on it: \(result.summary)",
+            actionTitle: action.title,
+            log: result.log,
+            failure: result.failure))
+    }
+
+    fileprivate static func runAction(
+        _ action: ScheduledActionKind,
+        backupStores: (hosts: HostStore, keys: SSHKeyStore, snippets: SnippetStore, dictation: DictationStore)?
+    ) -> ScheduleActionResult {
+        #if FM_SELFTESTS
+        if let override = actionOverrideForTests { return override(action) }
+        #endif
+        return ScheduleActions.run(action, backupStores: backupStores)
+    }
+
+    #if FM_SELFTESTS
+    /// Replaces the real action (which runs `brew`, `gh`, `git`) in a suite.
+    /// Runs on the runner's own background queue, like the real one.
+    static var actionOverrideForTests: ((ScheduledActionKind) -> ScheduleActionResult)?
+
+    /// A runner of a suite's own, never `.shared`, over a suite's stores and
+    /// calendar, with no timer.
+    static func makeForTests(store: ScheduleStore, historyStore: ScheduleRunHistoryStore,
+                             calendar: Calendar) -> ScheduleRunner {
+        let runner = ScheduleRunner()
+        runner.store = store
+        runner.historyStore = historyStore
+        runner.calendar = calendar
+        return runner
+    }
+    #endif
 }
 
 // MARK: - The actions themselves
