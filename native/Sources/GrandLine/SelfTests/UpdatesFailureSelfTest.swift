@@ -55,6 +55,7 @@ enum UpdatesFailureSelfTest {
             ("theInstalledCaskFileIsReadToo", test_installedCaskfileIsRead),
             ("eachSudoDirectiveIsRecognisedAndNothingElse", test_sudoDirectiveMatrix),
             ("aCaskNotYetInstalledOnlyAsksAboutInstalling", test_notInstalledIgnoresUninstall),
+            ("theTestSeamSurvivesConcurrentChecks", test_seamIsThreadSafe),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -107,6 +108,31 @@ enum UpdatesFailureSelfTest {
     }
 
     private static var fixtureRoots: [URL] = []
+
+    /// The Updates page checks its tools on concurrent queues, and every
+    /// check records itself in the seam. Unsynchronised, that append lost
+    /// records and - intermittently - corrupted the heap, which is what
+    /// crashed `FM_RUN_PANEL_AND_PAGE_MOTION_TESTS`. Every concurrent check
+    /// must be recorded exactly once.
+    private static func test_seamIsThreadSafe() -> String? {
+        fakeUpdates([:])
+        let item = DependencyItem(id: "seam-race", name: "seam-race", category: "Test", kind: .npmGlobal(package: "seam-race"))
+        let threads = 8, perThread = 200
+        DispatchQueue.concurrentPerform(iterations: threads) { _ in
+            for _ in 0..<perThread { _ = UpdatesSource.check(item) }
+        }
+        let recorded = UpdatesDataTestSeam.invocations.count
+        // Each npm check makes the same number of calls, so the total is a
+        // multiple of the single-check count; measure that once, serially.
+        UpdatesDataTestSeam.invocations = []
+        _ = UpdatesSource.check(item)
+        let perCheck = UpdatesDataTestSeam.invocations.count
+        guard perCheck > 0 else { return "a single check recorded nothing - the case is vacuous" }
+        guard recorded == perCheck * threads * perThread else {
+            return "\(threads * perThread) concurrent checks recorded \(recorded) invocations, expected \(perCheck * threads * perThread) - appends were lost"
+        }
+        return nil
+    }
 
     /// A fake transport plus an empty fixture Caskroom and `/Applications`.
     /// `replies` is matched on the first argument; anything else is a clean
