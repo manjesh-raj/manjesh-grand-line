@@ -52,6 +52,8 @@ enum ReadyToMergeCountSelfTest {
         checkOneDefinition(&ok)
         checkReviewPageAgrees(&ok)
         checkOverviewAgrees(&ok)
+        checkOverviewNeverShowsZeroWhileScanning(&ok)
+        checkHomeNeverShowsZeroWhileScanning(&ok)
         checkNoReDerivation(&ok)
         print(ok ? "ReadyToMergeCountSelfTest: all checks passed"
                  : "ReadyToMergeCountSelfTest: FAILED")
@@ -318,6 +320,83 @@ enum ReadyToMergeCountSelfTest {
             } else {
                 fail("the merge-queue card rendered no chip", &ok)
             }
+        }
+    }
+
+    /// REL-25: every Fleet refresh renders its fast snapshot before the PR
+    /// scan lands, with no PR list and no failure. The tile said "0 ready to
+    /// merge" and the banner "0 PRs ready to merge" - a confident zero for a
+    /// number nobody had read yet, which is GL-14's rule broken on every
+    /// refresh. This renders exactly that interim snapshot.
+    private static func checkOverviewNeverShowsZeroWhileScanning(_ ok: inout Bool) {
+        print("\n-- REL-25: Overview says scanning, not 0, while the PR scan runs --")
+        withScratchEnv {
+            let snapshot = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
+                                         queuedCount: 0, doneCount: 0, projectsCount: 0,
+                                         watcher: WatcherHealth(status: "healthy"))
+            let fleet = FleetController(shiftStore: ShiftStore())
+            let window = OffScreenProbe.window(width: 1200, height: 900, styleMask: [.titled, .resizable])
+            window.contentViewController = fleet
+            fleet.view.layoutSubtreeIfNeeded()
+            fleet.debugRender(snapshot: snapshot, mergedPRs: nil)
+            fleet.view.layoutSubtreeIfNeeded()
+
+            let tiles = fleet.debugStatTiles
+            check(!tiles.contains { $0.caption == "ready to merge" && $0.value == "0" },
+                  "REL-25: the interim tile must not say 0 ready to merge - tiles: \(tiles)", &ok)
+            if let tile = tiles.first(where: { $0.caption == "scanning PRs" }) {
+                check(tile.value == "\u{2014}", "REL-25: the scanning tile shows a dash, got \(tile.value)", &ok)
+            } else {
+                fail("REL-25: no scanning tile while the PR scan runs - tiles: \(tiles)", &ok)
+            }
+            let banner = fleet.debugBannerMeta
+            check(number(before: "PRs ready to merge", in: banner) == nil,
+                  "REL-25: the interim banner must not state a ready count: \"\(banner)\"", &ok)
+            check(banner.contains("checking PRs"), "REL-25: the banner says it is checking, got \"\(banner)\"", &ok)
+
+            // And the scan landing replaces it with the real number.
+            fleet.debugRender(snapshot: snapshot, mergedPRs: fixture())
+            check(fleet.debugStatTiles.contains { $0.caption == "ready to merge" && $0.value == "\(expectedReady)" },
+                  "REL-25: the scan landing shows the real count - tiles: \(fleet.debugStatTiles)", &ok)
+        }
+    }
+
+    /// REL-04: the same interim push reaches the hub, which turned it into
+    /// "0 PRs ready to merge" in the good tint for the length of every scan
+    /// while the Merge queue card under it kept the last good list. After a
+    /// good scan the verdict keeps that count; with no scan yet it says it is
+    /// checking. Neither may ever state 0.
+    private static func checkHomeNeverShowsZeroWhileScanning(_ ok: inout Bool) {
+        print("\n-- REL-04: the hub's verdict never says 0 PRs while a scan runs --")
+        withScratchEnv {
+            let snapshot = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
+                                         queuedCount: 0, doneCount: 0, projectsCount: 0,
+                                         watcher: WatcherHealth(status: "healthy"))
+            func makeCanvas() -> HomeCanvasController {
+                HomeCanvasController(sources: .init(
+                    shiftStore: ShiftStore(), hostStore: HostStore(), scheduleStore: ScheduleStore(),
+                    logAnalyzerStore: LogAnalyzerStore(), docsRunbookStore: DocsRunbookStore(),
+                    codePreviewStore: CodePreviewStore(),
+                    notebookStore: NotebookStore(), readingListStore: ReadingListStore(),
+                    commandLibraryStore: CommandLibraryStore(),
+                    stickyBoardStore: StickyBoardStore()))
+            }
+
+            // No scan has landed yet: the verdict says it is checking.
+            let fresh = makeCanvas()
+            fresh.applyFleet(snapshot: snapshot, mergedPRs: nil, prFetchFailure: nil)
+            let first = fresh.overviewAnswerForTests?.meta ?? ""
+            check(number(before: "PRs ready to merge", in: first) == nil,
+                  "REL-04: with no scan yet the verdict states no ready count: \"\(first)\"", &ok)
+            check(first.contains("checking PRs"), "REL-04: it says it is checking, got \"\(first)\"", &ok)
+
+            // A good scan, then the next refresh's interim push.
+            let canvas = makeCanvas()
+            canvas.applyFleet(snapshot: snapshot, mergedPRs: fixture(), prFetchFailure: nil)
+            canvas.applyFleet(snapshot: snapshot, mergedPRs: nil, prFetchFailure: nil)
+            let interim = canvas.overviewAnswerForTests?.meta ?? ""
+            check(number(before: "PRs ready to merge", in: interim) == expectedReady,
+                  "REL-04: a scan in flight keeps the last good count, got \"\(interim)\"", &ok)
         }
     }
 

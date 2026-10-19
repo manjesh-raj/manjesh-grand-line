@@ -247,8 +247,16 @@ final class ShiftStore {
         // parsing - which is the right answer, because that edit is about to
         // push and carry the merged state with it.
         gitSync?.observeRemoteChanges { [weak self] in
-            self?.reloadAllAsync {}
+            self?.remoteFilesChanged()
         }
+    }
+
+    /// What a pull, an auto-merge or a resolved conflict does to this store:
+    /// re-read off the main thread and apply. `apply` fires the change
+    /// handlers when the reread differs (REL-02), which is what repaints an
+    /// open Tasks page and refreshes the widget and the compact badge.
+    func remoteFilesChanged() {
+        reloadAllAsync {}
     }
 
     // MARK: Location
@@ -423,6 +431,17 @@ final class ShiftStore {
     /// GL-01 depends on, the first-run scaffold write, and the in-memory state
     /// itself. Byte-for-byte the decisions `reloadAll` always made.
     private func apply(_ loaded: LoadedState) {
+        // REL-02: what the observers last saw, so a reread that changed
+        // anything tells them - and one that changed nothing stays quiet.
+        let before = (activeTasks, followUps, projects, isInFailedLoadState)
+        defer {
+            if before.0 != activeTasks || before.1 != followUps || before.2 != projects
+                || before.3 != isInFailedLoadState {
+                // The handlers, not `notify()`: a reread is not a local edit,
+                // so it must not mark git dirty and commit what it just read.
+                changeHandlers.forEach { $0() }
+            }
+        }
         isApplyingReload = true
         defer { isApplyingReload = false }
         invalidateCompletedTasksCache()
