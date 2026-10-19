@@ -985,8 +985,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Every host that had a page, reconnected with `navigate: false` - so
         // each page exists but stays hidden, and (per `ConsoleController.
         // addTab`'s `hasAppeared` guard) forks no `ssh` until the captain
-        // actually opens it. The one that was *showing* is connected last,
-        // with navigation, so it is the page that comes up.
+        // actually opens it. The one that was *showing* is connected
+        // straight away, with navigation, so it is the page that comes up.
         // `uniquingKeysWith`, never `uniqueKeysWithValues`: the latter traps
         // on a duplicate key, and this runs on the launch path against a file
         // that can be hand-edited. `HostStore` should never produce two hosts
@@ -994,10 +994,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // than quietly keeping the first.
         let byID = Dictionary(hostStore.hosts.map { ($0.id.uuidString, $0) }, uniquingKeysWith: { first, _ in first })
         let plan = SessionRestorePlan.hosts(from: state, knownHostIDs: Set(byID.keys))
-        for id in plan.background {
-            guard let host = byID[id] else { continue }
-            appShell.connectHost(host, args: host.sshArguments(allHosts: hostStore.hosts), navigate: false)
-        }
+        // PERF-08: queued rather than built here. The shell builds one page
+        // per run-loop turn (and a page the captain switches to at once), so
+        // five restored hosts are five short turns rather than one long one
+        // right after the first frame. Each still gets its strip pill now, in
+        // this order, so the showing host below still registers last.
+        appShell.queueRestoredHostConsoles(plan.background.compactMap { id in
+            byID[id].map { ($0, $0.sshArguments(allHosts: hostStore.hosts)) }
+        })
 
         guard FirstmateHome.homeOk() else {
             AppLog.lifecycle.info("session restore: tabs restored, destination left to GL-31's Bootstrap landing")

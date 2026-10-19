@@ -509,3 +509,52 @@ Every fake `claude` that needed to see the prompt now reads its stdin.
 Several negative checks (no vocabulary section, no recap on a resumed turn, no old board after Start over) would have passed vacuously against argv, so each now reads the captured prompt and asserts it was captured first.
 `ClaudeOneShotSelfTest.argvShapeIsWhatCallersExpect` asserts the prompt is absent from argv and arrives on stdin byte for byte, for both entry points, with a 300 KB prompt for `runSync`.
 Restoring the old `ClaudeOneShot.swift` fails it, plus the Straw Hat, Command Library AI, dictation cleanup and Whiteboard suites.
+
+## The launch path: PERF-01, PERF-02 and PERF-08 (2026-10 end-to-end review)
+
+The review's section 3.6 found three launch-path costs on main.
+None of them was measured here: the brief forbids launching or sampling the captain's app, so every claim below is about work done, not time saved.
+`LaunchSignposts.swift` puts a named `os_signpost` interval on each step of the launch path (each store `AppDelegate` builds, `AppShellController.init` and `loadView`, the stores the shell builds, and `restoreSessionIfNeeded`), and `native/MANUAL-CHECKS.md` section 19 is the Instruments session that turns them into a baseline.
+
+**PERF-02, git syncs started per store.**
+Every git-synced store starts its sync from its own `init`, the syncs are `.shared` singletons, and none of the seven had an "already started" guard.
+`ShiftGitSync.start()` guarded only its pull timer, so each call still queued a working-tree check and a full launch `pullNow()`.
+At launch that was five `DocsRunbookStore`s and two `LogAnalyzerStore`s, plus the other stores that start `ShiftGitSync`, all serialised on the one shared git queue.
+`GitSyncStartGate` makes `start()` do its launch work once per instance in all seven syncs.
+The shell also passes the app delegate's `DocsRunbookStore` and one `LogAnalyzerStore` to the Log Analyzer, Runbooks, Postmortems and the canvas, rather than each building its own.
+
+**PERF-01, every page constructed before the window.**
+GL-37 made destinations mount lazily, but every controller was still constructed in `AppShellController.init`.
+The 26 non-eager destinations are `lazy var`s now, and `DestinationSlot` holds a closure rather than a controller, so a page is constructed by its first `show(_:)`.
+Three things had to move with that:
+
+- Each page's wiring moved from `loadView` into its own lazy initialiser, because assigning a callback to a lazy property builds it.
+  `hostsPanel` and `settings` are autoclosure parameters, and the app delegate's wiring of those two moved into its own `wireHostsPanel`/`wireSettings`.
+- Every reach-in that does not navigate asks `isBuilt` first: the quit-time flushes (which still flush an unbuilt page's store, since ⌘K, captures and widget taps write to it directly), the per-navigation session capture, the dictation status fan-out, the Kubernetes feed-bridge busy check the console bridges make every tick, and the vault's lock and menu-bar readers.
+- The Sticky Board's store moved onto the shell, beside the Reading List's, so the canvas, ⌘K, the crew and the widgets never build a page to read its data.
+
+The three web views (`WhiteboardWebView`, and Code Preview's and the Notebook's `CodePreviewWebView`) are `lazy` too, so they are allocated by `loadView` rather than by the controller's construction.
+
+`ReadingListStore` and `StickyBoardStore` start empty when the shell builds them (`loadsInBackground: true`) and read their YAML through `HelmBackgroundReload`.
+The design point is that correctness never depends on that read winning a race.
+`links`/`notes`, `isInFailedLoadState` and the record counts load synchronously when read before the background read lands, and every write path reads them before changing anything.
+So an early reader pays for the read instead of seeing an empty list, and an early write adds to the file instead of replacing it.
+The Home canvas asks `isLoaded` and says "Reading your saved links…" / "Reading your notes…" until `whenLoaded` re-renders it, and the first-run hero waits for the board.
+A locked widget publish no longer reads the notes it does not carry, because the app launches locked.
+
+What stayed eager: `homeCanvas`, `overview`, `console` and `review`, for the reasons `DestinationRegistry.swift`'s header gives.
+The credential vault's store is still built at the first Home render, because the vault card reads its state; that is unchanged from before and was not in scope.
+
+**PERF-08, restored host pages built in one turn.**
+F2's restore called `connectHost(navigate: false)` for every restored host in the run-loop turn after the first frame.
+No page forks `ssh` before it appears, so the cost was building one `ConsoleController`, its views and a terminal per host back to back.
+The showing host is still connected straight away.
+The others queue in `AppShellController.queueRestoredHostConsoles`, which builds one page per main-queue turn.
+Each queued host gets its strip pill immediately, in plan order, so the strip and ⌘⌃1…9 read the same order as before.
+A host the captain switches to before its turn is built on the spot, and a queued host is still captured as open, ended cleanly and forgotten if it is deleted.
+
+**Verification.**
+`LaunchPathSelfTest` (pure logic, blocking CI lane) covers the signposts, the seven start gates, the two stores' first load (never read as empty, a write before the load keeps the file, the load lands off main and calls `whenLoaded` once) and the locked widget publish.
+`DestinationMountingSelfTest` covers the shell: one runbook store and one log store across the launch and three first visits, no lazy page constructed at launch, a first visit constructs exactly that page, the reach-ins build nothing, and the launch reads neither YAML file on the main thread.
+`SessionRestoreSelfTest` covers the restore queue.
+Each case was confirmed to fail with its fix reverted; the PR description lists the injections.

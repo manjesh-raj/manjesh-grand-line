@@ -3204,7 +3204,97 @@ final class AppShellController: NSViewController {
     /// `args` is the host's resolved `ssh` argv (`Host.sshArguments(allHosts:)`)
     /// - built by the caller, since this controller knows nothing about the
     /// host store, matching `onPresentHostEditor` above.
+    // MARK: Restored host pages, one per run-loop turn (PERF-08)
+    //
+    // **The 2026-10 end-to-end review's PERF-08.** F2's restore used to call
+    // `connectHost(navigate: false)` for every host that had a page, in one
+    // run-loop turn right after the first frame - one `ConsoleController`,
+    // its `loadView`, a `CockpitTerminalView` and a block tracker per host,
+    // back to back, while the captain is looking at a window that cannot
+    // respond yet. None of those pages forks `ssh` before it is opened
+    // (`ConsoleController.addTab`'s `hasAppeared` guard), so the cost was
+    // the construction itself.
+    //
+    // Now the showing host is connected straight away (the app delegate
+    // does that, with navigation), and the others queue here: one page is
+    // built per main-queue turn, so input and drawing get a turn between
+    // each. A host the captain switches to before its turn is built on the
+    // spot - `switchToSession`, the strip, Recents, ⌘⌃1…9 and the crew's
+    // handoff all go through `materializePendingRestoredHost`.
+    //
+    // Every queued host gets its strip pill immediately, in plan order, so
+    // the strip and the ⌘⌃ shortcuts read exactly what a one-turn restore
+    // produced (`HostSessionRegistry` is insertion-ordered, and the showing
+    // host still registers last).
+
+    /// Hosts whose restored page has not been built yet, oldest first.
+    private var pendingRestoredHosts: [(host: Host, args: [String])] = []
+    private var restoreTurnScheduled = false
+
+    /// How the next restore turn is scheduled - the next main-queue turn.
+    /// A suite swaps in a manual scheduler to step through the turns.
+    var restoreTurnScheduler: (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }
+
+    /// F2: queue `hosts`' pages to be rebuilt hidden, one per run-loop turn.
+    /// A host that already has a page (or is already queued) is skipped.
+    func queueRestoredHostConsoles(_ hosts: [(host: Host, args: [String])]) {
+        for entry in hosts where hostConsoles[entry.host.id] == nil
+            && !pendingRestoredHosts.contains(where: { $0.host.id == entry.host.id }) {
+            pendingRestoredHosts.append(entry)
+            // `.restored`, exactly what `connectHost` registers for a page
+            // that has not started anything - the page itself moves it.
+            registerSession(for: entry.host, state: .restored)
+        }
+        scheduleRestoreTurn()
+    }
+
+    private func scheduleRestoreTurn() {
+        guard !restoreTurnScheduled, !pendingRestoredHosts.isEmpty else { return }
+        restoreTurnScheduled = true
+        restoreTurnScheduler { [weak self] in
+            guard let self else { return }
+            self.restoreTurnScheduled = false
+            if let next = self.pendingRestoredHosts.first {
+                self.materializePendingRestoredHost(next.host.id)
+            }
+            self.scheduleRestoreTurn()
+        }
+    }
+
+    /// The registry's one registrar (`SessionSwitcherSelfTest` holds it to
+    /// one call site): `connectHost` for a page that exists, and the restore
+    /// queue for a page that will on its turn.
+    private func registerSession(for host: Host, state: HostSessionState) {
+        sessions.register(hostID: host.id, label: host.label, accentHex: host.accentHex, state: state)
+    }
+
+    /// Builds a queued host's page now, rather than on its turn. Returns
+    /// whether `id` was queued.
+    @discardableResult
+    private func materializePendingRestoredHost(_ id: UUID) -> Bool {
+        guard let index = pendingRestoredHosts.firstIndex(where: { $0.host.id == id }) else { return false }
+        let entry = pendingRestoredHosts.remove(at: index)
+        connectHost(entry.host, args: entry.args, navigate: false)
+        return true
+    }
+
+    /// Drops a queued host that will never be built - a host deleted, or a
+    /// session ended, before its turn.
+    @discardableResult
+    private func forgetPendingRestoredHost(_ id: UUID) -> Bool {
+        guard let index = pendingRestoredHosts.firstIndex(where: { $0.host.id == id }) else { return false }
+        pendingRestoredHosts.remove(at: index)
+        return true
+    }
+
+    #if FM_SELFTESTS
+    var pendingRestoredHostIDsForTests: [UUID] { pendingRestoredHosts.map(\.host.id) }
+    #endif
+
     func connectHost(_ host: Host, args: [String], navigate: Bool = true) {
+        // PERF-08: an explicit connect supersedes a queued restore of the
+        // same host, which would otherwise connect it a second time.
+        forgetPendingRestoredHost(host.id)
         let controller: ConsoleController
         if let existing = hostConsoles[host.id] {
             controller = existing
@@ -3258,8 +3348,7 @@ final class AppShellController: NSViewController {
         // layout pass later and for a restored (or lock-deferred) page is
         // whenever the captain actually opens it. `register` never downgrades
         // an already-live entry, so a re-reveal cannot blank a live pill.
-        sessions.register(hostID: host.id, label: host.label, accentHex: host.accentHex,
-                          state: controller.hasLiveSession ? .connected : .restored)
+        registerSession(for: host, state: controller.hasLiveSession ? .connected : .restored)
 
         // fm/grandline-notification-center: reassigned on every call (not
         // just the first) so a renamed host label is always current in the
@@ -3566,11 +3655,17 @@ final class AppShellController: NSViewController {
     }
 
     func removeHostConsole(id: UUID) {
-        guard let controller = hostConsoles.removeValue(forKey: id) else { return }
+        // PERF-08: a host still queued for restore has no page to tear down,
+        // only its strip entry - which the one `unregister` below removes.
+        let wasQueued = forgetPendingRestoredHost(id)
+        let controller = hostConsoles.removeValue(forKey: id)
+        guard controller != nil || wasQueued else { return }
         let wasActive = activeHostID == id
-        controller.shutdown()
-        controller.view.removeFromSuperview()
-        controller.removeFromParent()
+        if let controller {
+            controller.shutdown()
+            controller.view.removeFromSuperview()
+            controller.removeFromParent()
+        }
         // `fm/grandline-session-switcher`: this is the app's one teardown path
         // for a host page (a deleted host, or an explicit "end session"), so it
         // is where the registry stops claiming that host is live. Unregistering
@@ -3601,6 +3696,9 @@ final class AppShellController: NSViewController {
     /// A no-op for a host with no live session, so every caller can fire it
     /// against a possibly-stale id without checking first.
     func switchToSession(hostID: UUID) {
+        // PERF-08: a restored page still waiting for its turn is built now -
+        // a switch never waits for the queue.
+        materializePendingRestoredHost(hostID)
         guard let controller = hostConsoles[hostID],
               let session = sessions.session(for: hostID) else { return }
         revealHostConsole(controller, hostID: hostID, label: session.label)
@@ -3660,7 +3758,11 @@ final class AppShellController: NSViewController {
             // `Dictionary.keys` has no defined order, and without this the
             // save-only-when-changed check below would write on every
             // navigation regardless.
-            openHostIDs: hostConsoles.keys.map(\.uuidString).sorted(),
+            // PERF-08: a page still queued for restore is open too - this
+            // runs on every navigation, including the one restore itself
+            // makes before the queue has drained.
+            openHostIDs: (Array(hostConsoles.keys) + pendingRestoredHosts.map(\.host.id))
+                .map(\.uuidString).sorted(),
             consoleTabs: console.isViewLoaded ? console.restorableConsoleTabs() : [],
             // `isBuilt` first: this runs on every navigation, and asking an
             // unbuilt Tools page whether its view is loaded would build it.
@@ -4282,7 +4384,9 @@ final class AppShellController: NSViewController {
         // whole feature's honesty rules exist to prevent. A session can be in
         // the registry with no page behind it at all (`connectHost(navigate:
         // false)`, or an F2-restored entry), in which case `switchToSession`
-        // is a documented no-op and nothing moved.
+        // is a documented no-op and nothing moved. A page only queued for
+        // restore (PERF-08) is built first, so it is not one of those.
+        materializePendingRestoredHost(chosen.hostID)
         guard let controller = hostConsoles[chosen.hostID] else {
             show(.hosts)
             return "I couldn't reach \u{201C}\(chosen.label)\u{201D}'s page - open it from Hosts and ask me again."

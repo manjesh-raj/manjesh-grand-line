@@ -59,6 +59,9 @@ enum SessionRestoreSelfTest {
             ("aConsoleTheCaptainWorkedInIsLeftAlone", test_consoleWithRealWorkIsLeftAlone),
             ("toolTabsComeBackByKindAndName", test_toolTabs),
             ("hostPagesComeBackWithoutConnecting", test_lazyHostPages),
+            ("restoredHostPagesAreBuiltOnePerTurn", test_restoredHostPagesAreBuiltOnePerTurn),
+            ("aQueuedHostIsBuiltOnItsFirstSwitch", test_aQueuedHostIsBuiltOnItsFirstSwitch),
+            ("aQueuedHostIsCapturedAndCanBeForgotten", test_aQueuedHostIsCapturedAndCanBeForgotten),
             ("captureReadsWhateverIsActuallyOpen", test_capture),
             ("anEmptyOrAbsentStateChangesNothing", test_emptyState),
             ("aRestoredHostPageKnowsAboutItsActiveIncident", test_incidentReattachment),
@@ -573,6 +576,133 @@ enum SessionRestoreSelfTest {
             }
             guard shell.captureSessionState().openHostIDs == [host.id.uuidString] else {
                 return "the restored page was not captured as open"
+            }
+            return nil
+        }
+    }
+
+    // MARK: PERF-08 - restored host pages, one per run-loop turn
+
+    /// A manual stand-in for the main queue, so a case can step through the
+    /// restore one turn at a time.
+    private final class ManualTurns {
+        private(set) var pending: [() -> Void] = []
+        func schedule(_ work: @escaping () -> Void) { pending.append(work) }
+        /// Runs the turns scheduled so far, and only those.
+        func runOne() {
+            let turn = pending.removeFirst()
+            turn()
+        }
+    }
+
+    private static func hosts(_ labels: [String]) -> [(host: Host, args: [String])] {
+        labels.enumerated().map { index, label in
+            let host = Host(label: label, address: "198.51.100.\(index + 10)")
+            return (host, host.sshArguments(allHosts: [host]))
+        }
+    }
+
+    /// The review's PERF-08: five restored pages used to be built in the one
+    /// turn after the first frame. Now queueing builds none, and each turn
+    /// builds exactly one - while every pill is registered up front, in plan
+    /// order, so the strip and ⌘⌃1…9 read what a one-turn restore produced.
+    ///
+    /// Injection: queue the hosts by calling `connectHost` for each in a
+    /// loop (the old restore) and this sees five pages after zero turns.
+    private static func test_restoredHostPagesAreBuiltOnePerTurn() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeShell()
+            defer { window.contentViewController = nil }
+            let turns = ManualTurns()
+            shell.restoreTurnScheduler = turns.schedule
+            let queued = hosts(["one", "two", "three", "four", "five"])
+
+            shell.queueRestoredHostConsoles(queued)
+            let built = { queued.filter { shell.debugHostConsole(id: $0.host.id) != nil }.count }
+            guard built() == 0 else {
+                return "queueing five restored hosts built \(built()) page(s) in the same turn"
+            }
+            guard shell.sessions.sessions.map(\.hostID) == queued.map(\.host.id) else {
+                return "the strip's pills are not the queued hosts in plan order"
+            }
+            for expected in 1...5 {
+                guard turns.pending.count == 1 else {
+                    return "expected one scheduled turn before page \(expected), found \(turns.pending.count)"
+                }
+                turns.runOne()
+                guard built() == expected else {
+                    return "after \(expected) turn(s), \(built()) page(s) were built"
+                }
+            }
+            guard turns.pending.isEmpty else { return "the queue kept scheduling turns after it drained" }
+            // Still the restore's own safety property: no page started a tab.
+            for entry in queued {
+                guard shell.debugHostConsole(id: entry.host.id)?.tabs.first?.started == false else {
+                    return "a restored page built from the queue started its ssh"
+                }
+            }
+            return nil
+        }
+    }
+
+    /// The captain does not wait for the queue: switching to a host that is
+    /// still queued builds its page on the spot, and the queue then skips it.
+    private static func test_aQueuedHostIsBuiltOnItsFirstSwitch() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeShell()
+            defer { window.contentViewController = nil }
+            let turns = ManualTurns()
+            shell.restoreTurnScheduler = turns.schedule
+            let queued = hosts(["alpha", "bravo", "charlie"])
+            shell.queueRestoredHostConsoles(queued)
+
+            let last = queued[2].host.id
+            shell.switchToSession(hostID: last)
+            guard shell.debugHostConsole(id: last) != nil else {
+                return "switching to a queued host did not build its page"
+            }
+            guard shell.pendingRestoredHostIDsForTests == [queued[0].host.id, queued[1].host.id] else {
+                return "the switched-to host is still queued: \(shell.pendingRestoredHostIDsForTests)"
+            }
+            let page = shell.debugHostConsole(id: last)
+            while !turns.pending.isEmpty { turns.runOne() }
+            guard shell.debugHostConsole(id: last) === page else {
+                return "draining the queue rebuilt a page the switch had already built"
+            }
+            guard queued.allSatisfy({ shell.debugHostConsole(id: $0.host.id) != nil }) else {
+                return "the queue did not finish building the other pages"
+            }
+            return nil
+        }
+    }
+
+    /// A queued page is open for the next capture (saving runs on every
+    /// navigation, including the one restore itself makes), and a host
+    /// deleted before its turn leaves no pill and is never built.
+    private static func test_aQueuedHostIsCapturedAndCanBeForgotten() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeShell()
+            defer { window.contentViewController = nil }
+            let turns = ManualTurns()
+            shell.restoreTurnScheduler = turns.schedule
+            let queued = hosts(["kept", "deleted"])
+            shell.queueRestoredHostConsoles(queued)
+
+            let expected = queued.map(\.host.id.uuidString).sorted()
+            guard shell.captureSessionState().openHostIDs == expected else {
+                return "queued pages were not captured as open: \(shell.captureSessionState().openHostIDs)"
+            }
+            let deleted = queued[1].host.id
+            shell.removeHostConsole(id: deleted)
+            guard !shell.sessions.isLive(deleted) else {
+                return "a host removed before its turn kept its strip pill"
+            }
+            while !turns.pending.isEmpty { turns.runOne() }
+            guard shell.debugHostConsole(id: deleted) == nil else {
+                return "a host removed before its turn was still built"
+            }
+            guard shell.debugHostConsole(id: queued[0].host.id) != nil else {
+                return "removing one queued host dropped the other"
             }
             return nil
         }

@@ -33,6 +33,7 @@ enum LaunchPathSelfTest {
             ("aWriteBeforeTheFirstLoadKeepsTheFile", test_aWriteBeforeTheFirstLoadKeepsTheFile),
             ("theBackgroundFirstLoadLandsOffMain", test_theBackgroundFirstLoadLandsOffMain),
             ("aLockedWidgetPublishDoesNotReadTheBoard", test_aLockedWidgetPublishDoesNotReadTheBoard),
+            ("sessionRestoreQueuesBackgroundHostPages", test_sessionRestoreQueuesBackgroundHostPages),
         ]
         var failed = 0
         for (name, body) in cases {
@@ -325,6 +326,27 @@ enum LaunchPathSelfTest {
         }
         var onMain: Int { lock.lock(); defer { lock.unlock() }; return main }
         var offMain: Int { lock.lock(); defer { lock.unlock() }; return background }
+    }
+
+    // MARK: PERF-08 - the app delegate's half
+
+    /// `SessionRestoreSelfTest` proves the shell's queue builds one page per
+    /// turn; this proves the launch path uses it. `applicationDidFinishLaunching`
+    /// cannot run in a suite, so it is a source guard on the function body.
+    private static func test_sessionRestoreQueuesBackgroundHostPages() -> String? {
+        guard let main = source("main.swift"),
+              let start = main.range(of: "private func restoreSessionIfNeeded(") else {
+            return "could not find restoreSessionIfNeeded in main.swift - the guard would silently pass"
+        }
+        let rest = main[start.upperBound...]
+        let body = String(rest.prefix(upTo: rest.range(of: "\n    }\n")?.lowerBound ?? rest.endIndex))
+        guard body.contains("appShell.queueRestoredHostConsoles(") else {
+            return "restoreSessionIfNeeded no longer queues the background host pages"
+        }
+        guard !body.contains("appShell.connectHost(") else {
+            return "restoreSessionIfNeeded connects background host pages directly again"
+        }
+        return nil
     }
 
     // MARK: T-14d - the signposts
