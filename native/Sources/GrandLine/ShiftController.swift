@@ -632,6 +632,13 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             self.applySyncPill()
         }
 
+        // REL-02: a pull applied while this page is open repaints it. The
+        // store fires its handlers for every local edit too, and this page
+        // already renders synchronously after its own edits, so the repaint
+        // is coalesced onto the next main-queue turn and skipped when a
+        // render has happened since.
+        store.observe { [weak self] in self?.scheduleRenderForStoreChange() }
+
         // REL-01: the first paint is the store, not the pre-render state.
         // `ShiftStore.init` already read every file synchronously, but the
         // only path to a render was `viewWillAppear`'s background reload -
@@ -1761,7 +1768,25 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     // MARK: Rendering
 
+    /// Set by a store change, cleared by any render - see `loadView`'s REL-02
+    /// note.
+    private var renderPendingForStoreChange = false
+
+    private func scheduleRenderForStoreChange() {
+        guard !renderPendingForStoreChange else { return }
+        renderPendingForStoreChange = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.renderPendingForStoreChange else { return }
+            self.renderPendingForStoreChange = false
+            // GL-24's spirit: a page nobody can see does not rebuild; its
+            // next `viewWillAppear` renders anyway.
+            guard self.isViewLoaded, self.view.window != nil, !self.view.isHiddenOrHasHiddenAncestor else { return }
+            self.render()
+        }
+    }
+
     private func render() {
+        renderPendingForStoreChange = false
         // §6.4: the greeting and the date line this used to write are gone
         // with the in-page hero - the drill header carries the destination's
         // name, and its subtitle carries these counts.
