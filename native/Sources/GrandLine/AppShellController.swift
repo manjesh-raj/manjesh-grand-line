@@ -492,6 +492,9 @@ final class AppShellController: NSViewController {
         scheduleStore: ScheduleStore,
         makeHostConsole: @escaping () -> ConsoleController
     ) {
+        // T-14d: the launch interval Instruments reads, ended as the last
+        // line of this initialiser - see `LaunchSignposts.swift`.
+        let initInterval = LaunchSignposts.begin("AppShellController.init")
         self.hostsPanel = hostsPanel
         self.console = console
         self.settings = settings
@@ -567,21 +570,21 @@ final class AppShellController: NSViewController {
         // this page, not two. Neither caches, so two would not diverge the way
         // the two `CommandLibraryStore`s once did - but one is still the
         // cheaper and more obviously-correct answer.
-        let codePreviewStore = CodePreviewStore()
+        let codePreviewStore = LaunchSignposts.measure("CodePreviewStore.init") { CodePreviewStore() }
         self.codePreviewStore = codePreviewStore
         self.codePreview = CodePreviewController(store: codePreviewStore)
         // GL-23's lesson again: **one** `NotebookStore`, shared by the page
         // and the canvas card. It re-reads its own git-synced folder per call
         // rather than caching, so two would not diverge - one is still the
         // cheaper and more obviously-correct answer.
-        let notebookStore = NotebookStore()
+        let notebookStore = LaunchSignposts.measure("NotebookStore.init") { NotebookStore() }
         self.notebookStore = notebookStore
         self.notebook = NotebookController(store: notebookStore)
         // GL-23 again: **one** `ReadingListStore`, shared by the page, the
         // canvas card, ⌘K's provider and ⌥Space's filer. This one caches its
         // decoded array, so a second instance would genuinely be a second
         // source of truth racing the first's writes.
-        let readingListStore = ReadingListStore()
+        let readingListStore = LaunchSignposts.measure("ReadingListStore.init") { ReadingListStore() }
         self.readingListStore = readingListStore
         self.readingList = ReadingListController(store: readingListStore)
         self.homeCanvas = HomeCanvasController(sources: .init(
@@ -617,11 +620,16 @@ final class AppShellController: NSViewController {
         // the daily review's only home.
         dailyOverview.attachDailyReviewSources(stickyBoardStore: stickyBoard.store,
                                                readingListStore: readingListStore)
+        LaunchSignposts.end("AppShellController.init", initInterval)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func loadView() {
+        // T-14d: everything below, including the eager destinations' own
+        // `loadView`s (`mounter.mountEagerSlots()`), is one launch interval.
+        let loadViewInterval = LaunchSignposts.begin("AppShellController.loadView")
+        defer { LaunchSignposts.end("AppShellController.loadView", loadViewInterval) }
         // A1: a `ChromeFusionRootView` rather than a plain `NSView`, purely
         // for its `layout()` hook - AppKit resets the traffic lights' frames
         // on every layout pass, so the reposition has to ride that same

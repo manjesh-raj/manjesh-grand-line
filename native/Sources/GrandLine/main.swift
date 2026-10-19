@@ -19,20 +19,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var fullScreenMenuBarFill: FullScreenMenuBarFill?
     // Phase 1: saved SSH hosts + the panel that lists and connects them. The
     // panel hands a `ssh` argv to the console, which opens it as a new tab.
-    let hostStore = HostStore()
+    let hostStore = LaunchSignposts.measure("HostStore.init") { HostStore() }
     // Phase 2: the saved-keys Keychain. The console resolves a host's chosen
     // key through it at connect time; the Keys window (below) is where the
     // captain generates/imports/browses them.
-    let keyStore = SSHKeyStore()
+    let keyStore = LaunchSignposts.measure("SSHKeyStore.init") { SSHKeyStore() }
     // Phase 3: the saved-command library (B2/B5). The console resolves a
     // host's startup snippet through it at connect time, and the Snippets
     // window's "Run" sends a snippet straight to the active tab.
-    let snippetStore = SnippetStore()
+    let snippetStore = LaunchSignposts.measure("SnippetStore.init") { SnippetStore() }
     // Phase 5 (cockpit-shift-power-features): one `ShiftStore` shared by the
     // main window's Shift page, the menu bar item, the search palette, and
     // quick capture - all read/write the same tasks/follow-ups, never
     // separate store instances that could drift out of sync with each other.
-    let shiftStore = ShiftStore()
+    let shiftStore = LaunchSignposts.measure("ShiftStore.init") { ShiftStore() }
     lazy var console = ConsoleController(keyStore: keyStore, snippetStore: snippetStore)
     // Phase 5 of the full-app UI audit merged the Hosts destination and the
     // two floating SSH Keys / Snippets windows into one destination with
@@ -76,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // instance costs nothing and caches nothing that could drift - the same
     // reasoning `UpdatesController`/`BootstrapController` already use for
     // their own independent copies of one underlying check (see AGENTS.md).
-    let docsRunbookStore = DocsRunbookStore()
+    let docsRunbookStore = LaunchSignposts.measure("DocsRunbookStore.init") { DocsRunbookStore() }
     lazy var unifiedSearch = UnifiedSearchController(index: buildUnifiedSearchIndex())
 
     /// UX1's all-destinations map. Lazy, like the search palette beside it -
@@ -168,19 +168,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // personal vocabulary, shared by the Dictation page and the engine
     // (vocabulary bias, history recording) - same "one store, every reader/
     // writer shares it" convention as `shiftStore`.
-    let dictationStore = DictationStore()
+    let dictationStore = LaunchSignposts.measure("DictationStore.init") { DictationStore() }
     // GL-23: one command library for the whole app. The Tasks page's DevOps
     // Commands tab and the Log Analyzer's "from your library" matching both
     // read and write it; two caching instances diverged in-session and
     // last-writer-wins on `recent.yaml`. Same one-store convention as
     // `shiftStore` and `dictationStore` above.
-    let commandLibraryStore = CommandLibraryStore()
+    let commandLibraryStore = LaunchSignposts.measure("CommandLibraryStore.init") { CommandLibraryStore() }
     // F11: the schedules the Automation page's Schedules card manages and
     // `ScheduleRunner` reads. Same one-store convention as `shiftStore`,
     // `dictationStore` and `commandLibraryStore` above - the runner and the
     // card must see the same list, and two instances would be two writers to
     // the same JSON file.
-    let scheduleStore = ScheduleStore()
+    let scheduleStore = LaunchSignposts.measure("ScheduleStore.init") { ScheduleStore() }
     // fm/grandline-dictation-visual-feedback-hud: the floating on-screen HUD
     // - see DictationHUD.swift's header. Owned here (not by `AppShellController`)
     // since it must appear regardless of whether Grand Line's own window is
@@ -940,6 +940,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// defers.
     private func restoreSessionIfNeeded(_ saved: SessionRestoreState?) {
         guard let state = saved, !state.isEmpty else { return }
+        // T-14d: the first-frame-to-idle interval PERF-08 is measured by.
+        let interval = LaunchSignposts.begin("restoreSessionIfNeeded")
+        defer { LaunchSignposts.end("restoreSessionIfNeeded", interval) }
 
         appShell.restoreTabs(from: state)
 
@@ -3539,6 +3542,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_TESTS"] == "1" {
 // and a revisit reuses it. See DestinationMountingSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_DESTINATION_MOUNTING_TESTS"] == "1" {
     exit(DestinationMountingSelfTest.run() ? 0 : 1)
+}
+
+// The launch-path half of the 2026-10 end-to-end review's performance
+// findings (PERF-01, PERF-02, PERF-08 and T-14d's signposts). Pure logic. See
+// LaunchPathSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_LAUNCH_PATH_TESTS"] == "1" {
+    exit(LaunchPathSelfTest.run() ? 0 : 1)
 }
 
 // fm/grandline-app-lock: same convention, for `AppLockController`'s idle/
