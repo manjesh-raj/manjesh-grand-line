@@ -398,23 +398,89 @@ final class CredentialVaultStore {
 
     /// Create a brand-new vault. Refuses if one already exists, so this can
     /// never be the call that destroys real credentials.
+    ///
+    /// **The same split `changeMasterPassword` uses, for the same defect**
+    /// (REL-20 of the 2026-10 end-to-end review). The controller used to run
+    /// a synchronous `createVault` whole on `DispatchQueue.global`, so the
+    /// state mutation, `persist()`, the `loadState()` memo and `onChange?()`
+    /// - which is `CredentialVaultController.render()`, a full AppKit view
+    /// rebuild - all ran on a background thread, racing the auto-lock timer
+    /// that mutates the same fields on main. Only the derivation and the
+    /// seals happen off-main now (pure functions of the password and a fresh
+    /// salt), and every mutation happens back on main in `finishCreateVault`.
+    ///
+    /// The completion is always delivered on the main thread.
+    func createVault(masterPassword: String, completion: @escaping (Result<Void, Error>) -> Void) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard case .absent = loadState() else {
+            completion(.failure(CredentialVaultStoreError.vaultAlreadyExists))
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let derived = Result { try Self.deriveNewVault(masterPassword: masterPassword) }
+            DispatchQueue.main.async {
+                guard let self else {
+                    completion(.failure(CredentialVaultStoreError.locked))
+                    return
+                }
+                completion(self.finishCreateVault(derived))
+            }
+        }
+    }
+
+    #if FM_SELFTESTS
+    /// The suites' synchronous create: the same two halves, run back to back
+    /// on main. Debug builds only, so no production caller can reach a
+    /// create that derives on the main thread.
     @discardableResult
     func createVault(masterPassword: String) -> Result<Void, Error> {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard case .absent = loadState() else {
+            return .failure(CredentialVaultStoreError.vaultAlreadyExists)
+        }
+        return finishCreateVault(Result { try Self.deriveNewVault(masterPassword: masterPassword) })
+    }
+    #endif
+
+    /// What the background half of a create produced. A value type holding
+    /// nothing but pure outputs, so the hop back to main hands over no shared
+    /// state.
+    private struct DerivedNewVault {
+        let key: CredentialVaultKey
+        let file: CredentialVaultFile
+    }
+
+    /// The background half: the derivation, the verifier and the two empty
+    /// seals. Touches nothing on `self`.
+    private static func deriveNewVault(masterPassword: String) throws -> DerivedNewVault {
+        let salt = CredentialVaultCrypto.newSalt()
+        let key = try CredentialVaultCrypto.deriveKey(password: masterPassword, salt: salt)
+        let newFile = CredentialVaultFile(
+            kdf: .init(salt: salt),
+            verifier: try CredentialVaultCrypto.makeVerifier(key),
+            items: [],
+            auditLog: try CredentialVaultCrypto.seal([VaultAuditEvent](), vaultKey: key, purpose: auditPurpose),
+            settings: try CredentialVaultCrypto.seal(VaultSettings.default, vaultKey: key, purpose: settingsPurpose)
+        )
+        return DerivedNewVault(key: key, file: newFile)
+    }
+
+    /// The main-thread half of a create: every mutation, the write and
+    /// `onChange`. Re-checks that the vault is still absent, because a
+    /// restore or a git pull can land a vault file during the derivation.
+    private func finishCreateVault(_ derived: Result<DerivedNewVault, Error>) -> Result<Void, Error> {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let created: DerivedNewVault
+        switch derived {
+        case .failure(let error): return .failure(error)
+        case .success(let value): created = value
+        }
         guard case .absent = loadState() else {
             return .failure(CredentialVaultStoreError.vaultAlreadyExists)
         }
         do {
-            let salt = CredentialVaultCrypto.newSalt()
-            let key = try CredentialVaultCrypto.deriveKey(password: masterPassword, salt: salt)
-            let newFile = CredentialVaultFile(
-                kdf: .init(salt: salt),
-                verifier: try CredentialVaultCrypto.makeVerifier(key),
-                items: [],
-                auditLog: try CredentialVaultCrypto.seal([VaultAuditEvent](), vaultKey: key, purpose: Self.auditPurpose),
-                settings: try CredentialVaultCrypto.seal(VaultSettings.default, vaultKey: key, purpose: Self.settingsPurpose)
-            )
-            vaultKey = key
-            file = newFile
+            vaultKey = created.key
+            file = created.file
             credentials = []
             baseline = []
             auditLog = []
@@ -862,10 +928,9 @@ final class CredentialVaultStore {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.auditFlushDelay, execute: work)
     }
 
-    /// Write any pending audit-only state now. Test seam, and the hook a
-    /// future terminate-time flush would use - `lock()` covers the real app's
-    /// path today, since the vault is always locked before the key is
-    /// dropped.
+    /// Write any pending audit-only state now. `lock()` covers the path where
+    /// the key is dropped, and `flushForTermination` covers quit, which
+    /// drops the key without a lock (REL-23).
     func flushPendingAuditWritesNow() {
         guard pendingAuditFlush != nil, isUnlocked else { return }
         pendingAuditFlush?.cancel()
@@ -1407,8 +1472,15 @@ final class CredentialVaultStore {
         gitSync.markDirty()
     }
 
-    /// Quit-time flush, forwarded to the sync's bounded on-queue flush.
+    /// Quit-time flush: the batched reveal/copy bookkeeping first, then the
+    /// sync's bounded on-queue flush.
+    ///
+    /// REL-23: this used to flush git only. Audit-only writes wait
+    /// `auditFlushDelay` (20s) on a main-queue timer that never fires once
+    /// the process exits, so a quit inside that window lost the "last used"
+    /// timestamps of everything revealed or copied in it.
     func flushForTermination() {
+        flushPendingAuditWritesNow()
         gitSync?.flushForTerminationNow()
     }
 

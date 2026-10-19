@@ -36,6 +36,7 @@
 // asserts that every file in this directory carries it.
 #if FM_SELFTESTS
 
+import AppKit
 import Foundation
 import Yaml
 
@@ -67,6 +68,11 @@ enum StoreDurabilitySelfTest {
         aCorruptBackupOfASensitiveStoreIsOwnerOnly(scratch: scratch)
         aLoosenedSensitiveFileIsTightenedOnRead(scratch: scratch)
         s10PersonalStoresAreOwnerOnly(scratch: scratch)
+        rel21UnreadableFilesAreNeverOverwritten(scratch: scratch)
+        rel22ShiftRewritesKeepWhatTheyCannotRead(scratch: scratch)
+        rel22IncidentRewritesKeepWhatTheyCannotRead(scratch: scratch)
+        rel22NestedTypesDecodeWithoutEveryKey()
+        rel24FailedDeletesAndSavesAreReportedAndLoseNothing(scratch: scratch)
 
         print(failures.isEmpty
             ? "== PASS (store durability) =="
@@ -253,6 +259,516 @@ enum StoreDurabilitySelfTest {
             let afterRepair = (try? String(contentsOf: active, encoding: .utf8)) ?? ""
             check(afterRepair.contains("task-four"), "writes resume once the file parses again")
         }
+    }
+
+    // MARK: - REL-21: a file that cannot be read is not a missing file
+
+    /// REL-21 of the 2026-10 end-to-end review. Every store below used to
+    /// read a permission error, an I/O error or a non-UTF-8 byte as "no file
+    /// yet", start empty, and replace the file on its next write with no
+    /// backup. Each case makes a real file unreadable (or not UTF-8), writes
+    /// through the store, and then proves the original bytes are still on
+    /// disk and the refusal reached the captain.
+    private static func rel21UnreadableFilesAreNeverOverwritten(scratch: URL) {
+        print("- REL-21: an unreadable or non-UTF-8 store file is never overwritten")
+        let root = scratch.appendingPathComponent("rel21", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        PersistenceFailureReporter.resetForTests()
+
+        let sshKeys = root.appendingPathComponent("keys.json")
+        withUnreadableFile(sshKeys, bytes: Data(#"[{"label":"prod-ed25519"}]"#.utf8), label: "SSHKeyStore") {
+            withEnv(["FM_KEYS_FILE": sshKeys.path]) {
+                let store = SSHKeyStore()
+                check(store.loadStatus.unreadableReason != nil, "SSHKeyStore: the load says the file could not be read")
+                check(StoreLoadFailure.notice(for: store.loadStatus, what: "saved SSH keys") != nil,
+                      "SSHKeyStore: the launch notice reports it")
+                store.add(SSHKey(label: "new-key", type: .ed25519, publicKey: "ssh-ed25519 AAAA",
+                                 fingerprint: "SHA256:x", certificate: nil))
+            }
+        }
+        checkRefusalReported(sshKeys, label: "SSHKeyStore")
+
+        let snippets = root.appendingPathComponent("snippets.json")
+        withUnreadableFile(snippets, bytes: Data(#"[{"label":"attach"}]"#.utf8), label: "SnippetStore") {
+            withEnv(["FM_SNIPPETS_FILE": snippets.path]) {
+                let store = SnippetStore()
+                check(store.loadStatus.refusesWrites, "SnippetStore: the load refuses writes")
+                store.add(Snippet(label: "fresh", command: "echo hi"))
+            }
+        }
+        checkRefusalReported(snippets, label: "SnippetStore")
+
+        let schedules = root.appendingPathComponent("schedules.json")
+        withUnreadableFile(schedules, bytes: Data(#"[{"action":"driftCheck"}]"#.utf8), label: "ScheduleStore") {
+            withEnv(["FM_SCHEDULES_FILE": schedules.path]) {
+                let store = ScheduleStore()
+                check(store.loadStatus.refusesWrites, "ScheduleStore: the load refuses writes")
+                store.add(AutomationSchedule(action: .driftCheck, cadence: .daily(hour: 2, minute: 0)))
+            }
+        }
+        checkRefusalReported(schedules, label: "ScheduleStore")
+
+        let scratchpad = root.appendingPathComponent("scratchpad.json")
+        withUnreadableFile(scratchpad, bytes: Data(#"{"pad":{"text":"keep me"}}"#.utf8), label: "ScratchpadStore") {
+            let store = ScratchpadStore(fileURL: scratchpad)
+            check(store.loadStatus.refusesWrites, "ScratchpadStore: the load refuses writes")
+            store.save("overwrite attempt", for: "pad")
+        }
+        checkRefusalReported(scratchpad, label: "ScratchpadStore")
+
+        let dictationDir = root.appendingPathComponent("dictation", isDirectory: true)
+        let history = dictationDir.appendingPathComponent("history.json")
+        withUnreadableFile(history, bytes: Data(#"[{"text":"deploy the api"}]"#.utf8), label: "DictationStore") {
+            withEnv(["FM_DICTATION_DIR": dictationDir.path]) {
+                let store = DictationStore()
+                check(store.historyLoadStatus.refusesWrites, "DictationStore: the history load refuses writes")
+                store.recordHistory(text: "a brand new transcript", durationSeconds: 1, date: Date())
+            }
+        }
+        checkRefusalReported(history, label: "DictationStore")
+
+        let hosts = root.appendingPathComponent("hosts.json")
+        withUnreadableFile(hosts, bytes: Data(#"[{"label":"Prod bastion"}]"#.utf8), label: "HostStore") {
+            withEnv(["FM_HOSTS_FILE": hosts.path]) {
+                let store = HostStore()
+                check(store.loadStatus.refusesWrites, "HostStore: the load refuses writes")
+                store.add(Host(label: "Dev bastion", address: "dev.example.invalid"))
+            }
+        }
+        checkRefusalReported(hosts, label: "HostStore")
+
+        let sessionRestore = root.appendingPathComponent("session-restore.json")
+        withUnreadableFile(sessionRestore, bytes: Data(#"{"destination":"vault"}"#.utf8), label: "SessionRestoreStore") {
+            withEnv(["FM_SESSION_RESTORE_FILE": sessionRestore.path]) {
+                let defaults = UserDefaults(suiteName: "fm-rel21-\(UUID().uuidString)") ?? AppDefaults.store
+                check(SessionRestoreStore.load(defaults: defaults) == nil, "SessionRestoreStore: an unreadable file loads as nothing")
+                check(SessionRestoreStore.lastLoadStatus(for: sessionRestore).refusesWrites,
+                      "SessionRestoreStore: the load refuses writes")
+                let state = SessionRestoreState(destination: RailDestination.vault.rawValue, consoleTabs: [])
+                check(!SessionRestoreStore.save(state), "SessionRestoreStore: save reports that nothing was written")
+                check(!SessionRestoreStore.save(nil), "SessionRestoreStore: clearing does not delete the file either")
+            }
+        }
+        checkRefusalReported(sessionRestore, label: "SessionRestoreStore")
+
+        let clipboard = root.appendingPathComponent("clipboard-history.sealed")
+        withUnreadableFile(clipboard, bytes: Data([0x01, 0x02, 0x03, 0x04]), label: "ClipboardHistoryStore") {
+            guard let key = ClipboardHistoryKey.ephemeralKey() else {
+                check(false, "ClipboardHistoryStore: a throwaway key could be built")
+                return
+            }
+            let store = ClipboardHistoryStore(fileURL: clipboard, key: key)
+            check(store.loadFailed, "ClipboardHistoryStore: the picker is told the load failed")
+            check(store.loadStatus.refusesWrites, "ClipboardHistoryStore: the load refuses writes")
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name("grandline-rel21-\(UUID().uuidString)"))
+            pasteboard.clearContents()
+            pasteboard.setString("a fresh copy", forType: .string)
+            store.record(from: pasteboard)
+            store.flush()
+            pasteboard.releaseGlobally()
+        }
+        checkRefusalReported(clipboard, label: "ClipboardHistoryStore")
+
+        // The clipboard's other GL-01 path: a sealed file this key cannot open
+        // is moved aside, and that move was a `try?` followed by a log line
+        // saying a copy was kept. A directory that refuses the rename leaves
+        // the file in place with no copy anywhere, so no write may replace it.
+        let lockedDir = root.appendingPathComponent("clipboard-locked", isDirectory: true)
+        let sealed = lockedDir.appendingPathComponent("clipboard-history.sealed")
+        try? FileManager.default.createDirectory(at: lockedDir, withIntermediateDirectories: true)
+        try? Data(repeating: 0x5A, count: 64).write(to: sealed)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: lockedDir.path)
+        if let key = ClipboardHistoryKey.ephemeralKey() {
+            let store = ClipboardHistoryStore(fileURL: sealed, key: key)
+            check(store.loadStatus.unpreserved,
+                  "ClipboardHistoryStore: a sealed file that could not be moved aside is marked as held nowhere else")
+            check(store.loadStatus.refusesWrites,
+                  "ClipboardHistoryStore: and no write may replace it")
+        } else {
+            check(false, "ClipboardHistoryStore: a throwaway key could be built")
+        }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: lockedDir.path)
+
+        // The YAML stores: a Latin-1 byte (the read fault that needs no
+        // permission change at all) and a permission error.
+        let shiftRoot = root.appendingPathComponent("shift", isDirectory: true)
+        let settings = shiftRoot.appendingPathComponent("settings.yaml")
+        let latin1Settings = SelfTestFaults.latin1YAML(key: "settings", id: "s")
+        try? FileManager.default.createDirectory(at: shiftRoot, withIntermediateDirectories: true)
+        try? latin1Settings.write(to: settings)
+        check(String(data: latin1Settings, encoding: .utf8) == nil, "ShiftStore: the fixture really is not UTF-8")
+        if case .parseFailed = ShiftYaml.readMappingChecked(path: settings.path) {
+            check(true, "ShiftYaml: a non-UTF-8 settings file reads as .parseFailed, not .missing")
+        } else {
+            check(false, "ShiftYaml: a non-UTF-8 settings file reads as .parseFailed, not .missing")
+        }
+        let active = shiftRoot.appendingPathComponent("tasks/active.yaml")
+        withUnreadableFile(active, bytes: Data("\"tasks\":\n  - \"id\": \"real\"\n".utf8), label: "ShiftStore active.yaml") {
+            withEnv(["FM_SHIFT_DIR": shiftRoot.path]) {
+                let store = ShiftStore()
+                check(store.isInFailedLoadState, "ShiftStore: an unreadable task list is a failed load")
+                var task = ShiftTask.fresh()
+                task.id = "written-after-the-failure"
+                task.title = "Must not land"
+                store.addTask(task)
+            }
+        }
+        check(SelfTestFaults.bytes(of: settings) == latin1Settings,
+              "ShiftStore: a non-UTF-8 settings.yaml is not replaced by defaults at load")
+
+        let readingRoot = root.appendingPathComponent("reading", isDirectory: true)
+        let links = readingRoot.appendingPathComponent("links.yaml")
+        let latin1Links = SelfTestFaults.latin1YAML(key: "links", id: "l1")
+        try? FileManager.default.createDirectory(at: readingRoot, withIntermediateDirectories: true)
+        try? latin1Links.write(to: links)
+        let reading = ReadingListStore(root: readingRoot)
+        check(reading.isInFailedLoadState, "ReadingListStore: a non-UTF-8 links file is a failed load")
+        reading.add("https://example.invalid/rel21")
+        reading.flush()
+        check(SelfTestFaults.bytes(of: links) == latin1Links, "ReadingListStore: the non-UTF-8 file still holds its bytes")
+
+        let stickyRoot = root.appendingPathComponent("sticky", isDirectory: true)
+        let notes = stickyRoot.appendingPathComponent("notes.yaml")
+        withUnreadableFile(notes, bytes: Data("\"notes\":\n  - \"id\": \"n1\"\n".utf8), label: "StickyBoardStore") {
+            let sticky = StickyBoardStore(root: stickyRoot)
+            check(sticky.isInFailedLoadState, "StickyBoardStore: an unreadable notes file is a failed load")
+            sticky.addNote(text: "must not land", color: .yellow, x: 0, y: 0, rotationDegrees: 0)
+            sticky.flushPendingWrite()
+        }
+
+        let commandsRoot = root.appendingPathComponent("commands", isDirectory: true)
+        let favorites = commandsRoot.appendingPathComponent("favorites.yaml")
+        let latin1Favorites = SelfTestFaults.latin1YAML(key: "favorites", id: "f1")
+        try? FileManager.default.createDirectory(at: commandsRoot, withIntermediateDirectories: true)
+        try? latin1Favorites.write(to: favorites)
+        let recent = commandsRoot.appendingPathComponent("recent.yaml")
+        withUnreadableFile(recent, bytes: Data("\"recent\":\n  - \"id\": \"r1\"\n".utf8), label: "CommandLibraryStore recent.yaml") {
+            withEnv(["FM_COMMAND_LIBRARY_DIR": commandsRoot.path]) {
+                let library = CommandLibraryStore()
+                let anyID = library.commands.first?.id ?? "seeded-command"
+                check(library.unwritablePaths.contains(favorites.path),
+                      "CommandLibraryStore: a non-UTF-8 favorites file keeps writes off it")
+                check(library.unwritablePaths.contains(recent.path),
+                      "CommandLibraryStore: an unreadable recent file keeps writes off it")
+                library.toggleFavorite(anyID)
+                library.recordUsage(anyID)
+            }
+        }
+        check(SelfTestFaults.bytes(of: favorites) == latin1Favorites,
+              "CommandLibraryStore: the non-UTF-8 favorites file still holds its bytes after a star")
+    }
+
+    // MARK: - REL-22: a rewrite keeps what this build cannot read
+
+    private static func yamlString(_ item: Yaml?, _ key: String) -> String? {
+        guard case .string(let value, _)? = item?.dictionary?[.string(key, quoted: .double)] else { return nil }
+        return value
+    }
+
+    private static func record(_ items: [Yaml], id: String) -> Yaml? {
+        items.first { yamlString($0, "id") == id }
+    }
+
+    /// REL-22: completing and reopening a task rewrote the completed-month
+    /// file and the activity log from decoded structs (dropping every unknown
+    /// key and every record without an id), and the active list dropped
+    /// whole records it could not decode on the next edit.
+    private static func rel22ShiftRewritesKeepWhatTheyCannotRead(scratch: URL) {
+        print("- REL-22: Shift's rewrites keep unknown keys and undecodable records")
+        let root = scratch.appendingPathComponent("rel22-shift", isDirectory: true)
+        let now = Date()
+        let month: String = {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM"
+            f.calendar = Calendar(identifier: .gregorian)
+            f.timeZone = TimeZone.current
+            return f.string(from: now)
+        }()
+        let active = root.appendingPathComponent("tasks/active.yaml")
+        let completed = root.appendingPathComponent("tasks/completed/\(month).yaml")
+        let activity = root.appendingPathComponent("activity/\(month).yaml")
+        for url in [active, completed, activity] {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
+        try? """
+        "tasks":
+          - "id": "task-a"
+            "title": "Finish me"
+            "status": "todo"
+            "priority": "normal"
+            "future_field": "a-extra"
+          - "title": "orphan active record"
+        """.write(to: active, atomically: true, encoding: .utf8)
+        try? """
+        "tasks":
+          - "id": "task-c"
+            "title": "Done earlier"
+            "status": "completed"
+            "priority": "normal"
+            "future_field": "c-extra"
+          - "title": "orphan completed record"
+        """.write(to: completed, atomically: true, encoding: .utf8)
+        try? """
+        "activity":
+          - "summary": "orphan activity record"
+        """.write(to: activity, atomically: true, encoding: .utf8)
+
+        withEnv(["FM_SHIFT_DIR": root.path]) {
+            let store = ShiftStore()
+            check(store.activeTasks.map(\.id) == ["task-a"], "REL-22: the fixture loads one decodable active task")
+            store.setTaskCompleted(id: "task-a", completed: true, now: now)
+
+            let activeAfter = ShiftYaml.readList(path: active.path, key: "tasks")
+            check(activeAfter.contains { yamlString($0, "title") == "orphan active record" },
+                  "REL-22: an active record this build cannot decode survives an edit to the list")
+            let completedAfter = ShiftYaml.readList(path: completed.path, key: "tasks")
+            check(yamlString(record(completedAfter, id: "task-c"), "future_field") == "c-extra",
+                  "REL-22: completing one task keeps another completed task's unknown key")
+            check(completedAfter.contains { yamlString($0, "title") == "orphan completed record" },
+                  "REL-22: completing one task keeps a completed record this build cannot decode")
+            check(yamlString(record(completedAfter, id: "task-a"), "future_field") == "a-extra",
+                  "REL-22: the completed task carries its own unknown key into the month file")
+            let activityAfter = ShiftYaml.readList(path: activity.path, key: "activity")
+            check(activityAfter.contains { yamlString($0, "summary") == "orphan activity record" },
+                  "REL-22: logging activity keeps an activity record this build cannot decode")
+            check(activityAfter.count == 2, "REL-22: the completion was logged next to it, got \(activityAfter.count)")
+
+            store.setTaskCompleted(id: "task-c", completed: false, now: now)
+            let reopened = ShiftYaml.readList(path: active.path, key: "tasks")
+            check(yamlString(record(reopened, id: "task-c"), "future_field") == "c-extra",
+                  "REL-22: a reopened task carries its unknown key back into the active list")
+            let completedFinal = ShiftYaml.readList(path: completed.path, key: "tasks")
+            check(record(completedFinal, id: "task-c") == nil, "REL-22: the reopened task left the month file")
+            check(completedFinal.contains { yamlString($0, "title") == "orphan completed record" },
+                  "REL-22: removing a task from the month file keeps the undecodable record")
+        }
+    }
+
+    /// REL-22: an incident timeline entry this build cannot decode (an
+    /// unknown `kind`) and a top-level key it does not write were lost on the
+    /// next append, because every write rewrites the file from the model.
+    private static func rel22IncidentRewritesKeepWhatTheyCannotRead(scratch: URL) {
+        print("- REL-22: an incident append keeps an unknown entry kind and an unknown key")
+        let root = scratch.appendingPathComponent("rel22-incidents", isDirectory: true)
+        let store = IncidentStore(root: root)
+        guard case .success(let incident) = store.start(title: "Disk full", hostID: "host-1", hostLabel: "prod") else {
+            check(false, "REL-22: the incident fixture starts")
+            return
+        }
+        let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL }.filter { $0.lastPathComponent == "incident.yaml" } ?? []
+        guard let file = files.first, var doc = ShiftYamlBridge.readMapping(path: file.path)?.dictionary else {
+            check(false, "REL-22: the incident file is on disk")
+            return
+        }
+        var future = YamlOrderedMap()
+        future[.string("id", quoted: .double)] = .string("future-entry", quoted: .double)
+        future[.string("at", quoted: .double)] = .string("2020-01-01T00:00:00Z", quoted: .double)
+        future[.string("kind", quoted: .double)] = .string("pagerAck", quoted: .double)
+        future[.string("title", quoted: .double)] = .string("Acknowledged in PagerDuty", quoted: .double)
+        doc[.string("timeline", quoted: .double)] = .array([.dictionary(future)])
+        doc[.string("future_key", quoted: .double)] = .string("kept", quoted: .double)
+        try? ShiftYamlBridge.writeMapping(path: file.path, doc: .dictionary(doc))
+        store.invalidateCache()
+
+        check(store.append(IncidentTimelineEntry(kind: .note, title: "Cleared /var/log"), to: incident.id),
+              "REL-22: the append succeeds")
+        let after = ShiftYamlBridge.readMapping(path: file.path)?.dictionary
+        let timeline = after?[.string("timeline", quoted: .double)]?.array ?? []
+        check(timeline.contains { yamlString($0, "id") == "future-entry" },
+              "REL-22: a timeline entry of a kind this build does not know survives an append")
+        check(timeline.contains { yamlString($0, "title") == "Cleared /var/log" }, "REL-22: the new entry is written too")
+        check(yamlString(timeline.first, "id") == "future-entry", "REL-22: the carried entry keeps its time order")
+        check(yamlString(after.map { .dictionary($0) }, "future_key") == "kept",
+              "REL-22: a top-level key this build does not write survives an append")
+    }
+
+    /// REL-22 / GL-01: four nested `Codable` types used synthesised decoders,
+    /// so one field added to any of them would make every existing file that
+    /// holds one undecodable as a whole - backed up and emptied.
+    private static func rel22NestedTypesDecodeWithoutEveryKey() {
+        print("- REL-22: nested Codable types decode a record that lacks a field")
+        let decoder = JSONDecoder()
+        let rule = try? decoder.decode(PortForwardRule.self, from: Data(#"{"kind":"local","listenPort":5432}"#.utf8))
+        check(rule?.listenPort == 5432 && rule?.destPort == 80,
+              "REL-22: a PortForwardRule without destHost/destPort/bindAddress/id decodes with defaults")
+
+        let isoDecoder = JSONDecoder()
+        isoDecoder.dateDecodingStrategy = .iso8601
+        let entry = try? isoDecoder.decode(DictationHistoryEntry.self,
+                                           from: Data(#"{"text":"deploy","date":"2026-01-01T00:00:00Z"}"#.utf8))
+        check(entry?.text == "deploy" && entry?.durationSeconds == 0,
+              "REL-22: a DictationHistoryEntry without id/durationSeconds decodes with defaults")
+
+        let explanation = try? decoder.decode(ScheduleFailureExplanation.self,
+                                              from: Data(#"{"whatFailed":"The backup did not push."}"#.utf8))
+        check(explanation?.whatFailed == "The backup did not push." && explanation?.whatToDo == "",
+              "REL-22: a ScheduleFailureExplanation without why/whatToDo decodes")
+
+        let cadence = try? decoder.decode(ScheduleCadence.self, from: Data(#"{"weekly":{"weekday":1,"hour":6}}"#.utf8))
+        check(cadence == .weekly(weekday: 1, hour: 6, minute: 0),
+              "REL-22: a ScheduleCadence payload without minute decodes, got \(String(describing: cadence))")
+
+        // The on-disk shape is unchanged, so a file this build writes still
+        // reads on the build before it.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let written = (try? encoder.encode(ScheduleCadence.daily(hour: 2, minute: 30))).flatMap { String(data: $0, encoding: .utf8) }
+        check(written == #"{"daily":{"hour":2,"minute":30}}"#,
+              "REL-22: a cadence still encodes in the synthesised shape, got \(String(describing: written))")
+        let roundTrip = try? decoder.decode(ScheduleCadence.self, from: Data((written ?? "").utf8))
+        check(roundTrip == .daily(hour: 2, minute: 30), "REL-22: and decodes back to itself")
+    }
+
+    // MARK: - REL-24: a failed delete or save is reported and loses nothing
+
+    private static func reported(_ path: String, containing what: String) -> Bool {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        return PersistenceFailureReporter.recent.contains { $0.path.hasPrefix(path) || $0.what.contains(what) }
+    }
+
+    /// Runs `body` with `directory` made read-only (so nothing inside it can
+    /// be removed or created), then restores it.
+    private static func withReadOnlyDirectory(_ directory: URL, _ body: () -> Void) {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.path)
+        body()
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
+    }
+
+    private static func rel24FailedDeletesAndSavesAreReportedAndLoseNothing(scratch: URL) {
+        print("- REL-24: failed deletes and saves are reported, and lose nothing")
+        let root = scratch.appendingPathComponent("rel24", isDirectory: true)
+        PersistenceFailureReporter.resetForTests()
+
+        // Log Analyzer: a re-save that cannot land must leave the saved copy.
+        let analyzerRoot = root.appendingPathComponent("log-analyzer", isDirectory: true)
+        withEnv(["FM_LOG_ANALYZER_DIR": analyzerRoot.path]) {
+            let store = LogAnalyzerStore()
+            let text = "ERROR disk full on /var/log"
+            var investigation = LogInvestigation(title: "Alpha outage")
+            investigation.evidence = [LogEvidenceItem(
+                label: "kubectl logs", origin: .terminal, text: text,
+                detection: LogAnalyzerController.buildLocalAnalysis(text: text, override: nil).detection,
+                redactionCount: 0)]
+            investigation.storage = .complete
+            guard let first = store.save(investigation) else {
+                check(false, "REL-24: the Log Analyzer fixture saves")
+                return
+            }
+            // A regular file where the renamed save's folder would go makes
+            // the write fail after the old code had already deleted the copy.
+            let blocked = first.deletingLastPathComponent()
+                .appendingPathComponent(first.lastPathComponent.replacingOccurrences(of: "alpha-outage", with: "beta-outage"))
+            check(blocked != first, "REL-24: the renamed save targets a different folder (the fixture is not vacuous)")
+            try? Data("not a folder".utf8).write(to: blocked)
+            investigation.title = "Beta outage"
+            check(store.save(investigation) == nil, "REL-24: a re-save that cannot land reports failure")
+            store.invalidateHistoryCache()
+            let kept = store.load(id: investigation.id)
+            check(kept?.title == "Alpha outage" && kept?.evidence.first?.text == text,
+                  "REL-24: the previously saved investigation survives a failed re-save, got \(String(describing: kept?.title))")
+            check(reported(blocked.path, containing: "Beta outage"), "REL-24: the failed re-save is reported")
+            try? FileManager.default.removeItem(at: blocked)
+
+            // A delete that cannot happen is reported, and the record stays.
+            // The folder itself is read-only, so `removeItem` fails on its
+            // first child rather than emptying it first.
+            PersistenceFailureReporter.resetForTests()
+            withReadOnlyDirectory(first) {
+                store.delete(id: investigation.id)
+            }
+            store.invalidateHistoryCache()
+            check(store.load(id: investigation.id) != nil, "REL-24: an investigation whose delete failed is still there")
+            check(reported(first.path, containing: "investigation"),
+                  "REL-24: the failed investigation delete is reported")
+        }
+
+        // Notebook, runbooks: a failed delete is reported.
+        PersistenceFailureReporter.resetForTests()
+        let notebookRoot = root.appendingPathComponent("notebook", isDirectory: true)
+        let notebook = NotebookStore(root: notebookRoot)
+        let page = notebook.createPage(title: "Kept page", content: "# Kept page\n")
+        withReadOnlyDirectory(notebookRoot) { notebook.deletePage(id: page.id) }
+        check(reported(notebookRoot.path, containing: "notebook page"), "REL-24: a failed notebook delete is reported")
+
+        PersistenceFailureReporter.resetForTests()
+        let runbooksRoot = root.appendingPathComponent("runbooks", isDirectory: true)
+        withEnv(["FM_DOCS_RUNBOOKS_DIR": runbooksRoot.path]) {
+            let runbooks = DocsRunbookStore()
+            let runbook = runbooks.createRunbook(title: "Kept runbook", content: "# Kept runbook\n")
+            withReadOnlyDirectory(runbooksRoot) { runbooks.deleteRunbook(id: runbook.id) }
+            check(reported(runbooksRoot.path, containing: "runbook"), "REL-24: a failed runbook delete is reported")
+        }
+
+        // Command library: a move whose write fails keeps the old file, and a
+        // failed delete keeps the command and its favourite.
+        PersistenceFailureReporter.resetForTests()
+        let commandsRoot = root.appendingPathComponent("commands", isDirectory: true)
+        withEnv(["FM_COMMAND_LIBRARY_DIR": commandsRoot.path]) {
+            let library = CommandLibraryStore()
+            let command = library.createCommand(name: "Disk usage", description: "", category: "rel24-source",
+                                                subcategory: nil, commandTemplate: "df -h", parameters: [],
+                                                tags: [], risk: .readOnly)
+            library.toggleFavorite(command.id)
+            let sourceDir = commandsRoot.appendingPathComponent("rel24-source", isDirectory: true)
+            let targetDir = commandsRoot.appendingPathComponent("rel24-target", isDirectory: true)
+            try? FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
+            withReadOnlyDirectory(targetDir) {
+                _ = library.updateCommand(id: command.id, name: "Disk usage", description: "", category: "rel24-target",
+                                          subcategory: nil, commandTemplate: "df -h", parameters: [], tags: [], risk: .readOnly)
+            }
+            let oldFile = sourceDir.appendingPathComponent((command.id as NSString).lastPathComponent + ".yaml")
+            check(FileManager.default.fileExists(atPath: oldFile.path),
+                  "REL-24: a command move whose write failed keeps the original file")
+            check(library.command(id: command.id) != nil, "REL-24: and the command is still listed under its old id")
+
+            withReadOnlyDirectory(sourceDir) { library.deleteCommand(id: command.id) }
+            check(library.command(id: command.id) != nil, "REL-24: a command whose delete failed is still listed")
+            check(library.favoriteIDs.contains(command.id), "REL-24: and it keeps its favourite")
+            check(reported(sourceDir.path, containing: "command"), "REL-24: the failed command delete is reported")
+        }
+
+        // Tasks: a failed attachment removal is reported.
+        PersistenceFailureReporter.resetForTests()
+        let shiftRoot = root.appendingPathComponent("shift", isDirectory: true)
+        withEnv(["FM_SHIFT_DIR": shiftRoot.path]) {
+            let store = ShiftStore()
+            var task = ShiftTask.fresh()
+            task.id = "rel24-attached"
+            task.title = "Has a screenshot"
+            store.addTask(task, attachment: .set(Data([0x89, 0x50, 0x4E, 0x47])))
+            let attachments = shiftRoot.appendingPathComponent("attachments", isDirectory: true)
+            check(FileManager.default.fileExists(atPath: attachments.appendingPathComponent("rel24-attached.png").path),
+                  "REL-24: the attachment fixture is on disk")
+            withReadOnlyDirectory(attachments) { _ = store.deleteTask(id: "rel24-attached") }
+            check(reported(attachments.path, containing: "task attachment"), "REL-24: a failed attachment removal is reported")
+        }
+    }
+
+    /// Writes `bytes` to `file`, makes it unreadable, runs `body`, then
+    /// restores it and proves the bytes are the original ones.
+    private static func withUnreadableFile(_ file: URL, bytes: Data, label: String, _ body: () -> Void) {
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? bytes.write(to: file)
+        guard SelfTestFaults.makeUnreadable(file) else {
+            SelfTestFaults.restoreReadable(file)
+            check(false, "\(label): the fault injection took (this process can no longer read the file)")
+            return
+        }
+        body()
+        SelfTestFaults.restoreReadable(file)
+        check(SelfTestFaults.bytes(of: file) == bytes,
+              "\(label): the unreadable file still holds its original bytes after a write through the store")
+    }
+
+    /// The refusal reached `PersistenceFailureReporter`, which is what the
+    /// Health card and the Notification Center read.
+    private static func checkRefusalReported(_ file: URL, label: String) {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        let reported = PersistenceFailureReporter.recent.contains {
+            $0.path == file.path && $0.reason.contains("left untouched")
+        }
+        check(reported, "\(label): the refused write is reported to the captain")
     }
 
     // MARK: - GL-21

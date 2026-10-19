@@ -332,6 +332,45 @@ final class ShiftGitSync {
         }
     }
 
+    /// How long the quit-time flush may hold the main thread, shared with
+    /// `DocsRunbookGitSync` because both run on this one queue. Short, for
+    /// the reason `ReadingListGitSync.terminateFlushBudget` gives: the local
+    /// write already landed, and the next launch's `pullNow()` finds the
+    /// uncommitted files and schedules the commit itself.
+    static let terminateFlushBudget: TimeInterval = 3.0
+
+    /// REL-23: run a pending debounced commit+push now, on `queue`, waiting
+    /// at most until `deadline`. Returns whether it finished in time.
+    ///
+    /// `markDirty()` schedules the commit `debounceInterval` (3s) after the
+    /// last write, on a queue that stops existing at quit, and nothing ever
+    /// flushed it - so a Tasks, Commands, Incident or Log Analyzer edit made
+    /// inside the window stayed uncommitted until the next edit, possibly on
+    /// the next launch. Only a pending commit is run: a quit with nothing
+    /// queued does not reach the network.
+    @discardableResult
+    func flushForTerminationNow(deadline: DispatchTime = .now() + ShiftGitSync.terminateFlushBudget) -> Bool {
+        let done = DispatchSemaphore(value: 0)
+        queue.async { [weak self] in
+            defer { done.signal() }
+            guard let self, let pending = self.pendingCommit else { return }
+            // Cancelled inside the queue block: `pendingCommit` is only ever
+            // touched on `queue`, so the item cannot be running concurrently.
+            pending.cancel()
+            self.pendingCommit = nil
+            _ = self.commitAndPushNow()
+        }
+        guard done.wait(timeout: deadline) == .success else {
+            AppLog.lifecycle.info("tasks repo: quit-time git flush still running - letting the app quit; the next launch commits")
+            return false
+        }
+        return true
+    }
+
+    #if FM_SELFTESTS
+    var hasPendingCommitForTests: Bool { queue.sync { pendingCommit != nil } }
+    #endif
+
     // MARK: Synchronous core (used directly by tests; wrapped above for
     // production callers so nothing here ever runs on the caller's thread)
 
@@ -375,8 +414,34 @@ final class ShiftGitSync {
                 setStatus(.failed("Could not clone \(remoteURL): \(clone.stderr.isEmpty ? "unknown error" : clone.stderr). Working locally offline."))
                 return false
             }
-            salvageRacedLocalWrites(from: workingTree.appendingPathComponent(Self.shiftSubpath), into: tempClone.appendingPathComponent(Self.shiftSubpath))
-            try? fm.removeItem(at: workingTree)
+            // REL-24: copy, verify, then remove. The salvage was a `try?` per
+            // file and the old tree was deleted either way, so a file that
+            // failed to copy was destroyed with it. When anything did not
+            // copy, the old tree is moved aside rather than deleted.
+            let salvaged = salvageRacedLocalWrites(from: workingTree.appendingPathComponent(Self.shiftSubpath),
+                                                   into: tempClone.appendingPathComponent(Self.shiftSubpath))
+            if fm.fileExists(atPath: workingTree.path) {
+                if salvaged {
+                    guard PersistenceFailureReporter.removeItem(at: workingTree, what: "the tasks folder replaced by a fresh clone") else {
+                        PersistenceFailureReporter.removeItem(at: tempClone, what: "an unused tasks clone")
+                        setStatus(.failed("Could not replace \(workingTree.path) with the fresh clone. Working locally offline."))
+                        return false
+                    }
+                } else {
+                    let keptAside = workingTree.deletingLastPathComponent()
+                        .appendingPathComponent("\(workingTree.lastPathComponent).unsalvaged-\(Int(Date().timeIntervalSince1970))", isDirectory: true)
+                    do {
+                        try fm.moveItem(at: workingTree, to: keptAside)
+                        AppLog.store.error("tasks clone: some local files could not be copied into the fresh clone - kept the old folder at \(keptAside.path, privacy: .public)")
+                    } catch {
+                        PersistenceFailureReporter.report(what: "local task files that could not be copied into the fresh clone",
+                                                          path: workingTree.path, error: error)
+                        PersistenceFailureReporter.removeItem(at: tempClone, what: "an unused tasks clone")
+                        setStatus(.failed("Could not copy local files into the fresh clone. Working locally offline."))
+                        return false
+                    }
+                }
+            }
             do {
                 try fm.moveItem(at: tempClone, to: workingTree)
             } catch {
@@ -401,7 +466,12 @@ final class ShiftGitSync {
     /// this walks every file rather than special-casing that one name, so it
     /// stays correct if that race window is ever hit with real task data in
     /// it too.
-    private func salvageRacedLocalWrites(from raced: URL, into cloned: URL) {
+    ///
+    /// Returns whether every file that needed copying was copied and reads
+    /// back byte-for-byte (REL-24). A copy that fails is reported, and the
+    /// caller then keeps the old folder rather than deleting it.
+    @discardableResult
+    private func salvageRacedLocalWrites(from raced: URL, into cloned: URL) -> Bool {
         let fm = FileManager.default
         // `enumerator(at:)` can hand back paths resolved through a symlinked
         // ancestor (e.g. macOS's own `/tmp` -> `/private/tmp`) even when
@@ -413,7 +483,9 @@ final class ShiftGitSync {
         // `privatesettings.yaml`). Resolving both sides through
         // `resolvingSymlinksInPath` first keeps them on the same footing.
         let racedResolved = (raced.path as NSString).resolvingSymlinksInPath
-        guard let enumerator = fm.enumerator(at: raced, includingPropertiesForKeys: [.isRegularFileKey]) else { return }
+        guard fm.fileExists(atPath: raced.path) else { return true }
+        guard let enumerator = fm.enumerator(at: raced, includingPropertiesForKeys: [.isRegularFileKey]) else { return false }
+        var allCopied = true
         for case let file as URL in enumerator {
             guard (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
             let fileResolved = (file.path as NSString).resolvingSymlinksInPath
@@ -421,9 +493,36 @@ final class ShiftGitSync {
             let relative = String(fileResolved.dropFirst(racedResolved.count + 1))
             let destination = cloned.appendingPathComponent(relative)
             guard !fm.fileExists(atPath: destination.path) else { continue }
-            try? fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? fm.copyItem(at: file, to: destination)
+            if !Self.copyVerified(file, to: destination, what: "local task file \(relative)") { allCopied = false }
         }
+        return allCopied
+    }
+
+    /// REL-24: one copy that is reported when it fails and read back before
+    /// it counts - what both migrations here need before they may remove or
+    /// move aside the original.
+    static func copyVerified(_ source: URL, to destination: URL, what: String) -> Bool {
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: source, to: destination)
+        } catch {
+            PersistenceFailureReporter.report(what: what, path: destination.path, error: error)
+            return false
+        }
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: source.path, isDirectory: &isDirectory) else { return false }
+        if isDirectory.boolValue {
+            return fm.contentsEqual(atPath: source.path, andPath: destination.path)
+        }
+        guard let original = try? Data(contentsOf: source),
+              let copied = try? Data(contentsOf: destination), original == copied else {
+            PersistenceFailureReporter.report(
+                what: what, path: destination.path,
+                error: CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "the copy does not match the original"]))
+            return false
+        }
+        return true
     }
 
     /// Migrates the *repo's own* layout from a top-level `personal-tasks/`
@@ -509,15 +608,27 @@ final class ShiftGitSync {
         let legacy = ShiftGitSync.legacyLocalRoot()
         guard fm.fileExists(atPath: legacy.appendingPathComponent("tasks/active.yaml").path) else { return }
         guard !fm.fileExists(atPath: dataRoot.appendingPathComponent("tasks/active.yaml").path) else { return }
+        // REL-24: every copy is checked, and the legacy folder is only moved
+        // aside once they all landed. It used to be moved aside after a run
+        // of `try?` copies, so a copy that failed left the data in a folder
+        // that the next launch no longer looks at, with nothing saying so.
+        var allCopied = true
         for entry in ["tasks", "follow-ups", "projects", "notes", "activity", "settings.yaml"] {
             let src = legacy.appendingPathComponent(entry)
             guard fm.fileExists(atPath: src.path) else { continue }
             let dst = dataRoot.appendingPathComponent(entry)
-            try? fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? fm.copyItem(at: src, to: dst)
+            if !Self.copyVerified(src, to: dst, what: "legacy task data (\(entry))") { allCopied = false }
+        }
+        guard allCopied else {
+            AppLog.store.error("legacy task data: not every file copied - leaving \(legacy.path, privacy: .public) in place")
+            return
         }
         let migratedMarker = legacy.deletingLastPathComponent().appendingPathComponent("shift.migrated-\(Int(Date().timeIntervalSince1970))")
-        try? fm.moveItem(at: legacy, to: migratedMarker)
+        do {
+            try fm.moveItem(at: legacy, to: migratedMarker)
+        } catch {
+            PersistenceFailureReporter.report(what: "the migrated legacy task folder", path: legacy.path, error: error)
+        }
     }
 
     /// `git add -A -- GrandLineDocs/personal-tasks && git commit && git push`,
@@ -623,7 +734,10 @@ final class ShiftGitSync {
         if originBehindOrEqual {
             // Nothing new to pull.
             if !uncommittedFiles().isEmpty {
-                setStatus(.localChanges)
+                // REL-23: schedule the commit, not just the pill. An edit
+                // left uncommitted by a quit used to sit here until the next
+                // edit - on this machine only, absent from the other one.
+                markDirty()
                 return .upToDate
             }
             // GL-13: only push when local genuinely has commits origin does
@@ -651,7 +765,8 @@ final class ShiftGitSync {
             return .failed(reason)
         }
         let dirty = !uncommittedFiles().isEmpty
-        setStatus(dirty ? .localChanges : .synced)
+        // REL-23: the same as above - uncommitted files get a commit.
+        if dirty { markDirty() } else { setStatus(.synced) }
         // B6: the files under `dataRoot` are not what they were a moment ago.
         // Whoever holds them in memory has to re-read them before the next
         // whole-file rewrite turns a fast-forward into a deletion.
@@ -815,10 +930,20 @@ final class ShiftGitSync {
                 return false
             }
         }
+        // REL-22: through each side's passthrough, so a key this build does
+        // not write survives the merge on every record, and a record this
+        // build cannot decode survives it at all.
+        let keptLocally = Set(choices.filter { $0.value == .keepLocal }.keys)
+        let taskItems = (set.preserved[.task] ?? ShiftConflictPreserved())
+            .items(finalTasks, localWins: keptLocally, toYaml: ShiftYaml.toYaml)
+        let followUpItems = (set.preserved[.followUp] ?? ShiftConflictPreserved())
+            .items(finalFollowUps, localWins: keptLocally, toYaml: ShiftYaml.toYaml)
+        let projectItems = (set.preserved[.project] ?? ShiftConflictPreserved())
+            .items(finalProjects, localWins: keptLocally, toYaml: ShiftYaml.toYaml)
         do {
-            try ShiftYaml.writeList(path: dataRoot.appendingPathComponent("tasks/active.yaml").path, key: "tasks", items: finalTasks.map(ShiftYaml.toYaml))
-            try ShiftYaml.writeList(path: dataRoot.appendingPathComponent("follow-ups/follow-ups.yaml").path, key: "follow_ups", items: finalFollowUps.map(ShiftYaml.toYaml))
-            try ShiftYaml.writeList(path: dataRoot.appendingPathComponent("projects/projects.yaml").path, key: "projects", items: finalProjects.map(ShiftYaml.toYaml))
+            try ShiftYaml.writeList(path: dataRoot.appendingPathComponent("tasks/active.yaml").path, key: "tasks", items: taskItems)
+            try ShiftYaml.writeList(path: dataRoot.appendingPathComponent("follow-ups/follow-ups.yaml").path, key: "follow_ups", items: followUpItems)
+            try ShiftYaml.writeList(path: dataRoot.appendingPathComponent("projects/projects.yaml").path, key: "projects", items: projectItems)
         } catch {
             _ = runGit(["merge", "--abort"], cwd: workingTree, authenticated: false)
             setStatus(.failed("Could not write resolved files: \(error)"))
@@ -908,49 +1033,77 @@ final class ShiftGitSync {
         var set = ShiftConflictSet()
 
         let taskPath = "\(Self.shiftSubpath)/tasks/active.yaml"
-        guard let baseTaskRecords = loadRecords(ref: base, path: taskPath, key: "tasks", parse: ShiftYaml.task),
-              let localTaskRecords = loadRecords(ref: "HEAD", path: taskPath, key: "tasks", parse: ShiftYaml.task),
-              let remoteTaskRecords = loadRecords(ref: "origin/\(branch)", path: taskPath, key: "tasks", parse: ShiftYaml.task)
+        guard let baseTasks = loadRecords(ref: base, path: taskPath, key: "tasks", parse: ShiftYaml.task),
+              let localTasks = loadRecords(ref: "HEAD", path: taskPath, key: "tasks", parse: ShiftYaml.task),
+              let remoteTasks = loadRecords(ref: "origin/\(branch)", path: taskPath, key: "tasks", parse: ShiftYaml.task)
         else { return nil }
         let taskMerge = ShiftThreeWayMerge.run(
             kind: .task,
-            base: baseTaskRecords,
-            local: localTaskRecords,
-            remote: remoteTaskRecords
+            base: baseTasks.records,
+            local: localTasks.records,
+            remote: remoteTasks.records
         )
         set.taskConflicts = taskMerge.conflicts
         set.resolvedTasks = taskMerge.resolved
+        set.preserved[.task] = Self.preserved(local: localTasks, remote: remoteTasks,
+                                              knownKeys: ShiftYaml.taskKnownKeys)
 
         let followUpPath = "\(Self.shiftSubpath)/follow-ups/follow-ups.yaml"
-        guard let baseFollowUpRecords = loadRecords(ref: base, path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp),
-              let localFollowUpRecords = loadRecords(ref: "HEAD", path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp),
-              let remoteFollowUpRecords = loadRecords(ref: "origin/\(branch)", path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp)
+        guard let baseFollowUps = loadRecords(ref: base, path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp),
+              let localFollowUps = loadRecords(ref: "HEAD", path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp),
+              let remoteFollowUps = loadRecords(ref: "origin/\(branch)", path: followUpPath, key: "follow_ups", parse: ShiftYaml.followUp)
         else { return nil }
         let followUpMerge = ShiftThreeWayMerge.run(
             kind: .followUp,
-            base: baseFollowUpRecords,
-            local: localFollowUpRecords,
-            remote: remoteFollowUpRecords
+            base: baseFollowUps.records,
+            local: localFollowUps.records,
+            remote: remoteFollowUps.records
         )
         set.followUpConflicts = followUpMerge.conflicts
         set.resolvedFollowUps = followUpMerge.resolved
+        set.preserved[.followUp] = Self.preserved(local: localFollowUps, remote: remoteFollowUps,
+                                                  knownKeys: ShiftYaml.followUpKnownKeys)
 
         let projectPath = "\(Self.shiftSubpath)/projects/projects.yaml"
-        guard let baseProjectRecords = loadRecords(ref: base, path: projectPath, key: "projects", parse: ShiftYaml.project),
-              let localProjectRecords = loadRecords(ref: "HEAD", path: projectPath, key: "projects", parse: ShiftYaml.project),
-              let remoteProjectRecords = loadRecords(ref: "origin/\(branch)", path: projectPath, key: "projects", parse: ShiftYaml.project)
+        guard let baseProjects = loadRecords(ref: base, path: projectPath, key: "projects", parse: ShiftYaml.project),
+              let localProjects = loadRecords(ref: "HEAD", path: projectPath, key: "projects", parse: ShiftYaml.project),
+              let remoteProjects = loadRecords(ref: "origin/\(branch)", path: projectPath, key: "projects", parse: ShiftYaml.project)
         else { return nil }
         let projectMerge = ShiftThreeWayMerge.run(
             kind: .project,
-            base: baseProjectRecords,
-            local: localProjectRecords,
-            remote: remoteProjectRecords
+            base: baseProjects.records,
+            local: localProjects.records,
+            remote: remoteProjects.records
         )
         set.projectConflicts = projectMerge.conflicts
         set.resolvedProjects = projectMerge.resolved
+        set.preserved[.project] = Self.preserved(local: localProjects, remote: remoteProjects,
+                                                 knownKeys: ShiftYaml.projectKnownKeys)
 
         set.autoMergeNotes = taskMerge.notes + followUpMerge.notes + projectMerge.notes
         return set
+    }
+
+    /// One revision of a list file: the records this build decodes, and the
+    /// raw items they came from.
+    private struct LoadedRecords<T> {
+        let records: [T]
+        let raw: [Yaml]
+        let parse: (Yaml) -> T?
+    }
+
+    /// REL-22: the unknown keys on each side, and the records neither side's
+    /// decoder accepts, deduplicated so a record both sides carry is written
+    /// once.
+    private static func preserved<T>(local: LoadedRecords<T>, remote: LoadedRecords<T>,
+                                     knownKeys: Set<String>) -> ShiftConflictPreserved {
+        var out = ShiftConflictPreserved()
+        out.local.capture(local.raw, knownKeys: knownKeys)
+        out.remote.capture(remote.raw, knownKeys: knownKeys)
+        for item in local.raw + remote.raw where local.parse(item) == nil {
+            if !out.unreadable.contains(item) { out.unreadable.append(item) }
+        }
+        return out
     }
 
     /// `git show <ref>:<path>`.
@@ -965,12 +1118,15 @@ final class ShiftGitSync {
     /// the captain's tasks as deleted remotely and pushed that deletion.
     /// GL-01 and GL-14, in the one place where the cost is the whole task
     /// list.
-    private func loadRecords<T>(ref: String, path: String, key: String, parse: (Yaml) -> T?) -> [T]? {
+    private func loadRecords<T>(ref: String, path: String, key: String,
+                                parse: @escaping (Yaml) -> T?) -> LoadedRecords<T>? {
         let result = runGit(["show", "\(ref):\(path)"], cwd: workingTree, authenticated: false)
         // A non-zero status here is "no such path at that revision", which
         // `git show` reports the same way for a genuinely absent file. Empty
         // output is an empty file.
-        guard result.status == 0, !result.stdout.isEmpty else { return [] }
+        guard result.status == 0, !result.stdout.isEmpty else {
+            return LoadedRecords(records: [], raw: [], parse: parse)
+        }
         guard let doc = try? Yaml.load(result.stdout) else {
             AppLog.store.error("Tasks: \(path, privacy: .public) at \(ref, privacy: .public) will not parse - refusing to treat it as empty")
             return nil
@@ -980,7 +1136,7 @@ final class ShiftGitSync {
             return nil
         }
         let arr = dictionary[.string(key, quoted: .double)]?.array ?? []
-        return arr.compactMap(parse)
+        return LoadedRecords(records: arr.compactMap(parse), raw: arr, parse: parse)
     }
 
     /// `git status --short -- GrandLineDocs/personal-tasks` lines - what decides whether

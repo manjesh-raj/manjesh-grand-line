@@ -495,7 +495,9 @@ final class NotebookStore {
 
     func deletePage(id: String) {
         guard let url = fileURL(for: id) else { return }
-        try? fm.removeItem(at: url)
+        // REL-24: reported, never a silent `try?` - a failed delete brings the
+        // page back on the next launch with nothing saying why.
+        guard PersistenceFailureReporter.removeItem(at: url, what: "notebook page \"\(id)\"") else { return }
         gitSync?.markDirty()
     }
 

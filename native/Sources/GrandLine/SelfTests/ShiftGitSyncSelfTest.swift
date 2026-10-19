@@ -444,6 +444,112 @@ enum ShiftGitSyncSelfTest {
             check(logAfterFailure.stdout.contains("file(s) updated"), "attachment push failure: the local commit should have succeeded even though the push failed")
         }
 
+        // MARK: REL-23. The quit-time flush runs a pending debounced commit
+        // now, and a launch-time pull that finds uncommitted files schedules
+        // the commit instead of only flipping the pill.
+
+        do {
+            let remote = makeBareRemote(name: "remote-rel23")
+            seedRemote(remote)
+            let wt = scratch.appendingPathComponent("wt-rel23", isDirectory: true)
+            // A debounce far longer than the test, so only the flush can commit.
+            let sync = ShiftGitSync(workingTree: wt, remoteURL: remote.path, debounceInterval: 600, periodicPullInterval: 999_999)
+            check(sync.ensureWorkingTreeNow(), "REL-23: the quit-flush fixture clones")
+            let before = commitCount(remote, gitDir: true)
+            writeTaskFile("tasks:\n  - id: quit-edit\n", to: sync.dataRoot.appendingPathComponent("tasks/active.yaml"))
+            sync.markDirty()
+            check(sync.hasPendingCommitForTests, "REL-23: the edit is waiting on the debounce (the fixture is not vacuous)")
+            check(sync.flushForTerminationNow(), "REL-23: the quit-time flush finishes inside its budget")
+            check(commitCount(remote, gitDir: true) == before + 1,
+                  "REL-23: the pending edit is committed and pushed at quit, before=\(before) after=\(commitCount(remote, gitDir: true))")
+            check(!sync.hasPendingCommitForTests, "REL-23: nothing is left pending after the flush")
+
+            // The next launch: a file left uncommitted (a quit that ran out
+            // of budget, or a crash) must be scheduled for commit by the pull.
+            writeTaskFile("tasks:\n  - id: left-by-a-crash\n", to: sync.dataRoot.appendingPathComponent("tasks/active.yaml"))
+            check(sync.pullNow() == .upToDate, "REL-23: the pull itself is a no-op")
+            check(sync.hasPendingCommitForTests,
+                  "REL-23: a pull that finds uncommitted files schedules their commit, not just the pill")
+            check(sync.flushForTerminationNow(), "REL-23: and that commit can be flushed too")
+        }
+
+        // MARK: REL-24. The clone swap copies, verifies, then removes: a local
+        // file that cannot be copied into the fresh clone keeps the old folder
+        // (moved aside) instead of being deleted with it.
+
+        do {
+            let remote = makeBareRemote(name: "remote-rel24-salvage")
+            seedRemote(remote)
+            let wt = scratch.appendingPathComponent("wt-rel24-salvage", isDirectory: true)
+            let raced = wt.appendingPathComponent("GrandLineDocs/personal-tasks/tasks/active.yaml")
+            writeTaskFile("tasks:\n  - id: written-before-the-clone\n", to: raced)
+            check(SelfTestFaults.makeUnreadable(raced), "REL-24: the raced local file is unreadable (the fault took)")
+            let sync = ShiftGitSync(workingTree: wt, remoteURL: remote.path, debounceInterval: 600, periodicPullInterval: 999_999)
+            _ = sync.ensureWorkingTreeNow()
+            let siblings = (try? fm.contentsOfDirectory(atPath: scratch.path)) ?? []
+            let keptAside = siblings.first { $0.hasPrefix("wt-rel24-salvage.unsalvaged-") }
+            check(keptAside != nil, "REL-24: a local file that could not be copied keeps the old folder, got \(siblings)")
+            if let keptAside {
+                let file = scratch.appendingPathComponent(keptAside)
+                    .appendingPathComponent("GrandLineDocs/personal-tasks/tasks/active.yaml")
+                SelfTestFaults.restoreReadable(file)
+                check((try? String(contentsOf: file, encoding: .utf8))?.contains("written-before-the-clone") == true,
+                      "REL-24: the kept folder still holds the file the copy could not take")
+            } else {
+                SelfTestFaults.restoreReadable(raced)
+            }
+            check(fm.fileExists(atPath: wt.appendingPathComponent(".git").path), "REL-24: the fresh clone is still in place")
+        }
+
+        // The legacy-data migration moves the old folder aside only once
+        // every copy landed. `legacyLocalRoot()` resolves through
+        // `AppPaths.dataRoot()`, so `FM_SCRATCH_ROOT` points it at scratch -
+        // and the case refuses to run unless it really did.
+        do {
+            let legacyRootDir = scratch.appendingPathComponent("rel24-scratch-root", isDirectory: true)
+            let previous = ProcessInfo.processInfo.environment[AppPaths.scratchRootVariable]
+            setenv(AppPaths.scratchRootVariable, legacyRootDir.path, 1)
+            defer {
+                if let previous { setenv(AppPaths.scratchRootVariable, previous, 1) } else { unsetenv(AppPaths.scratchRootVariable) }
+            }
+            let legacy = AppPaths.dataRoot().appendingPathComponent("shift", isDirectory: true)
+            if legacy.path.hasPrefix(scratch.path) {
+                writeTaskFile("tasks:\n  - id: legacy-task\n", to: legacy.appendingPathComponent("tasks/active.yaml"))
+                let settings = legacy.appendingPathComponent("settings.yaml")
+                writeTaskFile("theme: legacy\n", to: settings)
+                check(SelfTestFaults.makeUnreadable(settings), "REL-24: the legacy settings file is unreadable (the fault took)")
+                let remote = makeBareRemote(name: "remote-rel24-legacy")
+                seedRemote(remote)
+                let wt = scratch.appendingPathComponent("wt-rel24-legacy", isDirectory: true)
+                let sync = ShiftGitSync(workingTree: wt, remoteURL: remote.path, debounceInterval: 600,
+                                        periodicPullInterval: 999_999, migratesLegacyData: true)
+                _ = sync.ensureWorkingTreeNow()
+                SelfTestFaults.restoreReadable(settings)
+                check(fm.fileExists(atPath: settings.path),
+                      "REL-24: a legacy folder with a file that failed to copy is left in place, not moved aside")
+                let migrated = ((try? fm.contentsOfDirectory(atPath: legacy.deletingLastPathComponent().path)) ?? [])
+                    .filter { $0.hasPrefix("shift.migrated-") }
+                check(migrated.isEmpty, "REL-24: nothing was renamed to shift.migrated-*, got \(migrated)")
+            } else {
+                check(false, "REL-24: FM_SCRATCH_ROOT did not move the legacy root under scratch - refusing to touch \(legacy.path)")
+            }
+        }
+
+        // The terminate path calls both flushes on the shared queue. A source
+        // guard rather than a behaviour check, because `applicationWillTerminate`
+        // cannot run inside a suite; the behaviour is the case above.
+        if let dir = SelfTestSources.appSourceDirectory(),
+           let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8),
+           let start = main.range(of: "func applicationWillTerminate(") {
+            let body = String(main[start.lowerBound...].prefix(9000))
+            check(body.contains("ShiftGitSync.shared.flushForTerminationNow("),
+                  "REL-23: applicationWillTerminate flushes the tasks repo's pending commit")
+            check(body.contains("DocsRunbookGitSync.shared.flushForTerminationNow("),
+                  "REL-23: applicationWillTerminate flushes the runbooks' pending commit")
+        } else {
+            check(false, "REL-23: could not read main.swift - the terminate-path guard would silently pass")
+        }
+
         if !failures.isEmpty {
             for f in failures { FileHandle.standardError.write(Data(("FAIL: " + f + "\n").utf8)) }
         }

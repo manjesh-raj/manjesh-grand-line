@@ -11,8 +11,13 @@ final class SnippetStore {
 
     private(set) var snippets: [Snippet] = []
 
+    /// What `load()` found (GL-01 / REL-21). A file that could not be read
+    /// at all, or that failed to decode and could not be copied aside, keeps
+    /// every write off it - see `StoreLoadFailure.LoadStatus`.
+    private(set) var loadStatus = StoreLoadFailure.LoadStatus.clean
+
     /// Set when `load()` backed up an undecodable `snippets.json` (GL-01).
-    private(set) var loadFailureBackupPath: String?
+    var loadFailureBackupPath: String? { loadStatus.backupPath }
 
     /// Fired after any mutation so the snippets list can reload.
     var onChange: (() -> Void)?
@@ -40,7 +45,7 @@ final class SnippetStore {
 
     /// `~/Library/Application Support/GrandLine/snippets.json`,
     /// overridable via `FM_SNIPPETS_FILE` (handy for tests / a scratch set).
-    private static func storeURL() -> URL {
+    static func storeURL() -> URL {
         if let override = ProcessInfo.processInfo.environment["FM_SNIPPETS_FILE"], !override.isEmpty {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
         }
@@ -79,14 +84,17 @@ final class SnippetStore {
     /// GL-01: back an undecodable `snippets.json` up before the next
     /// `persist()` overwrites it - see `StoreLoadFailure`'s header.
     private func load() {
-        var backup: String?
         snippets = StoreLoadFailure.decodeJSON(
-            [Snippet].self, at: fileURL, label: "snippets.json", sensitive: true, didBackUp: &backup
+            [Snippet].self, at: fileURL, label: "snippets.json", sensitive: true, status: &loadStatus
         ) ?? []
-        loadFailureBackupPath = backup
     }
 
     private func persist() {
+        if StoreLoadFailure.refusesWrite(loadStatus, what: "snippets", url: fileURL) {
+            onChange?()
+            for observer in observers { observer() }
+            return
+        }
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

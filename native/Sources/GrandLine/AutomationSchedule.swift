@@ -294,6 +294,33 @@ enum ScheduleCadence: Codable, Equatable {
         }
     }
 
+    /// REL-22 / GL-01: the synthesised enum decoder, hand-written so every
+    /// payload field is `decodeIfPresent`. The shape on disk is unchanged -
+    /// `{"daily": {"hour": 2, "minute": 0}}`, which the synthesised encoder
+    /// still writes - but a payload field added later (or one a hand-edit
+    /// dropped) no longer makes the whole `schedules.json` undecodable.
+    /// Missing fields take the start of their range, and `normalized` clamps
+    /// anything out of it.
+    private enum CaseKeys: String, CodingKey { case daily, weekly }
+    private enum PayloadKeys: String, CodingKey { case weekday, hour, minute }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CaseKeys.self)
+        if c.contains(.daily) {
+            let p = try c.nestedContainer(keyedBy: PayloadKeys.self, forKey: .daily)
+            self = .daily(hour: try p.decodeIfPresent(Int.self, forKey: .hour) ?? 0,
+                          minute: try p.decodeIfPresent(Int.self, forKey: .minute) ?? 0)
+        } else if c.contains(.weekly) {
+            let p = try c.nestedContainer(keyedBy: PayloadKeys.self, forKey: .weekly)
+            self = .weekly(weekday: try p.decodeIfPresent(Int.self, forKey: .weekday) ?? 1,
+                           hour: try p.decodeIfPresent(Int.self, forKey: .hour) ?? 0,
+                           minute: try p.decodeIfPresent(Int.self, forKey: .minute) ?? 0)
+        } else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "a cadence is daily or weekly"))
+        }
+    }
+
     static let weekdayNames = ["", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
     /// "Nightly at 2:00 AM" / "Daily at 9:00 AM" / "Weekly, Sunday 6:00 AM" -
@@ -540,6 +567,17 @@ struct ScheduleFailureExplanation: Codable, Equatable {
         self.whatFailed = whatFailed
         self.why = why
         self.whatToDo = whatToDo
+    }
+
+    /// REL-22 / GL-01: `decodeIfPresent` for every field, so a field added
+    /// later cannot make an existing `schedules.json` undecodable as a whole.
+    private enum DecodingKeys: String, CodingKey { case whatFailed, why, whatToDo }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: DecodingKeys.self)
+        whatFailed = try c.decodeIfPresent(String.self, forKey: .whatFailed) ?? ""
+        why = try c.decodeIfPresent(String.self, forKey: .why) ?? ""
+        whatToDo = try c.decodeIfPresent(String.self, forKey: .whatToDo) ?? ""
     }
 }
 

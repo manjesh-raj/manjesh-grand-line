@@ -14,10 +14,15 @@ final class SSHKeyStore {
 
     private(set) var keys: [SSHKey] = []
 
+    /// What `load()` found (GL-01 / REL-21). A file that could not be read
+    /// at all, or that failed to decode and could not be copied aside, keeps
+    /// every write off it - see `StoreLoadFailure.LoadStatus`.
+    private(set) var loadStatus = StoreLoadFailure.LoadStatus.clean
+
     /// Set when `load()` found a `keys.json` it could not decode and copied it
     /// aside - mirrors `HostStore.loadFailureBackupPath` so the app delegate
     /// can warn about this the same way it already warns about hosts.
-    private(set) var loadFailureBackupPath: String?
+    var loadFailureBackupPath: String? { loadStatus.backupPath }
 
     /// Fired after any mutation so the keys list can reload.
     var onChange: (() -> Void)?
@@ -92,14 +97,16 @@ final class SSHKeyStore {
     /// `delete(id:)` can no longer clean them up because it no longer knows
     /// their ids exist.
     private func load() {
-        var backup: String?
         keys = StoreLoadFailure.decodeJSON(
-            [SSHKey].self, at: fileURL, label: "keys.json", sensitive: true, didBackUp: &backup
+            [SSHKey].self, at: fileURL, label: "keys.json", sensitive: true, status: &loadStatus
         ) ?? []
-        loadFailureBackupPath = backup
     }
 
     private func persist() {
+        if StoreLoadFailure.refusesWrite(loadStatus, what: "SSH key metadata", url: fileURL) {
+            onChange?()
+            return
+        }
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

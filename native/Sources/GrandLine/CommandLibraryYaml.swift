@@ -149,11 +149,34 @@ enum CommandLibraryYaml {
 
     // MARK: Favorites (commands/favorites.yaml - a flat `favorites: [id, ...]` list)
 
-    static func readFavorites(path: String) -> Set<String> {
-        guard let text = try? String(contentsOfFile: path, encoding: .utf8), !text.isEmpty else { return [] }
-        guard let doc = try? Yaml.load(text) else { return [] }
+    /// One read of `favorites.yaml` or `recent.yaml`. `failed` is set when
+    /// the file exists but could not be read, was not UTF-8, or would not
+    /// parse - REL-21: both readers returned an empty list for all of those,
+    /// and the next star or Copy rewrote the file from that empty list.
+    struct CheckedRead<T> {
+        let value: T
+        let failed: Bool
+    }
+
+    /// The parsed document, `.null` for a missing or empty file, or `nil`
+    /// when the file holds something this process cannot read.
+    private static func readDocumentChecked(path: String) -> Yaml? {
+        switch StoreLoadFailure.readText(URL(fileURLWithPath: path)) {
+        case .absent: return .null
+        case .unreadable: return nil
+        case .text(let text):
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .null }
+            // A document that parses to something other than a mapping is
+            // nothing the writers below produce - damage, not an empty list.
+            guard let doc = try? Yaml.load(text), doc.dictionary != nil else { return nil }
+            return doc
+        }
+    }
+
+    static func readFavorites(path: String) -> CheckedRead<Set<String>> {
+        guard let doc = readDocumentChecked(path: path) else { return CheckedRead(value: [], failed: true) }
         let ids = doc.dictionary?[str("favorites")]?.array ?? []
-        return Set(ids.compactMap { optString($0) })
+        return CheckedRead(value: Set(ids.compactMap { optString($0) }), failed: false)
     }
 
     static func writeFavorites(_ ids: Set<String>, path: String) throws {
@@ -175,16 +198,15 @@ enum CommandLibraryYaml {
         return f
     }()
 
-    static func readRecentUsage(path: String) -> [CommandLibraryUsageEntry] {
-        guard let text = try? String(contentsOfFile: path, encoding: .utf8), !text.isEmpty else { return [] }
-        guard let doc = try? Yaml.load(text) else { return [] }
+    static func readRecentUsage(path: String) -> CheckedRead<[CommandLibraryUsageEntry]> {
+        guard let doc = readDocumentChecked(path: path) else { return CheckedRead(value: [], failed: true) }
         let entries = doc.dictionary?[str("recent")]?.array ?? []
-        return entries.compactMap { entry -> CommandLibraryUsageEntry? in
+        return CheckedRead(value: entries.compactMap { entry -> CommandLibraryUsageEntry? in
             guard let dict = entry.dictionary, let id = optString(dict[str("id")] ?? .null) else { return nil }
             let usedAtString = reqString(dict[str("used_at")] ?? .null)
             let usedAt = usageDateFormatter.date(from: usedAtString) ?? ISO8601DateFormatter().date(from: usedAtString) ?? Date(timeIntervalSince1970: 0)
             return CommandLibraryUsageEntry(id: id, usedAt: usedAt)
-        }
+        }, failed: false)
     }
 
     static func writeRecentUsage(_ entries: [CommandLibraryUsageEntry], path: String) throws {

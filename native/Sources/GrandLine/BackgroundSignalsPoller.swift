@@ -577,6 +577,19 @@ final class BackgroundSignalsPoller {
     /// fields - this poller keeps its own throwaway copy of the same inputs
     /// those pages already gather, purely to call the identical
     /// `SetupStepChecks` predicates.
+    /// The saved host and snippet counts the "restore config" step reads.
+    ///
+    /// REL-29: counted from the files, never by building a store. This used
+    /// to construct a throwaway `HostStore()` and `SnippetStore()` on the
+    /// poller's background queue, and a store's load backs up a file it
+    /// cannot decode and tightens its mode - racing the live main-thread
+    /// store over the same `hosts.json`. A file that cannot be read counts as
+    /// nothing restored, which is what the live store shows for it too.
+    static func restoredConfigCounts() -> (hosts: Int, snippets: Int) {
+        (StoreLoadFailure.peekArrayCount(at: HostStore.storeURL()) ?? 0,
+         StoreLoadFailure.peekArrayCount(at: SnippetStore.storeURL()) ?? 0)
+    }
+
     private func checkSetupDrift(softwareStatuses: [DependencyStatus], gatheredAt: Date) {
         let firstmateHome = SetupStepChecks.firstmateHomeDone()
 
@@ -595,8 +608,7 @@ final class BackgroundSignalsPoller {
         let agentDone = SetupStepChecks.agentInstructionsDone(isLoading: false, items: agentItems)
         let softwareDone = SetupStepChecks.softwareDone(isLoading: false, statuses: softwareStatuses)
 
-        let hostCount = HostStore().hosts.count
-        let snippetCount = SnippetStore().snippets.count
+        let (hostCount, snippetCount) = Self.restoredConfigCounts()
         let restoreConfigDone = SetupStepChecks.restoreConfigDone(hostCount: hostCount, snippetCount: snippetCount)
 
         // Keyed by step exactly as both setup pages hold it, so the shared

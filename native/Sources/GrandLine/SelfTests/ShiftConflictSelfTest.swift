@@ -29,6 +29,7 @@
 #if FM_SELFTESTS
 
 import Foundation
+import Yaml
 
 enum ShiftConflictSelfTest {
     static func run() -> Bool {
@@ -517,6 +518,61 @@ enum ShiftConflictSelfTest {
             let afterwards = readTasks(syncB.dataRoot.appendingPathComponent("tasks/active.yaml"))
             check(afterwards.contains { $0.id == "base-task" } && afterwards.contains { $0.id == "b-only" },
                   "B6 garbage: B's own tasks must be untouched after the refusal, got \(afterwards.map(\.id))")
+        }
+
+        // MARK: REL-22. A resolved merge keeps the keys this build does not
+        // write, and the records it cannot decode, from either side. The
+        // rewrite used to serialise the final records from their structs, so
+        // every resolved merge dropped both from the whole file.
+
+        do {
+            let remote = makeBareRemote(name: "remote-rel22")
+            seedRemoteWithTask(remote, id: "shared-task", title: "Original title")
+            let wtA = scratch.appendingPathComponent("wt-rel22-a", isDirectory: true)
+            let syncA = ShiftGitSync(workingTree: wtA, remoteURL: remote.path, debounceInterval: 0.2, periodicPullInterval: 999_999)
+            check(syncA.ensureWorkingTreeNow(), "REL-22: machine A should clone successfully")
+            let wtB = scratch.appendingPathComponent("wt-rel22-b", isDirectory: true)
+            let syncB = ShiftGitSync(workingTree: wtB, remoteURL: remote.path, debounceInterval: 0.2, periodicPullInterval: 999_999)
+            check(syncB.ensureWorkingTreeNow(), "REL-22: machine B should clone successfully")
+
+            // A, a newer build: edits the title, adds a field this build does
+            // not know to the task, and adds a record this build cannot decode.
+            let aFile = syncA.dataRoot.appendingPathComponent("tasks/active.yaml")
+            try? """
+            "tasks":
+              - "id": "shared-task"
+                "title": "Title edited on A"
+                "status": "todo"
+                "priority": "normal"
+                "future_field": "kept from A"
+              - "title": "A record with no id"
+                "future_kind": "note"
+            """.write(to: aFile, atomically: true, encoding: .utf8)
+            _ = shell("/usr/bin/git", ["-C", wtA.path, "add", "-A", "--", "GrandLineDocs/personal-tasks"])
+            _ = shell("/usr/bin/git", ["-C", wtA.path, "-c", "user.email=test@example.com", "-c", "user.name=Shift Test", "commit", "-m", "A's edit"])
+            _ = shell("/usr/bin/git", ["-C", wtA.path, "push", "origin", "main"])
+
+            // B edits the same task's title, so the record conflicts.
+            let bFile = syncB.dataRoot.appendingPathComponent("tasks/active.yaml")
+            var bTasks = readTasks(bFile)
+            check(!bTasks.isEmpty, "REL-22: the fixture is vacuous unless B starts with the shared task")
+            if !bTasks.isEmpty { bTasks[0].title = "Title edited on B" }
+            try? writeTaskYaml(bTasks, to: bFile)
+            _ = shell("/usr/bin/git", ["-C", wtB.path, "add", "-A", "--", "GrandLineDocs/personal-tasks"])
+            _ = shell("/usr/bin/git", ["-C", wtB.path, "-c", "user.email=test@example.com", "-c", "user.name=Shift Test", "commit", "-m", "B's edit"])
+
+            check(syncB.pullNow() == .diverged, "REL-22: B's pull should diverge")
+            check(syncB.detectAndResolveConflicts() == .needsResolution, "REL-22: the title edit is a real conflict")
+            check(syncB.resolveConflicts(choices: ["shared-task": .keepLocal]), "REL-22: keeping B's side resolves")
+
+            let raw = ShiftYaml.readList(path: bFile.path, key: "tasks")
+            let shared = raw.first { $0.dictionary?[.string("id", quoted: .double)] == .string("shared-task", quoted: .double) }
+            check(readTasks(bFile).first { $0.id == "shared-task" }?.title == "Title edited on B",
+                  "REL-22: the captain's choice still decides the record's own fields")
+            check(shared?.dictionary?[.string("future_field", quoted: .double)] == .string("kept from A", quoted: .double),
+                  "REL-22: the other side's unknown key survives the resolved merge, got \(String(describing: shared))")
+            check(raw.contains { $0.dictionary?[.string("title", quoted: .double)] == .string("A record with no id", quoted: .double) },
+                  "REL-22: a record this build cannot decode survives the resolved merge")
         }
 
         return finish()

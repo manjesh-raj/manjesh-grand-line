@@ -64,8 +64,13 @@ final class ScratchpadStore {
 
     private(set) var pads: [String: ScratchpadDocument] = [:]
 
+    /// What `load()` found (GL-01 / REL-21). A file that could not be read
+    /// at all, or that failed to decode and could not be copied aside, keeps
+    /// every write off it - see `StoreLoadFailure.LoadStatus`.
+    private(set) var loadStatus = StoreLoadFailure.LoadStatus.clean
+
     /// Set when `load()` backed up an undecodable file (GL-01).
-    private(set) var loadFailureBackupPath: String?
+    var loadFailureBackupPath: String? { loadStatus.backupPath }
 
     private let fileURL: URL
 
@@ -115,16 +120,15 @@ final class ScratchpadStore {
     // MARK: Disk
 
     private func load() {
-        var backup: String?
         pads = StoreLoadFailure.decodeJSON(
             [String: ScratchpadDocument].self, at: fileURL, label: "scratchpad.json",
-            sensitive: true, didBackUp: &backup
+            sensitive: true, status: &loadStatus
         ) ?? [:]
-        loadFailureBackupPath = backup
     }
 
     private func persist() {
         prune()
+        if StoreLoadFailure.refusesWrite(loadStatus, what: "the scratchpad", url: fileURL) { return }
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

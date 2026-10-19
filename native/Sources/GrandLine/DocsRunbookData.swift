@@ -279,6 +279,31 @@ final class DocsRunbookGitSync {
         }
     }
 
+    /// REL-23: run a pending debounced commit now, waiting at most until
+    /// `deadline` - `ShiftGitSync.flushForTerminationNow`'s shape, on the same
+    /// shared queue. `start()` used to be the only thing that noticed an
+    /// edit left uncommitted by a quit, and only on the next launch.
+    @discardableResult
+    func flushForTerminationNow(deadline: DispatchTime = .now() + ShiftGitSync.terminateFlushBudget) -> Bool {
+        let done = DispatchSemaphore(value: 0)
+        queue.async { [weak self] in
+            defer { done.signal() }
+            guard let self, let pending = self.pendingCommit else { return }
+            pending.cancel()
+            self.pendingCommit = nil
+            _ = self.commitAndPushNow()
+        }
+        guard done.wait(timeout: deadline) == .success else {
+            AppLog.lifecycle.info("runbooks: quit-time git flush still running - letting the app quit; the next launch commits")
+            return false
+        }
+        return true
+    }
+
+    #if FM_SELFTESTS
+    var hasPendingCommitForTests: Bool { queue.sync { pendingCommit != nil } }
+    #endif
+
     @discardableResult
     func commitAndPushNow() -> Bool {
         guard FileManager.default.fileExists(atPath: workingTree.appendingPathComponent(".git").path) else {
@@ -469,7 +494,8 @@ final class DocsRunbookStore {
 
     func deleteRunbook(id: String) {
         let url = root.appendingPathComponent("\(id).md")
-        try? fm.removeItem(at: url)
+        // REL-24: reported, never a silent `try?`.
+        guard PersistenceFailureReporter.removeItem(at: url, what: "runbook \"\(id)\"") else { return }
         gitSync?.markDirty()
     }
 

@@ -32,6 +32,14 @@ final class ShiftStore {
     private var followUpPassthrough = ShiftYamlPassthrough()
     private var projectPassthrough = ShiftYamlPassthrough()
 
+    /// REL-22: whole records this build cannot decode (no id, not a
+    /// mapping), kept verbatim and written back after the decoded ones -
+    /// `StickyBoardStore.unreadableRecords`' shape. They used to be dropped
+    /// by the `compactMap` at load and then rewritten away by the next edit.
+    private var unreadableTaskRecords: [Yaml] = []
+    private var unreadableFollowUpRecords: [Yaml] = []
+    private var unreadableProjectRecords: [Yaml] = []
+
     #if FM_SELFTESTS
     /// GL-27. How many records carry a key this build does not write - zero
     /// for a file this build produced, which is what makes a forgotten
@@ -374,6 +382,8 @@ final class ShiftStore {
         /// so a whole-file rewrite puts them back. Empty for a file this
         /// build wrote itself.
         var passthrough = ShiftYamlPassthrough()
+        /// REL-22: records this build could not decode at all.
+        var unreadable: [Yaml] = []
     }
 
     /// Pure: reads and parses, decides nothing, touches no store state. Safe
@@ -388,7 +398,12 @@ final class ShiftStore {
                 // the only moment they exist.
                 var passthrough = ShiftYamlPassthrough()
                 passthrough.capture(items, knownKeys: knownKeys)
-                return Loaded(items: items.compactMap(map), failed: false, passthrough: passthrough)
+                var decoded: [T] = []
+                var unreadable: [Yaml] = []
+                for item in items {
+                    if let value = map(item) { decoded.append(value) } else { unreadable.append(item) }
+                }
+                return Loaded(items: decoded, failed: false, passthrough: passthrough, unreadable: unreadable)
             case .missing: return Loaded(items: [], failed: false)
             case .parseFailed: return Loaded(items: [], failed: true)
             }
@@ -423,15 +438,31 @@ final class ShiftStore {
         taskPassthrough = loaded.activeTasks.passthrough
         followUpPassthrough = loaded.followUps.passthrough
         projectPassthrough = loaded.projects.passthrough
+        unreadableTaskRecords = loaded.activeTasks.unreadable
+        unreadableFollowUpRecords = loaded.followUps.unreadable
+        unreadableProjectRecords = loaded.projects.unreadable
+        for (count, path) in [(unreadableTaskRecords.count, activeTasksPath),
+                              (unreadableFollowUpRecords.count, followUpsPath),
+                              (unreadableProjectRecords.count, projectsPath)] where count > 0 {
+            AppLog.store.info("""
+                Shift: \(count, privacy: .public) record(s) in \(path, privacy: .public) could not be \
+                decoded by this build - preserving them verbatim rather than dropping them on the next write.
+                """)
+        }
         switch loaded.settings {
         case .ok(let doc):
             noteLoadOK(settingsPath)
             settings = ShiftYaml.settings(from: doc)
         case .missing:
-            // Genuine first run - write the scaffold, as before.
+            // Genuine first run - write the scaffold, as before. REL-21: but
+            // not while any list in the same folder failed to read. A store
+            // that cannot read its task list is not on a first run, and the
+            // load is the one moment nothing has asked it to write anything.
             noteLoadOK(settingsPath)
             settings = ShiftSettings()
-            writeMappingGuarded(path: settingsPath, doc: ShiftYaml.toYaml(settings))
+            if loadFailurePaths.isEmpty {
+                writeMappingGuarded(path: settingsPath, doc: ShiftYaml.toYaml(settings))
+            }
         case .parseFailed:
             // GL-01: do NOT overwrite a settings file we could not read.
             noteLoadFailure(settingsPath)
@@ -500,7 +531,8 @@ final class ShiftStore {
             let spawned = Self.nextOccurrence(after: task, now: now)
             if let spawned { activeTasks.append(spawned) }
             persistActiveTasks()
-            appendToCompletedMonth(task, month: ShiftStore.monthKey(for: now))
+            appendToCompletedMonth(completedRecord(task, raw: nil), id: task.id,
+                                   month: ShiftStore.monthKey(for: now))
             logActivity(kind: "task_completed", summary: "Completed \"\(task.title)\"", targetID: task.id, now: now)
             if let spawned {
                 logActivity(kind: "task_recurrence_advanced",
@@ -508,12 +540,14 @@ final class ShiftStore {
                             targetID: spawned.id, now: now)
             }
         } else {
-            guard let (month, task) = findCompletedTask(id: id) else { return }
+            guard let (month, task, raw) = findCompletedTask(id: id) else { return }
             var restored = task
             restored.status = .todo
             restored.completedAt = nil
             restored.updatedAt = iso
             removeFromCompletedMonth(id: id, month: month)
+            // REL-22: the record's unknown keys move with it.
+            taskPassthrough.absorb(raw, knownKeys: ShiftYaml.taskKnownKeys)
             activeTasks.append(restored)
             persistActiveTasks()
             logActivity(kind: "task_reopened", summary: "Reopened \"\(restored.title)\"", targetID: restored.id, now: now)
@@ -608,7 +642,7 @@ final class ShiftStore {
         guard let subIdx = task.subtasks.firstIndex(where: { $0.id == subtaskID }) else { return }
         task.subtasks[subIdx].done = done
         task.updatedAt = ShiftStore.iso8601(now)
-        appendToCompletedMonth(task, month: found.month)
+        appendToCompletedMonth(completedRecord(task, raw: found.raw), id: task.id, month: found.month)
         notify()
     }
 
@@ -713,7 +747,8 @@ final class ShiftStore {
 
     private func persistFollowUps() {
         writeListGuarded(path: followUpsPath, key: "follow_ups",
-                         items: followUps.map { followUpPassthrough.merged(ShiftYaml.toYaml($0), id: $0.id) })
+                         items: followUps.map { followUpPassthrough.merged(ShiftYaml.toYaml($0), id: $0.id) }
+                            + unreadableFollowUpRecords)
     }
 
     // MARK: Deletion (fm/grandline-tasks-kanban-devops-split)
@@ -845,42 +880,65 @@ final class ShiftStore {
         activeTasks.filter { $0.projectID == projectID } + allCompletedTasks().filter { $0.projectID == projectID }
     }
 
-    private func findCompletedTask(id: String) -> (month: String, task: ShiftTask)? {
+    /// The completed task with `id`, its month, and its raw record - the raw
+    /// one so a move or an edit can carry the keys this build does not write.
+    private func findCompletedTask(id: String) -> (month: String, task: ShiftTask, raw: Yaml)? {
         let completedDir = root.appendingPathComponent("tasks/completed", isDirectory: true)
         guard let files = try? FileManager.default.contentsOfDirectory(atPath: completedDir.path) else { return nil }
         for file in files where file.hasSuffix(".yaml") {
             let path = completedDir.appendingPathComponent(file).path
-            let tasks = ShiftYaml.readList(path: path, key: "tasks").compactMap(ShiftYaml.task(from:))
-            if let task = tasks.first(where: { $0.id == id }) {
-                return (String(file.dropLast(".yaml".count)), task)
+            for raw in ShiftYaml.readList(path: path, key: "tasks") {
+                if let task = ShiftYaml.task(from: raw), task.id == id {
+                    return (String(file.dropLast(".yaml".count)), task, raw)
+                }
             }
         }
         return nil
     }
 
-    private func appendToCompletedMonth(_ task: ShiftTask, month: String) {
+    // REL-22: the completed-month and activity files are edited one record
+    // at a time, at the YAML level. They used to be decoded whole, reduced to
+    // structs with a `compactMap` that dropped any record without an id, and
+    // re-serialised - so one completion rewrote every other record in the
+    // month without the keys this build does not write, and deleted every
+    // record it could not decode. Every record this edit does not touch now
+    // goes back exactly as it was read.
+
+    /// Replaces (or adds) one task in a completed-month file. `raw` is the
+    /// serialised record, already carrying whatever unknown keys it should.
+    private func appendToCompletedMonth(_ raw: Yaml, id: String, month: String) {
         invalidateCompletedTasksCache()
         let path = completedPath(forMonth: month)
-        var tasks = readListGuarded(path: path, key: "tasks").compactMap(ShiftYaml.task(from:))
-        tasks.removeAll { $0.id == task.id }
-        tasks.append(task)
-        writeListGuarded(path: path, key: "tasks", items: tasks.map(ShiftYaml.toYaml))
+        var items = readListGuarded(path: path, key: "tasks")
+        items.removeAll { ShiftYamlPassthrough.recordID($0) == id }
+        items.append(raw)
+        writeListGuarded(path: path, key: "tasks", items: items)
     }
 
     private func removeFromCompletedMonth(id: String, month: String) {
         invalidateCompletedTasksCache()
         let path = completedPath(forMonth: month)
-        var tasks = readListGuarded(path: path, key: "tasks").compactMap(ShiftYaml.task(from:))
-        tasks.removeAll { $0.id == id }
-        writeListGuarded(path: path, key: "tasks", items: tasks.map(ShiftYaml.toYaml))
+        var items = readListGuarded(path: path, key: "tasks")
+        items.removeAll { ShiftYamlPassthrough.recordID($0) == id }
+        writeListGuarded(path: path, key: "tasks", items: items)
+    }
+
+    /// A task about to be written to a completed-month file, with the keys
+    /// its own record carried. `raw` is that record when it came from a
+    /// month file; otherwise the active list's passthrough has them.
+    private func completedRecord(_ task: ShiftTask, raw: Yaml?) -> Yaml {
+        guard let raw else { return taskPassthrough.merged(ShiftYaml.toYaml(task), id: task.id) }
+        var single = ShiftYamlPassthrough()
+        single.capture([raw], knownKeys: ShiftYaml.taskKnownKeys)
+        return single.merged(ShiftYaml.toYaml(task), id: task.id)
     }
 
     private func logActivity(kind: String, summary: String, targetID: String? = nil,
                              durationSeconds: Int? = nil, now: Date) {
         let path = activityPath(forMonth: ShiftStore.monthKey(for: now))
-        var entries = readListGuarded(path: path, key: "activity").compactMap(ShiftYaml.activity(from:))
-        entries.append(ShiftActivityEntry(id: UUID().uuidString, timestamp: ShiftStore.iso8601(now), kind: kind, summary: summary, targetID: targetID, durationSeconds: durationSeconds))
-        writeListGuarded(path: path, key: "activity", items: entries.map(ShiftYaml.toYaml))
+        var items = readListGuarded(path: path, key: "activity")
+        items.append(ShiftYaml.toYaml(ShiftActivityEntry(id: UUID().uuidString, timestamp: ShiftStore.iso8601(now), kind: kind, summary: summary, targetID: targetID, durationSeconds: durationSeconds)))
+        writeListGuarded(path: path, key: "activity", items: items)
     }
 
     // MARK: Focus sessions (F7)
@@ -962,12 +1020,14 @@ final class ShiftStore {
 
     private func persistActiveTasks() {
         writeListGuarded(path: activeTasksPath, key: "tasks",
-                         items: activeTasks.map { taskPassthrough.merged(ShiftYaml.toYaml($0), id: $0.id) })
+                         items: activeTasks.map { taskPassthrough.merged(ShiftYaml.toYaml($0), id: $0.id) }
+                            + unreadableTaskRecords)
     }
 
     private func persistProjects() {
         writeListGuarded(path: projectsPath, key: "projects",
-                         items: projects.map { projectPassthrough.merged(ShiftYaml.toYaml($0), id: $0.id) })
+                         items: projects.map { projectPassthrough.merged(ShiftYaml.toYaml($0), id: $0.id) }
+                            + unreadableProjectRecords)
     }
 
     // MARK: Attachments (grandline-shift-task-image-attachments)
@@ -1007,9 +1067,10 @@ final class ShiftStore {
 
     /// Deletes a task's attachment file, if any - a no-op if there isn't
     /// one. Never fails the caller: a missing file here just means there was
-    /// nothing to remove.
+    /// nothing to remove. Any other failure is reported (REL-24) - it leaves
+    /// an orphaned image in the git-synced tree.
     private func removeAttachmentFile(taskID: String) {
-        try? FileManager.default.removeItem(at: attachmentURL(forTaskID: taskID))
+        PersistenceFailureReporter.removeItem(at: attachmentURL(forTaskID: taskID), what: "task attachment")
     }
 
     /// Applies a captain's attachment decision (from the task editor sheet)
@@ -1240,7 +1301,7 @@ final class ShiftStore {
                 projectID: project.id, notes: nil
             ),
         ]
-        writeListGuarded(path: followUpsPath, key: "follow_ups", items: followUps.map(ShiftYaml.toYaml))
+        persistFollowUps()
 
         settings = ShiftSettings()
         writeMappingGuarded(path: settingsPath, doc: ShiftYaml.toYaml(settings))

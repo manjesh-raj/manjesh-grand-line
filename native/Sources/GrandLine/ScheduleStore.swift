@@ -109,8 +109,13 @@ final class ScheduleStore {
 
     private(set) var schedules: [AutomationSchedule] = []
 
+    /// What `load()` found (GL-01 / REL-21). A file that could not be read
+    /// at all, or that failed to decode and could not be copied aside, keeps
+    /// every write off it - see `StoreLoadFailure.LoadStatus`.
+    private(set) var loadStatus = StoreLoadFailure.LoadStatus.clean
+
     /// Set when `load()` backed up an undecodable `schedules.json` (GL-01).
-    private(set) var loadFailureBackupPath: String?
+    var loadFailureBackupPath: String? { loadStatus.backupPath }
 
     /// Fired after any mutation, so the Automation card can re-render.
     var onChange: (() -> Void)?
@@ -283,15 +288,17 @@ final class ScheduleStore {
     }
 
     private func load() {
-        var backup: String?
         schedules = StoreLoadFailure.decodeJSON(
             [AutomationSchedule].self, at: fileURL, decoder: Self.jsonDecoder(),
-            label: "schedules.json", didBackUp: &backup
+            label: "schedules.json", status: &loadStatus
         ) ?? []
-        loadFailureBackupPath = backup
     }
 
     private func persist() {
+        if StoreLoadFailure.refusesWrite(loadStatus, what: "schedules", url: fileURL) {
+            onChange?()
+            return
+        }
         do {
             try FileManager.default.createDirectory(
                 at: fileURL.deletingLastPathComponent(),
