@@ -374,3 +374,11 @@ sibling run in flight.
   AppKit's own layout engine, not a visual check.
 - **Nothing was exported or restored against the captain's real data.** Every
   suite runs against scratch roots.
+
+## SEC-04 (2026-10 end-to-end review): a restore writes the file-backed sections privately
+
+`BackupStoreImport.apply` wrote every task, notebook, sticky-board and code-snippet file with `AtomicWrite.data(data, to:)` and no `sensitive:`.
+On a fresh machine the restore is the first write into those trees, so it left 0755 directories and 0644 files until the owning store next wrote.
+It now passes `sensitive: true`, the same as the vault half already did, so the files land at 0600 and every directory the restore creates at 0700.
+`BackupStoreSectionsSelfTest.checkRestoreIntoAFreshRootIsPrivate` restores into a root that does not exist yet, with a nested notebook page, and reads `posixPermissions` back.
+Dropping the flag fails it on all four files and all seven directories.

@@ -51,6 +51,7 @@ enum BackupStoreSectionsSelfTest {
         checkPerFileDiff(check)
         checkRoundTripThroughTheBundleFile(check)
         checkApplyMergesAndNeverDeletes(check)
+        checkRestoreIntoAFreshRootIsPrivate(check)
         checkUnsafePathsAreRefusedAndNotWritten(check)
         checkUnreadableSourceAppliesNothing(check)
         checkVaultIsCarriedSealed(check)
@@ -302,6 +303,55 @@ enum BackupStoreSectionsSelfTest {
                   "a file present in both is replaced by the bundle's copy, as the preview said")
             check(read(target.notebook, "mine.md") == "never in the bundle",
                   "a file only on this Mac survives the restore untouched - GL-21's 'a restore merges'")
+        }
+    }
+
+    /// SEC-04 (full review). On a fresh machine the restore is the first write
+    /// into these trees, so the modes it leaves are the modes they keep. The
+    /// target root does not exist beforehand, which is the case that matters:
+    /// every directory on the way down is created by the restore itself.
+    private static func checkRestoreIntoAFreshRootIsPrivate(_ check: (Bool, String) -> Void) {
+        withScratch { base in
+            let source = roots(base.appendingPathComponent("source", isDirectory: true))
+            write("a task", to: source.tasks, "tasks/today.yaml")
+            write("# A page", to: source.notebook, "work/deep/page.md")
+            write("a note", to: source.stickyBoard, "notes.yaml")
+            write("print(1)", to: source.codeSnippets, "snippet.py")
+            let archives = BackupStoreArchives.build(roots: source)
+
+            let targetBase = base.appendingPathComponent("fresh-machine", isDirectory: true)
+            check(!FileManager.default.fileExists(atPath: targetBase.path),
+                  "the target must not exist before the restore - the mode check is vacuous otherwise")
+            let target = roots(targetBase)
+            let preview = BackupStoreImport.diff(archives, roots: target)
+            let applied = BackupStoreImport.apply(preview, archives: archives, roots: target)
+            check(applied.written == 4 && applied.failed == 0,
+                  "all four files should be restored, got \(applied)")
+
+            func mode(_ url: URL) -> Int? {
+                (try? FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber)?.intValue
+            }
+            func octal(_ url: URL) -> String { mode(url).map { String($0, radix: 8) } ?? "missing" }
+            let files = [
+                target.tasks.appendingPathComponent("tasks/today.yaml"),
+                target.notebook.appendingPathComponent("work/deep/page.md"),
+                target.stickyBoard.appendingPathComponent("notes.yaml"),
+                target.codeSnippets.appendingPathComponent("snippet.py"),
+            ]
+            for file in files {
+                check(mode(file) == 0o600,
+                      "a restored file must be 0600 on a fresh machine, \(file.lastPathComponent) is \(octal(file))")
+            }
+            let directories = [
+                target.tasks, target.tasks.appendingPathComponent("tasks"),
+                target.notebook, target.notebook.appendingPathComponent("work"),
+                target.notebook.appendingPathComponent("work/deep"),
+                target.stickyBoard, target.codeSnippets,
+            ]
+            for directory in directories {
+                check(mode(directory) == 0o700,
+                      "a directory the restore created must be 0700, \(directory.path) is \(octal(directory))")
+            }
         }
     }
 
