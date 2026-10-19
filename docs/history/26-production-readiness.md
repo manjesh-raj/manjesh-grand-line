@@ -495,3 +495,17 @@ up anything still open.
   text whose font is set once in a page's `loadView` does not follow a
   `ChromeTextScale` change until relaunch, and fixed table `rowHeight`s do not
   grow with it.
+
+## GL-26 follow-up: the `claude -p` prompt moves to stdin (SEC-02, 2026-10 end-to-end review)
+
+`ClaudeOneShot` used to pass the prompt as the argument after `-p`.
+argv is visible to every other process of the same user through `ps`, and these prompts carry dictation transcripts, article bodies and redacted logs.
+Both `run` and `runSync` now pass `-p` with no positional prompt and send the prompt on stdin through `Subprocess.run(stdin:)`.
+`claude -p` with no positional prompt reads stdin, which was measured against the real CLI before the change.
+It also removes the ARG_MAX ceiling on a long prompt.
+The old note about stdin being `/dev/null` still holds in spirit: the CLI's piped-stdin probe gets data and EOF immediately, so it never waits.
+
+Every fake `claude` that needed to see the prompt now reads its stdin.
+Several negative checks (no vocabulary section, no recap on a resumed turn, no old board after Start over) would have passed vacuously against argv, so each now reads the captured prompt and asserts it was captured first.
+`ClaudeOneShotSelfTest.argvShapeIsWhatCallersExpect` asserts the prompt is absent from argv and arrives on stdin byte for byte, for both entry points, with a 300 KB prompt for `runSync`.
+Restoring the old `ClaudeOneShot.swift` fails it, plus the Straw Hat, Command Library AI, dictation cleanup and Whiteboard suites.

@@ -776,6 +776,7 @@ enum WhiteboardViewSelfTest {
         echo "$N" > "$DIR/count"
         : > "$DIR/argv-$N"
         for a in "$@"; do printf '%s\\n' "$a" >> "$DIR/argv-$N"; done
+        cat > "$DIR/prompt-$N"
         if [ -f "$DIR/reply-$N" ]; then cat "$DIR/reply-$N"; else cat "$DIR/reply-1"; fi
         """
         try? script.write(to: claude, atomically: true, encoding: .utf8)
@@ -784,6 +785,10 @@ enum WhiteboardViewSelfTest {
 
         func argv(_ turn: Int) -> String {
             (try? String(contentsOf: dir.appendingPathComponent("argv-\(turn)"), encoding: .utf8)) ?? ""
+        }
+        /// The prompt, which arrives on stdin rather than in argv (SEC-02).
+        func prompt(_ turn: Int) -> String {
+            (try? String(contentsOf: dir.appendingPathComponent("prompt-\(turn)"), encoding: .utf8)) ?? ""
         }
         /// Clears the status, fires the button, and waits for a genuinely new
         /// terminal status. Clearing first is what makes this a wait for a
@@ -847,9 +852,9 @@ enum WhiteboardViewSelfTest {
         let second = argv(2)
         check(second.contains("--resume") && second.contains("wb-session-1"),
               "turn 2 must resume turn 1's conversation")
-        check(second.contains("Only box"),
+        check(prompt(2).contains("Only box"),
               "turn 2's prompt must carry the live board - the model has to be told what \"it\" is")
-        check(second.contains("make it bigger and add a second box"),
+        check(prompt(2).contains("make it bigger and add a second box"),
               "turn 2's prompt must carry the follow-up instruction")
         check(!argv(1).contains("--resume"), "turn 1 must not have resumed anything")
 
@@ -871,7 +876,9 @@ enum WhiteboardViewSelfTest {
         clickAndSettle()
         check(!argv(3).contains("--resume"),
               "the generation after Start over must not resume the discarded conversation")
-        check(!argv(3).contains("Only box"),
+        check(prompt(3).contains("one box"),
+              "turn 3's prompt should have been captured - the next check is vacuous otherwise")
+        check(!prompt(3).contains("Only box"),
               "the generation after Start over must not carry the old board as context")
     }
 

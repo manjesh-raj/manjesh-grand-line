@@ -591,9 +591,10 @@ enum WhiteboardSelfTest {
                 .appendingPathComponent("fake-claude-whiteboard-\(UUID().uuidString)")
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             path = dir.appendingPathComponent("claude").path
-            // `reply-<n>` if present, else `reply-0` as the default. Every
-            // argument is written to its own file so a prompt containing
-            // newlines survives the round trip intact.
+            // `reply-<n>` if present, else `reply-0` as the default. The argv
+            // goes to `argv-<n>`, one argument per line, and the prompt -
+            // which arrives on stdin (`ClaudeOneShot`, SEC-02) - goes to its
+            // own `prompt-<n>` byte for byte.
             let script = """
             #!/bin/sh
             DIR="\(dir.path)"
@@ -602,6 +603,7 @@ enum WhiteboardSelfTest {
             echo "$N" > "$DIR/count"
             : > "$DIR/argv-$N"
             for a in "$@"; do printf '%s\\n' "$a" >> "$DIR/argv-$N"; done
+            cat > "$DIR/prompt-$N"
             for a in "$@"; do
               if [ "$a" = "--resume" ] && [ -f "$DIR/fail-on-resume" ]; then
                 cat "$DIR/fail-on-resume"
@@ -650,13 +652,9 @@ enum WhiteboardSelfTest {
             return raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         }
 
-        /// The `-p` prompt as handed over, reassembled from the argv record.
-        /// A prompt is multi-line, so it is the argument *after* `-p` in the
-        /// per-argument file rather than a line of it.
+        /// The prompt as handed over on stdin.
         func prompt(turn: Int) -> String? {
-            guard let raw = try? String(contentsOf: dir.appendingPathComponent("argv-\(turn)"), encoding: .utf8)
-            else { return nil }
-            return raw
+            try? String(contentsOf: dir.appendingPathComponent("prompt-\(turn)"), encoding: .utf8)
         }
 
         func cleanUp() { try? FileManager.default.removeItem(at: dir) }

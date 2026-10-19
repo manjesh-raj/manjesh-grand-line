@@ -80,7 +80,8 @@ enum NotificationCenterSRELeadSelfTest {
             .appendingPathComponent("fake-claude-notification-center-\(UUID().uuidString).sh")
         let script = """
         #!/bin/sh
-        printf '{"result": "reply-to: %s", "is_error": false, "session_id": "fake-session-%s"}' "$2" "$2"
+        Q=$(cat)
+        printf '{"result": "reply-to: %s", "is_error": false, "session_id": "fake-session-%s"}' "$Q" "$Q"
         """
         try? script.write(to: path, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)

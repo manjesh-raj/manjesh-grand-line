@@ -556,12 +556,12 @@ enum DictationEngineSelfTest {
     /// `DictationCleanup.rewrite` at all (confirmed the hard way while
     /// writing this - a first draft asserted only the outcome and kept
     /// passing after deliberately dropping `vocabulary: vocabulary` from
-    /// `finishWithFinalText`'s call site). The `argv.txt` check below, on the
+    /// `finishWithFinalText`'s call site). The `prompt.txt` check below, on the
     /// real prompt this engine actually sent, is what makes this a genuine
     /// wiring regression test rather than one that only proves
     /// `DictationCleanup` itself works correctly if handed a vocabulary list.
     private static func test_cleanupCorrectsVocabularyMisrecognition() -> String? {
-        guard let script = writeFakeClaudeCapturingArgv(resultJSON: #"{"result": "Let's start a herdr session.", "is_error": false}"#) else {
+        guard let script = writeFakeClaudeCapturingPrompt(resultJSON: #"{"result": "Let's start a herdr session.", "is_error": false}"#) else {
             return "could not write the fake claude script"
         }
         let scriptDir = script.deletingLastPathComponent()
@@ -580,9 +580,9 @@ enum DictationEngineSelfTest {
         guard h.recorded.count == 1, h.recorded[0].text == "Let's start a herdr session." else {
             return "history should record the same corrected text that was pasted, got \(h.recorded)"
         }
-        let sentArgv = (try? String(contentsOf: scriptDir.appendingPathComponent("argv.txt"), encoding: .utf8)) ?? ""
-        guard sentArgv.contains("herdr") else {
-            return "the vocabulary word never reached the real prompt this engine sent to claude - argv:\n\(sentArgv)"
+        let sentPrompt = (try? String(contentsOf: scriptDir.appendingPathComponent("prompt.txt"), encoding: .utf8)) ?? ""
+        guard sentPrompt.contains("herdr") else {
+            return "the vocabulary word never reached the real prompt this engine sent to claude - prompt:\n\(sentPrompt)"
         }
         return nil
     }
@@ -595,7 +595,7 @@ enum DictationEngineSelfTest {
     /// skips sending the vocabulary in the first place).
     private static func test_cleanupDoesNotOverCorrectGenuineWord() -> String? {
         let unmodified = "He's a bit older than expected for this position."
-        guard let script = writeFakeClaudeCapturingArgv(resultJSON: #"{"result": "\#(unmodified)", "is_error": false}"#) else {
+        guard let script = writeFakeClaudeCapturingPrompt(resultJSON: #"{"result": "\#(unmodified)", "is_error": false}"#) else {
             return "could not write the fake claude script"
         }
         let scriptDir = script.deletingLastPathComponent()
@@ -611,23 +611,23 @@ enum DictationEngineSelfTest {
         guard h.pasted == [unmodified] else {
             return "a genuinely-meant word should pass through unmodified, got \(h.pasted)"
         }
-        let sentArgv = (try? String(contentsOf: scriptDir.appendingPathComponent("argv.txt"), encoding: .utf8)) ?? ""
-        guard sentArgv.contains("herdr") else {
-            return "the vocabulary list should still reach the sent prompt even when the model declines to correct - argv:\n\(sentArgv)"
+        let sentPrompt = (try? String(contentsOf: scriptDir.appendingPathComponent("prompt.txt"), encoding: .utf8)) ?? ""
+        guard sentPrompt.contains("herdr") else {
+            return "the vocabulary list should still reach the sent prompt even when the model declines to correct - prompt:\n\(sentPrompt)"
         }
         return nil
     }
 
     /// A disposable fake `claude` executable (never the real CLI) that dumps
-    /// its own real argv (the prompt travels as one argv element - see
-    /// `ClaudeOneShot.swift`'s header) to a sibling `argv.txt` before printing
-    /// one canned `claude -p ... --output-format json` reply - the same
-    /// argv-capturing shape `DictationCleanupSelfTest.swift`'s
-    /// `writeFakeClaudeCapturingArgv` uses, and for the identical reason: a
+    /// the prompt it was really sent (on stdin - see `ClaudeOneShot.swift`'s
+    /// header) to a sibling `prompt.txt` before printing one canned
+    /// `claude -p ... --output-format json` reply - the same prompt-capturing
+    /// shape `DictationCleanupSelfTest.swift`'s
+    /// `writeFakeClaudeCapturingPrompt` uses, and for the identical reason: a
     /// fake script that only ever returns canned output cannot, on its own,
     /// prove what was actually sent to it. This file needed its own copy
     /// since that one is `private` to its own enum.
-    private static func writeFakeClaudeCapturingArgv(resultJSON: String) -> URL? {
+    private static func writeFakeClaudeCapturingPrompt(resultJSON: String) -> URL? {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("grandline-dictation-engine-cleanup-\(UUID().uuidString)")
         guard (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil else {
@@ -637,7 +637,7 @@ enum DictationEngineSelfTest {
         let escaped = (resultJSON + "\n").replacingOccurrences(of: "'", with: "'\\''")
         let script = """
         #!/bin/sh
-        printf '%s\\n' "$@" > "$(dirname "$0")/argv.txt"
+        cat > "$(dirname "$0")/prompt.txt"
         printf '%s' '\(escaped)'
         exit 0
         """

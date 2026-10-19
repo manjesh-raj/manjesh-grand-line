@@ -24,21 +24,25 @@
 // only ever need the final reply, and the streaming parser would add
 // line-buffering and event dispatch to get right with no cheap way to test it.
 //
-// stdin is `/dev/null` on purpose, and it is load-bearing rather than tidy:
-// `claude -p` probes for piped stdin and (confirmed live, in `SRELeadRunner`'s
-// original comment) waits ~3s before proceeding without it on *every* turn.
-// `Subprocess` gives every run `/dev/null` stdin by default, so that property
-// now holds for all five callers rather than the four that remembered it.
+// stdin is never left as a terminal or an open pipe, and that is load-bearing
+// rather than tidy: `claude -p` probes for piped stdin and (confirmed live, in
+// `SRELeadRunner`'s original comment) waits ~3s before proceeding without it
+// on *every* turn. It now carries the prompt itself and then closes (see
+// below), which satisfies the probe immediately.
 //
 // The per-caller `claudePathOverrideForTests` seams are all kept exactly as
 // they were: each caller resolves its own executable and passes it in. That is
 // what lets the existing `DictationCleanupSelfTest`,
 // `SRELeadPostmortemSelfTest`, `ConsoleCommandComposerSelfTest`,
 // `SRELeadPerTabSelfTest` and `NotificationCenterSRELeadSelfTest` fake-`claude`
-// harnesses keep working untouched.
+// harnesses keep working. A fake that needs to see the prompt reads its stdin.
 //
-// The prompt still travels as an argv element, never through a shell - which
-// is why none of this needs quoting or escaping, and why a prompt containing
+// **The prompt travels on stdin, never in argv** (SEC-02 of the 2026-10 full
+// review). argv is visible to every other process of the same user through
+// `ps`, and these prompts carry dictation transcripts, article bodies and
+// redacted logs. `claude -p` with no positional prompt reads it from stdin
+// (measured against the real CLI). It also removes the ARG_MAX ceiling on a
+// long prompt. Nothing goes through a shell either way, so a prompt containing
 // backticks or `$(...)` is inert.
 //
 // ## `--tools`: why every run here is fail-closed on the built-in set
@@ -160,8 +164,7 @@ enum ClaudeOneShot {
         completion: @escaping (Result<ClaudeReply, ClaudeOneShotError>) -> Void
     ) -> SubprocessCancellation {
         let token = cancellation ?? SubprocessCancellation()
-        var arguments = ["-p", prompt] + extraArguments
-            + ["--tools", builtInToolsArgument(builtInTools), "--output-format", "json"]
+        var arguments = argv(extraArguments: extraArguments, builtInTools: builtInTools)
         if let resumeSessionID {
             arguments += ["--resume", resumeSessionID]
         }
@@ -171,6 +174,7 @@ enum ClaudeOneShot {
                 executable: executable,
                 arguments: arguments,
                 cwd: cwd,
+                stdin: Data(prompt.utf8),
                 timeout: timeout,
                 log: AppLog.ai,
                 label: label,
@@ -195,14 +199,22 @@ enum ClaudeOneShot {
     ) -> Result<ClaudeReply, ClaudeOneShotError> {
         let result = Subprocess.run(
             executable: executable,
-            arguments: ["-p", prompt] + extraArguments
-                + ["--tools", builtInToolsArgument(builtInTools), "--output-format", "json"],
+            arguments: argv(extraArguments: extraArguments, builtInTools: builtInTools),
             cwd: cwd,
+            stdin: Data(prompt.utf8),
             timeout: timeout,
             log: AppLog.ai,
             label: label
         )
         return parse(result)
+    }
+
+    /// The argv both runners share: `-p` with **no** positional prompt (the
+    /// prompt goes on stdin - see this file's header), the caller's extras,
+    /// then the fail-closed `--tools` and the JSON envelope.
+    private static func argv(extraArguments: [String], builtInTools: [String]) -> [String] {
+        ["-p"] + extraArguments
+            + ["--tools", builtInToolsArgument(builtInTools), "--output-format", "json"]
     }
 
     /// The one copy of what were five near-identical parses. Kept `internal`

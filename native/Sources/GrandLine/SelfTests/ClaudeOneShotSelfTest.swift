@@ -205,10 +205,11 @@ enum ClaudeOneShotSelfTest {
     }
 
     private static func argvShapeIsWhatCallersExpect() {
-        print("- argv: -p <prompt>, caller extras, then --output-format json (+ --resume)")
+        print("- argv: -p, caller extras, then --output-format json (+ --resume); the prompt on stdin")
 
         guard let script = makeFakeClaude(body: #"""
         printf '%s\n' "$@" > "$(dirname "$0")/argv.txt"
+        cat > "$(dirname "$0")/stdin.txt"
         printf '%s\n' '{"result":"ok"}'
         """#) else {
             check(false, "could not write the fake claude script")
@@ -232,9 +233,17 @@ enum ClaudeOneShotSelfTest {
 
         let argv = (try? String(contentsOf: dir.appendingPathComponent("argv.txt"), encoding: .utf8))?
             .split(separator: "\n").map(String.init) ?? []
+        let stdin = try? String(contentsOf: dir.appendingPathComponent("stdin.txt"), encoding: .utf8)
         check(argv.first == "-p", "argv starts with -p")
-        check(argv.count > 1 && argv[1] == "PROMPT-TEXT",
-              "the prompt is one argv element - never shell-interpolated, so backticks in it are inert")
+        // SEC-02: argv is visible to every process of the same user through
+        // `ps`, so the prompt must not be in it at all - not as the element
+        // after `-p`, and not anywhere else.
+        check(!argv.contains { $0.contains("PROMPT-TEXT") },
+              "the prompt must never travel in argv, got \(argv)")
+        check(argv.count > 1 && argv[1] == "--allowedTools",
+              "-p takes no positional prompt - the caller's extras follow it directly, got \(argv)")
+        check(stdin == "PROMPT-TEXT",
+              "the prompt must arrive on stdin, exactly, got \(stdin.map { "\"\($0)\"" } ?? "nothing")")
         check(argv.contains("--allowedTools") && argv.contains("Task"), "caller extras are present")
         check(argv.contains("--output-format") && argv.contains("json"), "--output-format json is present")
         if let idx = argv.firstIndex(of: "--resume") {
@@ -242,6 +251,22 @@ enum ClaudeOneShotSelfTest {
         } else {
             check(false, "--resume was not passed")
         }
+
+        // `runSync` is the second entry point and builds its own run, so it is
+        // held to the same shape - with a prompt long and awkward enough that
+        // it could not have survived a shell or a positional argument intact.
+        let longPrompt = "line one `$(touch /tmp/x)`\nline two \"quoted\"\n"
+            + String(repeating: "x", count: 300_000)
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent("stdin.txt"))
+        _ = ClaudeOneShot.runSync(executable: script.path, prompt: longPrompt, timeout: 20)
+        let syncArgv = (try? String(contentsOf: dir.appendingPathComponent("argv.txt"), encoding: .utf8))?
+            .split(separator: "\n").map(String.init) ?? []
+        let syncStdin = try? String(contentsOf: dir.appendingPathComponent("stdin.txt"), encoding: .utf8)
+        check(syncArgv.first == "-p" && !syncArgv.contains { $0.contains("line one") },
+              "runSync must not put the prompt in argv either, got \(syncArgv.prefix(4).map { String($0.prefix(60)) })")
+        check(syncStdin == longPrompt,
+              "runSync must deliver the whole prompt on stdin, byte for byte (got \(syncStdin?.utf8.count ?? 0) "
+              + "of \(longPrompt.utf8.count) bytes)")
     }
 
     // MARK: - Helpers
