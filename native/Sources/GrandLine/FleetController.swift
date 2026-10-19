@@ -860,7 +860,8 @@ final class FleetController: NSViewController {
         // are independent - render the fast fields the moment snapshot()
         // finishes instead of blocking that on the PR fetch too, then
         // re-render once the PR list itself lands. The "Ready to merge"
-        // section/stat tile shows its own loading state in between.
+        // stat tile and the banner show their scanning state in between
+        // (REL-25 - they used to show "0 ready to merge").
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let snapshot = FleetDataSource.snapshot(forceRefresh: forceRefresh)
             DispatchQueue.main.async {
@@ -893,8 +894,9 @@ final class FleetController: NSViewController {
 
     /// `mergedPRs == nil` means the (slow) PR fetch hasn't finished yet -
     /// every other field from `snapshot` still renders immediately, and the
-    /// "ready to merge" stat tile shows 0 until this method is called again
-    /// once the fetch completes.
+    /// "ready to merge" tile and the banner say they are still scanning
+    /// until this method is called again once the fetch completes (REL-25:
+    /// they used to render that as a confident 0).
     /// `prFetchFailure` (GL-14) is a short reason string when the PR scan did
     /// not fully succeed. Overview's "ready to merge" tile is a
     /// should-I-act-on-something instrument, so a failed scan must read as
@@ -939,11 +941,9 @@ final class FleetController: NSViewController {
         // raw *open* count under that label, which is how this page could say
         // "50 PRs ready to merge" while the merge-queue card one click away
         // said "none ready" off the identical array.
-        let readyToMerge = mergedPRs.map(FleetDataSource.readyToMergeCount) ?? 0
-        renderBanner(needs: needs, working: working, readyCount: readyToMerge,
-                     prFetchFailure: prFetchFailure, homeOk: snapshot.homeOk)
-        rebuildStats(working: working.count, ready: readyToMerge, snapshot: snapshot,
-                     prFetchFailure: prFetchFailure)
+        let ready = FleetDataSource.PRReadyReading(mergedPRs: mergedPRs, failure: prFetchFailure)
+        renderBanner(needs: needs, working: working, ready: ready, homeOk: snapshot.homeOk)
+        rebuildStats(working: working.count, ready: ready, snapshot: snapshot)
         currentNeedsTasks = needs
         rebuildNeedsRows(needs)
         rebuildTaskRows(into: inFlightStack, tasks: working, emptyTitle: "All hands idle", emptyBody: "No crew are working right now. Send your first mate a task from the console and this board lights up.")
@@ -972,12 +972,9 @@ final class FleetController: NSViewController {
     /// so the home canvas's one-line summary is the same computation rather
     /// than a second one that could drift. This method is now purely the
     /// rendering half: values in, one `HelmAccentRow.Content` out.
-    private func renderBanner(needs: [FleetTask], working: [FleetTask], readyCount: Int,
-                              prFetchFailure: String? = nil, homeOk: Bool = true) {
-        let answer = FleetGreeting.answer(tasks: needs + working,
-                                          readyCount: readyCount,
-                                          prFetchFailure: prFetchFailure,
-                                          homeOk: homeOk)
+    private func renderBanner(needs: [FleetTask], working: [FleetTask],
+                              ready: FleetDataSource.PRReadyReading, homeOk: Bool = true) {
+        let answer = FleetGreeting.answer(tasks: needs + working, prs: ready, homeOk: homeOk)
         let content = HelmAccentRow.Content(
             tint: answer.tint,
             kicker: answer.kicker,
@@ -991,8 +988,25 @@ final class FleetController: NSViewController {
         bannerRow.onClick = answer.isSetupPrompt ? { [weak self] in self?.onNavigateToSetup?() } : nil
     }
 
-    private func rebuildStats(working: Int, ready: Int, snapshot: FleetSnapshot,
-                              prFetchFailure: String? = nil) {
+    /// The "ready to merge" tile for each state of the reading. GL-14: an em
+    /// dash, never "0", whenever the number is not known - while the scan is
+    /// running (REL-25) as well as when it failed. The tile stays clickable
+    /// in every state so the captain can go to Review and see why.
+    private static func readyTile(_ ready: FleetDataSource.PRReadyReading) -> StatTileItem {
+        switch ready {
+        case .value(let count):
+            return StatTileItem(key: "ready", icon: "arrow.triangle.pull", value: "\(count)",
+                                label: "ready to merge", tint: .accent, opensReview: true)
+        case .scanning:
+            return StatTileItem(key: "ready", icon: "arrow.triangle.pull", value: "\u{2014}",
+                                label: "scanning PRs", opensReview: true)
+        case .failed:
+            return StatTileItem(key: "ready", icon: "wifi.exclamationmark", value: "\u{2014}",
+                                label: "PRs unavailable", tint: .warn, opensReview: true)
+        }
+    }
+
+    private func rebuildStats(working: Int, ready: FleetDataSource.PRReadyReading, snapshot: FleetSnapshot) {
         let watcherLabel: String
         switch snapshot.watcher.status {
         case "healthy": watcherLabel = "watcher healthy"
@@ -1016,15 +1030,7 @@ final class FleetController: NSViewController {
         }
         let items: [StatTileItem] = [
             StatTileItem(key: "working", icon: "clock", value: "\(working)", label: "working"),
-            // GL-14: "\u{2014}" (an em dash), not "0", when the scan failed -
-            // the tile is still clickable so the captain can go to Review and
-            // see the real reason there.
-            StatTileItem(key: "ready",
-                         icon: prFetchFailure == nil ? "arrow.triangle.pull" : "wifi.exclamationmark",
-                         value: prFetchFailure == nil ? "\(ready)" : "\u{2014}",
-                         label: prFetchFailure == nil ? "ready to merge" : "PRs unavailable",
-                         tint: prFetchFailure == nil ? .accent : .warn,
-                         opensReview: true),
+            Self.readyTile(ready),
             StatTileItem(key: "queued", icon: "line.3.horizontal", value: "\(snapshot.queuedCount)", label: "queued"),
             StatTileItem(key: "done", icon: "checkmark.circle", value: "\(snapshot.doneCount)", label: "done today", tint: .good),
             StatTileItem(key: "projects", icon: "shippingbox", value: "\(snapshot.projectsCount)", label: "projects"),

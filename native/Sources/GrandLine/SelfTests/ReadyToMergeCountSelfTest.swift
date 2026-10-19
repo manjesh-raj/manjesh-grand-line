@@ -52,6 +52,7 @@ enum ReadyToMergeCountSelfTest {
         checkOneDefinition(&ok)
         checkReviewPageAgrees(&ok)
         checkOverviewAgrees(&ok)
+        checkOverviewNeverShowsZeroWhileScanning(&ok)
         checkNoReDerivation(&ok)
         print(ok ? "ReadyToMergeCountSelfTest: all checks passed"
                  : "ReadyToMergeCountSelfTest: FAILED")
@@ -318,6 +319,44 @@ enum ReadyToMergeCountSelfTest {
             } else {
                 fail("the merge-queue card rendered no chip", &ok)
             }
+        }
+    }
+
+    /// REL-25: every Fleet refresh renders its fast snapshot before the PR
+    /// scan lands, with no PR list and no failure. The tile said "0 ready to
+    /// merge" and the banner "0 PRs ready to merge" - a confident zero for a
+    /// number nobody had read yet, which is GL-14's rule broken on every
+    /// refresh. This renders exactly that interim snapshot.
+    private static func checkOverviewNeverShowsZeroWhileScanning(_ ok: inout Bool) {
+        print("\n-- REL-25: Overview says scanning, not 0, while the PR scan runs --")
+        withScratchEnv {
+            let snapshot = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
+                                         queuedCount: 0, doneCount: 0, projectsCount: 0,
+                                         watcher: WatcherHealth(status: "healthy"))
+            let fleet = FleetController(shiftStore: ShiftStore())
+            let window = OffScreenProbe.window(width: 1200, height: 900, styleMask: [.titled, .resizable])
+            window.contentViewController = fleet
+            fleet.view.layoutSubtreeIfNeeded()
+            fleet.debugRender(snapshot: snapshot, mergedPRs: nil)
+            fleet.view.layoutSubtreeIfNeeded()
+
+            let tiles = fleet.debugStatTiles
+            check(!tiles.contains { $0.caption == "ready to merge" && $0.value == "0" },
+                  "REL-25: the interim tile must not say 0 ready to merge - tiles: \(tiles)", &ok)
+            if let tile = tiles.first(where: { $0.caption == "scanning PRs" }) {
+                check(tile.value == "\u{2014}", "REL-25: the scanning tile shows a dash, got \(tile.value)", &ok)
+            } else {
+                fail("REL-25: no scanning tile while the PR scan runs - tiles: \(tiles)", &ok)
+            }
+            let banner = fleet.debugBannerMeta
+            check(number(before: "PRs ready to merge", in: banner) == nil,
+                  "REL-25: the interim banner must not state a ready count: \"\(banner)\"", &ok)
+            check(banner.contains("checking PRs"), "REL-25: the banner says it is checking, got \"\(banner)\"", &ok)
+
+            // And the scan landing replaces it with the real number.
+            fleet.debugRender(snapshot: snapshot, mergedPRs: fixture())
+            check(fleet.debugStatTiles.contains { $0.caption == "ready to merge" && $0.value == "\(expectedReady)" },
+                  "REL-25: the scan landing shows the real count - tiles: \(fleet.debugStatTiles)", &ok)
         }
     }
 

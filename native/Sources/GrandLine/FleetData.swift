@@ -433,6 +433,32 @@ enum FleetDataSource {
         readyToMerge(prs).count
     }
 
+    /// REL-25 / REL-04: the one reading of "how many PRs are ready to merge"
+    /// that every surface renders - Overview's tile and banner, and the hub's
+    /// hero line. The PR scan is slow and every Fleet refresh renders its
+    /// fast snapshot first, so "not read yet" is a real state of each
+    /// refresh, and GL-14 says it must not read as zero. All three surfaces
+    /// rendered `mergedPRs.map(readyToMergeCount) ?? 0` - "0 PRs ready to
+    /// merge", in the good tint, at the start of every refresh.
+    enum PRReadyReading: Equatable {
+        /// The scan for this refresh has not landed.
+        case scanning
+        case value(Int)
+        /// The scan finished but did not fully succeed.
+        case failed(String)
+
+        /// A failure wins over a partial list, as the tile always treated it.
+        init(mergedPRs: [MergedPR]?, failure: String?) {
+            if let failure {
+                self = .failed(failure)
+            } else if let mergedPRs {
+                self = .value(FleetDataSource.readyToMergeCount(mergedPRs))
+            } else {
+                self = .scanning
+            }
+        }
+    }
+
     /// A guarded merge runs `gh`/`git` against a real remote. Minutes is
     /// plausible on a slow link; unbounded is not acceptable (this is the
     /// call that wedged its own completion handler for a whole session).
@@ -940,6 +966,16 @@ enum FleetGreeting {
                        readyCount: Int,
                        prFetchFailure: String?,
                        homeOk: Bool) -> Answer {
+        answer(tasks: tasks,
+               prs: prFetchFailure.map { .failed($0) } ?? .value(readyCount),
+               homeOk: homeOk)
+    }
+
+    /// The same three states over a `PRReadyReading`, which adds the fourth
+    /// thing the PR half can be: still scanning (REL-25).
+    static func answer(tasks: [FleetTask],
+                       prs: FleetDataSource.PRReadyReading,
+                       homeOk: Bool) -> Answer {
         guard homeOk else {
             return Answer(
                 tint: .info,
@@ -955,15 +991,25 @@ enum FleetGreeting {
         let needs = tasks.filter { $0.status == "needs_decision" || $0.status == "blocked" }
 
         guard !needs.isEmpty else {
-            let prPhrase = prFetchFailure == nil
-                ? "\(readyCount) PR\(readyCount == 1 ? "" : "s") ready to merge"
-                : "PR status unavailable"
+            let prPhrase: String
+            var failed = false
+            switch prs {
+            case .value(let readyCount):
+                prPhrase = "\(readyCount) PR\(readyCount == 1 ? "" : "s") ready to merge"
+            case .scanning:
+                // Nothing about the PRs is known yet, and nothing here is
+                // bad news either: the line says it is still looking.
+                prPhrase = "checking PRs\u{2026}"
+            case .failed:
+                prPhrase = "PR status unavailable"
+                failed = true
+            }
             return Answer(
-                tint: prFetchFailure == nil ? .good : .warn,
-                kicker: prFetchFailure == nil ? "All clear" : "Partly unknown",
-                title: prFetchFailure == nil ? "Nothing needs you right now" : "Nothing known needs you right now",
+                tint: failed ? .warn : .good,
+                kicker: failed ? "Partly unknown" : "All clear",
+                title: failed ? "Nothing known needs you right now" : "Nothing needs you right now",
                 meta: "\(working.count) crew working \u{00B7} \(prPhrase) \u{00B7} nobody is parked on a decision.",
-                badgeSymbol: prFetchFailure == nil ? "checkmark" : "wifi.exclamationmark",
+                badgeSymbol: failed ? "wifi.exclamationmark" : "checkmark",
                 isSetupPrompt: false,
                 metaRestatesCards: true)
         }
