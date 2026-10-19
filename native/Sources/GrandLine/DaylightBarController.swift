@@ -686,7 +686,7 @@ final class DaylightBarController: NSViewController {
     /// the captain's current task, which is exactly the kind of thing the
     /// lock exists to hide.
     private func registerFocusPopoverWithLockGate() {
-        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.focusPopover }
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.focusPopover }
     }
 
     func attachFocusTimer(_ timer: FocusTimerController) {

@@ -204,7 +204,10 @@ enum HelmConfirm {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.contentView = content
-        panel.followHelmTheme()
+        // REL-26: kept and released when the dialog ends. Each dialog builds
+        // a new panel, and the discarded token left one theme observer behind
+        // per dialog for the life of the process.
+        let themeObservation = panel.followHelmTheme()
         if let anchor = NSApp.keyWindow ?? NSApp.mainWindow {
             let frame = anchor.frame
             panel.setFrameOrigin(NSPoint(x: frame.midX - size.width / 2,
@@ -228,6 +231,7 @@ enum HelmConfirm {
         // returned at once either way - the fade only owns the pixels.
         HelmMotion.fadeInContent(of: panel)
         NSApp.runModal(for: panel)
+        ThemeManager.shared.unobserve(themeObservation)
         HelmMotion.fadeOut(window: panel) { panel.orderOut(nil) }
         return answer
     }

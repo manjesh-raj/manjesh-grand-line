@@ -283,7 +283,7 @@ extension ConsoleController {
         // of that expectation being wrong here is handing the gate the app's
         // *main* window to `orderOut` - which would hide the whole app rather
         // than secure it.
-        AppLockGate.shared.registerSecondaryWindow { [weak self] in
+        AppLockGate.shared.registerSecondaryWindow(owner: self) { [weak self] in
             guard let self, self.incidentPopover.isShown else { return nil }
             let popoverWindow = self.incidentPopover.contentViewController?.view.window
             guard popoverWindow !== self.view.window else { return nil }
@@ -297,7 +297,7 @@ extension ConsoleController {
         // *before* `setLocked(true)`, so it stays the primary path, and this
         // is the backstop for any future lock path that does not go through
         // the shell.
-        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.incidentPopover }
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.incidentPopover }
         incidentCard.onEndIncident = { [weak self] in self?.endIncidentClicked() }
         incidentCard.onAddNote = { [weak self] text in
             guard let self, let incident = self.activeIncident() else { return }

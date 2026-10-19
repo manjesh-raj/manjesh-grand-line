@@ -308,8 +308,28 @@ final class AppLockGate {
     private(set) var isLocked: Bool = true
 
     private var observers: [(Bool) -> Void] = []
-    private var secondaryWindows: [() -> NSWindow?] = []
-    private var dismissiblePopovers: [() -> NSPopover?] = []
+    private var secondaryWindows: [Registration<NSWindow>] = []
+    private var dismissiblePopovers: [Registration<NSPopover>] = []
+
+    /// One registered surface: the provider, and the object that registered
+    /// it, held weakly.
+    ///
+    /// REL-26: registrations used to be bare closures that were never
+    /// removed, and `HelmDateField` registers one per instance - built per
+    /// editor sheet - so the list grew for the life of the process. A
+    /// provider returning `nil` cannot be the test for "gone", because most
+    /// of these surfaces are built lazily and legitimately return `nil` until
+    /// first use. The owner going away is the test, and an entry whose owner
+    /// is gone is pruned on every registration and every sweep.
+    private struct Registration<Surface> {
+        weak var owner: AnyObject?
+        let provider: () -> Surface?
+    }
+
+    private func pruneReleasedOwners() {
+        secondaryWindows.removeAll { $0.owner == nil }
+        dismissiblePopovers.removeAll { $0.owner == nil }
+    }
 
     private init() {}
 
@@ -354,8 +374,12 @@ final class AppLockGate {
     /// Explicit registration, not a sweep of `NSApp.windows`: that array
     /// includes AppKit's own `NSStatusBarWindow` and popover windows, and
     /// ordering those out would break the status item rather than secure it.
-    func registerSecondaryWindow(_ provider: @escaping () -> NSWindow?) {
-        secondaryWindows.append(provider)
+    ///
+    /// `owner` is the object the provider belongs to; the registration is
+    /// dropped once it is released (REL-26).
+    func registerSecondaryWindow(owner: AnyObject, _ provider: @escaping () -> NSWindow?) {
+        pruneReleasedOwners()
+        secondaryWindows.append(Registration(owner: owner, provider: provider))
         if isLocked { provider()?.orderOut(nil) }
     }
 
@@ -384,8 +408,12 @@ final class AppLockGate {
     /// weakly by its caller, for `registerSecondaryWindow`'s own reason:
     /// there is no unregister, and a per-host `ConsoleController`'s popovers
     /// go away when that host is deleted.
-    func registerLockDismissiblePopover(_ provider: @escaping () -> NSPopover?) {
-        dismissiblePopovers.append(provider)
+    ///
+    /// `owner` is the object the provider belongs to; the registration is
+    /// dropped once it is released (REL-26).
+    func registerLockDismissiblePopover(owner: AnyObject, _ provider: @escaping () -> NSPopover?) {
+        pruneReleasedOwners()
+        dismissiblePopovers.append(Registration(owner: owner, provider: provider))
         if isLocked, let popover = provider(), popover.isShown { popover.performClose(nil) }
     }
 
@@ -400,13 +428,20 @@ final class AppLockGate {
     /// check registration without ordering a real panel onto the captain's
     /// screen (`orderOutSecondaryWindows` skips anything not `isVisible`, so
     /// a never-shown panel leaves no trace).
-    var debugRegisteredWindows: [NSWindow] { secondaryWindows.compactMap { $0() } }
+    var debugRegisteredWindows: [NSWindow] { secondaryWindows.compactMap { $0.provider() } }
 
     /// The popovers currently registered, resolved through their providers -
     /// the behavioural counterpart to `LockGateCoverageSelfTest`'s source
     /// grep, which can see that a file *calls* `registerLockDismissiblePopover`
     /// but not that the popover it hands over is the one it shows.
-    var debugDismissiblePopovers: [NSPopover] { dismissiblePopovers.compactMap { $0() } }
+    var debugDismissiblePopovers: [NSPopover] { dismissiblePopovers.compactMap { $0.provider() } }
+
+    /// REL-26: how many popover registrations are held, live or not, after a
+    /// prune - so a suite can see the registry shrink when owners go away.
+    var debugDismissiblePopoverRegistrationCount: Int {
+        pruneReleasedOwners()
+        return dismissiblePopovers.count
+    }
 
     /// How many providers are registered, resolved or not.
     ///
@@ -417,18 +452,25 @@ final class AppLockGate {
     /// on its own, which is why the suite pairs it with a source guard that
     /// the registration is where it should be.
     var debugRegisteredWindowProviderCount: Int { secondaryWindows.count }
+
+    /// REL-26: whether `owner` still has a popover registration - a suite
+    /// counting the whole registry would see every other suite's entries.
+    func debugHasDismissiblePopoverRegistration(for owner: AnyObject) -> Bool {
+        dismissiblePopovers.contains { $0.owner === owner }
+    }
     #endif
 
     private func closeLockDismissiblePopovers() {
-        for provider in dismissiblePopovers {
-            guard let popover = provider(), popover.isShown else { continue }
+        pruneReleasedOwners()
+        for registration in dismissiblePopovers {
+            guard let popover = registration.provider(), popover.isShown else { continue }
             popover.performClose(nil)
         }
     }
 
     private func orderOutSecondaryWindows() {
-        for provider in secondaryWindows {
-            guard let window = provider(), window.isVisible else { continue }
+        for registration in secondaryWindows {
+            guard let window = registration.provider(), window.isVisible else { continue }
             AppLog.lifecycle.info("lock: ordering out \(window.title, privacy: .public)")
             window.orderOut(nil)
         }

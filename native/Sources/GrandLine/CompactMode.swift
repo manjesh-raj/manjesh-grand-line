@@ -297,7 +297,7 @@ final class CompactModeController: NSObject, NSPopoverDelegate {
         // status items this replaces make: a popover is its own window,
         // layered *above* the lock overlay, so it is closed on the way into
         // the lock rather than merely refused on the next open.
-        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.popover }
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.popover }
 
         if let button = statusItem.button {
             // The app's own mark, for the same reason

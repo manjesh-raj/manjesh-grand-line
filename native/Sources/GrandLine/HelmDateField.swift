@@ -137,7 +137,7 @@ final class HelmDateField: NSControl {
         // and interactive over the lock screen. `LockGateCoverageSelfTest`
         // fails the build for any popover owner that skips this, which is
         // how this one was caught.
-        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.popover }
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.popover }
     }
 
     /// The value in words, which is E6's own "'Tomorrow 3:00 PM'".

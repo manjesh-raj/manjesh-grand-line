@@ -1507,7 +1507,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // a Host Editor open at lock time remained fully usable, editing and
             // saving real host records. Registered once, when the window is
             // created; the gate orders it out on every lock.
-            AppLockGate.shared.registerSecondaryWindow { [weak self] in self?.hostEditorWindow }
+            AppLockGate.shared.registerSecondaryWindow(owner: self) { [weak self] in self?.hostEditorWindow }
         }
         // Still set, though `titleVisibility` is `.hidden` under F2(a)'s
         // fusion: the Window menu, Mission Control and the proxy menu all read

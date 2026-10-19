@@ -127,7 +127,7 @@ final class AllDestinationsOverlayController: NSWindowController {
         // is a fixed list of page names - but it is a live navigation surface,
         // and a locked app handing out navigation is exactly what the gate is
         // for.
-        AppLockGate.shared.registerSecondaryWindow { [weak self] in self?.window }
+        AppLockGate.shared.registerSecondaryWindow(owner: self) { [weak self] in self?.window }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
