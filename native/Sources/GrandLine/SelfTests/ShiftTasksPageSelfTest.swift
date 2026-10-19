@@ -591,7 +591,9 @@ enum ShiftTasksPageSelfTest {
     // MARK: The UI/UX revamp's Tasks states (UI-26, UI-31)
 
     /// - UI-31: the lanes draw the skeleton until the first render, and only
-    ///   the chosen view is mounted on first paint;
+    ///   the chosen view is mounted on first paint (REL-01: the first render
+    ///   now runs at the end of `loadView`, from the store `init` already
+    ///   read, so building the view is enough to clear the skeleton);
     /// - UI-31 / GL-14: a task file that will not parse is a failed-read card
     ///   naming the file and the line - the board is hidden and the subtitle
     ///   never says "0 open";
@@ -602,13 +604,34 @@ enum ShiftTasksPageSelfTest {
             _ = seed(store, title: "Anything", status: .todo, due: nil)
             let controller = ShiftController(store: store)
             _ = controller.view
-            check(controller.debugBoardView?.debugColumn(.backlog)?.debugSkeletonVisible == true,
-                  "UI-31: before the first render the lanes show the skeleton")
             check(!controller.debugCalendarIsVisible,
                   "UI-31: the Calendar is not mounted under the Board on first paint")
             controller.debugRender()
             check(controller.debugBoardView?.debugColumn(.backlog)?.debugSkeletonVisible == false,
                   "UI-31: the skeleton goes once the board has rendered")
+        }
+
+        // REL-01: the first paint is the loaded store. Mounted in a window
+        // that is ordered front, and checked before the run loop turns even
+        // once - so the only render that can have happened is the one the
+        // view ran for itself, not `viewWillAppear`'s background reload.
+        withScratchStore { store in
+            _ = seed(store, title: "First", status: .todo, due: nil)
+            _ = seed(store, title: "Second", status: .todo, due: nil)
+            _ = seedProject(store, name: "Alpha")
+            let controller = ShiftController(store: store)
+            let window = OffScreenProbe.window(width: 1440, height: 940, styleMask: [.titled, .resizable])
+            defer { window.orderOut(nil) }
+            window.contentView = controller.view
+            window.orderFront(nil)
+            check(controller.debugBoardView?.debugColumn(.backlog)?.debugSkeletonVisible == false,
+                  "REL-01: the first paint shows the loaded board, not the lane skeletons")
+            check(!controller.debugProjectDetailIsVisible,
+                  "REL-01: the project detail is not visible under the grid before anything opened it")
+            check(controller.debugTasksCountBadge == "2",
+                  "REL-01: the task count on first paint is the store's, got \(controller.debugTasksCountBadge)")
+            check(Set(controller.debugVisibleTaskIDs(.backlog)).count == 2,
+                  "REL-01: the backlog lane holds the store's two tasks on first paint")
         }
 
         withScratchStore { store in

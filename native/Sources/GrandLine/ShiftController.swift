@@ -631,6 +631,18 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             self.syncStatus = (self.store.gitSync?.hasReportedStatus ?? false) ? status : nil
             self.applySyncPill()
         }
+
+        // REL-01: the first paint is the store, not the pre-render state.
+        // `ShiftStore.init` already read every file synchronously, but the
+        // only path to a render was `viewWillAppear`'s background reload -
+        // one main-queue turn after a four-file parse, and never at all in a
+        // window that is not ordered front. Until then the lanes showed
+        // their skeletons, the counts said 0 while the drill subtitle
+        // (which reads the store directly) said 7, and the project detail
+        // sat under the grid. The reload in `viewWillAppear` now only picks
+        // up an edit made outside this page, the contract
+        // `HelmBackgroundReload` states for the other pages.
+        render()
     }
 
     deinit {
@@ -964,6 +976,10 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         projectsDetailContainer.alignment = .leading
         projectsDetailContainer.spacing = HelmMetrics.s4
         projectsDetailContainer.translatesAutoresizingMaskIntoConstraints = false
+        // REL-01: hidden until `renderProjectsSection` opens a project. It
+        // used to be visible from build to the first render, stacking the
+        // "Back to Projects" detail under the grid on every first visit.
+        projectsDetailContainer.isHidden = true
         buildDetailChrome()
 
         // Just the panel now. The board renders Projects as its own
@@ -997,7 +1013,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         boardView.onAddTask = { [weak self] column in self?.addTask(in: column) }
         boardView.onDropTask = { [weak self] id, column in self?.moveTask(id: id, to: column) ?? false }
         boardView.onClearFilter = { [weak self] in self?.clearFilters() }
-        // UI-31: the lanes show the skeleton until the first read renders.
+        // UI-31: the lanes show the skeleton until the first render, which
+        // REL-01 runs at the end of `loadView` from the already-loaded store.
         boardView.setLoading(true)
 
         calendarView.onOpenTask = { [weak self] id in self?.openBoardTask(id: id) }
@@ -2468,6 +2485,9 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     var debugFailedReadSubline: String { failedReadHeader.sublineLabel.stringValue }
     var debugFailedReadTitle: String { failedReadHeader.titleLabel.stringValue }
     var debugTaskPanelIsVisible: Bool { !taskPanel.isHidden }
+    /// REL-01: whether the project detail is showing.
+    var debugProjectDetailIsVisible: Bool { !projectsDetailContainer.isHidden }
+    var debugTasksCountBadge: String { tasksCountBadge.stringValue }
 
     /// Drives the real toggle's own handler, so a test cannot pass against a
     /// pill wired to nothing.
