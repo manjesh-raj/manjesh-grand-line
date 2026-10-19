@@ -56,7 +56,8 @@ enum FullScreenMenuBarFillSelfTest {
                       checkTheFillCoversTheStripAboveTheMenuBarWindow,
                       checkThePanelRefusesToBeConstrainedBelowTheMenuBar,
                       checkTheFillTakesThePageGroundAndFollowsTheTheme,
-                      checkTheFillYieldsWhileThePointerIsInTheStrip] {
+                      checkTheFillYieldsWhileThePointerIsInTheStrip,
+                      checkAReleasedFillStopsItsYieldPoll] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -251,6 +252,28 @@ enum FullScreenMenuBarFillSelfTest {
                   "the fill must come back once the pointer leaves the strip", &ok)
             window.close()
         }
+    }
+
+    /// REL-30: the yield poll only stops when the pointer leaves the strip,
+    /// so a fill released while yielding left a 0.2s timer running for the
+    /// rest of the process. Its `deinit` invalidates it now.
+    private static func checkAReleasedFillStopsItsYieldPoll(_ ok: inout Bool) {
+        var poll: Timer?
+        weak var released: FullScreenMenuBarFill?
+        autoreleasepool {
+            let (window, fill) = mountedFill(fullScreen: true)
+            fill.update()
+            fill.debugPanelContentView?.mouseEntered(with: hoverEvent())
+            poll = fill.debugYieldPoll
+            released = fill
+            window.close()
+        }
+        guard let poll, released == nil else {
+            fail("REL-30: the fixture needs a running yield poll and a fill that deallocates "
+                 + "(poll: \(poll != nil), released: \(released == nil))", &ok)
+            return
+        }
+        check(!poll.isValid, "REL-30: the yield poll must be invalidated with its fill", &ok)
     }
 
     /// The tracking area's callbacks read nothing off the event, so any mouse

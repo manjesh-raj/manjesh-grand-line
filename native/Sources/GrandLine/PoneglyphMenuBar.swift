@@ -69,7 +69,7 @@ final class PoneglyphMenuBarController: NSObject, NSPopoverDelegate {
         // Audit 2 §2.7/§6.2: a popover is its own window above the lock
         // overlay, so it must be closed on a lock rather than merely
         // refused on the next open.
-        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.popover }
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.popover }
 
         if let button = statusItem.button {
             button.image = Self.statusItemIcon()

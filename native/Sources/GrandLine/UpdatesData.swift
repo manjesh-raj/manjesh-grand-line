@@ -259,30 +259,77 @@ enum UpdatesRunLimits {
 ///
 /// Set both closures together: a fake `run` with real `resolveExecutable`
 /// would still depend on what is installed.
+///
+/// **Every field is behind one lock.** The Updates page, the Setup page and
+/// the signals poller check several tools at once on concurrent queues, and
+/// every one of those checks reaches `run(_:_:cwd:)` - which appends to
+/// `invocations` - in any process that mounts them. An unsynchronised
+/// `Array.append` from several threads corrupted the heap: it was the
+/// intermittent SIGSEGV/SIGABRT in `FM_RUN_PANEL_AND_PAGE_MOTION_TESTS`
+/// (measured 2 in 25 local runs, and red on `main` in CI), crashing inside
+/// `run` under `UpdatesController.check`.
 enum UpdatesDataTestSeam {
+    private static let lock = NSLock()
+
+    private static func locked<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+
+    private static var _run: ((String, [String], URL?) -> SubprocessResult)?
+    private static var _resolveExecutable: ((String) -> String?)?
+    private static var _homebrewPrefixes: [URL]?
+    private static var _applicationsDirectory: URL?
+    private static var _invocations: [(executable: String, args: [String])] = []
+
     /// `(executable, args, cwd) -> result`. `nil` means "really run it".
-    static var run: ((String, [String], URL?) -> SubprocessResult)?
+    static var run: ((String, [String], URL?) -> SubprocessResult)? {
+        get { locked { _run } }
+        set { locked { _run = newValue } }
+    }
     /// `name -> absolute path`, or `nil` to report the tool as missing.
-    static var resolveExecutable: ((String) -> String?)?
+    static var resolveExecutable: ((String) -> String?)? {
+        get { locked { _resolveExecutable } }
+        set { locked { _resolveExecutable = newValue } }
+    }
     /// Replaces every Homebrew prefix `BrewCaskInstallation` would look under
     /// for a `Caskroom`, so a suite reads a fixture directory and never the
     /// machine's real Caskroom. `nil` means "the real prefixes".
-    static var homebrewPrefixes: [URL]?
+    static var homebrewPrefixes: [URL]? {
+        get { locked { _homebrewPrefixes } }
+        set { locked { _homebrewPrefixes = newValue } }
+    }
     /// Replaces `/Applications` for the app-bundle half of the same lookup.
-    static var applicationsDirectory: URL?
+    static var applicationsDirectory: URL? {
+        get { locked { _applicationsDirectory } }
+        set { locked { _applicationsDirectory = newValue } }
+    }
 
     /// Every `(executable, args)` pair the seam saw, in order - so a test can
     /// assert what was *asked of the tool*, not only what was made of the
     /// reply. That is the half that catches the fully-qualified-cask bug,
     /// whose whole symptom is the wrong argument being sent.
-    static var invocations: [(executable: String, args: [String])] = []
+    static var invocations: [(executable: String, args: [String])] {
+        get { locked { _invocations } }
+        set { locked { _invocations = newValue } }
+    }
+
+    /// The one write `run(_:_:cwd:)` makes, atomic as a whole - a
+    /// read-modify-write through the `invocations` accessor would still lose
+    /// appends between two threads.
+    static func record(_ executable: String, _ args: [String]) {
+        locked { _invocations.append((executable, args)) }
+    }
 
     static func reset() {
-        run = nil
-        resolveExecutable = nil
-        homebrewPrefixes = nil
-        applicationsDirectory = nil
-        invocations = []
+        locked {
+            _run = nil
+            _resolveExecutable = nil
+            _homebrewPrefixes = nil
+            _applicationsDirectory = nil
+            _invocations = []
+        }
     }
 }
 #endif
@@ -298,7 +345,7 @@ private typealias RunResult = SubprocessResult
 
 private func run(_ executable: String, _ args: [String], cwd: URL? = nil) -> RunResult {
     #if FM_SELFTESTS
-    UpdatesDataTestSeam.invocations.append((executable, args))
+    UpdatesDataTestSeam.record(executable, args)
     if let override = UpdatesDataTestSeam.run { return override(executable, args, cwd) }
     #endif
     return Subprocess.run(executable: executable, arguments: args, cwd: cwd,

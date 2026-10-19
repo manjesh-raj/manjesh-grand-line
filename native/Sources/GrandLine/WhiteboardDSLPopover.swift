@@ -232,7 +232,7 @@ final class WhiteboardDSLController: NSObject, NSPopoverDelegate {
         // Audit 2 §6.2: a popover is its own window, layered above the lock
         // overlay, so one left open when the lock fires would stay readable and
         // interactive over the lock screen. Weak - there is no unregister.
-        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.popover }
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.popover }
         popover.contentViewController = content
         popover.behavior = .transient
         popover.delegate = self

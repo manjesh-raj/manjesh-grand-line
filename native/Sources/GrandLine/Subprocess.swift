@@ -187,6 +187,35 @@ final class SubprocessCancellation {
         process = nil
         lock.unlock()
     }
+
+    // MARK: Scoped cancellation (REL-05)
+
+    private static let scopeKey = "com.manjesh.grandline.subprocess-cancellation"
+
+    /// Run `body` with `token` as the cancellation for every `Subprocess.run`
+    /// on this thread that does not pass one of its own.
+    ///
+    /// REL-05: a schedule run or an update install reaches its subprocesses
+    /// through many layers of existing code (`ScheduleActions`,
+    /// `UpdatesSource`) that take no handle, and threading one through all of
+    /// them would touch dozens of signatures for one caller. Scoping it to
+    /// the thread the work runs on reaches every one of them. Once the token
+    /// is cancelled, the running child is terminated and any later run in
+    /// the scope is killed the moment it launches, so the work stops at its
+    /// next subprocess. A run started on a *different* thread from inside the
+    /// body is not covered - those are bounded by their own timeouts.
+    static func withScope<T>(_ token: SubprocessCancellation, _ body: () -> T) -> T {
+        let dictionary = Thread.current.threadDictionary
+        let previous = dictionary[scopeKey]
+        dictionary[scopeKey] = token
+        defer { dictionary[scopeKey] = previous }
+        return body()
+    }
+
+    /// The token `withScope` set for this thread, if any.
+    static var scoped: SubprocessCancellation? {
+        Thread.current.threadDictionary[scopeKey] as? SubprocessCancellation
+    }
 }
 
 // MARK: - Runner
@@ -292,6 +321,9 @@ enum Subprocess {
         cancellation: SubprocessCancellation? = nil
     ) -> SubprocessResult {
         _ = ignoreSIGPIPE
+        // REL-05: a run inside `SubprocessCancellation.withScope` is
+        // cancellable through the scope's token.
+        let cancellation = cancellation ?? SubprocessCancellation.scoped
         let name = label ?? (executable as NSString).lastPathComponent
         // B4: a self-test or tour process never starts the captain's own
         // tools. Refused as a launch failure, which every caller already

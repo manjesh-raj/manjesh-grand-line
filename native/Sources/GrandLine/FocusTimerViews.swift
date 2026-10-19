@@ -257,6 +257,10 @@ final class FocusTimerPanelController: NSViewController {
 
     deinit {
         if let timerObservation { timer.unobserve(timerObservation) }
+        // REL-26: this panel is built on every focus-chip click, and its
+        // theme observer outlived it - one more closure called on every
+        // theme change for the life of the process, per click.
+        if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
     }
 
     override func loadView() {

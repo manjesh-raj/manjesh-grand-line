@@ -651,7 +651,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// `CodeRunnerViewSelfTest` asserts to the point.
     private func buildOutputPane(in root: NSView) {
         root.addSubview(outputPane)
-        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.runnersPopover }
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.runnersPopover }
         outputPane.onStop = { [weak self] in self?.stopRun() }
         outputPane.onCopy = { [weak self] in self?.copyOutput() }
         outputPane.onClear = { [weak self] in self?.clearOutput() }

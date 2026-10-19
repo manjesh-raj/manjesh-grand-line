@@ -76,6 +76,7 @@ enum CompactModeSelfTest {
         checkTheStatusItemsAreNeverBothShown(check)
         checkTheDockIconCannotOutliveTheMode(check)
         checkClosingTheLastWindowOnlyQuitsOutsideCompactMode(check)
+        checkADockClickBringsTheWindowBack(check)
         checkTheBadgeIsOptInAndLockAware(check)
         checkThePolicyReadsAllThreeSettings(check)
         checkTheHotkeyIsExactlyControlOptionG(check)
@@ -232,6 +233,29 @@ enum CompactModeSelfTest {
                   + "window is to close the main one")
         check(!policy(true, true, true).terminatesAfterLastWindowClosed,
               "the answer is keyed on the mode alone, not on the Dock or badge switches")
+    }
+
+    /// REL-07: in compact mode with the Dock icon kept, a Dock click with no
+    /// window showing activated the app and restored nothing. The policy
+    /// answers when to reopen, and the delegate method must route that answer
+    /// through the same exit the popover uses - a source guard, because the
+    /// delegate cannot run without `NSApp`.
+    private static func checkADockClickBringsTheWindowBack(_ check: (Bool, String) -> Void) {
+        check(policy(true, false, false).reopensFullWindow(hasVisibleWindows: false),
+              "REL-07: in compact mode a Dock click with no window showing brings the full window back")
+        check(!policy(true, false, false).reopensFullWindow(hasVisibleWindows: true),
+              "REL-07: with a window already showing, AppKit's default reopen is left alone")
+        check(!policy(false, false, false).reopensFullWindow(hasVisibleWindows: false),
+              "REL-07: outside compact mode AppKit's default reopen is left alone")
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8),
+              let start = main.range(of: "func applicationShouldHandleReopen(") else {
+            check(false, "REL-07: AppDelegate implements applicationShouldHandleReopen")
+            return
+        }
+        let body = String(main[start.lowerBound...].prefix(400))
+        check(body.contains("reopensFullWindow(hasVisibleWindows: flag)") && body.contains("leaveCompactMode()"),
+              "REL-07: the reopen handler asks the policy and leaves compact mode the popover's way")
     }
 
     private static func checkTheBadgeIsOptInAndLockAware(_ check: (Bool, String) -> Void) {

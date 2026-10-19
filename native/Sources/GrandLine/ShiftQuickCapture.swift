@@ -378,7 +378,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         // the idle lock implies nobody was typing, but the 12h session-expiry
         // lock can fire mid-use. Registered once, here, where the window is
         // created; the gate orders it out on every lock.
-        AppLockGate.shared.registerSecondaryWindow { [weak self] in self?.window }
+        AppLockGate.shared.registerSecondaryWindow(owner: self) { [weak self] in self?.window }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }

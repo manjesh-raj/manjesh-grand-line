@@ -105,6 +105,18 @@ struct CompactModePolicy: Equatable {
     /// the normal state of this mode.
     var terminatesAfterLastWindowClosed: Bool { !isEnabled }
 
+    /// REL-07: whether a Dock click should bring the full window back.
+    ///
+    /// Compact mode with the Dock icon kept is `.regular`, so the Dock icon
+    /// is there to click - but the mode orders the main window out, and
+    /// AppKit's default reopen only un-miniaturizes. A click activated the
+    /// app and showed nothing. With no visible window it now does what the
+    /// popover's "Open full window" does. Outside compact mode, and whenever
+    /// a window is already showing, AppKit's default is left alone.
+    func reopensFullWindow(hasVisibleWindows: Bool) -> Bool {
+        isEnabled && !hasVisibleWindows
+    }
+
     /// `.accessory` is `LSUIElement` at runtime: no Dock icon, no app menu,
     /// status item only.
     ///
@@ -297,7 +309,7 @@ final class CompactModeController: NSObject, NSPopoverDelegate {
         // status items this replaces make: a popover is its own window,
         // layered *above* the lock overlay, so it is closed on the way into
         // the lock rather than merely refused on the next open.
-        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.popover }
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.popover }
 
         if let button = statusItem.button {
             // The app's own mark, for the same reason

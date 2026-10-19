@@ -41,6 +41,7 @@ enum FocusTimerViewSelfTest {
             checkBarChip(store: store, check: check)
             checkPopoverPanel(store: store, check: check)
             checkWeeklyReviewTile(store: store, check: check)
+            checkThePanelReleasesItsThemeObserver(store: store, check: check)
         }
 
         return report(failures)
@@ -162,6 +163,25 @@ enum FocusTimerViewSelfTest {
             check(bar.debugFocusChipHostWidth < 1,
                   "and give its width back, got \(bar.debugFocusChipHostWidth)")
         }
+    }
+
+    // MARK: REL-26 - one panel per chip click must not leave observers behind
+
+    /// The focus chip builds a new `FocusTimerPanelController` on every click,
+    /// and its theme observer outlived it - one more closure called on every
+    /// theme change for the life of the process, per click.
+    private static func checkThePanelReleasesItsThemeObserver(store: ShiftStore, check: (Bool, String) -> Void) {
+        let timer = FocusTimerController(store: store)
+        let before = ThemeManager.shared.observerCountForTests
+        for _ in 0..<20 {
+            autoreleasepool {
+                let panel = FocusTimerPanelController(timer: timer)
+                _ = panel.view
+            }
+        }
+        let after = ThemeManager.shared.observerCountForTests
+        check(after == before,
+              "REL-26: twenty focus panels opened and released left \(after - before) theme observers behind")
     }
 
     // MARK: The popover panel

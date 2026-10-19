@@ -200,7 +200,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         // what the lock exists to hide.
         // `LockGateCoverageSelfTest` is the source guard that caught this
         // missing.
-        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.tagPopover }
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.tagPopover }
 
         store.gitSync?.observeStatus { [weak self] status in
             guard let self else { return }

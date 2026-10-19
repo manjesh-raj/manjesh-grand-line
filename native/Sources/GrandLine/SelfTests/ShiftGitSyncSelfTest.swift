@@ -535,6 +535,31 @@ enum ShiftGitSyncSelfTest {
             }
         }
 
+        // MARK: REL-30. A released instance stops its periodic pull timer.
+        do {
+            let remote = makeBareRemote(name: "remote-rel30")
+            seedRemote(remote)
+            var timer: Timer?
+            weak var released: ShiftGitSync?
+            autoreleasepool {
+                let wt = scratch.appendingPathComponent("wt-rel30", isDirectory: true)
+                let sync = ShiftGitSync(workingTree: wt, remoteURL: remote.path, debounceInterval: 600, periodicPullInterval: 999_999)
+                sync.start()
+                let deadline = Date().addingTimeInterval(5)
+                while sync.debugPullTimer == nil, Date() < deadline {
+                    RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+                }
+                timer = sync.debugPullTimer
+                // Let `start()`'s clone finish so its queue block releases it.
+                sync.sharedQueue.sync {}
+                released = sync
+            }
+            for _ in 0..<20 { RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01)) }
+            check(timer != nil && released == nil,
+                  "REL-30: the fixture needs a started pull timer and an instance that deallocates (timer: \(timer != nil), released: \(released == nil))")
+            check(timer?.isValid == false, "REL-30: a released instance's periodic pull timer is invalidated")
+        }
+
         // The terminate path calls both flushes on the shared queue. A source
         // guard rather than a behaviour check, because `applicationWillTerminate`
         // cannot run inside a suite; the behaviour is the case above.

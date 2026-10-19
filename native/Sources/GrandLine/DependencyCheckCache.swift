@@ -135,7 +135,7 @@ final class DependencyCheckCache {
     /// giving up and checking for itself. Comfortably longer than a real
     /// check; short enough that a wedged one cannot park a pool thread
     /// indefinitely.
-    static let inFlightWaitTimeout: TimeInterval = 120
+    private(set) static var inFlightWaitTimeout: TimeInterval = 120
 
     func check(_ item: DependencyItem, forceRefresh: Bool = false, maxAge: TimeInterval = defaultTTL) -> CheckOutcome {
         checkDated(item, forceRefresh: forceRefresh, maxAge: maxAge).outcome
@@ -160,27 +160,38 @@ final class DependencyCheckCache {
     func checkDated(_ item: DependencyItem,
                     forceRefresh: Bool = false,
                     maxAge: TimeInterval = defaultTTL) -> (outcome: CheckOutcome, gatheredAt: Date) {
+        var gaveUpWaiting = false
         while true {
             lock.lock()
             if !forceRefresh, let entry = entries[item.id], Date().timeIntervalSince(entry.checkedAt) < maxAge {
                 lock.unlock()
                 return (entry.outcome, entry.checkedAt)
             }
-            if let group = inFlight[item.id] {
+            if !gaveUpWaiting, let group = inFlight[item.id] {
                 lock.unlock()
                 // Bounded rather than an open `wait()`: the runner in front of
                 // us is only transitively bounded by the per-subprocess timeout,
                 // and an unbounded wait parks a pool thread for however long
-                // that takes with no watchdog of its own. Timing out just
-                // re-reads the cache on the next turn - the runner still
-                // publishes its result, so nothing is lost, and a waiter that
-                // gives up runs its own check rather than hanging.
-                _ = group.wait(timeout: .now() + Self.inFlightWaitTimeout)
+                // that takes with no watchdog of its own. A runner that
+                // finishes in time has published its result, which the next
+                // turn reads. One that does not is waited on exactly once: the
+                // waiter then runs its own check rather than hanging.
+                //
+                // REL-28: this used to `continue` either way, find the same
+                // registration still in `inFlight`, and wait again - forever,
+                // while the comment above promised it would check for itself.
+                if group.wait(timeout: .now() + Self.inFlightWaitTimeout) == .timedOut {
+                    AppLog.poller.error("dependency check: \(item.id, privacy: .public) waited \(Self.inFlightWaitTimeout, privacy: .public)s on another check - running its own")
+                    gaveUpWaiting = true
+                }
                 continue
             }
             let group = DispatchGroup()
             group.enter()
-            inFlight[item.id] = group
+            // A waiter that gave up runs alongside the registration it gave
+            // up on rather than replacing it - others may still be parked on
+            // that one, and they time out the same way.
+            if inFlight[item.id] == nil { inFlight[item.id] = group }
             lock.unlock()
 
             let runner = Self.checkOverrideForTests ?? UpdatesSource.check
@@ -189,7 +200,8 @@ final class DependencyCheckCache {
             let gatheredAt = Date()
             lock.lock()
             entries[item.id] = Entry(outcome: outcome, checkedAt: gatheredAt)
-            inFlight.removeValue(forKey: item.id)
+            // Identity-checked: only the runner that registered clears it.
+            if inFlight[item.id] === group { inFlight.removeValue(forKey: item.id) }
             lock.unlock()
             group.leave()
             return (outcome, gatheredAt)
@@ -213,4 +225,9 @@ final class DependencyCheckCache {
     /// claudePathOverrideForTests`/`SRELead.claudePathOverrideForTests`.
     /// `nil` (the production default) means "call the real thing".
     static var checkOverrideForTests: ((DependencyItem) -> CheckOutcome)?
+
+    #if FM_SELFTESTS
+    /// REL-28: a suite shortens the wait so a hung check costs it a moment.
+    static func debugSetInFlightWaitTimeout(_ seconds: TimeInterval) { inFlightWaitTimeout = seconds }
+    #endif
 }

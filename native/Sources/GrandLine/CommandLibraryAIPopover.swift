@@ -43,7 +43,7 @@ final class CommandLibraryAIController: NSObject, NSPopoverDelegate {
         // readable and interactive over the lock screen (§5.1(b)'s harm, of
         // which the incident card was one instance). Weak, because there is
         // no unregister.
-        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.popover }
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.popover }
         popover.contentViewController = content
         popover.behavior = .transient
         popover.delegate = self

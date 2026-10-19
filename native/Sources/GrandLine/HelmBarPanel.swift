@@ -124,7 +124,7 @@ final class HelmBarPanel {
         // left open when the 12h session lock fires would stay readable and
         // interactive over the lock screen. Weak, because there is no
         // unregister.
-        AppLockGate.shared.registerSecondaryWindow { [weak self] in self?.panel }
+        AppLockGate.shared.registerSecondaryWindow(owner: self) { [weak self] in self?.panel }
 
         _ = panel.followHelmTheme()
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }

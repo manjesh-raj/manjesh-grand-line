@@ -57,6 +57,8 @@ enum LockGateCoverageSelfTest {
             ("B: the gate closes popovers before it orders windows out", test_popoverClosePrecedesWindowSweep),
             ("B: a popover is closed, never ordered out", test_popoversAreClosedNotOrderedOut),
             ("the exemption tables name real code", test_exemptionsAreHonest),
+            ("REL-26: a released owner's registration is pruned", test_releasedOwnersArePruned),
+            ("REL-26: a confirm dialog releases its theme observer", test_confirmReleasesItsThemeObserver),
         ]
 
         var ok = true
@@ -311,6 +313,47 @@ enum LockGateCoverageSelfTest {
         guard let files = SelfTestSources.appSourceFiles() else { return nil }
         guard let file = files.first(where: { $0.lastPathComponent == name }) else { return nil }
         return readCode(file)
+    }
+
+    // MARK: REL-26
+
+    /// `HelmDateField` registers a lock-dismissible popover per instance, and
+    /// date fields are built per editor sheet. The registry never shrank, so
+    /// every sheet ever opened stayed in it for the life of the process.
+    private static func test_releasedOwnersArePruned() -> String? {
+        let before = AppLockGate.shared.debugDismissiblePopoverRegistrationCount
+        weak var probe: HelmDateField?
+        var registered = false
+        autoreleasepool {
+            let field = HelmDateField()
+            probe = field
+            registered = AppLockGate.shared.debugHasDismissiblePopoverRegistration(for: field)
+            for _ in 0..<19 { _ = HelmDateField() }
+        }
+        guard registered else { return "a date field did not register with the lock gate - the fixture is vacuous" }
+        guard probe == nil else { return "the fixture's date field never deallocated, so nothing can be pruned" }
+        let after = AppLockGate.shared.debugDismissiblePopoverRegistrationCount
+        guard after == before else {
+            return "twenty date fields built and released left \(after - before) lock-gate registrations behind"
+        }
+        return nil
+    }
+
+    /// `HelmConfirm.runModal` cannot run inside a suite (it is a modal
+    /// session), so this is a source guard: the panel's theme token is kept
+    /// and released when the session ends, rather than discarded.
+    private static func test_confirmReleasesItsThemeObserver() -> String? {
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let source = try? String(contentsOf: dir.appendingPathComponent("HelmConfirm.swift"), encoding: .utf8),
+              let start = source.range(of: "private static func runModal(") else {
+            return "could not read HelmConfirm.swift - this guard would silently pass"
+        }
+        let body = String(source[start.lowerBound...].prefix(4000))
+        guard body.contains("let themeObservation = panel.followHelmTheme()"),
+              body.contains("ThemeManager.shared.unobserve(themeObservation)") else {
+            return "HelmConfirm.runModal discards (or never releases) the panel's theme observer"
+        }
+        return nil
     }
 }
 

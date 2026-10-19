@@ -47,11 +47,57 @@ enum DependencyCheckCacheSelfTest {
         checkPollerSweepReportsItsOldestContributingSample(&ok)
         checkPollerWindowCannotBeSatisfiedByThePreviousPollerSweep(&ok)
         checkPollerSweepDoesNotBypassTheSharedCache(&ok)
+        checkAWaiterChecksForItselfAfterOneTimeout(&ok)
         print(ok ? "DependencyCheckCacheSelfTest: all checks passed" : "DependencyCheckCacheSelfTest: FAILED")
         DependencyCheckCache.checkOverrideForTests = nil
         return ok
     }
 
+
+    /// REL-28: a waiter parked on a hung check waits once, then runs its
+    /// own. It used to `continue` after the timeout, find the same in-flight
+    /// registration and wait again - forever.
+    private static func checkAWaiterChecksForItselfAfterOneTimeout(_ ok: inout Bool) {
+        print("\n-- REL-28: a waiter on a hung check runs its own after one timeout --")
+        let previous = DependencyCheckCache.inFlightWaitTimeout
+        DependencyCheckCache.debugSetInFlightWaitTimeout(0.3)
+        defer { DependencyCheckCache.debugSetInFlightWaitTimeout(previous) }
+        let cache = DependencyCheckCache()
+        let item = fakeItem("rel28-tool")
+        let hungStarted = DispatchSemaphore(value: 0)
+        let releaseHung = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var calls = 0
+        DependencyCheckCache.checkOverrideForTests = { item in
+            lock.lock(); calls += 1; let call = calls; lock.unlock()
+            if call == 1 {
+                hungStarted.signal()
+                releaseHung.wait()
+            }
+            return fakeOutcome(for: "\(item.id)-call-\(call)")
+        }
+        let hungDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            _ = cache.check(item)
+            hungDone.signal()
+        }
+        hungStarted.wait()
+
+        let waiterDone = DispatchSemaphore(value: 0)
+        var waiterDetail = ""
+        DispatchQueue.global(qos: .utility).async {
+            waiterDetail = cache.check(item).detail
+            waiterDone.signal()
+        }
+        let returned = waiterDone.wait(timeout: .now() + 3) == .success
+        releaseHung.signal()
+        _ = hungDone.wait(timeout: .now() + 10)
+        if !returned {
+            fail("REL-28: a waiter on a hung check never returned - it keeps waiting instead of checking itself", &ok)
+        } else if !waiterDetail.contains("call-2") {
+            fail("REL-28: the waiter should have run its own check, got \"\(waiterDetail)\"", &ok)
+        }
+    }
 
     // MARK: - Fakes
 

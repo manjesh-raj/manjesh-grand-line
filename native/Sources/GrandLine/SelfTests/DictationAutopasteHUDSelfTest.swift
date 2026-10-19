@@ -42,7 +42,8 @@ enum DictationAutopasteHUDSelfTest {
     static func run() -> Bool {
         var allOK = true
         for check in [checkCopiedOnlyIsNeverShownAsPasted,
-                      checkARealSuccessfulPasteStillSaysPasted] {
+                      checkARealSuccessfulPasteStillSaysPasted,
+                      checkAReleasedHUDStopsItsWaveformTimer] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -104,6 +105,36 @@ enum DictationAutopasteHUDSelfTest {
             ok = false
         }
         hud.handle(.ready) // Let it settle back to a real terminal state before teardown.
+    }
+
+    /// REL-30: the waveform's frame timer is stopped only by a state change,
+    /// so a HUD released mid-dictation left it firing for the rest of the
+    /// process. Its `deinit` invalidates it now.
+    private static func checkAReleasedHUDStopsItsWaveformTimer(_ ok: inout Bool) {
+        print("\n-- REL-30: a HUD released while listening stops its waveform timer --")
+        let saved = HelmMotion.reducedOverrideForTests
+        HelmMotion.reducedOverrideForTests = false
+        defer { HelmMotion.reducedOverrideForTests = saved }
+        var timer: Timer?
+        weak var released: DictationHUDController?
+        autoreleasepool {
+            let hud = DictationHUDController()
+            hud.handle(.recording)
+            timer = hud.debugVariableTimer
+            released = hud
+        }
+        guard let timer, released == nil else {
+            print("  FAIL REL-30: the fixture needs a running waveform timer and a HUD that deallocates "
+                  + "(timer: \(timer != nil), released: \(released == nil))")
+            ok = false
+            return
+        }
+        if timer.isValid {
+            print("  FAIL REL-30: the waveform timer is still scheduled after its HUD was released")
+            ok = false
+        } else {
+            print("  OK   the waveform timer was invalidated with its HUD")
+        }
     }
 
     /// The fix's own guard rail: a genuine successful paste must keep saying

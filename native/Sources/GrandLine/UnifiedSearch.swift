@@ -157,7 +157,7 @@ final class UnifiedSearchController: NSWindowController {
         // action rows. Registered once, here, where the window is created;
         // the gate orders it out on every lock. Same shape as the Host Editor's
         // own registration in `main.swift`.
-        AppLockGate.shared.registerSecondaryWindow { [weak self] in self?.window }
+        AppLockGate.shared.registerSecondaryWindow(owner: self) { [weak self] in self?.window }
     }
 
     private var themeObservation: ThemeObservation?

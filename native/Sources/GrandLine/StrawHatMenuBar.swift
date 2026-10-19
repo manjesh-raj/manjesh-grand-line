@@ -67,7 +67,7 @@ final class StrawHatMenuBarController: NSObject, NSPopoverDelegate {
         // overlay, so anything open when the lock fires would stay readable
         // and interactive over the lock screen. Weak, because there is no
         // unregister.
-        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.popover }
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.popover }
 
         if let button = statusItem.button {
             button.image = Self.statusItemIcon()

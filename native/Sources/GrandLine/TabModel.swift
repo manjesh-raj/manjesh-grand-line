@@ -132,6 +132,22 @@ final class TabModel {
     /// the tab first does not get a second reconnect on unlock.
     var reconnectDeferredByLock = false
 
+    /// REL-03: when this tab's current process started, so a termination can
+    /// tell a session that failed at once from one that ran and dropped. Set
+    /// by `restartTabBookkeeping`, which every start and restart reaches.
+    var startedAt: Date?
+
+    /// REL-03: automatic reconnects since the last session that settled (or
+    /// the last manual ⌘R), which is what the backoff counts. See
+    /// `ConsoleReconnectPolicy`.
+    var autoReconnectAttempts = 0
+
+    #if FM_SELFTESTS
+    /// REL-03: how many times `startTab` has started this tab, so a suite
+    /// can count the restarts a failing session triggers.
+    var debugStartCount = 0
+    #endif
+
     /// Set by `ConsoleController.processTerminated` (and its split-pane
     /// sibling) and never cleared on restart - `startTab` resets it, so a
     /// reconnected tab does not keep describing a previous run.
@@ -265,5 +281,51 @@ final class TabModel {
         self.launch = launch
         self.terminal = terminal
         self.accentHex = accentHex
+    }
+}
+
+/// REL-03: whether, and when, a tab whose process ended reconnects by itself.
+///
+/// Auto-reconnect used to restart any non-one-shot tab two seconds after it
+/// ended, whatever the exit status and however briefly it ran, with no
+/// counter and no backoff. A host whose `ssh` fails within a second - an
+/// unresolvable name, a refused connection, a rejected key - relaunched every
+/// two seconds for as long as the tab was open, hammering the host and
+/// raising the Touch ID sheet again on every cycle for a protected key.
+///
+/// Pure, so the whole table is asserted in a suite.
+enum ConsoleReconnectPolicy {
+    /// A process that ends sooner than this with a non-zero status failed to
+    /// start a session rather than dropping one, and is not retried.
+    static let failedFastWithin: TimeInterval = 5
+    /// A session that lived at least this long was a real session, so its
+    /// drop starts the backoff over.
+    static let settledAfter: TimeInterval = 60
+    static let firstDelay: TimeInterval = 2
+    static let maxDelay: TimeInterval = 60
+    /// 2 + 4 + 8 + 16 + 32 + 60 + 60 + 60 seconds - about four minutes of
+    /// trying before the tab waits for the captain.
+    static let maxAttempts = 8
+
+    enum Decision: Equatable {
+        /// Reconnect after `delay`; this will be attempt number `attempt`.
+        case reconnect(delay: TimeInterval, attempt: Int)
+        /// Do not reconnect; `reason` is said in the tab.
+        case stop(reason: String)
+    }
+
+    /// `exitCode == nil` is a process that ended with no status (an I/O
+    /// error), which is not evidence that it failed to start, so it takes
+    /// the backoff rather than the fast-failure stop.
+    static func decide(lifetime: TimeInterval, exitCode: Int32?, previousAttempts: Int) -> Decision {
+        if let exitCode, exitCode != 0, lifetime < failedFastWithin {
+            return .stop(reason: "it failed within \(Int(failedFastWithin))s, so it was not retried")
+        }
+        let attempts = lifetime >= settledAfter ? 0 : previousAttempts
+        guard attempts < maxAttempts else {
+            return .stop(reason: "gave up after \(attempts) automatic reconnects")
+        }
+        let delay = min(firstDelay * pow(2, Double(attempts)), maxDelay)
+        return .reconnect(delay: delay, attempt: attempts + 1)
     }
 }
