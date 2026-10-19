@@ -62,9 +62,21 @@ enum FleetTaskCache {
     /// launch-time pile-up of three concurrent callers.
     static let ttl: TimeInterval = 5
 
+    /// How long a caller waits on another caller's sweep before running its
+    /// own (REL-27), and how old an in-flight registration may be before a
+    /// new caller stops treating it as live. A real sweep is about half a
+    /// second; this only matters when one hangs.
+    private(set) static var waitTimeout: TimeInterval = 10
+
     private static let lock = NSLock()
-    private static var cached: (tasks: [FleetTask], at: Date)?
-    private static var inFlight: DispatchGroup?
+    private static var cached: (tasks: [FleetTask], at: Date, generation: UInt64)?
+    private static var inFlight: (group: DispatchGroup, startedAt: Date)?
+    /// REL-27, GL-03's pass id: every sweep takes the next number when it
+    /// starts, and a finished sweep only replaces `cached` when it started
+    /// after the one stored there. A forced sweep never registered in
+    /// `inFlight` and always wrote `cached`, so an older forced sweep that
+    /// finished late overwrote a newer result for the whole `ttl`.
+    private static var nextGeneration: UInt64 = 0
 
     /// Serve `compute`'s result, reusing a hit inside `ttl` and coalescing a
     /// concurrent race onto one real run.
@@ -79,41 +91,67 @@ enum FleetTaskCache {
             lock.unlock()
             return hit.tasks
         }
-        if !forceRefresh, let group = inFlight {
-            // Someone else is already running exactly this sweep. Wait for
-            // theirs instead of starting a second identical one.
-            lock.unlock()
-            group.wait()
-            lock.lock()
-            let result = cached?.tasks
-            lock.unlock()
-            if let result { return result }
-            // Unreachable in practice - the producer always stores before it
-            // leaves the group - but if it somehow did not, run the real
-            // sweep rather than reporting an empty fleet, which GL-14's rule
-            // says must never be manufactured out of a failure.
-            return compute()
+        // REL-27's admission-time watchdog: a registration older than the
+        // wait bound belongs to a sweep that is not coming back, so it is not
+        // something a new caller parks on.
+        if let running = inFlight, Date().timeIntervalSince(running.startedAt) >= waitTimeout {
+            AppLog.store.error("fleet tasks: an in-flight sweep has run past \(waitTimeout, privacy: .public)s - no longer waiting on it")
+            inFlight = nil
         }
-        let group = DispatchGroup()
-        group.enter()
+        if !forceRefresh, let running = inFlight {
+            // Someone else is already running exactly this sweep. Wait for
+            // theirs instead of starting a second identical one - for a
+            // bounded time (REL-27): an unbounded `wait()` parked every later
+            // caller for as long as one sweep hung.
+            lock.unlock()
+            if running.group.wait(timeout: .now() + waitTimeout) == .success {
+                lock.lock()
+                let result = cached?.tasks
+                lock.unlock()
+                if let result { return result }
+            } else {
+                AppLog.store.error("fleet tasks: waited \(waitTimeout, privacy: .public)s on another sweep - running this one")
+            }
+            // The producer always stores before it leaves the group, so this
+            // is the timeout path in practice. Run the real sweep rather than
+            // reporting an empty fleet, which GL-14's rule says must never be
+            // manufactured out of a failure.
+            return runSweep(register: false, compute: compute)
+        }
+        lock.unlock()
         // A *forced* run deliberately does not register as the sweep others
         // may wait on: it exists to bypass the window, and offering itself as
         // the shared answer would also mean clobbering the registration of an
         // ordinary sweep already running (which is what waiters are parked
         // on). Waiters stay on the sweep they captured, which always
         // completes.
-        if !forceRefresh { inFlight = group }
+        return runSweep(register: !forceRefresh, compute: compute)
+    }
+
+    /// One real sweep, stored only if no newer sweep has stored since it
+    /// started.
+    private static func runSweep(register: Bool, compute: () -> [FleetTask]) -> [FleetTask] {
+        lock.lock()
+        nextGeneration &+= 1
+        let generation = nextGeneration
+        let group = DispatchGroup()
+        group.enter()
+        if register { inFlight = (group, Date()) }
         lock.unlock()
 
         let result = compute()
 
         lock.lock()
-        cached = (result, Date())
+        if cached.map({ generation > $0.generation }) ?? true {
+            cached = (result, Date(), generation)
+        } else {
+            AppLog.store.debug("fleet tasks: a sweep finished after a newer one - keeping the newer result")
+        }
         // Identity-checked so a producer can only ever clear its *own*
         // registration - clearing unconditionally would let a run that
         // finished first drop a later one's, leaving a third caller to start
         // a redundant sweep.
-        if inFlight === group { inFlight = nil }
+        if inFlight?.group === group { inFlight = nil }
         lock.unlock()
         group.leave()
         return result
@@ -129,6 +167,17 @@ enum FleetTaskCache {
     }
 
     #if FM_SELFTESTS
+    /// REL-27: a suite shortens the wait bound so a hung sweep is seconds,
+    /// not ten of them, and restores it.
+    static func debugSetWaitTimeout(_ seconds: TimeInterval) { waitTimeout = seconds }
+
+    /// What is stored right now, regardless of age.
+    static var debugCachedTasks: [FleetTask]? {
+        lock.lock()
+        defer { lock.unlock() }
+        return cached?.tasks
+    }
+
     /// Whether a value is currently stored and still inside `ttl` - so a
     /// suite can assert the window is real rather than that a call happened
     /// to be fast.

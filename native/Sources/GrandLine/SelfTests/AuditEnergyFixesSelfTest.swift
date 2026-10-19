@@ -34,6 +34,8 @@ enum AuditEnergyFixesSelfTest {
             ("3.5_simultaneousCallersCoalesceOntoOneSweep", test_35_coalesce),
             ("3.5_aHitInsideTheWindowIsReusedAndForceBypassesIt", test_35_window),
             ("3.5_theWindowIsShorterThanFleetNotifiersOwnPoll", test_35_shorterThanPoll),
+            ("REL-27_aLateOlderSweepNeverOverwritesANewerOne", test_rel27_generation),
+            ("REL-27_aWaiterRunsItsOwnSweepWhenTheSharedOneHangs", test_rel27_boundedWait),
             ("3.5_parseTasksGoesThroughTheCacheAndManualRefreshForces", test_35_sources),
             ("3.1_bridgeIsEventDrivenNotAPermanentFastPoll", test_31_sources),
             ("3.2_periodicRefreshIsGatedOnVisibilityAtTheAttempt", test_32_sources),
@@ -187,6 +189,79 @@ enum AuditEnergyFixesSelfTest {
         _ = FleetTaskCache.tasks(forceRefresh: true, compute: compute)
         guard computeCount == 2 else {
             return "forceRefresh was answered from the window - the captain's own Refresh click must always run for real"
+        }
+        return nil
+    }
+
+    /// REL-27: two forced sweeps overlap, the older finishing last. The
+    /// cache used to store whichever finished last, so the older result
+    /// replaced the newer one for the whole `ttl`.
+    private static func test_rel27_generation() -> String? {
+        FleetTaskCache.invalidate()
+        let olderStarted = DispatchSemaphore(value: 0)
+        let releaseOlder = DispatchSemaphore(value: 0)
+        let olderDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            _ = FleetTaskCache.tasks(forceRefresh: true) {
+                olderStarted.signal()
+                releaseOlder.wait()
+                return [FleetTask(id: "older", repo: nil, kind: "ship", pr: nil)]
+            }
+            olderDone.signal()
+        }
+        olderStarted.wait()
+        _ = FleetTaskCache.tasks(forceRefresh: true) {
+            [FleetTask(id: "newer", repo: nil, kind: "ship", pr: nil)]
+        }
+        releaseOlder.signal()
+        guard olderDone.wait(timeout: .now() + 10) == .success else { return "the older sweep never finished" }
+        let stored = FleetTaskCache.debugCachedTasks?.map(\.id)
+        guard stored == ["newer"] else {
+            return "the older sweep finished last and replaced the newer result, stored \(String(describing: stored))"
+        }
+        let served = FleetTaskCache.tasks { [FleetTask(id: "recomputed", repo: nil, kind: "ship", pr: nil)] }.map(\.id)
+        guard served == ["newer"] else { return "a caller inside the window was served \(served), not the newer sweep" }
+        return nil
+    }
+
+    /// REL-27: a caller parked on another caller's sweep waits a bounded
+    /// time and then runs its own. The wait used to be unbounded, so one
+    /// hung sweep parked every later caller with it.
+    private static func test_rel27_boundedWait() -> String? {
+        FleetTaskCache.invalidate()
+        let previous = FleetTaskCache.waitTimeout
+        FleetTaskCache.debugSetWaitTimeout(0.3)
+        defer { FleetTaskCache.debugSetWaitTimeout(previous) }
+
+        let hungStarted = DispatchSemaphore(value: 0)
+        let releaseHung = DispatchSemaphore(value: 0)
+        let hungDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            _ = FleetTaskCache.tasks {
+                hungStarted.signal()
+                releaseHung.wait()
+                return [FleetTask(id: "hung", repo: nil, kind: "ship", pr: nil)]
+            }
+            hungDone.signal()
+        }
+        hungStarted.wait()
+
+        let waiterDone = DispatchSemaphore(value: 0)
+        var waiterGot: [String] = []
+        DispatchQueue.global(qos: .utility).async {
+            waiterGot = FleetTaskCache.tasks { [FleetTask(id: "own", repo: nil, kind: "ship", pr: nil)] }.map(\.id)
+            waiterDone.signal()
+        }
+        let returned = waiterDone.wait(timeout: .now() + 3) == .success
+        // Always release the hung sweep, so a failing run does not leave a
+        // thread parked for the rest of the process.
+        releaseHung.signal()
+        _ = hungDone.wait(timeout: .now() + 10)
+        guard returned else { return "a caller waiting on a hung sweep never returned - the wait is unbounded" }
+        guard waiterGot == ["own"] else { return "the waiter ran its own sweep but returned \(waiterGot)" }
+        let stored = FleetTaskCache.debugCachedTasks?.map(\.id)
+        guard stored == ["own"] else {
+            return "the hung sweep, started first, replaced the newer result when it finally finished: \(String(describing: stored))"
         }
         return nil
     }
