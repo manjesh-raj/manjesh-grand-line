@@ -254,6 +254,9 @@ extension ConsoleController {
             connectSSH(tab, executable: exe, hostArgs: hostArgs, keyID: keyID, startupSnippetID: startupSnippetID)
         }
         tab.started = true
+        #if FM_SELFTESTS
+        tab.debugStartCount += 1
+        #endif
         // B36: any start settles a reconnect the lock deferred - including a
         // manual right-click one the captain does first - so the drain on
         // unlock cannot start the same tab twice.
@@ -293,6 +296,8 @@ extension ConsoleController {
         // outcome. One place, so every restart path resets it - which is the
         // whole reason this function exists.
         tab.lastExit = .none
+        // REL-03: the lifetime the next termination is measured against.
+        tab.startedAt = Date()
         tab.blockTracker?.reset()
         tab.blockContainer?.clear()
         installShellIntegrationIfSupported(tab)
@@ -811,6 +816,8 @@ extension ConsoleController {
     /// shell this forks a new login shell.
     @objc func reconnectActive() {
         guard let tab = currentTab else { return }
+        // REL-03: the captain asking is a fresh start for the backoff.
+        tab.autoReconnectAttempts = 0
         switch tab.launch {
         case .shell(let exe, let args, let cwd):
             tab.terminal.startProcess(
@@ -955,22 +962,32 @@ extension ConsoleController {
         // the captain reads this line, and promising "reconnecting…" behind a
         // lock overlay they cannot see would be a lie by the time they look.
         let locked = !AppLockGate.shared.allows(.terminalAutoReconnect)
+        // REL-03: whether to reconnect at all, and how long to wait, depends
+        // on how long this session lived and how many times it has already
+        // been retried - see `ConsoleReconnectPolicy`.
+        let lifetime = tab.startedAt.map { Date().timeIntervalSince($0) } ?? .infinity
+        let decision = AppSettings.shared.autoReconnect
+            ? ConsoleReconnectPolicy.decide(lifetime: lifetime, exitCode: exitCode,
+                                            previousAttempts: tab.autoReconnectAttempts)
+            : nil
         let hint: String
-        if !AppSettings.shared.autoReconnect {
+        switch decision {
+        case nil:
             hint = "right-click this tab to reconnect"
-        } else if locked {
-            hint = "reconnecting when you unlock"
-        } else {
-            hint = "reconnecting…"
+        case .stop(let reason)?:
+            hint = "\(reason) - right-click this tab to reconnect"
+        case .reconnect?:
+            hint = locked ? "reconnecting when you unlock" : delayHint(decision)
         }
         source.feed(text: "\r\n  \u{1b}[2m[process ended\(code) - \(hint)]\u{1b}[0m\r\n")
 
-        if AppSettings.shared.autoReconnect {
+        if case .reconnect(let delay, let attempt)? = decision {
+            tab.autoReconnectAttempts = attempt
             if locked {
                 deferReconnectUntilUnlock(tab)
                 return
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self, weak tab] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak tab] in
                 guard let self, let tab, !tab.isClosing, self.tabs.contains(where: { $0 === tab }) else { return }
                 // The lock can engage inside the two seconds, which is the
                 // window the gate at the top of this function cannot see. A
@@ -1001,6 +1018,12 @@ extension ConsoleController {
     /// typed the vault password is exactly the person who should see their
     /// session come back - including its Touch ID prompt, which is now
     /// visible, expected and attached to something they just did.
+    /// "reconnecting…" for the first try, and the wait for a backed-off one.
+    private func delayHint(_ decision: ConsoleReconnectPolicy.Decision?) -> String {
+        guard case .reconnect(let delay, let attempt)? = decision, attempt > 1 else { return "reconnecting…" }
+        return "reconnecting in \(Int(delay))s (attempt \(attempt) of \(ConsoleReconnectPolicy.maxAttempts))…"
+    }
+
     func deferReconnectUntilUnlock(_ tab: TabModel) {
         guard !tab.isClosing, tabs.contains(where: { $0 === tab }) else { return }
         guard !tab.reconnectDeferredByLock else { return }

@@ -53,6 +53,9 @@ enum ConsoleTabLifecycleSelfTest {
             ("reconnectKeepsTheSameTabAndTerminalView", test_reconnectReusesTheSameTab),
             ("aSessionDroppingWhileLockedDefersItsReconnect", test_lockDefersTheAutoReconnect),
             ("aLockInsideTheTimerWindowAlsoDefers", test_lockEngagingInsideTheTimerWindowAlsoDefers),
+            ("REL-03: the reconnect policy backs off, caps, and resets", test_reconnectPolicyTable),
+            ("REL-03: a session that fails at once is not retried", test_aFailedFastSessionIsNotRetried),
+            ("REL-03: a manual reconnect resets the backoff", test_manualReconnectResetsTheBackoff),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -433,6 +436,83 @@ enum ConsoleTabLifecycleSelfTest {
     /// a hook that calls `deferReconnectUntilUnlock` directly would assert the
     /// helper, not the wiring, which is this repository's most-repeated
     /// testing trap.
+    // MARK: REL-03 - no reconnect loop
+
+    private static func test_reconnectPolicyTable() -> String? {
+        typealias P = ConsoleReconnectPolicy
+        let rows: [(TimeInterval, Int32?, Int, P.Decision?, String)] = [
+            (0.5, 255, 0, nil, "a session that failed within a second with a status is not retried"),
+            (0.5, nil, 0, .reconnect(delay: 2, attempt: 1), "no exit status is not evidence of a failed start"),
+            (0.5, 0, 0, .reconnect(delay: 2, attempt: 1), "a clean exit is not a failed start"),
+            (10, 255, 0, .reconnect(delay: 2, attempt: 1), "a session that ran, then dropped, is retried"),
+            (10, 255, 3, .reconnect(delay: 16, attempt: 4), "each retry waits twice as long"),
+            (10, 1, 6, .reconnect(delay: 60, attempt: 7), "the wait is capped at a minute"),
+            (10, 1, 8, nil, "the retries stop after the cap"),
+            (120, 1, 8, .reconnect(delay: 2, attempt: 1), "a session that settled starts the backoff over"),
+        ]
+        for (lifetime, code, attempts, expected, label) in rows {
+            let got = P.decide(lifetime: lifetime, exitCode: code, previousAttempts: attempts)
+            switch (expected, got) {
+            case (nil, .stop): continue
+            case (let e?, _) where e == got: continue
+            default: return "\(label): got \(got)"
+            }
+        }
+        return nil
+    }
+
+    /// The repro from the review: a tab whose process exits 255 at once (an
+    /// ssh to a host that refuses, an unresolvable name) used to relaunch
+    /// every two seconds for as long as the tab was open.
+    private static func test_aFailedFastSessionIsNotRetried() -> String? {
+        let (window, console) = makeConsole(isFirstmate: false)
+        let wasAuto = AppSettings.shared.autoReconnect
+        let wasLocked = AppLockGate.shared.isLocked
+        defer {
+            AppLockGate.shared.setLocked(wasLocked)
+            AppSettings.shared.autoReconnect = wasAuto
+            console.shutdown()
+            window.orderOut(nil)
+        }
+        AppSettings.shared.autoReconnect = true
+        AppLockGate.shared.setLocked(false)
+        let tab = console.addTab(launch: .shell(executable: "/bin/sh", args: ["-c", "exit 255"],
+                                                cwd: NSTemporaryDirectory()),
+                                 name: "rel03", select: true)
+        if !tab.started { console.startTab(tab) }
+        // Past the old fixed two-second retry, with room for one more.
+        let deadline = Date().addingTimeInterval(4.5)
+        while Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+        }
+        // The delegate hands over the raw wait status (65280 for `exit 255`),
+        // so any non-zero failure is the fixture working.
+        guard case .failed = tab.lastExit else {
+            return "the fixture's process should have exited non-zero, got \(tab.lastExit) - the case is vacuous"
+        }
+        guard tab.debugStartCount == 1 else {
+            return "a session that failed at once was started \(tab.debugStartCount) times in 4.5s - it is still looping"
+        }
+        let output = console.debugCurrentTerminalOutput() ?? ""
+        guard output.contains("not retried"), output.contains("right-click this tab to reconnect") else {
+            return "the tab does not say it will not retry, or how to reconnect"
+        }
+        return nil
+    }
+
+    private static func test_manualReconnectResetsTheBackoff() -> String? {
+        let (window, console) = makeConsole(isFirstmate: false)
+        defer { console.shutdown(); window.orderOut(nil) }
+        console.newShellTab()
+        guard let tab = console.currentTab else { return "no tab" }
+        tab.autoReconnectAttempts = 6
+        console.reconnectActive()
+        guard tab.autoReconnectAttempts == 0 else {
+            return "a manual reconnect left the backoff at attempt \(tab.autoReconnectAttempts)"
+        }
+        return nil
+    }
+
     private static func test_lockEngagingInsideTheTimerWindowAlsoDefers() -> String? {
         let (window, console) = makeConsole(isFirstmate: false)
         let wasAuto = AppSettings.shared.autoReconnect
