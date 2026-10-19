@@ -232,6 +232,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: shiftStore,
             dictationStore: dictationStore, commandLibraryStore: commandLibraryStore,
             scheduleStore: scheduleStore,
+            // PERF-02: the one `DocsRunbookStore` - the palette's and the
+            // shell's pages' - rather than four more built inside the shell.
+            docsRunbookStore: docsRunbookStore,
             makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false) }
         )
     }()

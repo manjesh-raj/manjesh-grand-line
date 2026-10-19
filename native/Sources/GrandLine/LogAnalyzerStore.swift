@@ -58,7 +58,16 @@ final class LogAnalyzerStore {
 
     private var investigationsDir: URL { root.appendingPathComponent("investigations", isDirectory: true) }
 
+    #if FM_SELFTESTS
+    /// PERF-02: how many of these this process has built, so a suite can
+    /// assert the shell builds one and hands it down.
+    static var debugInitCount = 0
+    #endif
+
     init() {
+        #if FM_SELFTESTS
+        Self.debugInitCount += 1
+        #endif
         let env = ProcessInfo.processInfo.environment
         if let override = env["FM_LOG_ANALYZER_DIR"], !override.isEmpty {
             root = URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)

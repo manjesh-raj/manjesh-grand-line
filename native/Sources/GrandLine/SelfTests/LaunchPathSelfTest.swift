@@ -28,6 +28,7 @@ enum LaunchPathSelfTest {
     static func run() -> Bool {
         let cases: [(String, () -> String?)] = [
             ("theLaunchPathCarriesItsSignposts", test_theLaunchPathCarriesItsSignposts),
+            ("everyGitSyncDoesItsLaunchWorkOnce", test_everyGitSyncDoesItsLaunchWorkOnce),
         ]
         var failed = 0
         for (name, body) in cases {
@@ -47,6 +48,99 @@ enum LaunchPathSelfTest {
     private static func source(_ name: String) -> String? {
         guard let dir = SelfTestSources.appSourceDirectory() else { return nil }
         return try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)
+    }
+
+    /// A scratch directory for one case, removed when `body` returns.
+    private static func withScratch<T>(_ name: String, _ body: (URL) -> T) -> T {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fm-launch-path-\(name)-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        return body(dir)
+    }
+
+    // MARK: PERF-02 - one launch start per git sync
+
+    /// Every git sync's `start()` does its launch work once per instance.
+    ///
+    /// Each sync is built against a scratch working tree and a remote path
+    /// that does not exist, so the work a start queues (a clone that fails
+    /// at once) touches nothing real. The count is read after the second
+    /// call: with `GitSyncStartGate` removed from any one `start()`, that
+    /// sync reports 2 and the case names it.
+    private static func test_everyGitSyncDoesItsLaunchWorkOnce() -> String? {
+        withScratch("sync-start") { dir in
+            func paths(_ name: String) -> (URL, String, DispatchQueue) {
+                (dir.appendingPathComponent("\(name)-wt", isDirectory: true),
+                 dir.appendingPathComponent("\(name)-missing-remote.git").path,
+                 DispatchQueue(label: "fm.selftest.launch-path.\(name)"))
+            }
+            var counts: [(String, Int)] = []
+            var drains: [() -> Void] = []
+
+            do {
+                let (wt, remote, _) = paths("shift")
+                let sync = ShiftGitSync(workingTree: wt, remoteURL: remote, debounceInterval: 600,
+                                        periodicPullInterval: 999_999,
+                                        queueLabel: "fm.selftest.launch-path.shift")
+                sync.start(); sync.start()
+                counts.append(("ShiftGitSync", sync.debugStartWorkCount))
+                drains.append { sync.sharedQueue.sync {} }
+            }
+            do {
+                let (wt, remote, queue) = paths("runbooks")
+                let sync = DocsRunbookGitSync(workingTree: wt, remoteURL: remote, debounceInterval: 600, queue: queue)
+                sync.start(); sync.start()
+                counts.append(("DocsRunbookGitSync", sync.debugStartWorkCount))
+                drains.append { queue.sync {} }
+            }
+            do {
+                let (wt, remote, queue) = paths("vault")
+                let sync = CredentialVaultGitSync(workingTree: wt, remoteURL: remote, debounceInterval: 600, queue: queue)
+                sync.start(); sync.start()
+                counts.append(("CredentialVaultGitSync", sync.debugStartWorkCount))
+                drains.append { queue.sync {} }
+            }
+            do {
+                let (wt, remote, queue) = paths("reading")
+                let sync = ReadingListGitSync(workingTree: wt, remoteURL: remote, debounceInterval: 600, queue: queue)
+                sync.start(); sync.start()
+                counts.append(("ReadingListGitSync", sync.debugStartWorkCount))
+                drains.append { queue.sync {} }
+            }
+            do {
+                let (wt, remote, queue) = paths("notebook")
+                let sync = NotebookGitSync(workingTree: wt, remoteURL: remote, debounceInterval: 600, queue: queue)
+                sync.start(); sync.start()
+                counts.append(("NotebookGitSync", sync.debugStartWorkCount))
+                drains.append { queue.sync {} }
+            }
+            do {
+                let (wt, remote, queue) = paths("code")
+                let sync = CodePreviewGitSync(workingTree: wt, remoteURL: remote, debounceInterval: 600, queue: queue)
+                sync.start(); sync.start()
+                counts.append(("CodePreviewGitSync", sync.debugStartWorkCount))
+                drains.append { queue.sync {} }
+            }
+            do {
+                let (wt, remote, queue) = paths("sticky")
+                let sync = StickyBoardGitSync(workingTree: wt, remoteURL: remote, debounceInterval: 600, queue: queue)
+                sync.start(); sync.start()
+                counts.append(("StickyBoardGitSync", sync.debugStartWorkCount))
+                drains.append { queue.sync {} }
+            }
+            // Let every queued clone attempt finish before the scratch
+            // directory is removed under it.
+            drains.forEach { $0() }
+
+            guard counts.count == 7 else { return "expected seven syncs, measured \(counts.count)" }
+            let wrong = counts.filter { $0.1 != 1 }
+            guard wrong.isEmpty else {
+                return "a second start() queued launch work again: "
+                    + wrong.map { "\($0.0) started \($0.1)x" }.joined(separator: ", ")
+            }
+            return nil
+        }
     }
 
     // MARK: T-14d - the signposts

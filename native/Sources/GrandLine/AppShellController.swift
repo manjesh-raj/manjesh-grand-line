@@ -206,7 +206,7 @@ final class AppShellController: NSViewController {
     /// `fm/grandline-docs-split-runbooks-postmortems`: Runbooks and
     /// Postmortems are their own top-level destinations now, split out of
     /// `DocsController`'s former tabs - see that file's own header.
-    private let runbooks = RunbooksController()
+    private let runbooks: RunbooksController
     /// F1 of full review #3 §8 - see `NotebookController.swift`'s header. Its
     /// store is built here rather than inside the page, like every other
     /// store the canvas also reads (`HomeCanvasController`'s rule 1).
@@ -215,7 +215,7 @@ final class AppShellController: NSViewController {
     /// Its store is built in `init` beside every other store the canvas also
     /// reads (`HomeCanvasController`'s rule 1).
     private let readingList: ReadingListController
-    private let postmortems = PostmortemsController()
+    private let postmortems: PostmortemsController
     private let updates = UpdatesController()
     private let bootstrap: BootstrapController
     private let automation: AutomationController
@@ -490,6 +490,7 @@ final class AppShellController: NSViewController {
         hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, shiftStore: ShiftStore,
         dictationStore: DictationStore, commandLibraryStore: CommandLibraryStore,
         scheduleStore: ScheduleStore,
+        docsRunbookStore: DocsRunbookStore = DocsRunbookStore(),
         makeHostConsole: @escaping () -> ConsoleController
     ) {
         // T-14d: the launch interval Instruments reads, ended as the last
@@ -545,8 +546,19 @@ final class AppShellController: NSViewController {
         // GL-23 again: the same shared instance the Log Analyzer, the crew's
         // `command_search` tool and the ⌘K palette already read.
         self.commandLibrary = CommandLibraryController(store: commandLibraryStore)
+        // PERF-02: one `DocsRunbookStore` (the app delegate's, which ⌘K
+        // already reads) and one `LogAnalyzerStore` for every reader on this
+        // shell - the Log Analyzer, Runbooks, Postmortems and the canvas.
+        // Each of them used to build its own, and every one of those `init`s
+        // started a git sync at launch; `GitSyncStartGate` makes a second
+        // start a no-op, and this stops the second store existing at all.
+        let logAnalyzerStore = LaunchSignposts.measure("LogAnalyzerStore.init") { LogAnalyzerStore() }
         // GL-23: the same instance the Tasks page uses.
-        self.logAnalyzer = LogAnalyzerController(commandLibrary: commandLibraryStore)
+        self.logAnalyzer = LogAnalyzerController(commandLibrary: commandLibraryStore,
+                                                 runbookStore: docsRunbookStore,
+                                                 store: logAnalyzerStore)
+        self.runbooks = RunbooksController(runbookStore: docsRunbookStore)
+        self.postmortems = PostmortemsController(runbookStore: docsRunbookStore)
         self.bootstrap = BootstrapController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
         self.automation = AutomationController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
                                                dictationStore: dictationStore)
@@ -557,13 +569,10 @@ final class AppShellController: NSViewController {
         // Daylight Phase 2: the canvas reads already-owned stores, never its
         // own - see `HomeCanvasController`'s header, and the source guard in
         // `DaylightModuleSelfTest` that enforces it. `DocsRunbookStore` and
-        // `LogAnalyzerStore` are the two the shell did not already hold, so
-        // they are constructed here alongside the rest of this controller's
-        // own dependencies rather than inside the canvas - each store re-reads
-        // its git-synced folder per call, which is the same "an independent
-        // instance is fine and cheap" pattern `UnifiedSearch` already uses.
-        // One more store the shell did not already hold, on the same terms as
-        // the two below: it re-reads its own git-synced folder per call, and
+        // `LogAnalyzerStore` are the same two instances the pages above were
+        // just handed (PERF-02), not a second pair of the canvas's own.
+        // One more store the shell did not already hold: it re-reads its own
+        // git-synced folder per call, and
         // it honours `FM_CODE_PREVIEW_DIR`/`FM_SHIFT_DIR` so a self-test never
         // reaches the captain's real clone.
         // GL-23's lesson: **one** store instance shared by both consumers on
@@ -591,8 +600,8 @@ final class AppShellController: NSViewController {
             shiftStore: shiftStore,
             hostStore: hostStore,
             scheduleStore: scheduleStore,
-            logAnalyzerStore: LogAnalyzerStore(),
-            docsRunbookStore: DocsRunbookStore(),
+            logAnalyzerStore: logAnalyzerStore,
+            docsRunbookStore: docsRunbookStore,
             codePreviewStore: codePreviewStore,
             notebookStore: notebookStore,
             readingListStore: readingListStore,

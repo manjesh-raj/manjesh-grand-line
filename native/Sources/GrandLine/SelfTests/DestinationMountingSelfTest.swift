@@ -105,6 +105,7 @@ enum DestinationMountingSelfTest {
             ("everyDestinationRendersRealContentOnFirstLoad", test_everyDestinationRendersRealContentOnFirstLoad),
             ("everyDestinationForcesItsOwnAppearance", test_everyDestinationForcesItsOwnAppearance),
             ("windowTitleFollowsTheShowingDestination", test_windowTitleFollowsTheShowingDestination),
+            ("theShellBuildsOneRunbookStoreAndOneLogAnalyzerStore", test_theShellBuildsOneRunbookStoreAndOneLogAnalyzerStore),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -259,6 +260,32 @@ enum DestinationMountingSelfTest {
             let eagerlyBuilt = mounted.intersection(mustBeLazy)
             guard eagerlyBuilt.isEmpty else {
                 return "these should not be built at launch: \(eagerlyBuilt.map(\.rawValue).sorted())"
+            }
+            return nil
+        }
+    }
+
+    /// PERF-02: the Log Analyzer, Runbooks, Postmortems and the canvas read
+    /// one `DocsRunbookStore` and one `LogAnalyzerStore`, handed down by the
+    /// shell. Each used to build its own, and every one of those `init`s
+    /// started a git sync at launch.
+    ///
+    /// Counted across the launch *and* a first visit to all three pages, so
+    /// a page that quietly goes back to building its own store fails here
+    /// whether it is built at launch or on first mount.
+    private static func test_theShellBuildsOneRunbookStoreAndOneLogAnalyzerStore() -> String? {
+        withScratchEnv {
+            let runbooksBefore = DocsRunbookStore.debugInitCount
+            let logsBefore = LogAnalyzerStore.debugInitCount
+            let (_, shell) = makeMountedShell()
+            for destination in [RailDestination.logAnalyzer, .runbooks, .postmortems] {
+                shell.show(destination)
+            }
+            let runbookStores = DocsRunbookStore.debugInitCount - runbooksBefore
+            let logStores = LogAnalyzerStore.debugInitCount - logsBefore
+            guard runbookStores == 1, logStores == 1 else {
+                return "expected one of each store across the launch and three first visits, "
+                    + "built \(runbookStores) DocsRunbookStore and \(logStores) LogAnalyzerStore"
             }
             return nil
         }
