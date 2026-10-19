@@ -1213,6 +1213,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         CompactModePolicy.current().terminatesAfterLastWindowClosed
     }
 
+    /// REL-07: a Dock click in compact mode with no window showing leaves the
+    /// mode the way the popover's "Open full window" does. The decision is
+    /// `CompactModePolicy.reopensFullWindow`, asserted in CI's blocking lane.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard CompactModePolicy.current().reopensFullWindow(hasVisibleWindows: flag) else { return true }
+        leaveCompactMode()
+        return false
+    }
+
     /// Tear down every console's own materialized SSH keys and SRE Lead
     /// sessions on quit - the shared Firstmate console and (Fix 1) every
     /// host's own dedicated console.
