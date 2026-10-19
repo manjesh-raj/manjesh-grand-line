@@ -51,6 +51,8 @@ enum ScheduleRunnerSelfTest {
         checkHealthSeedingFromHistory(&ok)
         checkRunLogIsRedactedOnPersist(&ok)
         checkAWedgedRunCannotEndANewerOne(&ok)
+        checkAQuitStopsARunAndRecordsIt(&ok)
+        checkTheQuitGuardIsWiredToEveryInstall(&ok)
         print(ok ? "ScheduleRunnerSelfTest: all checks passed" : "ScheduleRunnerSelfTest: FAILED")
         return ok
     }
@@ -972,6 +974,89 @@ enum ScheduleRunnerSelfTest {
         }
         if !history.allEntries().contains(where: { $0.summary.hasPrefix("Finished late") }) {
             fail("REL-06: the late run should still be kept in history, marked late", &ok)
+        }
+    }
+
+    // MARK: REL-05 - quitting during a run
+
+    /// REL-05: ⌘Q terminated at once, so a run's subprocess lost its pipes
+    /// mid-flight and its record - written only in the completion - was never
+    /// written, so the next launch ran the same occurrence again. The quit is
+    /// asked about now, and a confirmed one stops the child and records it.
+    private static func checkAQuitStopsARunAndRecordsIt(_ ok: inout Bool) {
+        print("\n-- REL-05: a quit during a run asks, stops the child, and records it --")
+        let guardian = QuitGuard.shared
+        if guardian.shouldTerminate(confirm: { _ in
+            fail("REL-05: nothing is running, so the quit must not ask", &ok); return false
+        }, reply: { _ in }) != .terminateNow {
+            fail("REL-05: with nothing running the app quits at once", &ok)
+        }
+        guard let (runner, store, _) = runnerFixture("rel05") else {
+            fail("REL-05: could not build the runner fixture", &ok)
+            return
+        }
+        ScheduleRunner.actionOverrideForTests = { _ in
+            // A real child that would outlive the test by far if nothing
+            // stopped it.
+            _ = Subprocess.run(executable: "/bin/sleep", arguments: ["30"], timeout: 60)
+            return ScheduleActionResult(verdict: .clean, summary: "slept the whole way through")
+        }
+        defer { ScheduleRunner.actionOverrideForTests = nil }
+
+        runner.tick(now: Date())
+        guard runner.isBusy, !guardian.runningDescriptions.isEmpty else {
+            fail("REL-05: the run should be in flight and registered with the quit guard", &ok)
+            return
+        }
+        // Give the child time to actually launch.
+        pumpMain(until: { false }, timeout: 0.5)
+
+        var asked: [String] = []
+        if guardian.shouldTerminate(confirm: { asked = $0; return false }, reply: { _ in }) != .terminateCancel {
+            fail("REL-05: declining the dialog must cancel the quit", &ok)
+        }
+        if asked.isEmpty || !runner.isBusy {
+            fail("REL-05: the dialog names the run, and declining leaves it running (asked: \(asked))", &ok)
+        }
+
+        var replied: Bool?
+        let started = Date()
+        let answer = guardian.shouldTerminate(confirm: { _ in true }, reply: { replied = $0 })
+        if answer != .terminateLater { fail("REL-05: a confirmed quit waits for the run to stop, got \(answer)", &ok) }
+        pumpMain(until: { replied != nil }, timeout: QuitGuard.stopBound + 2)
+        let waited = Date().timeIntervalSince(started)
+        if replied != true { fail("REL-05: the quit was never let through", &ok) }
+        if waited > 4 {
+            fail("REL-05: the quit waited \(Int(waited))s - the child was not stopped, the bound let it through", &ok)
+        }
+        if runner.isBusy { fail("REL-05: the run is still marked running after the quit stopped it", &ok) }
+        let summary = store.schedules.first?.lastRun?.summary ?? ""
+        if !summary.contains("Grand Line quit") {
+            fail("REL-05: the stopped run should be recorded as stopped at quit, got \"\(summary)\"", &ok)
+        }
+        if store.schedules.first?.lastFiredOccurrence == nil {
+            fail("REL-05: the stopped run's occurrence should be recorded, or the next launch runs it again", &ok)
+        }
+    }
+
+    /// The other two halves cannot run in a suite - a real update install, and
+    /// `NSApplication`'s own terminate path - so they are source guards: the
+    /// Updates page registers each install and runs it in the quit guard's
+    /// scope, and the app delegate routes ⌘Q through the guard.
+    private static func checkTheQuitGuardIsWiredToEveryInstall(_ ok: inout Bool) {
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let updates = try? String(contentsOf: dir.appendingPathComponent("UpdatesController.swift"), encoding: .utf8),
+              let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8) else {
+            fail("REL-05: could not read the app sources - these guards would silently pass", &ok)
+            return
+        }
+        if !(updates.contains("QuitGuard.shared.begin(")
+             && updates.contains("SubprocessCancellation.withScope(work.token) { UpdatesSource.update(")
+             && updates.contains("QuitGuard.shared.end(work.id)")) {
+            fail("REL-05: UpdatesController.update must register the install with QuitGuard and run it in its scope", &ok)
+        }
+        if !(main.contains("func applicationShouldTerminate(") && main.contains("QuitGuard.shared.shouldTerminate(")) {
+            fail("REL-05: AppDelegate must route applicationShouldTerminate through QuitGuard", &ok)
         }
     }
 

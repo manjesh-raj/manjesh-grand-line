@@ -291,9 +291,17 @@ final class ScheduleRunner {
 
         let action = schedule.action
         let stores = backupStores
+        // REL-05: a quit during this run asks first, and on yes cancels the
+        // run's subprocesses so this completion records it as stopped rather
+        // than the process exiting with no record at all.
+        let work = QuitGuard.shared.begin("The scheduled \(action.title.lowercased())")
         queue.async { [weak self] in
-            let result = Self.runAction(action, backupStores: stores)
+            var result = SubprocessCancellation.withScope(work.token) {
+                Self.runAction(action, backupStores: stores)
+            }
+            if work.token.isCancelled { result = Self.stoppedAtQuit(action) }
             DispatchQueue.main.async {
+                defer { QuitGuard.shared.end(work.id) }
                 guard let self else { return }
                 guard self.currentRunID == runID else {
                     self.recordAbandonedRun(schedule: schedule, action: action, result: result)
@@ -368,6 +376,16 @@ extension ScheduleRunner {
             actionTitle: action.title,
             log: result.log,
             failure: result.failure))
+    }
+
+    /// REL-05: what a run cancelled by a confirmed quit records.
+    fileprivate static func stoppedAtQuit(_ action: ScheduledActionKind) -> ScheduleActionResult {
+        ScheduleActionResult(
+            failing: .failed,
+            summary: "Stopped because Grand Line quit while it was running.",
+            whatFailed: "\(action.title) was stopped partway through.",
+            why: "Grand Line was quit while this run was in progress, and its work was stopped cleanly.",
+            whatToDo: "Use Run now on the Schedules page to run it again, or let it run at its next scheduled time.")
     }
 
     fileprivate static func runAction(

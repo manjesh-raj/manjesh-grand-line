@@ -919,9 +919,13 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         row.isBusy = true
         row.status = .updating
         render(row)
+        // REL-05: a quit during an install asks first, and on yes stops the
+        // install's subprocess (SIGTERM) instead of closing its pipes under it.
+        let work = QuitGuard.shared.begin("Updating \(row.item.name)")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let outcome = UpdatesSource.update(row.item)
+            let outcome = SubprocessCancellation.withScope(work.token) { UpdatesSource.update(row.item) }
             DispatchQueue.main.async {
+                defer { QuitGuard.shared.end(work.id) }
                 guard let self else { return }
                 self.apply(outcome, to: row)
                 completion?()

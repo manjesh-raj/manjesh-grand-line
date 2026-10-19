@@ -1213,6 +1213,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         CompactModePolicy.current().terminatesAfterLastWindowClosed
     }
 
+    /// REL-05: ⌘Q while an update install or a scheduled run is in flight
+    /// asks first, and on yes stops that work cleanly before quitting - see
+    /// `QuitGuard`. With nothing running, it quits at once as it always did.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        QuitGuard.shared.shouldTerminate(confirm: QuitGuard.confirmQuit) { quit in
+            sender.reply(toApplicationShouldTerminate: quit)
+        }
+    }
+
     /// REL-07: a Dock click in compact mode with no window showing leaves the
     /// mode the way the popover's "Open full window" does. The decision is
     /// `CompactModePolicy.reopensFullWindow`, asserted in CI's blocking lane.
