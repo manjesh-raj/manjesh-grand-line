@@ -63,6 +63,7 @@ enum CredentialVaultSelfTest {
         checkPasswordChangeRollsBackOnWriteFailure(scratch: scratch, check)
         checkPasswordChangeStaysOnMain(scratch: scratch, check)
         checkVaultCreationStaysOnMain(scratch: scratch, check)
+        checkQuitFlushesPendingAuditWrites(scratch: scratch, check)
         checkClipboardChangeCountGuard(check)
         checkLockClearsTheClipboard(scratch: scratch, check)
         checkClipboardSourceGuards(check)
@@ -866,6 +867,30 @@ enum CredentialVaultSelfTest {
               "the rollback must not capture-and-restore the Touch ID flag - that is L5's defect")
         check(code.contains("settings.touchIDUnlockEnabled = false"),
               "...it must force it off instead")
+    }
+
+    /// REL-23: a reveal or a copy is audit-only bookkeeping, batched for
+    /// `auditFlushDelay` (20s) on a main-queue timer. The quit-time flush
+    /// wrote git only, so a quit inside that window lost the use record.
+    private static func checkQuitFlushesPendingAuditWrites(scratch: URL, _ check: (Bool, String) -> Void) {
+        let (store, root) = makeVault(scratch, name: "rel23-audit", password: "audit-flush-password")
+        guard case .success(let added) = store.add(VaultCredential(title: "Prod DB", secret: "audit-flush-secret")) else {
+            check(false, "REL-23: the fixture credential is added")
+            return
+        }
+        store.recordReveal(id: added.id)
+        check(store.auditLog.contains { $0.kind == .revealed && $0.itemID == added.id },
+              "REL-23: the reveal is recorded in memory (the fixture is not vacuous)")
+        store.flushForTermination()
+
+        let reopened = CredentialVaultStore(root: root)
+        var outcome: VaultUnlockOutcome?
+        waitFor(timeout: 30) { done in
+            reopened.unlock(masterPassword: "audit-flush-password") { o in outcome = o; done() }
+        }
+        check(outcome == .unlocked, "REL-23: the vault reopens, got \(String(describing: outcome))")
+        check(reopened.auditLog.contains { $0.kind == .revealed && $0.itemID == added.id },
+              "REL-23: a reveal inside the audit batch window reaches disk at quit")
     }
 
     /// REL-20: creating a vault mutates the store, writes it and fires

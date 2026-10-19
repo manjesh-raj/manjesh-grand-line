@@ -222,6 +222,24 @@ enum DocsRunbookDataSelfTest {
             check(freshContent?.contains("Real content.") == true, "a fresh clone from the remote should show the real committed runbook content")
         }
 
+        // REL-23: a runbook edit inside the 3s debounce is committed by the
+        // quit-time flush rather than left for the next launch.
+        do {
+            let remote = makeBareRemote(name: "remote-runbooks-rel23")
+            seedRemote(remote)
+            let wt = scratch.appendingPathComponent("wt-runbooks-rel23", isDirectory: true)
+            let queue = DispatchQueue(label: "docs-runbook-selftest-rel23")
+            // A debounce far longer than the test, so only the flush can commit.
+            let sync = DocsRunbookGitSync(workingTree: wt, remoteURL: remote.path, debounceInterval: 600, queue: queue)
+            check(sync.ensureReadyNow(), "REL-23: the runbook quit-flush fixture clones")
+            let before = commitCount(remote)
+            try? "# Quit edit".write(to: sync.dataRoot.appendingPathComponent("quit-edit.md"), atomically: true, encoding: .utf8)
+            sync.markDirty()
+            check(sync.hasPendingCommitForTests, "REL-23: the runbook edit is waiting on the debounce")
+            check(sync.flushForTerminationNow(), "REL-23: the runbook quit flush finishes inside its budget")
+            check(commitCount(remote) == before + 1, "REL-23: the pending runbook edit is committed and pushed at quit")
+        }
+
         // --- DocsRunbookMetadata (fm/grandline-design-fidelity-fixes) -------
         //
         // The card subtitle the Docs grid shows is derived from the document's

@@ -928,10 +928,9 @@ final class CredentialVaultStore {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.auditFlushDelay, execute: work)
     }
 
-    /// Write any pending audit-only state now. Test seam, and the hook a
-    /// future terminate-time flush would use - `lock()` covers the real app's
-    /// path today, since the vault is always locked before the key is
-    /// dropped.
+    /// Write any pending audit-only state now. `lock()` covers the path where
+    /// the key is dropped, and `flushForTermination` covers quit, which
+    /// drops the key without a lock (REL-23).
     func flushPendingAuditWritesNow() {
         guard pendingAuditFlush != nil, isUnlocked else { return }
         pendingAuditFlush?.cancel()
@@ -1473,8 +1472,15 @@ final class CredentialVaultStore {
         gitSync.markDirty()
     }
 
-    /// Quit-time flush, forwarded to the sync's bounded on-queue flush.
+    /// Quit-time flush: the batched reveal/copy bookkeeping first, then the
+    /// sync's bounded on-queue flush.
+    ///
+    /// REL-23: this used to flush git only. Audit-only writes wait
+    /// `auditFlushDelay` (20s) on a main-queue timer that never fires once
+    /// the process exits, so a quit inside that window lost the "last used"
+    /// timestamps of everything revealed or copied in it.
     func flushForTermination() {
+        flushPendingAuditWritesNow()
         gitSync?.flushForTerminationNow()
     }
 

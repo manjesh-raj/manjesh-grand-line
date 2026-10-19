@@ -444,6 +444,50 @@ enum ShiftGitSyncSelfTest {
             check(logAfterFailure.stdout.contains("file(s) updated"), "attachment push failure: the local commit should have succeeded even though the push failed")
         }
 
+        // MARK: REL-23. The quit-time flush runs a pending debounced commit
+        // now, and a launch-time pull that finds uncommitted files schedules
+        // the commit instead of only flipping the pill.
+
+        do {
+            let remote = makeBareRemote(name: "remote-rel23")
+            seedRemote(remote)
+            let wt = scratch.appendingPathComponent("wt-rel23", isDirectory: true)
+            // A debounce far longer than the test, so only the flush can commit.
+            let sync = ShiftGitSync(workingTree: wt, remoteURL: remote.path, debounceInterval: 600, periodicPullInterval: 999_999)
+            check(sync.ensureWorkingTreeNow(), "REL-23: the quit-flush fixture clones")
+            let before = commitCount(remote, gitDir: true)
+            writeTaskFile("tasks:\n  - id: quit-edit\n", to: sync.dataRoot.appendingPathComponent("tasks/active.yaml"))
+            sync.markDirty()
+            check(sync.hasPendingCommitForTests, "REL-23: the edit is waiting on the debounce (the fixture is not vacuous)")
+            check(sync.flushForTerminationNow(), "REL-23: the quit-time flush finishes inside its budget")
+            check(commitCount(remote, gitDir: true) == before + 1,
+                  "REL-23: the pending edit is committed and pushed at quit, before=\(before) after=\(commitCount(remote, gitDir: true))")
+            check(!sync.hasPendingCommitForTests, "REL-23: nothing is left pending after the flush")
+
+            // The next launch: a file left uncommitted (a quit that ran out
+            // of budget, or a crash) must be scheduled for commit by the pull.
+            writeTaskFile("tasks:\n  - id: left-by-a-crash\n", to: sync.dataRoot.appendingPathComponent("tasks/active.yaml"))
+            check(sync.pullNow() == .upToDate, "REL-23: the pull itself is a no-op")
+            check(sync.hasPendingCommitForTests,
+                  "REL-23: a pull that finds uncommitted files schedules their commit, not just the pill")
+            check(sync.flushForTerminationNow(), "REL-23: and that commit can be flushed too")
+        }
+
+        // The terminate path calls both flushes on the shared queue. A source
+        // guard rather than a behaviour check, because `applicationWillTerminate`
+        // cannot run inside a suite; the behaviour is the case above.
+        if let dir = SelfTestSources.appSourceDirectory(),
+           let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8),
+           let start = main.range(of: "func applicationWillTerminate(") {
+            let body = String(main[start.lowerBound...].prefix(9000))
+            check(body.contains("ShiftGitSync.shared.flushForTerminationNow("),
+                  "REL-23: applicationWillTerminate flushes the tasks repo's pending commit")
+            check(body.contains("DocsRunbookGitSync.shared.flushForTerminationNow("),
+                  "REL-23: applicationWillTerminate flushes the runbooks' pending commit")
+        } else {
+            check(false, "REL-23: could not read main.swift - the terminate-path guard would silently pass")
+        }
+
         if !failures.isEmpty {
             for f in failures { FileHandle.standardError.write(Data(("FAIL: " + f + "\n").utf8)) }
         }

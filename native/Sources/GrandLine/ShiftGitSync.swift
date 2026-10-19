@@ -332,6 +332,45 @@ final class ShiftGitSync {
         }
     }
 
+    /// How long the quit-time flush may hold the main thread, shared with
+    /// `DocsRunbookGitSync` because both run on this one queue. Short, for
+    /// the reason `ReadingListGitSync.terminateFlushBudget` gives: the local
+    /// write already landed, and the next launch's `pullNow()` finds the
+    /// uncommitted files and schedules the commit itself.
+    static let terminateFlushBudget: TimeInterval = 3.0
+
+    /// REL-23: run a pending debounced commit+push now, on `queue`, waiting
+    /// at most until `deadline`. Returns whether it finished in time.
+    ///
+    /// `markDirty()` schedules the commit `debounceInterval` (3s) after the
+    /// last write, on a queue that stops existing at quit, and nothing ever
+    /// flushed it - so a Tasks, Commands, Incident or Log Analyzer edit made
+    /// inside the window stayed uncommitted until the next edit, possibly on
+    /// the next launch. Only a pending commit is run: a quit with nothing
+    /// queued does not reach the network.
+    @discardableResult
+    func flushForTerminationNow(deadline: DispatchTime = .now() + ShiftGitSync.terminateFlushBudget) -> Bool {
+        let done = DispatchSemaphore(value: 0)
+        queue.async { [weak self] in
+            defer { done.signal() }
+            guard let self, let pending = self.pendingCommit else { return }
+            // Cancelled inside the queue block: `pendingCommit` is only ever
+            // touched on `queue`, so the item cannot be running concurrently.
+            pending.cancel()
+            self.pendingCommit = nil
+            _ = self.commitAndPushNow()
+        }
+        guard done.wait(timeout: deadline) == .success else {
+            AppLog.lifecycle.info("tasks repo: quit-time git flush still running - letting the app quit; the next launch commits")
+            return false
+        }
+        return true
+    }
+
+    #if FM_SELFTESTS
+    var hasPendingCommitForTests: Bool { queue.sync { pendingCommit != nil } }
+    #endif
+
     // MARK: Synchronous core (used directly by tests; wrapped above for
     // production callers so nothing here ever runs on the caller's thread)
 
@@ -623,7 +662,10 @@ final class ShiftGitSync {
         if originBehindOrEqual {
             // Nothing new to pull.
             if !uncommittedFiles().isEmpty {
-                setStatus(.localChanges)
+                // REL-23: schedule the commit, not just the pill. An edit
+                // left uncommitted by a quit used to sit here until the next
+                // edit - on this machine only, absent from the other one.
+                markDirty()
                 return .upToDate
             }
             // GL-13: only push when local genuinely has commits origin does
@@ -651,7 +693,8 @@ final class ShiftGitSync {
             return .failed(reason)
         }
         let dirty = !uncommittedFiles().isEmpty
-        setStatus(dirty ? .localChanges : .synced)
+        // REL-23: the same as above - uncommitted files get a commit.
+        if dirty { markDirty() } else { setStatus(.synced) }
         // B6: the files under `dataRoot` are not what they were a moment ago.
         // Whoever holds them in memory has to re-read them before the next
         // whole-file rewrite turns a fast-forward into a deletion.

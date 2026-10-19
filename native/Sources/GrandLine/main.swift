@@ -1267,6 +1267,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // now, so ⌘Q inside its own write latency would lose the last copy -
         // the same class as the five flushes above it.
         appShell.shutdownClipboardHistory()
+        // REL-23: the tasks repo's own 3s commit debounce (Tasks, Commands,
+        // Incidents, the Log Analyzer) and the runbooks' one beside it, on
+        // the same serial queue and so under one shared deadline. Neither had
+        // a quit-time flush, so an edit inside the window stayed uncommitted
+        // and unpushed until the next edit.
+        let gitFlushDeadline = DispatchTime.now() + ShiftGitSync.terminateFlushBudget
+        ShiftGitSync.shared.flushForTerminationNow(deadline: gitFlushDeadline)
+        DocsRunbookGitSync.shared.flushForTerminationNow(deadline: gitFlushDeadline)
         shiftHotkey.stop()
         tabShortcuts.stop()
         shiftNotifications.stop()
