@@ -264,11 +264,28 @@ final class ShiftGitSync {
 
     // MARK: Startup (production entry point)
 
+    private let startGate = GitSyncStartGate()
+
+    #if FM_SELFTESTS
+    /// How many `start()` calls actually queued work. PERF-02's suite
+    /// asserts a second call leaves this at one.
+    private(set) var debugStartWorkCount = 0
+    #endif
+
     /// Ensures the local clone exists (cloning if needed, migrating any
     /// pre-git-sync local Shift data in on first run), then starts the
     /// periodic pull timer. Entirely asynchronous - safe to call from
     /// `ShiftStore.init()` on the main thread at app launch.
     func start() {
+        // PERF-02: once per instance. Five stores call this from their own
+        // `init` (tasks, the command library, incidents, the Log Analyzer and
+        // the crew transcripts), and before this gate every call queued its
+        // own working-tree check and full launch `pullNow()` - see
+        // `GitSyncStartGate`.
+        guard startGate.claim() else { return }
+        #if FM_SELFTESTS
+        debugStartWorkCount += 1
+        #endif
         ServiceHealthRegistry.shared.register(.shiftGitSync)
         queue.async { [weak self] in
             guard let self else { return }

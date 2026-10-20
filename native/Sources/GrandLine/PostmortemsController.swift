@@ -24,7 +24,17 @@ import AppKit
 
 final class PostmortemsController: NSViewController, DaylightDrillActions {
 
-    private let runbookStore = DocsRunbookStore()
+    private let runbookStore: DocsRunbookStore
+
+    /// PERF-02: the shell hands down its one `DocsRunbookStore` rather than
+    /// this page building a second (whose `init` used to start another git
+    /// sync at launch). The default keeps a page built on its own working.
+    init(runbookStore: DocsRunbookStore = DocsRunbookStore()) {
+        self.runbookStore = runbookStore
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     /// The plates built by `rebuildPostmortemGrid`, kept so `applyTheme()`
     /// can re-tint a plate built between two theme changes.

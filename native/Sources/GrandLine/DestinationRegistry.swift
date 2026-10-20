@@ -59,6 +59,13 @@
 // Everything else - Hosts, Tasks, DevOps Commands, Log Analyzer, Tools,
 // Vault, Dictation, Docs, the four Engineering setup pages (Updates,
 // Bootstrap, Automation, GitHub Sync) and Settings - is lazy.
+//
+// **And lazy means constructed, not only mounted** (PERF-01 of the 2026-10
+// end-to-end review). A slot holds a closure that reaches its controller, and
+// `AppShellController` declares every non-eager page as a `lazy var`, so the
+// first `show(_:)` is what builds the page as well as what mounts it. Until
+// that change every controller was built in the shell's `init`, before the
+// window existed - see `AppShellController`'s "Lazy destinations" note.
 
 import AppKit
 
@@ -276,24 +283,52 @@ extension RailDestination {
     }
 }
 
-/// A single registered destination: its controller, its top-bar title, and
-/// whether it has been mounted into the body container yet.
+/// A single registered destination: how to reach its controller, its
+/// top-bar title, and whether it has been mounted into the body container yet.
+///
+/// **PERF-01 (the 2026-10 end-to-end review).** A slot used to hold the
+/// controller itself, which meant every controller had been constructed
+/// before the table could be built - GL-37's laziness covered `loadView` and
+/// nothing before it. It holds a closure now, and the first `controller` read
+/// (which `DestinationMounter` makes on the slot's first mount) is what
+/// builds the page.
 final class DestinationSlot {
     let id: DestinationSlotID
     let title: String
     let mountsEagerly: Bool
-    let controller: NSViewController
+
+    private let makeController: () -> NSViewController
+    private var builtController: NSViewController?
+
+    /// The slot's controller, built on the first read and the same instance
+    /// on every read after it.
+    var controller: NSViewController {
+        if let builtController { return builtController }
+        let controller = makeController()
+        builtController = controller
+        return controller
+    }
+
+    /// Whether `controller` has been read yet. Asking never builds it.
+    var isControllerBuilt: Bool { builtController != nil }
 
     /// `true` once the controller has been added as a child and its view
     /// embedded - i.e. once `loadView` has actually run. Never goes back to
     /// `false`: mounting is permanent by design (see the file header).
     fileprivate(set) var isMounted = false
 
-    init(id: DestinationSlotID, title: String, mountsEagerly: Bool, controller: NSViewController) {
+    init(id: DestinationSlotID, title: String, mountsEagerly: Bool,
+         makeController: @escaping () -> NSViewController) {
         self.id = id
         self.title = title
         self.mountsEagerly = mountsEagerly
-        self.controller = controller
+        self.makeController = makeController
+    }
+
+    /// An already-built controller - for a suite driving the mounter with
+    /// stub controllers, where there is no construction cost to defer.
+    convenience init(id: DestinationSlotID, title: String, mountsEagerly: Bool, controller: NSViewController) {
+        self.init(id: id, title: title, mountsEagerly: mountsEagerly, makeController: { controller })
     }
 }
 

@@ -102,8 +102,22 @@ final class ReadingListGitSync {
     /// `ReadingListStore.init()`, which runs on the main thread at launch -
     /// GL-12: nothing synchronous and slow before the window exists.
     func start() {
+        // PERF-02: once per instance, however many stores ask - see
+        // `GitSyncStartGate`.
+        guard startGate.claim() else { return }
+        #if FM_SELFTESTS
+        debugStartWorkCount += 1
+        #endif
         queue.async { [weak self] in self?.ensureReadyNow() }
     }
+
+    private let startGate = GitSyncStartGate()
+
+    #if FM_SELFTESTS
+    /// How many `start()` calls actually queued work. PERF-02's suite
+    /// asserts a second call leaves this at one.
+    private(set) var debugStartWorkCount = 0
+    #endif
 
     @discardableResult
     func ensureReadyNow() -> Bool {
@@ -250,14 +264,58 @@ final class ReadingListStore {
     /// `ShiftStore.gitSync` / `StickyBoardStore.gitSync` use.
     let gitSync: ReadingListGitSync?
 
-    private(set) var links: [ReadingLink] = []
+    /// Every saved link. Reading it before the first load has landed loads
+    /// synchronously (`ensureLoaded()`), so a store started with
+    /// `loadsInBackground` can never be read as an empty list.
+    private(set) var links: [ReadingLink] {
+        get { ensureLoaded(); return loadedLinks }
+        set { loadedLinks = newValue }
+    }
+    private var loadedLinks: [ReadingLink] = []
+
+    // MARK: The first load (PERF-01)
+    //
+    // The 2026-10 end-to-end review's PERF-01: this store used to parse
+    // `links.yaml` in `init`, which the shell runs before the window exists.
+    // A store built with `loadsInBackground` starts empty and reads the file
+    // through `HelmBackgroundReload` instead - the same off-main read every
+    // page revisit already uses. `StickyBoardStore` makes the same move, and
+    // its "The first load" note is the full argument; in short, `links`,
+    // `isInFailedLoadState` and the two record counts load synchronously when
+    // read before the background read lands, and every write path reads
+    // `links` before it changes anything, so an early reader pays for the
+    // read rather than ever seeing - or writing - an empty list.
+
+    /// Whether this store's contents have been read from disk yet. A reader
+    /// that must not pay for that read on the main thread (the Home canvas,
+    /// before the first frame) asks this first.
+    private(set) var isLoaded = false
+
+    private var loadHandlers: [() -> Void] = []
+
+    /// Runs `handler` once the first load has been applied - now, if it
+    /// already has.
+    func whenLoaded(_ handler: @escaping () -> Void) {
+        guard !isLoaded else { handler(); return }
+        loadHandlers.append(handler)
+    }
+
+    /// Reads the file now if no load has been applied yet.
+    private func ensureLoaded() {
+        guard !isLoaded else { return }
+        reloadAll()
+    }
 
     private var linksPath: String { root.appendingPathComponent("links.yaml").path }
     private var iconsRoot: URL { root.appendingPathComponent("icons", isDirectory: true) }
 
     /// GL-01's first half: `true` once the last read found real content this
     /// store could not parse. Every write is refused while it holds.
-    private(set) var isInFailedLoadState = false
+    private(set) var isInFailedLoadState: Bool {
+        get { ensureLoaded(); return failedLoadState }
+        set { failedLoadState = newValue }
+    }
+    private var failedLoadState = false
 
     /// GL-01's second half, and the full-app audit's finding 4.2: records this
     /// build could not decode, kept verbatim so `persist()` writes them
@@ -282,11 +340,16 @@ final class ReadingListStore {
 
     /// How many records carry a key this build does not write. Zero for a
     /// file this build produced.
-    var recordsWithUnknownKeys: Int { passthrough.recordsWithExtras }
+    var recordsWithUnknownKeys: Int { ensureLoaded(); return passthrough.recordsWithExtras }
 
-    var unreadableRecordCount: Int { unreadableRecords.count }
+    var unreadableRecordCount: Int { ensureLoaded(); return unreadableRecords.count }
 
-    init() {
+    convenience init() { self.init(loadsInBackground: false) }
+
+    /// `loadsInBackground`: start empty and read the file off the main thread
+    /// (PERF-01 - see "The first load" above). The shell builds its one
+    /// instance this way; everything else reads synchronously, as before.
+    init(loadsInBackground: Bool) {
         let env = ProcessInfo.processInfo.environment
         if let override = env["FM_READING_LIST_DIR"], !override.isEmpty {
             root = URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
@@ -302,7 +365,11 @@ final class ReadingListStore {
             gitSync = sync
         }
         try? fm.createDirectory(at: root, withIntermediateDirectories: true)
-        reloadAll()
+        if loadsInBackground {
+            reloadAllInBackground(then: {})
+        } else {
+            reloadAll()
+        }
     }
 
     /// Test seam: an explicitly-rooted, git-free store, so a suite never has
@@ -384,6 +451,17 @@ final class ReadingListStore {
 
     /// The state half, on main - including GL-01's backup.
     private func apply(_ read: ReadingListRead) {
+        // First, so a getter read inside this method does not start a second
+        // synchronous load of the file this one is applying.
+        let isFirstLoad = !isLoaded
+        isLoaded = true
+        defer {
+            if isFirstLoad {
+                let handlers = loadHandlers
+                loadHandlers = []
+                handlers.forEach { $0() }
+            }
+        }
         switch read {
         case .ok(let decoded, let unreadable, let captured):
             isInFailedLoadState = false

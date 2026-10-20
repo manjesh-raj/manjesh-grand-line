@@ -223,8 +223,22 @@ final class DocsRunbookGitSync {
     /// `ensureWorkingTreeNow()`-runs-synchronously split, and its self-test's
     /// convention of calling the synchronous form directly).
     func start() {
+        // PERF-02: once per instance, however many stores ask - see
+        // `GitSyncStartGate`.
+        guard startGate.claim() else { return }
+        #if FM_SELFTESTS
+        debugStartWorkCount += 1
+        #endif
         queue.async { [weak self] in self?.ensureReadyNow() }
     }
+
+    private let startGate = GitSyncStartGate()
+
+    #if FM_SELFTESTS
+    /// How many `start()` calls actually queued work. PERF-02's suite
+    /// asserts a second call leaves this at one.
+    private(set) var debugStartWorkCount = 0
+    #endif
 
     /// Ensures a working tree exists (delegating to `ShiftGitSync.shared` when
     /// this instance shares its production clone, never re-cloning
@@ -402,7 +416,16 @@ final class DocsRunbookStore {
     /// contract that block's own comment (and AGENTS.md) already claimed
     /// actually true, and the one that covers a single suite run by hand with
     /// just `FM_SHIFT_DIR` set.
+    #if FM_SELFTESTS
+    /// PERF-02: how many of these this process has built, so a suite can
+    /// assert the shell builds one and hands it down.
+    static var debugInitCount = 0
+    #endif
+
     init() {
+        #if FM_SELFTESTS
+        Self.debugInitCount += 1
+        #endif
         let env = ProcessInfo.processInfo.environment
         if let override = env["FM_DOCS_RUNBOOKS_DIR"], !override.isEmpty {
             root = URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)

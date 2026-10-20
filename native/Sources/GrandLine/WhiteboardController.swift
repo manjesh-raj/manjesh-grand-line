@@ -43,7 +43,12 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
 
     private var theme: HelmTheme = ThemeManager.shared.theme
 
-    private let webView = WhiteboardWebView()
+    /// PERF-01: `lazy`, so the web view - its configuration, its content
+    /// controller and its non-persistent data store - is allocated by
+    /// `loadView`, its first real use, rather than when this controller is
+    /// constructed. `activate()` already deferred loading content; this
+    /// defers the object as well.
+    private lazy var webView = WhiteboardWebView()
     /// Daylight §7's card around an embedded surface - the same treatment (and
     /// the same reason it carries no shadow: a clipping layer casts none) as
     /// Docs' playbook card.

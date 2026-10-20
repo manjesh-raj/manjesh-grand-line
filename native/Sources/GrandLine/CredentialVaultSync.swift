@@ -128,8 +128,22 @@ final class CredentialVaultGitSync {
     /// on the main thread). A test that needs to observe the result calls
     /// `ensureReadyNow()` directly, matching every sibling sync class.
     func start() {
+        // PERF-02: once per instance, however many stores ask - see
+        // `GitSyncStartGate`.
+        guard startGate.claim() else { return }
+        #if FM_SELFTESTS
+        debugStartWorkCount += 1
+        #endif
         queue.async { [weak self] in self?.ensureReadyNow() }
     }
+
+    private let startGate = GitSyncStartGate()
+
+    #if FM_SELFTESTS
+    /// How many `start()` calls actually queued work. PERF-02's suite
+    /// asserts a second call leaves this at one.
+    private(set) var debugStartWorkCount = 0
+    #endif
 
     @discardableResult
     func ensureReadyNow() -> Bool {

@@ -392,6 +392,34 @@ Do this once, after the first `./build_native_app.sh` on the renamed build.
       exists and `.../FirstmateCockpit/` does not. If both are there, the app
       is reading the new one and left the old one alone - reconcile by hand.
 
+## 19. Launch cost (the signpost baseline)
+
+The 2026-10 end-to-end review's PERF-01, PERF-02 and PERF-08 (section 3.6) are
+claims about launch cost.
+The fixes for them are proved by deterministic suites (call counts, what is
+built at launch, what a second `start()` does), but the time they save can only
+be measured in Instruments, against real data, by the captain.
+`LaunchSignposts.swift` puts a named interval on every row of the launch path
+so that measurement is one table rather than a call tree.
+
+- [ ] Copy the data folder somewhere disposable and point `FM_SCRATCH_ROOT` at
+      the copy, so nothing below reads or writes the real stores.
+- [ ] Instruments > App Launch against `.build/debug/GrandLine` (or the probe
+      app), warm disk, three runs.
+      Filter the os_signpost track to subsystem `com.manjesh.grandline.native`,
+      category `launch`.
+- [ ] Record, per run: process start to the window becoming key, and the
+      duration of `AppShellController.init`, `AppShellController.loadView`,
+      every `*.init` store interval, and `restoreSessionIfNeeded`.
+- [ ] Pass: `AppShellController.init` under 50 ms, no store `init` over 10 ms,
+      first frame under 400 ms, and the main thread free within 100 ms of the
+      first frame with five restored host pages.
+- [ ] Record the numbers in
+      [`docs/history/26-production-readiness.md`](../docs/history/26-production-readiness.md),
+      so the next change to the launch path has a baseline to compare against.
+
+---
+
 ## When something here fails
 
 Prefer turning it into an automated suite if the failure is reachable

@@ -45,17 +45,25 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     /// for why two caching instances of this store diverge in-session.
     private let commandLibrary: CommandLibraryStore
 
-    init(commandLibrary: CommandLibraryStore) {
+    /// PERF-02: the two stores below are the shell's shared instances when
+    /// it has them. Each `DocsRunbookStore`/`LogAnalyzerStore` built here
+    /// used to start its own git sync at launch; the defaults keep a page
+    /// built on its own (a suite) working unchanged.
+    init(commandLibrary: CommandLibraryStore,
+         runbookStore: DocsRunbookStore = DocsRunbookStore(),
+         store: LogAnalyzerStore = LogAnalyzerStore()) {
         self.commandLibrary = commandLibrary
+        self.runbookStore = runbookStore
+        self.store = store
         super.init(nibName: nil, bundle: nil)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     /// Spec §18 - "Create Runbook" writes into the real Docs → Runbooks
     /// store, not a private copy of the concept.
-    private let runbookStore = DocsRunbookStore()
+    private let runbookStore: DocsRunbookStore
     /// Spec §15/§23/§25.
-    private let store = LogAnalyzerStore()
+    private let store: LogAnalyzerStore
 
     // MARK: Forwarded actions (the page owns none of these itself)
 

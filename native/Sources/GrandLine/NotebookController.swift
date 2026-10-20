@@ -126,7 +126,12 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     private let newPageButton = HelmButton(title: "New page", variant: .primary, symbol: "plus")
 
     private let editorCard = HelmCard()
-    private let webView = CodePreviewWebView()
+    /// PERF-01: `lazy`, so the web view - its configuration, its content
+    /// controller and its non-persistent data store - is allocated by
+    /// `loadView`, its first real use, rather than when this controller is
+    /// constructed. `activate()` already deferred loading content; this
+    /// defers the object as well.
+    private lazy var webView = CodePreviewWebView()
     private let editorOverlay = NSView()
     private var editorOverlayState: HelmEmptyState?
 

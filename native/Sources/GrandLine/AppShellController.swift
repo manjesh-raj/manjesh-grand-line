@@ -94,58 +94,331 @@ final class AppShellController: NSViewController {
     /// navigation beyond the closures wired below.
     private let homeCanvas: HomeCanvasController
 
-    private let hostsPanel: HostsController
     private let console: ConsoleController
-    private let settings: SettingsController
     private let overview: FleetController
+    private let review = ReviewController()
+
+    // MARK: Lazy destinations (PERF-01)
+    //
+    // **The 2026-10 end-to-end review's PERF-01.** GL-37 made destinations
+    // *mount* lazily, but every controller was still *constructed* in this
+    // class's `init`, before the window existed - 26 pages the captain may
+    // never open this session, with their stores, two YAML directory walks
+    // and three `WKWebView`s among them. So each non-eager destination is a
+    // `lazy var` now, built the first time something asks for it - which for
+    // nearly every page is its first `show(_:)`, through the controller
+    // closure its `DestinationSlot` holds.
+    //
+    // Three rules keep that true:
+    //
+    //   - **A page's wiring lives in its own initialiser below**, not in
+    //     `loadView`. Assigning a callback to a lazy property builds it, so
+    //     wiring every page from `loadView` would have built all of them at
+    //     launch again.
+    //   - **Anything that reaches a page from outside its own visit asks
+    //     `isBuilt` first** when the answer for an unbuilt page is already
+    //     known (a quit-time flush with nothing to flush, a bridge that cannot
+    //     be busy on a page that does not exist). A menu action or a deep
+    //     link that navigates there anyway simply builds it.
+    //   - **A store another surface reads lives on the shell**, never only on
+    //     the page (`stickyBoardStore`, `readingListStore`, ...), so the canvas,
+    //     ⌘K and the widgets never have to build a page to read its data.
+    //
+    // `homeCanvas`, `overview`, `console` and `review` stay eager for the
+    // reasons `DestinationRegistry.swift`'s header gives.
+
+    /// Which lazy destinations have been built. Written only by `built(_:_:)`.
+    private var builtDestinations: Set<DestinationSlotID> = []
+
+    /// Records that `id`'s controller exists and hands it back - the one
+    /// line at the end of every lazy initialiser below.
+    private func built<Controller: NSViewController>(_ id: DestinationSlotID,
+                                                     _ controller: Controller) -> Controller {
+        builtDestinations.insert(id)
+        return controller
+    }
+
+    /// Whether `id`'s controller has been built yet. Asking never builds it.
+    private func isBuilt(_ id: DestinationSlotID) -> Bool { builtDestinations.contains(id) }
+
+    // The stores the lazy initialisers below are built from. Held here
+    // because a lazy initialiser runs long after `init` has returned.
+    private let hostStore: HostStore
+    private let keyStore: SSHKeyStore
+    private let snippetStore: SnippetStore
+    private let dictationStore: DictationStore
+    private let commandLibraryStore: CommandLibraryStore
+    private let scheduleStore: ScheduleStore
+    private let docsRunbookStore: DocsRunbookStore
+    private let logAnalyzerStore: LogAnalyzerStore
+
+    /// The app delegate builds Hosts and Settings (it wires them to the host
+    /// store, the console and the menu), so the shell holds how to reach
+    /// them rather than the pages themselves.
+    private let makeHostsPanel: () -> HostsController
+    private let makeSettings: () -> SettingsController
+
+    private lazy var hostsPanel: HostsController = {
+        let hostsPanel = makeHostsPanel()
+        hostsPanel.onAddOrEdit = { [weak self] host in self?.onPresentHostEditor?(host) }
+        hostsPanel.onRunSnippet = { [weak self] snippet in self?.onRunSnippet?(snippet) }
+        hostsPanel.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // Hosts is the first migrated page whose *actions* change while it is
+        // on screen: §6.4's cluster carries the add action for the tab that is
+        // showing, and the three tabs add three different records. Same shape
+        // as the subtitle callback - the page says "re-ask me", the shell owns
+        // the header.
+        hostsPanel.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
+        // `fm/grandline-session-switcher`: the Hosts list reads liveness from
+        // the same registry the strip does, through a closure, so that page
+        // never learns what a `ConsoleController` is - the same
+        // forward-don't-own shape as every other `hostsPanel` hook here.
+        hostsPanel.liveSession = { [weak self] hostID in self?.sessions.session(for: hostID) }
+        hostsPanel.onSwitchToSession = { [weak self] hostID in self?.switchToSession(hostID: hostID) }
+        hostsPanel.onEndSession = { [weak self] hostID in self?.confirmEndSession(hostID: hostID) }
+        return built(.hosts, hostsPanel)
+    }()
+
+    private lazy var settings: SettingsController = {
+        let settings = makeSettings()
+        settings.onTerminalShortcutsChanged = { [weak self] shortcuts in self?.onTerminalShortcutsChanged?(shortcuts) }
+        settings.onQuickCaptureShortcutChanged = { [weak self] chord in self?.onQuickCaptureShortcutChanged?(chord) }
+        // Settings' own sidebar moves the header's subtitle - it names the
+        // selected category, the way the reference mockup's "Settings /
+        // Shortcuts & Siri" does.
+        settings.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // `fm/grandline-overview-layout-fix-gmail-settings`: a Google account
+        // connected (or disconnected, or its calendar switch flipped) changes
+        // what the daily review's calendar column can read.
+        // Pushed from Settings rather than polled, and the pages re-read the
+        // source rather than being handed one. Only a built Overview page has
+        // anything to re-render.
+        settings.onGoogleAccountsChanged = { [weak self] in
+            guard let self, self.isBuilt(.dailyOverview) else { return }
+            self.dailyOverview.renderDailyReviewIfMounted()
+        }
+        // cockpit-settings-sudo-touchid: Settings' "Touch ID for sudo" row
+        // runs `sudo av harden sudo`, which needs a real interactive `sudo`
+        // prompt exactly like Bootstrap's provisioning actions - same
+        // one-shot Console command-tab mechanism, just reached from Settings
+        // instead.
+        settings.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
+        settings.onRunCommandTracked = { [weak self] label, command, completion in
+            self?.runInConsole(label: label, command: command, completion: completion)
+        }
+        return built(.settings, settings)
+    }()
+
     /// `fm/grandline-overview-page-daily-review`: the Overview page - F20's
     /// daily review on a destination of its own, opened by the leftmost space
     /// pill. Lazily mounted like every other page that owns no live process.
-    private let dailyOverview: DailyOverviewController
+    private lazy var dailyOverview: DailyOverviewController = {
+        // The same shared `ShiftStore` (GL-23), never a second instance - the
+        // daily review reads the very lists the Tasks page is showing.
+        let dailyOverview = DailyOverviewController(shiftStore: shiftStore)
+        // F20: the daily review reads the sticky board and the reading list.
+        // GL-23: the shared instances, the same ones the canvas and the other
+        // destinations use.
+        //
+        // **One host, since X3.** Fleet used to take the same attach for its
+        // own copy of the card; the review's navigation-naming fix made Today
+        // the daily review's only home.
+        dailyOverview.attachDailyReviewSources(stickyBoardStore: stickyBoardStore,
+                                               readingListStore: readingListStore)
+        // F20's own page: the same pass-through the morning briefing uses. No
+        // drill-subtitle wiring - `fm/grandline-overview-layout-fix-gmail-
+        // settings` made Overview a top-level page, which has no drill header
+        // to update.
+        dailyOverview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
+        return built(.dailyOverview, dailyOverview)
+    }()
+
     /// `fm/polish-straw-hat-overview-card-and-voice-c8d3`: the Straw Hat
     /// Pirates chat, its own destination since the captain asked for it to be
-    /// its own Overview card rather than a tab inside Fleet's page. Lazily
-    /// mounted - the controller exists at launch, its view does not.
-    private let strawHat: StrawHatController
-    private let shift: ShiftController
-    private let review = ReviewController()
+    /// its own Overview card rather than a tab inside Fleet's page. Built on
+    /// first use since PERF-01: its canvas summary starts empty either way
+    /// (`StrawHatCanvasState()`), so an unbuilt page has nothing to report.
+    private lazy var strawHat: StrawHatController = {
+        // The four store dependencies below were `FleetController`'s while the
+        // crew chat was a tab on that page; they came here with it. All three
+        // stores are the shared instances: each caches its records as well as
+        // writing them, so a second instance would be a second writer to the
+        // same file. The command library is handed over as a *root* URL
+        // because the crew only ever reads it through their `command_search`
+        // tool - constructing a second store for that would be the mistake
+        // GL-24 fixed.
+        let strawHat = StrawHatController(shiftStore: shiftStore,
+                                          commandLibraryRoot: commandLibraryStore.root,
+                                          commandLibraryStore: commandLibraryStore,
+                                          stickyStore: stickyBoardStore,
+                                          scheduleStore: scheduleStore)
+        // Straw Hat phase 3 (M3.2): the crew's two navigation handoffs. Both
+        // are pass-throughs into navigation this object already owns - a
+        // handoff writes nothing, which is what lets its link row run on a
+        // single click with no confirm card in front of it.
+        strawHat.onOpenDestination = { [weak self] dest, hint in
+            self?.openDestinationForCrew(dest, hint: hint)
+        }
+        strawHat.onOpenSRELead = { [weak self] hint in
+            self?.openSRELeadForCrew(hostHint: hint)
+                ?? "I couldn't reach your host pages from here."
+        }
+        strawHat.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // The Overview card's own summary line - see
+        // `StrawHatCanvasState`. Pushed rather than polled, the
+        // same shape `FleetController.onSnapshotChanged` already uses for the
+        // Fleet card.
+        strawHat.onCanvasStateChanged = { [weak self] in
+            guard let self else { return }
+            self.homeCanvas.applyStrawHat(self.strawHat.canvasState)
+        }
+        return built(.strawHat, strawHat)
+    }()
+
+    private lazy var shift: ShiftController = {
+        let shift = ShiftController(store: shiftStore, focusTimer: focusTimer)
+        shift.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // The Tasks column's footer links, forwarded rather than owned - that
+        // page knows nothing about the shell or the palette
+        // (`onSearchTapped`'s own convention).
+        shift.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
+        shift.onOpenCommandPalette = { [weak self] in self?.onSearchTapped?() }
+        return built(.shift, shift)
+    }()
+
     /// `fm/grandline-log-analyzer-build`: the Log / Output Analyzer page.
-    /// Owns its own `CommandLibraryStore`/`DocsRunbookStore`/
-    /// `LogAnalyzerStore`, so this controller needs to know nothing about
-    /// any of them - the same forward-don't-own convention every other
-    /// destination here follows.
-    private let logAnalyzer: LogAnalyzerController
-    /// `fm/grandline-k8s-cluster-tail`. `lazy` for one concrete reason: it
-    /// needs *this* controller's own `sessions` registry (there is exactly
-    /// one - a second would be a second source of truth for "which hosts are
-    /// live"), and a stored property with an inline default cannot be read
-    /// from an initialiser's phase-1 assignments. It is still lazily *mounted*
-    /// like every other non-eager destination; this only defers construction.
-    private lazy var kubernetes = KubernetesController(sessions: sessions)
+    /// PERF-02: handed the shell's one `DocsRunbookStore` and
+    /// `LogAnalyzerStore` rather than building its own.
+    private lazy var logAnalyzer: LogAnalyzerController = {
+        // GL-23: the same `CommandLibraryStore` instance the Tasks page uses.
+        let logAnalyzer = LogAnalyzerController(commandLibrary: commandLibraryStore,
+                                                runbookStore: docsRunbookStore,
+                                                store: logAnalyzerStore)
+        // `fm/grandline-log-analyzer-build`: the Log Analyzer forwards the
+        // same two things Shift's Command Library already does - "run this
+        // command" goes to whichever console tab is in front, and a runbook
+        // or postmortem it just wrote opens in Docs. It owns neither.
+        logAnalyzer.onSendCommandToTerminal = { [weak self] text in
+            self?.console.sendCommandLibraryTextToActiveTab(text)
+        }
+        logAnalyzer.onOpenRunbook = { [weak self] id in self?.openRunbook(id: id) }
+        // `fm/grandline-docs-split-runbooks-postmortems`: `createIncident()`
+        // used to route its saved-postmortem confirmation through
+        // `onOpenRunbook` too, which opened it as a runbook - a postmortem id
+        // is never in `listRunbooks()`, so that silently no-opped. Fixed by
+        // giving it its own closure, wired to the postmortem destination.
+        logAnalyzer.onOpenPostmortem = { [weak self] id in self?.openPostmortem(id: id) }
+        // F8 (incident mode): a saved investigation attaches as openable
+        // evidence to the incident on whichever host page handed over the
+        // capture this investigation was built from - which is the only
+        // honest correlation available, since the Log Analyzer itself has no
+        // notion of a host. A clipboard analysis or an investigation reopened
+        // from history clears that association first (see
+        // `logAnalyzerCaptureSource`), so a save then attaches to nothing
+        // rather than to whichever host happened to be last.
+        logAnalyzer.onInvestigationSaved = { [weak self] id, title in
+            self?.logAnalyzerCaptureSource?.noteInvestigationSaved(id: id, title: title)
+        }
+        logAnalyzer.onOpenConsole = { [weak self] in self?.show(.console) }
+        logAnalyzer.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        return built(.logAnalyzer, logAnalyzer)
+    }()
+
+    /// `fm/grandline-k8s-cluster-tail`. It needs *this* controller's own
+    /// `sessions` registry (there is exactly one - a second would be a second
+    /// source of truth for "which hosts are live").
+    private lazy var kubernetes: KubernetesController = {
+        let kubernetes = KubernetesController(sessions: sessions)
+        // `fm/grandline-k8s-cluster-tail`: everything the `.kubernetes`
+        // destination needs from the shell, as closures. Forward-don't-own -
+        // that page knows nothing about `hostConsoles` or `ConsoleController`,
+        // and this controller knows nothing about pods.
+        kubernetes.configure(access: KubeSessionAccess(
+            tabs: { [weak self] hostID in self?.hostConsoles[hostID]?.kubeFeedTabs() ?? [] },
+            duplicateTabForFeed: { [weak self] hostID in self?.hostConsoles[hostID]?.duplicateTabForKubeFeed() },
+            isTabBusyElsewhere: { [weak self] hostID, tabID in
+                self?.hostConsoles[hostID]?.isTabBusyForKubeFeed(tabID) ?? false
+            },
+            revealHost: { [weak self] hostID in self?.switchToSession(hostID: hostID) },
+            openHosts: { [weak self] in self?.show(.hosts) }))
+        return built(.kubernetes, kubernetes)
+    }()
+
+    /// The reverse direction of the Kubernetes feed guard (full-app audit,
+    /// finding 4.1), shared by the Firstmate console and every host page: a
+    /// console-side bridge asks whether the `.kubernetes` page's feed bridge
+    /// is using a tab. A page that has not been built has no feed bridge, so
+    /// asking must not build it - the console bridges ask on every tick.
+    private func isKubernetesFeedBridgeBusy(onTab tabID: UUID) -> Bool {
+        guard isBuilt(.kubernetes) else { return false }
+        return kubernetes.isFeedBridgeBusy(onTab: tabID)
+    }
+
     /// F8: the host page whose capture seeded whatever the Log Analyzer is
     /// currently showing, so a save can be attached to that host's incident.
     /// Weak - a deleted host's page is torn down and must not be kept alive
     /// by this.
     private weak var logAnalyzerCaptureSource: ConsoleController?
-    private let tools = ToolsController()
+
+    private lazy var tools: ToolsController = {
+        let tools = ToolsController()
+        // Tools' subtitle counts open tool tabs, which the captain can change
+        // without leaving the page.
+        tools.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        return built(.tools, tools)
+    }()
+
     /// `fm/grand-line-whiteboard-excalidraw`: the embedded Excalidraw canvas.
     /// Lazy like every other utility destination, and deliberately so - see
     /// `WhiteboardWebView`'s gating note: a session that never opens it never
     /// starts a web content process.
-    private let whiteboard = WhiteboardController()
+    private lazy var whiteboard: WhiteboardController = {
+        let whiteboard = WhiteboardController()
+        whiteboard.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        return built(.whiteboard, whiteboard)
+    }()
+
     /// `fm/grandline-sticky-board`: a freeform corkboard of draggable, colored
     /// sticky notes. Lazy like every other utility destination - see
-    /// `StickyBoardController.swift`'s header.
-    private let stickyBoard = StickyBoardController()
+    /// `StickyBoardController.swift`'s header. Its store is the shell's.
+    private lazy var stickyBoard: StickyBoardController = {
+        let stickyBoard = StickyBoardController(store: stickyBoardStore)
+        // UX10: the board raises a note to promote; this controller is the
+        // one place that holds both destinations.
+        stickyBoard.onMakeTaskFromNote = { [weak self] note in self?.makeTaskFromStickyNote(note) }
+        return built(.stickyBoard, stickyBoard)
+    }()
+
     /// `fm/grandline-monaco-code-preview`: the embedded Monaco editor. Lazy
     /// for the same reason the Whiteboard is - see `CodePreviewWebView`'s
     /// gating note: a session that never opens it never starts a web content
     /// process, never loads the 4MB bundle and never builds an editor.
-    private let codePreview: CodePreviewController
+    private lazy var codePreview: CodePreviewController = {
+        let codePreview = CodePreviewController(store: codePreviewStore)
+        codePreview.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        return built(.codePreview, codePreview)
+    }()
+
     /// `fm/grandline-tasks-kanban-devops-split`: the Command Library's own
     /// destination. Was the third tab of `shift` - see
     /// `CommandLibraryController`'s header for why it moved.
-    private let commandLibrary: CommandLibraryController
+    private lazy var commandLibrary: CommandLibraryController = {
+        // GL-23 again: the same shared instance the Log Analyzer, the crew's
+        // `command_search` tool and the ⌘K palette already read.
+        let commandLibrary = CommandLibraryController(store: commandLibraryStore)
+        // fm/grandline-devops-command-library-phase2: the Command Library's
+        // "Send to Terminal" types straight into whichever console tab is
+        // currently in front - not a new one-shot command tab (`runInConsole`
+        // below), the exact same "type this into the active tab" behavior
+        // Snippets' own "Run" already uses.
+        commandLibrary.onSendCommandToTerminal = { [weak self] text in self?.console.sendCommandLibraryTextToActiveTab(text) }
+        // F9 (v1): straight up to the app delegate - see `onSendCommandToHosts`.
+        commandLibrary.onSendCommandToHosts = { [weak self] command, values, generated in
+            self?.onSendCommandToHosts?(command, values, generated)
+        }
+        commandLibrary.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        return built(.commandLibrary, commandLibrary)
+    }()
 
     /// The same `CodePreviewStore` instance the page uses, exposed so ⌘K's
     /// provider searches what the page shows rather than a second reader
@@ -164,9 +437,11 @@ final class AppShellController: NSViewController {
     /// reader of the same folder.
     let notebookStore: NotebookStore
 
-    /// The Sticky Board's own store - one instance, for the reason its own
-    /// declaration gives.
-    var stickyBoardStore: StickyBoardStore { stickyBoard.store }
+    /// The Sticky Board's one store (GL-23: it caches its notes *and* writes
+    /// them, so a second instance would be a second writer to one file).
+    /// Built here rather than inside the page since PERF-01, so the canvas,
+    /// ⌘K, the crew and the widgets can read it while the page is unbuilt.
+    let stickyBoardStore: StickyBoardStore
 
     /// The one `ShiftStore` (GL-23), held rather than only passed through, so
     /// F2's capture filer can write a task without a second instance. Every
@@ -181,8 +456,37 @@ final class AppShellController: NSViewController {
     /// than a Setup tab (`fm/poneglyph-own-destination-and-strawhat-toolbar-
     /// shortcut`) - see `VaultController.swift`'s and
     /// `CredentialVaultController.swift`'s headers for the full history.
-    private let vault = VaultController()
-    private let poneglyph = CredentialVaultController()
+    private lazy var vault: VaultController = {
+        let vault = VaultController()
+        // fm/grandline-vault-tab: `av save`/`av inject` both need a real
+        // interactive terminal (see `VaultController`'s header) - same
+        // one-shot Console command-tab mechanism as every other
+        // interactive/sudo action in this app.
+        vault.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
+        vault.onRunCommandTracked = { [weak self] label, command, completion in
+            self?.runInConsole(label: label, command: command, completion: completion)
+        }
+        vault.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        return built(.vault, vault)
+    }()
+
+    private lazy var poneglyph: CredentialVaultController = {
+        let poneglyph = CredentialVaultController()
+        // Poneglyph is its own destination now
+        // (`fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut`), so
+        // it wires this exactly like every other conforming destination
+        // rather than through `SetupContainerController`'s own per-tab
+        // forwarding.
+        poneglyph.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        return built(.poneglyph, poneglyph)
+    }()
+
+    /// The credential vault's one store, for the readers that do not need the
+    /// page: `GrandLineServices` owns it (F21), and the page holds the same
+    /// instance. Reading it never builds the page.
+    private var credentialVaultStore: CredentialVaultStore {
+        isBuilt(.poneglyph) ? poneglyph.credentialStore : GrandLineServices.shared.vault
+    }
 
     #if FM_SELFTESTS
     /// The Poneglyph page and its store, so a suite can drive the real
@@ -193,33 +497,151 @@ final class AppShellController: NSViewController {
     var debugPoneglyph: CredentialVaultController { poneglyph }
     var debugPoneglyphStore: CredentialVaultStore { poneglyph.credentialStore }
     #endif
-    private let dictation: DictationController
+
+    private lazy var dictation: DictationController = {
+        let dictation = DictationController(store: dictationStore)
+        dictation.onShortcutChanged = { [weak self] chord in self?.onKeyChordChanged?(chord) }
+        dictation.onLocalWhisperEnabledChanged = { [weak self] enabled in self?.onDictationLocalWhisperChanged?(enabled) }
+        dictation.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        return built(.dictation, dictation)
+    }()
+
     /// `fm/grandline-schedules-sidebar-move`: F11's Schedules card, promoted
     /// off the Automation page onto its own rail destination - see
     /// `SchedulesController.swift`'s header.
-    private let schedules: SchedulesController
+    private lazy var schedules: SchedulesController = {
+        let schedules = SchedulesController(scheduleStore: scheduleStore)
+        schedules.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // `fm/grand-line-schedules-page-redesign`: a needs-you row's "Review"
+        // button hands off to the page that owns that action
+        // (`ScheduledActionKind.reviewDestination`). Same seam as Overview's.
+        schedules.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
+        return built(.schedules, schedules)
+    }()
+
     /// `fm/grandline-health-sidebar-move`: F1/GL-11's Health card, promoted
     /// off the Settings page onto its own rail destination - see
     /// `HealthController.swift`'s header.
-    private let health = HealthController()
-    private let docs = DocsController()
+    private lazy var health: HealthController = {
+        let health = HealthController()
+        health.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // UI12: both pages' empty states now offer a way out of themselves.
+        health.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
+        return built(.health, health)
+    }()
+
+    private lazy var docs: DocsController = {
+        let docs = DocsController()
+        // Docs' subtitle still tracks the Playbook's own real sync state; its
+        // action cluster no longer changes while it's on screen now that the
+        // runbook editor (and the per-tab switch that used to empty the
+        // cluster for it) moved to `.runbooks`.
+        docs.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        return built(.docs, docs)
+    }()
+
     /// `fm/grandline-docs-split-runbooks-postmortems`: Runbooks and
     /// Postmortems are their own top-level destinations now, split out of
     /// `DocsController`'s former tabs - see that file's own header.
-    private let runbooks = RunbooksController()
+    private lazy var runbooks: RunbooksController = {
+        let runbooks = RunbooksController(runbookStore: docsRunbookStore)
+        // Runbooks inherited Docs' old per-editor-state cluster: "New
+        // Runbook" beside a form already creating one is a second, competing
+        // action, so its cluster empties while the editor is open.
+        runbooks.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        runbooks.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
+        return built(.runbooks, runbooks)
+    }()
+
     /// F1 of full review #3 §8 - see `NotebookController.swift`'s header. Its
-    /// store is built here rather than inside the page, like every other
+    /// store is built in `init` rather than inside the page, like every other
     /// store the canvas also reads (`HomeCanvasController`'s rule 1).
-    private let notebook: NotebookController
+    private lazy var notebook: NotebookController = {
+        let notebook = NotebookController(store: notebookStore)
+        notebook.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        notebook.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
+        return built(.notebook, notebook)
+    }()
+
     /// F4 of full review #3 §8 - see `ReadingListController.swift`'s header.
     /// Its store is built in `init` beside every other store the canvas also
     /// reads (`HomeCanvasController`'s rule 1).
-    private let readingList: ReadingListController
-    private let postmortems = PostmortemsController()
-    private let updates = UpdatesController()
-    private let bootstrap: BootstrapController
-    private let automation: AutomationController
-    private let githubSync = GitHubSyncController()
+    private lazy var readingList: ReadingListController = {
+        let readingList = ReadingListController(store: readingListStore)
+        readingList.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        readingList.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
+        return built(.readingList, readingList)
+    }()
+
+    private lazy var postmortems: PostmortemsController = {
+        let postmortems = PostmortemsController(runbookStore: docsRunbookStore)
+        postmortems.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        postmortems.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
+        return built(.postmortems, postmortems)
+    }()
+
+    // The four Engineering setup pages, each wired exactly like every other
+    // conforming destination since `fm/grandline-separate-setup-destinations`.
+    // They used to route through `SetupContainerController`'s own per-tab
+    // forwarding, which also had to fire on a tab switch because the line was
+    // per-tab; each page owns its own header line now, so a page's own numbers
+    // moving is the only thing that can change it.
+
+    private lazy var updates: UpdatesController = {
+        let updates = UpdatesController()
+        // cockpit-bootstrap-software: a `.notInstalled` row on the Updates
+        // page no longer installs inline - it links to the Bootstrap page's
+        // own Software checklist card instead (same catalog, same install
+        // action, just relocated).
+        updates.onNavigateToBootstrap = { [weak self] in self?.show(.bootstrap) }
+        // An update that needs the captain's `sudo` password is never started
+        // in the background (`BrewCaskSudo`); its row's "Run in Terminal"
+        // opens the exact command here instead, then re-checks on exit.
+        updates.onRunCommandTracked = { [weak self] label, command, completion in
+            self?.runInConsole(label: label, command: command, completion: completion)
+        }
+        updates.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        return built(.updates, updates)
+    }()
+
+    private lazy var bootstrap: BootstrapController = {
+        let bootstrap = BootstrapController(hostStore: hostStore, keyStore: keyStore,
+                                            snippetStore: snippetStore, dictationStore: dictationStore)
+        // cockpit-bootstrap-dotfiles: every command the Bootstrap page can run
+        // that touches `darwin-rebuild switch` (needs an interactive `sudo`
+        // TTY) opens as a real tab in the shared Firstmate console rather
+        // than a silent background process - see `runInConsole` below.
+        bootstrap.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
+        // cockpit-bootstrap-full-setup: the "Run full setup" sequencer needs
+        // to know a step's Console command actually finished (not a fixed
+        // timer) before starting the next one - same tab, same command
+        // string, just with a completion callback threaded through.
+        bootstrap.onRunCommandTracked = { [weak self] label, command, completion in
+            self?.runInConsole(label: label, command: command, completion: completion)
+        }
+        bootstrap.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        return built(.bootstrap, bootstrap)
+    }()
+
+    private lazy var automation: AutomationController = {
+        let automation = AutomationController(hostStore: hostStore, keyStore: keyStore,
+                                              snippetStore: snippetStore, dictationStore: dictationStore)
+        // fm/grandline-automation-pipeline: the automation pipeline's own
+        // dotfiles step needs the exact same real Console-tab/completion
+        // wiring as Bootstrap's - it runs the identical clone/rebuild command
+        // (`DotfilesRunCommand`, shared by both pages).
+        automation.onRunCommandTracked = { [weak self] label, command, completion in
+            self?.runInConsole(label: label, command: command, completion: completion)
+        }
+        automation.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        return built(.automation, automation)
+    }()
+
+    private lazy var githubSync: GitHubSyncController = {
+        let githubSync = GitHubSyncController()
+        githubSync.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        return built(.githubSync, githubSync)
+    }()
 
     /// Fix 1: builds a fresh, host-scoped `ConsoleController` (its own ssh
     /// tab(s) only, no Firstmate host's own Shell tab - see
@@ -446,38 +868,29 @@ final class AppShellController: NSViewController {
     /// combo - the app delegate is what actually owns the live
     /// `DictationHotkey` instance, matching `onFontSizeStep`'s own
     /// forward-don't-own convention.
-    var onKeyChordChanged: ((KeyChord) -> Void)? {
-        get { dictation.onShortcutChanged }
-        set { dictation.onShortcutChanged = newValue }
-    }
+    ///
+    /// Held here rather than forwarded into the page since PERF-01, so the
+    /// app delegate wiring it at launch does not build the Dictation page.
+    var onKeyChordChanged: ((KeyChord) -> Void)?
 
     /// Fired whenever a Settings > Terminal Shortcuts recorder captures a new
     /// combo, or the captain resets them all. Forwarded to the app delegate,
     /// which owns the live `TabKeyboardShortcuts` monitor - the same
     /// forward-don't-own convention `onKeyChordChanged` above already follows
     /// for Dictation's own hotkey.
-    var onTerminalShortcutsChanged: ((TerminalShortcutSet) -> Void)? {
-        get { settings.onTerminalShortcutsChanged }
-        set { settings.onTerminalShortcutsChanged = newValue }
-    }
+    var onTerminalShortcutsChanged: ((TerminalShortcutSet) -> Void)?
 
     /// Fired whenever Settings > Capture's recorder captures a new chord.
     /// Forwarded to the app delegate, which owns the live `ShiftGlobalHotkey`
     /// and the Shift menu's Capture item - the same forward-don't-own
     /// convention the two above already follow.
-    var onQuickCaptureShortcutChanged: ((KeyChord) -> Void)? {
-        get { settings.onQuickCaptureShortcutChanged }
-        set { settings.onQuickCaptureShortcutChanged = newValue }
-    }
+    var onQuickCaptureShortcutChanged: ((KeyChord) -> Void)?
 
     /// E2: the Dictation page's local-Whisper toggle, forwarded the same way -
     /// switching it off must be able to release a resident engine (and with it
     /// the ggml Metal residency thread), not just stop future dictations from
     /// using one.
-    var onDictationLocalWhisperChanged: ((Bool) -> Void)? {
-        get { dictation.onLocalWhisperEnabledChanged }
-        set { dictation.onLocalWhisperEnabledChanged = newValue }
-    }
+    var onDictationLocalWhisperChanged: ((Bool) -> Void)?
 
     /// Phase 4 ("Knowledge and speed"): the topbar Search pill's click,
     /// forwarded to whoever owns the unified `⌘K` search palette (the app
@@ -485,47 +898,41 @@ final class AppShellController: NSViewController {
     /// convention) rather than presented here.
     var onSearchTapped: (() -> Void)?
 
+    /// `hostsPanel` and `settings` are autoclosures since PERF-01: the app
+    /// delegate (and every suite) still writes the page's construction at the
+    /// call site, but it runs on the page's first use rather than here.
     init(
-        hostsPanel: HostsController, console: ConsoleController, settings: SettingsController,
+        hostsPanel: @autoclosure @escaping () -> HostsController, console: ConsoleController,
+        settings: @autoclosure @escaping () -> SettingsController,
         hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, shiftStore: ShiftStore,
         dictationStore: DictationStore, commandLibraryStore: CommandLibraryStore,
         scheduleStore: ScheduleStore,
+        docsRunbookStore: DocsRunbookStore = DocsRunbookStore(),
         makeHostConsole: @escaping () -> ConsoleController
     ) {
-        self.hostsPanel = hostsPanel
+        // T-14d: the launch interval Instruments reads, ended as the last
+        // line of this initialiser - see `LaunchSignposts.swift`.
+        let initInterval = LaunchSignposts.begin("AppShellController.init")
+        // PERF-01: only the four eager pages (`homeCanvas`, `overview`,
+        // `console`, `review`) and the stores other surfaces read are built
+        // here. Every other destination is a lazy property, built on first
+        // use - see "Lazy destinations" above.
+        self.makeHostsPanel = hostsPanel
+        self.makeSettings = settings
         self.console = console
-        self.settings = settings
+        self.hostStore = hostStore
+        self.keyStore = keyStore
+        self.snippetStore = snippetStore
+        self.dictationStore = dictationStore
+        self.commandLibraryStore = commandLibraryStore
+        self.scheduleStore = scheduleStore
+        self.docsRunbookStore = docsRunbookStore
         // The shared `ShiftStore`, never a second instance - two consumers
         // on this page now. F12: the briefing's due-task count is the same
         // one the Tasks page shows. F6: Overview's "Log" tab reads the task
         // half of its feed straight from Shift's own activity YAML rather
         // than a second copy of it (see `FleetLogFeed`'s header).
-        // Phase 3 (M3.1): the crew's three new proposal kinds write to the
-        // command library, the sticky board and the schedules - so this page
-        // now needs the *stores*, not just the command library's root. All
-        // three are the shared instances (`stickyBoard.store` is `internal`
-        // for exactly this reason, per audit section 6.5b): each one caches
-        // its records as well as writing them, so a second instance would be
-        // a second writer to the same file.
         self.overview = FleetController(shiftStore: shiftStore)
-        // The same shared `ShiftStore` (GL-23), never a second instance - the
-        // daily review reads the very lists the Tasks page is showing.
-        self.dailyOverview = DailyOverviewController(shiftStore: shiftStore)
-        // The four store dependencies below were `FleetController`'s while the
-        // crew chat was a tab on that page; they came here with it. All three
-        // stores are the shared instances (`stickyBoard.store` is `internal`
-        // for exactly this reason, per audit section 6.5b): each caches its
-        // records as well as writing them, so a second instance would be a
-        // second writer to the same file. The command library is handed over
-        // as a *root* URL because the crew only ever reads it through their
-        // `command_search` tool - constructing a second store for that would
-        // be the mistake GL-24 fixed.
-        self.strawHat = StrawHatController(shiftStore: shiftStore,
-                                           commandLibraryRoot: commandLibraryStore.root,
-                                           commandLibraryStore: commandLibraryStore,
-                                           stickyStore: stickyBoard.store,
-                                           scheduleStore: scheduleStore)
-        self.dictation = DictationController(store: dictationStore)
         // Phase 5 (cockpit-shift-power-features): `shiftStore` is now built
         // once by the app delegate and shared with the menu bar item, the
         // search palette, and quick capture - all of which need to read/
@@ -538,63 +945,71 @@ final class AppShellController: NSViewController {
         // would each believe they were the only one running.
         let focusTimer = FocusTimerController(store: shiftStore)
         self.focusTimer = focusTimer
-        self.shift = ShiftController(store: shiftStore, focusTimer: focusTimer)
-        // GL-23 again: the same shared instance the Log Analyzer, the crew's
-        // `command_search` tool and the ⌘K palette already read.
-        self.commandLibrary = CommandLibraryController(store: commandLibraryStore)
-        // GL-23: the same instance the Tasks page uses.
-        self.logAnalyzer = LogAnalyzerController(commandLibrary: commandLibraryStore)
-        self.bootstrap = BootstrapController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
-        self.automation = AutomationController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
-                                               dictationStore: dictationStore)
-        // `fm/grandline-schedules-sidebar-move`: the schedules card's own
-        // destination, not a section of `.automation` anymore.
-        self.schedules = SchedulesController(scheduleStore: scheduleStore)
+        // PERF-02: one `DocsRunbookStore` (the app delegate's, which ⌘K
+        // already reads) and one `LogAnalyzerStore` for every reader on this
+        // shell - the Log Analyzer, Runbooks, Postmortems and the canvas.
+        // Each of them used to build its own, and every one of those `init`s
+        // started a git sync at launch; `GitSyncStartGate` makes a second
+        // start a no-op, and this stops the second store existing at all.
+        let logAnalyzerStore = LaunchSignposts.measure("LogAnalyzerStore.init") { LogAnalyzerStore() }
+        self.logAnalyzerStore = logAnalyzerStore
         self.makeHostConsole = makeHostConsole
         // Daylight Phase 2: the canvas reads already-owned stores, never its
         // own - see `HomeCanvasController`'s header, and the source guard in
         // `DaylightModuleSelfTest` that enforces it. `DocsRunbookStore` and
-        // `LogAnalyzerStore` are the two the shell did not already hold, so
-        // they are constructed here alongside the rest of this controller's
-        // own dependencies rather than inside the canvas - each store re-reads
-        // its git-synced folder per call, which is the same "an independent
-        // instance is fine and cheap" pattern `UnifiedSearch` already uses.
-        // One more store the shell did not already hold, on the same terms as
-        // the two below: it re-reads its own git-synced folder per call, and
+        // `LogAnalyzerStore` are the same two instances the pages are handed
+        // (PERF-02), not a second pair of the canvas's own.
+        // One more store the shell did not already hold: it re-reads its own
+        // git-synced folder per call, and
         // it honours `FM_CODE_PREVIEW_DIR`/`FM_SHIFT_DIR` so a self-test never
         // reaches the captain's real clone.
         // GL-23's lesson: **one** store instance shared by both consumers on
         // this page, not two. Neither caches, so two would not diverge the way
         // the two `CommandLibraryStore`s once did - but one is still the
         // cheaper and more obviously-correct answer.
-        let codePreviewStore = CodePreviewStore()
+        let codePreviewStore = LaunchSignposts.measure("CodePreviewStore.init") { CodePreviewStore() }
         self.codePreviewStore = codePreviewStore
-        self.codePreview = CodePreviewController(store: codePreviewStore)
         // GL-23's lesson again: **one** `NotebookStore`, shared by the page
         // and the canvas card. It re-reads its own git-synced folder per call
         // rather than caching, so two would not diverge - one is still the
         // cheaper and more obviously-correct answer.
-        let notebookStore = NotebookStore()
+        let notebookStore = LaunchSignposts.measure("NotebookStore.init") { NotebookStore() }
         self.notebookStore = notebookStore
-        self.notebook = NotebookController(store: notebookStore)
         // GL-23 again: **one** `ReadingListStore`, shared by the page, the
         // canvas card, ⌘K's provider and ⌥Space's filer. This one caches its
         // decoded array, so a second instance would genuinely be a second
         // source of truth racing the first's writes.
-        let readingListStore = ReadingListStore()
+        //
+        // PERF-01: it and the Sticky Board's store below start empty and read
+        // their YAML file on a background thread (`HelmBackgroundReload`).
+        // Anything that reads their contents before that read lands reads the
+        // file synchronously instead, so nothing ever sees an unloaded store
+        // as an empty one - the canvas asks `isLoaded` and says "reading"
+        // rather than paying for that read before the first frame.
+        let readingListStore = LaunchSignposts.measure("ReadingListStore.init") {
+            ReadingListStore(loadsInBackground: true)
+        }
         self.readingListStore = readingListStore
-        self.readingList = ReadingListController(store: readingListStore)
-        self.homeCanvas = HomeCanvasController(sources: .init(
+        let stickyBoardStore = LaunchSignposts.measure("StickyBoardStore.init") {
+            StickyBoardStore(loadsInBackground: true)
+        }
+        self.stickyBoardStore = stickyBoardStore
+        let homeCanvas = HomeCanvasController(sources: .init(
             shiftStore: shiftStore,
             hostStore: hostStore,
             scheduleStore: scheduleStore,
-            logAnalyzerStore: LogAnalyzerStore(),
-            docsRunbookStore: DocsRunbookStore(),
+            logAnalyzerStore: logAnalyzerStore,
+            docsRunbookStore: docsRunbookStore,
             codePreviewStore: codePreviewStore,
             notebookStore: notebookStore,
             readingListStore: readingListStore,
             commandLibraryStore: commandLibraryStore,
-            stickyBoardStore: stickyBoard.store))
+            stickyBoardStore: stickyBoardStore))
+        self.homeCanvas = homeCanvas
+        // The canvas renders "reading" for either card until its store has
+        // loaded; this is what puts the real contents there once it has.
+        readingListStore.whenLoaded { [weak homeCanvas] in homeCanvas?.storeDidLoad() }
+        stickyBoardStore.whenLoaded { [weak homeCanvas] in homeCanvas?.storeDidLoad() }
         // F21/F24: hand the four file-backed stores and the focus timer to
         // `GrandLineServices`, which is how an App Intent (no view controller,
         // possibly a launch it triggered itself) and Settings' Backup card
@@ -602,26 +1017,20 @@ final class AppShellController: NSViewController {
         // one (GL-23). A registry, not a factory: see that file's header.
         GrandLineServices.shared.register(shiftStore: shiftStore,
                                           notebookStore: notebookStore,
-                                          stickyBoardStore: stickyBoard.store,
+                                          stickyBoardStore: stickyBoardStore,
                                           codePreviewStore: codePreviewStore,
                                           focusTimer: focusTimer)
         super.init(nibName: nil, bundle: nil)
-        // F20: the daily review reads the sticky board and the reading list,
-        // both of which are built above - after the page itself, which is why
-        // this is an attach rather than two more `init` parameters. GL-23:
-        // the shared instances, the same ones the canvas and the other
-        // destinations use.
-        //
-        // **One host, since X3.** Fleet used to take the same attach for its
-        // own copy of the card; the review's navigation-naming fix made Today
-        // the daily review's only home.
-        dailyOverview.attachDailyReviewSources(stickyBoardStore: stickyBoard.store,
-                                               readingListStore: readingListStore)
+        LaunchSignposts.end("AppShellController.init", initInterval)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func loadView() {
+        // T-14d: everything below, including the eager destinations' own
+        // `loadView`s (`mounter.mountEagerSlots()`), is one launch interval.
+        let loadViewInterval = LaunchSignposts.begin("AppShellController.loadView")
+        defer { LaunchSignposts.end("AppShellController.loadView", loadViewInterval) }
         // A1: a `ChromeFusionRootView` rather than a plain `NSView`, purely
         // for its `layout()` hook - AppKit resets the traffic lights' frames
         // on every layout pass, so the reposition has to ride that same
@@ -748,51 +1157,49 @@ final class AppShellController: NSViewController {
         // the rail's own order, purely for readability - `show(_:)` looks
         // slots up by id.
         //
-        // Constructing a controller does not run its `loadView`; only
-        // `mount` does, which for a lazy slot is the first `show(_:)` that
-        // names it. So every reference to these properties elsewhere in this
-        // file is safe before a first visit as long as it only *assigns a
-        // closure* (which the wiring below does) - anything that touches a
-        // destination's views goes through `show(_:)` first.
-        mounter.register(DestinationSlot(id: .homeCanvas, title: RailDestination.homeCanvas.title, mountsEagerly: true, controller: homeCanvas))
-        mounter.register(DestinationSlot(id: .dailyOverview, title: RailDestination.dailyOverview.title, mountsEagerly: false, controller: dailyOverview))
-        mounter.register(DestinationSlot(id: .overview, title: RailDestination.overview.title, mountsEagerly: true, controller: overview))
-        mounter.register(DestinationSlot(id: .strawHat, title: RailDestination.strawHat.title, mountsEagerly: false, controller: strawHat))
-        mounter.register(DestinationSlot(id: .console, title: RailDestination.console.title, mountsEagerly: true, controller: console))
-        mounter.register(DestinationSlot(id: .hosts, title: RailDestination.hosts.title, mountsEagerly: false, controller: hostsPanel))
-        mounter.register(DestinationSlot(id: .shift, title: RailDestination.shift.title, mountsEagerly: false, controller: shift))
-        mounter.register(DestinationSlot(id: .review, title: RailDestination.review.title, mountsEagerly: true, controller: review))
-        mounter.register(DestinationSlot(id: .logAnalyzer, title: RailDestination.logAnalyzer.title, mountsEagerly: false, controller: logAnalyzer))
-        mounter.register(DestinationSlot(id: .kubernetes, title: RailDestination.kubernetes.title, mountsEagerly: false, controller: kubernetes))
-        mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.title, mountsEagerly: false, controller: tools))
-        mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.title, mountsEagerly: false, controller: whiteboard))
-        // UX10: the board raises a note to promote; this controller is the
-        // one place that holds both destinations.
-        stickyBoard.onMakeTaskFromNote = { [weak self] note in self?.makeTaskFromStickyNote(note) }
-        mounter.register(DestinationSlot(id: .stickyBoard, title: RailDestination.stickyBoard.title, mountsEagerly: false, controller: stickyBoard))
-        mounter.register(DestinationSlot(id: .codePreview, title: RailDestination.codePreview.title, mountsEagerly: false, controller: codePreview))
-        mounter.register(DestinationSlot(id: .commandLibrary, title: RailDestination.commandLibrary.title, mountsEagerly: false, controller: commandLibrary))
-        mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.title, mountsEagerly: false, controller: vault))
-        mounter.register(DestinationSlot(id: .dictation, title: RailDestination.dictation.title, mountsEagerly: false, controller: dictation))
-        mounter.register(DestinationSlot(id: .schedules, title: RailDestination.schedules.title, mountsEagerly: false, controller: schedules))
-        mounter.register(DestinationSlot(id: .health, title: RailDestination.health.title, mountsEagerly: false, controller: health))
-        mounter.register(DestinationSlot(id: .docs, title: RailDestination.docs.title, mountsEagerly: false, controller: docs))
-        mounter.register(DestinationSlot(id: .notebook, title: RailDestination.notebook.title, mountsEagerly: false, controller: notebook))
-        mounter.register(DestinationSlot(id: .readingList, title: RailDestination.readingList.title, mountsEagerly: false, controller: readingList))
-        mounter.register(DestinationSlot(id: .runbooks, title: RailDestination.runbooks.title, mountsEagerly: false, controller: runbooks))
-        mounter.register(DestinationSlot(id: .postmortems, title: RailDestination.postmortems.title, mountsEagerly: false, controller: postmortems))
+        // PERF-01: each slot holds how to reach its controller rather than
+        // the controller, so a lazy page is *constructed* on its first
+        // `show(_:)` as well as mounted there. Reading a lazy property
+        // anywhere else in this file builds the page too, which is why the
+        // pages' wiring lives in their own initialisers (see "Lazy
+        // destinations") and why a reach-in that does not navigate asks
+        // `isBuilt` first.
+        mounter.register(DestinationSlot(id: .homeCanvas, title: RailDestination.homeCanvas.title, mountsEagerly: true, makeController: { [unowned self] in self.homeCanvas }))
+        mounter.register(DestinationSlot(id: .dailyOverview, title: RailDestination.dailyOverview.title, mountsEagerly: false, makeController: { [unowned self] in self.dailyOverview }))
+        mounter.register(DestinationSlot(id: .overview, title: RailDestination.overview.title, mountsEagerly: true, makeController: { [unowned self] in self.overview }))
+        mounter.register(DestinationSlot(id: .strawHat, title: RailDestination.strawHat.title, mountsEagerly: false, makeController: { [unowned self] in self.strawHat }))
+        mounter.register(DestinationSlot(id: .console, title: RailDestination.console.title, mountsEagerly: true, makeController: { [unowned self] in self.console }))
+        mounter.register(DestinationSlot(id: .hosts, title: RailDestination.hosts.title, mountsEagerly: false, makeController: { [unowned self] in self.hostsPanel }))
+        mounter.register(DestinationSlot(id: .shift, title: RailDestination.shift.title, mountsEagerly: false, makeController: { [unowned self] in self.shift }))
+        mounter.register(DestinationSlot(id: .review, title: RailDestination.review.title, mountsEagerly: true, makeController: { [unowned self] in self.review }))
+        mounter.register(DestinationSlot(id: .logAnalyzer, title: RailDestination.logAnalyzer.title, mountsEagerly: false, makeController: { [unowned self] in self.logAnalyzer }))
+        mounter.register(DestinationSlot(id: .kubernetes, title: RailDestination.kubernetes.title, mountsEagerly: false, makeController: { [unowned self] in self.kubernetes }))
+        mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.title, mountsEagerly: false, makeController: { [unowned self] in self.tools }))
+        mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.title, mountsEagerly: false, makeController: { [unowned self] in self.whiteboard }))
+        mounter.register(DestinationSlot(id: .stickyBoard, title: RailDestination.stickyBoard.title, mountsEagerly: false, makeController: { [unowned self] in self.stickyBoard }))
+        mounter.register(DestinationSlot(id: .codePreview, title: RailDestination.codePreview.title, mountsEagerly: false, makeController: { [unowned self] in self.codePreview }))
+        mounter.register(DestinationSlot(id: .commandLibrary, title: RailDestination.commandLibrary.title, mountsEagerly: false, makeController: { [unowned self] in self.commandLibrary }))
+        mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.title, mountsEagerly: false, makeController: { [unowned self] in self.vault }))
+        mounter.register(DestinationSlot(id: .dictation, title: RailDestination.dictation.title, mountsEagerly: false, makeController: { [unowned self] in self.dictation }))
+        mounter.register(DestinationSlot(id: .schedules, title: RailDestination.schedules.title, mountsEagerly: false, makeController: { [unowned self] in self.schedules }))
+        mounter.register(DestinationSlot(id: .health, title: RailDestination.health.title, mountsEagerly: false, makeController: { [unowned self] in self.health }))
+        mounter.register(DestinationSlot(id: .docs, title: RailDestination.docs.title, mountsEagerly: false, makeController: { [unowned self] in self.docs }))
+        mounter.register(DestinationSlot(id: .notebook, title: RailDestination.notebook.title, mountsEagerly: false, makeController: { [unowned self] in self.notebook }))
+        mounter.register(DestinationSlot(id: .readingList, title: RailDestination.readingList.title, mountsEagerly: false, makeController: { [unowned self] in self.readingList }))
+        mounter.register(DestinationSlot(id: .runbooks, title: RailDestination.runbooks.title, mountsEagerly: false, makeController: { [unowned self] in self.runbooks }))
+        mounter.register(DestinationSlot(id: .postmortems, title: RailDestination.postmortems.title, mountsEagerly: false, makeController: { [unowned self] in self.postmortems }))
         // `fm/grandline-separate-setup-destinations`: four ordinary lines,
         // where this was one `.setup` slot holding a
         // `SetupContainerController` that parented all four pages. Each of
         // them is now registered, titled, mounted and lazily built exactly
         // like every other destination in this table - see
         // `RailDestination.slot` for the captain's own reasoning.
-        mounter.register(DestinationSlot(id: .updates, title: RailDestination.updates.title, mountsEagerly: false, controller: updates))
-        mounter.register(DestinationSlot(id: .bootstrap, title: RailDestination.bootstrap.title, mountsEagerly: false, controller: bootstrap))
-        mounter.register(DestinationSlot(id: .automation, title: RailDestination.automation.title, mountsEagerly: false, controller: automation))
-        mounter.register(DestinationSlot(id: .githubSync, title: RailDestination.githubSync.title, mountsEagerly: false, controller: githubSync))
-        mounter.register(DestinationSlot(id: .poneglyph, title: RailDestination.poneglyph.title, mountsEagerly: false, controller: poneglyph))
-        mounter.register(DestinationSlot(id: .settings, title: RailDestination.settings.title, mountsEagerly: false, controller: settings))
+        mounter.register(DestinationSlot(id: .updates, title: RailDestination.updates.title, mountsEagerly: false, makeController: { [unowned self] in self.updates }))
+        mounter.register(DestinationSlot(id: .bootstrap, title: RailDestination.bootstrap.title, mountsEagerly: false, makeController: { [unowned self] in self.bootstrap }))
+        mounter.register(DestinationSlot(id: .automation, title: RailDestination.automation.title, mountsEagerly: false, makeController: { [unowned self] in self.automation }))
+        mounter.register(DestinationSlot(id: .githubSync, title: RailDestination.githubSync.title, mountsEagerly: false, makeController: { [unowned self] in self.githubSync }))
+        mounter.register(DestinationSlot(id: .poneglyph, title: RailDestination.poneglyph.title, mountsEagerly: false, makeController: { [unowned self] in self.poneglyph }))
+        mounter.register(DestinationSlot(id: .settings, title: RailDestination.settings.title, mountsEagerly: false, makeController: { [unowned self] in self.settings }))
 
         // Built here, before the window is ever shown, for the three
         // invariants `DestinationRegistry.swift` documents (a live PTY, and
@@ -889,62 +1296,24 @@ final class AppShellController: NSViewController {
             self.windowOverflowGuard.windowDidResize(window)
         }
 
-        hostsPanel.onAddOrEdit = { [weak self] host in self?.onPresentHostEditor?(host) }
-        // cockpit-bootstrap-dotfiles: every command the Bootstrap page can run
-        // that touches `darwin-rebuild switch` (needs an interactive `sudo`
-        // TTY) opens as a real tab in the shared Firstmate console rather
-        // than a silent background process - see `runInConsole` below.
-        bootstrap.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
-        // cockpit-bootstrap-full-setup: the "Run full setup" sequencer needs
-        // to know a step's Console command actually finished (not a fixed
-        // timer) before starting the next one - same tab, same command
-        // string, just with a completion callback threaded through.
-        bootstrap.onRunCommandTracked = { [weak self] label, command, completion in
-            self?.runInConsole(label: label, command: command, completion: completion)
-        }
-        // fm/grandline-automation-pipeline: the automation pipeline's own
-        // dotfiles step needs the exact same real Console-tab/completion
-        // wiring as Bootstrap's - it runs the identical clone/rebuild command
-        // (`DotfilesRunCommand`, shared by both pages).
-        automation.onRunCommandTracked = { [weak self] label, command, completion in
-            self?.runInConsole(label: label, command: command, completion: completion)
-        }
-        // cockpit-bootstrap-software: a `.notInstalled` row on the Updates
-        // page no longer installs inline - it links to the Bootstrap page's
-        // own Software checklist card instead (same catalog, same install
-        // action, just relocated).
-        updates.onNavigateToBootstrap = { [weak self] in self?.show(.bootstrap) }
-        // An update that needs the captain's `sudo` password is never started
-        // in the background (`BrewCaskSudo`); its row's "Run in Terminal"
-        // opens the exact command here instead, then re-checks on exit.
-        updates.onRunCommandTracked = { [weak self] label, command, completion in
-            self?.runInConsole(label: label, command: command, completion: completion)
-        }
+        // PERF-01: only the four eager pages are wired here. Every lazy
+        // destination is wired inside its own initialiser (see "Lazy
+        // destinations"), because assigning a callback to a lazy property
+        // here would build the page at launch.
+
         // fm/grandline-overview-drop-duplicate-pr-list: Overview's own
         // itemized "Ready to merge" list was removed as a duplicate of
         // `.review`'s - the stat tile that's left jumps straight there.
         overview.onNavigateToReview = { [weak self] in self?.show(.review) }
 
-        // `fm/grandline-k8s-cluster-tail`: everything the `.kubernetes`
-        // destination needs from the shell, as closures. Forward-don't-own -
-        // that page knows nothing about `hostConsoles` or `ConsoleController`,
-        // and this controller knows nothing about pods.
-        kubernetes.configure(access: KubeSessionAccess(
-            tabs: { [weak self] hostID in self?.hostConsoles[hostID]?.kubeFeedTabs() ?? [] },
-            duplicateTabForFeed: { [weak self] hostID in self?.hostConsoles[hostID]?.duplicateTabForKubeFeed() },
-            isTabBusyElsewhere: { [weak self] hostID, tabID in
-                self?.hostConsoles[hostID]?.isTabBusyForKubeFeed(tabID) ?? false
-            },
-            revealHost: { [weak self] hostID in self?.switchToSession(hostID: hostID) },
-            openHosts: { [weak self] in self?.show(.hosts) }))
-        // The reverse direction of that same guard (full-app audit, finding
-        // 4.1). `isTabBusyElsewhere` above lets the Kubernetes feed bridge see
-        // the two console-side bridges; this lets them see it. Both halves are
-        // wired here because this is the only object that holds both a
-        // `ConsoleController` and the `.kubernetes` destination - neither of
+        // The reverse direction of the Kubernetes feed guard (full-app audit,
+        // finding 4.1). `isTabBusyElsewhere` lets the Kubernetes feed bridge
+        // see the two console-side bridges; this lets them see it. Both halves
+        // are wired by this object because it is the only one that holds both
+        // a `ConsoleController` and the `.kubernetes` destination - neither of
         // them knows the other exists, and neither should.
         console.isKubernetesFeedBridgeBusy = { [weak self] tabID in
-            self?.kubernetes.isFeedBridgeBusy(onTab: tabID) ?? false
+            self?.isKubernetesFeedBridgeBusy(onTab: tabID) ?? false
         }
         // GL-31: Overview's unconfigured banner leads straight into the
         // Bootstrap stepper, which is where firstmate home is actually set.
@@ -955,101 +1324,10 @@ final class AppShellController: NSViewController {
         // than new behaviour.
         overview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         overview.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
-        // F20's own page: the same two pass-throughs. No drill-subtitle
-        // wiring - `fm/grandline-overview-layout-fix-gmail-settings` made
-        // Overview a top-level page, which has no drill header to update.
-        dailyOverview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
-        // Straw Hat phase 3 (M3.2): the crew's two navigation handoffs. Both
-        // are pass-throughs into navigation this object already owns - a
-        // handoff writes nothing, which is what lets its link row run on a
-        // single click with no confirm card in front of it.
-        strawHat.onOpenDestination = { [weak self] dest, hint in
-            self?.openDestinationForCrew(dest, hint: hint)
-        }
-        strawHat.onOpenSRELead = { [weak self] hint in
-            self?.openSRELeadForCrew(hostHint: hint)
-                ?? "I couldn't reach your host pages from here."
-        }
-        strawHat.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Review #3 §7: the fleet dashboard's "Ask your crew" header button.
         // Plain navigation - the composer it replaced is gone, and the crew
         // page's own composer is the one place a message to them is written.
         overview.onOpenCrew = { [weak self] in self?.show(.strawHat) }
-        // The Overview card's own summary line - see
-        // `StrawHatCanvasState`. Pushed rather than polled, the
-        // same shape `FleetController.onSnapshotChanged` already uses for the
-        // Fleet card.
-        strawHat.onCanvasStateChanged = { [weak self] in
-            guard let self else { return }
-            self.homeCanvas.applyStrawHat(self.strawHat.canvasState)
-        }
-        // cockpit-settings-sudo-touchid: Settings' "Touch ID for sudo" row
-        // runs `sudo av harden sudo`, which needs a real interactive `sudo`
-        // prompt exactly like Bootstrap's provisioning actions - same
-        // one-shot Console command-tab mechanism, just reached from Settings
-        // instead.
-        // Settings' own sidebar moves the header's subtitle - it names the
-        // selected category, the way the reference mockup's "Settings /
-        // Shortcuts & Siri" does.
-        settings.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // `fm/grandline-overview-layout-fix-gmail-settings`: a Google account
-        // connected (or disconnected, or its calendar switch flipped) changes
-        // what the daily review's calendar column can read.
-        // Pushed from Settings rather than polled, and the pages re-read the
-        // source rather than being handed one.
-        settings.onGoogleAccountsChanged = { [weak self] in
-            guard let self else { return }
-            self.dailyOverview.renderDailyReviewIfMounted()
-        }
-        settings.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
-        settings.onRunCommandTracked = { [weak self] label, command, completion in
-            self?.runInConsole(label: label, command: command, completion: completion)
-        }
-        // fm/grandline-vault-tab: `av save`/`av inject` both need a real
-        // interactive terminal (see `VaultController`'s header) - same
-        // one-shot Console command-tab mechanism as every other
-        // interactive/sudo action in this app.
-        vault.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
-        vault.onRunCommandTracked = { [weak self] label, command, completion in
-            self?.runInConsole(label: label, command: command, completion: completion)
-        }
-        // fm/grandline-devops-command-library-phase2: the Command Library's
-        // "Send to Terminal" types straight into whichever console tab is
-        // currently in front - not a new one-shot command tab (`runInConsole`
-        // above), the exact same "type this into the active tab" behavior
-        // Snippets' own "Run" already uses.
-        commandLibrary.onSendCommandToTerminal = { [weak self] text in self?.console.sendCommandLibraryTextToActiveTab(text) }
-        // F9 (v1): straight up to the app delegate - see `onSendCommandToHosts`.
-        commandLibrary.onSendCommandToHosts = { [weak self] command, values, generated in
-            self?.onSendCommandToHosts?(command, values, generated)
-        }
-
-        // `fm/grandline-log-analyzer-build`: the Log Analyzer forwards the
-        // same two things Shift's Command Library already does - "run this
-        // command" goes to whichever console tab is in front, and a runbook
-        // or postmortem it just wrote opens in Docs. It owns neither.
-        logAnalyzer.onSendCommandToTerminal = { [weak self] text in
-            self?.console.sendCommandLibraryTextToActiveTab(text)
-        }
-        logAnalyzer.onOpenRunbook = { [weak self] id in self?.openRunbook(id: id) }
-        // `fm/grandline-docs-split-runbooks-postmortems`: `createIncident()`
-        // used to route its saved-postmortem confirmation through
-        // `onOpenRunbook` too, which opened it as a runbook - a postmortem id
-        // is never in `listRunbooks()`, so that silently no-opped. Fixed by
-        // giving it its own closure, wired to the postmortem destination.
-        logAnalyzer.onOpenPostmortem = { [weak self] id in self?.openPostmortem(id: id) }
-        // F8 (incident mode): a saved investigation attaches as openable
-        // evidence to the incident on whichever host page handed over the
-        // capture this investigation was built from - which is the only
-        // honest correlation available, since the Log Analyzer itself has no
-        // notion of a host. A clipboard analysis or an investigation reopened
-        // from history clears that association first (see
-        // `logAnalyzerCaptureSource`), so a save then attaches to nothing
-        // rather than to whichever host happened to be last.
-        logAnalyzer.onInvestigationSaved = { [weak self] id, title in
-            self?.logAnalyzerCaptureSource?.noteInvestigationSaved(id: id, title: title)
-        }
-        logAnalyzer.onOpenConsole = { [weak self] in self?.show(.console) }
 
         // fm/grandline-sidebar-badges: forward each page's own already-
         // computed "needs you" count straight to its rail icon - no new
@@ -1098,27 +1376,6 @@ final class AppShellController: NSViewController {
         // writes into it but `applyDrillHeader`/`refreshDrillHeaderSubtitle`.
 
         review.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        shift.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // The Tasks column's footer links, forwarded rather than owned - that
-        // page knows nothing about the shell or the palette
-        // (`onSearchTapped`'s own convention).
-        shift.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
-        shift.onOpenCommandPalette = { [weak self] in self?.onSearchTapped?() }
-        hostsPanel.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // Hosts is the first migrated page whose *actions* change while it is
-        // on screen: §6.4's cluster carries the add action for the tab that is
-        // showing, and the three tabs add three different records. Same shape
-        // as the subtitle callback - the page says "re-ask me", the shell owns
-        // the header.
-        hostsPanel.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
-
-        // `fm/grandline-session-switcher`: the Hosts list reads liveness from
-        // the same registry the strip does, through a closure, so that page
-        // never learns what a `ConsoleController` is - the same
-        // forward-don't-own shape as every other `hostsPanel` hook here.
-        hostsPanel.liveSession = { [weak self] hostID in self?.sessions.session(for: hostID) }
-        hostsPanel.onSwitchToSession = { [weak self] hostID in self?.switchToSession(hostID: hostID) }
-        hostsPanel.onEndSession = { [weak self] hostID in self?.confirmEndSession(hostID: hostID) }
 
         // One observer turns every registry change into the two things that
         // have to follow it: the strip re-renders (and appears/disappears),
@@ -1128,60 +1385,7 @@ final class AppShellController: NSViewController {
         sessionsToken = sessions.observe { [weak self] registry in
             self?.applySessionRegistry(registry)
         }
-        health.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // UI12: both pages' empty states now offer a way out of themselves.
-        health.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         console.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // The four Engineering setup pages, each wired exactly like every
-        // other conforming destination since
-        // `fm/grandline-separate-setup-destinations`. They used to route
-        // through `SetupContainerController`'s own per-tab forwarding, which
-        // also had to fire on a tab switch because the line was per-tab; each
-        // page owns its own header line now, so a page's own numbers moving is
-        // the only thing that can change it.
-        updates.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        bootstrap.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        automation.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        githubSync.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        schedules.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // `fm/grand-line-schedules-page-redesign`: a needs-you row's "Review"
-        // button hands off to the page that owns that action
-        // (`ScheduledActionKind.reviewDestination`). Same seam as Overview's.
-        schedules.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
-        logAnalyzer.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        vault.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // Poneglyph is its own destination now
-        // (`fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut`), so
-        // it wires this exactly like every other conforming destination
-        // rather than through `SetupContainerController`'s own per-tab
-        // forwarding.
-        poneglyph.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // Docs' subtitle still tracks the Playbook's own real sync state; its
-        // action cluster no longer changes while it's on screen now that the
-        // runbook editor (and the per-tab switch that used to empty the
-        // cluster for it) moved to `.runbooks`.
-        docs.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        whiteboard.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        codePreview.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        commandLibrary.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // Runbooks inherited Docs' old per-editor-state cluster: "New
-        // Runbook" beside a form already creating one is a second, competing
-        // action, so its cluster empties while the editor is open.
-        runbooks.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        runbooks.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
-        readingList.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        readingList.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
-        notebook.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        notebook.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
-        postmortems.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        postmortems.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
-        dictation.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // Tools' subtitle counts open tool tabs, which the captain can change
-        // without leaving the page. Like every line above it, this is safe
-        // despite the page being lazily mounted (GL-37): assigning a closure
-        // never touches the controller's views, so it cannot force `loadView`
-        // to run early. Settings needs no callback - its subtitle is static.
-        tools.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Trigger both pages' own refresh once at launch so the badges have
         // a real count before the captain ever visits Overview or Review -
         // every later update comes from those pages' existing refresh
@@ -1235,7 +1439,7 @@ final class AppShellController: NSViewController {
         // inside the ciphertext.
         homeCanvas.credentialVaultState = { [weak self] in
             guard let self else { return (.absent, false, nil) }
-            let store = self.poneglyph.credentialStore
+            let store = self.credentialVaultStore
             return (store.loadState(), store.isUnlocked, store.isUnlocked ? store.credentials.count : nil)
         }
 
@@ -1352,7 +1556,13 @@ final class AppShellController: NSViewController {
         // is a subview of this window, so the overlay already blocks reaching
         // it; what has to happen is dropping the derived key and every
         // decrypted value from memory.
-        poneglyph.lockForAppLock()
+        //
+        // PERF-01: this runs at launch (the `.launch` lock), so it only builds
+        // the page when there is something to drop - the page exists, or the
+        // vault's one store is open without it (an App Intent can do that).
+        if isBuilt(.poneglyph) || credentialVaultStore.isUnlocked {
+            poneglyph.lockForAppLock()
+        }
         lockScreen.view.isHidden = false
         // E4: re-add what `hideLock` removed. A re-lock does not necessarily
         // re-lay-out an already-sized overlay, so this cannot be left to
@@ -2154,6 +2364,10 @@ final class AppShellController: NSViewController {
     /// `DaylightModuleSelfTest` can drive the real space filter, the real
     /// module cards and the real back button rather than stand-ins.
     #if FM_SELFTESTS
+    /// PERF-01: which lazy destinations have been *constructed* - a wider
+    /// question than `mountedDestinationSlotsForTests`, because a page can be
+    /// built without being mounted (a reach-in that forgot `isBuilt`).
+    var builtLazyDestinationsForTests: Set<DestinationSlotID> { builtDestinations }
     var homeCanvasForTests: HomeCanvasController { homeCanvas }
     /// `fm/grandline-engineering-cards-stale-counts`: the two detail pages
     /// whose own state the Engineering hub's cards summarise, so
@@ -2977,7 +3191,7 @@ final class AppShellController: NSViewController {
         // views, which would force a full mount just to re-lock an already
         // locked store. `isViewLoaded` is the honest test for "has this page
         // ever existed", and it is what keeps this verb free on a cold app.
-        guard poneglyph.isViewLoaded else { return }
+        guard isBuilt(.poneglyph), poneglyph.isViewLoaded else { return }
         poneglyph.lockFromMenu()
     }
 
@@ -2990,7 +3204,97 @@ final class AppShellController: NSViewController {
     /// `args` is the host's resolved `ssh` argv (`Host.sshArguments(allHosts:)`)
     /// - built by the caller, since this controller knows nothing about the
     /// host store, matching `onPresentHostEditor` above.
+    // MARK: Restored host pages, one per run-loop turn (PERF-08)
+    //
+    // **The 2026-10 end-to-end review's PERF-08.** F2's restore used to call
+    // `connectHost(navigate: false)` for every host that had a page, in one
+    // run-loop turn right after the first frame - one `ConsoleController`,
+    // its `loadView`, a `CockpitTerminalView` and a block tracker per host,
+    // back to back, while the captain is looking at a window that cannot
+    // respond yet. None of those pages forks `ssh` before it is opened
+    // (`ConsoleController.addTab`'s `hasAppeared` guard), so the cost was
+    // the construction itself.
+    //
+    // Now the showing host is connected straight away (the app delegate
+    // does that, with navigation), and the others queue here: one page is
+    // built per main-queue turn, so input and drawing get a turn between
+    // each. A host the captain switches to before its turn is built on the
+    // spot - `switchToSession`, the strip, Recents, ⌘⌃1…9 and the crew's
+    // handoff all go through `materializePendingRestoredHost`.
+    //
+    // Every queued host gets its strip pill immediately, in plan order, so
+    // the strip and the ⌘⌃ shortcuts read exactly what a one-turn restore
+    // produced (`HostSessionRegistry` is insertion-ordered, and the showing
+    // host still registers last).
+
+    /// Hosts whose restored page has not been built yet, oldest first.
+    private var pendingRestoredHosts: [(host: Host, args: [String])] = []
+    private var restoreTurnScheduled = false
+
+    /// How the next restore turn is scheduled - the next main-queue turn.
+    /// A suite swaps in a manual scheduler to step through the turns.
+    var restoreTurnScheduler: (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }
+
+    /// F2: queue `hosts`' pages to be rebuilt hidden, one per run-loop turn.
+    /// A host that already has a page (or is already queued) is skipped.
+    func queueRestoredHostConsoles(_ hosts: [(host: Host, args: [String])]) {
+        for entry in hosts where hostConsoles[entry.host.id] == nil
+            && !pendingRestoredHosts.contains(where: { $0.host.id == entry.host.id }) {
+            pendingRestoredHosts.append(entry)
+            // `.restored`, exactly what `connectHost` registers for a page
+            // that has not started anything - the page itself moves it.
+            registerSession(for: entry.host, state: .restored)
+        }
+        scheduleRestoreTurn()
+    }
+
+    private func scheduleRestoreTurn() {
+        guard !restoreTurnScheduled, !pendingRestoredHosts.isEmpty else { return }
+        restoreTurnScheduled = true
+        restoreTurnScheduler { [weak self] in
+            guard let self else { return }
+            self.restoreTurnScheduled = false
+            if let next = self.pendingRestoredHosts.first {
+                self.materializePendingRestoredHost(next.host.id)
+            }
+            self.scheduleRestoreTurn()
+        }
+    }
+
+    /// The registry's one registrar (`SessionSwitcherSelfTest` holds it to
+    /// one call site): `connectHost` for a page that exists, and the restore
+    /// queue for a page that will on its turn.
+    private func registerSession(for host: Host, state: HostSessionState) {
+        sessions.register(hostID: host.id, label: host.label, accentHex: host.accentHex, state: state)
+    }
+
+    /// Builds a queued host's page now, rather than on its turn. Returns
+    /// whether `id` was queued.
+    @discardableResult
+    private func materializePendingRestoredHost(_ id: UUID) -> Bool {
+        guard let index = pendingRestoredHosts.firstIndex(where: { $0.host.id == id }) else { return false }
+        let entry = pendingRestoredHosts.remove(at: index)
+        connectHost(entry.host, args: entry.args, navigate: false)
+        return true
+    }
+
+    /// Drops a queued host that will never be built - a host deleted, or a
+    /// session ended, before its turn.
+    @discardableResult
+    private func forgetPendingRestoredHost(_ id: UUID) -> Bool {
+        guard let index = pendingRestoredHosts.firstIndex(where: { $0.host.id == id }) else { return false }
+        pendingRestoredHosts.remove(at: index)
+        return true
+    }
+
+    #if FM_SELFTESTS
+    var pendingRestoredHostIDsForTests: [UUID] { pendingRestoredHosts.map(\.host.id) }
+    #endif
+
     func connectHost(_ host: Host, args: [String], navigate: Bool = true) {
+        // PERF-08: an explicit connect supersedes a queued restore of the
+        // same host, which would otherwise connect it a second time.
+        forgetPendingRestoredHost(host.id)
         let controller: ConsoleController
         if let existing = hostConsoles[host.id] {
             controller = existing
@@ -3008,7 +3312,7 @@ final class AppShellController: NSViewController {
             // per-connect closures below it depends on nothing about the host
             // record, only on which two objects the shell holds.
             controller.isKubernetesFeedBridgeBusy = { [weak self] tabID in
-                self?.kubernetes.isFeedBridgeBusy(onTab: tabID) ?? false
+                self?.isKubernetesFeedBridgeBusy(onTab: tabID) ?? false
             }
         }
         controller.connectSSHIfNeeded(
@@ -3044,8 +3348,7 @@ final class AppShellController: NSViewController {
         // layout pass later and for a restored (or lock-deferred) page is
         // whenever the captain actually opens it. `register` never downgrades
         // an already-live entry, so a re-reveal cannot blank a live pill.
-        sessions.register(hostID: host.id, label: host.label, accentHex: host.accentHex,
-                          state: controller.hasLiveSession ? .connected : .restored)
+        registerSession(for: host, state: controller.hasLiveSession ? .connected : .restored)
 
         // fm/grandline-notification-center: reassigned on every call (not
         // just the first) so a renamed host label is always current in the
@@ -3222,6 +3525,15 @@ final class AppShellController: NSViewController {
     }
 
     func shutdownStickyBoard() {
+        // PERF-01: the store can hold a pending write while the page was never
+        // built - ⌘K, the crew and a widget tap all write to it directly - so
+        // an unbuilt page still gets the store's two quit-time halves, in the
+        // page's own order.
+        guard isBuilt(.stickyBoard) else {
+            stickyBoardStore.flushPendingWrite()
+            _ = stickyBoardStore.gitSync?.flushForTerminationNow()
+            return
+        }
         stickyBoard.shutdown()
     }
 
@@ -3235,6 +3547,8 @@ final class AppShellController: NSViewController {
     /// that would make the feature untrustworthy. Safe on a page with no
     /// Scratchpad tab open: a tab of another kind flushes nothing.
     func shutdownScratchpads() {
+        // A scratchpad is a Tools tab, so an unbuilt page has none to flush.
+        guard isBuilt(.tools) else { return }
         tools.flushScratchpads()
     }
 
@@ -3247,6 +3561,13 @@ final class AppShellController: NSViewController {
     /// mounted - the controller and its store are built eagerly at init, and a
     /// store with nothing queued flushes nothing.
     func shutdownReadingList() {
+        // PERF-01: ⌥Space and ⌘K write links without building the page, so
+        // an unbuilt page still drains the store - the page's own two halves.
+        guard isBuilt(.readingList) else {
+            readingListStore.flush()
+            readingListStore.gitSync?.flushForTerminationNow()
+            return
+        }
         readingList.shutdown()
     }
 
@@ -3262,6 +3583,12 @@ final class AppShellController: NSViewController {
     /// `CodePreviewController.shutdown()` no-ops on a page whose editor never
     /// loaded while its store still commits anything genuinely queued.
     func shutdownCodePreview() {
+        // PERF-01: an unbuilt page has no editor edits to wait for, but a
+        // capture can still have written a snippet, so the git half runs.
+        guard isBuilt(.codePreview) else {
+            codePreviewStore.gitSync?.flushForTerminationNow()
+            return
+        }
         codePreview.shutdown()
     }
 
@@ -3277,6 +3604,11 @@ final class AppShellController: NSViewController {
     /// The shell's forward for the same reason the others here are: `notebook`
     /// is `private` and the app delegate is where quit is handled.
     func shutdownNotebook() {
+        // PERF-01: the same split as Code Preview's, for the same reason.
+        guard isBuilt(.notebook) else {
+            notebookStore.gitSync?.flushForTerminationNow()
+            return
+        }
         notebook.shutdown()
     }
 
@@ -3292,6 +3624,12 @@ final class AppShellController: NSViewController {
     /// are built eagerly, and a store with nothing queued (or a vault that was
     /// never unlocked) flushes nothing.
     func shutdownCredentialVault() {
+        // PERF-01: the page and `GrandLineServices` hold one store; a store
+        // nobody built has nothing to flush, and quitting must not build one.
+        guard isBuilt(.poneglyph) else {
+            if GrandLineServices.shared.hasBuiltVault { GrandLineServices.shared.vault.flushForTermination() }
+            return
+        }
         poneglyph.shutdown()
     }
 
@@ -3311,15 +3649,23 @@ final class AppShellController: NSViewController {
     /// Safe on a page whose Crew tab was never opened: the runner is built
     /// lazily on the first send, so there is usually nothing to cancel.
     func shutdownStrawHatCrew() {
+        // An unbuilt crew page has no runner to cancel.
+        guard isBuilt(.strawHat) else { return }
         strawHat.shutdown()
     }
 
     func removeHostConsole(id: UUID) {
-        guard let controller = hostConsoles.removeValue(forKey: id) else { return }
+        // PERF-08: a host still queued for restore has no page to tear down,
+        // only its strip entry - which the one `unregister` below removes.
+        let wasQueued = forgetPendingRestoredHost(id)
+        let controller = hostConsoles.removeValue(forKey: id)
+        guard controller != nil || wasQueued else { return }
         let wasActive = activeHostID == id
-        controller.shutdown()
-        controller.view.removeFromSuperview()
-        controller.removeFromParent()
+        if let controller {
+            controller.shutdown()
+            controller.view.removeFromSuperview()
+            controller.removeFromParent()
+        }
         // `fm/grandline-session-switcher`: this is the app's one teardown path
         // for a host page (a deleted host, or an explicit "end session"), so it
         // is where the registry stops claiming that host is live. Unregistering
@@ -3350,6 +3696,9 @@ final class AppShellController: NSViewController {
     /// A no-op for a host with no live session, so every caller can fire it
     /// against a possibly-stale id without checking first.
     func switchToSession(hostID: UUID) {
+        // PERF-08: a restored page still waiting for its turn is built now -
+        // a switch never waits for the queue.
+        materializePendingRestoredHost(hostID)
         guard let controller = hostConsoles[hostID],
               let session = sessions.session(for: hostID) else { return }
         revealHostConsole(controller, hostID: hostID, label: session.label)
@@ -3409,9 +3758,15 @@ final class AppShellController: NSViewController {
             // `Dictionary.keys` has no defined order, and without this the
             // save-only-when-changed check below would write on every
             // navigation regardless.
-            openHostIDs: hostConsoles.keys.map(\.uuidString).sorted(),
+            // PERF-08: a page still queued for restore is open too - this
+            // runs on every navigation, including the one restore itself
+            // makes before the queue has drained.
+            openHostIDs: (Array(hostConsoles.keys) + pendingRestoredHosts.map(\.host.id))
+                .map(\.uuidString).sorted(),
             consoleTabs: console.isViewLoaded ? console.restorableConsoleTabs() : [],
-            toolTabs: tools.isViewLoaded ? tools.restorableToolTabs() : []
+            // `isBuilt` first: this runs on every navigation, and asking an
+            // unbuilt Tools page whether its view is loaded would build it.
+            toolTabs: isBuilt(.tools) && tools.isViewLoaded ? tools.restorableToolTabs() : []
         )
     }
 
@@ -3612,7 +3967,7 @@ final class AppShellController: NSViewController {
         applySessionStripVisibility()
         // Rebuilding a hidden page's rows would be work nobody can see; it
         // gets them on its next `viewWillAppear` instead.
-        if hostsPanel.isViewLoaded, !hostsPanel.view.isHidden {
+        if isBuilt(.hosts), hostsPanel.isViewLoaded, !hostsPanel.view.isHidden {
             hostsPanel.refreshLiveSessionState()
         }
         updateKeyViewLoop()
@@ -3692,10 +4047,7 @@ final class AppShellController: NSViewController {
     /// Wired by the app delegate: the Snippets tab's "Run" sends a snippet to
     /// the console's active tab. Forwarded rather than owned, matching
     /// `onPresentHostEditor` - this controller knows nothing about snippets.
-    var onRunSnippet: ((Snippet) -> Void)? {
-        get { hostsPanel.onRunSnippet }
-        set { hostsPanel.onRunSnippet = newValue }
-    }
+    var onRunSnippet: ((Snippet) -> Void)?
 
     /// The Edit menu's "Find in Terminal" (no longer ⌘K as of phase 4 - see
     /// main.swift's Edit menu comment; ⌘K now opens the unified search
@@ -3851,9 +4203,16 @@ final class AppShellController: NSViewController {
     /// caching store gets exactly one instance, and two would hold two
     /// copies of the decrypted set and race each other's writes. Same
     /// forward-don't-own shape as `askCrewFromMenuBar` above.
-    var poneglyphQuickCodes: [PoneglyphQuickCode] { poneglyph.quickCodeEntries }
+    ///
+    /// PERF-01: a locked store has no codes to list, so asking does not build
+    /// the page unless the vault is open (an App Intent can open it without
+    /// the page ever having been shown).
+    var poneglyphQuickCodes: [PoneglyphQuickCode] {
+        guard credentialVaultStore.isUnlocked else { return [] }
+        return poneglyph.quickCodeEntries
+    }
 
-    var poneglyphIsUnlocked: Bool { poneglyph.isVaultUnlocked }
+    var poneglyphIsUnlocked: Bool { credentialVaultStore.isUnlocked }
 
     @discardableResult
     func copyPoneglyphCodeFromMenuBar(id: String) -> String? {
@@ -4025,7 +4384,9 @@ final class AppShellController: NSViewController {
         // whole feature's honesty rules exist to prevent. A session can be in
         // the registry with no page behind it at all (`connectHost(navigate:
         // false)`, or an F2-restored entry), in which case `switchToSession`
-        // is a documented no-op and nothing moved.
+        // is a documented no-op and nothing moved. A page only queued for
+        // restore (PERF-08) is built first, so it is not one of those.
+        materializePendingRestoredHost(chosen.hostID)
         guard let controller = hostConsoles[chosen.hostID] else {
             show(.hosts)
             return "I couldn't reach \u{201C}\(chosen.label)\u{201D}'s page - open it from Hosts and ask me again."
@@ -4166,7 +4527,9 @@ final class AppShellController: NSViewController {
     /// status out to two subscribers (the Dictation page and the floating
     /// HUD); this is a third, not a new signal.
     func setDictationEngineStatus(_ status: DictationStatus) {
-        dictation.setEngineStatus(status)
+        // The page only renders a status once its view is loaded, so an
+        // unbuilt page has nothing to update - and must not be built for it.
+        if isBuilt(.dictation) { dictation.setEngineStatus(status) }
         homeCanvas.applyDictationStatus(status)
     }
 
