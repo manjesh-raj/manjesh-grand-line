@@ -166,6 +166,11 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     static let interactiveScrollbackLines = 10_000
     let scrollbackLines = ConsoleController.interactiveScrollbackLines
 
+    /// PERF-07: how long a tab must be out of sight before its scrollback
+    /// shrinks to `backgroundScrollbackLines`. Per instance so a suite can
+    /// shorten it; see `ConsoleController+Scrollback.swift`.
+    var backgroundScrollbackGrace: TimeInterval = ConsoleController.defaultBackgroundScrollbackGrace
+
     /// GL-36: lives here rather than in `ConsoleController+LogCapture.swift`
     /// with the rest of Block View, because a Swift extension cannot declare
     /// a stored property.

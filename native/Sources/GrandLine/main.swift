@@ -3582,6 +3582,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_DESTINATION_MOUNTING_TESTS"] == "
 // The launch-path half of the 2026-10 end-to-end review's performance
 // findings (PERF-01, PERF-02, PERF-08 and T-14d's signposts). Pure logic. See
 // LaunchPathSelfTest.swift's header.
+// PERF-07 of the 2026-10 end-to-end review: a background tab's scrollback
+// shrinks after a grace period and comes back on select. Pure logic (real
+// terminals, no window, no process). See BackgroundScrollbackSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_BACKGROUND_SCROLLBACK_TESTS"] == "1" {
+    exit(BackgroundScrollbackSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_LAUNCH_PATH_TESTS"] == "1" {
     exit(LaunchPathSelfTest.run() ? 0 : 1)
 }
