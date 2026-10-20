@@ -62,17 +62,10 @@ enum BarNavigationModernizationSelfTest {
         defer { ThemeManager.shared.setTheme(savedTheme) }
 
         let cases: [(String, () -> String?)] = [
-            ("B1 the bar's material is per-theme-family", test_b1BarMaterialPerThemeFamily),
-            ("B1 the material cannot cost the bar its legibility", test_b1MaterialCannotBreakContrast),
-            ("B2 the icon row is one language", test_b2IconRowIsOneLanguage),
-            ("B2/UI-34 a shortcut firms on hover and lights in its own hue while active",
-             test_b2ShortcutHoverAndActiveState),
-            ("B2 the bell's badge sits on the glyph, inside the tile", test_b2BellBadgeSitsOnTheGlyph),
-            ("UI-34/35/36 the bar's groups, one radius, a pressed state",
-             test_revampBarStructure),
-            ("the clipboard history is off the bar, and ⌘⇧V still opens it under Recents",
+            ("B2 the bell's badge sits on the glyph's corner", test_b2BellBadgeSitsOnTheGlyph),
+            ("the clipboard history has no toolbar control, and ⌘⇧V opens it under Recents",
              test_clipboardHistoryIsOffTheBar),
-            ("B3 the window's initial focus is the page, not the bar", test_b3InitialFirstResponderIsThePage),
+            ("B3 the window's initial focus is the page, not the sidebar", test_b3InitialFirstResponderIsThePage),
             ("B3 a ring is painted only for focus the captain moved", test_b3FocusRingOnlyForKeyboardFocus),
             ("B4 a navigation animates, and repeating it does not", test_b4TransitionSkippedWhenAlreadyShowing),
             ("B4 Reduce Motion gets the end state instantly", test_b4ReduceMotionIsInstant),
@@ -95,223 +88,11 @@ enum BarNavigationModernizationSelfTest {
         return allOK
     }
 
-    // MARK: B1 - the material
-
-    private static func test_b1BarMaterialPerThemeFamily() -> String? {
-        // Pinned off, the way Reduce Motion is pinned rather than inherited
-        // (AGENTS.md: a GitHub runner's display settings are not a dev Mac's).
-        // Since P7 the bar drops its material under Reduce Transparency, and
-        // a runner with it on failed this case with "shows no material".
-        // That branch is `DisplayAccessibilitySelfTest`'s to assert.
-        HelmDisplayAccessibility.reduceTransparencyOverrideForTests = false
-        defer { HelmDisplayAccessibility.reduceTransparencyOverrideForTests = nil }
-        let bar = DaylightBarController()
-        bar.loadView()
-        // 1512, the captain's own screen width, deliberately above
-        // `DaylightBarController.quickAccessCollapseWidth`: review #3's B6
-        // gives the shortcut row back to the drill title on a narrow bar, so
-        // below that width every one of these buttons is legitimately zero
-        // wide and what this case measures would not exist. The expanded row
-        // is the state it was written for.
-        bar.view.frame = NSRect(x: 0, y: 0, width: 1512,
-                                height: DaylightBarController.height + DaylightBarController.topMargin)
-        bar.view.layoutSubtreeIfNeeded()
-
-        // Every one of the fourteen, so "never `.behindWindow`" is a claim
-        // about the app rather than about whichever two themes got sampled.
-        for theme in HelmTheme.allThemes {
-            bar.applyThemeForTests(theme)
-            bar.view.layoutSubtreeIfNeeded()
-            let geometry = bar.geometryForTests
-
-            if geometry.visualEffectBlendingModes.contains(.behindWindow) {
-                return "\(theme.id): a `.behindWindow` material - gotcha (8), which the audit's §6 keeps banned by name"
-            }
-
-            if theme.isDaylight {
-                guard geometry.usesVisualEffect else {
-                    return "\(theme.id) is a Daylight-family theme and shows no material - B1 asks for one here"
-                }
-                guard geometry.visualEffectBlendingModes.contains(.withinWindow) else {
-                    return "\(theme.id): the material is not `.withinWindow` (modes: \(geometry.visualEffectBlendingModes))"
-                }
-                let expected = DaylightBarController.daylightFillAlpha
-                guard abs(geometry.fillAlpha - expected) < 0.01 else {
-                    return "\(theme.id): the bar fill is \(geometry.fillAlpha) alpha, expected \(expected) - "
-                        + "at 1.0 the material below it is invisible and B1 buys nothing"
-                }
-            } else {
-                guard !geometry.usesVisualEffect else {
-                    return "\(theme.id) is a legacy palette and renders a material - B1 keeps those opaque "
-                        + "(\"their surfaces are already near-black; translucency buys little\")"
-                }
-                guard abs(geometry.fillAlpha - 1) < 0.01 else {
-                    return "\(theme.id): the bar fill is \(geometry.fillAlpha) alpha, expected the opaque 1.0 it always had"
-                }
-            }
-        }
-        return nil
-    }
-
-    /// B1's risk, bounded by measurement rather than by eye.
-    ///
-    /// `NSVisualEffectView` is composited by the window server, so
-    /// `cacheDisplay` - this repo's screenshot substitute - captures a flat
-    /// placeholder for it, and launching a real build to look is forbidden
-    /// (the captain's own instance shares this bundle identity). So what the
-    /// material *resolves to* cannot be observed from here.
-    ///
-    /// What can be bounded is the damage. The bar paints `chromeBackgroundHex`
-    /// at `daylightFillAlpha` over the material, and the material composites
-    /// against the page ground this controller's own root paints
-    /// (`backgroundHex`). So the bar's effective surface is somewhere between
-    /// those two colours, whatever the material does in between - and if the
-    /// bar's own text clears the contrast floor against *both* ends, it clears
-    /// it everywhere in between too.
-    ///
-    /// That is the honest form of "this change cannot make the bar
-    /// illegible", and it is also what picks `daylightFillAlpha`: the number
-    /// is whatever lets the material read while this still holds.
-    private static func test_b1MaterialCannotBreakContrast() -> String? {
-        for theme in HelmTheme.allThemes where theme.isDaylight {
-            let card = HelmTheme.nsColor(theme.chromeBackgroundHex)
-            let page = HelmTheme.nsColor(theme.backgroundHex)
-            let inks: [(String, NSColor)] = [
-                ("chrome ink (the wordmark, a hovered pill)", HelmTheme.nsColor(theme.chromeInkHex)),
-                ("muted ink (an idle pill, the search placeholder)", HelmTheme.mutedInk(theme)),
-            ]
-            for (name, ink) in inks {
-                for (surfaceName, surface) in [("card", card), ("page ground", page)] {
-                    let ratio = HelmContrast.ratio(ink, surface)
-                    guard ratio >= HelmContrast.textTarget else {
-                        return "\(theme.id): \(name) measures \(String(format: "%.2f", ratio)):1 on the \(surfaceName) "
-                            + "- the material blends the bar between those two surfaces, so B1's translucency "
-                            + "could land the bar's own text below the floor. Lower `daylightFillAlpha` or "
-                            + "leave this family opaque."
-                    }
-                }
-            }
-        }
-        return nil
-    }
-
-    // MARK: B2 - one icon language
-
-    private static func test_b2IconRowIsOneLanguage() -> String? {
-        let bar = makeLaidOutBar()
-
-        // Every square the same size, including the bell - which is the whole
-        // of B2's "the History and theme buttons should match the bell's
-        // square", and was not true while the bell reserved an outboard badge
-        // zone.
-        let side = DaylightBarIconButton.side
-        guard abs(NotificationBellButton.controlWidth - side) < 0.01 else {
-            return "the bell's control is \(NotificationBellButton.controlWidth)pt wide against a \(side)pt icon square - "
-                + "B2 asks for one shape, and an outboard badge zone is what made it two"
-        }
-
-        // Hidden squares are skipped, and review #3's B6 is why there is now
-        // one: the shortcut row collapses into a "More destinations" overflow
-        // button on a narrow bar, so at any width exactly one of the two is
-        // on screen and the other is legitimately zero wide. The overflow
-        // button is measured below, in the state where it *is* shown - the
-        // point of B2 is that every square the captain can see is one shape,
-        // not that every square that exists is.
-        var squares: [(String, NSView)] = [("bell", bar.notificationCenter.bell)]
-        for button in bar.debugIconSquares() where !button.isHidden {
-            squares.append((button.accessibilityLabel() ?? "icon", button))
-        }
-        for (name, view) in squares {
-            guard abs(view.frame.width - side) < 0.5, abs(view.frame.height - side) < 0.5 else {
-                return "\(name) measures \(view.frame.size), expected \(side)x\(side) - one square, not several"
-            }
-        }
-
-        // The collapsed state, so the overflow button is held to the same
-        // shape rather than exempted by being hidden when this case runs.
-        bar.view.frame = NSRect(x: 0, y: 0, width: 1100,
-                                height: DaylightBarController.height + DaylightBarController.topMargin)
-        bar.view.layoutSubtreeIfNeeded()
-        let overflow = bar.debugQuickAccessOverflowButton()
-        guard !overflow.isHidden else {
-            return "the bar did not collapse its shortcut row at 1100pt, so the overflow square is untested"
-        }
-        guard abs(overflow.frame.width - side) < 0.5, abs(overflow.frame.height - side) < 0.5 else {
-            return "the overflow square measures \(overflow.frame.size), expected \(side)x\(side)"
-        }
-        for button in bar.debugIconSquares() where !button.isHidden {
-            guard abs(button.frame.width - side) < 0.5, abs(button.frame.height - side) < 0.5 else {
-                return "collapsed: \(button.accessibilityLabel() ?? "icon") measures \(button.frame.size)"
-            }
-        }
-
-        // The radii have to match too, or three identically-sized tiles still
-        // read as different shapes.
-        var radii: Set<CGFloat> = []
-        for button in bar.debugIconSquares() { radii.insert(button.debugIconBackground.layer?.cornerRadius ?? -1) }
-        radii.insert(bar.notificationCenter.bell.debugIconFrameRadius)
-        guard radii.count == 1 else {
-            return "the icon squares use \(radii.count) different corner radii (\(radii.sorted())) - B2 asks for one"
-        }
-        return nil
-    }
-
-    private static func test_b2ShortcutHoverAndActiveState() -> String? {
-        // Daylight, because that is the family whose domain hues are real
-        // (`identityHex` is uniformly neutral on the twelve - see
-        // `DaylightBarIconButton.tileHex(for:in:)` for why, and for what the
-        // other 24 palettes get instead).
-        guard let daylight = HelmTheme.allThemes.first(where: { $0.id == "daylight" }) else {
-            return "no `daylight` theme - has the palette been renamed?"
-        }
-        let bar = makeLaidOutBar()
-        bar.applyThemeForTests(daylight)
-
-        guard let button = bar.debugDestinationButtons().first else { return "no quick-access shortcuts on the bar" }
-        let resting = button.debugGlyphColor
-
-        button.debugSetHovering(true)
-        let hovered = button.debugGlyphColor
-        button.debugSetHovering(false)
-        guard let resting, let hovered else { return "the shortcut has no glyph colour at all" }
-        guard !sameColor(resting, hovered) else {
-            return "\(button.destination.title): the glyph is the same colour hovered as at rest - "
-                + "a shortcut still has to respond to the pointer"
-        }
-
-        // UI-34 (Q6): hover is monochrome - the glyph firms from muted to
-        // page ink on the plain square. The hue is for the page you are on.
-        guard sameColor(hovered, HelmTheme.nsColor(daylight.chromeInkHex)) else {
-            return "\(button.destination.title): hovered glyph is \(describe(hovered)), expected page ink - "
-                + "hover is monochrome since UI-34"
-        }
-
-        // Active: exactly the one showing, and it survives the pointer leaving.
-        bar.setActiveDestination(button.destination)
-        let expectedActive = HelmContrast.tintedSurface(
-            tintHex: DaylightBarIconButton.tileHex(for: button.destination, in: daylight),
-            theme: daylight,
-            target: HelmContrast.nonTextTarget,
-            washSteps: DaylightBarIconButton.activeTileWashSteps)
-        guard let active = button.debugGlyphColor, sameColor(active, expectedActive.foreground) else {
-            return "\(button.destination.title): its shortcut does not light while its own page is showing"
-        }
-        for other in bar.debugDestinationButtons() where other !== button {
-            guard other.isActiveDestination == false else {
-                return "\(other.destination.title) is lit too - only the destination actually showing may be"
-            }
-        }
-        bar.setActiveDestination(nil)
-        guard button.isActiveDestination == false else {
-            return "clearing the active destination left \(button.destination.title) lit - a host page would keep "
-                + "the last visited shortcut asserting it is current"
-        }
-        return nil
-    }
+    // MARK: B2 - the bell
 
     private static func test_b2BellBadgeSitsOnTheGlyph() -> String? {
-        let bar = makeLaidOutBar()
-        let bell = bar.notificationCenter.bell
+        let toolbar = makeLaidOutToolbar()
+        let bell = toolbar.notificationCenter.bell
 
         bell.setBadgeCount(0)
         guard bell.debugBadgeIsHidden else { return "the badge shows with nothing waiting - PRODUCT.md's \"quiet until it matters\"" }
@@ -321,14 +102,13 @@ enum BarNavigationModernizationSelfTest {
         guard !bell.debugBadgeIsHidden else { return "the badge stays hidden with 3 waiting" }
         guard bell.debugBadgeText == "3" else { return "badge reads '\(bell.debugBadgeText)' for a count of 3" }
 
-        // The finding's own words: "attached to the symbol's corner". A symbol
-        // is inside the tile, so the badge has to be too - which is exactly
-        // what both previous attempts at an attached badge could not manage,
-        // because they aimed at the *tile's* rounded corner instead.
+        // The finding's own words: "attached to the symbol's corner". UX-12
+        // made the bell a toolbar button, so the button's own bounds are the
+        // square the glyph sits in, and the badge has to be inside them.
         let badge = bell.debugBadgeFrame
-        let icon = bell.debugIconFrame
+        let icon = bell.bounds
         guard icon.contains(badge) else {
-            return "the badge \(badge) is not inside the icon tile \(icon) - it is beside the square again, "
+            return "the badge \(badge) is not inside the bell button \(icon) - it is beside the control again, "
                 + "which is the shape B2 asks to replace"
         }
         guard abs(badge.width - NotificationBellButton.badgeSide) < 0.5,
@@ -345,11 +125,8 @@ enum BarNavigationModernizationSelfTest {
         // y. Asserting `maxY <= midY` without checking would fail against
         // correct geometry - which is exactly what it did the first time this
         // check ran.
-        // Centres, not edges: a 15pt badge inset 3pt from a 34pt tile's top
-        // spans 3...18 against a midline of 17, so demanding it sit *entirely*
-        // in the top half fails a badge that is plainly in the corner. Where
-        // its centre lands is the question "is this a corner badge" actually
-        // asks.
+        // Centres, not edges: where the badge's centre lands is the question
+        // "is this a corner badge" actually asks.
         let badgeIsAtTop = bell.isFlipped
             ? badge.midY < icon.midY
             : badge.midY > icon.midY
@@ -370,93 +147,56 @@ enum BarNavigationModernizationSelfTest {
         return nil
     }
 
-    /// The captain asked for the clipboard square off the top bar. Three
-    /// things have to hold together, and each fails on its own:
+    /// The captain asked for the clipboard square off the top bar, and UX-12
+    /// moved the bar's controls into the window toolbar. Both halves still
+    /// hold:
     ///
-    ///   - nothing on the bar is the clipboard history any more - no square,
-    ///     no focusable control, nothing carrying its symbol or label;
-    ///   - the history group's separator closed up behind it, so Recents sits
-    ///     one plain gap from the separator, the same gap the separator keeps
-    ///     from the first shortcut (a removal that left the old constraint
-    ///     shape would leave a 42pt hole there instead);
+    ///   - nothing in the toolbar is the clipboard history - no item, no
+    ///     control carrying its symbol or label;
     ///   - the feature is still reachable: ⌘⇧V's verb opens the real panel,
-    ///     dropped down from Recents' trailing edge where the square used to
-    ///     end, and the anchor has no width so it cannot swallow a click.
+    ///     dropped down from the Recents button's trailing edge.
     private static func test_clipboardHistoryIsOffTheBar() -> String? {
-        let bar = makeLaidOutBar()
-        // Off-screen, the same fixture `test_b5PanelAnchorsAndDismisses`
-        // uses, so the panel opens nowhere near the captain's display.
-        let window = OffScreenProbe.window(width: 1512, height: 120)
-        window.setFrame(NSRect(x: -20_000, y: 0, width: 1512, height: 120), display: false)
-        window.contentView = bar.view
-        bar.view.layoutSubtreeIfNeeded()
+        let toolbar = makeLaidOutToolbar()
+        let window = OffScreenProbe.window(width: 1512, height: 400)
+        window.setFrame(NSRect(x: -20_000, y: 0, width: 1512, height: 400), display: false)
+        WorkspaceWindowChrome.apply(to: window, toolbar: toolbar.toolbar)
+        window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 1512, height: 400))
+        // Ordered in (still off every screen): AppKit builds and lays out a
+        // toolbar's item views only for a window that is on the window list.
+        window.orderFront(nil)
+        window.displayIfNeeded()
+        defer { window.orderOut(nil) }
+        window.contentView?.layoutSubtreeIfNeeded()
 
-        func everyView(_ root: NSView) -> [NSView] { [root] + root.subviews.flatMap(everyView) }
-        let clipboardish = everyView(bar.view).filter { view in
-            let label = view.accessibilityLabel() ?? ""
-            let tooltip = view.toolTip ?? ""
-            return label.localizedCaseInsensitiveContains("clipboard")
-                || tooltip.localizedCaseInsensitiveContains("clipboard")
+        let items = toolbar.toolbar.items
+        guard items.contains(where: { $0.view === toolbar.recentDestinations.button }) else {
+            return "the toolbar carries no Recents item - the clipboard check below would be vacuous"
         }
-        // Discriminating power: the same walk does find Recents by its label,
-        // so an empty result above means "no clipboard control", not "this
-        // walk reads no labels at all".
-        guard everyView(bar.view).contains(where: { $0.accessibilityLabel() == "Recently Visited" }) else {
-            return "the view walk found no Recents control by label - the clipboard check below would be vacuous"
+        let clipboardish = items.filter { item in
+            let text = [item.label, item.toolTip ?? "", item.view?.accessibilityLabel() ?? ""].joined(separator: " ")
+            return text.localizedCaseInsensitiveContains("clipboard")
         }
         guard clipboardish.isEmpty else {
-            return "the bar still carries a clipboard control: "
-                + clipboardish.map { "\(type(of: $0)) '\($0.accessibilityLabel() ?? $0.toolTip ?? "")'" }
-                    .joined(separator: ", ")
-        }
-        guard !bar.keyViewChain.contains(where: { clipboardish.contains($0) }) else {
-            return "the keyboard loop still reaches a clipboard control"
+            return "the toolbar carries a clipboard control: \(clipboardish.map(\.label))"
         }
 
-        guard let recents = bar.debugIconSquares().first(where: { $0 is RecentDestinationsButton }),
-              let firstShortcut = bar.debugDestinationButtons().first else {
-            return "the bar's Recents square or first shortcut is missing"
+        let recents = toolbar.recentDestinations.button
+        guard recents.window === window else {
+            return "the Recents button is not in the toolbar's window - the anchor check would be vacuous"
         }
-        guard bar.debugIconSquares().first === recents else {
-            return "Recents is no longer the first square in the bar's visual order"
-        }
-        let separator = bar.debugGroupSeparators()[0]
-        func frame(_ v: NSView) -> NSRect { v.convert(v.bounds, to: bar.view) }
-        let before = frame(separator).minX - frame(recents).maxX
-        let after = frame(firstShortcut).minX - frame(separator).maxX
-        let tolerance = 1.0 / window.backingScaleFactor
-        guard abs(before - HelmMetrics.s2) <= tolerance, abs(after - HelmMetrics.s2) <= tolerance else {
-            return "the history separator sits \(before)pt after Recents and \(after)pt before the first "
-                + "shortcut, expected \(HelmMetrics.s2) on both sides"
-        }
-
-        let anchor = bar.debugClipboardHistoryAnchor
-        guard anchor.window === window, frame(anchor).width == 0 else {
-            return "the clipboard panel's anchor is \(frame(anchor)) in \(String(describing: anchor.window)) - it must "
-                + "be a zero-width view in the bar's window"
-        }
-        guard abs(frame(anchor).maxX - frame(recents).maxX) < 0.5,
-              abs(frame(anchor).minY - frame(recents).minY) < 0.5 else {
-            return "the clipboard anchor \(frame(anchor)) is not on Recents' trailing edge \(frame(recents))"
-        }
-
-        // The gate starts locked (the app does), and a locked gate makes ⌘⇧V
-        // beep rather than open - so unlock for the check and put it back.
         let wasLocked = AppLockGate.shared.isLocked
         AppLockGate.shared.setLocked(false)
         defer { AppLockGate.shared.setLocked(wasLocked) }
-        let clipboard = bar.clipboardHistory
+        let clipboard = toolbar.clipboardHistory
         let panel = clipboard.debugPanel
         defer { panel.close() }
         guard !panel.isShown else { return "the clipboard panel is showing before ⌘⇧V opened it" }
-        // The verb the Edit menu's ⌘⇧V item reaches through
-        // `AppShellController.toggleClipboardHistory`.
         clipboard.toggle()
         guard panel.isShown else { return "⌘⇧V's toggle did not open the clipboard panel" }
-        guard panel.debugAnchor === anchor else {
-            return "the clipboard panel anchored on \(String(describing: panel.debugAnchor)), not the bar's anchor"
+        guard panel.debugAnchor === recents else {
+            return "the clipboard panel anchored on \(String(describing: panel.debugAnchor)), not the Recents button"
         }
-        let anchorOnScreen = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+        let anchorOnScreen = window.convertToScreen(recents.convert(recents.bounds, to: nil))
         let panelFrame = panel.debugPanelWindow.frame
         guard panelFrame.maxY <= anchorOnScreen.minY + 0.5, abs(panelFrame.maxX - anchorOnScreen.maxX) < 0.5 else {
             return "the clipboard panel at \(panelFrame) is not under Recents' trailing edge \(anchorOnScreen)"
@@ -480,18 +220,17 @@ enum BarNavigationModernizationSelfTest {
             guard let initial = window.initialFirstResponder else {
                 return "the window has no initial first responder at all - Tab would start nowhere"
             }
-            // The reported bug, stated directly: it used to be `chain.first`,
-            // i.e. the first space pill.
-            let barChain = shell.barKeyViewChainForTests
-            if barChain.contains(where: { $0 === initial }) {
-                return "the window's initial focus is a bar control - that is exactly B3's bug, and at launch "
-                    + "it draws a focus ring on a space pill beside a differently decorated selected one"
+            // The reported bug, stated directly: it used to be the head of the
+            // navigation chrome's chain. That chrome is the sidebar now.
+            if initial === shell.sidebar.outline {
+                return "the window's initial focus is the sidebar - that is exactly B3's bug, and at launch "
+                    + "it draws a focus ring on the navigation instead of the page"
             }
             let canvasView = shell.homeCanvasForTests.view
             var ancestor: NSView? = initial
             while let current = ancestor, current !== canvasView { ancestor = current.superview }
             guard ancestor === canvasView else {
-                return "the initial focus is neither the bar nor the canvas - B3 asks for the page"
+                return "the initial focus is neither the sidebar nor Home - B3 asks for the page"
             }
             return nil
         }
@@ -590,14 +329,12 @@ enum BarNavigationModernizationSelfTest {
                     + "\(settled.layer?.transform.m41 ?? 0) - a skip has to land on the end state, not part way"
             }
 
-            // Back out to the hub is the mirror image.
+            // UX-01: Home is a sidebar item like any other, not the target of a
+            // back button, so returning to it is an ordinary navigation that
+            // still animates.
             shell.show(.homeCanvas)
-            guard let back = shell.lastTransitionForTests, case .back = back.direction else {
-                return "returning to the canvas reported \(String(describing: shell.lastTransitionForTests?.direction)), expected .back"
-            }
-            guard back.entryOffset < 0 else {
-                return "the back navigation entered at dx=\(back.entryOffset) - it slides the same way as a "
-                    + "drill-in, so the direction signals nothing"
+            guard let home = shell.lastTransitionForTests, !home.skipped else {
+                return "navigating to Home from Review was skipped as a no-op"
             }
             return nil
         }
@@ -642,8 +379,8 @@ enum BarNavigationModernizationSelfTest {
         for theme in [HelmTheme.allThemes.first(where: { $0.id == "daylight" }),
                       HelmTheme.allThemes.first(where: { $0.id == "helm-dark" })].compactMap({ $0 }) {
             ThemeManager.shared.setTheme(theme)
-            let bar = makeLaidOutBar()
-            for (name, panel) in bar.debugBarPanels() {
+            let toolbar = makeLaidOutToolbar()
+            for (name, panel) in toolbar.debugBarPanels() {
                 let window = panel.debugPanelWindow
                 guard !window.isOpaque else {
                     return "\(name) on \(theme.id): the panel window is opaque, so its corner radius cannot read - "
@@ -672,17 +409,21 @@ enum BarNavigationModernizationSelfTest {
     }
 
     private static func test_b5PanelAnchorsAndDismisses() -> String? {
-        let bar = makeLaidOutBar()
+        let toolbar = makeLaidOutToolbar()
         // Off-screen, so nothing lands on the captain's own display. The panel
         // follows its anchor's window and `HelmBarPanel.position` deliberately
         // clamps only to the anchor's *own* screen, of which there is none here.
-        let window = OffScreenProbe.window(width: 1200, height: 120)
-        window.setFrame(NSRect(x: -20_000, y: 0, width: 1200, height: 120), display: false)
-        window.contentView = bar.view
-        bar.view.layoutSubtreeIfNeeded()
+        let window = OffScreenProbe.window(width: 1200, height: 400)
+        window.setFrame(NSRect(x: -20_000, y: 0, width: 1200, height: 400), display: false)
+        WorkspaceWindowChrome.apply(to: window, toolbar: toolbar.toolbar)
+        window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 1200, height: 400))
+        window.orderFront(nil)
+        window.displayIfNeeded()
+        defer { window.orderOut(nil) }
+        window.contentView?.layoutSubtreeIfNeeded()
 
-        let panel = bar.notificationCenter.debugPanel
-        let bell = bar.notificationCenter.bell
+        let panel = toolbar.notificationCenter.debugPanel
+        let bell = toolbar.notificationCenter.bell
         defer { panel.close() }
 
         guard !panel.isShown else { return "the panel is showing before anything opened it" }
@@ -699,7 +440,10 @@ enum BarNavigationModernizationSelfTest {
             return "the panel's top (\(frame.maxY)) is not below the control's bottom (\(anchorOnScreen.minY)) - "
                 + "B5 asks for it anchored *under* the control"
         }
-        guard abs(frame.maxX - anchorOnScreen.maxX) < 0.5 else {
+        // A toolbar centres its items, so the control can sit on a half
+        // point; the panel lands on a whole one. One device pixel is the
+        // honest tolerance (AGENTS.md's half-point rule).
+        guard abs(frame.maxX - anchorOnScreen.maxX) <= 1.0 / window.backingScaleFactor + 0.01 else {
             return "the panel's trailing edge (\(frame.maxX)) does not line up with the control's "
                 + "(\(anchorOnScreen.maxX)) - every one of these controls sits near the window's trailing edge"
         }
@@ -712,9 +456,9 @@ enum BarNavigationModernizationSelfTest {
     }
 
     private static func test_b5PanelsAreLockRegistered() -> String? {
-        let bar = makeLaidOutBar()
+        let toolbar = makeLaidOutToolbar()
         let registered = AppLockGate.shared.debugRegisteredWindows
-        for (name, panel) in bar.debugBarPanels() {
+        for (name, panel) in toolbar.debugBarPanels() {
             guard registered.contains(where: { $0 === panel.debugPanelWindow }) else {
                 return "\(name)'s panel is not registered with the lock gate. These used to be popovers on "
                     + "`registerLockDismissiblePopover`; a panel is its own window layered above the lock "
@@ -726,19 +470,15 @@ enum BarNavigationModernizationSelfTest {
 
     // MARK: Fixtures
 
-    private static func makeLaidOutBar() -> DaylightBarController {
-        let bar = DaylightBarController()
-        bar.loadView()
-        // 1512, the captain's own screen width, deliberately above
-        // `DaylightBarController.quickAccessCollapseWidth`: review #3's B6
-        // gives the shortcut row back to the drill title on a narrow bar, so
-        // below that width every one of these buttons is legitimately zero
-        // wide and what this case measures would not exist. The expanded row
-        // is the state it was written for.
-        bar.view.frame = NSRect(x: 0, y: 0, width: 1512,
-                                height: DaylightBarController.height + DaylightBarController.topMargin)
-        bar.view.layoutSubtreeIfNeeded()
-        return bar
+    /// The window toolbar's controller, its controls laid out at their own
+    /// sizes - the fixture the badge and panel cases read.
+    private static func makeLaidOutToolbar() -> WorkspaceToolbarController {
+        let toolbar = WorkspaceToolbarController()
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 40))
+        host.addSubview(toolbar.notificationCenter.bell)
+        host.layoutSubtreeIfNeeded()
+        toolbar.notificationCenter.bell.removeFromSuperview()
+        return toolbar
     }
 
     private static func sameColor(_ a: NSColor, _ b: NSColor) -> Bool {
@@ -811,54 +551,6 @@ enum BarNavigationModernizationSelfTest {
         return body()
     }
 
-    /// The UI/UX revamp's bar, structurally:
-    ///
-    ///   - UI-34: two 1px separators split history | shortcuts | controls,
-    ///     in that order along the bar;
-    ///   - UI-35: one radius (10) on every square, the avatar and the bell;
-    ///   - UI-36: a pressed square compresses, and releases.
-    ///
-    /// UI-38 (the clipboard square's size) is gone with the square itself -
-    /// see `test_clipboardHistoryIsOffTheBar`.
-    private static func test_revampBarStructure() -> String? {
-        let bar = makeLaidOutBar()
-        let separators = bar.debugGroupSeparators()
-        guard separators.count == 2, separators.allSatisfy({ $0.frame.height > 0 && $0.frame.width > 0 }) else {
-            return "UI-34: expected two laid-out separators, got \(separators.map(\.frame))"
-        }
-        guard let recents = bar.debugIconSquares().first(where: { $0 is RecentDestinationsButton }),
-              let firstShortcut = bar.debugDestinationButtons().first,
-              let theme = bar.debugIconSquares().first(where: { $0 is DaylightThemeToggleButton }) else {
-            return "the bar's squares are missing"
-        }
-        func x(_ v: NSView) -> CGFloat { v.convert(v.bounds, to: bar.view).midX }
-        guard x(recents) < x(separators[0]), x(separators[0]) < x(firstShortcut),
-              x(firstShortcut) < x(separators[1]), x(separators[1]) < x(theme) else {
-            return "UI-34: the separators do not split history | shortcuts | controls"
-        }
-        for square in bar.debugIconSquares() {
-            guard abs((square.debugIconBackground.layer?.cornerRadius ?? -1) - HelmMetrics.barControlRadius) < 0.01 else {
-                return "UI-35: \(square.accessibilityLabel() ?? "a square") has radius "
-                    + "\(square.debugIconBackground.layer?.cornerRadius ?? -1)"
-            }
-        }
-        guard abs(bar.debugAvatarRadius - HelmMetrics.barControlRadius) < 0.01 else {
-            return "UI-35: the avatar's radius is \(bar.debugAvatarRadius)"
-        }
-        guard abs(bar.notificationCenter.debugBell.debugIconFrameRadius - HelmMetrics.barControlRadius) < 0.01 else {
-            return "UI-35: the bell's radius is \(bar.notificationCenter.debugBell.debugIconFrameRadius)"
-        }
-        HelmMotion.reducedOverrideForTests = true
-        defer { HelmMotion.reducedOverrideForTests = nil }
-        firstShortcut.highlight(true)
-        let pressed = firstShortcut.debugIsPressedScale
-        firstShortcut.highlight(false)
-        let released = firstShortcut.debugIsPressedScale
-        guard abs(pressed - HelmButton.pressScale) < 0.001, abs(released - 1) < 0.001 else {
-            return "UI-36: a pressed square scales to \(pressed) and releases to \(released)"
-        }
-        return nil
-    }
 }
 
 #endif

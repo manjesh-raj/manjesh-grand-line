@@ -59,7 +59,6 @@ enum HoverPressEasingSelfTest {
             ("a HelmButton's hover fill eases", test_buttonHoverEases),
             ("a HelmButton's press eases, about its centre", test_buttonPressEases),
             ("a module card's hover lift and shadow ease", test_moduleCardHoverEases),
-            ("a bar square's press eases", test_barSquarePressEases),
             ("a field's focus glow eases", test_focusGlowEases),
             ("a theme repaint stays instant", test_themeRepaintIsInstant),
         ]
@@ -262,41 +261,9 @@ enum HoverPressEasingSelfTest {
         return failures
     }
 
-    // MARK: - The bar
-
-    private static func test_barSquarePressEases() -> [String] {
-        var failures: [String] = []
-        for reduced in [false, true] {
-            HelmMotion.reducedOverrideForTests = reduced
-            let square = DaylightBarIconButton(symbol: "gearshape", tooltip: "Settings",
-                                               accessibilityLabel: "Settings", hue: .blue)
-            let host = NSView(frame: NSRect(x: 0, y: 0, width: 120, height: 60))
-            host.addSubview(square)
-            NSLayoutConstraint.activate([
-                square.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 20),
-                square.centerYAnchor.constraint(equalTo: host.centerYAnchor),
-                square.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-                square.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-            ])
-            let window = makeWindow(host, size: NSSize(width: 120, height: 60))
-            defer { window.orderOut(nil) }
-            let tile = square.debugIconBackground
-            guard let layer = tile.layer else { return ["no backing layer on the tile"] }
-            let label = reduced ? "Reduce Motion" : "motion on"
-            let restingFill = layer.backgroundColor
-            layer.removeAllAnimations()
-
-            square.highlight(true)
-            expect(!sameColor(layer.backgroundColor, restingFill),
-                   "\(label): the pressed tile did not change fill - nothing to ease", &failures)
-            expect(square.debugIsPressedScale < 1, "\(label): pressing did not compress the square", &failures)
-            expectKeys(layer, contain: "transform", reduced: reduced, "\(label): press scale", &failures)
-            expectKeys(layer, contain: "backgroundColor", reduced: reduced, "\(label): press fill", &failures)
-            square.highlight(false)
-        }
-        HelmMotion.reducedOverrideForTests = nil
-        return failures
-    }
+    // The bar's own icon squares and their press ease were retired with the
+    // floating bar (UX-12): the window toolbar's buttons are AppKit's own
+    // toolbar buttons, whose press the system draws.
 
     // MARK: - Theme repaint
 

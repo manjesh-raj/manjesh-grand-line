@@ -125,7 +125,7 @@ final class DailyOverviewController: NSViewController {
             //
             // This page is one full-bleed card sitting immediately under the
             // Daylight bar, and the bar is a floating panel inset
-            // `DaylightBarController.sideMargin` (22) from the window - so a
+            // `HelmMetrics.pageGutter` (22) from the window - so a
             // 24pt page gutter put the card's edges 2pt inside the chrome
             // directly above it. Measured in a real off-screen render at
             // 1220pt: bar 22..1198, card 24..1196. Small, and the captain saw
@@ -134,9 +134,9 @@ final class DailyOverviewController: NSViewController {
             // keeps `pageGutter`; none of them has a single element whose
             // edge lines up with the bar's.
             contentStack.leadingAnchor.constraint(equalTo: content.leadingAnchor,
-                                                  constant: DaylightBarController.sideMargin),
+                                                  constant: HelmMetrics.pageGutter),
             contentStack.trailingAnchor.constraint(equalTo: content.trailingAnchor,
-                                                   constant: -DaylightBarController.sideMargin),
+                                                   constant: -HelmMetrics.pageGutter),
             contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: HelmMetrics.s5),
             contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -28),
             // The card is the page: full width inside the gutter, which is

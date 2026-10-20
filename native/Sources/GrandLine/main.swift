@@ -94,20 +94,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let docsRunbookStore = LaunchSignposts.measure("DocsRunbookStore.init") { DocsRunbookStore() }
     lazy var unifiedSearch = UnifiedSearchController(index: buildUnifiedSearchIndex())
 
-    /// UX1's all-destinations map. Lazy, like the search palette beside it -
-    /// a captain who never presses ⌘⇧D never builds twenty-six tiles.
-    lazy var allDestinations: AllDestinationsOverlayController = {
-        let overlay = AllDestinationsOverlayController()
-        overlay.onSelect = { [weak self] destination in self?.appShell.show(destination) }
-        overlay.onTogglePin = { [weak self] destination in
-            self?.appShell.toggleQuickAccessPin(destination)
-        }
-        overlay.isPinned = { [weak self] destination in
-            self?.appShell.isQuickAccessPinned(destination) ?? false
-        }
-        return overlay
-    }()
-
     /// The File menu's one item, held so `menuNeedsUpdate` can re-title it -
     /// UX4. See its construction in `buildMenu` for why the title is part of
     /// the contract rather than decoration.
@@ -580,27 +566,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // any more, and no second palette (⌘⇧P is gone with
         // `ShiftSearchController`).
         //
-        // The bar's Search pill's click, forwarded through `AppShellController.
-        // onSearchTapped` (see that property's own doc comment) - not
-        // `appShell.bar.onSearchTapped` directly, since `loadView()` (run
-        // later, once `window.contentViewController = appShell` is assigned
-        // below) wires that control to call back through this property, and
-        // would silently clobber a direct assignment made before that point.
+        // The toolbar's search control's click, forwarded through
+        // `AppShellController.onSearchTapped` (see that property's own doc
+        // comment) - not the toolbar's own closure directly, since `loadView()`
+        // (run later, once `window.contentViewController = appShell` is
+        // assigned below) wires that control to call back through this
+        // property, and would silently clobber a direct assignment made before
+        // that point.
         appShell.onSearchTapped = { [weak self] in self?.unifiedSearch.present() }
-        // ⌘K's own "All Destinations…" verb, forwarded the same way the
-        // Search pill's click is - and for the same reason the line above
-        // gives: `loadView()` has not run yet, so this has to be the shell's
-        // property rather than anything reached through `appShell.bar`.
-        //
-        // **This assignment was missing, and that made the verb dead.** The
-        // property existed and `UnifiedSearchProviders` called it, but nothing
-        // in the app ever set it, so ⌘K → "All Destinations…" silently did
-        // nothing - the same defect, in a second entry point, that
-        // `fm/grandline-remove-dead-all-destinations-overflow` removed from
-        // the bar's overflow menu. The overlay itself was never broken; only
-        // the routes into it were, and ⌘⇧D/Go went through `showAllDestinations`
-        // directly and so always worked.
-        appShell.onShowAllDestinations = { [weak self] in self?.showAllDestinations() }
         // F2: the toast names where it went, because the router has five
         // answers now and "Task captured" would be wrong for four of them.
         shiftQuickCapture.onCaptured = { [weak self] destination in
@@ -792,30 +765,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // excluded, and it is applied as the *window* frame (title bar
         // included) so nothing is pushed off the top of the screen.
         //
-        // **A1 of the UI modernization audit** (`data/grandline-ui-
-        // modernization-audit/report.md` §3A) adds `.fullSizeContentView`
-        // here: the content view then covers the whole window and the
-        // floating bar becomes the top edge, reclaiming the stock titlebar's
-        // height (measured: 32pt, not the report's estimated ~28). The rest
-        // of that treatment - the transparent, titleless titlebar and the
-        // traffic lights re-centred onto the bar - is `WindowChromeFusion`;
-        // see its header for every measured number and for why the lights
-        // have to be repositioned from a `layout()` hook.
+        // **UX-12 of the 2026-10 review.** `.fullSizeContentView` so the
+        // Workspace sidebar runs the full height of the window under the
+        // traffic lights; the title is visible (the module), the toolbar is
+        // a real `NSToolbar`, and the lights stay where AppKit puts them -
+        // see `WorkspaceWindowChrome` in `WorkspaceShell.swift`.
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1220, height: 720),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        // Still set, and still worth setting, even though `titleVisibility`
-        // hides it: the Window menu, Mission Control and the window's own
-        // proxy menu all read it.
+        // The Window menu, Mission Control and the toolbar's own title all
+        // read it.
         window.title = Self.windowTitle(context: appShell.currentContextTitle)
         // **Review bug B8.** `isReleasedWhenClosed` defaults to `true` for a
         // window created with `init(contentRect:...)`, and this one is
         // referenced for the app's whole life - `AppDelegate.window`, the
-        // resize observers, `FullScreenMenuBarFill`, `WindowChromeFusion`'s
-        // per-window cluster cache, the lock overlay.
+        // resize observers, `FullScreenMenuBarFill`, the lock overlay.
         //
         // With the stock `applicationShouldTerminateAfterLastWindowClosed`
         // answer the red button quits the app, so the release is harmless. In
@@ -827,7 +794,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // for the same reason; the main window never did because until
         // compact mode shipped it could not outlive its own close.
         window.isReleasedWhenClosed = false
-        WindowChromeFusion.apply(to: window)
+        // The shell's view first: the toolbar's tracking separator follows
+        // the shell's split view, which exists once `loadView` has run, and
+        // AppKit builds the toolbar's items when the toolbar is installed.
+        _ = appShell.view
+        WorkspaceWindowChrome.apply(to: window, toolbar: appShell.toolbarController.toolbar)
         fullScreenMenuBarFill = FullScreenMenuBarFill(window: window)
         // **`contentViewController` first, then the frame.** Assigning a
         // content view controller makes AppKit re-derive the window's frame
@@ -836,13 +807,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // *before* this line is silently undone. Measured with a real window:
         // set to 1512x950 and then given a content view controller, it came
         // back 960x652, i.e. exactly `contentMinSize` plus the title bar.
-        // Review #3 §7: every navigation renames the window, so Mission
-        // Control and the Window menu say which page this is. Registered
-        // before `contentViewController`, which is what first lays the shell
-        // out - a `show(_:)` during that pass then already finds a handler.
-        appShell.onCurrentDestinationChanged = { [weak window] context in
-            window?.title = Self.windowTitle(context: context)
-        }
+        // Review #3 §7 and UX-12: every navigation renames the window, so
+        // Mission Control, the Window menu and the toolbar say which module
+        // this is. The shell titles its own window
+        // (`AppShellController.refreshDrillHeaderSubtitle`), so nothing here
+        // has to forward it.
         window.contentViewController = appShell
         window.contentMinSize = Self.minContentSize
         window.setFrame(Self.defaultWindowFrame(), display: false)
@@ -852,6 +821,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // restored - so this sets a sane default without overriding a
         // deliberate later choice.
         window.setFrameAutosaveName(Self.windowAutosaveName)
+        // The shell navigated during `loadView`, before it had a window to
+        // title, and the sidebar's icon-only mode depends on the frame just
+        // restored - so both are applied once now that the window is real.
+        appShell.refreshDrillHeaderSubtitle()
+        appShell.applySidebarCompactness()
         // Theme-audit task: the window's own chrome (title bar) has no view
         // to force `.appearance` on, so without this it always follows the
         // OS's actual light/dark setting rather than the active Helm theme.
@@ -1037,7 +1011,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// height so it can never fight `defaultWindowFrame` - it only stops the
     /// captain dragging the window down to a size where the destinations
     /// stop being readable.
-    static let minContentSize = NSSize(width: 960, height: 620)
+    ///
+    /// UX-01: the width is the pages' own 960pt floor plus the Workspace
+    /// sidebar as icons (`WorkspaceSidebarController.compactWidth` and its
+    /// divider), so the narrowest window still gives every page the column it
+    /// was designed and measured at.
+    static let minContentSize = NSSize(
+        width: 960 + WorkspaceSidebarController.compactWidth + 4, height: 620)
 
     /// The window's title, from the running bundle rather than a literal.
     ///
@@ -1082,11 +1062,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// A `nil` or blank context answers the bare app name, which is what the
     /// window is titled for the instant between being created and the shell's
     /// first navigation - never "Grand Line - ".
+    ///
+    /// **UX-12** made the title visible: the system draws it at the leading
+    /// edge of the toolbar, where it names the module the way Mail's names the
+    /// mailbox. So the real app's title is the module alone ("Tasks"), and
+    /// only a build with a different bundle name (the probe) keeps its name in
+    /// front - "which instance is this?" is still that build's question.
     static func windowTitle(context: String?) -> String {
         let name = windowTitle()
         guard let context = context?.trimmingCharacters(in: .whitespaces), !context.isEmpty else {
             return name
         }
+        guard name != "Grand Line" else { return context }
         return "\(name) - \(context)"
     }
 
@@ -1600,17 +1587,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: Command palette (phase 4 "Knowledge and speed"; expanded by F5)
-
-    /// The Go menu's "All Destinations…" (⌘⇧D) and ⌘K's verb of the same
-    /// name - UX1.
-    ///
-    /// The bar's quick-access overflow menu used to carry a third row into
-    /// here. It is gone: it was wired to a closure nothing ever assigned, so
-    /// it did nothing at all, and the captain asked for it removed rather than
-    /// repaired - see `docs/history/03-navigation-and-chrome.md`.
-    @objc func showAllDestinations() {
-        allDestinations.toggle()
-    }
 
     /// Help → "Keyboard Shortcuts…" (⌘⇧/) - UX3.
     ///
@@ -2207,121 +2183,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         for item in logAnalyzerMenu.items { item.target = menuTarget }
 
-        // Go menu - UX3's "a 'Go' menu listing every destination with its
-        // shortcut", and UX4's "give ⌘1-⌘5 to the spaces (the original
-        // Daylight spec)". Six of them since
-        // `fm/grandline-overview-page-daily-review` added a sixth pill, so
-        // the range is ⌘1-⌘6 and Home sits at ⌘2.
+        // Window menu - UX3's "⌘M minimise is dead, no Zoom/Bring All to
+        // Front", and UX-01/UX-12 of the 2026-10 review: the menu lists the
+        // Workspace's seventeen modules, the same table the sidebar draws, so
+        // every module is reachable from the menu bar and from the keyboard.
+        // ⌘1-⌘6 go to Home and the Work group (the review's section 4.7; the
+        // old Go menu's six space pills held those chords until the pills
+        // went). The rows are generated from `ModuleTable`, never a second
+        // hand-written list, so a new module needs no edit here.
         //
-        // **UX issue X3 removed Home's separate ⌘0 row.** The menu used to
-        // open with "Home ⌘0" and then list "Home ⌘2" three rows later -
-        // one destination, two rows, the same word twice, which is half of
-        // what the review read off this menu. One of the two chords had to
-        // go, and ⌘0 is the one that does not fit a model: ⌘1-⌘6 mirrors
-        // the bar's pills left to right and is what `DaylightSpace
-        // .shortcutIndex` already means, while ⌘0 was a leftover from
-        // before the pills were numbered at all. ⌘2 reaches the same page
-        // (`selectSpace` on the Home space shows the canvas), so nothing is
-        // unreachable - only the second spelling of it is gone.
+        // This replaces the Go menu, whose spaces, destination list and
+        // "All Destinations…" overlay the sidebar now is.
         //
-        // ⌘1-⌘9 have been genuinely free since the Tab menu's removal (see
-        // the Hosts menu's own session-switcher comment, which records that
-        // and why the session switcher stayed on ⌘⌃1-9 regardless). The
-        // spaces take ⌘1 upward in declaration order, which is what
-        // `DaylightSpace.shortcutIndex` reports - the loop below reads it
-        // rather than a hand-written list, so a sixth pill needed no edit
-        // here.
-        //
-        // The destination list below is generated from
-        // `AllDestinationsOverlayController.groups()` - the same grouping the
-        // ⌘⇧D map draws - rather than a hand-written second list, so a new
-        // `RailDestination` appears in both surfaces with no edit here.
-        let goMenuItem = NSMenuItem()
-        mainMenu.addItem(goMenuItem)
-        let goMenu = NSMenu(title: "Go")
-        goMenuItem.submenu = goMenu
-        for space in DaylightSpace.allCases {
-            let item = NSMenuItem(title: space.title,
-                                  action: #selector(AppShellController.selectSpaceByShortcut(_:)),
-                                  keyEquivalent: "\(space.shortcutIndex)")
-            item.withSymbol(space.heroSymbol)
-            item.tag = space.shortcutIndex
-            item.target = menuTarget
-            goMenu.addItem(item)
+        // Assigning `NSApp.windowsMenu` is what makes AppKit keep the window
+        // list at the bottom of it up to date and what gives the standard
+        // items their system behaviour; those three items are the stock
+        // selectors, so none of that is behaviour this app implements.
+        let windowMenuItem = NSMenuItem()
+        mainMenu.addItem(windowMenuItem)
+        let windowMenu = NSMenu(title: "Window")
+        windowMenuItem.submenu = windowMenu
+        for section in WorkspaceSection.allCases {
+            let modules = ModuleTable.modules(in: section)
+            guard !modules.isEmpty else { continue }
+            if let title = section.title {
+                windowMenu.addItem(NSMenuItem.separator())
+                let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                header.isEnabled = false
+                windowMenu.addItem(header)
+            }
+            for module in modules {
+                let item = NSMenuItem(title: module.title,
+                                      action: #selector(AppShellController.selectModuleFromMenu(_:)),
+                                      keyEquivalent: module.chord?.key ?? "")
+                if let chord = module.chord { item.keyEquivalentModifierMask = chord.modifiers }
+                item.withSymbol(module.symbol)
+                item.representedObject = module.id.rawValue
+                item.target = menuTarget
+                item.indentationLevel = section.title == nil ? 0 : 1
+                windowMenu.addItem(item)
+            }
         }
-        goMenu.addItem(NSMenuItem.separator())
-        // P9: the standard sidebar command for the seven pages whose column is
-        // a real split-view sidebar. Not the system's ⌃⌘S, which this app
-        // already gives to Show Hosts; ⌥⌘S was checked free against this
-        // file's chords, which `NavigationCoherenceSelfTest` enforces.
+        windowMenu.addItem(NSMenuItem.separator())
+        // ⌘⇧] / ⌘⇧[ step through the showing module's tabs. On a page with
+        // its own tab strip (Console, a host page, Tools) the tab-shortcut
+        // monitor answers first and keeps the terminal's own ⌘⇧] / ⌘⇧[
+        // (`TabKeyboardShortcuts`), so the terminal chords are unchanged.
+        let nextTabItem = NSMenuItem(title: "Next Module Tab",
+                                     action: #selector(AppShellController.nextModuleTab),
+                                     keyEquivalent: "}").withSymbol("chevron.forward")
+        nextTabItem.keyEquivalentModifierMask = [.command]
+        nextTabItem.target = menuTarget
+        windowMenu.addItem(nextTabItem)
+        let previousTabItem = NSMenuItem(title: "Previous Module Tab",
+                                         action: #selector(AppShellController.previousModuleTab),
+                                         keyEquivalent: "{").withSymbol("chevron.backward")
+        previousTabItem.keyEquivalentModifierMask = [.command]
+        previousTabItem.target = menuTarget
+        windowMenu.addItem(previousTabItem)
+        // The standard sidebar command, on the Workspace sidebar. Not the
+        // system's ⌃⌘S, which this app already gives to Show Hosts; ⌥⌘S was
+        // checked free, which `NavigationCoherenceSelfTest` enforces.
         let toggleSidebarItem = NSMenuItem(title: "Toggle Sidebar",
                                            action: #selector(AppShellController.toggleSidebarFromMenu),
                                            keyEquivalent: "s").withSymbol("sidebar.left")
         toggleSidebarItem.keyEquivalentModifierMask = [.command, .option]
         toggleSidebarItem.target = menuTarget
-        goMenu.addItem(toggleSidebarItem)
-        goMenu.addItem(NSMenuItem.separator())
-        let allDestinationsItem = NSMenuItem(title: "All Destinations\u{2026}",
-                                             action: #selector(AppDelegate.showAllDestinations),
-                                             keyEquivalent: "d").withSymbol("square.grid.3x3")
-        // ⌘⇧D, not the finding's suggested ⌘⇧A: ⌘⇧A is already "Create RCA"
-        // in the Log Analyzer menu below, and that menu's own comment is
-        // explicit that it took ⌘⇧A *because* ⇧⌘R was occupied at the time,
-        // and equally explicit that an already-shipped shortcut is not a later
-        // task's to change. ⌘⇧D was verified unbound anywhere in this method.
-        allDestinationsItem.keyEquivalentModifierMask = [.command, .shift]
-        allDestinationsItem.target = self
-        goMenu.addItem(allDestinationsItem)
-        // **UX issue X3.** Everything above this point already has its own
-        // item: Home at Cmd-0, and every space pill at Cmd-1..Cmd-6. The
-        // groups below are the complete destination map (the same one the
-        // All Destinations overlay draws, where completeness is the whole
-        // point), so without this a destination that *is* a space - the
-        // daily review - appeared twice in one menu: once as its pill, and
-        // again as the only item under a header carrying its own name. Home
-        // appeared a third time, under "Elsewhere".
-        //
-        // Filtered here rather than in `groups()` because the overlay is a
-        // map and must stay complete; a menu that already listed something
-        // ten rows up must not list it again.
-        var alreadyListed: Set<RailDestination> = [.homeCanvas]
-        for space in DaylightSpace.allCases {
-            if let destination = space.destination { alreadyListed.insert(destination) }
-        }
-        for group in AllDestinationsOverlayController.groups() {
-            let remaining = group.destinations.filter { !alreadyListed.contains($0) }
-            guard !remaining.isEmpty else { continue }
-            goMenu.addItem(NSMenuItem.separator())
-            // A disabled header row, the standard Mac way to caption a run of
-            // items inside one menu - the alternative (a submenu per space)
-            // would put every destination two levels deep, which is the
-            // opposite of what a "show me everything" menu is for.
-            let header = NSMenuItem(title: group.title, action: nil, keyEquivalent: "")
-            header.isEnabled = false
-            goMenu.addItem(header)
-            for destination in remaining {
-                let item = NSMenuItem(title: destination.title,
-                                      action: #selector(AppShellController.selectDestinationFromMenu(_:)),
-                                      keyEquivalent: "")
-                item.withSymbol(destination.symbol)
-                item.representedObject = destination.rawValue
-                item.target = menuTarget
-                item.indentationLevel = 1
-                goMenu.addItem(item)
-            }
-        }
-
-        // Window menu - UX3's "⌘M minimise is dead, no Zoom/Bring All to
-        // Front".
-        //
-        // Assigning `NSApp.windowsMenu` is what makes AppKit keep the window
-        // list at the bottom of it up to date and what gives the standard
-        // items their system behaviour; the three items themselves are the
-        // stock selectors, so none of this is behaviour this app implements.
-        let windowMenuItem = NSMenuItem()
-        mainMenu.addItem(windowMenuItem)
-        let windowMenu = NSMenu(title: "Window")
-        windowMenuItem.submenu = windowMenu
+        windowMenu.addItem(toggleSidebarItem)
+        windowMenu.addItem(NSMenuItem.separator())
         windowMenu.addItem(withTitle: "Minimize", symbol: "minus", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", symbol: "arrow.up.left.and.arrow.down.right", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(NSMenuItem.separator())
@@ -3262,28 +3191,6 @@ if ProcessInfo.processInfo.environment["FM_RUN_BOOTSTRAP_WINDOW_SHRINK_TESTS"] =
     exit(BootstrapWindowShrinkSelfTest.run() ? 0 : 1)
 }
 
-// A drill page header's title can render truncated to a few characters
-// after switching away from a destination whose action cluster (or a narrow
-// window) genuinely squeezed the row at some earlier point in the session -
-// see AppShellDrillHeaderTitleSelfTest.swift's header for the root cause
-// (an NSStackView's cross-axis width getting permanently stuck once squeezed).
-if ProcessInfo.processInfo.environment["FM_RUN_DRILL_HEADER_TITLE_TESTS"] == "1" {
-    exit(AppShellDrillHeaderTitleSelfTest.run() ? 0 : 1)
-}
-
-// Daylight Phase 2: the shell that replaced the icon rail and the top bar -
-// module anatomy, span-2 grid math, the locked space table, the canvas's
-// no-store rule, and the bar's window-safety. See
-// DaylightModuleSelfTest.swift's header.
-// The UI modernization audit's A1/A2/A3: the window's titlebar fused into
-// the floating bar, the drill header merged into that bar's leading area,
-// and the shared scroll-edge treatment. Window-backed - every case is a
-// question about a real window's chrome, a real laid-out bar or a real
-// scroll offset. See WindowChromeFusionSelfTest.swift's header.
-if ProcessInfo.processInfo.environment["FM_RUN_WINDOW_CHROME_FUSION_TESTS"] == "1" {
-    exit(WindowChromeFusionSelfTest.run() ? 0 : 1)
-}
-
 // The other half of that fusion, which A1 deferred to AppKit and AppKit does
 // not do: the 33pt menu-bar strip macOS reserves above a full-screen window,
 // which renders as the captain-reported solid black band. Window-backed - it
@@ -3301,22 +3208,6 @@ if ProcessInfo.processInfo.environment["FM_RUN_FULL_SCREEN_MENU_BAR_FILL_TESTS"]
 // See BarNavigationModernizationSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_BAR_NAV_MODERNIZATION_TESTS"] == "1" {
     exit(BarNavigationModernizationSelfTest.run() ? 0 : 1)
-}
-
-// `fm/grandline-bar-active-state`: every bar square lit while its page is
-// open, by every route, and a real press drawing the pressed tile.
-// Window-backed - it presses the squares of a mounted shell.
-if ProcessInfo.processInfo.environment["FM_RUN_BAR_ACTIVE_STATE_TESTS"] == "1" {
-    exit(BarActiveStateSelfTest.run() ? 0 : 1)
-}
-
-// `fm/grandline-topbar-icon-tiles`: the same row's shortcuts as coloured
-// tiles - the per-destination hue, its legibility in all 26 palettes, the
-// three states, the controls deliberately left plain, and the guard that the
-// row's footprint did not move. Pure logic: layer colours and frames off a
-// hand-laid-out bar, no window.
-if ProcessInfo.processInfo.environment["FM_RUN_BAR_ICON_TILE_TESTS"] == "1" {
-    exit(DaylightBarIconTileSelfTest.run() ? 0 : 1)
 }
 
 // The same audit's C, D and E - the canvas and its cards, row/list density,
@@ -3423,6 +3314,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
 // consolidates - see `ModuleTableSelfTest.swift`'s header.
 if ProcessInfo.processInfo.environment["FM_RUN_MODULE_TABLE_TESTS"] == "1" {
     exit(ModuleTableSelfTest.run() ? 0 : 1)
+}
+
+// UX-01/UX-12: the Workspace shell mounted for real - the sidebar as the map,
+// every route reachable, the chords, the window's own chrome, no back button,
+// the icon-only column and the toolbar's lock. Window-backed. See
+// `WorkspaceShellSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_WORKSPACE_SHELL_TESTS"] == "1" {
+    exit(WorkspaceShellSelfTest.run() ? 0 : 1)
 }
 
 // `fm/grandline-engineering-cards-stale-counts`: a hub summary card must
@@ -4383,16 +4282,6 @@ if ProcessInfo.processInfo.environment["FM_RUN_UPDATES_REFRESH_BUTTON_THEME_TEST
 // alone - see StatusPillThemeSelfTest.swift's header for the root cause.
 if ProcessInfo.processInfo.environment["FM_RUN_STATUS_PILL_THEME_TESTS"] == "1" {
     exit(StatusPillThemeSelfTest.run() ? 0 : 1)
-}
-
-// A real, captain-reported bug on the top nav's space pills
-// (`DaylightBarController`): clicking a pill and leaving the cursor in
-// place left its label blended into a stale, pre-click background, in both
-// light and dark mode - see TopNavPillPressedStateSelfTest.swift's header
-// for the root cause (a missing `HoverHighlightView.hoverColor` repaint
-// while already hovering).
-if ProcessInfo.processInfo.environment["FM_RUN_TOPNAV_PILL_PRESSED_STATE_TESTS"] == "1" {
-    exit(TopNavPillPressedStateSelfTest.run() ? 0 : 1)
 }
 
 // `fm/grandline-session-switcher`: the persistent live-session strip, the

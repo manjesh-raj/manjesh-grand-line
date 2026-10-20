@@ -932,7 +932,7 @@ enum CompactModeViewSelfTest {
         }
         let construction = String(text[start.upperBound..<end.lowerBound])
         // Discriminating power: the extracted region has to be the real one.
-        check(construction.contains("WindowChromeFusion.apply(to: window)"),
+        check(construction.contains("WorkspaceWindowChrome.apply(to: window"),
               "the extracted window construction does not look like the real one")
         check(construction.contains("window.isReleasedWhenClosed = false"),
               "the main window must set isReleasedWhenClosed = false. In compact mode the red "

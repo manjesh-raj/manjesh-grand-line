@@ -74,21 +74,27 @@ final class AppShellController: NSViewController {
 
     private var chromeTextScaleObservation: ChromeTextScaleObservation?
 
-    /// Daylight Phase 2: the floating bar that replaced the rail and the old
-    /// top bar. Internal (like `rail` was) so the app delegate can reach its
-    /// notification centre and its space pills.
-    let bar = DaylightBarController()
+    /// UX-01 and UX-12: the Workspace shell's frame. The sidebar is the map
+    /// of the seventeen modules, the content pane holds the module's tab strip
+    /// over the body container, and the split adds the inspector. Internal so
+    /// the app delegate can install the toolbar on the window and reach the
+    /// toolbar's notification centre.
+    let sidebar = WorkspaceSidebarController()
+    let contentPane = WorkspaceContentPane()
+    private(set) lazy var split = WorkspaceSplitController(sidebar: sidebar, contentPane: contentPane)
+    let toolbarController = WorkspaceToolbarController()
 
-    /// A3: one observer, re-pointed at whatever is showing, that tells the
-    /// bar when the page has scrolled off its own top edge. See
-    /// `ScrollEdge.swift` for why this discovers the page's scroll view
-    /// rather than asking the page for it.
-    private let scrollEdge = ScrollEdgeObserver()
-    /// What the drill navigation was last pointed at, so a page whose live
-    /// numbers changed can have its subtitle re-read without the shell having
-    /// to work out which destination is showing all over again.
-    private var lastDrillContext: (title: String, subtitle: String, symbol: String,
-                                   hue: HelmDomainHue, artwork: NSImage?, controller: NSViewController?)?
+    /// The module showing now, and the tab each module last showed - so a
+    /// sidebar click returns to where the captain left that module, the way
+    /// Mail returns to a mailbox's last selection.
+    private(set) var currentModuleID: WorkspaceModuleID = .home
+    private var lastTabIndex: [WorkspaceModuleID: Int] = [:]
+
+    /// The page whose actions and live subtitle the toolbar is showing, so a
+    /// page whose numbers changed can have its subtitle re-read without the
+    /// shell working out which destination is showing all over again.
+    private weak var toolbarPage: NSViewController?
+    private var toolbarFallbackSubtitle = ""
 
     /// The hub. Owns the space filter and the module grid; knows nothing about
     /// navigation beyond the closures wired below.
@@ -744,20 +750,15 @@ final class AppShellController: NSViewController {
     /// The app's one answer to "which hosts are live right now". Written only
     /// from the three moments this controller already owned that fact
     /// (`connectHost`, `revealHostConsole`, `removeHostConsole`); read by the
-    /// session strip, the Hosts list's per-row live state, the ⌘K palette's
+    /// sidebar's children under Connections, the Hosts list's per-row live state, the ⌘K palette's
     /// pinned "Active sessions" group and the session shortcuts. `hostConsoles`
     /// above is still the only thing that maps an id back to a real console -
     /// this registry carries no controller reference, deliberately.
     let sessions = HostSessionRegistry()
 
-    /// The persistent pill strip, docked under the bar. Visible only while at
-    /// least one session is live, and collapsed to height 0 as well as hidden
-    /// when it is not - an ordinary hidden `NSView`'s constraints still
-    /// participate fully in layout (AGENTS.md gotcha (11)), so hiding alone
-    /// would leave a permanent gap above every destination.
-    private let sessionStrip = SessionStripView()
-    private var sessionStripHeightConstraint: NSLayoutConstraint!
-    private var bodyTopConstraint: NSLayoutConstraint!
+    /// UX-03: live sessions are children of Connections in the sidebar,
+    /// where the persistent strip under the old floating bar used to list
+    /// them. The token keeps the registry's one observer alive.
     private var sessionsToken: UUID?
 
     // MARK: Recent destinations (`fm/grandline-recents-navigation`)
@@ -790,14 +791,14 @@ final class AppShellController: NSViewController {
     /// and no second notion of it to drift.
     var onCurrentDestinationChanged: ((String?) -> Void)?
 
-    /// The human-readable name of whatever is on screen - a destination's own
-    /// title, or a host page's label. `nil` before the first navigation.
+    /// The name the window title carries: the showing module's (UX-12), or
+    /// `nil` before the first navigation.
     ///
     /// Read off `currentDestinationKind` through `RecentDestinationKind
     /// .title`, which is already the one place that answers "what is this
     /// page called" for the Recents dropdown. A second switch here would be a
     /// second answer.
-    var currentContextTitle: String? { currentDestinationKind?.title }
+    var currentContextTitle: String? { currentDestinationKind == nil ? nil : windowTitleContext }
 
     /// Whatever `updateRecentDestinations(arriving:)` last recorded as
     /// current - the one piece of state that lets it know what was "on
@@ -1031,44 +1032,28 @@ final class AppShellController: NSViewController {
         // `loadView`s (`mounter.mountEagerSlots()`), is one launch interval.
         let loadViewInterval = LaunchSignposts.begin("AppShellController.loadView")
         defer { LaunchSignposts.end("AppShellController.loadView", loadViewInterval) }
-        // A1: a `ChromeFusionRootView` rather than a plain `NSView`, purely
-        // for its `layout()` hook - AppKit resets the traffic lights' frames
-        // on every layout pass, so the reposition has to ride that same
-        // pass. `WindowChromeFusion`'s header records the measurements.
-        let root = ChromeFusionRootView(frame: NSRect(x: 0, y: 0, width: 1220, height: 720))
+        // UX-01/UX-12: the root holds the Workspace split (sidebar, content
+        // column, inspector) and, above it, the lock overlay. The window's
+        // traffic lights stay where AppKit puts them, over the sidebar, and
+        // the system draws the title in the toolbar - nothing here positions
+        // window chrome any more.
+        let root = WorkspaceRootView(frame: NSRect(x: 0, y: 0, width: 1220, height: 720))
         root.wantsLayer = true
+        // `fm/grand-line-body-width-selfheal-layout-fix`: the width tie's
+        // repair rides every layout pass of the content column, because a
+        // layout pass is when a constraint conflict actually resolves -
+        // repairing only on resize left a deactivated tie broken until the
+        // next resize that might never come. See
+        // `data/grand-line-stray-window-glitch-scout/report.md` "BUG B".
+        //
+        // **This does not reintroduce GL-20's resize-frame cost**: the
+        // staleness gate GL-20 added returns early on every settled pass
+        // (measured: ten idle passes, zero forced layouts).
         root.onLayout = { [weak self] in
-            guard let self else { return }
-            WindowChromeFusion.positionTrafficLights(
-                in: self.view.window,
-                verticalCenter: DaylightBarController.trafficLightCenterY,
-                leadingX: DaylightBarController.trafficLightLeadingX)
-            // `fm/grand-line-body-width-selfheal-layout-fix`: the width tie's
-            // repair rides this same pass, for the same reason the traffic
-            // lights do. Before this, `reassertBodyContainerWidthTie()` had
-            // exactly two triggers - `loadView` and
-            // `NSWindow.didResizeNotification` (both still below) - so a tie
-            // AppKit deactivated, or a frame that went stale, for any reason
-            // other than a resize stayed visibly broken until the captain
-            // happened to resize the window or restart the app. A layout pass
-            // is when a constraint conflict actually resolves, so repairing
-            // from here catches it at the moment it happens rather than at the
-            // next resize that may never come. See
-            // `data/grand-line-stray-window-glitch-scout/report.md` "BUG B"
-            // for the live capture (a 1512pt-wide window surface with only
-            // ~670pt of it laid out and drawn, the rest undrawn black,
-            // unrecoverable without a quit-and-reopen).
-            //
-            // **This does not reintroduce GL-20's resize-frame cost, and that
-            // was measured rather than argued** (a temporary counter, reverted
-            // before commit): across ten idle layout passes on a settled
-            // window this enters the method ten times and forces **zero**
-            // layout passes - the staleness gate GL-20 added returns early on
-            // every one. The per-pass cost is two frame reads and two
-            // `isActive` checks. Only a genuine break or a genuinely stale
-            // frame pays for a resolve (4 across a launch plus four resizes,
-            // all of them real work).
-            self.reassertBodyContainerWidthTie(insideLayoutPass: true)
+            self?.reassertBodyContainerWidthTie(insideLayoutPass: true)
+        }
+        contentPane.onLayout = { [weak self] in
+            self?.reassertBodyContainerWidthTie(insideLayoutPass: true)
         }
         view = root
 
@@ -1109,47 +1094,43 @@ final class AppShellController: NSViewController {
             self.view.layoutSubtreeIfNeeded()
         }
 
-        addChild(bar)
-        root.addSubview(bar.view)
-        bar.view.translatesAutoresizingMaskIntoConstraints = false
-        // A space pill navigates to the canvas (if it is not already showing)
-        // and filters it. That two-step is here rather than in the bar for
-        // §5.3's reason: the bar must not know what a canvas is.
-        bar.onSelectSpace = { [weak self] space in self?.selectSpace(space) }
-        // The bar's two quick-access icons (Sticky Board, Code Preview) - one
-        // click from anywhere in the app, straight to the destination, using
-        // the same `show(_:)` every other entry point uses rather than a
-        // second navigation path (`fm/grandline-sticky-code-preview-polish`).
-        bar.onSelectDestination = { [weak self] destination in self?.show(destination) }
-        bar.onSelectSettings = { [weak self] in self?.show(.settings) }
-        bar.onLogoutRequested = { [weak self] in self?.onLogoutRequested?() }
-        // `fm/grandline-recents-navigation`: the Recents popover reads this
+        addChild(split)
+        root.addSubview(split.view)
+        NSLayoutConstraint.activate([
+            split.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            split.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            split.view.topAnchor.constraint(equalTo: root.topAnchor),
+            split.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+        ])
+
+        // The sidebar navigates through the same `show(_:)` every other entry
+        // point uses - never a second navigation path.
+        sidebar.onSelectModule = { [weak self] id in self?.showModule(id) }
+        sidebar.onSelectChild = { [weak self] id, child in self?.selectSidebarChild(child, in: id) }
+        sidebar.childrenProvider = { [weak self] id in self?.sidebarChildren(for: id) ?? [] }
+        sidebar.accessoryProvider = { [weak self] id in self?.sidebarAccessory(for: id) }
+        sidebar.childMenu = { [weak self] id, child in self?.sidebarChildMenu(child, in: id) }
+        sidebar.onOpenSettings = { [weak self] in self?.show(.settings) }
+        sidebar.onLogout = { [weak self] in self?.requestLogout() }
+        contentPane.moduleTabs.onSelect = { [weak self] index in self?.selectModuleTab(index) }
+
+        // `fm/grandline-recents-navigation`: the Recents panel reads this
         // controller's own registry and dispatches a click back through
-        // whichever navigation primitive already handles that kind - never a
-        // third path.
-        bar.recentDestinations.configure(registry: recentDestinations) { [weak self] kind in
+        // whichever navigation primitive already handles that kind.
+        toolbarController.recentDestinations.configure(registry: recentDestinations) { [weak self] kind in
             self?.navigateToRecentDestination(kind)
         }
+        // Phase 4's unified search palette, forwarded to the app delegate.
+        toolbarController.onSearchTapped = { [weak self] in self?.onSearchTapped?() }
+        toolbarController.onToggleSidebar = { [weak self] in self?.toggleSidebarFromMenu() }
+        toolbarController.trackedSplitView = split.splitView
+        contentPane.titleObstacle = toolbarController.sidebarButton
+        // F7: the chip is the feature's "it follows you off the Tasks page"
+        // half, so the toolbar gets the timer as soon as both exist.
+        toolbarController.attachFocusTimer(focusTimer)
 
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(bodyContainer)
-
-        bar.onDrillBack = { [weak self] in self?.show(.homeCanvas) }
-        // A3: the bar is the only thing that reacts to the scroll edge, and
-        // the observer is the only thing that knows about it.
-        scrollEdge.onChange = { [weak self] active in self?.bar.setScrollEdgeActive(active) }
-        // Phase 4 ("Knowledge and speed") superseded Fix 4's original mapping
-        // here (an in-terminal find stand-in, since there was no real global
-        // search yet) - the topbar Search pill (and its `⌘K` badge) now opens
-        // the real unified search palette, forwarded to the app delegate via
-        // `onSearchTapped` (see that property's own doc comment) rather than
-        // owned by this controller. Plain find-in-terminal is unaffected -
-        // it's still reachable via the console toolbar's own magnifying-glass
-        // icon (`ConsoleController.showFind`) and the Edit menu's `⌘F`.
-        bar.onSearchTapped = { [weak self] in self?.onSearchTapped?() }
-        // F7: the chip is the feature's "it follows you off the Tasks page"
-        // half, so the bar gets the timer as soon as both exist.
-        bar.attachFocusTimer(focusTimer)
+        contentPane.bodyHost.addSubview(bodyContainer)
 
         // GL-37: the destination table. One line per body view replaces the
         // six hand-maintained per-destination edit sites this used to need
@@ -1207,48 +1188,17 @@ final class AppShellController: NSViewController {
         // views). Every other slot waits for its first `show(_:)`.
         mounter.mountEagerSlots()
 
-        // Daylight Phase 2: `bodyContainer` now spans the window's full width -
-        // there is no rail to sit beside - and starts below the floating bar's
-        // reserved region. Both edges are still named, still required, and
-        // still re-asserted on every resize; see
-        // `reassertBodyContainerWidthTie()` for why a declared `==` is not by
-        // itself enough.
-        bodyLeadingConstraint = bodyContainer.leadingAnchor.constraint(equalTo: root.leadingAnchor)
-        bodyTrailingConstraint = bodyContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor)
-
-        // The session strip sits between the floating bar and the body, at the
-        // bar's own side margins so the two read as one piece of chrome. It is
-        // a sibling here rather than a second row inside
-        // `DaylightBarController` because the vertical stack above the body is
-        // this controller's own decision, and that controller's geometry
-        // (`reservedTopHeight`, its two independently-anchored constraint
-        // chains, B4's pill-label priority band) is measured and self-tested
-        // as-is.
-        root.addSubview(sessionStrip)
-        sessionStrip.onSelect = { [weak self] id in self?.switchToSession(hostID: id) }
-        sessionStrip.onClose = { [weak self] id in self?.confirmEndSession(hostID: id) }
-        sessionStrip.onAddRequested = { [weak self] in self?.show(.hosts) }
-        sessionStripHeightConstraint = sessionStrip.heightAnchor.constraint(equalToConstant: 0)
-        bodyTopConstraint = bodyContainer.topAnchor.constraint(
-            equalTo: root.topAnchor, constant: DaylightBarController.reservedTopHeight)
-
+        // The body fills the content column's body host. Both edges are still
+        // named, still required and still re-asserted on every resize and
+        // layout pass; see `reassertBodyContainerWidthTie()` for why a declared
+        // `==` is not by itself enough.
+        bodyLeadingConstraint = bodyContainer.leadingAnchor.constraint(equalTo: contentPane.bodyHost.leadingAnchor)
+        bodyTrailingConstraint = bodyContainer.trailingAnchor.constraint(equalTo: contentPane.bodyHost.trailingAnchor)
         NSLayoutConstraint.activate([
-            bar.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            bar.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            bar.view.topAnchor.constraint(equalTo: root.topAnchor),
-
-            sessionStrip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            sessionStrip.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            sessionStrip.topAnchor.constraint(
-                equalTo: root.topAnchor,
-                constant: DaylightBarController.topMargin + DaylightBarController.height
-                    + SessionStripView.gapBelowBar),
-            sessionStripHeightConstraint,
-
             bodyLeadingConstraint,
             bodyTrailingConstraint,
-            bodyTopConstraint,
-            bodyContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            bodyContainer.topAnchor.constraint(equalTo: contentPane.bodyHost.topAnchor),
+            bodyContainer.bottomAnchor.constraint(equalTo: contentPane.bodyHost.bottomAnchor),
         ])
 
         // `fm/grandline-live-gap-rootcause-scout`: a real, live-captured
@@ -1288,12 +1238,18 @@ final class AppShellController: NSViewController {
         // covers the window's still-off-screen launch-time resizes, and a
         // resize can genuinely occur without a layout pass following it.
         reassertBodyContainerWidthTie()
+        // The split lays its panes out lazily, so the body would otherwise be
+        // zero wide until the window's first pass; one pass here (outside any
+        // layout pass, so it is legal) gives every page a real width to mount
+        // into at launch, as the full-width body always had.
+        view.layoutSubtreeIfNeeded()
         windowResizeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification, object: nil, queue: .main
         ) { [weak self] note in
             guard let self, let window = note.object as? NSWindow, window === self.view.window else { return }
             self.reassertBodyContainerWidthTie()
             self.windowOverflowGuard.windowDidResize(window)
+            self.applySidebarCompactness()
         }
 
         // PERF-01: only the four eager pages are wired here. Every lazy
@@ -1345,6 +1301,9 @@ final class AppShellController: NSViewController {
         // signal was invented for either.
         overview.onNeedsDecisionCountChanged = { [weak self] count in
             NotificationSources.setFleetDecisions(count: count) { self?.show(.overview) }
+            // UX-01: the same count is Crew's "needs you" badge in the sidebar.
+            self?.fleetDecisionCount = count
+            self?.sidebar.reloadAccessories()
         }
         // The canvas's Fleet and Merge queue modules, fed from Overview's own
         // refresh rather than a fetch of their own - see
@@ -1564,6 +1523,10 @@ final class AppShellController: NSViewController {
             poneglyph.lockForAppLock()
         }
         lockScreen.view.isHidden = false
+        // The toolbar is window chrome, outside the content view this overlay
+        // covers, so it is hidden with the app: the bell and Recents would
+        // otherwise stay one click from the captain's data.
+        toolbarController.setLocked(true)
         // E4: re-add what `hideLock` removed. A re-lock does not necessarily
         // re-lay-out an already-sized overlay, so this cannot be left to
         // `viewDidLayout`'s own call.
@@ -1714,6 +1677,7 @@ final class AppShellController: NSViewController {
 
     private func hideLock() {
         lockScreen.view.isHidden = true
+        toolbarController.setLocked(false)
         // E4: the scene's three infinite animations used to stay attached to
         // hidden layers for the rest of the session. `isHidden` alone does not
         // stop a `CAAnimation`.
@@ -2090,16 +2054,27 @@ final class AppShellController: NSViewController {
     /// Re-entrancy guard for the above - see its own doc comment.
     private var isReassertingBodyContainerWidthTie = false
 
-    /// `bodyContainer` spans from the rail's trailing edge to `root`'s trailing
-    /// edge, so its correct width is exactly `root.bounds.width - rail width`.
-    /// A half-point tolerance covers the non-integral widths AppKit produces on
-    /// a Retina display.
+    /// `bodyContainer` fills the content column's body host, so its correct
+    /// width is exactly that host's (UX-01: the window minus the sidebar and
+    /// any open inspector, which the split view decides). A half-point
+    /// tolerance covers the non-integral widths AppKit produces on a Retina
+    /// display.
     private func bodyContainerWidthIsStale() -> Bool {
-        // Daylight Phase 2: no rail, so the body spans the full content width.
-        let expected = view.bounds.width
+        let expected = contentPane.bodyHost.bounds.width
         guard expected > 0 else { return false }
         return abs(bodyContainer.frame.width - expected) > 0.5
     }
+
+    #if FM_SELFTESTS
+    /// The width the window gives everything that is not the content column:
+    /// the sidebar, the inspector when open, and the dividers between them.
+    var nonContentColumnsWidthForTests: CGFloat {
+        guard split.isViewLoaded else { return 0 }
+        let panes = split.splitViewItems.filter { $0 !== split.contentItem && !$0.isCollapsed }
+        let dividers = CGFloat(panes.count) * split.splitView.dividerThickness
+        return panes.reduce(0) { $0 + $1.viewController.view.frame.width } + dividers
+    }
+    #endif
 
     /// Is the destination currently on screen laid out narrower (or wider)
     /// than the container it is pinned to?
@@ -2200,15 +2175,20 @@ final class AppShellController: NSViewController {
 
     // MARK: Session-switcher probe surface (`fm/grandline-session-switcher`)
 
-    /// The real strip, so a suite can read its real pills rather than a
-    /// reimplementation of what it should contain.
-    var sessionStripForTests: SessionStripView { sessionStrip }
-    var sessionStripIsHiddenForTests: Bool { sessionStrip.isHidden }
-    var sessionStripHeightForTests: CGFloat { sessionStripHeightConstraint.constant }
-    /// The gap the body reserves above itself - grows by the strip's own
-    /// height plus its gap when the strip is showing, which is the half of
-    /// this that a plain `isHidden` check cannot see (AGENTS.md gotcha (11)).
-    var bodyTopInsetForTests: CGFloat { bodyTopConstraint.constant }
+    /// UX-03: the live sessions as the sidebar lists them under Connections.
+    /// Until Home's rebuild retires the canvas's space filter (UX-02), the
+    /// suites that sweep it drive it directly - no pill reaches it since
+    /// UX-01 took the pills off the chrome.
+    func debugShowCanvasSpace(_ space: DaylightSpace) {
+        homeCanvas.select(space: space)
+        show(.homeCanvas)
+    }
+    var sessionChildTitlesForTests: [String] { sidebarChildren(for: .connections).map(\.title) }
+    /// A sidebar child row's context menu, as a right-click would build it.
+    func debugSidebarChildMenu(childID: String) -> NSMenu? {
+        guard let child = sidebarChildren(for: .connections).first(where: { $0.id == childID }) else { return nil }
+        return sidebarChildMenu(child, in: .connections)
+    }
     var activeHostIDForTests: UUID? { activeHostID }
 
     // MARK: Recents probe surface (`fm/grandline-recents-navigation`)
@@ -2375,24 +2355,15 @@ final class AppShellController: NSViewController {
     /// card rather than standing either of them in.
     var updatesForTests: UpdatesController { updates }
     var githubSyncForTests: GitHubSyncController { githubSync }
-    /// A2: the drill cluster lives in the bar now. These keep their names so
-    /// the suites that already read them still read the same *fact* - which
-    /// destination the chrome is naming, and whether it is showing at all -
-    /// rather than being renamed across a dozen call sites for no gain.
-    var drillHeaderForTests: HelmDrillHeader { bar.drillNavForTests }
-    var drillHeaderIsHiddenForTests: Bool { bar.drillNavIsHiddenForTests }
-    var drillActionsForTests: [NSView] { bar.drillActionsForTests }
-    /// Whether the bar is showing the space-pill strip (a top-level page)
-    /// rather than the drill cluster - the property the Overview page's own
-    /// regression coverage asserts.
-    var barPillsAreHiddenForTests: Bool { bar.pillsAreHiddenForTests }
-    var barWordmarkIsHiddenForTests: Bool { bar.wordmarkIsHiddenForTests }
+    /// UX-12: the toolbar's page actions, and what the window title and
+    /// subtitle say - the facts the old drill-header hooks used to read.
+    var toolbarActionsForTests: [NSView] { toolbarController.moduleActions }
+    var windowTitleForTests: String { windowTitleContext }
+    var windowSubtitleForTests: String { windowSubtitle }
+    var pageSubtitleForTests: String { pageSubtitle }
     /// The Overview page itself, so a suite can drive the real page the shell
     /// mounted rather than a second instance of it.
     var dailyOverviewForTests: DailyOverviewController { dailyOverview }
-    /// A3's state, as the bar currently has it.
-    var scrollEdgeActiveForTests: Bool { bar.scrollEdgeActiveForTests }
-    var scrollEdgeWatchedForTests: [NSScrollView] { scrollEdge.watchedForTests }
     /// The Settings page itself, so a suite can drive its own category
     /// sidebar - `fm/grandline-settings-page-sidebar-redesign` made the page
     /// master/detail, and which pane is showing decides how tall its
@@ -2435,76 +2406,14 @@ final class AppShellController: NSViewController {
         // captain never sees "where I already am" in the dropdown.
         updateRecentDestinations(arriving: .rail(dest))
 
-        applyDrillHeader(title: slot.title,
-                         subtitle: dest.drillSubtitle,
-                         symbol: dest.symbol,
-                         hue: dest.domainHue,
-                         artwork: dest.drillHeaderArtwork,
-                         // `fm/grandline-overview-layout-fix-gmail-settings`:
-                         // a **top-level** page, not only the canvas. A space
-                         // pill that opens a page of its own
-                         // (`DaylightSpace.destination`) is still the top of
-                         // the navigation, so the bar keeps its wordmark and
-                         // its pill strip - the captain reported the new
-                         // Overview tab rendering with a back arrow and no
-                         // tabs at all, which is what naming the canvas here
-                         // did. Read off the same one table `selectSpace`
-                         // reads, never a second copy.
-                         isTopLevel: slot.id == .homeCanvas
-                             || DaylightSpace.owning(destination: dest) != nil,
-                         slotController: slot.controller)
-
-        // The strip's second input (see `applySessionStripVisibility`): which
-        // page is showing. `currentDestinationKind` was set by
-        // `updateRecentDestinations(arriving:)` a few lines up, so this reads
-        // the destination the shell is navigating *to*.
-        applySessionStripVisibility()
-
-        // A3: re-point the scroll-edge observer at what is now showing.
-        // After `mounter.show` the slot's view exists but may not have been
-        // laid out yet, and the observer's own test is geometric, so this
-        // waits for the layout pass the navigation just scheduled.
-        retargetScrollEdge(to: slot.controller.view)
-
-        // B5 (`data/grand-line-e2e-audit/report.md`): keep the bar's selected
-        // space honest on **every** navigation, not only a pill click.
-        //
-        // `selectSpace` was the one place that called `setSelectedSpace`, so
-        // reaching a page any other way - ⌘K, a notification's deep link, a
-        // canvas module card, a menu item - left the previously selected pill
-        // lit while showing a page that belongs to a different space. The
-        // audit's own walk caught it: every drill-page render showed
-        // "Engineering" highlighted, including Schedules and Health (which are
-        // `.operations`) and Tasks (`.command`). A highlight that asserts the
-        // wrong location is worse than none.
-        //
-        // Derived from the module table (`DaylightModule.space(forDestination:)`),
-        // never a second copy of that mapping. A destination no module opens,
-        // and the canvas itself, leave the pills alone - the canvas's space is
-        // whatever the captain last chose, which `selectSpace` still owns.
-
-        if let space = DaylightModule.space(forDestination: dest) {
-            bar.setSelectedSpace(space)
-        } else if dest == .homeCanvas {
-            // M1: `space(forDestination:)` returns nil for the canvas itself,
-            // and both the drill-header back button and `showHomeCanvas()`
-            // reach it through `show(_:)` rather than `selectSpace`. Without
-            // this the pill kept asserting the drill page's space while the
-            // canvas rendered the space the captain last chose - B5's own
-            // failure ("a highlight that asserts the wrong location is worse
-            // than none") one navigation later. The canvas owns that state, so
-            // this reads it rather than keeping a second copy.
-            bar.setSelectedSpace(homeCanvas.selectedSpace)
-        }
-
-        // B2: the bar's lit shortcut is pushed from `updateRecentDestinations`
-        // a few lines up, the one call every navigation route makes - not
-        // from here, which the SRE Lead reply-jump bypasses.
+        // UX-01/UX-12: the sidebar lights the module, the tab strip the tab,
+        // and the toolbar takes the page's title, live line and actions.
+        applyWorkspaceChrome(route: dest, page: slot.controller, fallbackSubtitle: dest.drillSubtitle)
 
         // B4: the page arrives rather than teleporting. Nothing above this
         // line knows or cares that it animates; see `animateDestinationEntrance`.
         animateDestinationEntrance(slot.controller.view,
-                                   direction: dest == .homeCanvas ? .back : .drillIn,
+                                   direction: .drillIn,
                                    skip: wasAlreadyShowing)
 
         // §8 Phase 6: which destination is showing decides where the bar's
@@ -2653,10 +2562,11 @@ final class AppShellController: NSViewController {
         window.autorecalculatesKeyViewLoop = false
         window.recalculateKeyViewLoop()
 
-        // Bar -> session strip -> body. The strip sits between them visually,
-        // so it sits between them in the key loop too; it contributes nothing
-        // when collapsed, because `keyViewChain` filters hidden views.
-        let chain = bar.keyViewChain + (sessionStrip.isHidden ? [] : sessionStrip.keyViewChain)
+        // Sidebar -> module tabs -> body. The toolbar is reached the system's
+        // own way (full keyboard access), so the shell's chain is the content.
+        let tabs = contentPane.moduleTabs.isHidden ? [] : contentPane.moduleTabs.subviews
+            .flatMap(\.subviews).filter { $0.canBecomeKeyView }
+        let chain: [NSView] = [sidebar.outline] + tabs
         for (from, to) in zip(chain, chain.dropFirst()) { from.nextKeyView = to }
         let body = firstBodyKeyView()
         chain.last?.nextKeyView = body
@@ -2689,30 +2599,12 @@ final class AppShellController: NSViewController {
         window.initialFirstResponder = body ?? chain.first
     }
 
-    /// The first thing below the bar the keyboard should reach: the showing
-    /// destination's own first focusable view, which on the canvas is its
+    /// The first thing in the content column the keyboard should reach: the
+    /// showing destination's own first focusable view, which on Home is its
     /// first module card.
-    ///
-    /// A2 moved the drill page's back button *into* the bar, so it is the
-    /// head of `bar.keyViewChain` now rather than the first thing below it -
-    /// which is the same reading order it always had, one row up.
     private func firstBodyKeyView() -> NSView? {
         guard let body = visibleDestinationView() else { return nil }
         return Self.firstKeyView(in: body)
-    }
-
-    /// A3: point the observer at a freshly-shown destination.
-    ///
-    /// The discovery is geometric (see `ScrollEdgeObserver`), so it has to
-    /// run against a laid-out view: a slot mounted for the first time by
-    /// this very navigation has its scroll view at `.zero` until the pass
-    /// that follows. Forcing the pass here rather than deferring to the next
-    /// runloop turn keeps the bar's state correct on the same frame the page
-    /// appears, which is what stops a scrolled page briefly rendering the
-    /// resting bar.
-    private func retargetScrollEdge(to destinationView: NSView?) {
-        destinationView?.layoutSubtreeIfNeeded()
-        scrollEdge.observe(destination: destinationView)
     }
 
     private func visibleDestinationView() -> NSView? {
@@ -2739,11 +2631,11 @@ final class AppShellController: NSViewController {
     }
 
     #if FM_SELFTESTS
-    /// The resolved loop, followed through `nextKeyView` from the first pill -
-    /// the shape `DaylightAccessibilitySelfTest` asserts. Capped, and stops on
-    /// a cycle, so a mis-wiring is a failed assertion rather than a hang.
+    /// The resolved loop, followed through `nextKeyView` from the sidebar.
+    /// Capped, and stops on a cycle, so a mis-wiring is a failed assertion
+    /// rather than a hang.
     func keyViewLoopOrderForTests(limit: Int = 24) -> [NSView] {
-        guard var current = bar.keyViewChain.first else { return [] }
+        var current: NSView = sidebar.outline
         var out: [NSView] = [current]
         var seen = Set<ObjectIdentifier>([ObjectIdentifier(current)])
         while out.count < limit, let next = current.nextKeyView {
@@ -2755,154 +2647,269 @@ final class AppShellController: NSViewController {
         return out
     }
 
-    var barKeyViewChainForTests: [NSView] { bar.keyViewChain }
     var firstBodyKeyViewForTests: NSView? { firstBodyKeyView() }
     #endif
 
-    /// Daylight §6.4, as merged into the bar by the audit's A2: point the
-    /// bar's leading area at whatever is showing, or hand it `nil` on the
-    /// canvas (the hub has no "back", so the wordmark and the space pills
-    /// come back instead).
+    // MARK: The Workspace chrome (UX-01, UX-12)
+
+    /// Point the sidebar, the module tab strip, the toolbar and the window
+    /// title at `route`, which `page` is now showing.
     ///
-    /// The name is unchanged because this is still the same decision it
-    /// always made; only where the result is rendered moved.
-    private func applyDrillHeader(title: String, subtitle: String, symbol: String,
-                                  hue: HelmDomainHue, artwork: NSImage? = nil, isTopLevel: Bool,
-                                  slotController: NSViewController?) {
-        guard !isTopLevel else {
-            bar.setDrillContext(nil)
-            lastDrillContext = nil
-            return
-        }
-        let page = slotController as? DaylightDrillActions
-        bar.setDrillContext(DaylightBarController.DrillContext(
-            title: title,
-            subtitle: page?.drillHeaderSubtitle ?? subtitle,
-            symbol: symbol, hue: hue, artwork: artwork))
-        // §6.4's action cluster. Asked of the destination rather than switched
-        // on here, so migrating a page in a later slice is one conformance on
-        // that page and no edit to the shell - and a page that has not been
-        // migrated yet answers `nil`, which clears the cluster rather than
-        // leaving the previous page's buttons showing.
-        bar.setDrillActions(page?.drillHeaderActions ?? [])
-        lastDrillContext = (title, subtitle, symbol, hue, artwork, slotController)
+    /// The one place a navigation reaches the chrome. `show(_:)` calls it for
+    /// a route and `revealHostConsole` for a live session (through the
+    /// overload below), so every entry point - a sidebar click, a chord, ⌘K,
+    /// a notification's deep link, Recents - lights the same things.
+    private func applyWorkspaceChrome(route: RailDestination, page: NSViewController, fallbackSubtitle: String) {
+        let module = ModuleTable.module(for: route)
+        let subpage = (page as? WorkspaceSubpageHosting)?.currentWorkspaceSubpage
+        let tab = ModuleTable.tab(for: route, subpage: subpage)
+        let tabIndex = module.tabs.firstIndex(of: tab) ?? 0
+        currentModuleID = module.id
+        lastTabIndex[module.id] = tabIndex
+        sidebar.setSelection(module: module.id, childID: sidebarChildID(showing: route, in: module.id))
+        contentPane.setTabs(module.tabs.map(\.title), selected: tabIndex)
+        installToolbarPage(page, fallbackSubtitle: fallbackSubtitle)
+        applyInspector(for: page)
     }
 
-    /// Re-read the showing page's own live subtitle (§6.4). Called by a
-    /// migrated destination whose numbers just changed - never by the header.
+    /// A live host session: it belongs to Connections, and the sidebar lights
+    /// its child row rather than a tab.
+    private func applyWorkspaceChrome(hostSession hostID: UUID, label: String, page: ConsoleController) {
+        currentModuleID = .connections
+        sidebar.setSelection(module: .connections, childID: Self.sessionChildID(hostID))
+        contentPane.setTabs([], selected: 0)
+        installToolbarPage(page, fallbackSubtitle: "\(label) - live session")
+        applyInspector(for: page)
+    }
+
+    private func installToolbarPage(_ page: NSViewController, fallbackSubtitle: String) {
+        toolbarPage = page
+        toolbarFallbackSubtitle = fallbackSubtitle
+        refreshDrillHeaderSubtitle()
+        refreshDrillHeaderActions()
+    }
+
+    private func applyInspector(for page: NSViewController) {
+        guard let provider = page as? WorkspaceInspectorProviding else {
+            split.setInspector(nil)
+            return
+        }
+        provider.onWorkspaceInspectorChanged = { [weak self, weak page] in
+            guard let self, let page, page === self.toolbarPage,
+                  let provider = page as? WorkspaceInspectorProviding else { return }
+            self.split.setInspector(provider.workspaceInspector, animated: true)
+        }
+        split.setInspector(provider.workspaceInspector)
+    }
+
+    /// The window's title is the module and its subtitle the page's own live
+    /// line (§6.4's caption, which the floating bar's drill header used to
+    /// show). Called by a page whose numbers just changed - never by the
+    /// toolbar itself. The name is kept from the drill header so the pages
+    /// that call it through `onDrillSubtitleChanged` needed no edit.
     func refreshDrillHeaderSubtitle() {
-        guard let context = lastDrillContext else { return }
-        let page = context.controller as? DaylightDrillActions
-        bar.setDrillContext(DaylightBarController.DrillContext(
-            title: context.title,
-            subtitle: page?.drillHeaderSubtitle ?? context.subtitle,
-            symbol: context.symbol, hue: context.hue, artwork: context.artwork))
-    }
-
-    /// Re-read the showing page's own action cluster (§6.4) - the sibling of
-    /// `refreshDrillHeaderSubtitle`, for a page whose actions depend on
-    /// something the captain can change without leaving it (Hosts' three
-    /// tabs).
-    ///
-    /// Deliberately a second method rather than folding it into the subtitle
-    /// refresh: `setActions` removes and re-adds the caller's own views, so a
-    /// page whose cluster never changes (Review's Refresh button, Tasks' sync
-    /// pill) should not have it torn down and rebuilt on every render.
-    func refreshDrillHeaderActions() {
-        guard let context = lastDrillContext else { return }
-        let page = context.controller as? DaylightDrillActions
-        bar.setDrillActions(page?.drillHeaderActions ?? [])
-    }
-
-    // MARK: Spaces (Daylight §5.3)
-
-    /// A space pill was picked: land on the canvas if we are not already
-    /// there, then filter it.
-    ///
-    /// Both halves live here rather than in either component, which is what
-    /// keeps §5.3's rule true from both directions - the bar does not know
-    /// what a canvas is, and the canvas does not know how to navigate.
-    func selectSpace(_ space: DaylightSpace) {
-        bar.setSelectedSpace(space)
-        // `fm/grandline-overview-page-daily-review`: a pill can now be a page
-        // rather than a filter (`DaylightSpace.destination`). The table is
-        // asked rather than the case named, so a second such pill is one line
-        // in that enum and none here - and the canvas's own space selection is
-        // left alone, which is what makes a round trip through this page land
-        // back on the space the captain was last filtering.
-        if let destination = space.destination {
-            show(destination)
-            return
+        guard isViewLoaded else { return }
+        let page = toolbarPage as? DaylightDrillActions
+        let module = ModuleTable.descriptor(currentModuleID)
+        var subtitle = page?.drillHeaderSubtitle ?? toolbarFallbackSubtitle
+        pageSubtitle = subtitle
+        if module.tabs.count > 1, case .rail(let route)? = currentDestinationKind {
+            let tab = ModuleTable.tab(for: route,
+                                      subpage: (toolbarPage as? WorkspaceSubpageHosting)?.currentWorkspaceSubpage)
+            // The tab names itself only where it says something the title
+            // does not ("Hosts" under Connections, not "Home" under Home).
+            if tab.title != module.title {
+                subtitle = subtitle.isEmpty ? tab.title : "\(tab.title) \u{00B7} \(subtitle)"
+            }
+            // A page that switched its own scope (Hosts' Keys and Snippets)
+            // keeps the module's tab strip honest through this same call.
+            if let index = module.tabs.firstIndex(of: tab), index != contentPane.moduleTabs.selectedIndex {
+                lastTabIndex[module.id] = index
+                contentPane.moduleTabs.setSelected(index)
+            }
         }
-        homeCanvas.select(space: space)
-        show(.homeCanvas)
+        windowSubtitle = subtitle
+        windowTitleContext = module.title
+        contentPane.titleView.configure(title: module.title, subtitle: subtitle)
+        if let window = view.window {
+            window.title = AppDelegate.windowTitle(context: module.title)
+            window.subtitle = subtitle
+        }
+        onCurrentDestinationChanged?(module.title)
     }
 
-    /// The canvas itself, for a caller that wants the hub without changing
-    /// the space (the app delegate's launch landing).
+    /// Re-read the showing page's own actions into the toolbar - the sibling
+    /// of `refreshDrillHeaderSubtitle`, for a page whose actions depend on
+    /// something the captain can change without leaving it (Hosts' tabs).
+    func refreshDrillHeaderActions() {
+        let page = toolbarPage as? DaylightDrillActions
+        toolbarController.setModuleActions(page?.drillHeaderActions ?? [])
+    }
+
+    /// What the window title and subtitle were last set to, for a window that
+    /// attaches after the first navigation and for the suites.
+    private(set) var windowTitleContext: String = "Home"
+    private(set) var windowSubtitle: String = ""
+    /// The showing page's own live line, before the tab name is put in front
+    /// of it.
+    private(set) var pageSubtitle: String = ""
+
+    /// Icons only below `WorkspaceSidebarController.compactBelowWindowWidth`
+    /// (the review's section 4.2), so a laptop keeps the terminal and the
+    /// board their width.
+    func applySidebarCompactness() {
+        guard let window = view.window else { return }
+        split.setSidebarCompact(window.frame.width < WorkspaceSidebarController.compactBelowWindowWidth)
+    }
+
+    // MARK: Module navigation
+
+    /// A sidebar click or a module chord: the module's last-shown tab, or its
+    /// first.
+    func showModule(_ id: WorkspaceModuleID) {
+        let module = ModuleTable.descriptor(id)
+        let index = lastTabIndex[id].flatMap { module.tabs.indices.contains($0) ? $0 : nil } ?? 0
+        showModuleTab(module.tabs[index])
+    }
+
+    /// A module tab: its route, then its sub-page when the page has one.
+    private func showModuleTab(_ tab: WorkspaceModuleTab) {
+        show(tab.route)
+        if let subpage = tab.subpage,
+           let host = mounter.slot(for: tab.route.slot)?.controller as? WorkspaceSubpageHosting {
+            host.showWorkspaceSubpage(subpage)
+            // The page changed itself under the chrome; re-light the tab.
+            applyWorkspaceChrome(route: tab.route, page: host as? NSViewController ?? split,
+                                 fallbackSubtitle: tab.route.drillSubtitle)
+        }
+    }
+
+    private func selectModuleTab(_ index: Int) {
+        let module = ModuleTable.descriptor(currentModuleID)
+        guard module.tabs.indices.contains(index) else { return }
+        showModuleTab(module.tabs[index])
+    }
+
+    /// The Window menu's module items (⌘1-⌘6 for Home and the Work group).
+    /// The item carries the module's raw value, so the menu holds no parallel
+    /// list of tags.
+    @objc func selectModuleFromMenu(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let id = WorkspaceModuleID(rawValue: raw) else { return }
+        showModule(id)
+    }
+
+    /// ⌘⇧] and ⌘⇧[: the module's next and previous tab, wrapping.
+    @objc func nextModuleTab() { stepModuleTab(by: 1) }
+    @objc func previousModuleTab() { stepModuleTab(by: -1) }
+
+    private func stepModuleTab(by step: Int) {
+        let module = ModuleTable.descriptor(currentModuleID)
+        guard module.tabs.count > 1 else { return }
+        let current = lastTabIndex[currentModuleID] ?? 0
+        let next = (current + step + module.tabs.count) % module.tabs.count
+        showModuleTab(module.tabs[next])
+    }
+
+    /// The hub, for a caller that wants Home without naming a module (the
+    /// app delegate's launch landing).
     @objc func showHomeCanvas() { show(.homeCanvas) }
 
-    /// The Go menu's five space items (⌘1-⌘5) - UX4's "give ⌘1-⌘5 to the
-    /// spaces (the original Daylight spec)".
-    ///
-    /// This wrapper existed once and was deleted with the View menu
-    /// (`fm/grandline-console-tabs-restore-tabmenu-fix` - see `buildMenu`'s
-    /// own note). It comes back in the same shape it had: the menu carries the
-    /// 1-based `shortcutIndex` in its tag, and `selectSpace(_:)` - which the
-    /// bar's own pills call - does the work, so a menu item and a pill click
-    /// cannot diverge.
-    @objc func selectSpaceByShortcut(_ sender: NSMenuItem) {
-        guard let space = DaylightSpace.allCases.first(where: { $0.shortcutIndex == sender.tag }) else { return }
-        selectSpace(space)
+    // MARK: The sidebar's children and accessories
+
+    static func sessionChildID(_ hostID: UUID) -> String { "session:\(hostID.uuidString)" }
+
+    /// Which child row lights for `route` - none for an ordinary page.
+    private func sidebarChildID(showing route: RailDestination, in module: WorkspaceModuleID) -> String? {
+        nil
     }
 
-    /// The Go menu's per-destination rows - UX3's "a 'Go' menu listing every
-    /// destination".
-    ///
-    /// Keyed off the destination's own raw value in `representedObject`, the
-    /// same shape the bar's quick-access overflow menu uses, so neither has to
-    /// hold a parallel array of tags.
-    @objc func selectDestinationFromMenu(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let destination = RailDestination(rawValue: raw) else { return }
-        show(destination)
+    /// The active module's children. Connections lists its live sessions
+    /// (UX-03), in the registry's own order so ⌃⌘1-9 match top to bottom.
+    private func sidebarChildren(for module: WorkspaceModuleID) -> [WorkspaceSidebarChild] {
+        switch module {
+        case .connections:
+            // The dot is the state (connected or restored), the caption the
+            // ⌃⌘N chord that reaches it - the two things the old strip's pill
+            // carried besides the name.
+            return sessions.sessions.enumerated().map { index, session in
+                WorkspaceSidebarChild(id: Self.sessionChildID(session.hostID),
+                                      title: session.label,
+                                      dot: session.isConnected ? .good : .neutral,
+                                      accessory: index < 9 ? "\u{2303}\u{2318}\(index + 1)" : nil,
+                                      spokenDetail: session.stateText)
+            }
+        default:
+            return []
+        }
     }
 
-    // MARK: The configurable quick-access row and the all-destinations map (UX1/UX2)
-
-    /// Raised when something asks for the all-destinations overlay. Owned by
-    /// the app delegate, which owns the overlay itself - the same shape as
-    /// `onSearchTapped`.
-    ///
-    /// **Assigned in `main.swift`, beside `onSearchTapped`, and it must stay
-    /// assigned**: its one caller is ⌘K's "All Destinations…" verb, and an
-    /// unassigned optional closure here is a palette row that silently does
-    /// nothing. That is exactly what shipped - the assignment was missing
-    /// from the first, and the bar's overflow menu carried a second row with
-    /// the same defect until
-    /// `fm/grandline-remove-dead-all-destinations-overflow` removed it.
-    /// `NavigationCoherenceSelfTest.checkTheMapIsActuallyReachable` guards the
-    /// assignment itself (a source guard - the behaviour needs a real
-    /// `AppDelegate`, and `NSApp` is nil in a headless suite), because nothing
-    /// about a dead closure is visible in a diff or on screen.
-    var onShowAllDestinations: (() -> Void)?
-
-    /// Pin or unpin `destination` on the floating bar's shortcut row, persist
-    /// the result, and redraw the row.
-    ///
-    /// The one write path. `AppSettings.quickAccess` is the store of record and
-    /// the bar holds only a cache of what it drew, so a caller that wrote the
-    /// setting directly would leave the bar stale until the next launch.
-    func toggleQuickAccessPin(_ destination: RailDestination) {
-        let next = AppSettings.shared.quickAccess.toggling(destination)
-        AppSettings.shared.quickAccess = next
-        bar.setQuickAccess(next)
+    private func selectSidebarChild(_ child: WorkspaceSidebarChild, in module: WorkspaceModuleID) {
+        switch module {
+        case .connections:
+            guard let session = sessions.sessions.first(where: { Self.sessionChildID($0.hostID) == child.id }) else { return }
+            switchToSession(hostID: session.hostID)
+        default:
+            showModule(module)
+        }
     }
 
-    /// Whether `destination` is currently pinned - what the overlay's context
-    /// menu reads to decide between "Pin to bar" and "Unpin from bar".
-    func isQuickAccessPinned(_ destination: RailDestination) -> Bool {
-        AppSettings.shared.quickAccess.contains(destination)
+    private func sidebarChildMenu(_ child: WorkspaceSidebarChild, in module: WorkspaceModuleID) -> NSMenu? {
+        guard module == .connections,
+              let session = sessions.sessions.first(where: { Self.sessionChildID($0.hostID) == child.id }) else { return nil }
+        let menu = NSMenu()
+        let end = NSMenuItem(title: "End Session\u{2026}", action: #selector(endSessionFromSidebarMenu(_:)), keyEquivalent: "")
+        end.representedObject = session.hostID.uuidString
+        end.target = self
+        end.withSymbol("xmark.circle")
+        menu.addItem(end)
+        return menu
+    }
+
+    @objc private func endSessionFromSidebarMenu(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let id = UUID(uuidString: raw) else { return }
+        confirmEndSession(hostID: id)
+    }
+
+    /// A module row's trailing accessory. Only numbers this shell already
+    /// holds in memory, so the sidebar never fetches (GL-24's rule, applied
+    /// to the map) and never shows a number it does not know (GL-14).
+    private func sidebarAccessory(for module: WorkspaceModuleID) -> WorkspaceSidebarAccessory? {
+        switch module {
+        case .connections:
+            let live = sessions.sessions.filter(\.isConnected).count
+            return live > 0 ? .caption("\(live) live") : nil
+        case .crew:
+            return fleetDecisionCount > 0 ? .badge(fleetDecisionCount, .critical) : nil
+        case .settings:
+            return .caption("\u{2318},")
+        default:
+            return nil
+        }
+    }
+
+    /// Fleet's own "needs a decision" count, as last pushed by its refresh.
+    private var fleetDecisionCount = 0
+
+    // MARK: Account
+
+    /// Log out of the app (lock it), after one confirmation. The sidebar's
+    /// account menu and the app menu's Log Out both come here.
+    func requestLogout() {
+        guard Self.confirmLogout() else { return }
+        onLogoutRequested?()
+    }
+
+    /// The one confirmation in front of a logout, separate from the action so
+    /// `ConfirmMigrationSelfTest` can drive it without a mounted shell.
+    static func confirmLogout() -> Bool {
+        return HelmConfirm.confirm(
+            title: "Log out of Grand Line?",
+            body: "This locks the app immediately. You'll need your Grand Line password to get back in. Your terminal sessions keep running in the background.",
+            confirmTitle: "Log Out",
+            destructive: true,
+            symbol: "lock.fill",
+            hue: .rose)
     }
 
     // MARK: Contextual ⌘N (UX4)
@@ -2987,7 +2994,7 @@ final class AppShellController: NSViewController {
     /// `DaylightBarController.clipboardHistory`); this is the menu's way in,
     /// and the one place the "paste it back" toast is worded.
     @objc func toggleClipboardHistory() {
-        bar.clipboardHistory.toggle()
+        toolbarController.clipboardHistory.toggle()
     }
 
     /// PF2: drain the clipboard history's off-main write before the process
@@ -2995,14 +3002,14 @@ final class AppShellController: NSViewController {
     /// controller, and the app delegate is where `applicationWillTerminate`
     /// lives.
     func shutdownClipboardHistory() {
-        bar.clipboardHistory.shutdown()
+        toolbarController.clipboardHistory.shutdown()
     }
 
     /// Arm the capture loop. Called once, from `main.swift` - never at init;
     /// see `ClipboardHistoryController.startCapturing()` for why.
     func startClipboardHistoryCapture() {
-        bar.clipboardHistory.startCapturing()
-        bar.clipboardHistory.onPasted = { [weak self] _ in
+        toolbarController.clipboardHistory.startCapturing()
+        toolbarController.clipboardHistory.onPasted = { [weak self] _ in
             self?.showToast("Copied - \u{2318}V to paste it")
         }
     }
@@ -3120,14 +3127,11 @@ final class AppShellController: NSViewController {
         codePreview.runCodeSnippet()
     }
 
-    /// P9's Toggle Sidebar (⌥⌘S): collapse or reopen the showing page's
-    /// split-view sidebar, animated. A no-op on a page without one, for
-    /// `runCodeSnippetFromMenu`'s reason - this app implements no
-    /// `validateMenuItem`, so the guard lives here.
+    /// Toggle Sidebar (⌥⌘S): collapse or reopen the Workspace sidebar - the
+    /// review's section 4.7. P9 gave this chord to the seven pages' own
+    /// split-view columns; the shell's sidebar is the one the command means
+    /// now, the way it does in Mail and Notes.
     @objc func toggleSidebarFromMenu() {
-        guard case .rail(let dest)? = currentDestinationKindForMenus,
-              let host = mounter.slot(for: dest.slot)?.controller as? HelmSplitPageHosting,
-              let split = host.splitPage else { return }
         split.toggleSidebar(nil)
     }
 
@@ -3369,12 +3373,8 @@ final class AppShellController: NSViewController {
                 // would leave `currentDestinationKind` stale for whatever the
                 // *next* real navigation tries to record as "outgoing".
                 self.updateRecentDestinations(arriving: .host(id: hostID, label: hostLabel))
-                self.applyDrillHeader(title: hostLabel, subtitle: "Dedicated host page",
-                                      symbol: RailDestination.hosts.symbol,
-                                      hue: RailDestination.hosts.domainHue, isTopLevel: false,
-                                      slotController: controller)
-                self.retargetScrollEdge(to: controller.view)
                 self.activeHostID = hostID
+                self.applyWorkspaceChrome(hostSession: hostID, label: hostLabel, page: controller)
                 controller.selectAndFocusTab(id: tab.id)
             }
         }
@@ -3720,14 +3720,8 @@ final class AppShellController: NSViewController {
         // one place both a fresh connect and switching back into a live
         // session reach, so it needs no separate hook at either call site.
         updateRecentDestinations(arriving: .host(id: hostID, label: label))
-        applyDrillHeader(title: label, subtitle: "Dedicated host page",
-                         symbol: RailDestination.hosts.symbol,
-                         hue: RailDestination.hosts.domainHue, isTopLevel: false,
-                         slotController: controller)
-        // A3: a host console has no page scroll view, so this correctly
-        // clears the edge rather than leaving the previous page's state.
-        retargetScrollEdge(to: controller.view)
         activeHostID = hostID
+        applyWorkspaceChrome(hostSession: hostID, label: label, page: controller)
         sessions.setActive(hostID)
         controller.focusCurrentTab()
         controller.markCurrentTabAsRead()
@@ -3846,20 +3840,10 @@ final class AppShellController: NSViewController {
     private func updateRecentDestinations(arriving kind: RecentDestinationKind) {
         recentDestinations.recordNavigation(leaving: currentDestinationKind, arriving: kind)
         currentDestinationKind = kind
-        // B2: light the bar square for this page, and darken whichever was lit
-        // before. Here rather than at each route because this is the one call
-        // they all make - the SRE Lead reply-jump used to bypass the push and
-        // left the previous page's square lit over a host page. A host page is
-        // not a `RailDestination`, so no square stands for it and it clears
-        // the bar. The bar draws state, it does not track navigation.
-        if case .rail(let dest) = kind {
-            bar.setActiveDestination(dest)
-        } else {
-            bar.setActiveDestination(nil)
-        }
-        // Review #3 §7: the window title carries the current destination, so
-        // Mission Control and the Window menu name a page rather than the app.
-        onCurrentDestinationChanged?(kind.title)
+        // Review #3 §7 and UX-12: the window title names the module, so
+        // Mission Control and the Window menu name a place rather than the
+        // app. Set by `refreshDrillHeaderSubtitle`, which every navigation
+        // reaches through `applyWorkspaceChrome` right after this.
         // A page that pushed the window past its screen is usually the page
         // being left - see `WindowOverflowGuard`.
         windowOverflowGuard.destinationDidChange(in: view.window)
@@ -3958,50 +3942,20 @@ final class AppShellController: NSViewController {
         switchToSession(hostID: previous.hostID)
     }
 
-    /// Every registry change lands here: the strip re-renders and shows or
-    /// collapses, and the Hosts list's rows are rebuilt so a row that just
-    /// went live (or just died) reads correctly the moment it is looked at.
+    /// Every registry change lands here: the sidebar's Connections children
+    /// and its "N live" caption are re-read, and the Hosts list's rows are
+    /// rebuilt so a row that just went live (or just died) reads correctly the
+    /// moment it is looked at.
     private func applySessionRegistry(_ registry: HostSessionRegistry) {
-        guard isViewLoaded, sessionStripHeightConstraint != nil else { return }
-        sessionStrip.render(registry)
-        applySessionStripVisibility()
+        guard isViewLoaded else { return }
+        sidebar.reloadChildren()
+        sidebar.reloadAccessories()
         // Rebuilding a hidden page's rows would be work nobody can see; it
         // gets them on its next `viewWillAppear` instead.
         if isBuilt(.hosts), hostsPanel.isViewLoaded, !hostsPanel.view.isHidden {
             hostsPanel.refreshLiveSessionState()
         }
         updateKeyViewLoop()
-    }
-
-    /// Whether the strip is showing, and how much room it takes.
-    ///
-    /// Two inputs, and the second is `fm/grandline-overview-layout-fix-gmail-settings`'s:
-    /// there has to be a live session **and** the showing page has to be one
-    /// the strip belongs on (`RailDestination.showsSessionStrip`). The strip
-    /// was built to make a live session reachable "from anywhere"
-    /// (`docs/history/03-navigation-and-chrome.md`) and still is - the one
-    /// page it is now kept off is the daily-review Overview, where the
-    /// captain reported a terminal tab strip reading as leftover UI bleeding
-    /// into a page that has nothing to do with terminals.
-    ///
-    /// Called from both inputs' own change points - a registry change and a
-    /// navigation - because either alone can flip the answer.
-    private func applySessionStripVisibility() {
-        guard isViewLoaded, sessionStripHeightConstraint != nil else { return }
-        let visible = !sessions.isEmpty && currentDestinationShowsSessionStrip
-        sessionStrip.isHidden = !visible
-        sessionStripHeightConstraint.constant = visible ? SessionStripView.height : 0
-        bodyTopConstraint.constant = DaylightBarController.reservedTopHeight
-            + (visible ? SessionStripView.gapBelowBar + SessionStripView.height : 0)
-    }
-
-    /// Whether the page showing right now is one the session strip belongs
-    /// on. A destination the shell has never navigated to (launch, before the
-    /// first `show`) answers `true`, which is the strip's own historical
-    /// behaviour.
-    private var currentDestinationShowsSessionStrip: Bool {
-        guard case .rail(let dest)? = currentDestinationKind else { return true }
-        return dest.showsSessionStrip
     }
 
     /// P3 of the polish report: installed by `AppDelegate` (see
@@ -4177,7 +4131,6 @@ final class AppShellController: NSViewController {
 
     /// The Hosts sidebar's user row, routed into the bar's own single logout
     /// confirmation rather than a second copy of it.
-    func requestLogout() { bar.requestLogout() }
 
     func openShiftTask(id: String) {
         show(.shift)

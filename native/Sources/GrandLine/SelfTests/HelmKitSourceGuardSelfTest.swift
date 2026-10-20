@@ -134,7 +134,6 @@ enum HelmKitSourceGuardSelfTest {
     /// The files the revamp rebuilt. They spell no spacing or radius as a
     /// number at all, on the scale or off it - only tokens (and zero).
     static let tokenOnlyFiles: Set<String> = [
-        "DaylightBarController.swift",
         "HelmKit.swift",
         "HelmModuleCard.swift",
         "HelmPlateCard.swift",
@@ -194,7 +193,6 @@ enum HelmKitSourceGuardSelfTest {
         "SchedulesCardView.swift": 1,
         "SchedulesController.swift": 1,
         "SchedulesInsights.swift": 1,
-        "SessionStripView.swift": 1,
         "SettingsController.swift": 4,
         "SettingsForm.swift": 1,
         "SettingsThemeCard.swift": 2,

@@ -69,64 +69,24 @@
 
 import AppKit
 
-/// The bell icon itself - lives in `TopBarController`, badge count driven by
-/// `NotificationCenterController`.
+/// The bell, a toolbar button in the Workspace shell's window toolbar - badge
+/// count driven by `NotificationCenterController`.
 ///
-/// B2: the button's frame *is* the 34x34 square, the same shape every other
-/// icon control on the bar wears, and the badge sits on the glyph's own
-/// top-trailing corner inside it - see the file header for why that corner
-/// works where the tile's own corner did not.
-final class NotificationBellButton: NSButton {
-    /// The visible, bordered icon square's fixed size - matches
-    /// `DaylightBarIconButton.side` exactly.
-    static let iconSize: CGFloat = 34
-    /// B2: the button *is* the square now. The outboard badge zone this used
-    /// to reserve is gone, which is what makes the bell, the theme toggle and
-    /// the Recents button one shape rather than three that happen to share a
-    /// fill. Kept as its own name because `DaylightBarController` sizes the
-    /// bell by it and reads better saying what it means.
-    static let controlWidth: CGFloat = iconSize
-    /// The badge's diameter. Small enough to sit on the glyph's corner inside
-    /// a 34pt tile and still carry a digit at `badgeFontSize`.
-    static let badgeSide: CGFloat = 15
+/// UX-12 moved it from the retired floating bar's 34pt tile into the
+/// system's own toolbar style (`WorkspaceToolbarButton`), monochrome at rest.
+/// The badge stays where B2 put it - on the glyph's top-trailing corner - and
+/// stays white on system red in every palette, the way macOS never re-tints a
+/// Dock badge.
+final class NotificationBellButton: WorkspaceToolbarButton {
+    static let badgeSide: CGFloat = 14
     private static let badgeFontSize: CGFloat = 9
-    /// The ring that separates the badge from whatever it overlaps, drawn in
-    /// the tile's own fill. Without it a red disc on a bell glyph reads as
-    /// part of the glyph.
-    private static let badgeRingWidth: CGFloat = 1.5
-    /// How far the badge is inset from the tile's top/trailing edges. Puts it
-    /// on the *symbol's* corner - the 14pt glyph's own bounds - rather than on
-    /// the tile's 9pt radius, which is what defeated both previous attempts at
-    /// an attached badge (see the file header).
-    private static let badgeInset: CGFloat = 3
+    private static let badgeInset: CGFloat = 1
 
-    private let iconBackground = NSView()
-    private let iconImageView = NSImageView()
     private let badgeContainer = NSView()
     private let badgeLabel = NSTextField(labelWithString: "")
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        title = ""
-        isBordered = false
-        image = nil
-        toolTip = "Notifications"
-        setAccessibilityLabel("Notifications")
-        translatesAutoresizingMaskIntoConstraints = false
-
-        iconBackground.wantsLayer = true
-        iconBackground.layer?.cornerRadius = HelmMetrics.barControlRadius
-        iconBackground.translatesAutoresizingMaskIntoConstraints = false
-        // Decorative only - clicks are handled by the button itself, and
-        // this view never needs to intercept them ahead of that.
-        addSubview(iconBackground)
-
-        iconImageView.image = NSImage(systemSymbolName: "bell", accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .regular))
-        iconImageView.imageScaling = .scaleProportionallyDown
-        iconImageView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(iconImageView)
-
+    init() {
+        super.init(symbol: "bell", tooltip: "Notifications", accessibilityLabel: "Notifications")
         badgeLabel.font = .monospacedDigitSystemFont(ofSize: Self.badgeFontSize, weight: .bold)
         badgeLabel.textColor = .white
         badgeLabel.alignment = .center
@@ -134,62 +94,33 @@ final class NotificationBellButton: NSButton {
 
         badgeContainer.wantsLayer = true
         badgeContainer.layer?.cornerRadius = Self.badgeSide / 2
-        // Fixed white-on-systemRed, never a theme tint - `IconRailController.
-        // attachBadge`'s own convention, kept verbatim: an alert should read
-        // the same way regardless of which of the 14 palettes is active, the
-        // way macOS never re-tints a Dock badge either.
         badgeContainer.layer?.backgroundColor = NSColor.systemRed.cgColor
-        badgeContainer.layer?.borderWidth = Self.badgeRingWidth
         badgeContainer.translatesAutoresizingMaskIntoConstraints = false
         badgeContainer.isHidden = true
         badgeContainer.addSubview(badgeLabel)
         addSubview(badgeContainer)
 
         NSLayoutConstraint.activate([
-            iconBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
-            iconBackground.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconBackground.widthAnchor.constraint(equalToConstant: Self.iconSize),
-            iconBackground.heightAnchor.constraint(equalToConstant: Self.iconSize),
-
-            iconImageView.centerXAnchor.constraint(equalTo: iconBackground.centerXAnchor),
-            iconImageView.centerYAnchor.constraint(equalTo: iconBackground.centerYAnchor),
-
             badgeLabel.centerXAnchor.constraint(equalTo: badgeContainer.centerXAnchor),
             badgeLabel.centerYAnchor.constraint(equalTo: badgeContainer.centerYAnchor),
             badgeContainer.heightAnchor.constraint(equalToConstant: Self.badgeSide),
             badgeContainer.widthAnchor.constraint(equalToConstant: Self.badgeSide),
-            // B2: on the glyph's corner, inside the tile. A fixed square
-            // (rather than a width that grows with the label) is what keeps it
-            // a *badge* - the count is abbreviated to fit, see `setBadgeCount`.
-            badgeContainer.trailingAnchor.constraint(equalTo: iconBackground.trailingAnchor,
-                                                     constant: -Self.badgeInset),
-            badgeContainer.topAnchor.constraint(equalTo: iconBackground.topAnchor,
-                                                constant: Self.badgeInset),
+            badgeContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.badgeInset),
+            badgeContainer.topAnchor.constraint(equalTo: topAnchor, constant: Self.badgeInset),
         ])
+        setBadgeCount(0)
     }
 
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+    /// The bell's visible frame, for anything that has to sit beside it.
+    var visibleIconFrame: NSRect { bounds }
 
-    /// The visible icon square's frame, in the button's own coordinate space -
-    /// used to anchor the popover on the icon itself, not the wider control.
-    var visibleIconFrame: NSRect { iconBackground.frame }
-
-    /// G2: "on new-notification arrival, a gentle bell symbol bounce".
-    ///
-    /// Hand-rolled rather than `NSImageView.addSymbolEffect(.bounce)`: symbol
-    /// effects are macOS 14, and this package targets 13 (`Package.swift`).
-    /// Two small scale beats on the glyph's own layer is what that effect
-    /// does anyway, and it composes with the badge sitting on the same tile.
-    ///
-    /// Reduce Motion gets nothing at all - not a shorter bounce. A bounce
-    /// carries no information the badge does not already carry, so the end
-    /// state *is* the whole message.
+    /// A short bounce when a new item arrives. Skipped under Reduce Motion.
     func playArrivalBounce() {
         guard !HelmMotion.isReduced else { return }
-        iconImageView.wantsLayer = true
-        guard let layer = iconImageView.layer else { return }
+        wantsLayer = true
+        guard let layer else { return }
         let bounce = CAKeyframeAnimation(keyPath: "transform.scale")
-        bounce.values = [1.0, 1.18, 0.94, 1.06, 1.0]
+        bounce.values = [1.0, 1.12, 0.96, 1.04, 1.0]
         bounce.keyTimes = [0, 0.25, 0.5, 0.75, 1]
         bounce.duration = 0.42
         bounce.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -197,27 +128,18 @@ final class NotificationBellButton: NSButton {
     }
 
     #if FM_SELFTESTS
-    /// Whether the arrival bounce is on the glyph's layer right now.
-    var debugIsBouncing: Bool { iconImageView.layer?.animation(forKey: "arrival-bounce") != nil }
+    var debugIsBouncing: Bool { layer?.animation(forKey: "arrival-bounce") != nil }
     #endif
 
     func setBadgeCount(_ count: Int) {
         badgeContainer.isHidden = count <= 0
         if count > 0 {
-            // One digit is what fits on a 15pt badge sitting inside a 34pt
-            // tile; the exact count is spoken below and listed in full in the
-            // panel, so nothing is lost that the captain cannot reach.
+            // One digit fits the badge; the exact count is spoken below and
+            // listed in full in the panel.
             badgeLabel.stringValue = count > 9 ? "9+" : "\(count)"
         }
-        // A1: the badge is the app's primary "something needs you" signal, and
-        // it used to be sighted-only - the label was set once at construction,
-        // so VoiceOver said "Notifications, button" whether nothing or 99+
-        // items were waiting. Updated alongside the visible count, the same
-        // pattern `MultiHostSendPicker`'s row already uses.
-        //
-        // The label carries the count too, not just the value: a value alone
-        // is easy to miss when a button is reached by tabbing rather than read
-        // outright, and this is the one control whose whole point is the count.
+        // A1: the badge is the app's primary "something needs you" signal, so
+        // the spoken label carries the count too.
         let spoken: String
         switch count {
         case ..<1: spoken = "Notifications, none waiting"
@@ -226,67 +148,21 @@ final class NotificationBellButton: NSButton {
         }
         setAccessibilityLabel(spoken)
         setAccessibilityValue(count)
-        // The badge itself is decoration on top of that label - left as its own
-        // element it surfaces a stray "5, text" beside the button.
         badgeLabel.setAccessibilityElement(false)
         badgeContainer.setAccessibilityElement(false)
     }
 
-    /// `fm/grandline-topbar-icon-tiles-round2`: the bell wears a real tile now
-    /// too, in `DaylightBarIconButton.bellTileHue` - see that property for why
-    /// amber and not red.
-    ///
-    /// It takes the whole theme rather than three pre-resolved colours because
-    /// the tile recipe is `HelmContrast.tintedSurface`, which needs the
-    /// palette to correct the fill and the glyph against each other - the same
-    /// reason `DaylightBarIconButton.applyTheme` takes one. Passing an already
-    /// -flattened ink/line/surface triple is exactly what kept this control on
-    /// the plain chrome square while every shortcut beside it moved on.
-    ///
-    /// The bell has no hover or active state of its own (no tracking area,
-    /// and it is never "the destination showing"), so it draws the resting
-    /// ladder only - deliberately the one state, not a third ladder invented
-    /// here.
-    /// UI-34 (Q6): the bell is monochrome at rest, like every square on the
-    /// bar - the same plain recipe `DaylightBarIconButton.restyleAsPlainSquare`
-    /// draws. It used to wear an amber tile; the attention it asks for is the
-    /// badge's job (white on system red, never theme-tinted), and an amber
-    /// square on every page spent that signal on an empty list.
-    func applyTheme(_ theme: HelmTheme) {
-        let surface = theme.isDaylight
-            ? HelmTheme.nsColor(theme.daylightTokens.inset)
-            : HelmTheme.nsColor(theme.chromeBackgroundHex)
-        iconImageView.contentTintColor = HelmTheme.mutedInk(theme)
-            .withAlphaComponent(DaylightBarIconButton.restingGlyphAlpha)
-        iconBackground.layer?.backgroundColor = surface.cgColor
-        iconBackground.layer?.borderWidth = 1
-        iconBackground.layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5).cgColor
-        // The badge's ring is the square it sits on, so the badge reads as
-        // floating above the glyph rather than merged into it.
-        badgeContainer.layer?.borderColor = surface.cgColor
-    }
+    /// The bell itself is the system's toolbar button and follows the
+    /// window's appearance; nothing here is palette-specific.
+    func applyTheme(_ theme: HelmTheme) {}
 
     #if FM_SELFTESTS
-    /// B2: the badge's real frame in the button's own coordinates, so a suite
-    /// can assert it sits inside the tile rather than beside it.
     var debugBadgeFrame: NSRect { badgeContainer.frame }
-    /// The bell's own tile, for the suite that asserts it is a real tile
-    /// rather than the plain chrome square - read off the layer, so a fill
-    /// that is computed and never painted still fails.
-    var debugTileFill: NSColor? { iconBackground.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
-    var debugTileBorder: NSColor? { iconBackground.layer?.borderColor.flatMap { NSColor(cgColor: $0) } }
-    var debugGlyphColor: NSColor? { iconImageView.contentTintColor }
-    var debugBadgeRingColor: NSColor? { badgeContainer.layer?.borderColor.flatMap { NSColor(cgColor: $0) } }
     var debugBadgeIsHidden: Bool { badgeContainer.isHidden }
     var debugBadgeText: String { badgeLabel.stringValue }
-    var debugIconFrame: NSRect { iconBackground.frame }
-    var debugIconFrameRadius: CGFloat { iconBackground.layer?.cornerRadius ?? -1 }
     #endif
 }
 
-/// Owns the popover, the bell's live badge count, and the panel content -
-/// the topbar's counterpart to `ConsoleComposerController`/
-/// `QuotaUsageController`.
 final class NotificationCenterController: NSObject {
     let bell = NotificationBellButton()
 

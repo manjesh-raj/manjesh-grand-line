@@ -800,8 +800,6 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
                    run: { [weak shell] in shell?.show(.strawHat) }),
             Action(title: "Lock Poneglyph", meta: "Poneglyph", keywords: ["vault", "secure", "lock", "credential"],
                    run: { [weak shell] in shell?.lockPoneglyph() }),
-            Action(title: "All Destinations\u{2026}", meta: "App", keywords: ["map", "pages", "everything", "navigate"],
-                   run: { [weak shell] in shell?.onShowAllDestinations?() }),
         ])
         return UnifiedSearchActionProvider(actions: actions)
     }

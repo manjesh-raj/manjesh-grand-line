@@ -118,15 +118,21 @@ enum DaylightDrillPageSelfTest {
         let window = mount(review)
         defer { _ = window }
 
-        // UI modernization audit A2: the action cluster is the *bar's* now,
-        // not the drill header's - so this drives the surface that actually
-        // renders it. The contract it is asserting is unchanged.
-        let bar = DaylightBarController()
-        _ = bar.view
-        bar.setDrillContext(DaylightBarController.DrillContext(
-            title: "Review", subtitle: "", symbol: RailDestination.review.symbol,
-            hue: RailDestination.review.domainHue, artwork: nil))
-        bar.setDrillActions(review.drillHeaderActions)
+        // UX-12: the action cluster is the window toolbar's now, so this
+        // drives the surface that actually renders it - a real toolbar on a
+        // real window. The contract it is asserting is unchanged.
+        let toolbar = WorkspaceToolbarController()
+        let toolbarWindow = OffScreenProbe.window(width: 1200, height: 300,
+                                                  styleMask: [.titled, .resizable, .fullSizeContentView])
+        WorkspaceWindowChrome.apply(to: toolbarWindow, toolbar: toolbar.toolbar)
+        toolbarWindow.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 1200, height: 300))
+        defer { toolbarWindow.orderOut(nil) }
+        toolbar.setModuleActions(review.drillHeaderActions)
+        func actionViews() -> [NSView] {
+            toolbar.toolbar.items
+                .filter { $0.itemIdentifier.rawValue.hasPrefix(NSToolbarItem.Identifier.workspaceActionPrefix) }
+                .compactMap(\.view)
+        }
 
         guard !review.drillHeaderActions.isEmpty else {
             print("  FAIL Review offers no drill-header actions - its Refresh never moved")
@@ -135,18 +141,18 @@ enum DaylightDrillPageSelfTest {
         }
         // Identity, not just count: a copy would render but never disable
         // itself while a fetch is in flight.
-        guard bar.drillActionsForTests.count == review.drillHeaderActions.count,
-              zip(bar.drillActionsForTests, review.drillHeaderActions).allSatisfy({ $0 === $1 }) else {
-            print("  FAIL the bar is not showing Review's own action views")
+        guard actionViews().count == review.drillHeaderActions.count,
+              zip(actionViews(), review.drillHeaderActions).allSatisfy({ $0 === $1 }) else {
+            print("  FAIL the toolbar is not showing Review's own action views (\(actionViews().count) items)")
             ok = false
             return
         }
         // Clearing has to actually clear - otherwise navigating from a
         // migrated page to an unmigrated one leaves the previous page's
         // buttons in the bar.
-        bar.setDrillActions([])
-        guard bar.drillActionsForTests.isEmpty else {
-            print("  FAIL setDrillActions([]) left \(bar.drillActionsForTests.count) view(s) behind")
+        toolbar.setModuleActions([])
+        guard actionViews().isEmpty else {
+            print("  FAIL setModuleActions([]) left \(actionViews().count) item(s) behind")
             ok = false
             return
         }

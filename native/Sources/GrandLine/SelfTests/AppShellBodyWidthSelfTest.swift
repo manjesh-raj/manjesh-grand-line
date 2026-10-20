@@ -295,7 +295,8 @@ enum AppShellBodyWidthSelfTest {
     /// visibly disturb anything on a shared machine.
     private static func makeMountedShell(seedHosts: [Host] = [])
         -> (window: NSWindow, shell: AppShellController) {
-        let window = OffScreenProbe.window(width: 1220, height: 720, styleMask: [.titled, .resizable])
+        let window = OffScreenProbe.window(width: 1220, height: 720,
+                                           styleMask: [.titled, .resizable, .fullSizeContentView])
         let hostStore = HostStore()
         // Seeded **before** the shell is built, so the Hosts page renders with
         // real rows (and, for a tagged host, its tag strip) from its very first
@@ -313,6 +314,11 @@ enum AppShellBodyWidthSelfTest {
             dictationStore: dictationStore, commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
             makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false) }
         )
+        // The real window's chrome (`main.swift`): the toolbar is what puts
+        // the content column's top under a safe-area inset, so a window
+        // without it measures a different page than the captain's.
+        _ = shell.view
+        WorkspaceWindowChrome.apply(to: window, toolbar: shell.toolbarController.toolbar)
         window.contentViewController = shell
         return (window, shell)
     }
@@ -320,14 +326,18 @@ enum AppShellBodyWidthSelfTest {
     /// The width `bodyContainer` should have for a given window.
     ///
     /// Was "the window's content width minus the fixed 84pt rail" - the exact
-    /// relationship the scout report found violated live. Daylight Phase 2
-    /// removed the rail (migration §5.1), so the body now spans the window's
-    /// *full* content width and the relationship being asserted is simply
-    /// equality. Everything else about these cases is unchanged: the bug they
+    /// relationship the scout report found violated live - then the full
+    /// width while the floating bar had no rail beside it, and since UX-01 the
+    /// content column beside the Workspace sidebar. Everything else about these cases is unchanged: the bug they
     /// guard against is `bodyContainer`'s frame going stale relative to the
     /// window, whatever the correct width happens to be.
     private static func expectedBodyWidth(for window: NSWindow) -> CGFloat {
-        window.contentView?.bounds.width ?? 0
+        // UX-01: the body spans the content column, which is the window less
+        // the Workspace sidebar (and an open inspector) and their dividers.
+        // Read off the split's own panes so this follows the sidebar's
+        // icon-only width below 1100pt as well as its full one.
+        let shell = window.contentViewController as? AppShellController
+        return (window.contentView?.bounds.width ?? 0) - (shell?.nonContentColumnsWidthForTests ?? 0)
     }
 
     // MARK: Cases - PF1, the idle constraint-solve cost
@@ -729,8 +739,9 @@ enum AppShellBodyWidthSelfTest {
                     + "reported (it clears only when the window is resized)"
             }
             let body = shell.bodyContainerFrameForTests.width
-            guard abs(body - expected) < 0.5 else {
-                return "contentView resynced to \(rootWidth) but bodyContainer stayed \(body)"
+            guard abs(body - expectedBodyWidth(for: window)) < 0.5 else {
+                return "contentView resynced to \(rootWidth) but bodyContainer stayed \(body), "
+                    + "expected \(expectedBodyWidth(for: window))"
             }
             return nil
         }
@@ -745,8 +756,9 @@ enum AppShellBodyWidthSelfTest {
             // value.
             window.setFrame(NSRect(x: 0, y: 0, width: 1512, height: 900), display: true)
             let staleWidth = shell.bodyContainerFrameForTests.width
-            guard abs(staleWidth - 1512) < 0.5 else {
-                return "setup failed: expected bodyContainer to be 1512 wide before breaking the tie, got \(staleWidth)"
+            guard abs(staleWidth - expectedBodyWidth(for: window)) < 0.5 else {
+                return "setup failed: expected bodyContainer to be \(expectedBodyWidth(for: window)) wide before "
+                    + "breaking the tie, got \(staleWidth)"
             }
 
             // Reproduce the exact live failure: the width tie goes inactive
@@ -790,7 +802,7 @@ enum AppShellBodyWidthSelfTest {
             for width in [CGFloat(1100), 1220, 1350, 1420, 1512, 1600, 1800, 2000] {
                 window.setFrame(NSRect(x: 0, y: 0, width: width, height: 900), display: true)
                 let actual = shell.bodyContainerFrameForTests.width
-                let expected = width
+                let expected = expectedBodyWidth(for: window)
                 guard abs(actual - expected) < 0.5 else {
                     return "at window width \(width): expected bodyContainer \(expected), got \(actual) "
                         + "(window's own frame stayed at \(window.frame.width) - a destination's content is "
@@ -896,8 +908,9 @@ enum AppShellBodyWidthSelfTest {
             for width in [CGFloat(1016), 1100, 1220, 1512, 2000, 1100] {
                 window.setFrame(NSRect(x: 0, y: 0, width: width, height: 900), display: true)
                 let actual = shell.bodyContainerFrameForTests.width
-                if abs(actual - width) >= 0.5 {
-                    failures.append("hosts (seeded) at width \(width): expected bodyContainer \(width), got \(actual)")
+                let expected = expectedBodyWidth(for: window)
+                if abs(actual - expected) >= 0.5 {
+                    failures.append("hosts (seeded) at width \(width): expected bodyContainer \(expected), got \(actual)")
                 }
             }
             // And the shape the brief's own "switch away and back" asks for:
@@ -907,8 +920,9 @@ enum AppShellBodyWidthSelfTest {
                 shell.show(.hosts)
                 window.setFrame(NSRect(x: 0, y: 0, width: 1016, height: 900), display: true)
                 let actual = shell.bodyContainerFrameForTests.width
-                if abs(actual - 1016) >= 0.5 {
-                    failures.append("hosts (seeded, after visiting \(other)) at 1016: got \(actual)")
+                if abs(actual - expectedBodyWidth(for: window)) >= 0.5 {
+                    failures.append("hosts (seeded, after visiting \(other)) at 1016: got \(actual), "
+                                    + "expected \(expectedBodyWidth(for: window))")
                 }
             }
             return failures.isEmpty ? nil : failures.joined(separator: " | ")
@@ -930,7 +944,7 @@ enum AppShellBodyWidthSelfTest {
                 for width in [CGFloat(1100), 1512, 2000] {
                     window.setFrame(NSRect(x: 0, y: 0, width: width, height: 900), display: true)
                     let actual = shell.bodyContainerFrameForTests.width
-                    let expected = width
+                    let expected = expectedBodyWidth(for: window)
                     if abs(actual - expected) >= 0.5 {
                         failures.append("\(dest) at width \(width): expected bodyContainer \(expected), got \(actual)")
                     }
@@ -946,7 +960,7 @@ enum AppShellBodyWidthSelfTest {
                 shell.show(dest)
                 window.setFrame(NSRect(x: 0, y: 0, width: 1100, height: 900), display: true)
                 let actual = shell.bodyContainerFrameForTests.width
-                let expected = CGFloat(1100)
+                let expected = expectedBodyWidth(for: window)
                 if abs(actual - expected) >= 0.5 {
                     failures.append("(revisit) \(dest) at width 1100: expected bodyContainer \(expected), got \(actual)")
                 }
@@ -994,13 +1008,17 @@ enum AppShellBodyWidthSelfTest {
                     if abs(contentHeight - asked) >= 0.5 {
                         failures.append("\(dest) at \(height): the page drove the window's content height to \(contentHeight), not \(asked)")
                     }
-                    // The body is pinned `reservedTopHeight` below the top and
-                    // flush with the bottom, so in AppKit's unflipped content
-                    // view that is minY 0 and maxY `contentHeight - inset`.
+                    // UX-01: the body fills the content column's body host,
+                    // which sits under the toolbar (and the module's tab strip)
+                    // and runs flush to the bottom of the window.
                     let body = shell.bodyContainerFrameForTests
-                    let expectedMaxY = contentHeight - DaylightBarController.reservedTopHeight
-                    if abs(body.minY) >= 0.5 || abs(body.maxY - expectedMaxY) >= 0.5 {
-                        failures.append("\(dest) at \(height): bodyContainer is \(body), want minY 0 and maxY \(expectedMaxY)")
+                    let host = shell.contentPane.bodyHost
+                    if abs(body.minY) >= 0.5 || abs(body.height - host.bounds.height) >= 0.5 {
+                        failures.append("\(dest) at \(height): bodyContainer is \(body) in a \(host.bounds.height)pt body host")
+                    }
+                    if abs(host.frame.minY) >= 0.5 || host.frame.maxY > contentHeight - 30 {
+                        failures.append("\(dest) at \(height): the body host is \(host.frame) - it should run from the "
+                                        + "window's bottom to under the toolbar in a \(contentHeight)pt window")
                     }
                 }
             }
@@ -1028,12 +1046,13 @@ enum AppShellBodyWidthSelfTest {
             let (window, shell) = makeMountedShell()
             var failures: [String] = []
             for space in DaylightSpace.allCases {
-                shell.selectSpace(space)
+                shell.debugShowCanvasSpace(space)
                 for width in [CGFloat(700), 820, 900, 1000, 1100, 1250, 1400, 1512, 1700, 2000, 2400] {
                     window.setFrame(NSRect(x: 0, y: 0, width: width, height: 900), display: true)
                     let actual = shell.bodyContainerFrameForTests.width
-                    if abs(actual - width) >= 0.5 {
-                        failures.append("space=\(space.rawValue) width=\(width): expected bodyContainer \(width), got \(actual)")
+                    let expected = expectedBodyWidth(for: window)
+                    if abs(actual - expected) >= 0.5 {
+                        failures.append("space=\(space.rawValue) width=\(width): expected bodyContainer \(expected), got \(actual)")
                     }
                 }
             }
@@ -1184,7 +1203,7 @@ enum AppShellBodyWidthSelfTest {
         withScratchEnv {
             let (window, shell) = makeMountedShell()
             window.setFrame(NSRect(x: 0, y: 0, width: 1400, height: 900), display: true)
-            shell.selectSpace(.overview)
+            shell.debugShowCanvasSpace(.overview)
             window.setFrame(NSRect(x: 0, y: 0, width: 1400, height: 900), display: true)
 
             let canvas = shell.homeCanvasForTests
@@ -1277,10 +1296,10 @@ enum AppShellBodyWidthSelfTest {
             // state, and steady state now includes every page a pill can
             // mount.
             for space in DaylightSpace.allCases {
-                autoreleasepool { shell.selectSpace(space) }
+                autoreleasepool { shell.debugShowCanvasSpace(space) }
             }
-            autoreleasepool { shell.selectSpace(.command) }
-            autoreleasepool { shell.selectSpace(.overview) }
+            autoreleasepool { shell.debugShowCanvasSpace(.command) }
+            autoreleasepool { shell.debugShowCanvasSpace(.overview) }
             let baselineInstances = HelmModuleCard.debugLiveInstanceCount
             let baselineObservers = ThemeManager.shared.observerCountForTests
             let baselineTiles = HelmGradientTile.debugLiveInstanceCount
@@ -1290,13 +1309,13 @@ enum AppShellBodyWidthSelfTest {
             for outer in 0..<60 {
                 for space in DaylightSpace.allCases {
                     autoreleasepool {
-                        shell.selectSpace(space)
+                        shell.debugShowCanvasSpace(space)
                         window.displayIfNeeded()
                     }
                 }
                 if (outer + 1).isMultiple(of: 12) {
                     autoreleasepool {
-                        shell.selectSpace(.overview)
+                        shell.debugShowCanvasSpace(.overview)
                         window.displayIfNeeded()
                     }
                     checkpointExcess.append(HelmModuleCard.debugLiveInstanceCount - baselineInstances)
@@ -1385,13 +1404,13 @@ enum AppShellBodyWidthSelfTest {
             // one generation the test above steps around.
             let initialInstances = HelmModuleCard.debugLiveInstanceCount
 
-            autoreleasepool { shell.selectSpace(.command) }
-            autoreleasepool { shell.selectSpace(.overview) }
+            autoreleasepool { shell.debugShowCanvasSpace(.command) }
+            autoreleasepool { shell.debugShowCanvasSpace(.overview) }
             let afterOneRoundTrip = HelmModuleCard.debugLiveInstanceCount - initialInstances
 
             for _ in 0..<5 {
-                autoreleasepool { shell.selectSpace(.command) }
-                autoreleasepool { shell.selectSpace(.overview) }
+                autoreleasepool { shell.debugShowCanvasSpace(.command) }
+                autoreleasepool { shell.debugShowCanvasSpace(.overview) }
             }
             let afterFiveMoreRoundTrips = HelmModuleCard.debugLiveInstanceCount - initialInstances
 
@@ -1560,7 +1579,12 @@ enum AppShellBodyWidthSelfTest {
                         failure = "\(id): the theme's ground has no representation in \(rep.colorSpace)"
                         return
                     }
-                    for xPoint in [CGFloat(2), root.bounds.midX, root.bounds.maxX - 2] {
+                    // UX-01: the sidebar runs the full height on the leading
+                    // side in its own fill, so the page ground is sampled in
+                    // the content column, from its leading edge to the
+                    // window's trailing one.
+                    let column = shell.contentPane.convert(shell.contentPane.bounds, to: root)
+                    for xPoint in [column.minX + 2, column.midX, column.maxX - 2] {
                         let px = min(rep.pixelsWide - 1, max(0, Int(xPoint * scaleX)))
                         guard let sampled = rep.colorAt(x: px, y: 0) else {
                             failure = "\(id): no pixel at the window's top edge, x \(px)"

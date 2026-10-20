@@ -5,8 +5,12 @@
 // (`HelmSplitPage`) - draggable, collapsible, and answering Toggle Sidebar.
 //
 // Every case drives the real shell: the page is shown through
-// `AppShellController.show`, the command goes through the shell's own menu
-// action, and the geometry is read after a real layout pass. Reduce Motion
+// `AppShellController.show` and the geometry is read after a real layout
+// pass. UX-01 of the 2026-10 review gave the Toggle Sidebar command (⌥⌘S) to
+// the Workspace sidebar, the way Mail and Notes use it, so a page's own
+// column is collapsed through its split view's own `toggleSidebar` (what a
+// divider drag to zero does) and the menu command is asserted to leave it
+// alone. Reduce Motion
 // is pinned on so a collapse is instant rather than animated; the animated
 // path is the same `isCollapsed` change inside an animation group.
 //
@@ -67,20 +71,36 @@ enum SplitSidebarSelfTest {
         (shell.debugSlotController(dest) as? HelmSplitPageHosting)?.splitPage
     }
 
+    /// A window whose *content column* is `width` wide: the Workspace
+    /// sidebar takes its own room beside the page now, and these cases are
+    /// about the page's column at the page widths they always measured.
     private static func mount(width: CGFloat, height: CGFloat) -> (NSWindow, AppShellController) {
         let (window, shell) = ReviewTourLab.makeOffScreenShell()
         window.orderFront(nil)
         var frame = window.frame
         frame.size = NSSize(width: width, height: height)
         window.setFrame(frame, display: true)
+        shell.view.layoutSubtreeIfNeeded()
+        frame.size.width = width + shell.nonContentColumnsWidthForTests
+        window.setFrame(frame, display: true)
+        shell.applySidebarCompactness()
+        shell.view.layoutSubtreeIfNeeded()
+        frame.size.width = width + shell.nonContentColumnsWidthForTests
+        window.setFrame(frame, display: true)
         return (window, shell)
+    }
+
+    /// The window width that gives the content column `width`.
+    private static func windowWidth(forContent width: CGFloat, _ shell: AppShellController) -> CGFloat {
+        width + shell.nonContentColumnsWidthForTests
     }
 
     // MARK: Cases
 
     private static func checkEveryPageOpensWhereItWas(_ ok: inout Bool) {
-        print("\n-- P9: every sidebar page opens with its column where it was, in the 960pt window --")
+        print("\n-- P9: every sidebar page opens with its column where it was, in a 960pt content column --")
         let (window, shell) = mount(width: 960, height: 620)
+        let wanted = window.frame.width
         defer { window.orderOut(nil) }
         for (dest, expected) in pages {
             shell.show(dest)
@@ -92,34 +112,35 @@ enum SplitSidebarSelfTest {
             check(!split.isSidebarCollapsed, "\(dest.rawValue) opens with its sidebar collapsed", &ok)
             check(abs(split.debugSidebarWidth - expected) < 0.5,
                   "\(dest.rawValue)'s sidebar opens \(split.debugSidebarWidth)pt wide, expected \(expected)", &ok)
-            check(abs(window.frame.width - 960) < 0.5,
-                  "\(dest.rawValue) grew the 960pt window to \(window.frame.width)pt", &ok)
+            check(abs(window.frame.width - wanted) < 0.5,
+                  "\(dest.rawValue) grew the \(wanted)pt window to \(window.frame.width)pt", &ok)
         }
-        if ok { print("  OK   7 pages, each column at its old width, the window still 960pt") }
+        if ok { print("  OK   7 pages, each column at its old width, the window held") }
     }
 
     private static func checkToggleSidebarCollapsesAndRestores(_ ok: inout Bool) {
-        print("\n-- P9: Toggle Sidebar collapses the column and gives the content the room --")
+        print("\n-- P9: collapsing a page's column gives its content the room --")
         let (window, shell) = mount(width: 1300, height: 800)
+        let wanted = window.frame.width
         defer { window.orderOut(nil) }
         for (dest, expected) in pages {
             shell.show(dest)
             settle(shell)
             guard let split = split(shell, dest) else { continue }
             let contentBefore = split.contentPane.frame.width
-            shell.toggleSidebarFromMenu()
+            split.toggleSidebar(nil)
             settle(shell)
-            check(split.isSidebarCollapsed, "\(dest.rawValue): Toggle Sidebar did not collapse the column", &ok)
+            check(split.isSidebarCollapsed, "\(dest.rawValue): its split's toggle did not collapse the column", &ok)
             check(split.contentPane.frame.width > contentBefore + expected - 2,
                   "\(dest.rawValue): collapsed, the content is \(split.contentPane.frame.width)pt, "
                   + "not the column's \(expected)pt wider than \(contentBefore)", &ok)
-            check(abs(window.frame.width - 1300) < 0.5, "\(dest.rawValue): collapsing resized the window", &ok)
-            shell.toggleSidebarFromMenu()
+            check(abs(window.frame.width - wanted) < 0.5, "\(dest.rawValue): collapsing resized the window", &ok)
+            split.toggleSidebar(nil)
             settle(shell)
             check(!split.isSidebarCollapsed && abs(split.debugSidebarWidth - expected) < 0.5,
                   "\(dest.rawValue): reopened at \(split.debugSidebarWidth)pt, expected \(expected)", &ok)
         }
-        if ok { print("  OK   collapsed and reopened on all 7 pages, through the shell's menu action") }
+        if ok { print("  OK   collapsed and reopened on all 7 pages") }
     }
 
     private static func checkADraggedDividerSticks(_ ok: inout Bool) {
@@ -134,7 +155,7 @@ enum SplitSidebarSelfTest {
         settle(shell)
         check(abs(split.debugSidebarWidth - 300) < 0.5, "the divider did not move to 300 (\(split.debugSidebarWidth))", &ok)
         var frame = window.frame
-        frame.size.width = 1500
+        frame.size.width = windowWidth(forContent: 1500, shell)
         window.setFrame(frame, display: true)
         settle(shell)
         check(abs(split.debugSidebarWidth - 300) < 0.5,
@@ -157,38 +178,40 @@ enum SplitSidebarSelfTest {
         tasks.showWeeklyReview()
         settle(shell)
         check(split.isSidebarCollapsed, "Weekly Review left the board's column open", &ok)
-        shell.toggleSidebarFromMenu()
+        split.toggleSidebar(nil)
         settle(shell)
-        check(split.isSidebarCollapsed, "Toggle Sidebar reopened a column the page had put away", &ok)
+        check(split.isSidebarCollapsed, "toggling reopened a column the page had put away", &ok)
         tasks.showDashboard()
         settle(shell)
         check(!split.isSidebarCollapsed, "back on the board, the column did not come back", &ok)
         // The captain's own collapse survives a trip to the review.
-        shell.toggleSidebarFromMenu()
+        split.toggleSidebar(nil)
         settle(shell)
         tasks.showWeeklyReview()
         settle(shell)
         tasks.showDashboard()
         settle(shell)
         check(split.isSidebarCollapsed, "a trip to Weekly Review undid the captain's own collapse", &ok)
-        shell.toggleSidebarFromMenu()
+        split.toggleSidebar(nil)
         settle(shell)
         if ok { print("  OK   put away on Weekly Review, back on the board, the captain's collapse kept") }
     }
 
     private static func checkTheCommandIsANoOpElsewhere(_ ok: inout Bool) {
-        print("\n-- P9: Toggle Sidebar does nothing on a page without one --")
+        print("\n-- UX-01: Toggle Sidebar is the Workspace sidebar's, and leaves a page's column alone --")
         let (window, shell) = mount(width: 1300, height: 800)
         defer { window.orderOut(nil) }
         shell.show(.schedules)
         settle(shell)
-        shell.show(.homeCanvas)
-        settle(shell)
+        guard let page = split(shell, .schedules) else { return fail("Schedules has no split", &ok) }
         shell.toggleSidebarFromMenu()
         settle(shell)
-        check(split(shell, .schedules)?.isSidebarCollapsed == false,
-              "Toggle Sidebar on Home collapsed a page that is not showing", &ok)
-        if ok { print("  OK   no effect from Home") }
+        check(shell.split.sidebarItem.isCollapsed, "⌥⌘S did not collapse the Workspace sidebar", &ok)
+        check(!page.isSidebarCollapsed, "⌥⌘S collapsed Schedules' own column as well", &ok)
+        shell.toggleSidebarFromMenu()
+        settle(shell)
+        check(!shell.split.sidebarItem.isCollapsed, "a second ⌥⌘S did not bring the Workspace sidebar back", &ok)
+        if ok { print("  OK   the Workspace sidebar collapsed and returned; the page's column untouched") }
     }
 }
 

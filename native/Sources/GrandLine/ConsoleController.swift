@@ -227,6 +227,10 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// the one place every tab add / close / rename / selection funnels
     /// through, so the header line and the tab strip cannot disagree.
     var onDrillSubtitleChanged: (() -> Void)?
+    /// The active terminal's own title, as its shell last reported it
+    /// (`setTerminalTitle`), shown in the window subtitle while this console
+    /// is the page on screen. `nil` when the shell reported none.
+    var reportedTerminalTitle: String?
 
     /// Whether the SRE Lead pane is currently up. Recorded rather than
     /// re-derived so `refreshTerminalCardChrome()` - which a theme change also

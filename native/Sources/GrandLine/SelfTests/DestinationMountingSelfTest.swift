@@ -135,16 +135,15 @@ enum DestinationMountingSelfTest {
     /// Control, the Window menu and the proxy menu named the app rather than
     /// the page - for twenty-seven destinations plus a page per saved host.
     /// `AppShellController.onCurrentDestinationChanged` fires from
-    /// `updateRecentDestinations`, the one funnel every navigation path passes
-    /// through, and `main.swift` composes the real title from it.
+    /// `refreshDrillHeaderSubtitle`, which `applyWorkspaceChrome` reaches on
+    /// every navigation, and `main.swift` composes the real title from it.
     ///
     /// This is the live half. `NavigationCoherenceSelfTest
     /// .checkWindowTitleComposition` asserts the composition itself, which
     /// needs no window at all.
     ///
-    /// **Confirmed to catch a regression, not merely to pass**: removing the
-    /// `onCurrentDestinationChanged?(kind.title)` line from
-    /// `updateRecentDestinations` leaves `seen` empty and fails the first
+    /// Removing the `onCurrentDestinationChanged?(module.title)` line from
+    /// `refreshDrillHeaderSubtitle` leaves `seen` empty and fails the first
     /// check below by name.
     private static func test_windowTitleFollowsTheShowingDestination() -> String? {
         withScratchEnv {
@@ -157,8 +156,9 @@ enum DestinationMountingSelfTest {
             }
             shell.view.layoutSubtreeIfNeeded()
 
-            // Three real navigations, chosen so no two share a title.
-            let visited: [RailDestination] = [.hosts, .console, .settings]
+            // Three real navigations, chosen so no two share a module. UX-12:
+            // the title is the module's (Hosts is a tab of Connections).
+            let visited: [RailDestination] = [.hosts, .shift, .settings]
             for dest in visited {
                 shell.show(dest)
                 shell.view.layoutSubtreeIfNeeded()
@@ -167,17 +167,17 @@ enum DestinationMountingSelfTest {
             guard seen.count >= visited.count else {
                 return "expected a title per navigation, got \(seen)"
             }
-            let bare = AppDelegate.windowTitle()
-            for dest in visited where !seen.contains("\(bare) - \(dest.title)") {
-                return "no title named \(dest.title) - got \(seen)"
+            for dest in visited {
+                let expected = AppDelegate.windowTitle(context: ModuleTable.module(for: dest).title)
+                guard seen.contains(expected) else { return "no title \(expected) for \(dest) - got \(seen)" }
             }
             // The window really is left holding the last one, not just told.
-            guard window.title == "\(bare) - \(RailDestination.settings.title)" else {
-                return "the window should still be titled for the page it is showing, got \(window.title)"
+            guard window.title == AppDelegate.windowTitle(context: "Settings") else {
+                return "the window should still be titled for the module it is showing, got \(window.title)"
             }
             // And `currentContextTitle` is the same answer, since the two must
             // not be able to disagree.
-            guard shell.currentContextTitle == RailDestination.settings.title else {
+            guard shell.currentContextTitle == "Settings" else {
                 return "currentContextTitle disagrees with the title bar: \(shell.currentContextTitle ?? "nil")"
             }
             return nil
@@ -862,16 +862,20 @@ enum DestinationMountingSelfTest {
             for dest in group {
                 shell.show(dest)
 
-                let title = shell.drillHeaderForTests.titleForTests
-                guard title == dest.title else {
-                    return "opening \(dest) shows a page titled \"\(title)\", expected \"\(dest.title)\""
+                // UX-09/UX-12: the four are tabs of one Setup module now. The
+                // window title names the module; the subtitle names the tab
+                // and carries the page's own live line.
+                let title = shell.windowTitleForTests
+                guard title == "Setup" else {
+                    return "opening \(dest) titles the window \"\(title)\", expected the module, \"Setup\""
                 }
-                guard title != "Setup" else {
-                    return "\(dest) still lands on a page titled \"Setup\""
+                let tabTitle = ModuleTable.tab(for: dest).title
+                guard shell.windowSubtitleForTests.hasPrefix(tabTitle) else {
+                    return "\(dest)'s subtitle \"\(shell.windowSubtitleForTests)\" does not name its tab \(tabTitle)"
                 }
 
-                let subtitle = shell.drillHeaderForTests.subtitleForTests
-                guard !subtitle.isEmpty else { return "\(dest)'s drill header has no subtitle" }
+                let subtitle = shell.pageSubtitleForTests
+                guard !subtitle.isEmpty else { return "\(dest)'s toolbar has no subtitle" }
                 guard subtitle != dest.drillSubtitle else {
                     return "\(dest)'s header shows the static per-area fallback (\"\(subtitle)\") rather than "
                         + "the page's own live line - its DaylightDrillActions conformance or its "

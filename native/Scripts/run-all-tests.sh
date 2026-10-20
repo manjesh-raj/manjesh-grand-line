@@ -225,6 +225,9 @@ NEEDS_SESSION=(
   # is built one file away and the `OffScreenProbe.window(` marker cannot see
   # it here.
   "FM_RUN_REVIEW_TOUR_LAB_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
+  # UX-01/UX-12: the Workspace shell mounted for real, through the same
+  # `ReviewTourLab.makeOffScreenShell()` the tour lab uses.
+  "FM_RUN_WORKSPACE_SHELL_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
   # Review bug B10: the Dictation status card's wrapping text column. It
   # asserts real resolved frames from a real layout pass at several widths -
   # the defect is a circular `preferredMaxLayoutWidth` derivation, which only
@@ -291,14 +294,12 @@ NEEDS_SESSION=(
   # The UI modernization audit's A1/A2/A3: a real window's own titlebar
   # chrome, a real laid-out bar, and a real scroll offset. None of the three
   # is answerable without a window.
-  "FM_RUN_WINDOW_CHROME_FUSION_TESTS"
   # The fill for the menu-bar strip macOS reserves above a full-screen window:
   # it mounts a real window and orders the real panel it builds.
   "FM_RUN_FULL_SCREEN_MENU_BAR_FILL_TESTS"
   # The same audit's B1-B5: a real window's initial first responder, a real
   # panel anchored under a real control, and a real navigation transition.
   "FM_RUN_BAR_NAV_MODERNIZATION_TESTS"
-  "FM_RUN_BAR_ACTIVE_STATE_TESTS"
   # The same audit's C/D/E: hover, press, focus-within and a real scroll
   # offset are each a question about a real window.
   "FM_RUN_CANVAS_LISTS_CONTROLS_TESTS"
@@ -345,7 +346,6 @@ NEEDS_SESSION=(
   # Audit §6.2: mounts a real host-page `ConsoleController` and drives its
   # real `viewDidAppear`.
   "FM_RUN_INCIDENT_RESUME_TESTS"
-  "FM_RUN_DRILL_HEADER_TITLE_TESTS"
   # `fm/grandline-engineering-cards-stale-counts`: mounts a real shell, drives
   # the real Updates/GitHub Sync pages and reads the real hub cards.
   "FM_RUN_SUMMARY_FRESHNESS_TESTS"
@@ -561,7 +561,6 @@ NEEDS_SESSION=(
   # workflow's own comment for the blocking/non-blocking reasoning.
   "FM_RUN_LOCK_SCREEN_TESTS"
   "FM_RUN_RECENT_DESTINATIONS_TESTS"
-  "FM_RUN_TOPNAV_PILL_PRESSED_STATE_TESTS"
   "FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TESTS"
   # `fm/grandline-settings-page-sidebar-redesign`: mounts a real Settings page
   # in a real window and drives its sidebar, reading rendered geometry and

@@ -59,8 +59,8 @@ enum RecentDestinationsSelfTest {
             ("hostPageNavigationIsTracked", test_hostPageNavigationIsTracked),
             ("panelRendersRowsAndClickNavigates", test_panelRendersRowsAndClickNavigates),
             ("panelShowsEmptyStateWithNothingRecorded", test_panelShowsEmptyStateWithNothingRecorded),
-            ("barButtonSitsBeforeStickyBoardAfterSearch", test_barButtonSitsBeforeStickyBoardAfterSearch),
-            ("barButtonThemesAcrossLightAndDark", test_barButtonThemesAcrossLightAndDark),
+            ("toolbarRecentsSitsAfterSearch", test_toolbarRecentsSitsAfterSearch),
+            ("toolbarRecentsThemesAcrossLightAndDark", test_toolbarRecentsThemesAcrossLightAndDark),
             ("recordNavigationIsTheOnlyWriter", test_recordNavigationIsTheOnlyWriter),
             ("endedSessionRowReconnectsInsteadOfDoingNothing", test_endedSessionRowReconnectsInsteadOfDoingNothing),
             ("deletedHostRowIsDroppedRatherThanLeftDead", test_deletedHostRowIsDroppedRatherThanLeftDead),
@@ -620,67 +620,43 @@ enum RecentDestinationsSelfTest {
         return nil
     }
 
-    // MARK: Bar placement + theming
+    // MARK: Toolbar placement + theming
 
-    private static func test_barButtonSitsBeforeStickyBoardAfterSearch() -> String? {
-        let bar = DaylightBarController()
-        let window = OffScreenProbe.window(width: 1400, height: 80)
-        window.contentViewController = bar
-        bar.view.layoutSubtreeIfNeeded()
+    /// UX-12 moved Recents from the floating bar into the window toolbar. The
+    /// captain's two placement corrections still hold there: it sits after
+    /// search (never next to the title), and before the appearance and bell
+    /// controls that close the toolbar.
+    private static func test_toolbarRecentsSitsAfterSearch() -> String? {
+        let toolbar = WorkspaceToolbarController()
+        let window = OffScreenProbe.window(width: 1400, height: 300,
+                                           styleMask: [.titled, .resizable, .fullSizeContentView])
+        WorkspaceWindowChrome.apply(to: window, toolbar: toolbar.toolbar)
+        window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 1400, height: 300))
+        // Ordered in (still off every screen): AppKit builds and lays out a
+        // toolbar's item views only for a window that is on the window list.
+        window.orderFront(nil)
+        window.displayIfNeeded()
+        defer { window.orderOut(nil) }
+        window.contentView?.layoutSubtreeIfNeeded()
 
-        let pills = bar.debugPills()
-        guard !pills.isEmpty else { return "no pills built" }
-        let lastPillMaxX = pills.map { $0.frame.maxX }.max() ?? 0
-        let button = bar.recentDestinations.button
-        let search = bar.debugSearchPill()
-        guard let stickyBoard = bar.debugDestinationButtons().first else {
-            return "no destination quick-access buttons built"
+        let ids = toolbar.toolbar.items.map(\.itemIdentifier)
+        guard let search = ids.firstIndex(of: .workspaceSearch),
+              let recents = ids.firstIndex(of: .workspaceRecents),
+              let theme = ids.firstIndex(of: .workspaceTheme) else {
+            return "the toolbar is missing search, Recents or the appearance toggle: \(ids.map(\.rawValue))"
         }
-
-        guard button.frame.width > 1, button.frame.height > 1 else {
-            return "the Recents button resolved a zero-size frame"
+        guard search < recents, recents < theme else {
+            return "Recents sits at \(recents) between search \(search) and appearance \(theme) - expected after "
+                + "search and before the toolbar's closing controls"
         }
-        // The second captain correction (`fm/grandline-recents-position-and-
-        // codepreview-theme`): the Recents button now sits after the search
-        // pill, not right after the space pills - it must clear the pills by
-        // more than a token gap, i.e. genuinely be on the far side of the
-        // search field.
-        guard search.frame.minX >= lastPillMaxX - 0.5 else {
-            return "the search pill (minX=\(search.frame.minX)) starts before the space pills end (maxX=\(lastPillMaxX))"
+        let button = toolbar.recentDestinations.button
+        guard button.window === window, button.frame.width > 1, button.frame.height > 1 else {
+            return "the Recents button resolved no frame in the toolbar (\(button.frame))"
         }
-        guard button.frame.minX >= search.frame.maxX - 0.5 else {
-            return "the Recents button (minX=\(button.frame.minX)) starts before the search pill ends (maxX=\(search.frame.maxX))"
-        }
-        // **Converted into the bar's own coordinate space.** Review #3's UX2
-        // moved the quick-access buttons inside an `NSStackView`, so a
-        // button's own `frame` is in that row's space and its `minX` is 0 for
-        // the leading one - comparing it against the Recents button's
-        // bar-space frame would fail for a reason that is not the one this
-        // check names (it did, on the first full run after UX2 landed).
-        let stickyBoardInBar = stickyBoard.convert(stickyBoard.bounds, to: bar.view)
-        guard stickyBoardInBar.width > 1 else {
-            return "the Sticky Board icon resolved a zero-size frame - this check would be vacuous"
-        }
-        guard button.frame.maxX <= stickyBoardInBar.minX + 0.5 else {
-            return "the Recents button (maxX=\(button.frame.maxX)) overlaps the Sticky Board icon (minX=\(stickyBoardInBar.minX))"
-        }
-        // The explicit first captain correction still holds: not next to the
-        // logo, i.e. not at the bar's own leading inset.
-        guard button.frame.minX > 40 else {
-            return "the Recents button sits right at the bar's leading edge, next to the logo"
-        }
-        // AGENTS.md gotcha (13)/DaylightModuleSelfTest.checkBarDoesNotCapWindow
-        // already owns the "no bar width constraint can cap the window"
-        // guarantee - checked there straight off `loadView()`, before any real
-        // layout pass has run, which is what keeps it from also tripping on
-        // `NSTextField`'s own lazily-materialised intrinsic-size constraints
-        // (a pre-existing, unrelated artifact this test's own real layout
-        // pass would otherwise surface as a false positive). Not re-checked
-        // here to avoid exactly that.
         return nil
     }
 
-    private static func test_barButtonThemesAcrossLightAndDark() -> String? {
+    private static func test_toolbarRecentsThemesAcrossLightAndDark() -> String? {
         let themes = [
             HelmTheme.allThemes.first { $0.mode == .light },
             HelmTheme.allThemes.first { $0.mode == .dark },
@@ -688,12 +664,10 @@ enum RecentDestinationsSelfTest {
         guard themes.count == 2 else { return "could not find one light and one dark real HelmTheme" }
         for theme in themes {
             ThemeManager.shared.setTheme(theme)
-            let bar = DaylightBarController()
-            bar.loadView()
-            let button = bar.recentDestinations.button
-            guard button.debugHasIcon else { return "\(theme.id): the Recents button's icon did not resolve" }
-            guard button.debugIconBackground.layer?.backgroundColor != nil else {
-                return "\(theme.id): the Recents button's icon square was never painted"
+            let button = WorkspaceToolbarController().recentDestinations.button
+            guard let image = button.image else { return "\(theme.id): the Recents button's icon did not resolve" }
+            guard image.isTemplate else {
+                return "\(theme.id): the Recents icon is not a template image, so it would not follow the toolbar's appearance"
             }
         }
         return nil

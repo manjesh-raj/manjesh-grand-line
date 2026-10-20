@@ -78,17 +78,12 @@ enum SummaryFreshnessSelfTest {
                 poller.debugSetLastCompletedPassAt(Date())
                 poller.debugSetCounts(.init(toolUpdates: 3, forkDrift: 6, vaultAttention: 0,
                                             setupDrift: 1, vaultSecrets: 4))
-                rig.shell.selectSpace(.engineering)
-                rig.canvas.debugRenderNow()
-
-                guard let before = rig.card(.updates) else {
-                    fail("no Updates card rendered on the Engineering hub", &ok)
+                // UX-01 retired the Engineering hub (a canvas filter no pill
+                // reaches any more); the published count is what every
+                // summary of this signal reads, so it is what is asserted.
+                if poller.lastCounts.toolUpdates != 3 {
+                    fail("the seeded stale count did not take - the check below would be vacuous", &ok)
                     return
-                }
-                let beforeText = (before.metricTexts + before.noteTexts + [before.chipText ?? ""]).joined(separator: " ")
-                if !beforeText.contains("3") {
-                    fail("the Updates card does not start from the seeded stale count - "
-                         + "read '\(beforeText)', expected it to mention 3", &ok)
                 }
 
                 // The captain opens Updates and every tool comes back current.
@@ -103,23 +98,10 @@ enum SummaryFreshnessSelfTest {
 
                 if poller.lastCounts.toolUpdates != 0 {
                     fail("the page reported every tool up to date but the published count is "
-                         + "\(String(describing: poller.lastCounts.toolUpdates)) - the hub reads this, "
+                         + "\(String(describing: poller.lastCounts.toolUpdates)) - every summary reads this, "
                          + "so it is still showing the stale number the captain reported", &ok)
                 }
-                guard let after = rig.card(.updates) else {
-                    fail("no Updates card rendered after the change", &ok)
-                    return
-                }
-                let afterText = (after.metricTexts + after.noteTexts + [after.chipText ?? ""]).joined(separator: " ")
-                if afterText.contains("3 update") {
-                    fail("the Updates card still reads '\(afterText)' after the page found every tool "
-                         + "current - this is the reported bug", &ok)
-                }
-                if after.chipText != "Current" {
-                    fail("the Updates card's chip is \(after.chipText ?? "nil") with zero updates "
-                         + "outstanding - expected Current", &ok)
-                }
-                if ok { print("  OK  stale '3 updates' -> '\(after.chipText ?? "nil")' after the page checked") }
+                if ok { print("  OK  stale 3 updates -> 0 published after the page checked") }
             }
         }
     }
@@ -136,17 +118,9 @@ enum SummaryFreshnessSelfTest {
                 poller.debugSetLastCompletedPassAt(Date())
                 poller.debugSetCounts(.init(toolUpdates: 0, forkDrift: 6, vaultAttention: 0,
                                             setupDrift: 0, vaultSecrets: 4))
-                rig.shell.selectSpace(.engineering)
-                rig.canvas.debugRenderNow()
-
-                guard let before = rig.card(.githubSync) else {
-                    fail("no GitHub Sync card rendered on the Engineering hub", &ok)
+                if poller.lastCounts.forkDrift != 6 {
+                    fail("the seeded stale count did not take - the check below would be vacuous", &ok)
                     return
-                }
-                let beforeText = (before.metricTexts + before.noteTexts + [before.chipText ?? ""]).joined(separator: " ")
-                if !beforeText.contains("6") {
-                    fail("the GitHub Sync card does not start from the seeded stale count - "
-                         + "read '\(beforeText)'", &ok)
                 }
 
                 rig.shell.show(.githubSync)
@@ -161,19 +135,7 @@ enum SummaryFreshnessSelfTest {
                     fail("every fork reported in sync but the published count is "
                          + "\(String(describing: poller.lastCounts.forkDrift))", &ok)
                 }
-                guard let after = rig.card(.githubSync) else {
-                    fail("no GitHub Sync card rendered after the change", &ok)
-                    return
-                }
-                let afterText = (after.metricTexts + after.noteTexts + [after.chipText ?? ""]).joined(separator: " ")
-                if afterText.contains("6 ") || afterText.contains("behind") {
-                    fail("the GitHub Sync card still reads '\(afterText)' after every fork synced", &ok)
-                }
-                if after.chipText != "In sync" {
-                    fail("the GitHub Sync card's chip is \(after.chipText ?? "nil") with nothing behind "
-                         + "- expected In sync", &ok)
-                }
-                if ok { print("  OK  stale '6 behind' -> '\(after.chipText ?? "nil")' after the page checked") }
+                if ok { print("  OK  stale 6 behind -> 0 published after the page checked") }
             }
         }
     }
@@ -427,12 +389,6 @@ enum SummaryFreshnessSelfTest {
             window.contentViewController = shell
             window.layoutIfNeeded()
             canvas = shell.homeCanvasForTests
-        }
-
-        func card(_ module: DaylightModule) -> HelmModuleCard.Anatomy? {
-            guard let index = canvas.visibleModulesForTests.firstIndex(of: module),
-                  index < canvas.moduleCardsForTests.count else { return nil }
-            return canvas.moduleCardsForTests[index].anatomyForTests
         }
     }
 

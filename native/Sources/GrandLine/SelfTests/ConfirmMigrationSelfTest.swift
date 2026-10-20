@@ -594,19 +594,20 @@ enum ConfirmMigrationSelfTest {
 
     private static func checkLogout(_ ok: inout Bool) {
         print("\n-- G3: logout fires on confirm, not on cancel --")
-        let bar = DaylightBarController()
-        _ = makeWindow(bar.view)
+        // UX-01 moved Log Out from the floating bar's avatar to the sidebar's
+        // account menu; both reach `AppShellController.requestLogout`, whose
+        // confirmation is this static.
         var loggedOut = 0
-        bar.onLogoutRequested = { loggedOut += 1 }
+        func logoutClicked() { if AppShellController.confirmLogout() { loggedOut += 1 } }
 
         var problems: [String] = []
-        let cancelRequests = answering(.cancel) { bar.debugLogoutClicked() }
+        let cancelRequests = answering(.cancel) { logoutClicked() }
         if loggedOut != 0 { problems.append("Cancel logged out anyway") }
         if cancelRequests.count != 1 { problems.append("no dialog was shown") }
         if let r = cancelRequests.first, !r.confirmIsDefault {
             problems.append("Return no longer completes the logout, as it did before")
         }
-        answering(.confirm) { bar.debugLogoutClicked() }
+        answering(.confirm) { logoutClicked() }
         if loggedOut != 1 { problems.append("Confirm logged out \(loggedOut) times, want 1") }
 
         if problems.isEmpty {

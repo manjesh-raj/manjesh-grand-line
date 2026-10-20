@@ -258,8 +258,10 @@ enum ModuleTable {
             summary: "Preferences, stored on this Mac"),
     ]
 
+    // `ModuleTableSelfTest` holds that every id has exactly one row; the
+    // first row wins if that ever breaks, rather than trapping at launch.
     private static let byID: [WorkspaceModuleID: ModuleDescriptor] =
-        Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
+        Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
     private static let byRoute: [RailDestination: WorkspaceModuleID] = {
         var map: [RailDestination: WorkspaceModuleID] = [:]

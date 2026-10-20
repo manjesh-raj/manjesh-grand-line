@@ -51,12 +51,11 @@ enum ReviewUIUXSelfTest {
             ("U9_emptyNavColumnSaysWhatItIsForAndOffersAnAction", test_u9EmptySidebar),
             ("U9_notebookStatesOneStorageLocation", test_u9StorageWording),
             ("U10_updatesRowsCarryAnActionOnlyWhenOneIsNeeded", test_u10CheckButton),
-            ("U14_allDestinationsOverlayFitsEveryName", test_u14OverlayWidth),
             ("U15_cardsHugTheContentTheyActuallyHold", test_u15CardHeights),
             ("U16_taskEditorLiftsTheDatePhraseAndEnablesTheRepeatPickers", test_u16TaskEditor),
             ("U17_lockScreenPasswordFieldDoesNotLookPreFilled", test_u17LockPlaceholder),
             ("X1_lockScreenOffersALocalFallbackWhenTheVaultIsUnreachable", test_x1LocalFallback),
-            ("X3_theGoMenuNamesEachDestinationOnce", test_x3GoMenu),
+            ("X3_theWindowMenuNamesEachModuleOnce", test_x3GoMenu),
             ("X5_emptyPagesOfferAnExampleToStartFrom", test_x5SeedExamples),
             ("X6_everythingCapturedTodayIsInOnePlace", test_x6CaptureInbox),
             ("X8_updatesOffersOneCheckAllNamedAfterTheWork", test_x8CheckAllIsNamedAfterTheWork),
@@ -814,59 +813,9 @@ enum ReviewUIUXSelfTest {
         }
     }
 
-    // MARK: U14 - the all-destinations overlay's truncated names
-
-    private static func test_u14OverlayWidth() -> String? {
-        autoreleasepool {
-            let tileWidth = AllDestinationsOverlayController.tileWidth
-            var offenders: [String] = []
-            var longest = ""
-            var longestNeeded: CGFloat = 0
-            for destination in RailDestination.allCases {
-                let tile = DestinationTileView(destination: destination)
-                let host = NSView(frame: NSRect(x: 0, y: 0, width: tileWidth + 40, height: 80))
-                tile.translatesAutoresizingMaskIntoConstraints = false
-                host.addSubview(tile)
-                NSLayoutConstraint.activate([
-                    tile.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-                    tile.centerYAnchor.constraint(equalTo: host.centerYAnchor),
-                ])
-                host.layoutSubtreeIfNeeded()
-                let label = tile.debugTitleLabel
-                let needed = label.intrinsicContentSize.width
-                if needed > longestNeeded { longestNeeded = needed; longest = destination.title }
-                // `intrinsicContentSize` recomputes from the field's current
-                // string and font every call, so comparing it against the
-                // resolved frame catches a truncated-but-otherwise-correct
-                // label without knowing any pixel count - the same shape
-                // `AppShellDrillHeaderTitleSelfTest` uses.
-                if needed > label.frame.width + 0.5 {
-                    offenders.append("\(destination.title) needs \(needed)pt, given \(label.frame.width)pt")
-                }
-            }
-            guard longestNeeded > 0 else {
-                return "no destination title measured above zero, so this case proves nothing"
-            }
-            guard offenders.isEmpty else {
-                return "the all-destinations overlay still truncates: \(offenders.joined(separator: "; "))"
-            }
-            // Discriminating power: the widest title must be the thing
-            // driving the width, or the tile is merely wide by luck.
-            guard tileWidth > AllDestinationsOverlayController.minimumTileWidth
-                    || longestNeeded + AllDestinationsOverlayController.tileChromeWidth
-                        <= AllDestinationsOverlayController.minimumTileWidth else {
-                return "the tile is still at its floor (\(tileWidth)pt) while \(longest.debugDescription) "
-                     + "needs \(longestNeeded)pt plus chrome"
-            }
-            // And the panel still fits the window the overlay is opened over.
-            // 1100pt is the narrow width this repo's own layout suites use.
-            guard AllDestinationsOverlayController.panelWidth <= 1100 - 80 else {
-                return "the panel is \(AllDestinationsOverlayController.panelWidth)pt wide, which no "
-                     + "longer sits inside a 1100pt window with room around it"
-            }
-            return nil
-        }
-    }
+    // U14 (the all-destinations overlay truncating names) was retired with
+    // the overlay itself: UX-01 made the Workspace sidebar the app's map, and
+    // `WorkspaceShellSelfTest` asserts every sidebar row's name fits.
 
     // MARK: U15 - fixed-height cards with one sentence in them
 
@@ -1180,44 +1129,35 @@ enum ReviewUIUXSelfTest {
 
     // MARK: X3 - navigation vocabulary
 
+    /// UX-01 replaced the Go menu with the Window menu's module rows, from
+    /// the same table the sidebar draws. X3's rules still hold there: every
+    /// module appears exactly once, and no group header is left empty.
     private static func test_x3GoMenu() -> String? {
         let menu = AppDelegate().buildMenu(installing: false)
-        guard let go = menu.items.compactMap(\.submenu).first(where: { $0.title == "Go" }) else {
-            return "there is no Go menu, so this case is measuring nothing"
+        guard menu.items.compactMap(\.submenu).first(where: { $0.title == "Go" }) == nil else {
+            return "the Go menu is back - its spaces and destination list are the sidebar now (UX-01)"
         }
-        let rows = go.items.filter { !$0.isSeparatorItem }.map(\.title)
-        guard rows.count > 20 else {
-            return "the Go menu has \(rows.count) rows, so it is not the full destination menu"
+        guard let window = menu.items.compactMap(\.submenu).first(where: { $0.title == "Window" }) else {
+            return "there is no Window menu, so this case is measuring nothing"
         }
-
-        // The review read the collision straight off this menu: "Home",
-        // "Overview", "Home", an "Overview" header containing an "Overview"
-        // item, and an "Elsewhere" group holding "Home" and "Fleet".
-        guard !rows.contains("Overview") else {
-            return "the Go menu still says \"Overview\", which names nothing now (review X3)"
+        let rows = window.items.filter { !$0.isSeparatorItem && $0.action == #selector(AppShellController.selectModuleFromMenu(_:)) }
+        guard rows.count == ModuleTable.all.count else {
+            return "the Window menu has \(rows.count) module rows, expected \(ModuleTable.all.count)"
         }
-        // Every *destination* appears once. Space pill rows share their
-        // names with the group headers they caption, which is the menu's own
-        // grammar, so the check is on the destination titles rather than on
-        // every row.
-        let destinationTitles = Set(RailDestination.allCases.map(\.title))
         var counts: [String: Int] = [:]
-        for row in rows where destinationTitles.contains(row) { counts[row, default: 0] += 1 }
+        for row in rows { counts[row.title, default: 0] += 1 }
         let repeated = counts.filter { $0.value > 1 }
         guard repeated.isEmpty else {
-            return "the Go menu lists \(repeated.keys.sorted()) more than once (review X3)"
+            return "the Window menu lists \(repeated.keys.sorted()) more than once (review X3)"
         }
-        guard counts["Today"] == 1, counts["Home"] == 1, counts["Fleet"] == 1 else {
-            return "Home/Today/Fleet should each appear exactly once, got "
-                 + "Home=\(counts["Home"] ?? 0) Today=\(counts["Today"] ?? 0) Fleet=\(counts["Fleet"] ?? 0)"
+        guard rows.map(\.title) == ModuleTable.all.map(\.title) else {
+            return "the Window menu's module order disagrees with the sidebar's"
         }
-        // And a group whose only destination was already listed must not
-        // leave an empty header behind.
         var previousWasHeader = false
-        for item in go.items {
-            let isHeader = !item.isSeparatorItem && !item.isEnabled && item.submenu == nil
+        for item in window.items {
+            let isHeader = !item.isSeparatorItem && !item.isEnabled && item.submenu == nil && item.action == nil
             if previousWasHeader, item.isSeparatorItem || isHeader {
-                return "the Go menu carries an empty group header"
+                return "the Window menu carries an empty group header"
             }
             if !item.isSeparatorItem { previousWasHeader = isHeader }
         }

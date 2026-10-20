@@ -90,27 +90,28 @@ enum DisplayAccessibilitySelfTest {
     // MARK: Reduce Transparency
 
     private static func checkReduceTransparencyDropsTheBarMaterial(_ ok: inout Bool) {
-        print("\n-- P7: Reduce Transparency drops the bar's material --")
+        print("\n-- P7: the Workspace chrome has no translucency to reduce --")
+        // UX-01/UX-12 retired the floating bar and its `.withinWindow`
+        // material. The sidebar and the content column now paint opaque Helm
+        // fills (see `WorkspaceSidebar.swift`), so Reduce Transparency has
+        // nothing left to drop: the property worth holding is that both stay
+        // opaque with the setting off and on.
         guard let daylight = HelmTheme.theme(id: "daylight") else { return fail("no `daylight` theme", &ok) }
         let (window, shell) = ReviewTourLab.makeOffScreenShell()
         defer { window.orderOut(nil) }
         window.orderFront(nil)
         ThemeManager.shared.setTheme(daylight)
-        HelmDisplayAccessibility.reduceTransparencyOverrideForTests = false
-        ThemeManager.shared.reapplyCurrentTheme()
-        let bar = shell.bar
-        // Discriminating power: on Daylight the material is normally there.
-        check(bar.debugMaterialIsShown, "the Daylight bar shows no material with Reduce Transparency off", &ok)
-        let translucentAlpha = bar.debugBarFill?.alpha ?? 1
-        check(translucentAlpha < 0.999, "the Daylight bar's fill is already opaque (\(translucentAlpha))", &ok)
-
-        HelmDisplayAccessibility.reduceTransparencyOverrideForTests = true
-        ThemeManager.shared.reapplyCurrentTheme()
-        check(!bar.debugMaterialIsShown, "the bar still shows its material under Reduce Transparency", &ok)
-        check((bar.debugBarFill?.alpha ?? 0) > 0.999, "the bar's fill is not opaque under Reduce Transparency", &ok)
+        for reduced in [false, true] {
+            HelmDisplayAccessibility.reduceTransparencyOverrideForTests = reduced
+            ThemeManager.shared.reapplyCurrentTheme()
+            let sidebarAlpha = shell.sidebar.view.layer?.backgroundColor?.alpha ?? 0
+            let contentAlpha = shell.contentPane.layer?.backgroundColor?.alpha ?? 0
+            check(sidebarAlpha > 0.999, "the sidebar's fill is not opaque (reduce transparency \(reduced))", &ok)
+            check(contentAlpha > 0.999, "the content column's fill is not opaque (reduce transparency \(reduced))", &ok)
+        }
         HelmDisplayAccessibility.reduceTransparencyOverrideForTests = nil
         ThemeManager.shared.reapplyCurrentTheme()
-        if ok { print("  OK   material shown and fill \(String(format: "%.2f", translucentAlpha)) normally; hidden and opaque when reduced") }
+        if ok { print("  OK   sidebar and content column opaque with Reduce Transparency off and on") }
     }
 
     // MARK: The live path

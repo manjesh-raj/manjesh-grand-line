@@ -1727,3 +1727,17 @@ private func copyToPasteboard(_ text: String) {
     pasteboard.clearContents()
     pasteboard.setString(text, forType: .string)
 }
+
+// MARK: - The Connections module's tabs (UX-01)
+
+/// Hosts, Keys and Snippets are tabs of the Connections module; this is how a
+/// module tab reaches the page's own scope, and how the shell knows which tab
+/// to light when the page switched scope itself.
+extension HostsController: WorkspaceSubpageHosting {
+    func showWorkspaceSubpage(_ subpage: WorkspaceSubpage) {
+        guard let tab = HostsTab(rawValue: subpage.rawValue) else { return }
+        select(tab: tab)
+    }
+
+    var currentWorkspaceSubpage: WorkspaceSubpage? { WorkspaceSubpage(currentTab.rawValue) }
+}

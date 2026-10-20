@@ -692,67 +692,28 @@ enum HostsRedesignSelfTest {
 
     // MARK: Toolbar
 
-    /// The captain's own placement: "immediately next to the existing
-    /// console/terminal icon". Console was the trailing-most icon, so the new
-    /// one appends after it - which is also this group's own convention (a new
-    /// icon never gets slotted in by topic, because that moves an icon the
-    /// captain already has muscle memory for).
+    /// The captain's own placement was "immediately next to the existing
+    /// console/terminal icon" on the floating bar's shortcut row. UX-01/UX-03
+    /// retired the row and went further: Hosts and Console are tabs of one
+    /// Connections module, so they cannot drift apart. What is asserted is
+    /// that they share a module, that Hosts is where the module opens, and
+    /// that the module is one keystroke away (⌘3).
     private static func checkToolbarShortcutSitsBesideConsole(_ ok: inout Bool) {
-        print("\n-- the toolbar shortcut sits beside the console icon --")
-        let bar = DaylightBarController()
-        _ = bar.view
-        // **Review #3's UX2 capped the *drawn* row at six**, and Hosts is the
-        // seventh - so the captain's placement lives in the pinned order
-        // rather than in the drawn buttons, and Hosts reaches the bar through
-        // the overflow menu. The placement claim is unchanged and still
-        // asserted; what changed is which of the two lists carries it.
-        //
-        // Asserting the pinned order rather than quietly dropping this case is
-        // the point: "Hosts is last, immediately after Console" is a captain
-        // decision, and it is exactly as breakable now as it was before.
-        //
-        // **Review U2 cut the *default* row to four**, which no longer
-        // carries either of these two, so the fixture is explicit now. That
-        // is the right shape regardless: this case is about the order a row
-        // holding both preserves, not about which destinations ship pinned -
-        // a captain who pins Hosts today gets exactly this row.
-        bar.setQuickAccess(QuickAccessConfiguration(pinned: [
-            .stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts,
-        ]))
-        let pinned = bar.quickAccessConfiguration.pinned
-        guard let consoleIndex = pinned.firstIndex(of: .console),
-              let hostsIndex = pinned.firstIndex(of: .hosts) else {
-            fail("the bar's pinned row is \(pinned.map(\.title)) - no console/hosts pair", &ok)
+        print("\n-- Hosts and the console share the Connections module --")
+        guard let hosts = ModuleTable.owner(of: .hosts), let console = ModuleTable.owner(of: .console) else {
+            fail("Hosts or the console has no module", &ok)
             return
         }
-        if hostsIndex != consoleIndex + 1 {
-            fail("Hosts is at \(hostsIndex), console at \(consoleIndex) - they are not adjacent", &ok)
+        if hosts.id != console.id {
+            fail("Hosts is in \(hosts.title) and the console in \(console.title) - they should be one module", &ok)
         }
-        if hostsIndex != pinned.count - 1 {
-            fail("Hosts is not the trailing-most shortcut (index \(hostsIndex) of \(pinned.count))", &ok)
+        if hosts.defaultTab.route != .hosts {
+            fail("\(hosts.title) opens on \(hosts.defaultTab.title), expected Hosts", &ok)
         }
-        // Past the cap, so it must be in the overflow menu - reachable, not
-        // dropped, which is the whole difference between a cap and a deletion.
-        let menuTitles = bar.debugQuickAccessOverflowMenu().items.map(\.title)
-        if hostsIndex >= QuickAccessConfiguration.visibleLimit,
-           !menuTitles.contains(RailDestination.hosts.title) {
-            fail("Hosts is past the six-icon cap and is not in the overflow menu - it is unreachable from the bar", &ok)
+        if hosts.chord != WorkspaceChord(key: "3", modifiers: .command) {
+            fail("\(hosts.title) is not on ⌘3 (got \(hosts.chord?.displayString ?? "none"))", &ok)
         }
-        // It has to be wired, not merely present: an unwired icon renders
-        // identically and does nothing. The drawn buttons are the ones a mouse
-        // can reach, so the click goes through whichever of them is last.
-        let buttons = bar.debugDestinationButtons()
-        guard let lastButton = buttons.last else {
-            fail("the bar drew no quick-access icons at all", &ok)
-            return
-        }
-        var opened: [RailDestination] = []
-        bar.onSelectDestination = { opened.append($0) }
-        lastButton.performClick(nil)
-        if opened != [lastButton.destination] {
-            fail("clicking the \(lastButton.destination.title) icon opened \(opened.map(\.title))", &ok)
-        }
-        if ok { print("  OK - Hosts is the last shortcut, immediately after Console, reachable from the overflow menu") }
+        if ok { print("  OK - Hosts and Console are tabs of \(hosts.title), which opens on Hosts at ⌘3") }
     }
     // MARK: - The nav column (fm/grand-line-hosts-sidebar-restore)
 

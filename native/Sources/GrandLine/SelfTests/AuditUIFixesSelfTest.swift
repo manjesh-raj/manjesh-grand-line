@@ -6,13 +6,17 @@
 //
 //   swift build && FM_RUN_AUDIT_UI_FIXES_TESTS=1 .build/debug/GrandLine; echo $?
 //
-//   B4  a narrow window truncates every nav pill a little, not one entirely
-//   B5  the selected space pill follows every navigation, not only a click
 //   B6  the lock screen's ribbon is painted on first layout
 //   B7  the Schedules row toggle is the app's own themed toggle
 //   B8  the Run History sheet re-colours its heading on a theme change
 //   B9  Overview's Health note fits; Updates' tiles do not claim a count
 //       they do not have yet
+//
+// B4 (the space pills truncating fairly in a narrow window) and B5 (the
+// selected pill following every navigation) were retired with the pills
+// themselves: UX-01 of the 2026-10 review replaced the floating bar with the
+// Workspace sidebar, and `WorkspaceShellSelfTest` asserts B5's successor -
+// the sidebar lights the right module on every route.
 //
 // B3's own case (the Health card's footer explanation was clipped to `"Copy`)
 // was retired rather than repointed: the captain later marked that whole
@@ -31,8 +35,6 @@ enum AuditUIFixesSelfTest {
 
     static func run() -> Bool {
         let cases: [(String, () -> String?)] = [
-            ("B4_narrowWindowTruncatesEveryPillFairly", test_b4),
-            ("B5_selectedSpaceFollowsEveryNavigation", test_b5),
             ("B6_lockRibbonIsPaintedOnFirstLayout", test_b6),
             ("B7_schedulesRowUsesTheAppsOwnToggle", test_b7),
             ("B8_runHistorySheetRecoloursOnThemeChange", test_b8),
@@ -73,65 +75,6 @@ enum AuditUIFixesSelfTest {
         }
         walk(root)
         return found
-    }
-
-    // MARK: B4
-
-    private static func test_b4() -> String? {
-        let bar = DaylightBarController()
-        // 900pt is the width the audit measured `engineering`'s label at 4.0pt
-        // while its neighbours kept 60-70pt; 1100 is where the captain would
-        // actually meet it (this app's own default launch frame used to be
-        // 1220).
-        for width in [900.0, 1100.0, 1200.0] as [CGFloat] {
-            let window = mount(bar.view, width: width, height: 90)
-            defer { window.contentView = nil }
-            bar.view.layoutSubtreeIfNeeded()
-            let widths = bar.debugPillLabelWidths()
-            guard !widths.isEmpty else { return "the bar reported no pills" }
-            for (space, w) in widths where w < DaylightBarController.pillLabelMinWidth - 0.5 {
-                let all = widths.map { "\($0.space.rawValue)=\(Int($0.width))" }.joined(separator: " ")
-                return "at \(Int(width))pt, \(space.rawValue)'s label is \(Int(w))pt - below the \(Int(DaylightBarController.pillLabelMinWidth))pt floor (\(all))"
-            }
-        }
-        return nil
-    }
-
-    // MARK: B5
-
-    private static func test_b5() -> String? {
-        // Pure mapping, deliberately: `AppShellController.show(_:)` mounts
-        // every destination, and what this finding is about is the *table*
-        // being consulted at all. The wiring itself is a one-line source
-        // guard below.
-        let expected: [(RailDestination, DaylightSpace?)] = [
-            (.schedules, .operations),
-            (.health, .operations),
-            (.shift, .command),
-            (.review, .command),
-            (.vault, .stores),
-            (.updates, .engineering),
-            (.overview, nil),
-            (.homeCanvas, nil),
-            // `fm/grandline-overview-page-daily-review`: a space that owns a
-            // page maps back to its own pill, which is what keeps the pill
-            // honest on a deep link or a ⌘K jump to that page.
-            (.dailyOverview, .dailyOverview),
-        ]
-        for (dest, want) in expected {
-            let got = DaylightModule.space(forDestination: dest)
-            guard got == want else {
-                return "\(dest) maps to \(got.map { $0.rawValue } ?? "nil"), expected \(want.map { $0.rawValue } ?? "nil")"
-            }
-        }
-        guard let dir = SelfTestSources.appSourceDirectory(),
-              let shell = try? String(contentsOf: dir.appendingPathComponent("AppShellController.swift"), encoding: .utf8) else {
-            return nil
-        }
-        guard shell.contains("DaylightModule.space(forDestination: dest)") else {
-            return "AppShellController.show(_:) no longer syncs the selected space - the pill goes stale on every ⌘K / deep-link / module-card navigation again"
-        }
-        return nil
     }
 
     // MARK: B6

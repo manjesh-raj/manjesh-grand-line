@@ -1,6 +1,6 @@
 // Grand Line - native macOS app.
 //
-// F7's render: a real `DaylightBarController` and a real `ShiftController`
+// F7's render: a real `WorkspaceToolbarController` and a real `ShiftController`
 // mounted in real windows, over a scratch store, with the real timer driving
 // them.
 //
@@ -55,20 +55,24 @@ enum FocusTimerViewSelfTest {
             var clock = Date(timeIntervalSince1970: 1_750_000_000)
             timer.clock = { clock }
 
-            let bar = DaylightBarController()
-            let window = OffScreenProbe.window(width: 1500, height: 120,
-                                               styleMask: [.titled, .resizable])
-            window.contentView = bar.view
+            // UX-12: the chip is an item of the window toolbar now, so the
+            // fixture is a real window wearing the real toolbar.
+            let bar = WorkspaceToolbarController()
+            let window = OffScreenProbe.window(width: 1500, height: 300,
+                                               styleMask: [.titled, .resizable, .fullSizeContentView])
+            WorkspaceWindowChrome.apply(to: window, toolbar: bar.toolbar)
+            let content = NSView(frame: NSRect(x: 0, y: 0, width: 1500, height: 300))
+            window.contentView = content
             window.orderFront(nil)
             defer { window.orderOut(nil) }
             bar.attachFocusTimer(timer)
-            bar.view.layoutSubtreeIfNeeded()
+            content.layoutSubtreeIfNeeded()
 
             // MARK: The bar with no session is the bar that existed before F7
 
-            check(!bar.debugFocusChipIsVisible,
+            check(!bar.debugFocusChipIsInstalled,
                   "the chip must not be on the bar before anything is running")
-            let idleChipWidth = bar.debugFocusChipHostWidth
+            let idleChipWidth = bar.debugFocusChipWidth
             // The whole point of hiding an *arranged* subview: a hidden
             // ordinary `NSView` would keep its width on the bar forever.
             check(idleChipWidth < 1,
@@ -80,10 +84,10 @@ enum FocusTimerViewSelfTest {
             task.title = "Rotate the prod bastion SSH keys"
             store.addTask(task)
             timer.start(task: task, minutes: 25)
-            bar.view.layoutSubtreeIfNeeded()
+            content.layoutSubtreeIfNeeded()
 
-            check(bar.debugFocusChipIsVisible, "the chip should appear when a session starts")
-            let runningWidth = bar.debugFocusChipHostWidth
+            check(bar.debugFocusChipIsInstalled, "the chip should appear when a session starts")
+            let runningWidth = bar.debugFocusChipWidth
             check(runningWidth > 80,
                   "the chip should have a real laid-out width, got \(runningWidth)")
             check(bar.debugFocusChip.debugCountdownText == "25:00",
@@ -102,7 +106,7 @@ enum FocusTimerViewSelfTest {
 
             clock = clock.addingTimeInterval(456)
             timer.debugTick()
-            bar.view.layoutSubtreeIfNeeded()
+            content.layoutSubtreeIfNeeded()
             check(bar.debugFocusChip.debugCountdownText == "17:24",
                   "7:36 in the chip should read 17:24, got \(bar.debugFocusChip.debugCountdownText)")
             check(abs(bar.debugFocusChip.debugRingFraction - 456.0 / 1500.0) < 0.01,
@@ -118,10 +122,10 @@ enum FocusTimerViewSelfTest {
             let legacy = HelmTheme.allThemes.first(where: { !$0.isDaylight })
                 ?? ThemeManager.shared.theme
             ThemeManager.shared.setTheme(daylight)
-            bar.view.layoutSubtreeIfNeeded()
+            content.layoutSubtreeIfNeeded()
             let daylightFill = bar.debugFocusChip.layer?.backgroundColor
             ThemeManager.shared.setTheme(legacy)
-            bar.view.layoutSubtreeIfNeeded()
+            content.layoutSubtreeIfNeeded()
             let legacyFill = bar.debugFocusChip.layer?.backgroundColor
             check(daylightFill != nil && legacyFill != nil,
                   "the chip should paint a real fill in both registers")
@@ -137,31 +141,30 @@ enum FocusTimerViewSelfTest {
             // different things (AGENTS.md), so this is the behavioural half:
             // a real window, really shrunk, with the chip really on the bar.
             //
-            // 700 is the bar's own stated comfortable floor
-            // (`DaylightBarController.comfortableWidth`), so a bar that
-            // cannot reach it is capping the window in the way gotcha (13)
-            // describes.
+            // 700 was the old bar's own stated comfortable floor; a toolbar
+            // that cannot reach it is capping the window in the way gotcha
+            // (13) describes (a toolbar overflows into its chevron instead).
             let wide = window.frame
             window.setFrame(NSRect(x: wide.minX, y: wide.minY, width: 700, height: wide.height),
                             display: true)
-            bar.view.layoutSubtreeIfNeeded()
+            content.layoutSubtreeIfNeeded()
             check(abs(window.frame.width - 700) < 1,
                   "the window should hold 700pt with the chip on the bar, got \(window.frame.width)")
-            check(bar.debugFocusChipHostWidth <= 700,
+            check(bar.debugFocusChipWidth <= 700,
                   "and the chip should have yielded rather than overflowed, got "
-                  + "\(bar.debugFocusChipHostWidth)")
+                  + "\(bar.debugFocusChipWidth)")
             window.setFrame(wide, display: true)
-            bar.view.layoutSubtreeIfNeeded()
+            content.layoutSubtreeIfNeeded()
 
             // MARK: Finishing takes it off the bar again
 
             clock = clock.addingTimeInterval(200)
             _ = timer.stop()
-            bar.view.layoutSubtreeIfNeeded()
-            check(!bar.debugFocusChipIsVisible,
+            content.layoutSubtreeIfNeeded()
+            check(!bar.debugFocusChipIsInstalled,
                   "the chip should leave the bar when the session ends")
-            check(bar.debugFocusChipHostWidth < 1,
-                  "and give its width back, got \(bar.debugFocusChipHostWidth)")
+            check(bar.debugFocusChipWidth < 1,
+                  "and give its width back, got \(bar.debugFocusChipWidth)")
         }
     }
 

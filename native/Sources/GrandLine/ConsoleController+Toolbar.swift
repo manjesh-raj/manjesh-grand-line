@@ -452,7 +452,10 @@ extension ConsoleController {
         }
         let count = tabs.count == 1 ? "1 tab" : "\(tabs.count) tabs"
         guard let name = currentTab?.name, !name.isEmpty else { return count }
-        return "\(count) \u{00B7} \(name)"
+        guard let title = reportedTerminalTitle, !title.isEmpty, title != name else {
+            return "\(count) \u{00B7} \(name)"
+        }
+        return "\(count) \u{00B7} \(name) \u{00B7} \(title)"
     }
 
     func styleChips() {

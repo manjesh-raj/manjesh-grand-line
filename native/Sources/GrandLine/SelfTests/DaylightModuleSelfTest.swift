@@ -1,7 +1,9 @@
 // Grand Line - native macOS app.
 //
 // Daylight Phase 2's own suite: the shell (floating bar + home canvas +
-// drill headers) that replaced the icon rail and the top bar.
+// drill headers) that replaced the icon rail and the top bar. UX-01/UX-12 of
+// the 2026-10 review replaced the bar and the drill headers in turn with the
+// Workspace sidebar and window toolbar; what is left here is the canvas.
 //
 // The migration spec names four things this has to pin (§8's "Testing
 // requirements per phase"), and each maps to a case below:
@@ -51,8 +53,7 @@ enum DaylightModuleSelfTest {
                       checkAnExemptCardSizesToItsOwnContent,
                       checkNoCardIsAWindowFloor,
                       checkModuleAnatomy, checkCanvasConstructsNoStores,
-                      checkBarAnatomy, checkBarDestinationIcons, checkBarDoesNotCapWindow,
-                      checkCanvasAndDrillHeader, checkLiveModuleWiring,
+                      checkCanvasAndWorkspaceNavigation, checkLiveModuleWiring,
                       checkNoNewPolling] {
             var ok = true
             check(&ok)
@@ -1287,324 +1288,20 @@ enum DaylightModuleSelfTest {
 
     // MARK: 6 - bar anatomy
 
-    private static func checkBarAnatomy(_ ok: inout Bool) {
-        print("\n-- floating bar: \u{00A7}6.3's geometry, its pills, and no `.behindWindow` vibrancy --")
-        let bar = DaylightBarController()
-        bar.loadView()
-        // 1512, the captain's own screen width, deliberately above
-        // `DaylightBarController.quickAccessCollapseWidth`: review #3's B6
-        // gives the shortcut row back to the drill title on a narrow bar, so
-        // below that width every one of these buttons is legitimately zero
-        // wide and what this case measures would not exist. The expanded row
-        // is the state it was written for.
-        bar.view.frame = NSRect(x: 0, y: 0, width: 1512, height: DaylightBarController.height + DaylightBarController.topMargin)
-        bar.view.layoutSubtreeIfNeeded()
+    // The bar's anatomy, its destination icons and its window-cap guard were
+    // retired with the floating bar (UX-01/UX-12 of the 2026-10 review).
+    // `WorkspaceShellSelfTest` holds the sidebar, toolbar and window chrome
+    // that replaced it.
 
-        let geometry = bar.geometryForTests
-        // gotcha (8): the single most-repeated bug class in this codebase.
-        //
-        // **This used to assert the bar contained no `NSVisualEffectView` at
-        // all.** The UI modernization audit's B1 corrected that reading:
-        // gotcha (8) is a finding about `.behindWindow`, which composites
-        // against the *desktop* and therefore renders the wrong tint on every
-        // theme. `.withinWindow` composites against this window's own content
-        // and is what the audit asks for here, with its own §6 constraint list
-        // keeping the `.behindWindow` ban intact by name. So the assertion is
-        // inverted to the thing that was actually true all along - and made
-        // stronger, because it now names the mode rather than the class.
-        //
-        // `checkBarMaterial` (in `BarNavigationModernizationSelfTest`) carries
-        // the other half: that the material is *present* on the Daylight
-        // family and *absent* on the twelve legacy palettes.
-        if geometry.visualEffectBlendingModes.contains(.behindWindow) {
-            fail("the bar contains a `.behindWindow` NSVisualEffectView - AGENTS.md gotcha (8) forbids it, and the audit's own \u{00A7}6 keeps that ban", &ok)
+    private static func checkCanvasAndWorkspaceNavigation(_ ok: inout Bool) {
+        print("\n-- shell: the canvas is the landing, every route lights its module, nothing has a back button --")
+        /// The canvas's own space filter, driven directly: UX-01 took the
+        /// space pills off the chrome, and Home's rebuild (UX-02) retires the
+        /// filter itself.
+        func selectCanvasSpace(_ shell: AppShellController, _ space: DaylightSpace) {
+            shell.homeCanvasForTests.select(space: space)
+            shell.show(.homeCanvas)
         }
-        if abs(geometry.cornerRadius - HelmMetrics.dBar) > 0.01 {
-            fail("bar radius \(geometry.cornerRadius), expected \(HelmMetrics.dBar)", &ok)
-        }
-        if abs(geometry.barFrame.height - DaylightBarController.height) > 0.5 {
-            fail("bar height \(geometry.barFrame.height), expected \(DaylightBarController.height)", &ok)
-        }
-        if abs(geometry.barFrame.minX - DaylightBarController.sideMargin) > 0.5 {
-            fail("bar leading inset \(geometry.barFrame.minX), expected \(DaylightBarController.sideMargin)", &ok)
-        }
-        let trailingInset = bar.view.bounds.width - geometry.barFrame.maxX
-        if abs(trailingInset - DaylightBarController.sideMargin) > 0.5 {
-            fail("bar trailing inset \(trailingInset), expected \(DaylightBarController.sideMargin)", &ok)
-        }
-        if geometry.shadowOpacity <= 0 {
-            fail("the bar casts no shadow - \u{00A7}6.3 asks for the resting level", &ok)
-        }
-        if geometry.pillCount != DaylightSpace.allCases.count {
-            fail("\(geometry.pillCount) pills, expected \(DaylightSpace.allCases.count)", &ok)
-        }
-
-        // Radio semantics, exactly one selected, and a real click through the
-        // recognizer moves it.
-        var picked: [DaylightSpace] = []
-        bar.onSelectSpace = { picked.append($0) }
-        let pills = bar.debugPills()
-        for pill in pills {
-            if pill.accessibilityRoleOverride != .radioButton {
-                fail("a space pill announces as \(String(describing: pill.accessibilityRoleOverride)), expected .radioButton", &ok)
-            }
-            if !pill.isActivatable { fail("a space pill is not activatable", &ok) }
-        }
-        let selectedCount = pills.filter { $0.accessibilityValueOverride == "selected" }.count
-        if selectedCount != 1 { fail("\(selectedCount) pills report as selected, expected exactly 1", &ok) }
-
-        guard pills.count >= 3 else {
-            fail("not enough pills to drive a selection", &ok)
-            return
-        }
-        // The fourth pill since `fm/grandline-overview-page-daily-review` put
-        // the Overview page's own pill leftmost - Home, Command and Operations
-        // each shifted right by one.
-        pills[3].performPrimaryAction()
-        if picked != [.operations] {
-            fail("clicking the fourth pill reported \(picked.map(\.rawValue)), expected [operations]", &ok)
-        }
-        if bar.selectedSpaceForTests != .operations {
-            fail("the bar's own selection is \(bar.selectedSpaceForTests.rawValue) after a click on Operations", &ok)
-        }
-        // `setSelectedSpace` moves the pill without reporting - the path a
-        // `\u{2318}N` shortcut or a restore takes.
-        picked.removeAll()
-        bar.setSelectedSpace(.stores)
-        if !picked.isEmpty { fail("setSelectedSpace fired onSelectSpace - it must not", &ok) }
-        if bar.selectedSpaceForTests != .stores { fail("setSelectedSpace did not move the selection", &ok) }
-
-        if ok { print("  OK - geometry, shadow, no vibrancy, \(pills.count) radio pills, click and silent-select") }
-    }
-
-    // MARK: 6b - the quick-access destination icons
-    //
-    // `fm/grandline-sticky-code-preview-polish`: the captain reaches Sticky
-    // Board and Code Preview often enough that a space switch plus a card
-    // click is friction, so both get a bar icon. Tasks joined them in
-    // `fm/grandline-tasks-quick-access-icon`, and Straw Hat Pirates/Poneglyph
-    // joined them in `fm/poneglyph-own-destination-and-strawhat-toolbar-
-    // shortcut`. Every one of them remains a full destination in its own
-    // space - this is a shortcut, not a relocation.
-    //
-    // The expected list is a literal here on purpose: a check that derived it
-    // from `debugDestinationButtons()` would pass for any set of icons in any
-    // order, including an accidental duplicate or a reordering that moves an
-    // icon the captain has muscle memory for.
-
-    private static func checkBarDestinationIcons(_ ok: inout Bool) {
-        print("\n-- bar quick-access: the default row, drawn in order (UX2 cap, U2 default) --")
-        let bar = DaylightBarController()
-        bar.loadView()
-        // 1512, the captain's own screen width, deliberately above
-        // `DaylightBarController.quickAccessCollapseWidth`: review #3's B6
-        // gives the shortcut row back to the drill title on a narrow bar, so
-        // below that width every one of these buttons is legitimately zero
-        // wide and what this case measures would not exist. The expanded row
-        // is the state it was written for.
-        bar.view.frame = NSRect(x: 0, y: 0, width: 1512, height: DaylightBarController.height + DaylightBarController.topMargin)
-        bar.view.layoutSubtreeIfNeeded()
-
-        // Typed out as a literal rather than read back from
-        // `debugDestinationButtons()`, for the same reason `lockedMembership`
-        // above is: a test that derives its expectation from the thing it is
-        // checking would pass for *any* set of icons in *any* order. Adding
-        // one is therefore a deliberate two-place edit - which is what made
-        // `fm/grandline-daylight-console-shortcut`'s own seven-site wiring
-        // (declaration, target/action loop, `addSubview`, the constraint
-        // chain, `keyViewChain`, `iconSquares`, `debugDestinationButtons`)
-        // verifiable rather than merely compiled. Only two of those seven
-        // fail loudly - a missing constraint collapses the row, a missing
-        // `addSubview` traps on "no common ancestor". The other five render a
-        // pixel-identical bar, and each was confirmed to fail here by name.
-        // **Review #3's UX2 capped the drawn row at six**, so the expectation
-        // is in two halves: the captain's whole *pinned* list and the *drawn*
-        // prefix of it. Review U2 briefly cut the default to four, which is
-        // what removed Console, Hosts and Poneglyph from the row; that cut is
-        // reverted (`QuickAccessConfiguration.defaultPinned` carries the
-        // reasoning), so the default is the shipped seven again and the
-        // overflow sweep below has a real seventh icon to sweep. Both halves
-        // are kept: the cap's own behaviour is covered against explicit
-        // over-cap rows in `NavigationCoherenceSelfTest` and
-        // `Audit3BugFixesSelfTest`, and what *this* case is for is the
-        // deliberate two-place edit on the default itself.
-        //
-        // Both are typed out as literals rather than read back from
-        // `debugDestinationButtons()` / `QuickAccessConfiguration`, for the
-        // reason this case has always given: a check that derives its
-        // expectation from the thing it is checking passes for any set of
-        // icons in any order, including an accidental duplicate or a
-        // reordering that moves an icon the captain has muscle memory for.
-        // Adding a shortcut stays a deliberate two-place edit.
-        let pinned: [RailDestination] = [
-            .stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts,
-        ]
-        if bar.quickAccessConfiguration.pinned != pinned {
-            fail("the default pinned row is \(bar.quickAccessConfiguration.pinned.map(\.title)), expected \(pinned.map(\.title))", &ok)
-        }
-        let expected = Array(pinned.prefix(QuickAccessConfiguration.visibleLimit))
-        let buttons = bar.debugDestinationButtons()
-        guard buttons.count == expected.count else {
-            fail("expected \(expected.count) quick-access icons (UX2's cap), found \(buttons.count)", &ok)
-            return
-        }
-        if buttons.map(\.destination) != expected {
-            fail("quick-access icons are \(buttons.map { $0.destination.title }), expected \(expected.map(\.title))", &ok)
-        }
-        // The seventh is reachable rather than dropped - that is the whole
-        // difference between a cap and a deletion.
-        let overflowed = pinned.dropFirst(QuickAccessConfiguration.visibleLimit).map(\.title)
-        let menuTitles = bar.debugQuickAccessOverflowMenu().items.map(\.title)
-        for title in overflowed where !menuTitles.contains(title) {
-            fail("\(title) is past UX2's cap and is not in the overflow menu either - it is unreachable from the bar", &ok)
-        }
-
-        // The glyph is each destination's OWN symbol, so the bar icon and the
-        // page it opens can never drift apart. A symbol name that does not
-        // resolve renders as an invisible button with no error anywhere,
-        // which this app has shipped before ("anchor", which is not an SF
-        // Symbol at all).
-        //
-        // **This used to also assert `debugUsesArtwork == (drillHeaderArtwork
-        // != nil)`, i.e. that Straw Hat Pirates' bar icon rendered the Jolly
-        // Roger raster** (`fm/strawhat-toolbar-shortcut-use-jolly-roger-icon-
-        // 69c3`). The UI modernization audit's B2 reverses that deliberately:
-        // five saturated raster tiles between grey symbol squares is what it
-        // calls "the noisiest thing in the app", and its preferred fix
-        // reserves the artwork for the destination *pages*. So the assertion
-        // is inverted rather than deleted - every shortcut is a symbol now,
-        // and the artwork still has to be reachable from the same
-        // `RailDestination`, which is what the earlier fix was really about.
-        for button in buttons {
-            if !button.debugHasIcon {
-                fail("\(button.destination.title): its icon (symbol '\(button.destination.symbol)') did not resolve - the icon is invisible", &ok)
-            }
-            if button.debugSymbolName != button.destination.symbol {
-                fail("\(button.destination.title): renders '\(button.debugSymbolName)', expected its own RailDestination.symbol '\(button.destination.symbol)'", &ok)
-            }
-            if button.accessibilityLabel() != button.destination.title {
-                fail("\(button.destination.title): accessibility label is \(button.accessibilityLabel() ?? "nil"), expected the destination title", &ok)
-            }
-        }
-
-        // Order, measured rather than assumed: the captain's own reviewed
-        // layout is search -> Recents -> Sticky Board -> Code Preview ->
-        // Tasks -> Straw Hat Pirates -> Poneglyph -> Console -> theme toggle
-        // -> bell -> avatar.
-        // UX2 moved the shortcut buttons inside an `NSStackView`, so their
-        // own `frame` is in that row's coordinate space rather than the
-        // bar's. **Every** number in this block is converted into one space
-        // for that reason, the reference views included - the first version
-        // of this converted only the buttons and compared them against the
-        // search pill's and the theme toggle's raw frames, which are offset
-        // from the bar by the floating bar's own inset. It happened to pass
-        // while the row was seven icons wide and started failing the moment
-        // review U2 made it four, naming an overlap that does not exist: the
-        // real gap between the last icon and the toggle is a clean 8pt
-        // (measured 1352 -> 1360). A check that fails for a reason that is
-        // not the one it names is worse than no check.
-        //
-        // Asserted rather than assumed: the row must actually be somewhere,
-        // or every comparison below is against a zero rect and vacuous.
-        let barView = bar.view
-        func barFrame(_ view: NSView) -> NSRect { view.convert(view.bounds, to: barView) }
-        let searchMaxX = barFrame(bar.debugSearchPill()).maxX
-        let toggleMinX = barFrame(bar.debugThemeToggleButton()).minX
-        let bellMinX = barFrame(bar.notificationCenter.bell).minX
-        if buttons.contains(where: { barFrame($0).width <= 0 }) {
-            fail("a quick-access button has no laid-out width - the order checks below would be vacuous", &ok)
-        }
-        for button in buttons where barFrame(button).width > 0 {
-            if barFrame(button).minX < searchMaxX {
-                fail("\(button.destination.title) sits before the search pill", &ok)
-            }
-            if barFrame(button).maxX > toggleMinX {
-                fail("\(button.destination.title) sits after the theme toggle - it must come immediately before it", &ok)
-            }
-        }
-        // Pairwise rather than a single comparison, so a third (or fourth)
-        // icon landing out of order fails by name instead of only the first
-        // two being checked.
-        for (left, right) in zip(buttons, buttons.dropFirst()) {
-            if barFrame(left).minX >= barFrame(right).minX {
-                fail("\(left.destination.title) should sit left of \(right.destination.title)", &ok)
-            }
-        }
-        if toggleMinX >= bellMinX {
-            fail("the theme toggle should still sit before the bell", &ok)
-        }
-        // Square, and the same side as the toggle and bell beside them - three
-        // icon squares of different sizes in one row is exactly the "two icon
-        // button languages" finding this app's own UI audit spent a phase
-        // undoing.
-        for button in buttons {
-            if abs(button.frame.width - DaylightBarIconButton.side) > 0.5
-                || abs(button.frame.height - DaylightBarIconButton.side) > 0.5 {
-                fail("\(button.destination.title) is \(button.frame.size), expected \(DaylightBarIconButton.side)pt square", &ok)
-            }
-        }
-
-        // A real click through the button's own target/action reports the
-        // destination - a button wired to nothing renders identically.
-        var picked: [RailDestination] = []
-        bar.onSelectDestination = { picked.append($0) }
-        for button in buttons { button.performClick(nil) }
-        if picked != expected {
-            fail("clicking every icon reported \(picked.map(\.title)), expected \(expected.map(\.title))", &ok)
-        }
-
-        // Both icons re-tint with the theme like every other control on the
-        // bar - they share `DaylightBarIconButton.applyTheme` with the toggle,
-        // so this catches a caller that forgot to include them in the sweep.
-        for id in ["helm-light", "helm-dark"] {
-            guard let theme = HelmTheme.theme(id: id) else { continue }
-            bar.applyThemeForTests(theme)
-            for button in buttons where button.debugIconBackground.layer?.backgroundColor == nil {
-                fail("\(id): \(button.destination.title) has no icon-square fill after a theme change", &ok)
-            }
-        }
-
-        // Every icon is reachable by keyboard too - the bar's own half of
-        // §8's key loop. A control added to the row but not to the chain is
-        // invisible to Tab and renders identically.
-        let chain = bar.keyViewChain
-        for button in buttons where !chain.contains(where: { $0 === button }) {
-            fail("\(button.destination.title) is missing from the bar's key view chain", &ok)
-        }
-
-        if ok { print("  OK - \(buttons.count) icons, right order, right glyphs, real clicks, themed, in the key loop") }
-    }
-
-    // MARK: 5 - the bar cannot cap the window
-
-    private static func checkBarDoesNotCapWindow(_ ok: inout Bool) {
-        print("\n-- gotcha (13): the bar cannot set a window-width floor --")
-        let bar = DaylightBarController()
-        bar.loadView()
-
-        for (description, priority) in bar.debugWidthConstraints() where priority >= 500 {
-            fail("a bar width constraint sits at priority \(priority) - anything >= "
-                 + "NSLayoutPriorityWindowSizeStayPut (500) can cap the window: \(description)", &ok)
-        }
-
-        // Measured, not reasoned: a real window carrying the bar has to hold a
-        // width well below \u{00A7}6.3's own comfortable floor.
-        let window = OffScreenProbe.window(width: 1200, height: 200, styleMask: [.titled, .resizable])
-        window.contentViewController = bar
-        for width in [CGFloat(1400), 900, 640, 520, 420] {
-            window.setFrame(NSRect(x: 0, y: 0, width: width, height: 200), display: true)
-            let actual = window.frame.width
-            if abs(actual - width) > 1.0 {
-                fail("asked for a \(width)pt window, got \(actual)pt - the bar is capping it", &ok)
-            }
-        }
-        if ok { print("  OK - every bar constraint < 500, and a real window holds 420pt") }
-    }
-
-    // MARK: canvas + drill header, driven through the real shell
-
-    private static func checkCanvasAndDrillHeader(_ ok: inout Bool) {
-        print("\n-- shell: the canvas is the landing, every drill page has a back button --")
         withScratchEnv {
             let window = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
             let hostStore = HostStore()
@@ -1646,7 +1343,7 @@ enum DaylightModuleSelfTest {
 
             // Overview shows exactly the trimmed six (`fm/grandline-overview-
             // canvas-trim`); each other space shows only its own.
-            shell.selectSpace(.overview)
+            selectCanvasSpace(shell, .overview)
             if Set(canvas.visibleModulesForTests) != overviewVisibleModules {
                 fail("Overview shows \(Set(canvas.visibleModulesForTests).map(\.rawValue).sorted()), "
                      + "expected exactly \(overviewVisibleModules.map(\.rawValue).sorted())", &ok)
@@ -1669,16 +1366,14 @@ enum DaylightModuleSelfTest {
             // sitting last in the *whole* enum would satisfy it by accident
             // rather than by placement - which is exactly what this catches
             // the day a new module is appended below it.
-            shell.selectSpace(.command)
+            selectCanvasSpace(shell, .command)
             if canvas.visibleModulesForTests.last != .strawHat {
                 fail("Straw Hat Pirates must be the LAST card on Command, got "
                      + "\(canvas.visibleModulesForTests.map(\.rawValue))", &ok)
             }
-            shell.selectSpace(.overview)
-            // A space that owns a destination is a page, not a canvas filter -
-            // it is driven in its own case below rather than swept here.
+            selectCanvasSpace(shell, .overview)
             for space in DaylightSpace.allCases where space != .overview && space.filtersCanvas {
-                shell.selectSpace(space)
+                selectCanvasSpace(shell, space)
                 let visible = Set(canvas.visibleModulesForTests)
                 guard let expected = lockedMembership[space] else { continue }
                 if visible != expected {
@@ -1689,140 +1384,38 @@ enum DaylightModuleSelfTest {
                     fail("\(space.rawValue) built \(canvas.moduleCardsForTests.count) cards for "
                          + "\(expected.count) modules", &ok)
                 }
-                // \u{00A7}5.4's exact copy for a non-Overview space.
-                let greeting = canvas.greetingForTests
-                if greeting.title != space.title || greeting.subtitle != space.subtitle {
-                    fail("\(space.rawValue) greeting is \(greeting), expected \((space.title, space.subtitle))", &ok)
-                }
-                // Selecting a space lands on the canvas, whichever page was up.
-                if shell.drillHeaderIsHiddenForTests == false {
-                    fail("selecting \(space.rawValue) left a drill header showing - it should be on the canvas", &ok)
-                }
             }
 
-            // `fm/grandline-overview-page-daily-review`: the sixth pill is a
-            // page, and this is the behavioural half of that - a real click
-            // path (`selectSpace`, which is what the pill's own handler calls)
-            // landing on a real mounted destination, with the canvas's own
-            // filter left where the captain had it.
-            //
-            // Discriminating power first: the canvas is parked on a space that
-            // is NOT the one being clicked, so "the filter survived" cannot
-            // pass by accident.
-            shell.selectSpace(.command)
-            for space in DaylightSpace.allCases where !space.filtersCanvas {
-                guard let destination = space.destination else { continue }
-                shell.selectSpace(space)
-                if !shell.mountedDestinationSlotsForTests.contains(destination.slot) {
-                    fail("selecting \(space.rawValue) did not mount \(destination)", &ok)
-                }
-                // Which page is showing, read off the shell's own current
-                // destination rather than off the drill header's title.
-                //
-                // `fm/grandline-overview-layout-fix-gmail-settings`: a pill's
-                // own page is top-level, so it has no drill header to read -
-                // and the drill header's title was never the thing under test
-                // here anyway. `currentContextTitle` is what the window title
-                // and the Recents list already read.
-                if shell.currentContextTitle != destination.title {
-                    fail("\(space.rawValue)'s pill opened "
-                         + "'\(shell.currentContextTitle ?? "nothing")', expected '\(destination.title)'", &ok)
-                }
-                if let view = shell.destinationViewIfMountedForTests(destination.slot),
-                   view.isHiddenOrHasHiddenAncestor {
-                    fail("\(space.rawValue)'s pill mounted \(destination) but left it hidden", &ok)
-                }
-                if canvas.selectedSpace != .command {
-                    fail("selecting \(space.rawValue) changed the canvas's own filter to "
-                         + "\(canvas.selectedSpace.rawValue) - a page pill must not touch it", &ok)
-                }
-            }
-
-            // The canvas has no drill header; every other destination does,
-            // and its back button returns to the canvas with the space intact.
-            shell.selectSpace(.stores)
-            shell.show(.homeCanvas)
-            if !shell.drillHeaderIsHiddenForTests {
-                fail("the canvas shows a drill cluster in the bar - the hub has no back", &ok)
-            }
-            // A2: the wordmark and the space pills are the canvas's own
-            // leading area, and they only come back if the swap is genuinely
-            // two-way.
-            if shell.bar.wordmarkIsHiddenForTests {
-                fail("the canvas hides the wordmark - the leading swap is one-way", &ok)
-            }
-            if shell.bar.pillsAreHiddenForTests {
-                fail("the canvas hides the space pills - they only collapse on a drill page", &ok)
-            }
-
-            // `fm/grandline-overview-layout-fix-gmail-settings`: the canvas is
-            // no longer the only top-level page. A space pill that opens a
-            // page of its own (`DaylightSpace.destination` - the Overview tab
-            // is the first) is still the top of the navigation, so it keeps
-            // the wordmark and the pills exactly as the canvas does. The
-            // sweep below is about **drill** pages; a page opened by a pill
-            // is asserted the other way, immediately after it.
-            let topLevel = Set(DaylightSpace.allCases.compactMap(\.destination) + [.homeCanvas])
-            for dest in RailDestination.allCases where !topLevel.contains(dest) {
+            // UX-01: every route lights exactly its module in the sidebar and
+            // titles the window with it, and none of them is a "drill" with a
+            // way back - the sidebar is the way anywhere. The canvas keeps the
+            // space it was left on over every round trip.
+            selectCanvasSpace(shell, .stores)
+            for dest in RailDestination.allCases {
                 shell.show(dest)
-                if shell.drillHeaderIsHiddenForTests {
-                    fail("\(dest) has no drill header - it would have no way back", &ok)
+                let module = ModuleTable.module(for: dest)
+                if shell.currentModuleID != module.id {
+                    fail("\(dest) lit \(shell.currentModuleID.rawValue) in the sidebar, expected \(module.id.rawValue)", &ok)
                 }
-                // A2: a drill page collapses the pills to make room for the
-                // cluster and the page's own actions - measured, they do not
-                // all fit (see `DaylightBarController`'s header).
-                if !shell.bar.pillsAreHiddenForTests {
-                    fail("\(dest) leaves the space pills showing beside the drill cluster", &ok)
+                if shell.sidebar.selectedModule != module.id {
+                    fail("\(dest): the sidebar's own selection is \(shell.sidebar.selectedModule.rawValue)", &ok)
                 }
-                if !shell.bar.wordmarkIsHiddenForTests {
-                    fail("\(dest) shows the wordmark and the drill title at once", &ok)
+                if shell.windowTitleForTests != module.title {
+                    fail("\(dest) titled the window '\(shell.windowTitleForTests)', expected '\(module.title)'", &ok)
                 }
-                // `fm/grandline-separate-setup-destinations`: this used to
-                // read `dest.bodyTitle`, a property whose only job was to
-                // report "Setup" for the four Engineering setup destinations
-                // regardless of which one was showing. With that property
-                // gone, this sweep *is* the behavioural guard that every
-                // destination's drill header names the page the captain
-                // actually opened - there is nowhere left for a lumped title
-                // to hide.
-                if shell.drillHeaderForTests.titleForTests != dest.title {
-                    fail("\(dest)'s drill header says '\(shell.drillHeaderForTests.titleForTests)', "
-                         + "expected '\(dest.title)'", &ok)
+                // The shell's own chrome, not a page's in-page navigation
+                // (Docs' article "Back" to its list is the page's own).
+                let body = shell.contentPane.bodyHost
+                func chrome(_ root: NSView) -> [NSView] { root === body ? [] : [root] + root.subviews.flatMap(chrome) }
+                if chrome(shell.view).contains(where: { ($0.accessibilityLabel() ?? "") == "Back" && !$0.isHiddenOrHasHiddenAncestor }) {
+                    fail("\(dest) shows a visible Back control - UX-01 replaced drilling with selection", &ok)
                 }
-                // The real back path a click or a VoiceOver press takes.
-                if !shell.drillHeaderForTests.debugActivateBack() {
-                    fail("\(dest)'s back button did not activate", &ok)
-                }
-                if !shell.drillHeaderIsHiddenForTests {
-                    fail("back from \(dest) did not land on the canvas", &ok)
-                }
-                // The space survives the round trip - the canvas is never
-                // rebuilt, which is what \u{00A7}5.2's "keeps its last space
-                // selection" means.
+                shell.show(.homeCanvas)
                 if canvas.selectedSpace != .stores {
                     fail("the canvas lost its space over a \(dest) round trip: now \(canvas.selectedSpace.rawValue)", &ok)
                 }
             }
-
-            // The other half of that rule: a pill that opens a page must not
-            // hide the pill strip it was pressed on. Shipped that way once -
-            // the captain reported the new Overview tab rendering with a back
-            // arrow and no tabs at all.
-            for space in DaylightSpace.allCases {
-                guard let dest = space.destination else { continue }
-                shell.selectSpace(space)
-                if !shell.drillHeaderIsHiddenForTests {
-                    fail("\(dest) is a pill's own page - it should carry no drill cluster", &ok)
-                }
-                if shell.bar.pillsAreHiddenForTests {
-                    fail("\(dest) hid the space pills the captain pressed to get there", &ok)
-                }
-                if shell.bar.wordmarkIsHiddenForTests {
-                    fail("\(dest) hid the wordmark - it is a top-level page, not a drill", &ok)
-                }
-            }
-            shell.selectSpace(.stores)
-            shell.show(.homeCanvas)
+            selectCanvasSpace(shell, .stores)
 
             // The canvas rebuilds fifteen self-theming cards on every space
             // switch. Each card - and each card's gradient tile - registers a
@@ -1839,14 +1432,14 @@ enum DaylightModuleSelfTest {
             // exits. Draining per switch reports a flat 69 -> 69. Any future
             // AppKit self-test that measures deallocation needs the same
             // wrapper, or it will chase a cycle that does not exist.
-            autoreleasepool { shell.selectSpace(.overview) }
+            autoreleasepool { selectCanvasSpace(shell, .overview) }
             let baselineObservers = ThemeManager.shared.observerCountForTests
             for _ in 0..<4 {
                 for space in DaylightSpace.allCases {
-                    autoreleasepool { shell.selectSpace(space) }
+                    autoreleasepool { selectCanvasSpace(shell, space) }
                 }
             }
-            autoreleasepool { shell.selectSpace(.overview) }
+            autoreleasepool { selectCanvasSpace(shell, .overview) }
             let afterObservers = ThemeManager.shared.observerCountForTests
             if afterObservers > baselineObservers {
                 fail("20 space switches left \(afterObservers - baselineObservers) extra ThemeManager "
@@ -1867,7 +1460,7 @@ enum DaylightModuleSelfTest {
             // hero band; `fm/grandline-home-page-visual-overhaul` merged that
             // band into the attention card, because the captain's reference
             // draws one card at the top of Home rather than two.
-            shell.selectSpace(.overview)
+            selectCanvasSpace(shell, .overview)
             let snapshot = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
                                          queuedCount: 0, doneCount: 0, projectsCount: 0,
                                          watcher: WatcherHealth(status: "healthy"))
@@ -1936,8 +1529,8 @@ enum DaylightModuleSelfTest {
             }
 
             if ok {
-                print("  OK - eager canvas, per-space filtering and copy, drill navigation in the bar on "
-                      + "\(RailDestination.allCases.count - 1) destinations, back preserves the space")
+                print("  OK - eager canvas, per-space filtering, \(RailDestination.allCases.count) routes "
+                      + "each lighting their module with no back button, the space kept over every round trip")
             }
         }
     }
@@ -2018,7 +1611,8 @@ enum DaylightModuleSelfTest {
             // Engineering now, per the locked space table, and the
             // observer-driven live-update behaviour below is unaffected by
             // which space a card happens to be on, so it is exercised there.
-            shell.selectSpace(.engineering)
+            shell.homeCanvasForTests.select(space: .engineering)
+            shell.show(.homeCanvas)
 
             // --- 1a. Warming up: no pass has completed, no count exists.
             poller.debugSetLastCompletedPassAt(nil)
@@ -2159,7 +1753,8 @@ enum DaylightModuleSelfTest {
             // `.poneglyph` card is now the captain's own credential vault,
             // whose count is inside the ciphertext and is deliberately never
             // read from a poller.
-            shell.selectSpace(.stores)
+            shell.homeCanvasForTests.select(space: .stores)
+            shell.show(.homeCanvas)
 
             poller.debugSetLastCompletedPassAt(nil)
             poller.debugSetCounts(BackgroundSignalsPoller.SignalCounts())
@@ -2201,7 +1796,8 @@ enum DaylightModuleSelfTest {
 
             // --- 2. Dictation, through the real forwarding path. On Stores,
             // where Dictation lives.
-            shell.selectSpace(.stores)
+            shell.homeCanvasForTests.select(space: .stores)
+            shell.show(.homeCanvas)
             for status in [DictationStatus.recording, .needsMicrophone, .ready] {
                 let expected: String
                 switch status {

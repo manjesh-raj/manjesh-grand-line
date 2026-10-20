@@ -67,16 +67,13 @@ enum ReviewTourLabSelfTest {
         let (_, fitBad) = ReviewTourLab.parse(tour: "demo attention lots\nmeasure\nrenderdoc")
         check(fitBad.count == 3, "a bad count and two missing names must be 3 errors, got \(fitBad)", &ok)
 
-        // The bar verbs (`fm/grandline-bar-active-state`).
-        let barTour = "bar hover hosts\nbar press theme\nbar rest\nrenderbar dusk-hosts"
-        let (barSteps, barErrors) = ReviewTourLab.parse(tour: barTour)
-        check(barErrors.isEmpty, "the bar verbs must parse clean, got \(barErrors)", &ok)
-        check(barSteps == [.barState(.hover, target: "hosts"), .barState(.press, target: "theme"),
-                           .barState(.rest, target: nil), .renderBar("dusk-hosts")],
-              "the bar verbs parsed to \(barSteps)", &ok)
-        let (_, barBad) = ReviewTourLab.parse(tour: "bar wiggle hosts\nbar hover nowhere\nbar press\nrenderbar")
-        check(barBad.count == 4, "a bad state, a bad target and two missing arguments must be 4 errors, "
-              + "got \(barBad)", &ok)
+        // The module verb (UX-01): a module chosen through the sidebar.
+        let moduleTour = "module tasks\nmodule settings"
+        let (moduleSteps, moduleErrors) = ReviewTourLab.parse(tour: moduleTour)
+        check(moduleErrors.isEmpty, "the module verb must parse clean, got \(moduleErrors)", &ok)
+        check(moduleSteps == [.module(.tasks), .module(.settings)], "the module verb parsed to \(moduleSteps)", &ok)
+        let (_, moduleBad) = ReviewTourLab.parse(tour: "module nowhere\nmodule")
+        check(moduleBad.count == 2, "an unknown and a missing module must be 2 errors, got \(moduleBad)", &ok)
 
         // The layout-break verbs (`fm/grandline-layout-breaks-refresh-reply`).
         let breaks = "demo decision\nfleet reply\ndemo refresh\ndemo loading merge\nmeasurewindow after\norderfront"

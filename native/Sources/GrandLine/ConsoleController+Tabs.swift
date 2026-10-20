@@ -769,7 +769,7 @@ extension ConsoleController {
         currentTab = tab
         for t in tabs { updateTabViewVisibility(t) }
         styleChips()
-        updateWindowTitle(from: tab)
+        refreshTerminalTitle(from: tab)
         updateBlockViewControls()
         updateComposeControls()
         updateQuotaUsageControls()
@@ -895,10 +895,16 @@ extension ConsoleController {
         herdrRestartPollTimer = nil
     }
 
-    // MARK: Window title
+    // MARK: Terminal title
 
-    func updateWindowTitle(from tab: TabModel) {
-        view.window?.title = "Grand Line - \(tab.name)"
+    /// UX-12: the window title names the module and belongs to the shell. A
+    /// console contributes its terminal's own title to the window *subtitle*
+    /// instead, through the live line `drillHeaderSubtitle` gives the
+    /// toolbar - so a hidden console's shell can no longer retitle the window
+    /// over whatever page is showing.
+    func refreshTerminalTitle(from tab: TabModel) {
+        reportedTerminalTitle = nil
+        onDrillSubtitleChanged?()
     }
 
     // MARK: LocalProcessTerminalViewDelegate
@@ -906,12 +912,13 @@ extension ConsoleController {
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
 
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        // Only the active terminal drives the window title; keep the tab name too.
+        // Only the active terminal contributes; the tab name stays in the line.
         guard source === currentTab?.terminal, let tab = currentTab else { return }
         if title.isEmpty {
-            updateWindowTitle(from: tab)
+            refreshTerminalTitle(from: tab)
         } else {
-            view.window?.title = "\(tab.name) - \(title)"
+            reportedTerminalTitle = title
+            onDrillSubtitleChanged?()
         }
     }
 

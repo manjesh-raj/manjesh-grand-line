@@ -1,20 +1,21 @@
 // Grand Line - native macOS app.
 //
 // Coverage for the session switcher (`fm/grandline-session-switcher`): the
-// persistent strip of live-SSH-session pills, the Hosts list's per-row live
-// state, the ⌘K palette's pinned "Active sessions" group, and the ⌘⌃1…9 /
+// live SSH sessions as children of Connections in the Workspace sidebar
+// (UX-03 of the 2026-10 review retired the persistent pill strip that used to
+// list them), the Hosts list's per-row live state, the ⌘K palette's pinned "Active sessions" group, and the ⌘⌃1…9 /
 // ⌘] / ⌘[ shortcut arithmetic.
 //
 // **What this drives for real, and what it deliberately does not.** Everything
 // here goes through the real production types - a real `AppShellController`
 // mounted in a real `NSWindow`, its real `HostSessionRegistry`, the real
-// `SessionStripView` it owns, a real `HostsController`, the real
+// sidebar it owns, a real `HostsController`, the real
 // `UnifiedSearchIndex` with the real providers registered. The one thing it
 // does not do is *open* a session by calling `AppShellController.connectHost`,
 // because that forks a real `/usr/bin/ssh` at a real address - so a session is
 // created by calling `sessions.register(...)`, which is the exact line
 // `connectHost` itself calls and the only writer of that fact. That leaves one
-// honest gap, stated rather than papered over: this suite proves the strip, the
+// honest gap, stated rather than papered over: this suite proves the sidebar, the
 // rows, the palette and the shortcuts all react correctly to a registered
 // session, and does not prove `connectHost` registers one - which is a single
 // unconditional line right after `connectSSHIfNeeded`, and is guarded instead
@@ -44,18 +45,17 @@ enum SessionSwitcherSelfTest {
             ("registryOrderAndDuration", test_registryOrderAndDuration),
             ("registryStepAndShortcutIndex", test_registryStepAndShortcutIndex),
             ("registryActiveNeverClaimsADeadHost", test_registryActiveNeverClaimsADeadHost),
-            ("stripAppearsAndReservesRealHeight", test_stripAppearsAndReservesRealHeight),
-            ("stripPillsCarryHostColourOrderAndShortcuts", test_stripPillsCarryHostColourOrderAndShortcuts),
-            ("activePillHasNoCloseButton", test_activePillHasNoCloseButton),
-            ("stripPillsAreAccessibleRadioButtons", test_stripPillsAreAccessibleRadioButtons),
+            ("sessionsAreConnectionsChildrenAndLeaveTheBodyAlone", test_stripAppearsAndReservesRealHeight),
+            ("sessionChildrenFollowTheRegistryAndShowTheirChord", test_stripPillsCarryHostColourOrderAndShortcuts),
+            ("sessionChildrenNameHostAndState", test_stripPillsAreAccessibleRadioButtons),
             ("hostRowReadsAsConnectedAndResumes", test_hostRowReadsAsConnectedAndResumes),
             ("hostRowWithNoSessionIsUnchanged", test_hostRowWithNoSessionIsUnchanged),
             ("paletteAddsPinnedLiveGroupAndDoesNotDuplicate", test_paletteAddsPinnedLiveGroupAndDoesNotDuplicate),
             ("switchToUnknownSessionIsSafe", test_switchToUnknownSessionIsSafe),
             ("connectHostIsTheOnlyRegistrar", test_connectHostIsTheOnlyRegistrar),
             ("sessionShortcutsDoNotCollide", test_sessionShortcutsDoNotCollide),
-            ("closeButtonIsARealButtonAndNotANestedRecognizer", test_closeButtonIsARealButtonAndNotANestedRecognizer),
-            ("realClickOnCloseEndsTheSessionAndDoesNotSwitchToIt", test_realClickOnCloseEndsTheSessionAndDoesNotSwitchToIt),
+            ("endSessionIsTheChildsOwnMenuItem", test_closeButtonIsARealButtonAndNotANestedRecognizer),
+            ("aClickOnASessionChildSelectsItOnce", test_realClickOnCloseEndsTheSessionAndDoesNotSwitchToIt),
         ]
         for (name, check) in cases {
             if let failure = check() { failures.append("\(name): \(failure)") }
@@ -136,179 +136,94 @@ enum SessionSwitcherSelfTest {
              username: "ec2-user", accentHex: "#22b3a6", tags: ["PROD"])
     }
 
-    // MARK: Finding 4.7 - the ✕ inside a recognizer-bearing pill
+    // MARK: Sessions in the sidebar (UX-03)
+    //
+    // The persistent pill strip under the old floating bar is gone: a live
+    // session is a child of Connections in the Workspace sidebar. Finding
+    // 4.7's lesson (a nested recognizer swallowing a control's click) is why
+    // the strip's ✕ became a context-menu item here rather than a second
+    // control inside the row, and why the selection is asserted with a real
+    // event.
 
-    /// Builds a real strip, off the shell, with one active and one inactive
-    /// session - so the inactive pill has a ✕.
-    private static func makeStrip() -> (window: NSWindow, strip: SessionStripView,
-                                        active: UUID, inactive: UUID) {
-        // Built off-screen by `OffScreenProbe.window(...)` and ordered front,
-        // never made key: real
-        // mouse-event routing needs a real `windowNumber` (a window that was
-        // never ordered in has none, and `NSEvent.mouseEvent` then routes
-        // nowhere), while activating the app would steal focus from the
-        // captain's own running instance on a shared machine. `orderFront` on
-        // an `.accessory` process does neither.
-        let window = OffScreenProbe.window(width: 900, height: 200)
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 200))
-        let strip = SessionStripView()
-        strip.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(strip)
-        NSLayoutConstraint.activate([
-            strip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            strip.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            strip.topAnchor.constraint(equalTo: root.topAnchor),
-            strip.heightAnchor.constraint(equalToConstant: SessionStripView.height),
-        ])
-        window.contentView = root
+    /// A real sidebar in a real window, ordered in (never made key), with
+    /// Connections showing two sessions.
+    private static func makeSidebar() -> (window: NSWindow, sidebar: WorkspaceSidebarController,
+                                          children: [WorkspaceSidebarChild]) {
+        let window = OffScreenProbe.window(width: 300, height: 900)
+        let sidebar = WorkspaceSidebarController()
+        let children = [WorkspaceSidebarChild(id: "session:a", title: "DEV Bastion", dot: .good, accessory: "\u{2303}\u{2318}1"),
+                        WorkspaceSidebarChild(id: "session:b", title: "Prod Bastion", dot: .good, accessory: "\u{2303}\u{2318}2")]
+        sidebar.childrenProvider = { $0 == .connections ? children : [] }
+        window.contentViewController = sidebar
+        window.setContentSize(NSSize(width: WorkspaceSidebarController.expandedWidth, height: 900))
         NSApp.setActivationPolicy(.accessory)
         window.orderFront(nil)
-
-        let registry = HostSessionRegistry()
-        let active = UUID(), inactive = UUID()
-        registry.register(hostID: active, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
-        registry.register(hostID: inactive, label: "Prod Bastion", accentHex: "#22b3a6", state: .connected)
-        registry.setActive(active)
-        strip.render(registry)
-        root.layoutSubtreeIfNeeded()
-        return (window, strip, active, inactive)
+        sidebar.setSelection(module: .connections, childID: "session:a")
+        sidebar.view.layoutSubtreeIfNeeded()
+        return (window, sidebar, children)
     }
 
-    /// **The structural half of finding 4.7.** The ✕ shipped as a
-    /// `HoverHighlightView` carrying its own `NSClickGestureRecognizer`,
-    /// *nested inside* the pill container that carries `pillClicked`'s -
-    /// and AppKit defines no automatic ancestor/descendant exclusivity, so
-    /// nothing decided which of the two a ✕ click belonged to.
-    ///
-    /// Asserted structurally as well as behaviourally because the shape is
-    /// what makes the behaviour unpredictable: a nested recognizer added back
-    /// for some other control would reintroduce the ambiguity even if a click
-    /// on the ✕ still happened to land correctly.
+    /// Ending a session is the child row's own context-menu item, wired to
+    /// the shell, and it names the session it ends.
     private static func test_closeButtonIsARealButtonAndNotANestedRecognizer() -> String? {
-        let (_, strip, active, inactive) = makeStrip()
-
-        guard let close = strip.debugCloseView(inactive) else {
-            return "the inactive pill has no ✕"
-        }
-        guard close.target != nil, close.action != nil else {
-            return "the ✕ is an NSButton with no target/action - it would do nothing at all"
-        }
-        guard strip.debugCloseView(active) == nil else {
-            return "the active pill must not carry a ✕ (mockup callout c)"
-        }
-
-        // No click recognizer anywhere inside a pill: the pill's own is the
-        // only one on that subtree.
-        func nestedClickRecognizers(_ view: NSView) -> [String] {
-            var out: [String] = []
-            for sub in view.subviews {
-                let count = sub.gestureRecognizers.filter { $0 is NSClickGestureRecognizer }.count
-                if count > 0 { out.append("\(type(of: sub)) x\(count)") }
-                out += nestedClickRecognizers(sub)
+        withScratchEnv {
+            let (_, shell, _) = makeMountedShell()
+            let dev = UUID()
+            shell.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: nil, state: .connected)
+            shell.show(.hosts)
+            guard let menu = shell.debugSidebarChildMenu(childID: AppShellController.sessionChildID(dev)) else {
+                return "the session's sidebar row has no context menu"
             }
-            return out
+            guard let end = menu.items.first(where: { $0.title.hasPrefix("End Session") }) else {
+                return "the context menu has no End Session item: \(menu.items.map(\.title))"
+            }
+            guard end.target === shell, end.action != nil else {
+                return "End Session is not wired to the shell - it would do nothing"
+            }
+            guard (end.representedObject as? String) == dev.uuidString else {
+                return "End Session names \(String(describing: end.representedObject)), not the row's session"
+            }
+            return nil
         }
-        for hostID in [active, inactive] {
-            guard let pill = strip.debugPillView(hostID) else { return "no pill for \(hostID)" }
-            let own = pill.gestureRecognizers.filter { $0 is NSClickGestureRecognizer }
-            guard own.count == 1 else {
-                return "a pill should carry exactly one click recognizer, has \(own.count)"
-            }
-            guard own[0].delegate != nil else {
-                return "the pill's recognizer has no delegate - nothing declines a click that "
-                    + "landed on a real control inside it"
-            }
-            let nested = nestedClickRecognizers(pill)
-            guard nested.isEmpty else {
-                return "a click recognizer is nested inside a pill (\(nested)) - that is the "
-                    + "ambiguity finding 4.7 is about"
-            }
-        }
-        return nil
     }
 
-    /// **The behavioural half.** A real `NSEvent` at the ✕'s own centre,
-    /// dispatched through the real `NSWindow.sendEvent`, must end that session
-    /// and must not switch to it.
+    /// A click on a session row chooses exactly that session, once.
     ///
-    /// Measured across the three states while fixing this, which is why both
-    /// halves of the fix are load-bearing and both are asserted here:
-    ///   - as shipped (two competing recognizers, no exclusion): **neither**
-    ///     handler fired - the ✕ was simply dead;
-    ///   - with the `NSButton` swap alone: `onSelect` fired and `onClose` did
-    ///     not - a ✕ click *switched to* the session it was meant to end;
-    ///   - with the swap plus the recognizer delegate: `onClose` only.
-    ///
-    /// Honest limitation: this process is `.accessory` and never becomes
-    /// active (activating it would steal focus from the captain's own running
-    /// instance on a shared machine), so this is not a byte-perfect
-    /// reproduction of a real click in a key window. What it does prove is
-    /// that the routing reaches exactly one handler, and which one.
+    /// Driven at the two calls AppKit itself makes for a click on an outline
+    /// row - the selection change on mouse-down, then the outline's action on
+    /// mouse-up - because a real `NSEvent` cannot be used here: measured, an
+    /// `NSTableView` in this never-activated `.accessory` process runs no
+    /// click tracking at all (the hit test lands on the outline and the
+    /// selection does not move, whether the event goes through
+    /// `NSWindow.sendEvent` or straight to `mouseDown`). The real click is a
+    /// manual check (`MANUAL-CHECKS.md`). What this does prove is the half
+    /// that broke the strip before it: the two halves of one click report the
+    /// choice once, not twice and not as a module.
     private static func test_realClickOnCloseEndsTheSessionAndDoesNotSwitchToIt() -> String? {
-        let (window, strip, active, inactive) = makeStrip()
-        var selected: [UUID] = []
-        var closed: [UUID] = []
-        strip.onSelect = { selected.append($0) }
-        strip.onClose = { closed.append($0) }
-
-        guard let close = strip.debugCloseView(inactive) else { return "no ✕ on the inactive pill" }
-
-        func click(at view: NSView) {
-            let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
-            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                guard let event = NSEvent.mouseEvent(
-                    with: type, location: point, modifierFlags: [],
-                    timestamp: ProcessInfo.processInfo.systemUptime,
-                    windowNumber: window.windowNumber, context: nil,
-                    eventNumber: 0, clickCount: 1,
-                    pressure: type == .leftMouseDown ? 1 : 0) else { continue }
-                window.sendEvent(event)
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        let (window, sidebar, children) = makeSidebar()
+        defer { window.orderOut(nil) }
+        var chosen: [String] = []
+        sidebar.onSelectChild = { _, child in chosen.append(child.id) }
+        var modules: [WorkspaceModuleID] = []
+        sidebar.onSelectModule = { modules.append($0) }
+        let titles = sidebar.debugRowTitles
+        guard let row = titles.firstIndex(of: "  Prod Bastion") else {
+            return "the second session has no row (rows: \(titles))"
         }
-
-        click(at: close)
-        guard closed == [inactive] else {
-            return "a click on ✕ should end exactly that session - onClose got \(closed)"
+        // Mouse-down: the outline moves its own selection.
+        sidebar.debugSimulateMouseDown()
+        sidebar.outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        // Mouse-up: the outline sends its action.
+        sidebar.outline.sendAction(sidebar.outline.action, to: sidebar.outline.target)
+        guard chosen == [children[1].id] else {
+            return "a click on Prod Bastion's row chose \(chosen) - expected exactly that session, once"
         }
-        guard selected.isEmpty else {
-            return "a click on ✕ also switched to the session it was ending - onSelect got \(selected)"
-        }
-
-        // The rest of the pill still switches, so the exclusion is scoped to
-        // the ✕ rather than disabling the row. A pill's own label is an
-        // `NSTextField` - i.e. an `NSControl` - so a delegate written as "any
-        // NSControl declines" would silently kill most of the pill's clickable
-        // surface; that is why the rule is *actionable* control, and why this
-        // half is asserted rather than assumed.
-        //
-        // A fresh strip, so the ✕ click above cannot interact with this one
-        // through AppKit's own click bookkeeping.
-        let (window2, strip2, _, inactive2) = makeStrip()
-        var selected2: [UUID] = []
-        var closed2: [UUID] = []
-        strip2.onSelect = { selected2.append($0) }
-        strip2.onClose = { closed2.append($0) }
-        guard let pill = strip2.debugPillView(inactive2),
-              let label = strip2.debugPillLabelView(inactive2) else { return "no pill/label" }
-
-        let bodyPoint = label.convert(NSPoint(x: label.bounds.midX, y: label.bounds.midY), to: nil)
-        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            guard let event = NSEvent.mouseEvent(
-                with: type, location: bodyPoint, modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: window2.windowNumber, context: nil,
-                eventNumber: 0, clickCount: 1,
-                pressure: type == .leftMouseDown ? 1 : 0) else { continue }
-            window2.sendEvent(event)
-        }
-        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        guard selected2 == [inactive2] else {
-            return "clicking the pill's own label should still switch to that session - got \(selected2)"
-        }
-        guard closed2.isEmpty else { return "clicking the pill body ended a session - got \(closed2)" }
-        _ = active
-        _ = pill
+        guard modules.isEmpty else { return "a click on a session row also chose a module: \(modules)" }
+        // A second click on the row already chosen reports again - it is how
+        // the captain gets back to that session from its own page.
+        sidebar.debugSimulateMouseDown()
+        sidebar.outline.sendAction(sidebar.outline.action, to: sidebar.outline.target)
+        guard chosen.count == 2 else { return "a click on the already-selected row was swallowed (\(chosen))" }
         return nil
     }
 
@@ -387,33 +302,27 @@ enum SessionSwitcherSelfTest {
         return nil
     }
 
-    // MARK: Strip
+    // MARK: Sessions under Connections
 
     private static func test_stripAppearsAndReservesRealHeight() -> String? {
         withScratchEnv {
             let (_, shell, _) = makeMountedShell()
-            let collapsedInset = shell.bodyTopInsetForTests
-            guard shell.sessionStripIsHiddenForTests, shell.sessionStripHeightForTests == 0 else {
-                return "strip is showing with no live sessions"
-            }
-            guard abs(collapsedInset - DaylightBarController.reservedTopHeight) < 0.5 else {
-                return "collapsed body inset \(collapsedInset), expected \(DaylightBarController.reservedTopHeight)"
-            }
+            shell.show(.hosts)
+            shell.view.layoutSubtreeIfNeeded()
+            guard shell.sessionChildTitlesForTests.isEmpty else { return "Connections lists sessions with none live" }
+            let bodyTop = shell.contentPane.bodyHost.frame.maxY
             shell.sessions.register(hostID: UUID(), label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
             shell.view.layoutSubtreeIfNeeded()
-            guard !shell.sessionStripIsHiddenForTests else { return "strip stayed hidden with a live session" }
-            // The height half matters as much as `isHidden`: an ordinary
-            // hidden `NSView` still constrains layout (gotcha (11)), so a
-            // strip that only toggled visibility would leave a permanent gap.
-            guard shell.sessionStripHeightForTests == SessionStripView.height else {
-                return "strip height \(shell.sessionStripHeightForTests), expected \(SessionStripView.height)"
+            guard shell.sessionChildTitlesForTests == ["DEV Bastion"] else {
+                return "the live session is not a child of Connections: \(shell.sessionChildTitlesForTests)"
             }
-            let grown = shell.bodyTopInsetForTests
-            guard abs(grown - (collapsedInset + SessionStripView.gapBelowBar + SessionStripView.height)) < 0.5 else {
-                return "body inset \(grown) did not grow by the strip's own height (was \(collapsedInset))"
+            guard shell.sidebar.debugRowTitles.contains("  DEV Bastion") else {
+                return "the sidebar did not draw the session's row (rows: \(shell.sidebar.debugRowTitles))"
             }
-            guard shell.sessionStripForTests.frame.height > 1 else {
-                return "strip resolved a zero-height frame while visible"
+            // The strip used to push the body down by its own height; a row
+            // in the sidebar must not move the page at all.
+            guard abs(shell.contentPane.bodyHost.frame.maxY - bodyTop) < 0.5 else {
+                return "registering a session moved the body (\(bodyTop) -> \(shell.contentPane.bodyHost.frame.maxY))"
             }
             return nil
         }
@@ -425,56 +334,19 @@ enum SessionSwitcherSelfTest {
             let dev = UUID(), prod = UUID()
             shell.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
             shell.sessions.register(hostID: prod, label: "Prod Bastion", accentHex: "#22b3a6", state: .connected)
+            shell.show(.hosts)
             shell.view.layoutSubtreeIfNeeded()
-            let strip = shell.sessionStripForTests
-            guard strip.debugPillHostIDs() == [dev, prod] else {
-                return "pill order does not match the registry's own order"
+            guard shell.sessionChildTitlesForTests == ["DEV Bastion", "Prod Bastion"] else {
+                return "child order does not match the registry's own order: \(shell.sessionChildTitlesForTests)"
             }
-            guard strip.debugPillShortcutText(dev) == "\u{2318}\u{2303}1",
-                  strip.debugPillShortcutText(prod) == "\u{2318}\u{2303}2" else {
-                return "shortcut hints wrong: \(strip.debugPillShortcutText(dev) ?? "nil") / \(strip.debugPillShortcutText(prod) ?? "nil")"
+            let rows = shell.sidebar.debugRowTitles
+            guard let devRow = rows.firstIndex(of: "  DEV Bastion"), let prodRow = rows.firstIndex(of: "  Prod Bastion"),
+                  let devLabel = shell.sidebar.debugCell(atRow: devRow)?.accessibilityLabel(),
+                  let prodLabel = shell.sidebar.debugCell(atRow: prodRow)?.accessibilityLabel() else {
+                return "the session rows are missing from the sidebar (rows: \(rows))"
             }
-            // A pill's dot is the captain's own per-host colour - the same
-            // literal hue the Hosts row's accent bar carries, which is what
-            // makes recognition instant (mockup callout b). Compared
-            // component-wise: `HelmContrast.ratio(a, b) < 1.01` is a
-            // *luminance* comparison and two different hues of similar
-            // brightness pass it (a trap two other suites in this repo have
-            // already walked into).
-            for (id, hex) in [(dev, "#e8a23d"), (prod, "#22b3a6")] {
-                guard let pill = strip.debugPillView(id),
-                      let dot = pill.subviews.first?.subviews.first(where: { $0.layer?.cornerRadius == 3.5 }),
-                      let painted = dot.layer?.backgroundColor.map({ NSColor(cgColor: $0) }) ?? nil else {
-                    return "could not find the accent dot for \(hex)"
-                }
-                let expected = HelmContrast.components(HelmTheme.nsColor(hex))
-                let actual = HelmContrast.components(painted)
-                guard abs(expected.0 - actual.0) < 0.02, abs(expected.1 - actual.1) < 0.02,
-                      abs(expected.2 - actual.2) < 0.02 else {
-                    return "pill dot for \(hex) painted \(actual), expected \(expected)"
-                }
-            }
-            return nil
-        }
-    }
-
-    private static func test_activePillHasNoCloseButton() -> String? {
-        withScratchEnv {
-            let (_, shell, _) = makeMountedShell()
-            let dev = UUID(), prod = UUID()
-            shell.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: nil, state: .connected)
-            shell.sessions.register(hostID: prod, label: "Prod Bastion", accentHex: nil, state: .connected)
-            shell.sessions.setActive(dev)
-            shell.view.layoutSubtreeIfNeeded()
-            let strip = shell.sessionStripForTests
-            guard strip.debugActiveHostID() == dev else { return "the active pill is not the active session" }
-            // Mockup callout c: no ✕ on the active pill, so a mis-click cannot
-            // close the session currently being read.
-            guard strip.debugPillHasCloseButton(dev) == false else {
-                return "the active pill offers a close button"
-            }
-            guard strip.debugPillHasCloseButton(prod) == true else {
-                return "an inactive pill has no close button"
+            guard devLabel.hasSuffix("\u{2303}\u{2318}1"), prodLabel.hasSuffix("\u{2303}\u{2318}2") else {
+                return "the rows do not carry their ⌃⌘N chord: \(devLabel) / \(prodLabel)"
             }
             return nil
         }
@@ -485,34 +357,18 @@ enum SessionSwitcherSelfTest {
             let (_, shell, _) = makeMountedShell()
             let dev = UUID()
             shell.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: nil, state: .connected)
-            shell.sessions.setActive(dev)
+            shell.show(.hosts)
             shell.view.layoutSubtreeIfNeeded()
-            let strip = shell.sessionStripForTests
-            guard let pill = strip.debugPillView(dev) else { return "no pill built" }
-            guard pill.isActivatable else { return "pill is invisible to VoiceOver and the key loop" }
-            guard pill.accessibilityRoleOverride == .radioButton else {
-                return "pill role is \(String(describing: pill.accessibilityRoleOverride)), expected radioButton"
+            let rows = shell.sidebar.debugRowTitles
+            guard let row = rows.firstIndex(of: "  DEV Bastion"),
+                  let label = shell.sidebar.debugCell(atRow: row)?.accessibilityLabel() else {
+                return "no row for the session (rows: \(rows))"
             }
-            guard pill.accessibilityValueOverride == "selected" else {
-                return "active pill does not announce itself as selected"
+            // The label names the host *and* its state - the dot is colour,
+            // and colour alone says nothing to VoiceOver.
+            guard label.contains("DEV Bastion"), label.lowercased().contains("connected") else {
+                return "the row's label does not name the host and its state: \(label)"
             }
-            // Case-insensitive on the state word: audit 2 §4.6 moved this
-            // label onto `HostSession.stateText`, which renders "Connected ·
-            // 14m" / "Restored · not connected" - a sentence fragment for
-            // VoiceOver rather than a lowercase fixed word. What this case is
-            // about is that the label names the host *and* its state, which
-            // casing has nothing to do with.
-            guard let label = strip.debugPillAccessibilityLabel(dev),
-                  label.contains("DEV Bastion"),
-                  label.lowercased().contains("connected") else {
-                return "pill label does not name the host and its state: \(strip.debugPillAccessibilityLabel(dev) ?? "nil")"
-            }
-            guard strip.debugAddButton().isActivatable,
-                  strip.debugAddButton().accessibilityLabelOverride == "New session" else {
-                return "the + affordance is not an accessible button"
-            }
-            // The strip sits between the bar and the body in the key loop.
-            guard strip.keyViewChain.count >= 2 else { return "strip contributes nothing to the key view loop" }
             return nil
         }
     }

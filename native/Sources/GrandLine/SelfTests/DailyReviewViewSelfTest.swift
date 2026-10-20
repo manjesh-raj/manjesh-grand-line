@@ -384,14 +384,10 @@ enum DailyReviewViewSelfTest {
                   "with a review to show, the page shows the card and no empty state")
             check(card.frame.height > 150,
                   "and the card really is laid out on it, got \(card.frame.height)")
-            // The card IS the page: full width inside the gutter. The gutter
-            // is `DaylightBarController.sideMargin`, not `HelmMetrics.pageGutter`
-            // - the bar is a floating panel directly above this card, and 24
-            // against its 22 left the two edges 2pt out of line. The captain
-            // reported exactly that.
-            let expectedWidth = page.view.frame.width - DaylightBarController.sideMargin * 2
+            // The card IS the page: full width inside the page gutter.
+            let expectedWidth = page.view.frame.width - HelmMetrics.pageGutter * 2
             check(abs(card.frame.width - expectedWidth) < 1,
-                  "the card should fill the page inside the bar's own margin - expected "
+                  "the card should fill the page inside the page gutter - expected "
                   + "\(expectedWidth), got \(card.frame.width) on a \(page.view.frame.width)pt page")
             // ...and sizes to its **content** in the other axis.
             //
@@ -488,48 +484,32 @@ enum DailyReviewViewSelfTest {
                 window.contentViewController = nil
             }
 
+            // UX-01: the shell's chrome is the Workspace sidebar now. Today
+            // belongs to Home, so it lights Home rather than a page of its
+            // own, and nothing about it is a "drill" any more.
             shell.show(.dailyOverview)
             shell.view.layoutSubtreeIfNeeded()
-            check(shell.drillHeaderIsHiddenForTests,
-                  "Overview is a top-level page, so the bar should carry no drill cluster")
-            check(!shell.barPillsAreHiddenForTests,
-                  "and the space pills should still be there - hiding them is what removed "
-                  + "the whole tab strip the captain reported missing")
-            check(!shell.barWordmarkIsHiddenForTests,
-                  "and the wordmark comes back with them")
+            check(shell.currentModuleID == .home, "Today should light Home in the sidebar")
+            check(shell.windowTitleForTests == "Home", "and the window should be titled Home, got "
+                  + shell.windowTitleForTests)
 
-            // The other direction, so this cannot pass by the bar simply
-            // never showing a drill cluster at all.
+            // The other direction, so this cannot pass by the shell lighting
+            // Home for everything.
             shell.show(.logAnalyzer)
             shell.view.layoutSubtreeIfNeeded()
-            check(!shell.drillHeaderIsHiddenForTests,
-                  "a page reached by drilling in should still get the drill cluster")
-            check(shell.barPillsAreHiddenForTests,
-                  "and should still trade the pills for it")
+            check(shell.currentModuleID == .logs, "Log Analyzer should light Logs")
 
-            // The session strip. Its fixture needs real discriminating power:
-            // with no live session it is hidden everywhere, so the check
-            // would pass on a build that never had the fix.
+            // A live session is a child of Connections in the sidebar, so it
+            // can no longer draw a strip over the daily review. Real
+            // discriminating power: the session is really registered.
             shell.sessions.register(hostID: UUID(), label: "Prod Bastion",
                                     accentHex: nil, state: .connected)
-            shell.show(.console)
-            shell.view.layoutSubtreeIfNeeded()
-            check(!shell.sessionStripIsHiddenForTests,
-                  "the live session really is registered, and the strip really does draw "
-                  + "somewhere - without this the Overview check below is vacuous")
-            check(shell.sessionStripHeightForTests > 0,
-                  "and it reserves real height there, got \(shell.sessionStripHeightForTests)")
-
             shell.show(.dailyOverview)
             shell.view.layoutSubtreeIfNeeded()
-            check(shell.sessionStripIsHiddenForTests,
-                  "a terminal session strip does not belong over the daily review")
-            check(shell.sessionStripHeightForTests == 0,
-                  "and it should reserve no height there either, got "
-                  + "\(shell.sessionStripHeightForTests)")
-            check(shell.bodyTopInsetForTests == DaylightBarController.reservedTopHeight,
-                  "so the page starts immediately under the bar, got "
-                  + "\(shell.bodyTopInsetForTests)")
+            check(shell.sessionChildTitlesForTests == ["Prod Bastion"],
+                  "the live session should be listed under Connections, got \(shell.sessionChildTitlesForTests)")
+            let strayStrip = shell.view.subviews.contains { String(describing: type(of: $0)).contains("SessionStrip") }
+            check(!strayStrip, "no session strip should be mounted in the shell any more")
         }
     }
 

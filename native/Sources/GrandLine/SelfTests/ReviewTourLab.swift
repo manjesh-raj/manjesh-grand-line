@@ -106,21 +106,11 @@ enum ReviewTourLab {
         /// Switch the Tasks page to `board`, `list`, `calendar` or `review`
         /// through its own segmented control.
         case tasksView(String)
-        /// Put one top-bar square into a state a click or a pointer would:
-        /// `bar hover <target>`, `bar press <target>`, or `bar rest` to put
-        /// every square back. A target is a destination's raw value, or
-        /// `theme`, `overflow` or `recents` for the bar's own controls.
-        ///
-        /// This is the one place the lab reaches past real event dispatch, and
-        /// it says so in the log: hover goes through the button's
-        /// `debugSetHovering`, and press through `highlight(_:)`, which is
-        /// what AppKit's own `performClick` calls. It exists to *render* the
-        /// states side by side, not to prove a real pointer reaches them -
-        /// `BarActiveStateSelfTest` posts real events for that.
-        case barState(BarState, target: String?)
-        /// Render only the floating bar, so a tour can compare one row of
-        /// squares across pages and palettes without the page under it.
-        case renderBar(String)
+        /// Choose a module the way the sidebar does: `module tasks`. Goes
+        /// through the sidebar's own row-selection path (`debugClickRow`), so
+        /// it exercises the same wire a click does, short of real event
+        /// dispatch.
+        case module(WorkspaceModuleID)
         /// Put one needs-decision task on the Fleet page whose open decision
         /// is the captain's own long line (an unbroken sentence with a URL),
         /// read through the real status-file path from a scratch directory.
@@ -146,10 +136,6 @@ enum ReviewTourLab {
         case comment
     }
 
-    enum BarState: String, Equatable {
-        case hover, press, rest
-    }
-
     enum ParseError: Error, Equatable, CustomStringConvertible {
         case unknownVerb(String)
         case unknownDestination(String)
@@ -161,8 +147,8 @@ enum ReviewTourLab {
         var description: String {
             switch self {
             case .unknownVerb(let v):
-                return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, renderbar, menu, wait, "
-                    + "demo, measure, measurewindow, orderfront, probe, tasks, bar, fleet)"
+                return "unknown verb \"\(v)\" (goto, module, theme, resize, render, renderdoc, menu, wait, "
+                    + "demo, measure, measurewindow, orderfront, probe, tasks, fleet)"
             case .badArgument(let a): return "bad argument \"\(a)\""
             case .unknownDestination(let d): return "unknown destination \"\(d)\""
             case .unknownTheme(let t): return "unknown theme \"\(t)\""
@@ -173,9 +159,6 @@ enum ReviewTourLab {
     }
 
     // MARK: Parsing
-
-    /// The bar's own controls a `bar` step can name, beside any destination.
-    static let barTargets: Set<String> = ["theme", "overflow", "recents"]
 
     static func parse(line: String) -> Result<Step, ParseError> {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -241,24 +224,10 @@ enum ReviewTourLab {
                 return .failure(.badArgument(argument))
             }
             return .success(.tasksView(argument))
-        case "bar":
-            let words = argument.split(separator: " ").map(String.init)
-            guard let first = words.first, let state = BarState(rawValue: first) else {
-                return .failure(argument.isEmpty ? .missingArgument("bar") : .badArgument(argument))
-            }
-            if state == .rest {
-                guard words.count == 1 else { return .failure(.badArgument(argument)) }
-                return .success(.barState(.rest, target: nil))
-            }
-            guard words.count == 2 else { return .failure(.missingArgument("bar \(first)")) }
-            let target = words[1]
-            guard barTargets.contains(target) || RailDestination(rawValue: target) != nil else {
-                return .failure(.unknownDestination(target))
-            }
-            return .success(.barState(state, target: target))
-        case "renderbar":
-            guard !argument.isEmpty else { return .failure(.missingArgument("renderbar")) }
-            return .success(.renderBar(argument))
+        case "module":
+            guard !argument.isEmpty else { return .failure(.missingArgument("module")) }
+            guard let id = WorkspaceModuleID(rawValue: argument) else { return .failure(.unknownDestination(argument)) }
+            return .success(.module(id))
         case "fleet":
             guard argument == "reply" else {
                 return .failure(argument.isEmpty ? .missingArgument("fleet") : .badArgument(argument))
@@ -371,16 +340,11 @@ enum ReviewTourLab {
                 shell.debugShift.debugShowView(id)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("tasks \(id)")
-            case .barState(let state, let target):
-                log.append(applyBarState(state, target: target, bar: shell.bar))
+            case .module(let id):
+                let row = shell.sidebar.debugRow(ofModule: id)
+                shell.sidebar.debugClickRow(row)
                 shell.view.layoutSubtreeIfNeeded()
-            case .renderBar(let name):
-                let url = outputDirectory.appendingPathComponent("\(name).png")
-                if writePNG(of: shell.bar.view, to: url) {
-                    log.append("renderbar \(url.path)")
-                } else {
-                    log.append("renderbar FAILED \(name) - the bar has no bitmap to cache")
-                }
+                log.append("module \(id.rawValue) (sidebar row \(row))")
             case .demoDecision:
                 seedDemoDecision(shell.debugOverview, scratch: outputDirectory)
                 shell.view.layoutSubtreeIfNeeded()
@@ -417,7 +381,10 @@ enum ReviewTourLab {
                 log.append(contentsOf: windowMeasureLines(shell: shell, window: window).map { "  " + $0 })
             case .render(let name):
                 let url = outputDirectory.appendingPathComponent("\(name).png")
-                if writePNG(of: shell.view, to: url) {
+                // UX-12: the whole window - the theme frame holds the toolbar,
+                // the system title and the traffic lights as well as the
+                // content, so a render shows the chrome the captain sees.
+                if writePNG(of: window.contentView?.superview ?? shell.view, to: url) {
                     log.append("render \(url.path)")
                 } else {
                     log.append("render FAILED \(name) - the view has no bitmap to cache")
@@ -425,38 +392,6 @@ enum ReviewTourLab {
             }
         }
         return log
-    }
-
-    /// `bar hover|press|rest` against the live bar. Returns the log line,
-    /// which names a target that drew no square rather than skipping it - a
-    /// render of a state that was never applied would look like a bar with no
-    /// hover state at all.
-    static func applyBarState(_ state: BarState, target: String?, bar: DaylightBarController) -> String {
-        let squares = bar.debugIconSquares()
-        if state == .rest {
-            for square in squares {
-                square.highlight(false)
-                square.debugSetHovering(false)
-            }
-            return "bar rest"
-        }
-        let square: DaylightBarIconButton?
-        switch target {
-        case "theme": square = bar.debugThemeToggleButton()
-        case "overflow": square = bar.debugQuickAccessOverflowButton()
-        case "recents": square = squares.first { $0 is RecentDestinationsButton }
-        default:
-            square = bar.debugDestinationButtons().first { $0.destination.rawValue == target }
-        }
-        guard let square, !square.isHidden else {
-            return "bar \(state.rawValue) FAILED \(target ?? "") - no visible square for it on the bar"
-        }
-        switch state {
-        case .hover: square.debugSetHovering(true)
-        case .press: square.highlight(true)
-        case .rest: break
-        }
-        return "bar \(state.rawValue) \(target ?? "") (debug hook, not a real pointer)"
     }
 
     /// The menu bar's shape as text.
@@ -832,12 +767,8 @@ enum ReviewTourLab {
     }
 
     static func makeOffScreenShell() -> (window: NSWindow, shell: AppShellController) {
-        let window = OffScreenProbe.window(width: 1512, height: 950, styleMask: [.titled, .resizable])
-        // The real window's chrome fusion (`main.swift`), so the shell's view
-        // is the whole frame and the bar reserves its height inside it -
-        // without it every page measured here is a title bar shorter than the
-        // captain's.
-        WindowChromeFusion.apply(to: window)
+        let window = OffScreenProbe.window(width: 1512, height: 950,
+                                           styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
@@ -853,7 +784,15 @@ enum ReviewTourLab {
             makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
                                                  isFirstmateConsole: false) }
         )
+        // The real window's chrome (`main.swift`): the Workspace toolbar and
+        // a visible title, so every page measured here sits under the same
+        // toolbar the captain's does.
+        _ = shell.view
+        WorkspaceWindowChrome.apply(to: window, toolbar: shell.toolbarController.toolbar)
         window.contentViewController = shell
+        window.setFrame(NSRect(x: window.frame.minX, y: window.frame.minY, width: 1512, height: 950), display: false)
+        shell.refreshDrillHeaderSubtitle()
+        shell.applySidebarCompactness()
         shell.view.layoutSubtreeIfNeeded()
         return (window, shell)
     }
