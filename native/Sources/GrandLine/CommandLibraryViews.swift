@@ -491,15 +491,17 @@ final class CommandLibraryPageView: NSObject {
 
     // MARK: Rendering
 
+    /// PERF-05: one pass. This used to render the left column and the detail
+    /// pane and then call `applyTheme`, which renders both again - every
+    /// render built each row twice.
     private func render() {
-        renderLeftPanel()
-        if let id = selectedCommandID, let command = store.command(id: id) {
-            renderDetail(for: command)
-        } else {
+        if selectedCommandID.flatMap({ store.command(id: $0) }) == nil {
             selectedCommandID = nil
             emptyDetailState.isHidden = false
             detailContentContainer.isHidden = true
         }
+        // Paints the chrome, then renders the column and the selected
+        // command's detail in the current theme.
         applyTheme(theme)
     }
 
@@ -510,13 +512,6 @@ final class CommandLibraryPageView: NSObject {
         }
     }
 
-    /// Adds `view` to `leftPanelStack` and pins its width to the stack's own
-    /// width - in that order. A width constraint referencing `leftPanelStack`
-    /// must never be activated before `view` is actually in the stack's view
-    /// hierarchy (added as an arranged subview) - doing it the other way
-    /// round throws AppKit's "no common ancestor" exception, since the two
-    /// views share no ancestor yet at that point. See AGENTS.md's AppKit
-    /// gotcha catalogue for the general rule this is an instance of.
     #if FM_SELFTESTS
     /// Review defect U6: what the left column is *actually showing*, in the
     /// order it shows it.
@@ -557,41 +552,40 @@ final class CommandLibraryPageView: NSObject {
     /// The detail pane's own instruction, so a check can assert the sentence
     /// and the list agree rather than assuming the sentence never changes.
     var debugEmptyDetailIsShowing: Bool { !emptyDetailState.isHidden && emptyDetailState.superview != nil }
+
+    /// The left column's views, in order - PERF-05's identity check.
+    var debugLeftPanelViews: [NSView] { leftPanelStack.arrangedSubviews }
+    /// The page's own render, the one every store publish and keystroke
+    /// reaches.
+    func debugRender() { render() }
+    /// Selects a command the way a row click does.
+    func debugSelectCommand(id: String) { selectCommand(id: id) }
     #endif
 
-    private func appendToLeftPanel(_ view: NSView) {
-        leftPanelStack.addArrangedSubview(view)
-        view.widthAnchor.constraint(equalTo: leftPanelStack.widthAnchor).isActive = true
-    }
-
-    /// A section break reads as cramped at the rail's uniform 4pt row
-    /// spacing (fine for row-to-row, too tight around a divider - the
-    /// mockup gives section boundaries roughly 3x a row's own gap). Rather
-    /// than loosen every row's spacing to get that breathing room, this
-    /// widens only the two gaps touching the divider itself via
-    /// `NSStackView.setCustomSpacing(_:after:)`.
-    private func appendDividerToLeftPanel() {
-        if let last = leftPanelStack.arrangedSubviews.last {
-            leftPanelStack.setCustomSpacing(10, after: last)
-        }
-        let d = divider()
-        appendToLeftPanel(d)
-        leftPanelStack.setCustomSpacing(10, after: d)
-    }
+    // A section break reads as cramped at the rail's uniform 4pt row
+    // spacing (fine for row-to-row, too tight around a divider - the mockup
+    // gives section boundaries roughly 3x a row's own gap). Rather than
+    // loosen every row's spacing to get that breathing room,
+    // `renderLeftPanel` widens only the two gaps touching each divider via
+    // `NSStackView.setCustomSpacing(_:after:)`.
 
     /// UI-45: `HelmPageSidebar`'s header - the muted kicker - rather than a
     /// 9.5pt mono face in the accent.
     private func mutedHeaderLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: "")
-        // Indented to the rows' own text inset, so a header and the labels
-        // under it start on one line.
+        label.attributedStringValue = mutedHeaderString(text)
+        return label
+    }
+
+    /// Indented to the rows' own text inset, so a header and the labels
+    /// under it start on one line.
+    private func mutedHeaderString(_ text: String) -> NSAttributedString {
         let header = NSMutableAttributedString(attributedString: HelmPageSidebar.headerString(text, theme: theme))
         let paragraph = NSMutableParagraphStyle()
         paragraph.firstLineHeadIndent = Self.rowTextInset
         paragraph.headIndent = Self.rowTextInset
         header.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: header.length))
-        label.attributedStringValue = header
-        return label
+        return header
     }
 
     /// A row's text inset inside its hover fill, which a header matches.
@@ -645,97 +639,115 @@ final class CommandLibraryPageView: NSObject {
         return row
     }
 
-    private func leftPanelRow(text: String, trailing: String? = nil, isSelected: Bool = false, isMuted: Bool = false, action: Selector) -> NSView {
-        let container = HoverHighlightView()
-        container.cornerRadius = HelmMetrics.rControl
-
-        let label = NSTextField(labelWithString: text)
-        label.font = isSelected
-            ? .systemFont(ofSize: HelmType.caption().pointSize, weight: .semibold)
-            : HelmType.caption()
-        label.lineBreakMode = .byTruncatingTail
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        var rowViews: [NSView] = [label]
-        if let trailing {
-            let trailingLabel = NSTextField(labelWithString: trailing)
-            trailingLabel.font = HelmType.captionSmall()
-            trailingLabel.textColor = HelmTheme.mutedInk(theme)
-            trailingLabel.setContentHuggingPriority(.required, for: .horizontal)
-            rowViews.append(trailingLabel)
-        }
-        let row = NSStackView(views: rowViews)
-        row.orientation = .horizontal
-        row.distribution = .fill
-        row.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Self.rowTextInset),
-            row.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -Self.rowTextInset),
-            row.topAnchor.constraint(equalTo: container.topAnchor, constant: 5),
-            row.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -5),
-        ])
-
-        // UI-45: the sidebar's own row recipe - the same selected wash, hover
-        // wash and contrast-corrected selected ink.
-        let palette = HelmPageSidebar.rowPalette(theme)
-        label.textColor = isMuted ? palette.muted : (isSelected ? palette.selectedInk : palette.ink)
-        container.normalColor = isSelected ? palette.selectedFill : .clear
-        container.hoverColor = isSelected ? palette.selectedFill : palette.hoverFill
-        container.translatesAutoresizingMaskIntoConstraints = false
-
-        let click = NSClickGestureRecognizer(target: self, action: action)
-        container.addGestureRecognizer(click)
-        return container
-    }
+    // `CommandLibraryPanelRow` (below) is the column's row: built once per
+    // key and reconfigured in place (PERF-05).
 
     /// A dispatch table from a built row's identity back to the identifier a
     /// click handler needs (a category id, a command id) - simpler than
     /// subclassing `HoverHighlightView` per row kind for this small a UI.
+    /// Rebuilt from the reconciled rows on every render.
     private var rowCategoryIDs: [ObjectIdentifier: String] = [:]
     private var rowCommandIDs: [ObjectIdentifier: String] = [:]
 
+    // MARK: The left column, keyed (PERF-05)
+    //
+    // **The 2026-10 end-to-end review's PERF-05.** This column used to be
+    // emptied and refilled on every render - and `render()` reached it twice,
+    // once directly and once through `applyTheme` - so each keystroke in the
+    // search field and each store publish rebuilt one row per command. It is
+    // a list of keyed entries now, reconciled through `HelmKeyedRows`: an
+    // entry whose key is still there keeps its view and is reconfigured in
+    // place, and only a new key builds a row. The column draws exactly what
+    // it drew before; only how it gets there changed.
+
+    /// One thing in the left column. The key is the entry's identity across
+    /// renders, so it carries the section a command row sits in - the same
+    /// command under Favorites and under its category is two rows.
+    private enum LeftPanelEntry {
+        case addCommand
+        case divider(String)
+        case header(String)
+        case symbolHeader(String, symbol: String)
+        case commandRow(section: String, id: String, name: String, action: Selector)
+        case categoryRow(id: String, name: String, count: Int)
+        case emptyResults
+        case workflows
+
+        var key: String {
+            switch self {
+            case .addCommand: return "add"
+            case .divider(let id): return "divider:\(id)"
+            case .header(let text): return "header:\(text)"
+            case .symbolHeader(let text, _): return "symbol-header:\(text)"
+            case .commandRow(let section, let id, _, _): return "command:\(section):\(id)"
+            case .categoryRow(let id, _, _): return "category:\(id)"
+            case .emptyResults: return "empty-results"
+            case .workflows: return "workflows"
+            }
+        }
+
+        var isDivider: Bool { if case .divider = self { return true } else { return false } }
+    }
+
+    private lazy var leftPanelRows = HelmKeyedRows(stack: leftPanelStack)
+
+    #if FM_SELFTESTS
+    /// How many times the column has been reconciled - one per `render()`.
+    private(set) var debugLeftPanelPasses = 0
+    #endif
+
     private func renderLeftPanel() {
-        clearStack(leftPanelStack)
+        #if FM_SELFTESTS
+        debugLeftPanelPasses += 1
+        #endif
+        let entries = leftPanelEntries()
+        leftPanelRows.reconcile(entries,
+                                key: \.key,
+                                make: { [unowned self] entry in self.makeLeftPanelView(entry) },
+                                update: { [unowned self] view, entry in self.updateLeftPanelView(view, entry) })
+
+        // The click handlers' dispatch tables, and the 10pt either side of
+        // each divider - re-derived from what is arranged now, so a view that
+        // stopped sitting next to a divider loses the spacing it had.
         rowCategoryIDs.removeAll()
         rowCommandIDs.removeAll()
+        let arranged = leftPanelStack.arrangedSubviews
+        for view in arranged { leftPanelStack.setCustomSpacing(NSStackView.useDefaultSpacing, after: view) }
+        for entry in entries {
+            guard let view = leftPanelRows.rowsByKey[entry.key] else { continue }
+            switch entry {
+            case .commandRow(_, let id, _, _): rowCommandIDs[ObjectIdentifier(view)] = id
+            case .categoryRow(let id, _, _): rowCategoryIDs[ObjectIdentifier(view)] = id
+            case .divider:
+                if let index = arranged.firstIndex(where: { $0 === view }) {
+                    if index > 0 { leftPanelStack.setCustomSpacing(10, after: arranged[index - 1]) }
+                    leftPanelStack.setCustomSpacing(10, after: view)
+                }
+            default: break
+            }
+        }
+    }
 
-        leftPanelStack.addArrangedSubview(addCommandButton())
-        appendDividerToLeftPanel()
-
+    /// What the column shows, in order - the one place that decides it.
+    private func leftPanelEntries() -> [LeftPanelEntry] {
+        var entries: [LeftPanelEntry] = [.addCommand, .divider("top")]
         if !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
-            renderSearchResults()
-            return
+            entries.append(.header("RESULTS"))
+            let results = store.search(query: searchQuery)
+            if results.isEmpty {
+                entries.append(.emptyResults)
+            }
+            for command in results {
+                entries.append(.commandRow(section: "results", id: command.id, name: command.name,
+                                           action: #selector(searchResultRowClicked(_:))))
+            }
+            return entries
         }
-
-        // One renderer for both states now - `renderBrowseList` reads
-        // `leftPanelState` itself to decide whether to append a selected
-        // category's command list under the Categories panel.
-        renderBrowseList()
-    }
-
-    private func addCommandButton() -> NSView {
-        let button = HelmButton(title: "+ Add Command", variant: .secondary, target: self, action: #selector(addCommandClicked))
-        button.controlSize = .small
-        button.translatesAutoresizingMaskIntoConstraints = false
-        return button
-    }
-
-    private func renderSearchResults() {
-        appendToLeftPanel(mutedHeaderLabel("RESULTS"))
-        let results = store.search(query: searchQuery)
-        if results.isEmpty {
-            let empty = NSTextField(labelWithString: "No matching commands.")
-            empty.setScaledFont(ofSize: 11.5)
-            empty.textColor = HelmTheme.mutedInk(theme)
-            appendToLeftPanel(empty)
-            return
-        }
-        for command in results {
-            let row = leftPanelRow(text: command.name, isSelected: command.id == selectedCommandID, action: #selector(searchResultRowClicked(_:)))
-            rowCommandIDs[ObjectIdentifier(row)] = command.id
-            appendToLeftPanel(row)
-        }
+        // One list for both states - it reads `leftPanelState` itself to
+        // decide whether to append a selected category's command list under
+        // the Categories panel.
+        browseEntries(into: &entries)
+        return entries
     }
 
     /// The left column, in both states.
@@ -752,60 +764,158 @@ final class CommandLibraryPageView: NSObject {
     /// the browse state already renders, with the active category
     /// highlighted; nothing is ever hidden, and the back row is gone because
     /// there is no longer anywhere to go back from.
-    private func renderBrowseList() {
+    private func browseEntries(into entries: inout [LeftPanelEntry]) {
         let favorites = store.favoriteCommands()
         if !favorites.isEmpty {
-            appendToLeftPanel(symbolHeaderLabel("FAVORITES", symbol: "star.fill"))
+            entries.append(.symbolHeader("FAVORITES", symbol: "star.fill"))
             for command in favorites {
-                let row = leftPanelRow(text: command.name, isSelected: command.id == selectedCommandID, action: #selector(favoriteRowClicked(_:)))
-                rowCommandIDs[ObjectIdentifier(row)] = command.id
-                appendToLeftPanel(row)
+                entries.append(.commandRow(section: "favorites", id: command.id, name: command.name,
+                                           action: #selector(favoriteRowClicked(_:))))
             }
-            appendDividerToLeftPanel()
+            entries.append(.divider("favorites"))
         }
 
         let recent = store.recentlyUsedCommands(limit: 5)
         if !recent.isEmpty {
-            appendToLeftPanel(symbolHeaderLabel("RECENTLY USED", symbol: "clock"))
+            entries.append(.symbolHeader("RECENTLY USED", symbol: "clock"))
             for command in recent {
-                let row = leftPanelRow(text: command.name, isSelected: command.id == selectedCommandID, action: #selector(recentRowClicked(_:)))
-                rowCommandIDs[ObjectIdentifier(row)] = command.id
-                appendToLeftPanel(row)
+                entries.append(.commandRow(section: "recent", id: command.id, name: command.name,
+                                           action: #selector(recentRowClicked(_:))))
             }
-            appendDividerToLeftPanel()
+            entries.append(.divider("recent"))
         }
 
         var selectedCategoryID: String?
         if case .category(let id) = leftPanelState { selectedCategoryID = id }
 
-        appendToLeftPanel(mutedHeaderLabel("CATEGORIES"))
+        entries.append(.header("CATEGORIES"))
         // U6: "All" is a category row like any other, sitting above the real
         // ones and reusing the same click handler through `allCategoryID` -
         // so the selection highlight, the count column and the
         // click-again-to-close behaviour are the ones this column already
         // has, rather than a second row shape that has to be kept in step.
-        let allRow = leftPanelRow(text: "All", trailing: "\(store.commands.count)",
-                                  isSelected: leftPanelState == .all,
-                                  action: #selector(categoryRowClicked(_:)))
-        rowCategoryIDs[ObjectIdentifier(allRow)] = Self.allCategoryID
-        appendToLeftPanel(allRow)
-        for (info, commands) in store.commandsByCategory() where !commands.isEmpty {
-            let row = leftPanelRow(text: info.displayName, trailing: "\(commands.count)",
-                                   isSelected: info.id == selectedCategoryID,
-                                   action: #selector(categoryRowClicked(_:)))
-            rowCategoryIDs[ObjectIdentifier(row)] = info.id
-            appendToLeftPanel(row)
+        let byCategory = store.commandsByCategory()
+        entries.append(.categoryRow(id: Self.allCategoryID, name: "All", count: store.commands.count))
+        for (info, commands) in byCategory where !commands.isEmpty {
+            entries.append(.categoryRow(id: info.id, name: info.displayName, count: commands.count))
         }
 
         if leftPanelState == .all {
-            appendDividerToLeftPanel()
-            renderAllCommandsList()
+            entries.append(.divider("list"))
+            entries.append(.header("ALL COMMANDS"))
+            for (_, commands) in byCategory {
+                for command in commands {
+                    entries.append(.commandRow(section: "all", id: command.id, name: command.name,
+                                               action: #selector(categoryCommandRowClicked(_:))))
+                }
+            }
         } else if let selectedCategoryID {
-            appendDividerToLeftPanel()
-            renderCategoryCommandList(selectedCategoryID)
+            entries.append(.divider("list"))
+            entries.append(.header(CommandLibraryCategory.info(for: selectedCategoryID).displayName.uppercased()))
+            let inCategory = byCategory.first { $0.info.id == selectedCategoryID }?.commands ?? []
+            for command in inCategory {
+                entries.append(.commandRow(section: "category", id: command.id, name: command.name,
+                                           action: #selector(categoryCommandRowClicked(_:))))
+            }
         }
 
-        appendDividerToLeftPanel()
+        entries.append(.divider("workflows"))
+        entries.append(.workflows)
+    }
+
+    static let allCategoryID = "__all__"
+
+    private func addCommandButton() -> NSView {
+        let button = HelmButton(title: "+ Add Command", variant: .secondary, target: self, action: #selector(addCommandClicked))
+        button.controlSize = .small
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }
+
+    private func makeLeftPanelView(_ entry: LeftPanelEntry) -> NSView {
+        switch entry {
+        case .addCommand:
+            // Full-width like every other entry (`HelmKeyedRows` ties each
+            // one to the column), with the button itself at its own width on
+            // the leading edge - exactly where it sat when it was added
+            // directly.
+            let holder = NSView()
+            holder.translatesAutoresizingMaskIntoConstraints = false
+            let button = addCommandButton()
+            holder.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
+                button.trailingAnchor.constraint(lessThanOrEqualTo: holder.trailingAnchor),
+                button.topAnchor.constraint(equalTo: holder.topAnchor),
+                button.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
+            ])
+            return holder
+        case .divider:
+            return divider()
+        case .header(let text):
+            return mutedHeaderLabel(text)
+        case .symbolHeader(let text, let symbol):
+            return symbolHeaderLabel(text, symbol: symbol)
+        case .commandRow(_, _, _, let action):
+            return CommandLibraryPanelRow(target: self, action: action)
+        case .categoryRow:
+            return CommandLibraryPanelRow(target: self, action: #selector(categoryRowClicked(_:)))
+        case .emptyResults:
+            let empty = NSTextField(labelWithString: "No matching commands.")
+            empty.setScaledFont(ofSize: 11.5)
+            return empty
+        case .workflows:
+            return workflowsRow()
+        }
+    }
+
+    /// Fully configures an entry's view from the entry and the current theme
+    /// - it runs for a new view and a kept one alike, so the two render the
+    /// same.
+    private func updateLeftPanelView(_ view: NSView, _ entry: LeftPanelEntry) {
+        let palette = HelmPageSidebar.rowPalette(theme)
+        switch entry {
+        case .commandRow(_, let id, let name, _):
+            (view as? CommandLibraryPanelRow)?.configure(text: name, trailing: nil,
+                                                         isSelected: id == selectedCommandID,
+                                                         palette: palette, theme: theme)
+        case .categoryRow(let id, let name, let count):
+            let isSelected: Bool
+            if id == Self.allCategoryID {
+                isSelected = leftPanelState == .all
+            } else if case .category(id) = leftPanelState {
+                isSelected = true
+            } else {
+                isSelected = false
+            }
+            (view as? CommandLibraryPanelRow)?.configure(text: name, trailing: "\(count)",
+                                                         isSelected: isSelected,
+                                                         palette: palette, theme: theme)
+        case .divider:
+            view.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5).cgColor
+        case .header(let text):
+            (view as? NSTextField)?.attributedStringValue = mutedHeaderString(text)
+        case .symbolHeader(let text, _):
+            for subview in view.subviews {
+                if let label = subview as? NSTextField {
+                    label.attributedStringValue = HelmPageSidebar.headerString(text, theme: theme)
+                } else if let glyph = subview as? NSImageView {
+                    glyph.contentTintColor = HelmTheme.mutedInk(theme)
+                }
+            }
+        case .emptyResults:
+            (view as? NSTextField)?.textColor = HelmTheme.mutedInk(theme)
+        case .workflows:
+            for subview in view.subviews {
+                (subview as? NSTextField)?.textColor = HelmTheme.mutedInk(theme)
+                (subview as? NSImageView)?.contentTintColor = HelmTheme.mutedInk(theme)
+            }
+        case .addCommand:
+            break
+        }
+    }
+
+    private func workflowsRow() -> NSView {
         // UI7: was a bare label headed by the `\u{1F4D6}` emoji. The words and
         // the tooltip are unchanged; only the glyph is, and it is now built
         // the same way every other icon on this page is.
@@ -815,7 +925,6 @@ final class CommandLibraryPageView: NSObject {
         workflowsLabel.lineBreakMode = .byTruncatingTail
         workflowsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         workflowsLabel.translatesAutoresizingMaskIntoConstraints = false
-
         let workflowsGlyph = NSImageView()
         workflowsGlyph.translatesAutoresizingMaskIntoConstraints = false
         workflowsGlyph.image = HelmSymbol.image("book.closed",
@@ -836,43 +945,7 @@ final class CommandLibraryPageView: NSObject {
         workflowsRow.setAccessibilityElement(true)
         workflowsRow.setAccessibilityRole(.staticText)
         workflowsRow.setAccessibilityLabel(workflowsLabel.stringValue)
-        appendToLeftPanel(workflowsRow)
-    }
-
-    /// U6: the id the "All" row carries. A reserved sentinel rather than a
-    /// real category - `CommandLibraryCategory.info(for:)` never produces it,
-    /// and `categoryRowClicked` reads it before anything else does.
-    static let allCategoryID = "__all__"
-
-    /// U6: every command, in the order `commandsByCategory()` groups them, so
-    /// the one list a new captain sees is the same ordering the categories
-    /// above it describe rather than a second sort nobody asked for.
-    private func renderAllCommandsList() {
-        appendToLeftPanel(mutedHeaderLabel("ALL COMMANDS"))
-        for (_, commands) in store.commandsByCategory() {
-            for command in commands {
-                let row = leftPanelRow(text: command.name,
-                                       isSelected: command.id == selectedCommandID,
-                                       action: #selector(categoryCommandRowClicked(_:)))
-                rowCommandIDs[ObjectIdentifier(row)] = command.id
-                appendToLeftPanel(row)
-            }
-        }
-    }
-
-    /// The selected category's own command list, rendered *below* the
-    /// Categories panel (see `renderBrowseList`). Headed by the category's
-    /// name, the same way the prototype's second left-hand card is - not by a
-    /// "\u{2039} back" row, which no longer has anything to go back to.
-    private func renderCategoryCommandList(_ categoryID: String) {
-        appendToLeftPanel(mutedHeaderLabel(CommandLibraryCategory.info(for: categoryID).displayName.uppercased()))
-
-        let commandsInCategory = store.commandsByCategory().first { $0.info.id == categoryID }?.commands ?? []
-        for command in commandsInCategory {
-            let row = leftPanelRow(text: command.name, isSelected: command.id == selectedCommandID, action: #selector(categoryCommandRowClicked(_:)))
-            rowCommandIDs[ObjectIdentifier(row)] = command.id
-            appendToLeftPanel(row)
-        }
+        return workflowsRow
     }
 
     private func divider() -> NSView {
@@ -1625,5 +1698,67 @@ extension CommandLibraryPageView: NSTextFieldDelegate {
         // everything reaching here is a parameter field.
         guard let field = obj.object as? NSTextField else { return }
         paramValueChanged(field)
+    }
+}
+
+// MARK: - CommandLibraryPanelRow (PERF-05)
+
+/// One row in the Command Library's left column: a label, an optional
+/// trailing count, the sidebar's selected and hover washes, and a click.
+///
+/// It was a function that built a fresh view per render. A class with
+/// `configure` is what lets `HelmKeyedRows` keep a row across renders and
+/// update it in place; the geometry and the colours are the old function's,
+/// line for line.
+final class CommandLibraryPanelRow: HoverHighlightView {
+
+    private let label = NSTextField(labelWithString: "")
+    private let trailingLabel = NSTextField(labelWithString: "")
+
+    private static let textInset: CGFloat = HelmMetrics.s2
+
+    init(target: AnyObject, action: Selector) {
+        super.init(frame: .zero)
+        cornerRadius = HelmMetrics.rControl
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        trailingLabel.setContentHuggingPriority(.required, for: .horizontal)
+        // Hidden is a real removal from layout here (an arranged subview), so
+        // a row with no count lays out exactly as one built without it.
+        trailingLabel.isHidden = true
+
+        let row = NSStackView(views: [label, trailingLabel])
+        row.orientation = .horizontal
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.textInset),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.textInset),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 5),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
+        ])
+        translatesAutoresizingMaskIntoConstraints = false
+        addGestureRecognizer(NSClickGestureRecognizer(target: target, action: action))
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// Everything about the row that can change between renders.
+    func configure(text: String, trailing: String?, isSelected: Bool,
+                   palette: HelmPageSidebar.RowPalette, theme: HelmTheme) {
+        label.stringValue = text
+        label.font = isSelected
+            ? .systemFont(ofSize: HelmType.caption().pointSize, weight: .semibold)
+            : HelmType.caption()
+        trailingLabel.isHidden = trailing == nil
+        trailingLabel.stringValue = trailing ?? ""
+        trailingLabel.font = HelmType.captionSmall()
+        trailingLabel.textColor = HelmTheme.mutedInk(theme)
+        // UI-45: the sidebar's own row recipe - the same selected wash, hover
+        // wash and contrast-corrected selected ink.
+        label.textColor = isSelected ? palette.selectedInk : palette.ink
+        normalColor = isSelected ? palette.selectedFill : .clear
+        hoverColor = isSelected ? palette.selectedFill : palette.hoverFill
     }
 }

@@ -1079,29 +1079,42 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     }
 
     /// One toggle button per distinct tag across all hosts, sorted for a
-    /// stable layout. Rebuilt on every reload (a handful of hosts, a handful
-    /// of tags) so it stays in sync with host edits with no change tracking.
+    /// stable layout, kept in sync with host edits with no change tracking.
+    ///
+    /// PERF-05: reconciled by tag through `HelmKeyedRows` rather than emptied
+    /// and refilled on every reload. The host list itself is an `NSTableView`
+    /// (`HostsListSection`) that reuses its cells, so this strip is the one
+    /// part of `reloadHosts` that still built a view per item of the
+    /// captain's data. A tag that is still in use keeps its button; only a
+    /// new tag builds one.
+    private lazy var tagChips = HelmKeyedRows(stack: tagsStack)
+
     private func rebuildTagChips() {
-        for v in tagsStack.arrangedSubviews {
-            tagsStack.removeArrangedSubview(v)
-            v.removeFromSuperview()
-        }
-        tagButtons.removeAll()
         let allTags = Set(hostStore.hosts.flatMap(\.tags)).sorted()
         selectedTags.formIntersection(allTags)
-        for tag in allTags {
-            // `.pushOnPushOff` still tracks `state` (which `tagChipClicked`
-            // reads), but nothing draws that state now the stock bezel is
-            // gone - the `.primary` variant is what shows it.
-            let b = HelmButton(title: tag, variant: .secondary, size: .small,
-                               target: self, action: #selector(tagChipClicked(_:)))
-            b.setButtonType(.pushOnPushOff)
-            b.state = selectedTags.contains(tag) ? .on : .off
-            b.variant = b.state == .on ? .primary : .secondary
-            b.identifier = NSUserInterfaceItemIdentifier(tag)
-            tagButtons[tag] = b
-            tagsStack.addArrangedSubview(b)
-        }
+        var buttons: [String: HelmButton] = [:]
+        tagChips.reconcile(allTags,
+                           key: { $0 },
+                           make: { [unowned self] tag in
+                               // `.pushOnPushOff` still tracks `state` (which
+                               // `tagChipClicked` reads), but nothing draws that
+                               // state now the stock bezel is gone - the
+                               // `.primary` variant is what shows it.
+                               let b = HelmButton(title: tag, variant: .secondary, size: .small,
+                                                  target: self, action: #selector(self.tagChipClicked(_:)))
+                               b.setButtonType(.pushOnPushOff)
+                               b.identifier = NSUserInterfaceItemIdentifier(tag)
+                               return b
+                           },
+                           update: { [unowned self] view, tag in
+                               guard let b = view as? HelmButton else { return }
+                               b.state = self.selectedTags.contains(tag) ? .on : .off
+                               b.variant = b.state == .on ? .primary : .secondary
+                               buttons[tag] = b
+                           },
+                           // A horizontal strip: each chip keeps its own width.
+                           tiesWidth: false)
+        tagButtons = buttons
         // Only the tag strip collapses when there are no tags - the "Online"
         // chip beside it is always meaningful.
         tagsScroll.isHidden = allTags.isEmpty
@@ -1691,6 +1704,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// a fixture that drifts back to tagged hosts has to fail loudly rather
     /// than pass while testing nothing.
     var debugTagStripIsHidden: Bool { tagsScroll.isHidden }
+    /// The tag chips, in strip order - PERF-05's identity check.
+    var debugTagChips: [NSView] { tagsStack.arrangedSubviews }
     var debugOnlineChip: HelmButton { onlineChip }
     func debugSetOnlineOnly(_ on: Bool) {
         onlineChip.state = on ? .on : .off

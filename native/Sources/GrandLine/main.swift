@@ -4216,6 +4216,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_HOME_DASHBOARD_TESTS"] == "1" {
 if ProcessInfo.processInfo.environment["FM_RUN_MODULE_CARD_HEADER_TESTS"] == "1" {
     exit(ModuleCardHeaderStabilitySelfTest.run() ? 0 : 1)
 }
+// PERF-05 of the 2026-10 end-to-end review: the four data-scaled lists keep
+// their rows across a refresh. Window-backed. See KeyedListsViewSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_KEYED_LISTS_VIEW_TESTS"] == "1" {
+    exit(KeyedListsViewSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_HOME_DASHBOARD_VIEW_TESTS"] == "1" {
     exit(HomeDashboardViewSelfTest.run() ? 0 : 1)
 }
