@@ -270,6 +270,7 @@ NEEDS_SESSION=(
   # frames out of a real window. Its arithmetic half
   # (`FM_RUN_HOME_DASHBOARD_TESTS`) is deliberately NOT here.
   "FM_RUN_HOME_DASHBOARD_VIEW_TESTS"
+  "FM_RUN_KEYED_LISTS_VIEW_TESTS"
   "FM_RUN_HOME_FIT_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
   "FM_RUN_LAYOUT_STABILITY_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
   "FM_RUN_HELM_KIT_VIEW_TESTS"

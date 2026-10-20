@@ -31,6 +31,7 @@ enum KubernetesDestinationSelfTest {
         let cases: [(String, () -> String?)] = [
             // `fm/grandline-k8s-ui-revamp`: the four reported problems.
             ("feedTabIsWidenedForMachineReadableOutput", test_feedTabIsWidenedForMachineReadableOutput),
+            ("aHiddenPageStopsItsPollTimers", test_aHiddenPageStopsItsPollTimers),
             ("describeDrawerIsARealPanelWithLoadingAndClose", test_describeDrawerIsARealPanelWithLoadingAndClose),
             ("describeCompletionForAStalePodIsDropped", test_describeCompletionForAStalePodIsDropped),
             ("sweepOnlyFetchesTheVisibleTabsData", test_sweepOnlyFetchesTheVisibleTabsData),
@@ -222,6 +223,50 @@ enum KubernetesDestinationSelfTest {
         harness.goLive()
         harness.drain()
         return harness
+    }
+
+    // MARK: PERF-06 - nothing polls for a page nobody can see
+
+    /// The 2026-10 end-to-end review's PERF-06 asked whether a per-tab bridge
+    /// keeps ticking behind a hidden page. `KubeBridge` itself idle-stops
+    /// when it has nothing queued, and the only thing that queues for it is
+    /// this page's cluster and tail timers - so the question is whether those
+    /// stop when the shell hides the page.
+    ///
+    /// They do, through `viewDidDisappear`: hiding a child view controller's
+    /// view is what the shell does to a page on navigate-away
+    /// (`setDestinationVisible`), and AppKit delivers the appearance
+    /// callbacks for it. Hosted here the way the shell hosts it - a child of
+    /// the window's content view controller - because a view set straight
+    /// onto `window.contentView` receives no appearance callbacks at all,
+    /// and the case would then be measuring the harness.
+    ///
+    /// Injection: remove the two invalidations from `viewDidDisappear` and
+    /// the timer survives the hide.
+    private static func test_aHiddenPageStopsItsPollTimers() -> String? {
+        let harness = liveHarness()
+        let root = NSViewController()
+        root.view = NSView(frame: NSRect(x: 0, y: 0, width: 1200, height: 780))
+        harness.window.contentView = nil
+        harness.window.contentViewController = root
+        root.addChild(harness.controller)
+        harness.controller.view.frame = root.view.bounds
+        root.view.addSubview(harness.controller.view)
+        harness.window.orderFront(nil)
+        defer { harness.window.orderOut(nil) }
+        harness.controller.restartTimers()
+        guard harness.controller.clusterTimer != nil || harness.controller.tailTimer != nil else {
+            return "the fixture's live page scheduled no poll timer - the hide below would prove nothing"
+        }
+        harness.controller.view.isHidden = true
+        guard harness.controller.clusterTimer == nil, harness.controller.tailTimer == nil else {
+            return "a hidden Kubernetes page kept its poll timer - it would keep typing kubectl into a session nobody is watching"
+        }
+        harness.controller.view.isHidden = false
+        guard harness.controller.clusterTimer != nil || harness.controller.tailTimer != nil else {
+            return "showing the page again did not restart its poll timer"
+        }
+        return nil
     }
 
     // MARK: The revamp (`fm/grandline-k8s-ui-revamp`)

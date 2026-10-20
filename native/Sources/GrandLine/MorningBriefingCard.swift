@@ -125,19 +125,39 @@ final class BriefingParagraphView: NSView, NSTextViewDelegate {
     /// sentences, so a space is right; the deterministic half returns
     /// fragments, so it passes `MorningBriefingLocal.statSeparator` and the
     /// rendered line is exactly `MorningBriefingLocal.statLine`.
+    ///
+    /// PERF-04: the same clauses, separator and theme leave the paragraph as
+    /// it is - the host re-renders on every refresh whether or not the
+    /// briefing moved.
     func render(_ clauses: [BriefingClause], separator: String, theme: HelmTheme) {
+        guard clauses != self.clauses || separator != self.separator || theme.appliedKey != appliedThemeKey else { return }
         self.clauses = clauses
         self.separator = separator
         self.theme = theme
         rebuild()
     }
 
+    /// PERF-04: a re-push of the theme already painted is a no-op - see
+    /// `HelmTheme.appliedKey`.
     func applyTheme(_ theme: HelmTheme) {
+        guard theme.appliedKey != appliedThemeKey else { return }
         self.theme = theme
         rebuild()
     }
 
+    /// The `appliedKey` of the theme the paragraph was last built in.
+    private var appliedThemeKey: String?
+
+    #if FM_SELFTESTS
+    /// PERF-04's counter: how many times the paragraph was rebuilt.
+    private(set) var debugRebuildCount = 0
+    #endif
+
     private func rebuild() {
+        appliedThemeKey = theme.appliedKey
+        #if FM_SELFTESTS
+        debugRebuildCount += 1
+        #endif
         HelmSelection.apply(to: textView, theme: theme)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let paragraph = NSMutableParagraphStyle()

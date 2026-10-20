@@ -250,6 +250,11 @@ final class TabModel {
     /// the full mechanism.
     var kubeContextBridge: KubeContextBridge?
 
+    /// PERF-07: the pending "this tab has been in the background long enough
+    /// to shrink its scrollback" step, or `nil` while the tab is current or
+    /// already shrunk. See `ConsoleController+Scrollback.swift`.
+    var backgroundScrollbackWork: DispatchWorkItem?
+
     /// This tab's own context/namespace badge display state - see
     /// `KubeContextBadgeStatus.swift`. Never activated automatically; only
     /// `ConsoleController.activateKubeContextBadge(for:)` moves it out of

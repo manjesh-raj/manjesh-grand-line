@@ -268,8 +268,28 @@ before assuming which is which.
 Every tab is a `CockpitTerminalView` (a `LocalProcessTerminalView` subclass -
 **do not touch its paste override**, it is what makes screenshot-paste into
 Claude work). Children are forked **in-process**, so a keystroke makes no
-localhost round trip. 10,000-line scrollback per terminal; a tab can be **split**
-into panes (`TerminalSplit.swift`).
+localhost round trip. 10,000-line scrollback per terminal
+(`ConsoleController.interactiveScrollbackLines`); a tab can be **split** into
+panes (`TerminalSplit.swift`).
+
+**What that scrollback costs.**
+A full pane is about **52 MB** at 200 columns: 10,000 rows of 24-byte cells is
+46 MB of cells alone.
+That is a measurement, not an estimate: `FM_RUN_BACKGROUND_SCROLLBACK_TESTS`
+fills one 200-column pane past its ceiling and prints the process's physical
+footprint before and after (a debug build, on the machine PERF-07 landed on).
+A narrower pane costs proportionally less (about 31 MB at 120 columns), and
+only a pane that has actually filled its history costs this much.
+
+Terminal memory still scales with tabs x panes, so a tab that has been out of
+sight for five minutes keeps only `ConsoleController.backgroundScrollbackLines`
+(2,000, about 10 MB at 200 columns) and gets its full 10,000 back the moment it
+is selected.
+The trim is real: the oldest lines above the most recent 2,000 are dropped, not
+paged out.
+A pane the captain has scrolled back in, and the Kubernetes feed tab, are left
+alone.
+`ConsoleController+Scrollback.swift` has the reasoning.
 
 ## Keyboard shortcuts
 

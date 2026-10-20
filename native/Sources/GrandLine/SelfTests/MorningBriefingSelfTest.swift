@@ -47,6 +47,7 @@ enum MorningBriefingSelfTest {
         checkShiftDue(&ok)
         checkDegradation(&ok)
         checkCardRendering(&ok)
+        checkASamePaletteRePushKeepsTheParagraph(&ok)
         checkStoredQuotaClausesArePurged(&ok)
 
         if ok {
@@ -562,6 +563,36 @@ enum MorningBriefingSelfTest {
     /// height from `NSLayoutManager.usedRect` inside `layout()`, and a
     /// briefing that renders as an invisible 0pt strip would look exactly like
     /// "the feature didn't run" while every logic check above still passed.
+    /// PERF-04: the briefing paragraph rebuilt its whole attributed string on
+    /// every `applyTheme`, unconditionally. A re-push of the palette already
+    /// showing, or the same record rendered again, now changes nothing; a
+    /// palette change still rebuilds.
+    ///
+    /// Injection: drop the `appliedKey` guard from
+    /// `BriefingParagraphView.applyTheme` and the count moves on a re-push.
+    private static func checkASamePaletteRePushKeepsTheParagraph(_ ok: inout Bool) {
+        print("\n-- a same-palette re-push rebuilds nothing --")
+        let card = MorningBriefingCard()
+        let theme = ThemeManager.shared.theme
+        let inputs = busyMorning()
+        let record = MorningBriefing.record(inputs: inputs,
+                                           clauses: MorningBriefingLocal.clauses(from: inputs),
+                                           isDegraded: false, degradedReason: nil)
+        card.render(record, theme: theme)
+        let paragraph = card.debugParagraph
+        let rebuilds = paragraph.debugRebuildCount
+        check(rebuilds > 0, "PERF-04: the fixture's render should have built the paragraph", &ok)
+        for _ in 0..<3 { card.applyTheme(theme) }
+        card.render(record, theme: theme)
+        check(paragraph.debugRebuildCount == rebuilds,
+              "PERF-04: \(paragraph.debugRebuildCount - rebuilds) paragraph rebuild(s) for nothing that changed", &ok)
+        let other = HelmTheme.allThemes.first { $0.id != theme.id } ?? theme
+        card.applyTheme(other)
+        check(paragraph.debugRebuildCount == rebuilds + 1,
+              "PERF-04: a palette change should rebuild the paragraph once", &ok)
+        card.applyTheme(theme)
+    }
+
     private static func checkCardRendering(_ ok: inout Bool) {
         print("\n-- the card renders --")
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 720, height: 400))

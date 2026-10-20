@@ -228,7 +228,7 @@ extension ConsoleController {
         refreshTabBar()
 
         if hasAppeared { startTab(tab) }
-        if select { self.select(tabID: tab.id) }
+        if select { self.select(tabID: tab.id) } else { syncBackgroundScrollback() }
         return tab
     }
 
@@ -626,6 +626,8 @@ extension ConsoleController {
         NotificationSources.clearSRELeadReply(tabID: tab.id)
 
         tab.isClosing = true
+        tab.backgroundScrollbackWork?.cancel()
+        tab.backgroundScrollbackWork = nil
         cleanupSSHKeyTempFile(tab)
         tab.kubeContextBridge?.stop()
         // Tears down every pane, the primary one included - `teardownAll`
@@ -784,6 +786,9 @@ extension ConsoleController {
         // background tab's badge should be asleep even while the page itself
         // is on screen.
         refreshPeriodicWorkGating()
+        // PERF-07: the tab now in front gets its full scrollback back, and
+        // every other one starts (or keeps) its grace period.
+        syncBackgroundScrollback()
         if focus { focusTerminal(of: tab) }
     }
 

@@ -533,6 +533,11 @@ final class CockpitTerminalView: LocalProcessTerminalView {
     /// out without tracking it separately.
     private(set) var usesMachineReadableGeometry = false
 
+    /// PERF-07: whether a background tab's shrink has trimmed this pane's
+    /// scrollback below the interactive size. See
+    /// `ConsoleController+Scrollback.swift`.
+    var isShrunkForBackground = false
+
     /// Fires whenever `usesMachineReadableGeometry` actually changes.
     ///
     /// `ConsoleController` wires this to refresh the tab's chip: the width
@@ -564,6 +569,9 @@ final class CockpitTerminalView: LocalProcessTerminalView {
     func applyMachineReadableGeometry(_ enabled: Bool, interactiveScrollback: Int) {
         guard usesMachineReadableGeometry != enabled else { return }
         usesMachineReadableGeometry = enabled
+        // PERF-07: either way this sets the scrollback outright, so a
+        // background shrink no longer applies.
+        isShrunkForBackground = false
         terminal?.changeScrollback(enabled ? Self.machineReadableScrollback : interactiveScrollback)
         minimumColumns = enabled ? Self.machineReadableColumns : 0
         onMachineReadableGeometryChanged?()

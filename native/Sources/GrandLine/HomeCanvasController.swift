@@ -322,6 +322,59 @@ final class HomeCanvasController: NSViewController {
     private var signalCountsToken: BackgroundSignalsPoller.CountsObservation?
     private var windowResizeObserver: NSObjectProtocol?
     private var clipResizeObserver: NSObjectProtocol?
+
+    // MARK: Live resize (PERF-03)
+    //
+    // **The 2026-10 end-to-end review's PERF-03.** AppKit posts
+    // `didResizeNotification` on every frame of a live resize, and every one
+    // of them reached `rebuildGrid()`. A width change defeats the in-place
+    // refresh, so each frame tore the grid down - and on the hub, before
+    // that, built six to eight throwaway probe cards and gave each a full
+    // layout pass (`fittingHeight`) to budget the columns.
+    //
+    // Two changes, both from the review:
+    //
+    //   - Probe heights are memoised by (content, width) - see
+    //     `probeHeight(_:width:)`. A probe is only re-measured when what it
+    //     shows or the width it is shown at has changed.
+    //   - Between `willStartLiveResize` and `didEndLiveResize` the grid keeps
+    //     its cards and only its constants move: the content width, each
+    //     card's (or hub column's) width pin, and the hub's own-height
+    //     preferences. One `rebuildGrid()` runs when the drag ends. A drag
+    //     that changes the shelf's column count, or crosses the hub's
+    //     fall-back width, still rebuilds, because that is a different grid.
+
+    private var liveResizeObservers: [NSObjectProtocol] = []
+    private(set) var isInLiveResize = false
+
+    /// Each width pin the current grid was built with, and the span it
+    /// covers, so a live resize can move them without rebuilding. On the hub
+    /// these are the three columns' pins; on a shelf, every card's and
+    /// spacer's.
+    private var gridWidthPins: [(constraint: NSLayoutConstraint, span: Int)] = []
+    /// The shelf's column count at build time - the live-resize path's test
+    /// for "same grid, new width".
+    private var builtShelfColumns = 0
+
+    private struct ProbeKey: Hashable {
+        let signature: String
+        let width: CGFloat
+    }
+    /// See `probeHeight(_:width:)`.
+    private var probeHeights: [ProbeKey: CGFloat] = [:]
+    /// The keys the plan being computed has read, so the memo can drop
+    /// everything else once it is done - what keeps it "cleared when the
+    /// content changes" without a per-module bookkeeping of its own.
+    private var probeKeysInUse: Set<ProbeKey>?
+
+    #if FM_SELFTESTS
+    /// PERF-03's counters: real probe layouts, memo hits, and full grid
+    /// rebuilds (the teardown path).
+    private(set) var debugProbeMeasurements = 0
+    private(set) var debugProbeMemoHits = 0
+    private(set) var debugGridRebuilds = 0
+    private(set) var debugApplyThemeCount = 0
+    #endif
     private var lastGridWidth: CGFloat = 0
     /// The height the hub's columns were last budgeted for - see
     /// `containerWidthMayHaveChanged`.
@@ -374,6 +427,7 @@ final class HomeCanvasController: NSViewController {
         if let signalCountsToken { BackgroundSignalsPoller.shared.unobserveCounts(signalCountsToken) }
         if let windowResizeObserver { NotificationCenter.default.removeObserver(windowResizeObserver) }
         if let clipResizeObserver { NotificationCenter.default.removeObserver(clipResizeObserver) }
+        liveResizeObservers.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
     // MARK: Build
@@ -563,6 +617,23 @@ final class HomeCanvasController: NSViewController {
         // clip, and through the same staleness check, so it converges: a
         // narrower grid is never shorter, so it cannot hide the scroller
         // that narrowed it.
+        // PERF-03: bracket a live resize, so the frames inside it move the
+        // grid's constants and the end of it rebuilds once. This window only,
+        // for the reason the resize observer above gives.
+        liveResizeObservers = [
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.willStartLiveResizeNotification, object: nil, queue: .main
+            ) { [weak self] note in
+                guard let self, (note.object as? NSWindow) === self.view.window else { return }
+                self.isInLiveResize = true
+            },
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.didEndLiveResizeNotification, object: nil, queue: .main
+            ) { [weak self] note in
+                guard let self, (note.object as? NSWindow) === self.view.window else { return }
+                self.liveResizeDidEnd()
+            },
+        ]
         scroll.contentView.postsFrameChangedNotifications = true
         clipResizeObserver = NotificationCenter.default.addObserver(
             forName: NSView.frameDidChangeNotification, object: scroll.contentView, queue: .main
@@ -1309,10 +1380,15 @@ final class HomeCanvasController: NSViewController {
         // observer and re-solved the whole grid.
         if refreshGridInPlace(available: available, modules: modules, dashboard: dashboard) { return }
 
+        #if FM_SELFTESTS
+        debugGridRebuilds += 1
+        #endif
         for row in gridStack.arrangedSubviews {
             gridStack.removeArrangedSubview(row)
             row.removeFromSuperview()
         }
+        gridWidthPins.removeAll()
+        builtShelfColumns = 0
         cards.removeAll()
         cardsByModule.removeAll()
         cardPlacements.removeAll()
@@ -1331,6 +1407,9 @@ final class HomeCanvasController: NSViewController {
             for row in rows {
                 gridStack.addArrangedSubview(row)
                 row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
+                gridWidthPins += row.arrangedSubviews.enumerated().compactMap { index, column in
+                    Self.widthPin(of: column).map { ($0, Self.dashboardSpans[min(index, Self.dashboardSpans.count - 1)]) }
+                }
             }
             gridLayoutKey = GridLayoutKey(space: space, modules: modules, dashboard: true,
                                           width: available, height: lastGridHeight, exemptHeights: [])
@@ -1375,9 +1454,20 @@ final class HomeCanvasController: NSViewController {
             return self.makeCard(for: module, placement: .shelf(width: cardWidth))
         }
 
+        let columns = HelmResponsiveGrid.columns(containerWidth: width, minItemWidth: Self.minModuleWidth,
+                                                 spacing: Self.gridSpacing)
+        let unit = HelmResponsiveGrid.itemWidth(containerWidth: width, columns: columns, spacing: Self.gridSpacing)
+        builtShelfColumns = columns
         for row in rows {
             gridStack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
+            // Each cell's span, read back off the width it was built at - the
+            // inverse of `spanningRows`' own `unit * span + spacing * (span - 1)`.
+            gridWidthPins += row.arrangedSubviews.compactMap { cell in
+                Self.widthPin(of: cell).map {
+                    ($0, max(1, Int((($0.constant + Self.gridSpacing) / (unit + Self.gridSpacing)).rounded())))
+                }
+            }
         }
         if Set(cardsByModule.keys) == Set(modules) {
             gridLayoutKey = GridLayoutKey(space: space, modules: modules, dashboard: false,
@@ -1552,6 +1642,13 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func dashboardPlan(available: CGFloat) -> DashboardPlan {
+        // PERF-03: whatever this plan does not read is stale - a module's
+        // content moved on, or the width did - so it leaves the memo.
+        probeKeysInUse = []
+        defer {
+            if let used = probeKeysInUse { probeHeights = probeHeights.filter { used.contains($0.key) } }
+            probeKeysInUse = nil
+        }
         let span = Self.dashboardSpans[0]
         let width = HelmResponsiveGrid.proportionalWidth(containerWidth: available, span: span,
                                                          spacing: Self.gridSpacing)
@@ -1564,13 +1661,13 @@ final class HomeCanvasController: NSViewController {
         let claudeContent = content(for: .claudeStatus, placement: placement)
         var fleetContent = content(for: .fleet, placement: placement)
         var healthContent = content(for: .health, placement: placement)
-        let claudeHeight = Self.fittingHeight(of: Self.probeCard(claudeContent), width: width)
-        let healthHeight = Self.fittingHeight(of: Self.probeCard(healthContent), width: width)
-        var fleetHeight = Self.fittingHeight(of: Self.probeCard(fleetContent), width: width)
+        let claudeHeight = probeHeight(claudeContent, width: width)
+        let healthHeight = probeHeight(healthContent, width: width)
+        var fleetHeight = probeHeight(fleetContent, width: width)
         if claudeHeight + fleetHeight + healthHeight + Self.gridSpacing * 2 > height,
            case let .kpis(_, items) = fleetContent.body {
             fleetContent.body = .kpis(note: nil, items: items)
-            fleetHeight = Self.fittingHeight(of: Self.probeCard(fleetContent), width: width)
+            fleetHeight = probeHeight(fleetContent, width: width)
         }
         // Health lists its services under the ring when the column holds
         // them; otherwise it stays the ring and its sentence.
@@ -1578,7 +1675,7 @@ final class HomeCanvasController: NSViewController {
         let listed = content(for: .health, placement: placement)
         healthListsServices = false
         if case .ringWithLines = listed.body,
-           claudeHeight + fleetHeight + Self.fittingHeight(of: Self.probeCard(listed), width: width)
+           claudeHeight + fleetHeight + probeHeight(listed, width: width)
             + Self.gridSpacing * 2 <= height {
             healthContent = listed
         }
@@ -1586,12 +1683,12 @@ final class HomeCanvasController: NSViewController {
         // Column 3: as many Merge queue rows as the column holds under the
         // briefing; the briefing takes what is left, below its paragraph.
         let briefingContent = content(for: .briefing, placement: placement)
-        let briefingHeight = Self.fittingHeight(of: Self.probeCard(briefingContent), width: width)
+        let briefingHeight = probeHeight(briefingContent, width: width)
         mergeQueueRowLimit = mergeQueueRows(budget: height - briefingHeight - Self.gridSpacing,
                                             placement: placement, width: width)
         let mergeContent = content(for: .mergeQueue, placement: placement)
         mergeQueueRowLimit = HelmModuleCard.maxPeekRows
-        let mergeHeight = Self.fittingHeight(of: Self.probeCard(mergeContent), width: width)
+        let mergeHeight = probeHeight(mergeContent, width: width)
 
         return DashboardPlan(
             width: width,
@@ -1661,15 +1758,56 @@ final class HomeCanvasController: NSViewController {
     private func mergeQueueRows(budget: CGFloat, placement: CardPlacement, width: CGFloat) -> Int {
         let minimum = Self.mergeQueueMinimumRows
         mergeQueueRowLimit = minimum
-        let first = Self.fittingHeight(of: Self.probeCard(content(for: .mergeQueue, placement: placement)),
-                                       width: width)
+        let first = probeHeight(content(for: .mergeQueue, placement: placement), width: width)
         mergeQueueRowLimit = minimum + 1
-        let second = Self.fittingHeight(of: Self.probeCard(content(for: .mergeQueue, placement: placement)),
-                                        width: width)
+        let second = probeHeight(content(for: .mergeQueue, placement: placement), width: width)
         let perRow = second - first
         guard perRow > 0.5 else { return minimum }
         let extra = Int(((budget - first) / perRow).rounded(.down))
         return max(minimum, minimum + extra)
+    }
+
+    /// A probe card's height, from the memo when the same content was
+    /// measured at the same width (PERF-03).
+    ///
+    /// The key is the content's `layoutSignature` - every field that can move
+    /// a card's height, so a changed reading is a new key rather than a stale
+    /// hit - and the width. During a live resize the width is bucketed to
+    /// `liveResizeProbeBucket`, so the frames of a drag share measurements;
+    /// otherwise it is the exact width, so a settled page is budgeted from
+    /// exactly the width it is shown at. Either way the probe is measured at
+    /// the real width the first time its key is seen.
+    private func probeHeight(_ content: HelmModuleCard.Content, width: CGFloat) -> CGFloat {
+        let widthKey = isInLiveResize
+            ? (width / Self.liveResizeProbeBucket).rounded(.down) * Self.liveResizeProbeBucket
+            : (width * 2).rounded() / 2
+        let key = ProbeKey(signature: content.layoutSignature, width: widthKey)
+        probeKeysInUse?.insert(key)
+        if let height = probeHeights[key] {
+            #if FM_SELFTESTS
+            debugProbeMemoHits += 1
+            #endif
+            return height
+        }
+        #if FM_SELFTESTS
+        debugProbeMeasurements += 1
+        #endif
+        let height = Self.fittingHeight(of: Self.probeCard(content), width: width)
+        probeHeights[key] = height
+        return height
+    }
+
+    /// The review's "width rounded to 8 pt": how far apart two live-resize
+    /// frames may be and still share a probe measurement.
+    static let liveResizeProbeBucket: CGFloat = 8
+
+    /// The width pin `proportionalRow`/`spanningRows` put on a cell: a
+    /// constant width at `contentTie`, on the view itself.
+    private static func widthPin(of view: NSView) -> NSLayoutConstraint? {
+        view.constraints.last {
+            $0.firstItem === view && $0.secondItem == nil && $0.firstAttribute == .width
+                && $0.priority == HelmDaylightPriority.contentTie
+        }
     }
 
     /// A card built only to be measured - not added to `cards`, so it is
@@ -1792,8 +1930,61 @@ final class HomeCanvasController: NSViewController {
         // height change rebuilds too; every other space is width-only.
         let heightChanged = usesDashboardLayout && abs(gridContainerHeight() - lastGridHeight) > 0.5
         guard abs(width - lastGridWidth) > 0.5 || heightChanged else { return }
+        // PERF-03: inside a drag, move the grid's constants and leave its
+        // cards; `liveResizeDidEnd` rebuilds once. A rebuild needs no
+        // `applyTheme` after it - every new card themes itself as it is
+        // built - so the one this used to make is gone too.
+        if isInLiveResize, resizeGridInPlace(available: width) { return }
         rebuildGrid()
-        applyTheme(ThemeManager.shared.theme)
+    }
+
+    /// The end of a drag: the one rebuild the frames inside it deferred.
+    private func liveResizeDidEnd() {
+        guard isInLiveResize else { return }
+        isInLiveResize = false
+        guard isViewLoaded, !view.isHidden else { return }
+        rebuildGrid()
+    }
+
+    /// One live-resize frame, constants only. `false` when the new width
+    /// needs a different grid - the shelf's column count changed, or the hub
+    /// crossed the width it falls back to the shelf at - and the caller
+    /// rebuilds instead.
+    private func resizeGridInPlace(available: CGFloat) -> Bool {
+        guard let built = gridLayoutKey, built.space == space, !gridWidthPins.isEmpty else { return false }
+        let modules = visibleModules()
+        guard built.modules == modules else { return false }
+        let height = gridContainerHeight()
+        if built.dashboard {
+            guard dashboardRowViewsWouldApply(available: available, modules: modules) else { return false }
+            let plan = dashboardPlan(available: available)
+            for (pin, span) in gridWidthPins {
+                pin.constant = HelmResponsiveGrid.proportionalWidth(containerWidth: available, span: span,
+                                                                   spacing: Self.gridSpacing)
+            }
+            contentWidthConstraint?.constant = available
+            attentionCard.setLayoutWidth(plan.width)
+            for module in modules {
+                guard let content = plan.contents[module] else { return false }
+                cardsByModule[module]?.configureIfChanged(content)
+            }
+            for (module, ownHeight) in plan.ownHeights {
+                dashboardOwnHeights[module]?.constant = ownHeight
+            }
+        } else {
+            let width = Self.composedContentWidth(available: available, modules: modules)
+            let columns = HelmResponsiveGrid.columns(containerWidth: width, minItemWidth: Self.minModuleWidth,
+                                                     spacing: Self.gridSpacing)
+            guard columns == builtShelfColumns else { return false }
+            let unit = HelmResponsiveGrid.itemWidth(containerWidth: width, columns: columns, spacing: Self.gridSpacing)
+            for (pin, span) in gridWidthPins {
+                pin.constant = unit * CGFloat(span) + Self.gridSpacing * CGFloat(span - 1)
+            }
+            contentWidthConstraint?.constant = width
+        }
+        lastGridWidth = available
+        lastGridHeight = height
+        return true
     }
 
     private func scrollToTop() {
@@ -1826,6 +2017,9 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func applyTheme(_ theme: HelmTheme) {
+        #if FM_SELFTESTS
+        debugApplyThemeCount += 1
+        #endif
         // `ThemeManager.swift`'s checklist item 2. Every layer fill below
         // tracks the theme on its own; this is what makes the *system-
         // semantic* colours in this subtree (a scroller's track and knob, an

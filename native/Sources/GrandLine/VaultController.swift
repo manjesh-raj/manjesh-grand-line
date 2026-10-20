@@ -523,11 +523,43 @@ final class VaultController: NSViewController, DaylightDrillActions {
         BackgroundSignalsPoller.shared.publishVaultRead(secrets: secrets, tools: tools)
     }
 
+    // MARK: The two lists, keyed (PERF-05)
+    //
+    // **The 2026-10 end-to-end review's PERF-05.** Both stacks used to be
+    // emptied and refilled on every snapshot - one `HelmAccentRow` and its
+    // buttons per secret and per launcher, rebuilt whether or not anything
+    // changed. They reconcile through `HelmKeyedRows` now, keyed by name: a
+    // secret or launcher still listed keeps its row and is reconfigured in
+    // place, and only a new name builds one. The three non-list states
+    // (loading, failed, empty) are unchanged - reconciling to no rows first
+    // takes the keyed rows out cleanly, and the state view is added after.
+
+    private lazy var secretRows = HelmKeyedRows(stack: secretsStack)
+    private lazy var toolRows = HelmKeyedRows(stack: toolsStack)
+
     private func rebuildSecretsStack() {
-        for v in secretsStack.arrangedSubviews {
-            secretsStack.removeArrangedSubview(v)
-            v.removeFromSuperview()
+        guard let secrets, !secrets.isEmpty else {
+            reconcileSecretRows([])
+            for v in secretsStack.arrangedSubviews {
+                secretsStack.removeArrangedSubview(v)
+                v.removeFromSuperview()
+            }
+            showSecretsState()
+            return
         }
+        reconcileSecretRows(secrets)
+    }
+
+    private func reconcileSecretRows(_ secrets: [VaultSecret]) {
+        secretRows.reconcile(secrets,
+                             key: \.name,
+                             make: { [unowned self] secret in self.secretRowView(secret) },
+                             update: { [unowned self] row, secret in
+                                 (row as? HelmAccentRow)?.configure(self.secretRowContent(secret), theme: self.theme)
+                             })
+    }
+
+    private func showSecretsState() {
         guard let secrets else {
             // B1: three states, not two. "Checking" until the first read
             // lands, then a real error - never a confident empty list.
@@ -540,18 +572,31 @@ final class VaultController: NSViewController, DaylightDrillActions {
                           text: "No saved secrets yet. Use \u{201c}Add Secret\u{201d} above - the value is entered directly in a real terminal, never through this app.")
             return
         }
-        for secret in secrets {
-            let row = secretRowView(secret)
-            secretsStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: secretsStack.widthAnchor).isActive = true
-        }
     }
 
     private func rebuildToolsStack() {
-        for v in toolsStack.arrangedSubviews {
-            toolsStack.removeArrangedSubview(v)
-            v.removeFromSuperview()
+        guard let tools, !tools.isEmpty else {
+            reconcileToolRows([])
+            for v in toolsStack.arrangedSubviews {
+                toolsStack.removeArrangedSubview(v)
+                v.removeFromSuperview()
+            }
+            showToolsState()
+            return
         }
+        reconcileToolRows(tools)
+    }
+
+    private func reconcileToolRows(_ tools: [VaultTool]) {
+        toolRows.reconcile(tools,
+                           key: \.name,
+                           make: { [unowned self] tool in self.toolRowView(tool) },
+                           update: { [unowned self] row, tool in
+                               (row as? HelmAccentRow)?.configure(self.toolRowContent(tool), theme: self.theme)
+                           })
+    }
+
+    private func showToolsState() {
         guard let tools else {
             addUnknownState(to: toolsStack, symbol: "checkmark.shield", noun: "verified launchers")
             return
@@ -561,11 +606,6 @@ final class VaultController: NSViewController, DaylightDrillActions {
                           symbol: "checkmark.shield",
                           text: "No verified launchers registered with Automic Vault yet.")
             return
-        }
-        for tool in tools {
-            let row = toolRowView(tool)
-            toolsStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: toolsStack.widthAnchor).isActive = true
         }
     }
 
@@ -646,7 +686,15 @@ final class VaultController: NSViewController, DaylightDrillActions {
     private func secretRowView(_ secret: VaultSecret) -> NSView {
         let row = HelmAccentRow(trailingAccessory: secretRowActions(for: secret), hover: false,
                                 maxContentWidth: HelmAccentRow.recordContentWidth)
-        row.configure(HelmAccentRow.Content(
+        row.configure(secretRowContent(secret), theme: theme)
+        return row
+    }
+
+    /// Everything a secret row shows - the keyed list's `update` and its
+    /// `make` configure from the same value, so a kept row and a new one
+    /// render the same.
+    private func secretRowContent(_ secret: VaultSecret) -> HelmAccentRow.Content {
+        HelmAccentRow.Content(
             tint: .good,
             kicker: "Hardened",
             title: secret.name,
@@ -658,8 +706,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
             meta: "Stored in Automic Vault's Keychain",
             badgeSymbol: "key.fill",
             titleIsCode: true
-        ), theme: theme)
-        return row
+        )
     }
 
     private func secretRowActions(for secret: VaultSecret) -> NSView {
@@ -700,6 +747,13 @@ final class VaultController: NSViewController, DaylightDrillActions {
     }
 
     private func toolRowView(_ tool: VaultTool) -> NSView {
+        let row = HelmAccentRow(hover: false)
+        row.configure(toolRowContent(tool), theme: theme)
+        return row
+    }
+
+    /// Everything a launcher row shows - see `secretRowContent`.
+    private func toolRowContent(_ tool: VaultTool) -> HelmAccentRow.Content {
         let isHardened: Bool
         switch tool.status {
         case .hardened: isHardened = true
@@ -712,8 +766,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
         let meta = isHardened
             ? "Hardened, 0 issues"
             : tool.status.label + " found"
-        let row = HelmAccentRow(hover: false)
-        row.configure(HelmAccentRow.Content(
+        return HelmAccentRow.Content(
             tint: isHardened ? .good : .warn,
             kicker: isHardened ? "Hardened" : "Needs Attention",
             title: tool.name,
@@ -727,8 +780,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
             // which is the state PRODUCT.md's "quiet until it matters" is
             // about.
             isSignal: !isHardened
-        ), theme: theme)
-        return row
+        )
     }
 
     // MARK: Actions

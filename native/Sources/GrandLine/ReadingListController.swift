@@ -747,34 +747,61 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
     private(set) var debugGridRebuildCount = 0
     #endif
 
+    /// The grid's rows, keyed (PERF-05).
+    ///
+    /// **The 2026-10 end-to-end review's PERF-05.** Every store publish and
+    /// every filter change used to empty this grid and build one card per
+    /// link again. Rows are keyed by what they hold now - the column count
+    /// and their links' ids, in order - so a row whose links did not change
+    /// keeps its cards and only re-renders them in place, exactly as
+    /// `refreshCard` already did for one card. A row whose membership did
+    /// change (a link marked read moves below the unread ones, a filter, a
+    /// width that changes the column count) is a new row - but it is built
+    /// from the cards already on screen where it can, so a reshuffle moves
+    /// cards rather than rebuilding them.
+    private lazy var gridRows = HelmKeyedRows(stack: gridStack)
+
     private func rebuildGrid() {
         #if FM_SELFTESTS
         debugGridRebuildCount += 1
         #endif
-        for row in gridStack.arrangedSubviews {
-            gridStack.removeArrangedSubview(row)
-            row.removeFromSuperview()
-        }
-        cards.removeAll()
-
         let visible = ReadingListQuery.apply(filter, to: store.links)
         lastGridWidth = gridScroll.contentView.bounds.width
-        let rows = HelmResponsiveGrid.rows(visible,
-                                           containerWidth: lastGridWidth,
-                                           minItemWidth: ReadingListCardView.minimumWidth,
-                                           // PF2's rule: these cards are
-                                           // content-sized (a summary well is
-                                           // three lines taller than none), so
-                                           // each row equalises to its own
-                                           // tallest rather than the grid
-                                           // reading as ragged.
-                                           equalHeights: true) { link, _ in
-            self.makeCard(link)
-        }
-        for row in rows {
-            gridStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
-        }
+        let columns = HelmResponsiveGrid.columns(containerWidth: lastGridWidth,
+                                                 minItemWidth: ReadingListCardView.minimumWidth)
+        let chunks = visible.chunked(into: columns)
+        let onScreen = cards
+        var nextCards: [String: ReadingListCardView] = [:]
+        gridRows.reconcile(chunks,
+                           key: { chunk in "\(columns):" + chunk.map(\.id).joined(separator: ",") },
+                           make: { [unowned self] chunk in
+                               // One chunk is one row: `rows(_:)` on exactly
+                               // the links that fit is the same row, with the
+                               // same partial-row padding, it always built.
+                               HelmResponsiveGrid.rows(chunk,
+                                                       containerWidth: self.lastGridWidth,
+                                                       minItemWidth: ReadingListCardView.minimumWidth,
+                                                       // PF2's rule: these cards are
+                                                       // content-sized (a summary well is
+                                                       // three lines taller than none), so
+                                                       // each row equalises to its own
+                                                       // tallest rather than the grid
+                                                       // reading as ragged.
+                                                       equalHeights: true) { link, _ in
+                                   // A card already on screen moves into
+                                   // this row; `update` below re-renders it.
+                                   onScreen[link.id] ?? self.makeCard(link)
+                               }.first ?? NSStackView()
+                           },
+                           update: { [unowned self] row, chunk in
+                               let rowCards = (row as? NSStackView)?.arrangedSubviews.compactMap { $0 as? ReadingListCardView } ?? []
+                               for (card, link) in zip(rowCards, chunk) {
+                                   card.render(link, iconPNG: self.store.iconPNG(forHost: link.host))
+                                   card.setSummarising(self.summariesInFlight.contains(link.id))
+                                   nextCards[link.id] = card
+                               }
+                           })
+        cards = nextCards
         refreshEmptyState(visibleCount: visible.count)
         applyTheme()
     }

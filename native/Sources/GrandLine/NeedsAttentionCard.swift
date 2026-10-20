@@ -469,7 +469,15 @@ final class NeedsAttentionCard: NSView {
     ///   freshness. The host passes it rather than this card formatting a
     ///   date of its own, so the two places that say when the fleet was read
     ///   can never disagree.
+    ///
+    /// PERF-04: the Home canvas calls this on every render. When the summary
+    /// and the theme are the ones already drawn, the rows stay - only a moved
+    /// subline is rewritten, through `setSubline`'s header-only path.
     func render(_ summary: NeedsAttentionSummary, subline: String, theme: HelmTheme) {
+        if summary == self.summary, theme.appliedKey == appliedThemeKey {
+            setSubline(subline)
+            return
+        }
         self.summary = summary
         self.subline = subline
         self.theme = theme
@@ -485,11 +493,24 @@ final class NeedsAttentionCard: NSView {
     }
 
     func applyTheme(_ theme: HelmTheme) {
+        // PERF-04: a re-push of the palette already painted - the host's
+        // `render()` and resize paths make one on nearly every call - changes
+        // nothing, so it rebuilds nothing. See `HelmTheme.appliedKey`.
+        guard theme.appliedKey != appliedThemeKey else { return }
+        appliedThemeKey = theme.appliedKey
         self.theme = theme
         paintChrome()
         // The rows are rebuilt rather than re-tinted - see the file header.
         if summary != nil { rebuild() }
     }
+
+    /// The `appliedKey` of the theme the card was last painted in.
+    private var appliedThemeKey: String?
+
+    #if FM_SELFTESTS
+    /// PERF-04's counter: how many times the rows were rebuilt.
+    private(set) var debugRebuildCount = 0
+    #endif
 
     /// Everything that is not a row. Called from both `applyTheme` and
     /// `rebuild`, because either can be the one that runs last.
@@ -519,6 +540,10 @@ final class NeedsAttentionCard: NSView {
 
     private func rebuild() {
         guard let summary else { return }
+        appliedThemeKey = theme.appliedKey
+        #if FM_SELFTESTS
+        debugRebuildCount += 1
+        #endif
 
         configureHeader(summary)
 
