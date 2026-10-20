@@ -558,3 +558,39 @@ A host the captain switches to before its turn is built on the spot, and a queue
 `DestinationMountingSelfTest` covers the shell: one runbook store and one log store across the launch and three first visits, no lazy page constructed at launch, a first visit constructs exactly that page, the reach-ins build nothing, and the launch reads neither YAML file on the main thread.
 `SessionRestoreSelfTest` covers the restore queue.
 Each case was confirmed to fail with its fix reverted; the PR description lists the injections.
+
+## Home, the data-scaled lists and the terminals: PERF-03 to PERF-07 (2026-10 end-to-end review)
+
+The second half of section 3.6, shipped as one pull request with one commit per finding.
+As with the launch path, nothing here was timed: the suites assert the work done, and the one number below is a synthetic measurement in a test process.
+
+**PERF-03, Home on every resize frame.**
+Each `didResizeNotification` of a live resize reached `rebuildGrid()`, which a width change sends down the teardown path, and the hub's plan built six to eight probe cards with a full layout pass each.
+Probe heights are memoised by the content's `layoutSignature` and the width, bucketed to 8pt during a live resize and exact otherwise, and a plan drops every key it did not read.
+Between `willStartLiveResize` and `didEndLiveResize` the grid keeps its cards and moves only its constants (the content width, the column or card width pins, the hub's own-height preferences), then rebuilds once.
+A drag that changes the shelf's column count, or crosses the hub's fall-back width, still rebuilds.
+The resize path's trailing `applyTheme` is gone; every card a rebuild builds themes itself.
+
+**PERF-04, three cards rebuilt on a same-palette re-push.**
+`HelmTheme.appliedKey` is the theme id plus the chrome text scale, because a text-size change re-fires the same theme to re-derive fonts.
+`MorningBriefingCard`'s paragraph, `NeedsAttentionCard` and `DailyReviewCard` return early on the key already painted, and their `render` leaves the rows alone for the model already drawn.
+`DailyReviewDigest.generatedAt` is stamped on every compose and is not drawn, so the daily review compares everything else.
+A genuine palette change still rebuilds the rows, which those cards' headers chose over re-tinting.
+
+**PERF-05, lists that rebuilt every row.**
+The Command Library's left column, the Reading List grid, the Vault page's secrets and launchers, and the Hosts tag strip reconcile through `HelmKeyedRows`.
+The Hosts list itself is already an `NSTableView` with cell reuse, and the Reading List sidebar already skipped unchanged structure.
+A rebuilt Reading List row reuses the cards already on screen, because marking a link read reorders the grid (unread first) and would otherwise rebuild every card.
+The Command Library's `render()` also stopped walking its column and detail pane twice.
+
+**PERF-06, bridge ticks behind a hidden tab.**
+All three were already gated, and the PR records the evidence rather than adding guards.
+`KubeContextBridge` polls only while a command is in flight and pauses for a tab that is not current, a hidden console or a backgrounded app.
+`KubeBridge` idle-stops, and its only producer, the Kubernetes page's timers, stops in `viewDidDisappear`, which a probe showed AppKit delivers when the shell hides a page.
+`SRELeadBridge` keeps serving unseen tabs on purpose, at a 30s idle cadence.
+`KubernetesDestinationSelfTest.aHiddenPageStopsItsPollTimers` now covers the one link no suite did.
+
+**PERF-07, unbounded terminal history.**
+A full 200-column pane measured about 52 MB.
+A tab out of sight for five minutes keeps 2,000 lines and gets its 10,000 back on select.
+SwiftTerm trims when it shrinks, so the grace period, the scrolled-back rule and the Kubernetes feed exemption are what keep the cost low; `native/README.md` states the figure and the trade.
