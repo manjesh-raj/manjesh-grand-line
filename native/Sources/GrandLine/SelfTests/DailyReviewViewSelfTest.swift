@@ -68,6 +68,7 @@ enum DailyReviewViewSelfTest {
             checkColumnGeometry(stores, check: check)
             checkCannotCapTheWindow(stores, check: check)
             checkThemeRepaint(stores, check: check)
+            checkASamePaletteRePushKeepsTheColumns(stores, check: check)
             checkCalendarGapAndButton(stores, check: check)
             checkDismissAndDisable(stores, check: check)
             checkPageEmptyStates(stores, check: check)
@@ -227,6 +228,33 @@ enum DailyReviewViewSelfTest {
     }
 
     // MARK: 4 - it re-themes
+
+    /// PERF-04, PF10's shape: a push of the palette already showing, and a
+    /// re-render of the digest already drawn, leave the columns' rows in
+    /// place. A real palette change still rebuilds them.
+    ///
+    /// Injection: drop the `appliedKey` guard from `applyTheme` and the rows
+    /// are replaced on the first re-push.
+    private static func checkASamePaletteRePushKeepsTheColumns(_ stores: Stores,
+                                                              check: (Bool, String) -> Void) {
+        seed(stores)
+        withMountedPage(stores) { controller, card, _ in
+            let theme = ThemeManager.shared.theme
+            let rows = card.debugColumns.flatMap(\.arrangedSubviews).map(ObjectIdentifier.init)
+            let rebuilds = card.debugRebuildCount
+            check(!rows.isEmpty, "PERF-04: the fixture should draw column rows, or identity proves nothing")
+            for _ in 0..<3 { card.applyTheme(theme) }
+            controller.debugRenderDailyReview()
+            check(card.debugColumns.flatMap(\.arrangedSubviews).map(ObjectIdentifier.init) == rows,
+                  "PERF-04: a same-palette re-push or an unchanged re-render replaced the rows")
+            check(card.debugRebuildCount == rebuilds,
+                  "PERF-04: \(card.debugRebuildCount - rebuilds) rebuild(s) for nothing that changed")
+            let other = HelmTheme.allThemes.first { $0.id != theme.id } ?? theme
+            card.applyTheme(other)
+            check(card.debugRebuildCount == rebuilds + 1, "PERF-04: a palette change should rebuild once")
+            card.applyTheme(theme)
+        }
+    }
 
     private static func checkThemeRepaint(_ stores: Stores, check: (Bool, String) -> Void) {
         seed(stores)

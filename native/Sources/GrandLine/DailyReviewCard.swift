@@ -273,13 +273,41 @@ final class DailyReviewCard: NSView {
 
     // MARK: Rendering
 
+    /// PERF-04: the same digest in the same theme leaves the columns as they
+    /// are - its host re-renders whenever any of its sources might have moved.
+    ///
+    /// "The same" is what the card draws. `generatedAt` is stamped fresh on
+    /// every compose and appears nowhere on the card (the kicker carries the
+    /// time, to the minute), so it is left out of the comparison; whether the
+    /// calendar gap offers its button is drawn, so it is part of it.
     func render(_ digest: DailyReviewDigest, theme: HelmTheme) {
+        if let drawn = self.digest, theme.appliedKey == appliedThemeKey,
+           calendarIsConnectable == drawnCalendarIsConnectable {
+            var unstamped = digest
+            unstamped.generatedAt = drawn.generatedAt
+            if unstamped == drawn { return }
+        }
         self.digest = digest
         self.theme = theme
         rebuild()
     }
 
+    /// `calendarIsConnectable` as the last rebuild drew it.
+    private var drawnCalendarIsConnectable = false
+
+    /// The `appliedKey` of the theme the card was last painted in.
+    private var appliedThemeKey: String?
+
+    #if FM_SELFTESTS
+    /// PERF-04's counter: how many times the columns were rebuilt.
+    private(set) var debugRebuildCount = 0
+    #endif
+
     func applyTheme(_ theme: HelmTheme) {
+        // PERF-04: a re-push of the palette already painted rebuilds nothing.
+        // See `HelmTheme.appliedKey`.
+        guard theme.appliedKey != appliedThemeKey else { return }
+        appliedThemeKey = theme.appliedKey
         self.theme = theme
         paintChrome()
         // The five `HelmButton`s are deliberately *not* touched here: a
@@ -304,6 +332,11 @@ final class DailyReviewCard: NSView {
 
     private func rebuild() {
         guard let digest else { return }
+        appliedThemeKey = theme.appliedKey
+        drawnCalendarIsConnectable = calendarIsConnectable
+        #if FM_SELFTESTS
+        debugRebuildCount += 1
+        #endif
         headlineLabel.stringValue = digest.headline
         kickerLabel.stringValue = digest.kicker
         // X11: the sentence itself lives in `AITransparency` now, so this

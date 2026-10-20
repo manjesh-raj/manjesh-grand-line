@@ -47,6 +47,7 @@ enum NeedsAttentionViewSelfTest {
         checkTheRevampRecipe(&ok)
         checkTheSublineTicks(&ok)
         checkTheListScrollsInsideTheCard(&ok)
+        checkASamePaletteRePushKeepsTheRows(&ok)
 
         if ok {
             print("NeedsAttentionViewSelfTest: all checks passed")
@@ -604,6 +605,58 @@ enum NeedsAttentionViewSelfTest {
             window.contentView = NSView()
             check(!card.debugTickIsRunning, "the tick should stop once the card leaves its window (GL-13)", &ok)
         }
+    }
+
+    /// A palette other than the one showing, for the discriminating half.
+    private static func otherTheme() -> HelmTheme {
+        HelmTheme.allThemes.first { $0.id != ThemeManager.shared.theme.id } ?? ThemeManager.shared.theme
+    }
+
+    /// PERF-04, PF10's shape: the Home canvas pushes the theme from its
+    /// observer, its own `render()` and its resize paths, and re-renders this
+    /// card on every refresh. A push of the palette already showing, and a
+    /// render of the summary already drawn, must leave the rows themselves -
+    /// not equal copies - in place. A real palette change still rebuilds, and
+    /// so does a text-size change, which re-fires the same theme.
+    ///
+    /// Injection: drop the `appliedKey` guard from `applyTheme` and the rows
+    /// are replaced on the first re-push.
+    private static func checkASamePaletteRePushKeepsTheRows(_ ok: inout Bool) {
+        let window = OffScreenProbe.window(width: 700, height: 700, styleMask: [.titled, .resizable])
+        defer { window.orderOut(nil) }
+        let card = NeedsAttentionCard()
+        window.contentView = card
+        window.orderFront(nil)
+        let theme = ThemeManager.shared.theme
+        let summary = ReviewTourLab.demoAttentionSummary(count: 4)
+        card.render(summary, subline: "Fleet read just now.", theme: theme)
+        card.layoutSubtreeIfNeeded()
+        let rows = card.debugRows.map(ObjectIdentifier.init)
+        let rebuilds = card.debugRebuildCount
+        check(!rows.isEmpty, "PERF-04: the fixture should draw rows, or identity proves nothing", &ok)
+
+        for _ in 0..<3 { card.applyTheme(theme) }
+        card.render(summary, subline: "Fleet read just now.", theme: theme)
+        card.render(summary, subline: "Fleet read 1 min ago.", theme: theme)
+        check(card.debugRows.map(ObjectIdentifier.init) == rows,
+              "PERF-04: a same-palette re-push or an unchanged render replaced the rows", &ok)
+        check(card.debugRebuildCount == rebuilds,
+              "PERF-04: \(card.debugRebuildCount - rebuilds) rebuild(s) for nothing that changed", &ok)
+        check(card.debugSubline == "Fleet read 1 min ago.",
+              "PERF-04: an unchanged summary with a new subline must still show the new subline", &ok)
+
+        // The other direction: a real change still repaints.
+        card.applyTheme(otherTheme())
+        check(card.debugRebuildCount == rebuilds + 1,
+              "PERF-04: a palette change should rebuild the rows once", &ok)
+        card.applyTheme(theme)
+        let before = card.debugRebuildCount
+        let scale = ChromeTextScale.shared.scale
+        ChromeTextScale.shared.setScale(scale == ChromeTextScale.maxScale ? ChromeTextScale.minScale : ChromeTextScale.maxScale)
+        card.applyTheme(theme)
+        ChromeTextScale.shared.setScale(scale)
+        check(card.debugRebuildCount == before + 1,
+              "PERF-04: a text-size change re-fires the same theme and must still rebuild", &ok)
     }
 }
 

@@ -1109,3 +1109,21 @@ extension HelmTheme {
         return image
     }
 }
+
+// MARK: - The applied-theme key (PERF-04)
+
+extension HelmTheme {
+
+    /// What a view that rebuilds content on `applyTheme` compares, to tell a
+    /// real repaint from a re-push of the theme it already shows.
+    ///
+    /// **The 2026-10 end-to-end review's PERF-04**, and PF10's
+    /// `appliedThemeID` gate on the crew chat before it: `applyTheme` reaches
+    /// a card from its host's theme observer, from the host's own `render()`
+    /// and from resize paths, so most calls carry the palette the card is
+    /// already showing. The id alone is not enough, because a chrome text
+    /// scale change re-fires the *same* theme to re-derive every font
+    /// (`ThemeManager.reapplyCurrentTheme`, GL-32) - so the scale is part of
+    /// the key, and a text-size change still repaints.
+    var appliedKey: String { "\(id)@\(ChromeTextScale.shared.scale)" }
+}
