@@ -65,6 +65,11 @@ enum HomeDashboardViewSelfTest {
         checkTheCardShadowIsPainted(&ok)
         checkMergeQueueRowsAreClickable(&ok)
         checkUnknownStatesAreNeverZero(&ok)
+        checkALiveResizeRebuildsOnceAtTheEnd(&ok)
+        checkASettledRenderReusesItsProbes(&ok)
+        checkLiveResizeFramesShareProbes(&ok)
+        checkAShelfLiveResizeRebuildsOnlyForNewColumns(&ok)
+        checkAResizeRebuildDoesNotReapplyTheTheme(&ok)
 
         if ok {
             print("HomeDashboardViewSelfTest: all checks passed")
@@ -588,6 +593,191 @@ enum HomeDashboardViewSelfTest {
             let empty = HomeCanvasController.healthRingSummary([])
             check(empty.title == "Not read" && empty.total == 0,
                   "nothing reported is 'Not read', never 'Healthy', got \(empty.title)", &ok)
+        }
+    }
+
+    // MARK: PERF-03 - a live resize moves constants, and rebuilds once
+
+    /// What AppKit does around a drag, in the order it does it: the start
+    /// notification, a resize per frame, the end notification.
+    private static func liveResize(_ window: NSWindow, widths: [CGFloat], end: Bool = true,
+                                   perFrame: ((CGFloat) -> Void)? = nil) {
+        NotificationCenter.default.post(name: NSWindow.willStartLiveResizeNotification, object: window)
+        for width in widths {
+            var frame = window.frame
+            frame.size.width = width
+            window.setFrame(frame, display: false)
+            window.contentView?.layoutSubtreeIfNeeded()
+            perFrame?(width)
+        }
+        if end {
+            NotificationCenter.default.post(name: NSWindow.didEndLiveResizeNotification, object: window)
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+    }
+
+    /// The review's PERF-03: every frame of a drag used to tear the grid
+    /// down and rebuild it. Inside a live resize the cards must survive and
+    /// follow the width; the end of the drag rebuilds exactly once.
+    ///
+    /// Injection: make `containerWidthMayHaveChanged` skip the
+    /// `resizeGridInPlace` branch and this counts one rebuild per frame.
+    private static func checkALiveResizeRebuildsOnceAtTheEnd(_ ok: inout Bool) {
+        withScratchShift { store in
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            seedFleet(canvas)
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+            guard canvas.usesDashboardLayoutForTests else {
+                fail("PERF-03: the fixture needs the hub's dashboard at \(Int(wide.width))pt", &ok)
+                return
+            }
+            let cardsBefore = canvas.moduleCardsForTests.map(ObjectIdentifier.init)
+            let rebuildsBefore = canvas.debugGridRebuilds
+            let widths: [CGFloat] = (1...10).map { wide.width - CGFloat($0) * 12 }
+            var stale: [String] = []
+            liveResize(window, widths: widths, end: false) { width in
+                // The columns follow the window during the drag - the hub's
+                // first column is the attention card, the last is the briefing
+                // column, and together they reach the page's trailing edge.
+                let rows = canvas.gridRowsForTests
+                guard let row = rows.first, let last = row.arrangedSubviews.last else { return }
+                let trailing = last.convert(last.bounds, to: canvas.view).maxX
+                let page = row.convert(row.bounds, to: canvas.view).maxX
+                if abs(trailing - page) > 1.0 / window.backingScaleFactor + 0.01 {
+                    stale.append("at \(Int(width))pt the last column ends at \(trailing), the row at \(page)")
+                }
+            }
+            check(canvas.debugGridRebuilds == rebuildsBefore,
+                  "PERF-03: ten live-resize frames rebuilt the grid \(canvas.debugGridRebuilds - rebuildsBefore) time(s), "
+                      + "expected none until the drag ends", &ok)
+            check(canvas.moduleCardsForTests.map(ObjectIdentifier.init) == cardsBefore,
+                  "PERF-03: the cards were replaced during the drag", &ok)
+            check(stale.isEmpty, "PERF-03: the columns did not follow the drag: \(stale.prefix(3))", &ok)
+
+            NotificationCenter.default.post(name: NSWindow.didEndLiveResizeNotification, object: window)
+            window.contentView?.layoutSubtreeIfNeeded()
+            check(canvas.debugGridRebuilds == rebuildsBefore + 1,
+                  "PERF-03: the end of the drag should rebuild once, rebuilt "
+                      + "\(canvas.debugGridRebuilds - rebuildsBefore) time(s)", &ok)
+        }
+    }
+
+    /// A render whose content did not change re-reads every probe height
+    /// from the memo; a changed reading re-measures only what it changed.
+    ///
+    /// Injection: return the measured height without storing it and the
+    /// second render measures every probe again.
+    private static func checkASettledRenderReusesItsProbes(_ ok: inout Bool) {
+        withScratchShift { store in
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            seedFleet(canvas)
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+
+            let measuredBefore = canvas.debugProbeMeasurements
+            let hitsBefore = canvas.debugProbeMemoHits
+            canvas.debugRenderNow()
+            check(canvas.debugProbeMeasurements == measuredBefore,
+                  "PERF-03: an unchanged render measured \(canvas.debugProbeMeasurements - measuredBefore) "
+                      + "probe card(s), expected none", &ok)
+            check(canvas.debugProbeMemoHits > hitsBefore,
+                  "PERF-03: an unchanged render did not read the memo at all - the check would be vacuous", &ok)
+
+            // A different fleet reading changes the Fleet card and nothing
+            // in column 3, so some probes are re-measured and some are not.
+            let before = canvas.debugProbeMeasurements
+            let hitsBeforeChange = canvas.debugProbeMemoHits
+            canvas.applyFleet(snapshot: FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
+                                                      queuedCount: 3, doneCount: 41, projectsCount: 9,
+                                                      watcher: WatcherHealth(status: "healthy")),
+                              mergedPRs: [], prFetchFailure: nil)
+            canvas.debugRenderNow()
+            check(canvas.debugProbeMeasurements > before,
+                  "PERF-03: a changed fleet reading re-measured nothing - a stale height would be reused", &ok)
+            check(canvas.debugProbeMemoHits > hitsBeforeChange,
+                  "PERF-03: a changed fleet reading re-measured every probe, including unchanged cards", &ok)
+        }
+    }
+
+    /// Within one 8pt bucket, the frames of a drag share their measurements.
+    private static func checkLiveResizeFramesShareProbes(_ ok: inout Bool) {
+        withScratchShift { store in
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            seedFleet(canvas)
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+            // Two frames 2pt apart, inside one bucket (1440 and 1442 both
+            // floor to 1440 once the page's own insets are taken off, which
+            // keeps them together whichever side of the bucket they land).
+            let bucket = HomeCanvasController.liveResizeProbeBucket
+            let base = (wide.width / bucket).rounded(.down) * bucket - 40
+            var measuredPerFrame: [Int] = []
+            var last = canvas.debugProbeMeasurements
+            liveResize(window, widths: [base, base + 1, base + 2]) { _ in
+                measuredPerFrame.append(canvas.debugProbeMeasurements - last)
+                last = canvas.debugProbeMeasurements
+            }
+            check(measuredPerFrame.count == 3 && measuredPerFrame.dropFirst().contains(0),
+                  "PERF-03: frames 1pt apart inside a drag should share probe heights, measured \(measuredPerFrame)", &ok)
+        }
+    }
+
+    /// A shelf (any space but the hub) moves its card widths during a drag,
+    /// and rebuilds only when the column count changes - that is a different
+    /// grid, not a resized one.
+    private static func checkAShelfLiveResizeRebuildsOnlyForNewColumns(_ ok: inout Bool) {
+        withScratchShift { store in
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            canvas.select(space: .stores)
+            canvas.view.layoutSubtreeIfNeeded()
+            let columnsAt: (CGFloat) -> Int = { width in
+                (canvas.gridRowsForTests.first?.arrangedSubviews.count) ?? 0
+            }
+            let startColumns = columnsAt(wide.width)
+            let rebuildsBefore = canvas.debugGridRebuilds
+            // Small steps first: same column count, so no rebuild.
+            liveResize(window, widths: [wide.width - 4, wide.width - 8], end: false)
+            check(canvas.debugGridRebuilds == rebuildsBefore,
+                  "PERF-03: a shelf drag that kept its \(startColumns) columns rebuilt "
+                      + "\(canvas.debugGridRebuilds - rebuildsBefore) time(s)", &ok)
+            // Then far enough to lose a column, which must rebuild.
+            liveResize(window, widths: [1000], end: false)
+            check(canvas.debugGridRebuilds > rebuildsBefore,
+                  "PERF-03: a shelf drag that changed the column count did not rebuild", &ok)
+            NotificationCenter.default.post(name: NSWindow.didEndLiveResizeNotification, object: window)
+        }
+    }
+
+    /// The resize path used to follow its rebuild with a whole-page
+    /// `applyTheme`, which rebuilt the attention card a second time. Every
+    /// card a rebuild builds themes itself, so a resize applies no theme.
+    private static func checkAResizeRebuildDoesNotReapplyTheTheme(_ ok: inout Bool) {
+        withScratchShift { store in
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            seedFleet(canvas)
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+            let themesBefore = canvas.debugApplyThemeCount
+            let rebuildsBefore = canvas.debugGridRebuilds
+            var frame = window.frame
+            frame.size.width -= 60
+            window.setFrame(frame, display: false)
+            window.contentView?.layoutSubtreeIfNeeded()
+            check(canvas.debugGridRebuilds > rebuildsBefore,
+                  "PERF-03: the fixture's resize did not rebuild the grid - the check would be vacuous", &ok)
+            check(canvas.debugApplyThemeCount == themesBefore,
+                  "PERF-03: a resize applied the theme \(canvas.debugApplyThemeCount - themesBefore) time(s), expected none", &ok)
         }
     }
 }

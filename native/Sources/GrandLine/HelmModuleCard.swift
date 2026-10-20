@@ -1142,7 +1142,20 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
     // MARK: Configure
 
+    /// `configure(_:)`, skipped when `content` would lay the card out exactly
+    /// as it already is - for a caller that re-derives every card's content
+    /// many times a second (the Home canvas during a live resize, PERF-03)
+    /// and must not pay a full reconfigure for an unchanged one.
+    func configureIfChanged(_ content: Content) {
+        guard content.layoutSignature != configuredSignature else { return }
+        configure(content)
+    }
+
+    /// The `layoutSignature` of the content last configured.
+    private var configuredSignature: String?
+
     func configure(_ content: Content) {
+        configuredSignature = content.layoutSignature
         self.content = content
         if let artwork = content.artwork {
             tile.configure(artwork: artwork, symbol: content.symbol, hue: content.hue)
@@ -3067,4 +3080,43 @@ final class HelmProgressBar: NSView {
     var debugIsIndeterminate: Bool { indeterminate }
     var debugIsSliding: Bool { fill.animation(forKey: "indeterminate") != nil }
     #endif
+}
+
+// MARK: - The content's layout signature (PERF-03)
+
+extension HelmModuleCard.Content {
+
+    /// Everything in this content that can change how the card lays out,
+    /// as one string - so two contents with the same signature produce the
+    /// same card at the same width.
+    ///
+    /// **Why a string and not `Equatable`.** `Content` carries closures (a
+    /// header action's handler, a footer's), which have no equality, and an
+    /// `NSImage`. Neither moves the layout - a handler is behaviour, and the
+    /// artwork tile is a fixed size - so the signature records whether each
+    /// is present and leaves the rest out. The body is every payload it
+    /// carries, all value types, through `String(describing:)`.
+    ///
+    /// Two readers: the Home canvas's probe-height memo, and
+    /// `HelmModuleCard.configureIfChanged`. A field that changes a card's
+    /// height and is left out of this would make both of them wrong, so a new
+    /// `Content` field belongs here in the same change.
+    var layoutSignature: String {
+        var parts: [String] = [
+            title, subtitle, symbol, String(describing: hue),
+            String(describing: chip),
+            String(describing: body),
+            artwork == nil ? "-" : "artwork",
+            toolTip ?? "-",
+            headerCaption ?? "-",
+            peekRowLimit.map(String.init) ?? "-",
+        ]
+        if let headerAction {
+            parts.append("action:\(headerAction.symbol):\(headerAction.tooltip):\(headerAction.isBusy)")
+        }
+        if let footer {
+            parts.append("footer:\(footer.caption):\(footer.actionTitle ?? "-"):\(footer.handler == nil)")
+        }
+        return parts.joined(separator: "\u{1F}")
+    }
 }
