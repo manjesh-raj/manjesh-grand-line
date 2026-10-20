@@ -3419,6 +3419,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
     exit(DaylightModuleSelfTest.run() ? 0 : 1)
 }
 
+// UX-01: the Workspace shell's module table against the thirty routes it
+// consolidates - see `ModuleTableSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_MODULE_TABLE_TESTS"] == "1" {
+    exit(ModuleTableSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-engineering-cards-stale-counts`: a hub summary card must
 // reflect a change the captain made through its own detail page. Window-backed
 // (it mounts a real shell and drives the real pages), so it sits in
