@@ -169,6 +169,21 @@ enum TodayCalendarRemovalSelfTest {
 
     // MARK: 4. The launch cleanup
 
+    /// What the removed features wrote, restated here as literals rather than
+    /// read off `TodayCalendarRetirement`. Seeding from the production list
+    /// would let a key dropped from it go unseeded and unnoticed.
+    static let leftDefaultsKeys = [
+        "fm.dailyReviewEnabled", "fm.dailyReviewDismissedDay",
+        "fm.dailyReviewCalendarEnabled", "fm.googleCalendarEnabled",
+    ]
+    static let leftKeychainItems: [(service: String, account: String)] = [
+        (KeychainService.resolve("com.manjesh.grandline.native.google-oauth"), "google.work"),
+        (KeychainService.resolve("com.manjesh.grandline.native.google-oauth"), "google.personal"),
+        (KeychainService.resolve("com.manjesh.grandline.native.google-oauth-client"), "client"),
+        (KeychainService.resolve("com.firstmate.cockpit.native.google-oauth"), "google.work"),
+        (KeychainService.resolve("com.firstmate.cockpit.native.google-oauth-client"), "client"),
+    ]
+
     private static func checkTheCleanupRemovesWhatTheyLeft(_ ok: inout Bool) {
         print("\n-- the launch cleanup removes what the removed features left --")
         guard let (defaults, domain) = scratchDefaults() else {
@@ -179,24 +194,22 @@ enum TodayCalendarRemovalSelfTest {
         let root = scratchDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        // Every service name this process resolves must be this process's
-        // own, or the pass below would delete the captain's real items.
+        // Every service name the pass touches must be this process's own, or
+        // it would delete the captain's real items.
         let services = TodayCalendarRetirement.retiredKeychainServices
-        guard services.count == 4, services.allSatisfy({ $0 != KeychainService.bare($0) }) else {
+        guard !KeychainService.testPrefix.isEmpty,
+              services.allSatisfy({ $0 != KeychainService.bare($0) }) else {
             fail("the retired Keychain services are not this process's prefixed names, so the "
                  + "cleanup cannot be exercised safely: \(services)", &ok)
             return
         }
 
         // What the features left: their four keys, both Google slots and the
-        // OAuth client under the current names, one slot under the pre-rename
-        // name, and the capture log.
-        for key in TodayCalendarRetirement.retiredDefaultsKeys { defaults.set(true, forKey: key) }
+        // OAuth client under the current names and the pre-rename ones, and
+        // the capture log.
+        for key in leftDefaultsKeys { defaults.set(true, forKey: key) }
         defaults.set("kept", forKey: "fm.unrelatedSetting")
-        let seeded: [(String, String)] = [
-            (services[0], "google.work"), (services[0], "google.personal"),
-            (services[1], "client"), (services[2], "google.work"),
-        ]
+        let seeded = leftKeychainItems
         for (service, account) in seeded {
             do {
                 try seed(service: service, account: account)
@@ -221,9 +234,9 @@ enum TodayCalendarRemovalSelfTest {
         let outcome = TodayCalendarRetirement.run(defaults: defaults, dataRoot: root)
 
         check(outcome.failures.isEmpty, "the pass reported failures: \(outcome.failures)", &ok)
-        check(Set(outcome.removedDefaultsKeys) == Set(TodayCalendarRetirement.retiredDefaultsKeys),
+        check(Set(outcome.removedDefaultsKeys) == Set(leftDefaultsKeys),
               "every retired key should be removed, got \(outcome.removedDefaultsKeys)", &ok)
-        for key in TodayCalendarRetirement.retiredDefaultsKeys {
+        for key in leftDefaultsKeys {
             check(defaults.object(forKey: key) == nil, "\(key) is still set", &ok)
         }
         check(defaults.string(forKey: "fm.unrelatedSetting") == "kept",
