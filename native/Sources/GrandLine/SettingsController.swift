@@ -421,6 +421,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// UI-57: whether every family is showing, or only the current one.
     private var showsAllThemes = false
     private var themeFilterTabs: HelmSegmentedTabs!
+    /// Stage 3 of the modular-shell migration: which shell the window opens
+    /// with (`AppSettings.workspaceLayout`).
+    private var windowLayoutTabs: HelmSegmentedTabs!
     /// Which half of the catalogue the grid shows - the reference's
     /// All / Dark / Light segmented control.
     private var themeFilter: ThemeFilter = .all
@@ -1314,8 +1317,26 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         scaleRow.orientation = .horizontal
         scaleRow.spacing = HelmMetrics.s1 + 2
 
+        // Stage 3 of the modular-shell migration: the sidebar shell, behind a
+        // setting while the floating bar stays the default. Read once at
+        // launch (`AppSettings.workspaceLayout`), so the row says when it
+        // takes effect rather than appearing to do nothing.
+        windowLayoutTabs = HelmSegmentedTabs(
+            items: WorkspaceLayout.allCases.map { .init(id: $0.rawValue, title: $0.title) },
+            selected: AppSettings.shared.workspaceLayout.rawValue, size: .compact)
+        windowLayoutTabs.setAccessibilityLabel("Window layout")
+        windowLayoutTabs.onSelect = { id in
+            guard let layout = WorkspaceLayout(rawValue: id) else { return }
+            AppSettings.shared.workspaceLayout = layout
+        }
+        let layoutRow = SettingsRow(
+            title: "Window layout",
+            description: "The floating bar, or a sidebar with a window toolbar and an inspector - the new workspace, in preview. Takes effect the next time Grand Line opens.",
+            control: windowLayoutTabs)
+
         return [
             SettingsSection(group: SettingsGroup(rows: [followRow, pairRow])),
+            SettingsSection(heading: "Window", group: SettingsGroup(rows: [layoutRow])),
             SettingsSection(heading: "Theme", aside: themeFilterTabs,
                             group: SettingsGroup(custom: appearanceContainer)),
             SettingsSection(heading: "Text", group: SettingsGroup(rows: [
@@ -2441,6 +2462,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             toggle.applyTheme(theme)
         }
         themeFilterTabs?.applyTheme(theme)
+        windowLayoutTabs?.applyTheme(theme)
         // The two popups are not in that loop: `HelmPopUpButton` observes the
         // theme itself, so a second push from here would be a duplicate.
 
@@ -2552,6 +2574,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// UI-57's disclosure, so a suite clicks the real button.
     var debugThemeDisclosure: HelmButton { themeDisclosure }
     var debugThemeFilterTabs: HelmSegmentedTabs { themeFilterTabs }
+    var debugWindowLayoutTabs: HelmSegmentedTabs { windowLayoutTabs }
     func debugSetThemeFilter(_ id: String) {
         guard let filter = ThemeFilter(rawValue: id) else { return }
         themeFilter = filter

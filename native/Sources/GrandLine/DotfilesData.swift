@@ -89,6 +89,12 @@ enum DotfilesSource {
     static let cloneURL = "https://github.com/manjesh-raj/manjesh-config"
     static let dotfilesMarker = "~/.dotfiles"
 
+    /// The narrow override for where every dotfiles *read* looks - the
+    /// sibling of `DotfilesAutoSync`'s `FM_DOTFILES_AUTOSYNC_PATH`, which
+    /// covers the watcher that writes. `main.swift`'s self-test redirect block
+    /// points it at a scratch path that does not exist.
+    static let locationOverrideVariable = "FM_DOTFILES_PATH"
+
     /// The paths `home.nix` declares as a plain `home.file` -> repo symlink
     /// (Part A's managed-items table). `.zshrc` is intentionally included even
     /// though it is expected to report "not linked" - see file header.
@@ -108,12 +114,36 @@ enum DotfilesSource {
         ("opencode", "~/.config/opencode/AGENTS.md"),
     ]
 
-    /// `~/.dotfiles`'s resolved target, or `nil` if it doesn't exist (a
-    /// genuinely blank machine, per the task brief's Part A.2).
+    /// Where the dotfiles checkout is looked for: `~/.dotfiles` in the
+    /// captain's own instance, and a path of this process's own in a suite, a
+    /// tour or the probe. The same order `DotfilesAutoSync` resolves its
+    /// working tree in: the narrow override, then `FM_SCRATCH_ROOT`, then the
+    /// real path.
+    ///
+    /// `~/.dotfiles` is nowhere near Application Support, so it cannot pick up
+    /// `FM_SCRATCH_ROOT` by nesting under `AppPaths.dataRoot()`. It has to
+    /// ask. Getting this wrong is not a stale read, because `repoState` runs a
+    /// real `git fetch origin` against whatever this resolves. Measured
+    /// (modular-shell stage 3): a review tour that walked Bootstrap and
+    /// Automation fetched the captain's real `manjesh-config` clone over the
+    /// network and wrote its `FETCH_HEAD`.
+    static func dotfilesLocation(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        if let override = environment[locationOverrideVariable], !override.isEmpty {
+            return (override as NSString).expandingTildeInPath
+        }
+        if AppPaths.isScratchRedirected(environment) {
+            return AppPaths.dataRoot(environment: environment)
+                .appendingPathComponent("dotfiles", isDirectory: true).path
+        }
+        return (dotfilesMarker as NSString).expandingTildeInPath
+    }
+
+    /// The dotfiles checkout's resolved target, or `nil` if it doesn't exist
+    /// (a genuinely blank machine, per the task brief's Part A.2).
     static func resolvedDotfilesPath() -> String? {
-        let expanded = (dotfilesMarker as NSString).expandingTildeInPath
-        guard FileManager.default.fileExists(atPath: expanded) else { return nil }
-        return (expanded as NSString).resolvingSymlinksInPath
+        let location = dotfilesLocation()
+        guard FileManager.default.fileExists(atPath: location) else { return nil }
+        return (location as NSString).resolvingSymlinksInPath
     }
 
     static func repoState(at repoPath: String) -> DotfilesRepoState {
@@ -254,7 +284,7 @@ enum DotfilesSource {
         // canned `git` output without needing a real repository, and without
         // the network round trip `git fetch` performs.
         #if FM_SELFTESTS
-        DotfilesDataTestSeam.invocations.append((executable, args))
+        DotfilesDataTestSeam.record(executable, args)
         if let override = DotfilesDataTestSeam.run { return override(executable, args, cwd) }
         #endif
         return Subprocess.run(executable: executable, arguments: args, cwd: cwd,
@@ -265,14 +295,50 @@ enum DotfilesSource {
 #if FM_SELFTESTS
 /// `DotfilesData`'s half of the §7 test seam - see `UpdatesDataTestSeam` for
 /// the full reasoning. Compiled out of release entirely (GL-27).
+///
+/// **Every field is behind one lock**, for the reason `UpdatesDataTestSeam`
+/// gives. Bootstrap, Automation, the schedule runner and the signals poller
+/// each read the dotfiles repository on a queue of their own, and every read
+/// reaches `run(_:_:cwd:)` - which records itself here - in any process that
+/// mounts them. Unsynchronised, that append corrupted the heap. Measured
+/// (modular-shell stage 3): a review tour walking Bootstrap, Automation and
+/// GitHub Sync died with SIGSEGV inside `Array.append`, under
+/// `AutomationController.refreshDotfiles`.
 enum DotfilesDataTestSeam {
+    private static let lock = NSLock()
+
+    private static func locked<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+
+    private static var _run: ((String, [String], URL?) -> SubprocessResult)?
+    private static var _invocations: [(executable: String, args: [String])] = []
+
     /// `(executable, args, cwd) -> result`. `nil` means "really run it".
-    static var run: ((String, [String], URL?) -> SubprocessResult)?
-    static var invocations: [(executable: String, args: [String])] = []
+    static var run: ((String, [String], URL?) -> SubprocessResult)? {
+        get { locked { _run } }
+        set { locked { _run = newValue } }
+    }
+
+    /// Every `(executable, args)` pair the seam saw, in order.
+    static var invocations: [(executable: String, args: [String])] {
+        locked { _invocations }
+    }
+
+    /// The one write `run(_:_:cwd:)` makes, atomic as a whole - a
+    /// read-modify-write through an accessor would still lose appends between
+    /// two threads.
+    static func record(_ executable: String, _ args: [String]) {
+        locked { _invocations.append((executable, args)) }
+    }
 
     static func reset() {
-        run = nil
-        invocations = []
+        locked {
+            _run = nil
+            _invocations = []
+        }
     }
 }
 #endif

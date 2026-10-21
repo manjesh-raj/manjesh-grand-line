@@ -68,6 +68,12 @@ enum ReviewTourLab {
     /// run as a suite and fail with `=1` for a filename.
     static let variable = "FM_REVIEW_TOUR"
 
+    /// `sidebar` tours the sidebar shell (`MainSplitShellController`) instead
+    /// of the floating bar - stage 3 of the modular-shell migration. Any other
+    /// value, or none, is the floating bar. Not `FM_RUN_*`, for the reason
+    /// `variable` gives.
+    static let layoutVariable = "FM_REVIEW_TOUR_LAYOUT"
+
     /// One line of a tour. Parsing is separated from running so the grammar
     /// can be asserted without a window - which is the whole difference
     /// between this and a probe somebody wrote once.
@@ -143,6 +149,10 @@ enum ReviewTourLab {
         /// on the window list, so this is what lets a tour see a window
         /// *grow* - which is what the captain's own visible window does.
         case orderFront
+        /// The sidebar shell's two collapsible panes: `inspector show|hide`
+        /// and `sidebar show|hide`, through the shell's own toggles.
+        case inspector(Bool)
+        case sidebar(Bool)
         case comment
     }
 
@@ -162,7 +172,7 @@ enum ReviewTourLab {
             switch self {
             case .unknownVerb(let v):
                 return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, renderbar, menu, wait, "
-                    + "demo, measure, measurewindow, orderfront, probe, tasks, bar, fleet)"
+                    + "demo, measure, measurewindow, orderfront, probe, tasks, bar, fleet, inspector, sidebar)"
             case .badArgument(let a): return "bad argument \"\(a)\""
             case .unknownDestination(let d): return "unknown destination \"\(d)\""
             case .unknownTheme(let t): return "unknown theme \"\(t)\""
@@ -266,6 +276,11 @@ enum ReviewTourLab {
             return .success(.fleetReply)
         case "orderfront":
             return .success(.orderFront)
+        case "inspector", "sidebar":
+            guard argument == "show" || argument == "hide" else {
+                return .failure(argument.isEmpty ? .missingArgument(verb) : .badArgument(argument))
+            }
+            return .success(verb == "inspector" ? .inspector(argument == "show") : .sidebar(argument == "show"))
         case "measurewindow":
             guard !argument.isEmpty else { return .failure(.missingArgument("measurewindow")) }
             return .success(.measureWindow(argument))
@@ -301,7 +316,7 @@ enum ReviewTourLab {
     /// armed-in-the-probe-app path can hand it the real one.
     @discardableResult
     static func run(steps: [Step],
-                    shell: AppShellController,
+                    shell: WorkspaceShellController,
                     window: NSWindow,
                     outputDirectory: URL) -> [String] {
         var log: [String] = []
@@ -372,11 +387,19 @@ enum ReviewTourLab {
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("tasks \(id)")
             case .barState(let state, let target):
-                log.append(applyBarState(state, target: target, bar: shell.bar))
+                guard let classic = shell as? AppShellController else {
+                    log.append("bar \(state.rawValue) FAILED - there is no floating bar in the sidebar layout")
+                    continue
+                }
+                log.append(applyBarState(state, target: target, bar: classic.bar))
                 shell.view.layoutSubtreeIfNeeded()
             case .renderBar(let name):
                 let url = outputDirectory.appendingPathComponent("\(name).png")
-                if writePNG(of: shell.bar.view, to: url) {
+                guard let classic = shell as? AppShellController else {
+                    log.append("renderbar FAILED \(name) - there is no floating bar in the sidebar layout")
+                    continue
+                }
+                if writePNG(of: classic.bar.view, to: url) {
                     log.append("renderbar \(url.path)")
                 } else {
                     log.append("renderbar FAILED \(name) - the bar has no bitmap to cache")
@@ -408,6 +431,18 @@ enum ReviewTourLab {
                 shell.debugHomeCanvas.debugForgetReading(card)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo loading \(card)")
+            case .inspector(let show), .sidebar(let show):
+                guard let split = shell as? MainSplitShellController else {
+                    log.append("\(step) FAILED - the floating bar has no inspector or sidebar to toggle")
+                    continue
+                }
+                if case .inspector = step {
+                    split.setInspectorShown(show)
+                } else if split.debugSidebarIsCollapsed == show {
+                    split.toggleWorkspaceSidebar()
+                }
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("\(step)")
             case .orderFront:
                 window.orderFront(nil)
                 shell.view.layoutSubtreeIfNeeded()
@@ -417,7 +452,9 @@ enum ReviewTourLab {
                 log.append(contentsOf: windowMeasureLines(shell: shell, window: window).map { "  " + $0 })
             case .render(let name):
                 let url = outputDirectory.appendingPathComponent("\(name).png")
-                if writePNG(of: shell.view, to: url) {
+                let written = (shell as? MainSplitShellController).map { writeSplitShellPNG($0, window: window, to: url) }
+                    ?? writePNG(of: shell.view, to: url)
+                if written {
                     log.append("render \(url.path)")
                 } else {
                     log.append("render FAILED \(name) - the view has no bitmap to cache")
@@ -542,7 +579,7 @@ enum ReviewTourLab {
     /// `fm/grandline-layout-breaks-refresh-reply` is about: how wide the
     /// window is against what its content asks for, and which views reach
     /// past it.
-    static func windowMeasureLines(shell: AppShellController, window: NSWindow) -> [String] {
+    static func windowMeasureLines(shell: WorkspaceShellController, window: NSWindow) -> [String] {
         shell.view.layoutSubtreeIfNeeded()
         func f(_ value: CGFloat) -> String { String(format: "%.1f", value) }
         var out: [String] = []
@@ -553,7 +590,15 @@ enum ReviewTourLab {
                    + " contentMinSize \(f(window.contentMinSize.width))x\(f(window.contentMinSize.height))")
         let fitting = shell.view.fittingSize
         out.append("shell \(f(shell.view.frame.width)) fitting \(f(fitting.width))x\(f(fitting.height))")
-        out.append("showing destination width \(shell.showingDestinationWidthForTests.map(f) ?? "-")")
+        if let split = shell as? MainSplitShellController {
+            out.append("sidebar " + (split.debugSidebarIsCollapsed ? "collapsed" : f(split.debugSidebarWidth))
+                       + " inspector " + (split.debugInspectorIsCollapsed ? "collapsed" : "shown"))
+        }
+        let showing = shell.workspace.content.visibleDestinationView()
+        // The page's own minimum width - what it would push the window to if
+        // its column were narrower than this (AGENTS.md gotcha (13)).
+        out.append("showing destination width \(showing.map { f($0.frame.width) } ?? "-")"
+                   + " fitting \(showing.map { f($0.fittingSize.width) } ?? "-")")
         // The showing page's scroll view: the visible one with the largest area.
         func visible(_ view: NSView) -> Bool {
             var v: NSView? = view
@@ -584,11 +629,15 @@ enum ReviewTourLab {
     /// Every visible view whose right edge passes the window's content width,
     /// outermost first, as one line each - the thing pushing the page wider.
     /// Empty when everything is inside the window.
-    static func viewsPastTheWindow(shell: AppShellController, window: NSWindow, limit: Int = 8) -> [String] {
+    static func viewsPastTheWindow(shell: WorkspaceShellController, window: NSWindow, limit: Int = 8) -> [String] {
         let contentWidth = window.contentView?.frame.width ?? window.frame.width
         var past: [String] = []
         func walk(_ view: NSView) {
             guard !view.isHidden, past.count < limit else { return }
+            // AppKit's own title-bar backdrop, which a split view item lays
+            // out wider than the window under a toolbar - system chrome, not
+            // a page reaching past its column.
+            if String(describing: type(of: view)).hasPrefix("NSTitlebar") { return }
             let rect = view.convert(view.bounds, to: nil)
             if rect.maxX > contentWidth + 0.5 {
                 var name = String(describing: type(of: view))
@@ -770,8 +819,10 @@ enum ReviewTourLab {
         }
 
         let outputDirectory = tourURL.deletingLastPathComponent()
-        let (window, shell) = makeOffScreenShell()
-        let log = run(steps: steps, shell: shell, window: window, outputDirectory: outputDirectory)
+        let layout = WorkspaceLayout(rawValue: ProcessInfo.processInfo.environment[layoutVariable] ?? "") ?? .floatingBar
+        let (window, shell) = makeOffScreenShell(layout: layout)
+        var log = ["layout \(layout.rawValue)"]
+        log += run(steps: steps, shell: shell, window: window, outputDirectory: outputDirectory)
         for line in log { print(line) }
         try? log.joined(separator: "\n").write(to: outputDirectory.appendingPathComponent("tour.log"),
                                                 atomically: true, encoding: .utf8)
@@ -832,17 +883,40 @@ enum ReviewTourLab {
     }
 
     static func makeOffScreenShell() -> (window: NSWindow, shell: AppShellController) {
-        let window = OffScreenProbe.window(width: 1512, height: 950, styleMask: [.titled, .resizable])
-        // The real window's chrome fusion (`main.swift`), so the shell's view
-        // is the whole frame and the bar reserves its height inside it -
-        // without it every page measured here is a title bar shorter than the
-        // captain's.
-        WindowChromeFusion.apply(to: window)
+        let (window, shell) = makeOffScreenShell(layout: .floatingBar)
+        // `.floatingBar` always builds an `AppShellController`.
+        return (window, shell as! AppShellController)
+    }
+
+    /// The sidebar shell, in the same kind of window `main.swift` gives it: a
+    /// standard titled window with a full-size content view and no chrome
+    /// fusion.
+    static func makeOffScreenSplitShell() -> (window: NSWindow, shell: MainSplitShellController) {
+        let (window, shell) = makeOffScreenShell(layout: .sidebar)
+        return (window, shell as! MainSplitShellController)
+    }
+
+    static func makeOffScreenShell(layout: WorkspaceLayout) -> (window: NSWindow, shell: WorkspaceShellController) {
+        let window = OffScreenProbe.window(width: 1512, height: 950,
+                                           styleMask: [.titled, .resizable, .fullSizeContentView])
+        // The real window's chrome fusion (`main.swift`), so the floating
+        // bar's view is the whole frame and the bar reserves its height
+        // inside it - without it every page measured here is a title bar
+        // shorter than the captain's. The sidebar shell keeps the system
+        // title bar, as `main.swift` does for it.
+        if layout == .floatingBar { WindowChromeFusion.apply(to: window) }
+        // The sidebar shell's chrome is the system's - the sidebar material,
+        // the toolbar, the system label colours - so its window has to follow
+        // the theme's light/dark mode the way `main.swift`'s does, or a
+        // Daylight render comes out in the Mac's own appearance. (The floating
+        // bar paints every pixel from the theme itself, and its renders are
+        // kept exactly as they were.)
+        if layout == .sidebar { window.followHelmTheme() }
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
         let dictationStore = DictationStore()
-        let shell = AppShellController(
+        let shell = layout.shellType.init(
             hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
             console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
             settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
@@ -878,6 +952,140 @@ enum ReviewTourLab {
                                                  withIntermediateDirectories: true)
         return (try? data.write(to: url)) != nil
     }
+
+    /// The sidebar shell, rendered whole: the window's frame view (so the
+    /// toolbar, the title and the traffic lights are in it), with the
+    /// sidebar's own content drawn over its pane.
+    ///
+    /// Several renders because of one limit: macOS 26 draws the sidebar and
+    /// the toolbar's capsules as Liquid Glass, which the window server
+    /// composites, so `cacheDisplay` of the frame captures a placeholder
+    /// there - an empty white panel where the sidebar's rows should be, and
+    /// opaque white capsules over the toolbar's buttons (measured; it is what
+    /// a Dusk render showed). So the sidebar's own view, which renders
+    /// correctly on its own, is drawn over its panel on
+    /// `HelmTheme.sidePanelFill`, and each toolbar capsule is repainted as a
+    /// translucent tint of the window's ground with its items redrawn on top
+    /// (in a dark render; a light one's capsules already read as glass).
+    /// Both stand-ins are approximations of glass no off-screen render can
+    /// show; everything else in the image is the frame's real render.
+    @discardableResult
+    static func writeSplitShellPNG(_ shell: MainSplitShellController, window: NSWindow, to url: URL) -> Bool {
+        guard let frameView = window.contentView?.superview else { return false }
+        frameView.layoutSubtreeIfNeeded()
+        guard frameView.bounds.width > 0, frameView.bounds.height > 0,
+              let frameRep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else { return false }
+        frameView.cacheDisplay(in: frameView.bounds, to: frameRep)
+
+        let sidebarView = shell.sidebar.view
+        let sidebarRep: NSBitmapImageRep?
+        if !shell.debugSidebarIsCollapsed, sidebarView.bounds.width > 0,
+           let rep = sidebarView.bitmapImageRepForCachingDisplay(in: sidebarView.bounds) {
+            sidebarView.cacheDisplay(in: sidebarView.bounds, to: rep)
+            sidebarRep = rep
+        } else {
+            sidebarRep = nil
+        }
+
+        let scale = CGFloat(frameRep.pixelsWide) / frameView.bounds.width
+        guard let composite = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: frameRep.pixelsWide,
+                                               pixelsHigh: frameRep.pixelsHigh, bitsPerSample: 8,
+                                               samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                               colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: composite) else { return false }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        let full = NSRect(x: 0, y: 0, width: frameRep.pixelsWide, height: frameRep.pixelsHigh)
+        frameRep.draw(in: full)
+        if let sidebarRep {
+            func pixels(_ view: NSView) -> NSRect {
+                let r = view.convert(view.bounds, to: nil)
+                return NSRect(x: r.minX * scale, y: r.minY * scale, width: r.width * scale, height: r.height * scale)
+            }
+            let rect = pixels(sidebarView)
+            let theme = ThemeManager.shared.theme
+            // The sidebar's pane, under the floating panel: the window's
+            // ground, as on screen around a macOS 26 sidebar.
+            if let pane = shell.debugSidebarPane {
+                HelmTheme.nsColor(theme.backgroundHex).setFill()
+                pixels(pane).fill()
+            }
+            HelmTheme.sidePanelFill(theme).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: HelmMetrics.rCard * scale, yRadius: HelmMetrics.rCard * scale).fill()
+            // `.sourceOver`, explicitly: a bitmap rep's plain `draw(in:)`
+            // copies, so the sidebar's transparent background would replace
+            // the fill under it rather than show it.
+            sidebarRep.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1,
+                            respectFlipped: false, hints: nil)
+            // What the title bar draws over the sidebar - the traffic lights
+            // and the sidebar button - rendered one by one and put back on
+            // top, since the panel just painted over them. (Their glass
+            // capsule is the window server's too, so the button comes back
+            // without it.)
+            let overlays = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
+                .compactMap { window.standardWindowButton($0) } + [shell.toolbar.debugSidebarButton]
+            for view in overlays where view.window != nil && !view.isHiddenOrHasHiddenAncestor && view.bounds.width > 0 {
+                guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+                view.cacheDisplay(in: view.bounds, to: rep)
+                rep.draw(in: pixels(view), from: .zero, operation: .sourceOver, fraction: 1,
+                         respectFlipped: false, hints: nil)
+            }
+        }
+        // Light capsules render as near-white, which reads correctly; only a
+        // dark render needs them repainted (and a light one cannot be: a
+        // toolbar button's vibrant template image does not survive being
+        // rendered on its own).
+        if window.effectiveAppearance.isDarkForTour { repaintToolbarGlass(in: frameView, scale: scale) }
+        NSGraphicsContext.restoreGraphicsState()
+        guard let data = composite.representation(using: .png, properties: [:]) else { return false }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                 withIntermediateDirectories: true)
+        return (try? data.write(to: url)) != nil
+    }
+
+    /// The toolbar half of `writeSplitShellPNG`, drawing into the current
+    /// context. Finds AppKit's capsule and item views by class name, which is
+    /// acceptable only because this is a review tool compiled into debug
+    /// builds: a renamed class leaves the white placeholder in place, and
+    /// the render says nothing false about the app.
+    private static func repaintToolbarGlass(in frameView: NSView, scale: CGFloat) {
+        func descendants(_ view: NSView, named name: String) -> [NSView] {
+            view.subviews.flatMap { sub -> [NSView] in
+                (String(describing: type(of: sub)) == name ? [sub] : []) + descendants(sub, named: name)
+            }
+        }
+        func pixels(_ view: NSView) -> NSRect {
+            let r = view.convert(view.bounds, to: nil)
+            return NSRect(x: r.minX * scale, y: r.minY * scale, width: r.width * scale, height: r.height * scale)
+        }
+        let platters = descendants(frameView, named: "NSToolbarPlatterView")
+        guard !platters.isEmpty else { return }
+        let ground = HelmTheme.nsColor(ThemeManager.shared.theme.backgroundHex)
+        for platter in platters where !platter.isHiddenOrHasHiddenAncestor {
+            let rect = pixels(platter)
+            let radius = rect.height / 2
+            ground.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            NSColor(white: 1, alpha: 0.10).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            NSColor(white: 1, alpha: 0.14).setStroke()
+            let edge = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5 * scale, dy: 0.5 * scale),
+                                    xRadius: radius, yRadius: radius)
+            edge.lineWidth = scale
+            edge.stroke()
+        }
+        for item in descendants(frameView, named: "NSToolbarItemViewer")
+        where !item.isHiddenOrHasHiddenAncestor && item.bounds.width > 0 {
+            guard let rep = item.bitmapImageRepForCachingDisplay(in: item.bounds) else { continue }
+            item.cacheDisplay(in: item.bounds, to: rep)
+            rep.draw(in: pixels(item), from: .zero, operation: .sourceOver, fraction: 1,
+                     respectFlipped: false, hints: nil)
+        }
+    }
+}
+
+private extension NSAppearance {
+    var isDarkForTour: Bool { bestMatch(from: [.aqua, .darkAqua]) == .darkAqua }
 }
 
 #endif

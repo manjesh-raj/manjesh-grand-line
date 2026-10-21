@@ -1231,7 +1231,12 @@ noted.
   a store no probe and no suite can move; `FM_RUN_PROBE_SCRATCH_ROOT_TESTS`
   fails the run on one. A default that is **not** under Application Support
   (`~/.dotfiles`, a shared App Group container) cannot nest under the root and
-  must ask `AppPaths.isScratchRedirected()` instead.
+  must ask `AppPaths.isScratchRedirected()` instead. **That alone covers the
+  probe and nothing else**, because a suite or a tour does not set
+  `FM_SCRATCH_ROOT`: such a store also needs its own narrow override, set in
+  `main.swift`'s redirect block. `DotfilesSource.dotfilesLocation` is the
+  worked example, and missing it ran a real `git fetch` of the captain's
+  dotfiles clone from every tour.
 - **Every store also honours its own narrow `FM_*` override**, which wins over
   the root; the repo-root README has the complete index. A store nested under
   Shift's data root must honour `FM_SHIFT_DIR` as a fallback, not only its own
@@ -1427,7 +1432,7 @@ can correct an earlier one - and several do.
 |---|---|
 | [`01-foundations.md`](docs/history/01-foundations.md) | The runtime, `swift build`, the vendored SwiftTerm and its six local patches |
 | [`02-console-and-terminal.md`](docs/history/02-console-and-terminal.md) | Console tabs, `CockpitTerminalView`, scrollback, text selection and drag routing, split panes, configurable shortcuts, the Claude-usage popover |
-| [`03-navigation-and-chrome.md`](docs/history/03-navigation-and-chrome.md) | The icon rail (removed), the Daylight bar, the menu bar, window chrome fusion, the session switcher, Recents, the canvas |
+| [`03-navigation-and-chrome.md`](docs/history/03-navigation-and-chrome.md) | The icon rail (removed), the Daylight bar, the menu bar, window chrome fusion, the session switcher, Recents, the canvas, the sidebar layout and its toolbar (modular shell) |
 | [`04-design-system.md`](docs/history/04-design-system.md) | `Helm*` components, the seven-phase UI audit rollout, contrast enforcement, themes, toasts, the later UI-modernization slices |
 | [`05-daylight-migration.md`](docs/history/05-daylight-migration.md) | The Daylight/Dusk token layer and its six migration phases |
 | [`06-hosts-and-ssh.md`](docs/history/06-hosts-and-ssh.md) | Saved hosts, the SSH keychain, jump hosts and port forwarding, the Hosts page |

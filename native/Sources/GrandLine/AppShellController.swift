@@ -79,17 +79,21 @@
 // the suites call on this controller still exists, and forwards to the part
 // that now does the work (see "The workspace's API, forwarded"), so nothing
 // that called the shell had to change.
+//
+// **Stage 3 made this the floating-bar layout, one of two.** The API that
+// forwards to the workspace, the window's ground and the chrome text scale
+// moved up into `WorkspaceShellController`, which this class and the
+// split-view `MainSplitShellController` both extend. This file keeps only
+// what draws the floating bar: the bar, the session strip, the drill header,
+// the space pills, the quick-access row, the scroll edge, the width-tie
+// repair and the keyboard loop. It is still the default layout, and nothing
+// it draws changed.
 
 
 import AppKit
 import LocalAuthentication
 
-final class AppShellController: NSViewController, WorkspaceChrome {
-
-    /// Everything this shell hosts - see this file's header.
-    let workspace: Workspace
-
-    private var chromeTextScaleObservation: ChromeTextScaleObservation?
+final class AppShellController: WorkspaceShellController {
 
     /// Daylight Phase 2: the floating bar that replaced the rail and the old
     /// top bar. Internal (like `rail` was) so the app delegate can reach its
@@ -129,43 +133,6 @@ final class AppShellController: NSViewController, WorkspaceChrome {
     private let sessionStrip = SessionStripView()
     private var sessionStripHeightConstraint: NSLayoutConstraint!
     private var bodyTopConstraint: NSLayoutConstraint!
-
-    /// The avatar's Logout action (confirmed inside `DaylightBarController`
-    /// itself) - forwarded to the app delegate's `AppLockController`, which
-    /// is what actually flips the lock state, matching how host-editor
-    /// presentation is forwarded rather than owned here.
-    var onLogoutRequested: (() -> Void)?
-
-    /// `hostsPanel` and `settings` are autoclosures since PERF-01: the app
-    /// delegate (and every suite) still writes the page's construction at the
-    /// call site, but it runs on the page's first use rather than here.
-    init(
-        hostsPanel: @autoclosure @escaping () -> HostsController, console: ConsoleController,
-        settings: @autoclosure @escaping () -> SettingsController,
-        hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, shiftStore: ShiftStore,
-        dictationStore: DictationStore, commandLibraryStore: CommandLibraryStore,
-        scheduleStore: ScheduleStore,
-        docsRunbookStore: DocsRunbookStore = DocsRunbookStore(),
-        makeHostConsole: @escaping () -> ConsoleController
-    ) {
-        // T-14d: the launch interval Instruments reads, ended as the last
-        // line of this initialiser - see `LaunchSignposts.swift`. The stores
-        // and the eager pages it measures are built by `Workspace` now, inside
-        // the same interval.
-        let initInterval = LaunchSignposts.begin("AppShellController.init")
-        self.workspace = Workspace(
-            hostsPanel: hostsPanel, console: console, settings: settings,
-            hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: shiftStore,
-            dictationStore: dictationStore, commandLibraryStore: commandLibraryStore,
-            scheduleStore: scheduleStore, docsRunbookStore: docsRunbookStore,
-            makeHostConsole: makeHostConsole)
-        super.init(nibName: nil, bundle: nil)
-        workspace.chrome = self
-        workspace.content.parentController = self
-        LaunchSignposts.end("AppShellController.init", initInterval)
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     /// The body area the workspace's pages are mounted into, pinned under
     /// this shell's floating bar.
@@ -218,41 +185,11 @@ final class AppShellController: NSViewController, WorkspaceChrome {
         view = root
 
         // Daylight Phase 2: this view is the window's *ground* now, and it has
-        // to paint. Before, the rail and the top bar between them covered
-        // every pixel of it; the floating bar deliberately does not - there is
-        // a real 20pt band of ground between the bar's bottom edge and the
-        // body container, which is what makes the bar read as floating rather
-        // than as a header strip. A layer-backed view with no explicit
-        // background paints nothing at all (AGENTS.md gotcha (8)), so that
-        // band would show the window's own backing through it.
-        //
-        // This controller had no `ThemeManager` observation before, for the
-        // same reason: it painted nothing. It is an app-lifetime singleton, so
-        // the token is discarded like every other such observer here.
-        _ = ThemeManager.shared.observe { [weak self] theme in
-            self?.view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
-        }
-
-        // GL-32: one place turns a chrome-text-scale change into the app-wide
-        // repaint every page already knows how to do. See
-        // `ThemeManager.reapplyCurrentTheme`'s own note on why this rides the
-        // theme observer rather than adding a second fan-out of its own. The
-        // token is discarded deliberately - this controller is the window's
-        // root and lives for the process.
-        chromeTextScaleObservation = ChromeTextScale.shared.observe { [weak self] _ in
-            guard let self, self.isViewLoaded else { return }
-            ThemeManager.shared.reapplyCurrentTheme()
-            // B33: the theme re-fire above reaches every font a page derives
-            // inside its own `applyTheme`. This second pass reaches the ones
-            // it cannot - a label built once in `loadView` and only ever
-            // re-coloured afterwards - by re-deriving from the recipe the
-            // label itself carries. It runs *after* the re-fire so a page
-            // that rebuilt its rows is not walked twice over stale views.
-            // See `HelmTextScale.swift` for why the recipe travels with the
-            // label rather than being re-written at 150 call sites.
-            HelmTextScale.reapply(in: self.view)
-            self.view.layoutSubtreeIfNeeded()
-        }
+        // to paint - and a chrome-text-scale change repaints the whole app.
+        // Both moved to `WorkspaceShellController` in stage 3, because the
+        // sidebar shell needs exactly the same two; see that method for the
+        // reasoning, which is unchanged.
+        paintGroundAndFollowTextScale()
 
         addChild(bar)
         root.addSubview(bar.view)
@@ -696,33 +633,11 @@ final class AppShellController: NSViewController, WorkspaceChrome {
         }
     }
 
-    // MARK: Test hooks (`fm/grandline-live-gap-rootcause-scout`)
-
-    /// `AppShellBodyWidthSelfTest` reads this rather than `bodyContainer`
-    /// directly, since that property stays `private` - everything else in
-    /// this controller only ever needs to add/remove/toggle a destination
-    /// view, never measure the container itself.
-    var bodyContainerFrameForTests: NSRect { bodyContainer.frame }
-    var bodyContainerForTests: NSView { bodyContainer }
-
-    /// Full review #3's PF1. How many of `bodyContainer`'s embedded
-    /// destination views are currently attached to it by active constraints,
-    /// and how many of those are actually showing.
-    ///
-    /// Exposed as counts rather than the constraints themselves so the suite
-    /// asserts the *property* - "a hidden page is out of the window's
-    /// constraint graph, a showing one is in it" - rather than this
-    /// controller's private storage shape.
-    var destinationLayoutAttachmentForTests: (attached: Int, showing: Int, embedded: Int) {
-        var attached = 0
-        var showing = 0
-        for (key, pins) in workspace.content.destinationPins {
-            guard let view = bodyContainer.subviews.first(where: { ObjectIdentifier($0) == key }) else { continue }
-            if pins.contains(where: { $0.isActive }) { attached += 1 }
-            if !view.isHidden { showing += 1 }
-        }
-        return (attached, showing, workspace.content.destinationPins.count)
-    }
+    // MARK: Test hooks
+    //
+    // The hooks every shell answers - the body container, the mounted
+    // slots, the pages - moved to `WorkspaceShellController` in stage 3.
+    // What is left here reads the floating bar's own chrome.
 
     // MARK: Session-switcher probe surface (`fm/grandline-session-switcher`)
 
@@ -735,85 +650,6 @@ final class AppShellController: NSViewController, WorkspaceChrome {
     /// height plus its gap when the strip is showing, which is the half of
     /// this that a plain `isHidden` check cannot see (AGENTS.md gotcha (11)).
     var bodyTopInsetForTests: CGFloat { bodyTopConstraint.constant }
-    var activeHostIDForTests: UUID? { workspace.navigator.activeHostID }
-
-    // MARK: Recents probe surface (`fm/grandline-recents-navigation`)
-
-    /// Seeds `hostConsoles` directly with an already-built controller,
-    /// bypassing `connectHost`'s real `ssh` fork - the host-page half of
-    /// `SessionSwitcherSelfTest`'s own `sessions.register(...)` trick, which
-    /// only covers the registry; a Recents test additionally needs
-    /// `switchToSession`/`revealHostConsole` to actually run, and both require
-    /// a real entry in `hostConsoles`.
-    /// F2: the restored page for a host, so a self-test can assert it exists
-    /// and - the property that matters - has not started its `ssh`.
-    func debugHostConsole(id: UUID) -> ConsoleController? { workspace.hosts.hostConsoles[id] }
-
-    /// The shared Firstmate console, so audit 2 §4.1's own case can drive the
-    /// real `restoreTabs(from:)` launch path and then read the tabs that
-    /// actually landed. `console` stays `private` - nothing in production
-    /// reaches it from outside this controller.
-    ///
-    /// Guarded, unlike some of its older neighbours here: GL-27's lesson is
-    /// that a `debug*` hook living in a production file keeps shipping unless
-    /// it says otherwise, so a *new* one is compiled into debug builds only.
-    #if FM_SELFTESTS
-    var debugConsole: ConsoleController { workspace.console }
-
-    /// Which destination is showing, in the same terms `show(_:)` takes.
-    ///
-    /// Read off `currentDestinationKind`, the one piece of state the Recents
-    /// dropdown, the tab shortcuts and F2's own capture already share - never
-    /// a second notion of "what is on screen", which is how those three would
-    /// start disagreeing.
-    var debugCurrentDestination: RailDestination? {
-        guard case .rail(let dest)? = workspace.navigator.currentDestinationKind else { return nil }
-        return dest
-    }
-
-    /// Which host page is showing, or nil. Straw Hat phase 3's handoff suite
-    /// asserts a refusal *did not* switch, which needs the nil case.
-    var debugActiveHostID: UUID? { workspace.navigator.activeHostID }
-
-    /// The Whiteboard destination, so the crew's "draw it out" handoff can be
-    /// asserted against that page's own composer rather than against a copy
-    /// of the prefill this suite passed in.
-    var debugWhiteboard: WhiteboardController { workspace.whiteboard }
-
-    var debugBootstrap: BootstrapController { workspace.bootstrap }
-
-    /// The Home page and the Tasks page, for `ReviewTourLab`'s `demo home`
-    /// and `tasks <view>` verbs - so a tour can render both pages in the
-    /// state the captain sees rather than in their first paint.
-    var debugHomeCanvas: HomeCanvasController { workspace.homeCanvas }
-    var debugSchedules: SchedulesController { workspace.schedules }
-    /// P9: a destination's mounted controller, for `SplitSidebarSelfTest`.
-    func debugSlotController(_ dest: RailDestination) -> NSViewController? { workspace.content.mounter.slot(for: dest.slot)?.controller }
-    var debugShift: ShiftController { workspace.shift }
-    /// The Fleet page, for the tour lab's `demo decision` and `fleet reply`.
-    var debugOverview: FleetController { workspace.overview }
-    #endif
-
-    #if FM_SELFTESTS
-    /// Compiled into debug builds only since stage 2 moved the seeding into
-    /// `HostSessionCoordinator`, where it is guarded (GL-27).
-    func debugSeedHostConsole(_ controller: ConsoleController, hostID: UUID) {
-        workspace.hosts.debugSeedHostConsole(controller, hostID: hostID)
-    }
-    #endif
-
-    /// The set the Home canvas's own "N live sessions" reads, resolved through
-    /// the real closure (audit 2 §4.6). A test that rebuilt the predicate
-    /// would be asserting its own copy rather than the shipped one.
-    func debugConnectedHostIDs() -> Set<UUID> { workspace.homeCanvas.connectedHostIDs?() ?? [] }
-
-    /// Drives the real Recents click handler (finding 4.3), which is
-    /// `private` because the bar's own popover is its only production caller.
-    /// A test that reimplemented its switch-vs-reconnect decision would be
-    /// asserting its own copy of the logic rather than the shipped one.
-    func debugNavigateToRecent(_ kind: RecentDestinationKind) {
-        workspace.navigator.navigateToRecentDestination(kind)
-    }
 
     /// Simulates the exact failure this task's scout report captured live:
     /// AppKit (for whatever internal reason - a transient required-
@@ -879,29 +715,7 @@ final class AppShellController: NSViewController, WorkspaceChrome {
         destination.frame = frame
     }
 
-    /// GL-37: which destination slots have actually been built.
-    /// `DestinationMountingSelfTest` asserts this is exactly the eager set
-    /// at launch, grows by one on a first visit, and does not grow again on
-    /// a revisit.
-    var mountedDestinationSlotsForTests: [DestinationSlotID] {
-        workspace.content.mounter.mountedSlots.map(\.id)
-    }
-
-    /// Daylight Phase 2: the hub and the drill header, so
-    /// `DaylightModuleSelfTest` can drive the real space filter, the real
-    /// module cards and the real back button rather than stand-ins.
     #if FM_SELFTESTS
-    /// PERF-01: which lazy destinations have been *constructed* - a wider
-    /// question than `mountedDestinationSlotsForTests`, because a page can be
-    /// built without being mounted (a reach-in that forgot `isBuilt`).
-    var builtLazyDestinationsForTests: Set<DestinationSlotID> { workspace.builtDestinations }
-    var homeCanvasForTests: HomeCanvasController { workspace.homeCanvas }
-    /// `fm/grandline-engineering-cards-stale-counts`: the two detail pages
-    /// whose own state the Engineering hub's cards summarise, so
-    /// `SummaryFreshnessSelfTest` can drive the real page and read the real
-    /// card rather than standing either of them in.
-    var updatesForTests: UpdatesController { workspace.updates }
-    var githubSyncForTests: GitHubSyncController { workspace.githubSync }
     /// A2: the drill cluster lives in the bar now. These keep their names so
     /// the suites that already read them still read the same *fact* - which
     /// destination the chrome is naming, and whether it is showing at all -
@@ -917,24 +731,10 @@ final class AppShellController: NSViewController, WorkspaceChrome {
     /// A3's state, as the bar currently has it.
     var scrollEdgeActiveForTests: Bool { bar.scrollEdgeActiveForTests }
     var scrollEdgeWatchedForTests: [NSScrollView] { scrollEdge.watchedForTests }
-    /// The Settings page itself, so a suite can drive its own category
-    /// sidebar - `fm/grandline-settings-page-sidebar-redesign` made the page
-    /// master/detail, and which pane is showing decides how tall its
-    /// document is.
-    var settingsForTests: SettingsController { workspace.settings }
     /// The bar itself, for a check on its own controls (UXP-01's search
     /// pill floor) under a drill context the suite chooses.
     var barForTests: DaylightBarController { bar }
     #endif
-
-    /// The view a mounted slot owns, for identity comparison across a
-    /// navigate-away-and-back cycle - `nil` while the slot is unmounted,
-    /// deliberately, so a test cannot accidentally build the thing it is
-    /// asserting stays unbuilt.
-    func destinationViewIfMountedForTests(_ id: DestinationSlotID) -> NSView? {
-        guard let slot = workspace.content.mounter.slot(for: id), slot.isMounted else { return nil }
-        return slot.controller.view
-    }
 
     // MARK: Key view loop (Daylight section 8, Phase 6)
 
@@ -1113,110 +913,30 @@ final class AppShellController: NSViewController, WorkspaceChrome {
 
     // MARK: Spaces (Daylight §5.3)
 
-    /// A space pill was picked: land on the canvas if we are not already
-    /// there, then filter it.
-    ///
-    /// Both halves live here rather than in either component, which is what
-    /// keeps §5.3's rule true from both directions - the bar does not know
-    /// what a canvas is, and the canvas does not know how to navigate.
-    func selectSpace(_ space: DaylightSpace) {
+    /// A space pill was picked (or ⌘1-⌘5): light the pill, then let the base
+    /// class land on the canvas and filter it - the same order this ran in
+    /// before stage 3 moved the canvas half up.
+    override func selectSpace(_ space: DaylightSpace) {
         bar.setSelectedSpace(space)
-        workspace.homeCanvas.select(space: space)
-        workspace.navigator.show(.homeCanvas)
+        super.selectSpace(space)
     }
 
-    /// The canvas itself, for a caller that wants the hub without changing
-    /// the space (the app delegate's launch landing).
-    @objc func showHomeCanvas() { workspace.navigator.show(.homeCanvas) }
+    // MARK: The configurable quick-access row (UX1/UX2)
 
-    /// The Go menu's five space items (⌘1-⌘5) - UX4's "give ⌘1-⌘5 to the
-    /// spaces (the original Daylight spec)".
-    ///
-    /// This wrapper existed once and was deleted with the View menu
-    /// (`fm/grandline-console-tabs-restore-tabmenu-fix` - see `buildMenu`'s
-    /// own note). It comes back in the same shape it had: the menu carries the
-    /// 1-based `shortcutIndex` in its tag, and `selectSpace(_:)` - which the
-    /// bar's own pills call - does the work, so a menu item and a pill click
-    /// cannot diverge.
-    @objc func selectSpaceByShortcut(_ sender: NSMenuItem) {
-        guard let space = DaylightSpace.allCases.first(where: { $0.shortcutIndex == sender.tag }) else { return }
-        selectSpace(space)
-    }
-
-    /// The Go menu's per-destination rows - UX3's "a 'Go' menu listing every
-    /// destination".
-    ///
-    /// Keyed off the destination's own raw value in `representedObject`, the
-    /// same shape the bar's quick-access overflow menu uses, so neither has to
-    /// hold a parallel array of tags.
-    @objc func selectDestinationFromMenu(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let destination = RailDestination(rawValue: raw) else { return }
-        workspace.navigator.show(destination)
-    }
-
-    // MARK: The configurable quick-access row and the all-destinations map (UX1/UX2)
-
-    /// Raised when something asks for the all-destinations overlay. Owned by
-    /// the app delegate, which owns the overlay itself - the same shape as
-    /// `onSearchTapped`.
-    ///
-    /// **Assigned in `main.swift`, beside `onSearchTapped`, and it must stay
-    /// assigned**: its one caller is ⌘K's "All Destinations…" verb, and an
-    /// unassigned optional closure here is a palette row that silently does
-    /// nothing. That is exactly what shipped - the assignment was missing
-    /// from the first, and the bar's overflow menu carried a second row with
-    /// the same defect until
-    /// `fm/grandline-remove-dead-all-destinations-overflow` removed it.
-    /// `NavigationCoherenceSelfTest.checkTheMapIsActuallyReachable` guards the
-    /// assignment itself (a source guard - the behaviour needs a real
-    /// `AppDelegate`, and `NSApp` is nil in a headless suite), because nothing
-    /// about a dead closure is visible in a diff or on screen.
-    var onShowAllDestinations: (() -> Void)?
-
-    /// Pin or unpin `destination` on the floating bar's shortcut row, persist
-    /// the result, and redraw the row.
-    ///
-    /// The one write path. `AppSettings.quickAccess` is the store of record and
-    /// the bar holds only a cache of what it drew, so a caller that wrote the
-    /// setting directly would leave the bar stale until the next launch.
-    func toggleQuickAccessPin(_ destination: RailDestination) {
-        let next = AppSettings.shared.quickAccess.toggling(destination)
-        AppSettings.shared.quickAccess = next
-        bar.setQuickAccess(next)
-    }
-
-    /// Whether `destination` is currently pinned - what the overlay's context
-    /// menu reads to decide between "Pin to bar" and "Unpin from bar".
-    func isQuickAccessPinned(_ destination: RailDestination) -> Bool {
-        AppSettings.shared.quickAccess.contains(destination)
+    /// The floating bar's shortcut row is this shell's drawing of the pins.
+    /// `WorkspaceShellController.toggleQuickAccessPin` is still the one write
+    /// path; this is what it calls once the setting is written.
+    override func quickAccessDidChange(_ configuration: QuickAccessConfiguration) {
+        bar.setQuickAccess(configuration)
     }
 
     // MARK: Clipboard history (F3)
 
-    /// ⌘⇧V. The panel and its store live on the bar (see
-    /// `DaylightBarController.clipboardHistory`); this is the menu's way in,
-    /// and the one place the "paste it back" toast is worded.
-    @objc func toggleClipboardHistory() {
-        bar.clipboardHistory.toggle()
-    }
-
-    /// PF2: drain the clipboard history's off-main write before the process
-    /// goes away. `AppShellController` owns the bar and the bar owns the
-    /// controller, and the app delegate is where `applicationWillTerminate`
-    /// lives.
-    func shutdownClipboardHistory() {
-        bar.clipboardHistory.shutdown()
-    }
-
-    /// Arm the capture loop. Called once, from `main.swift` - never at init;
-    /// see `ClipboardHistoryController.startCapturing()` for why.
-    func startClipboardHistoryCapture() {
-        bar.clipboardHistory.startCapturing()
-        bar.clipboardHistory.onPasted = { [weak self] _ in
-            self?.showToast("Copied - \u{2318}V to paste it")
-        }
-    }
+    /// The panel and its store live on the bar (see
+    /// `DaylightBarController.clipboardHistory`), which decides where it
+    /// drops down from. ⌘⇧V, the quit-time drain and the capture loop are the
+    /// base class's.
+    override var clipboardHistoryController: ClipboardHistoryController? { bar.clipboardHistory }
 
     /// Every registry change lands here: the strip re-renders and shows or
     /// collapses, and the Hosts list's rows are rebuilt so a row that just
@@ -1225,11 +945,7 @@ final class AppShellController: NSViewController, WorkspaceChrome {
         guard isViewLoaded, sessionStripHeightConstraint != nil else { return }
         sessionStrip.render(registry)
         applySessionStripVisibility()
-        // Rebuilding a hidden page's rows would be work nobody can see; it
-        // gets them on its next `viewWillAppear` instead.
-        if workspace.isBuilt(.hosts), workspace.hostsPanel.isViewLoaded, !workspace.hostsPanel.view.isHidden {
-            workspace.hostsPanel.refreshLiveSessionState()
-        }
+        workspace.refreshShowingHostsLiveSessionState()
         updateKeyViewLoop()
     }
 
@@ -1248,20 +964,13 @@ final class AppShellController: NSViewController, WorkspaceChrome {
 
     /// The Hosts sidebar's user row, routed into the bar's own single logout
     /// confirmation rather than a second copy of it.
-    func requestLogout() { bar.requestLogout() }
+    override func requestLogout() { bar.requestLogout() }
 
-    /// Fix 5: a host save closes its own (separate) editor window
-    /// immediately, so the confirmation has to live somewhere that's still
-    /// around afterward - the main window, regardless of which destination
-    /// happens to be showing.
-    func showToast(_ message: String) {
-        Toast.show(in: view, message: message)
-    }
     // MARK: WorkspaceChrome - what this shell draws when the workspace navigates
 
     /// `show(_:)`'s chrome half, in the order it has always run: the drill
     /// header, the scroll edge, then the space pill.
-    func workspaceDidShow(_ dest: RailDestination, slot: DestinationSlot) {
+    override func workspaceDidShow(_ dest: RailDestination, slot: DestinationSlot) {
         applyDrillHeader(title: slot.title,
                          subtitle: dest.drillSubtitle,
                          symbol: dest.symbol,
@@ -1317,7 +1026,7 @@ final class AppShellController: NSViewController, WorkspaceChrome {
     /// edge is re-pointed (a host console has no page scroll view, so this
     /// correctly clears the edge rather than leaving the previous page's
     /// state).
-    func workspaceDidRevealHostPage(_ controller: ConsoleController, label: String) {
+    override func workspaceDidRevealHostPage(_ controller: ConsoleController, label: String) {
         applyDrillHeader(title: label, subtitle: "Dedicated host page",
                          symbol: RailDestination.hosts.symbol,
                          hue: RailDestination.hosts.domainHue, isTopLevel: false,
@@ -1328,7 +1037,7 @@ final class AppShellController: NSViewController, WorkspaceChrome {
     /// B2: light the bar square for this page, and darken whichever was lit
     /// before. A host page is not a `RailDestination`, so no square stands for
     /// it and it clears the bar.
-    func workspaceCurrentDestinationDidChange(_ kind: RecentDestinationKind) {
+    override func workspaceCurrentDestinationDidChange(_ kind: RecentDestinationKind) {
         if case .rail(let dest) = kind {
             bar.setActiveDestination(dest)
         } else {
@@ -1336,227 +1045,11 @@ final class AppShellController: NSViewController, WorkspaceChrome {
         }
     }
 
-    func workspaceSubtitleMayHaveChanged() { refreshDrillHeaderSubtitle() }
+    override func workspaceSubtitleMayHaveChanged() { refreshDrillHeaderSubtitle() }
 
-    func workspaceActionsMayHaveChanged() { refreshDrillHeaderActions() }
+    override func workspaceActionsMayHaveChanged() { refreshDrillHeaderActions() }
 
-    func workspaceSessionsDidChange(_ registry: HostSessionRegistry) { applySessionRegistry(registry) }
+    override func workspaceSessionsDidChange(_ registry: HostSessionRegistry) { applySessionRegistry(registry) }
 
-    func workspaceKeyViewLoopMayHaveChanged() { updateKeyViewLoop() }
-
-    var workspaceWindow: NSWindow? { view.window }
-
-    // MARK: The workspace's API, forwarded
-    //
-    // Everything below is a one-line forward to the part that does the work
-    // since stage 2 (see this file's header). The app delegate, the menu and
-    // the suites still call these on the shell; step 3 points the ones that
-    // must work in either shell at the workspace itself.
-
-    // The stores other surfaces read.
-    var codePreviewStore: CodePreviewStore { workspace.codePreviewStore }
-    var readingListStore: ReadingListStore { workspace.readingListStore }
-    var notebookStore: NotebookStore { workspace.notebookStore }
-    var stickyBoardStore: StickyBoardStore { workspace.stickyBoardStore }
-    var shiftStore: ShiftStore { workspace.shiftStore }
-    var focusTimer: FocusTimerController { workspace.focusTimer }
-    var windowOverflowGuard: WindowOverflowGuard { workspace.windowOverflowGuard }
-
-    static func consolePeekRow(name: String,
-                               running: Bool,
-                               lastExit: TabModel.ExitOutcome) -> HelmModulePeekRow {
-        Workspace.consolePeekRow(name: name, running: running, lastExit: lastExit)
-    }
-
-    // The callbacks the app delegate wires.
-    var onPresentHostEditor: ((Host?) -> Void)? {
-        get { workspace.onPresentHostEditor } set { workspace.onPresentHostEditor = newValue }
-    }
-    var onSendCommandToHosts: ((DevOpsCommand, [String: String], String) -> Void)? {
-        get { workspace.onSendCommandToHosts } set { workspace.onSendCommandToHosts = newValue }
-    }
-    var onKeyChordChanged: ((KeyChord) -> Void)? {
-        get { workspace.onKeyChordChanged } set { workspace.onKeyChordChanged = newValue }
-    }
-    var onTerminalShortcutsChanged: ((TerminalShortcutSet) -> Void)? {
-        get { workspace.onTerminalShortcutsChanged } set { workspace.onTerminalShortcutsChanged = newValue }
-    }
-    var onQuickCaptureShortcutChanged: ((KeyChord) -> Void)? {
-        get { workspace.onQuickCaptureShortcutChanged } set { workspace.onQuickCaptureShortcutChanged = newValue }
-    }
-    var onDictationLocalWhisperChanged: ((Bool) -> Void)? {
-        get { workspace.onDictationLocalWhisperChanged } set { workspace.onDictationLocalWhisperChanged = newValue }
-    }
-    var onSearchTapped: (() -> Void)? {
-        get { workspace.onSearchTapped } set { workspace.onSearchTapped = newValue }
-    }
-    var onRunSnippet: ((Snippet) -> Void)? {
-        get { workspace.onRunSnippet } set { workspace.onRunSnippet = newValue }
-    }
-    var onSessionStateChanged: (() -> Void)? {
-        get { workspace.navigator.onSessionStateChanged } set { workspace.navigator.onSessionStateChanged = newValue }
-    }
-    var onCurrentDestinationChanged: ((String?) -> Void)? {
-        get { workspace.navigator.onCurrentDestinationChanged }
-        set { workspace.navigator.onCurrentDestinationChanged = newValue }
-    }
-    var onReconnectHost: ((UUID) -> Bool)? {
-        get { workspace.navigator.onReconnectHost } set { workspace.navigator.onReconnectHost = newValue }
-    }
-    var onUnlocked: (() -> Void)? {
-        get { workspace.lock.onUnlocked } set { workspace.lock.onUnlocked = newValue }
-    }
-    var onLockStateChanged: ((Bool) -> Void)? {
-        get { workspace.lock.onLockStateChanged } set { workspace.lock.onLockStateChanged = newValue }
-    }
-
-    // The lock.
-    func showLock(reason: AppLockReason) { workspace.lock.showLock(reason: reason) }
-    func attemptUnlockFromCompactMode(password: String, completion: @escaping (Bool) -> Void) {
-        workspace.lock.attemptUnlockFromCompactMode(password: password, completion: completion)
-    }
-    static var appPasswordRetryBaseDelay: TimeInterval { LockPresenter.appPasswordRetryBaseDelay }
-    static var appPasswordRetryCeiling: TimeInterval { LockPresenter.appPasswordRetryCeiling }
-    static func appPasswordRetryDelay(attempt: Int) -> TimeInterval { LockPresenter.appPasswordRetryDelay(attempt: attempt) }
-
-    // The body area's transition.
-    typealias TransitionDirection = WorkspaceContent.TransitionDirection
-    static var destinationTransitionDuration: TimeInterval { WorkspaceContent.destinationTransitionDuration }
-    static var destinationTransitionOffset: CGFloat { WorkspaceContent.destinationTransitionOffset }
-    var pageCrossfade: PageCrossfade? {
-        get { workspace.content.pageCrossfade } set { workspace.content.pageCrossfade = newValue }
-    }
-    #if FM_SELFTESTS
-    var lastTransitionForTests: (direction: TransitionDirection, skipped: Bool,
-                                 reducedMotion: Bool, entryOffset: CGFloat)? {
-        workspace.content.lastTransitionForTests
-    }
-    #endif
-
-    // Navigation.
-    func show(_ dest: RailDestination) { workspace.navigator.show(dest) }
-    var recentDestinations: RecentDestinations { workspace.navigator.recentDestinations }
-    var currentContextTitle: String? { workspace.navigator.currentContextTitle }
-    var isTerminalDestinationShowing: Bool { workspace.navigator.isTerminalDestinationShowing }
-    var contextualNewAction: ContextualNewAction { workspace.navigator.contextualNewAction }
-    func runInConsole(label: String, command: String, completion: ((Bool) -> Void)? = nil) {
-        workspace.navigator.runInConsole(label: label, command: command, completion: completion)
-    }
-    func captureSessionState() -> SessionRestoreState { workspace.navigator.captureSessionState() }
-    func restoreTabs(from state: SessionRestoreState) { workspace.navigator.restoreTabs(from: state) }
-    @discardableResult
-    func restoreDestination(from state: SessionRestoreState) -> Bool {
-        workspace.navigator.restoreDestination(from: state)
-    }
-    func activeTabShortcutTarget() -> TabShortcutHandling? { workspace.navigator.activeTabShortcutTarget() }
-    func forgetRecentHost(id: UUID) { workspace.navigator.forgetRecentHost(id: id) }
-    func showShiftDestination() { workspace.navigator.showShiftDestination() }
-    func openFleetLog() { workspace.navigator.openFleetLog() }
-    func openShiftTask(id: String) { workspace.navigator.openShiftTask(id: id) }
-    func openShiftFollowUp(id: String) { workspace.navigator.openShiftFollowUp(id: id) }
-    func openShiftProject(id: String) { workspace.navigator.openShiftProject(id: id) }
-    func openKubernetes(hostID: UUID, showTail: Bool) { workspace.navigator.openKubernetes(hostID: hostID, showTail: showTail) }
-    func openRunbook(id: String) { workspace.navigator.openRunbook(id: id) }
-    func openReadingListLink(id: String) { workspace.navigator.openReadingListLink(id: id) }
-    func openNotebookPage(id: String) { workspace.navigator.openNotebookPage(id: id) }
-    func openPostmortem(id: String) { workspace.navigator.openPostmortem(id: id) }
-    func openDestinationForCrew(_ dest: RailDestination, hint: String?) {
-        workspace.navigator.openDestinationForCrew(dest, hint: hint)
-    }
-    func openStickyNote(id: String) { workspace.navigator.openStickyNote(id: id) }
-    func openCodeSnippet(named name: String) { workspace.navigator.openCodeSnippet(named: name) }
-    func openCommandLibraryCommand(id: String) { workspace.navigator.openCommandLibraryCommand(id: id) }
-    func sendCommandToConsole(_ text: String) { workspace.navigator.sendCommandToConsole(text) }
-    func openLogAnalyzer(with capture: LogTerminalCapture, hostLabel: String) {
-        workspace.navigator.openLogAnalyzer(with: capture, hostLabel: hostLabel)
-    }
-    func updateToolFromNotification(_ toolID: String) { workspace.navigator.updateToolFromNotification(toolID) }
-    func syncForkFromNotification(_ repoFullName: String) { workspace.navigator.syncForkFromNotification(repoFullName) }
-
-    // The menu's verbs. Their selectors are what `buildMenu` names, so they
-    // stay on this controller and forward.
-    @objc func newContextualItem() { workspace.navigator.newContextualItem() }
-    @objc func newSavedLinkFromMenu() { workspace.navigator.newSavedLinkFromMenu() }
-    @objc func newNotebookPageFromMenu() { workspace.navigator.newNotebookPageFromMenu() }
-    @objc func newStickyNoteFromMenu() { workspace.navigator.newStickyNoteFromMenu() }
-    @objc func newCodeSnippetFromMenu() { workspace.navigator.newCodeSnippetFromMenu() }
-    @objc func runCodeSnippetFromMenu() { workspace.navigator.runCodeSnippetFromMenu() }
-    @objc func toggleSidebarFromMenu() { workspace.navigator.toggleSidebarFromMenu() }
-    @objc func toggleCodePreviewSidebarFromMenu() { workspace.navigator.toggleCodePreviewSidebarFromMenu() }
-    @objc func captureScreenRegionFromMenu() { workspace.navigator.captureScreenRegionFromMenu() }
-    @objc func copyWhiteboardImageFromMenu() { workspace.navigator.copyWhiteboardImageFromMenu() }
-    @objc func newCredentialFromMenu() { workspace.navigator.newCredentialFromMenu() }
-    @objc func newScheduleFromMenu() { workspace.navigator.newScheduleFromMenu() }
-    @objc func newCommandFromMenu() { workspace.navigator.newCommandFromMenu() }
-    @objc func newRunbookFromMenu() { workspace.navigator.newRunbookFromMenu() }
-    @objc func lockPoneglyph() { workspace.navigator.lockPoneglyph() }
-    @objc func revealHostsQuickConnect() { workspace.navigator.revealHostsQuickConnect() }
-    @objc func activateConsoleFind() { workspace.navigator.activateConsoleFind() }
-    @objc func selectSettings() { workspace.navigator.selectSettings() }
-    @objc func selectHosts() { workspace.navigator.selectHosts() }
-    @objc func newHostFromMenu() { workspace.navigator.newHostFromMenu() }
-    @objc func selectKeys() { workspace.navigator.selectKeys() }
-    @objc func selectSnippets() { workspace.navigator.selectSnippets() }
-    @objc func newKeyFromMenu() { workspace.navigator.newKeyFromMenu() }
-    @objc func newSnippetFromMenu() { workspace.navigator.newSnippetFromMenu() }
-    @objc func newShiftTaskFromMenu() { workspace.navigator.newShiftTaskFromMenu() }
-    @objc func newShiftFollowUpFromMenu() { workspace.navigator.newShiftFollowUpFromMenu() }
-    @objc func newShiftProjectFromMenu() { workspace.navigator.newShiftProjectFromMenu() }
-    @objc func showShiftWeeklyReview() { workspace.navigator.showShiftWeeklyReview() }
-    @objc func showLogAnalyzer() { workspace.navigator.showLogAnalyzer() }
-    @objc func analyzeClipboardInLogAnalyzer() { workspace.navigator.analyzeClipboardInLogAnalyzer() }
-    @objc func logAnalyzerCopyAnalysis() { workspace.navigator.logAnalyzerCopyAnalysis() }
-    @objc func logAnalyzerSendToTerminal() { workspace.navigator.logAnalyzerSendToTerminal() }
-    @objc func logAnalyzerInvestigateFurther() { workspace.navigator.logAnalyzerInvestigateFurther() }
-    @objc func logAnalyzerCreateRCA() { workspace.navigator.logAnalyzerCreateRCA() }
-    @objc func selectSessionByShortcut(_ sender: NSMenuItem) { workspace.hosts.selectSession(atShortcutIndex: sender.tag) }
-    @objc func nextSession() { workspace.hosts.nextSession() }
-    @objc func previousSession() { workspace.hosts.previousSession() }
-
-    // Host pages and live sessions.
-    var sessions: HostSessionRegistry { workspace.hosts.sessions }
-    var restoreTurnScheduler: (@escaping () -> Void) -> Void {
-        get { workspace.hosts.restoreTurnScheduler } set { workspace.hosts.restoreTurnScheduler = newValue }
-    }
-    func queueRestoredHostConsoles(_ hosts: [(host: Host, args: [String])]) {
-        workspace.hosts.queueRestoredHostConsoles(hosts)
-    }
-    func connectHost(_ host: Host, args: [String], navigate: Bool = true) {
-        workspace.hosts.connectHost(host, args: args, navigate: navigate)
-    }
-    func isHostConnected(_ host: Host) -> Bool { workspace.hosts.isHostConnected(host) }
-    func sendCommandToHost(_ host: Host, args: [String], text: String) {
-        workspace.hosts.sendCommandToHost(host, args: args, text: text)
-    }
-    func revealHost(_ host: Host, args: [String]) { workspace.hosts.revealHost(host, args: args) }
-    func removeHostConsole(id: UUID) { workspace.hosts.removeHostConsole(id: id) }
-    func switchToSession(hostID: UUID) { workspace.hosts.switchToSession(hostID: hostID) }
-    func confirmEndSession(hostID: UUID) { workspace.hosts.confirmEndSession(hostID: hostID) }
-    func openSRELeadForCrew(hostHint: String?) -> String? { workspace.hosts.openSRELeadForCrew(hostHint: hostHint) }
-    func shutdownAllHostConsoles() { workspace.hosts.shutdownAllHostConsoles() }
-    #if FM_SELFTESTS
-    var pendingRestoredHostIDsForTests: [UUID] { workspace.hosts.pendingRestoredHostIDsForTests }
-    #endif
-
-    // The pages' own quit-time flushes and menu-bar surfaces.
-    func shutdownStickyBoard() { workspace.shutdownStickyBoard() }
-    func shutdownScratchpads() { workspace.shutdownScratchpads() }
-    func shutdownReadingList() { workspace.shutdownReadingList() }
-    func shutdownCodePreview() { workspace.shutdownCodePreview() }
-    func shutdownNotebook() { workspace.shutdownNotebook() }
-    func shutdownCredentialVault() { workspace.shutdownCredentialVault() }
-    func shutdownStrawHatCrew() { workspace.shutdownStrawHatCrew() }
-    func askCrewFromMenuBar(_ text: String, completion: @escaping (Result<[StrawHatSection], StrawHatError>) -> Void) {
-        workspace.askCrewFromMenuBar(text, completion: completion)
-    }
-    var poneglyphQuickCodes: [PoneglyphQuickCode] { workspace.poneglyphQuickCodes }
-    var poneglyphIsUnlocked: Bool { workspace.poneglyphIsUnlocked }
-    @discardableResult
-    func copyPoneglyphCodeFromMenuBar(id: String) -> String? { workspace.copyPoneglyphCodeFromMenuBar(id: id) }
-    func setDictationEngineStatus(_ status: DictationStatus) { workspace.setDictationEngineStatus(status) }
-    func makeCaptureFiler() -> CaptureFiler { workspace.makeCaptureFiler() }
-    #if FM_SELFTESTS
-    var debugPoneglyph: CredentialVaultController { workspace.debugPoneglyph }
-    var debugPoneglyphStore: CredentialVaultStore { workspace.debugPoneglyphStore }
-    #endif
+    override func workspaceKeyViewLoopMayHaveChanged() { updateKeyViewLoop() }
 }

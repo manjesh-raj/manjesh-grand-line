@@ -85,11 +85,18 @@ final class RecentDestinationsController: NSObject {
     }
 
     @objc private func buttonClicked() {
+        togglePanel(under: button)
+    }
+
+    /// Open or close the panel under `anchor`. The floating bar's Recents
+    /// square passes itself; the sidebar shell's toolbar passes its own
+    /// Recents button, so both shells show the same rows.
+    func togglePanel(under anchor: NSView) {
         if panel.isShown {
             panel.close()
         } else {
             content.reload()
-            panel.show(under: button)
+            panel.show(under: anchor)
         }
     }
 

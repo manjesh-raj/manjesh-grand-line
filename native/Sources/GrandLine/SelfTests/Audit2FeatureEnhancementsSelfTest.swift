@@ -322,11 +322,13 @@ enum Audit2FeatureEnhancementsSelfTest {
 
     private static func test_codePreviewShutdownIsWired() -> String? {
         guard let main = readCode(named: "main.swift") else { return "could not read main.swift" }
-        guard let shell = readCode(named: "AppShellController.swift") else {
-            return "could not read AppShellController.swift"
+        // Stage 3 of the modular-shell migration moved the shell's forwards to
+        // `WorkspaceShellController`, which both window layouts extend.
+        guard let shell = readCode(named: "WorkspaceShellController.swift") else {
+            return "could not read WorkspaceShellController.swift"
         }
         guard shell.contains("func shutdownCodePreview()") else {
-            return "AppShellController has no shutdownCodePreview() forward, so the app delegate "
+            return "the shell has no shutdownCodePreview() forward, so the app delegate "
                 + "cannot reach the (private) destination"
         }
         guard main.contains("shutdownCodePreview()") else {

@@ -10,6 +10,10 @@
 //   1. **The shell is chrome only.** None of the moved responsibilities is
 //      back in `AppShellController.swift` - no page or store built there, no
 //      mounter, no lock overlay, no host-page storage, no navigation record.
+//      Since stage 3 the same holds for the split-view shell
+//      (`MainSplitShellController.swift`) and for the base class both extend
+//      (`WorkspaceShellController.swift`): two shells over one workspace,
+//      neither with a second copy of it.
 //   2. **Each part still owns its half.** The core of each responsibility is
 //      where the split put it, so a move that drops one fails by name.
 //   3. **`DestinationMounter` is untouched.** The plan's step 2 keeps it
@@ -70,20 +74,36 @@ enum ShellSplitSelfTest {
         ("readingListStore.add(", "CaptureFilingService files a capture"),
     ]
 
+    /// Each shell file, and a token of its own chrome - the discriminating
+    /// check that the file read really is that shell, so one emptied or
+    /// renamed does not pass for the right reason.
+    private static let shellFiles: [(file: String, chrome: [String])] = [
+        ("AppShellController.swift", ["let bar = DaylightBarController()", "func reassertBodyContainerWidthTie(",
+                                      "func applyDrillHeader(", "func updateKeyViewLoop()"]),
+        ("MainSplitShellController.swift", ["NSSplitViewItem(sidebarWithViewController:", "func fitPanesToWindow()",
+                                            "override func workspaceDidShow("]),
+        ("WorkspaceShellController.swift", ["self.workspace = Workspace(", "func paintGroundAndFollowTextScale()"]),
+    ]
+
     private static func checkTheShellIsChromeOnly(_ ok: inout Bool) {
-        guard let shell = code("AppShellController.swift") else {
-            fail("could not read AppShellController.swift - the guard cannot run", &ok)
-            return
+        for (file, chrome) in shellFiles {
+            guard let shell = code(file) else {
+                fail("could not read \(file) - the guard cannot run", &ok)
+                continue
+            }
+            for token in chrome {
+                check(shell.contains(token), "\(file) lost its own chrome (\(token)) - this guard is reading the wrong file", &ok)
+            }
+            for (token, owner) in movedOut {
+                check(!shell.contains(token),
+                      "\(file) contains `\(token)` again - \(owner) since stage 2, and both shells host that one copy", &ok)
+            }
         }
-        // Discriminating power: the shell still holds its own chrome, so a
-        // file that was emptied or renamed does not pass for the right reason.
-        for chrome in ["let bar = DaylightBarController()", "func reassertBodyContainerWidthTie(",
-                       "func applyDrillHeader(", "func updateKeyViewLoop()"] {
-            check(shell.contains(chrome), "the shell lost its own chrome (\(chrome)) - this guard is reading the wrong file", &ok)
-        }
-        for (token, owner) in movedOut {
-            check(!shell.contains(token),
-                  "AppShellController.swift contains `\(token)` again - \(owner) since stage 2, and the split-view shell needs it there", &ok)
+        // Exactly one shell builds the workspace, and it is the base class:
+        // a subclass building a second one would be a second set of pages.
+        for file in ["AppShellController.swift", "MainSplitShellController.swift"] {
+            guard let shell = code(file) else { continue }
+            check(!shell.contains("Workspace("), "\(file) builds a Workspace of its own", &ok)
         }
     }
 

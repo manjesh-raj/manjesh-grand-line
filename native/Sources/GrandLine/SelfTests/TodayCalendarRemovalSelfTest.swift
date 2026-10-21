@@ -113,10 +113,12 @@ enum TodayCalendarRemovalSelfTest {
         }
         // Discriminating power: the scan really reads code, and the comment
         // stripping really leaves it.
-        let shell = files.first { $0.lastPathComponent == "AppShellController.swift" }
+        // The shell's API lives in `WorkspaceShellController` since stage 3 of
+        // the modular-shell migration.
+        let shell = files.first { $0.lastPathComponent == "WorkspaceShellController.swift" }
         let shellCode = shell.flatMap { try? String(contentsOf: $0, encoding: .utf8) }.map(stripComments) ?? ""
         check(shellCode.contains("func restoreDestination"),
-              "fixture: the scan should see AppShellController's code", &ok)
+              "fixture: the scan should see the shell's code", &ok)
 
         var offenders: [String] = []
         for file in files where file.lastPathComponent != cleanupFile {

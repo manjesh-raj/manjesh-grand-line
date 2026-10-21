@@ -22,6 +22,9 @@ When the suite fails on a missing row, it prints the row to add.
 When a later stage moves a feature, update its New shell cell and, for an evidence row, point the Evidence cell at the new code.
 Deleting the old bar in step 5 is meant to fail every chrome row until each one names the new shell's code.
 
+Stage 3 builds the sidebar shell (`MainSplitShellController`) beside the floating bar, behind Settings › Appearance › Window layout.
+Where it already carries a piece of chrome, that row's Evidence names the sidebar shell's code as well as the floating bar's, so the feature stays checked in both layouts while both exist.
+
 ## Columns
 
 - **ID** is the stable key the suite matches on. The prefix is the family.
@@ -57,7 +60,7 @@ One row per `RailDestination`. The route id stays the deep-link id after the con
 | `dest.commandLibrary` | DevOps Commands page | Command space card; ⌘K commands; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Connections › Commands |  |
 | `dest.console` | Console page | Command space card and Home's Claude card; quick-access square (default pin); ⌃⌘1-9 and Next/Previous Session; Hosts' Connect; ⌘K sessions and hosts; Find in Terminal; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Console (its own sidebar item in Work; live sessions are its sidebar children; no page title, per the captain) |  |
 | `dest.dictation` | Dictation page | Stores space card; the dictation hotkey; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Dictation (Workbench group) |  |
-| `dest.docs` | Docs page | Stores space card; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Knowledge › Playbook |  |
+| `dest.docs` | Docs page | Stores space card; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Knowledge › Docs |  |
 | `dest.githubSync` | GitHub Sync page | Engineering space card; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Setup › GitHub sync |  |
 | `dest.health` | Health page | Home's Health card; Operations space card; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Health (Observe group; its state also shows in the status line) |  |
 | `dest.homeCanvas` | Home page | Launch landing; the Home space pill and Go > Home (⌘1); every drill page's back button; the bar's logo | Home (top of the sidebar, above the four groups; the launch landing) |  |
@@ -164,7 +167,7 @@ Every actionable item in the real menu bar, read from `AppDelegate.buildMenu(ins
 | `menu.Go/Console` | Go > Console | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Console) |  |
 | `menu.Go/DevOps Commands` | Go > DevOps Commands | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Connections › Commands) |  |
 | `menu.Go/Dictation` | Go > Dictation | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Dictation) |  |
-| `menu.Go/Docs` | Go > Docs | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Knowledge › Playbook) |  |
+| `menu.Go/Docs` | Go > Docs | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Knowledge › Docs) |  |
 | `menu.Go/Engineering` | Go > Engineering | shortcut ⌘5 | Main menu › Go (⌘1-⌘6 select the first six sidebar items - Home, Tasks, Crew, Connections, Console, Knowledge - and the space names become sidebar sections) |  |
 | `menu.Go/Fleet` | Go > Fleet | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Crew › In flight) |  |
 | `menu.Go/GitHub Sync` | Go > GitHub Sync | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Setup › GitHub sync) |  |
@@ -289,7 +292,7 @@ The Help menu's shortcut catalog: every menu chord, plus the configurable termin
 | `key.⌥⌘H` | ⌥⌘H - Hide Others | Grand Line menu | Main menu › App (unchanged chord) |  |
 | `key.⌥⌘N` | ⌥⌘N - New Snippet… | Hosts menu | Main menu › Hosts (unchanged chord) |  |
 | `key.⌥⌘P` | ⌥⌘P - Manage Snippets… | Hosts menu | Main menu › Hosts (unchanged chord) |  |
-| `key.⌥⌘S` | ⌥⌘S - Toggle Sidebar | Go menu | Sidebar (show or hide the workspace sidebar) |  |
+| `key.⌥⌘S` | ⌥⌘S - Toggle Sidebar | Go menu | Main menu › Go (unchanged chord: the showing page's own column, and in the sidebar shell the workspace sidebar on a page without one) |  |
 
 ## Command palette
 
@@ -382,6 +385,7 @@ The shell's public routes, the notification categories and buttons, the App Inte
 | `link.route.openShiftTask` | Route `openShiftTask` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (moved there in stage 2; AppShellController forwards to it) |  |
 | `link.route.openSRELeadForCrew` | Route `openSRELeadForCrew` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (moved there in stage 2; AppShellController forwards to it) |  |
 | `link.route.openStickyNote` | Route `openStickyNote` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (moved there in stage 2; AppShellController forwards to it) |  |
+| `link.route.revealDestinationMap` | Route `revealDestinationMap` | the shell - ⌘⇧D and ⌘K's All Destinations reach it through the app delegate's `showAllDestinations`; the floating bar answers no and the map panel opens | Sidebar (the sidebar shell reveals and focuses its sidebar, which is the whole map) |  |
 | `link.route.revealHost` | Route `revealHost` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (moved there in stage 2; AppShellController forwards to it) |  |
 | `link.route.revealHostsQuickConnect` | Route `revealHostsQuickConnect` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (moved there in stage 2; AppShellController forwards to it) |  |
 | `link.route.revealHostPage` | Route `revealHostPage` | Navigator - the one definition of "this host's page is now on screen", reached by connect, switch, the strip, Recents and ⌘⌃1-9 | Navigator (moved there in stage 2 as `revealHostConsole`'s new name) |  |
@@ -441,6 +445,7 @@ The eight categories and every row whose title is a literal. Rows built in a loo
 | `settings.row.Terminal scrollback & session state` | Settings row: Terminal scrollback & session state | Settings > Backup & Restore | Settings › Backup & Restore (unchanged row) |  |
 | `settings.row.Touch ID for sudo` | Settings row: Touch ID for sudo | Settings > Security | Settings › Security (unchanged row) |  |
 | `settings.row.Vault settings live in the vault` | Settings row: Vault settings live in the vault | Settings > Security | Settings › Security (unchanged row) |  |
+| `settings.row.Window layout` | Settings row: Window layout | Settings > Appearance - new in stage 3: the floating bar or the sidebar shell, applied the next time the app opens | Settings › Appearance (the switch between the two layouts until stage 5 makes the sidebar the default) |  |
 | `settings.row.Working directory` | Settings row: Working directory | Settings > Terminal | Settings › Terminal (unchanged row) |  |
 
 ## In-page tabs
@@ -575,10 +580,10 @@ The buttons a page hands the floating bar's drill header (`drillHeaderActions`, 
 | `toolbar.CredentialVaultController.recoveryButton` | CredentialVaultController header action `recoveryButton` | the floating bar's drill header, right side | Secrets › Poneglyph (moves into the window toolbar as a module action) |  |
 | `toolbar.CredentialVaultController.settingsButton` | CredentialVaultController header action `settingsButton` | the floating bar's drill header, right side | Secrets › Poneglyph (moves into the window toolbar as a module action) |  |
 | `toolbar.DictationController.refreshButton` | DictationController header action `refreshButton` | the floating bar's drill header, right side | Dictation (moves into the window toolbar as a module action) |  |
-| `toolbar.DocsController.backTapped()` | Back | DocsController page toolbar (`backTapped()`) | Knowledge › Playbook |  |
-| `toolbar.DocsController.forwardTapped()` | Forward | DocsController page toolbar (`forwardTapped()`) | Knowledge › Playbook |  |
-| `toolbar.DocsController.openLiveButton` | DocsController header action `openLiveButton` | the floating bar's drill header, right side | Knowledge › Playbook (moves into the window toolbar as a module action) |  |
-| `toolbar.DocsController.reloadTapped()` | Reload (local copy only) | DocsController page toolbar (`reloadTapped()`) | Knowledge › Playbook |  |
+| `toolbar.DocsController.backTapped()` | Back | DocsController page toolbar (`backTapped()`) | Knowledge › Docs |  |
+| `toolbar.DocsController.forwardTapped()` | Forward | DocsController page toolbar (`forwardTapped()`) | Knowledge › Docs |  |
+| `toolbar.DocsController.openLiveButton` | DocsController header action `openLiveButton` | the floating bar's drill header, right side | Knowledge › Docs (moves into the window toolbar as a module action) |  |
+| `toolbar.DocsController.reloadTapped()` | Reload (local copy only) | DocsController page toolbar (`reloadTapped()`) | Knowledge › Docs |  |
 | `toolbar.HealthController.healthCard.diagnosticsButton` | HealthController header action `healthCard.diagnosticsButton` | the floating bar's drill header, right side | Health (moves into the window toolbar as a module action) |  |
 | `toolbar.HelmKit.open()` | open | HelmKit page toolbar (`open()`) | Every module (a shared component; it travels with each page that uses it) |  |
 | `toolbar.HostsController.addHostButton` | HostsController header action `addHostButton` | the floating bar's drill header, right side | Connections › Hosts (moves into the window toolbar as a module action) |  |
@@ -653,7 +658,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.DictationController` | DictationController controls | `cleanupToggled`, `localWhisperToggled`, `modelActionTapped`, `modelDeleteTapped`, `modelMoreTapped`, `refreshTapped`, `resetShortcutTapped`, `statusActionTapped` | Dictation |  |
 | `action.DictationHistoryAndVocabularyViews` | DictationHistoryAndVocabularyViews controls | `deleteClicked`, `removeTapped` | Dictation |  |
 | `action.DiffResultView` | DiffResultView controls | `clicked` | Tools (Diff tool) |  |
-| `action.DocsController` | DocsController controls | `backTapped`, `forwardTapped`, `openLiveTapped`, `reloadTapped`, `syncNowTapped` | Knowledge › Playbook |  |
+| `action.DocsController` | DocsController controls | `backTapped`, `forwardTapped`, `openLiveTapped`, `reloadTapped`, `syncNowTapped` | Knowledge › Docs |  |
 | `action.FleetController` | FleetController controls | `crewTapped`, `refreshTapped` | Crew › In flight |  |
 | `action.FleetController+Reply` | FleetController+Reply controls | `replyTapped` | Crew › Needs you |  |
 | `action.FleetMessageComposer` | FleetMessageComposer controls | `cancelTapped`, `sendTapped` | Crew › Needs you |  |
@@ -685,7 +690,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.LockScreenController` | LockScreenController controls | `copySetupCommandTapped`, `installTapped`, `localAuthTapped`, `submitTapped` | Window (the lock overlay) |  |
 | `action.LogAnalyzerController` | LogAnalyzerController controls | `addClipboardAsEvidence`, `addCurrentInputAsEvidence`, `addFileTapped`, `analyzeClipboard`, `analyzeTapped`, `comparePickerChanged`, `copyCommandTapped`, `copyComparison`, `copyEvidence`, `copyNextSteps`, `copyRootCause`, `createIncident`, `focusInput`, `goToConsole`, `investigateFurther`, `modeChanged`, `newInvestigation`, `overrideChanged`, `runCompare`, `sendCommandTapped`, `sourceChanged`, `storageRowClicked`, `toggleHistory`, `toggleRedactions` | Logs |  |
 | `action.LogAnalyzerViews` | LogAnalyzerViews controls | `rowClicked` | Logs |  |
-| `action.main` | main controls | `AppDelegate.showAllDestinations`, `AppDelegate.showKeyboardShortcuts`, `AppDelegate.showManualChecks`, `AppDelegate.showShiftQuickCapture`, `AppDelegate.showUnifiedSearch`, `AppShellController.activateConsoleFind`, `AppShellController.analyzeClipboardInLogAnalyzer`, `AppShellController.captureScreenRegionFromMenu`, `AppShellController.copyWhiteboardImageFromMenu`, `AppShellController.logAnalyzerCopyAnalysis`, `AppShellController.logAnalyzerCreateRCA`, `AppShellController.logAnalyzerInvestigateFurther`, `AppShellController.logAnalyzerSendToTerminal`, `AppShellController.newContextualItem`, `AppShellController.newHostFromMenu`, `AppShellController.newKeyFromMenu`, `AppShellController.newShiftFollowUpFromMenu`, `AppShellController.newShiftProjectFromMenu`, `AppShellController.newShiftTaskFromMenu`, `AppShellController.newSnippetFromMenu`, `AppShellController.nextSession`, `AppShellController.previousSession`, `AppShellController.revealHostsQuickConnect`, `AppShellController.runCodeSnippetFromMenu`, `AppShellController.selectDestinationFromMenu`, `AppShellController.selectHosts`, `AppShellController.selectKeys`, `AppShellController.selectSessionByShortcut`, `AppShellController.selectSettings`, `AppShellController.selectSnippets`, `AppShellController.selectSpaceByShortcut`, `AppShellController.showLogAnalyzer`, `AppShellController.showShiftWeeklyReview`, `AppShellController.toggleClipboardHistory`, `AppShellController.toggleCodePreviewSidebarFromMenu`, `AppShellController.toggleSidebarFromMenu`, `ConsoleController.showFind`, `NSApplication.arrangeInFront`, `NSApplication.hide`, `NSApplication.hideOtherApplications`, `NSApplication.orderFrontStandardAboutPanel`, `NSApplication.terminate`, `NSApplication.unhideAllApplications`, `NSText.copy`, `NSText.cut`, `NSText.paste`, `NSText.selectAll`, `NSWindow.performMiniaturize`, `NSWindow.performZoom` | Main menu (these are the menu items' targets - see the menu rows) |  |
+| `action.main` | main controls | `AppDelegate.showAllDestinations`, `AppDelegate.showKeyboardShortcuts`, `AppDelegate.showManualChecks`, `AppDelegate.showShiftQuickCapture`, `AppDelegate.showUnifiedSearch`, `WorkspaceShellController.activateConsoleFind`, `WorkspaceShellController.analyzeClipboardInLogAnalyzer`, `WorkspaceShellController.captureScreenRegionFromMenu`, `WorkspaceShellController.copyWhiteboardImageFromMenu`, `WorkspaceShellController.logAnalyzerCopyAnalysis`, `WorkspaceShellController.logAnalyzerCreateRCA`, `WorkspaceShellController.logAnalyzerInvestigateFurther`, `WorkspaceShellController.logAnalyzerSendToTerminal`, `WorkspaceShellController.newContextualItem`, `WorkspaceShellController.newHostFromMenu`, `WorkspaceShellController.newKeyFromMenu`, `WorkspaceShellController.newShiftFollowUpFromMenu`, `WorkspaceShellController.newShiftProjectFromMenu`, `WorkspaceShellController.newShiftTaskFromMenu`, `WorkspaceShellController.newSnippetFromMenu`, `WorkspaceShellController.nextSession`, `WorkspaceShellController.previousSession`, `WorkspaceShellController.revealHostsQuickConnect`, `WorkspaceShellController.runCodeSnippetFromMenu`, `WorkspaceShellController.selectDestinationFromMenu`, `WorkspaceShellController.selectHosts`, `WorkspaceShellController.selectKeys`, `WorkspaceShellController.selectSessionByShortcut`, `WorkspaceShellController.selectSettings`, `WorkspaceShellController.selectSnippets`, `WorkspaceShellController.selectSpaceByShortcut`, `WorkspaceShellController.showLogAnalyzer`, `WorkspaceShellController.showShiftWeeklyReview`, `WorkspaceShellController.toggleClipboardHistory`, `WorkspaceShellController.toggleCodePreviewSidebarFromMenu`, `WorkspaceShellController.toggleSidebarFromMenu`, `ConsoleController.showFind`, `NSApplication.arrangeInFront`, `NSApplication.hide`, `NSApplication.hideOtherApplications`, `NSApplication.orderFrontStandardAboutPanel`, `NSApplication.terminate`, `NSApplication.unhideAllApplications`, `NSText.copy`, `NSText.cut`, `NSText.paste`, `NSText.selectAll`, `NSWindow.performMiniaturize`, `NSWindow.performZoom` | Main menu (these are the menu items' targets - see the menu rows) |  |
 | `action.MorningBriefingCard` | MorningBriefingCard controls | `dismissClicked`, `refreshClicked` | Home (Morning briefing card) |  |
 | `action.MultiHostSendPicker` | MultiHostSendPicker controls | `checkClicked`, `pillClicked` | Connections › Hosts (send to many hosts) |  |
 | `action.NeedsAttentionCard` | NeedsAttentionCard controls | `actionClicked`, `checkboxClicked`, `refreshClicked` | Home (Needs you card) |  |
@@ -742,6 +747,10 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.WhiteboardComposerPopover` | WhiteboardComposerPopover controls | `appendToggled`, `exampleClicked`, `generateClicked`, `startOverClicked` | Whiteboard |  |
 | `action.WhiteboardController` | WhiteboardController controls | `dslTapped`, `generateTapped` | Whiteboard |  |
 | `action.WhiteboardDSLPopover` | WhiteboardDSLPopover controls | `appendToggled`, `componentMenuPicked`, `componentsButtonClicked`, `insertClicked` | Whiteboard |  |
+| `action.WorkspaceInspector` | WorkspaceInspector controls | `closeClicked` | Inspector (its own close button; the toolbar's inspector button opens it) |  |
+| `action.WorkspaceSidebar` | WorkspaceSidebar controls | `WorkspaceSidebarMenuItem.fire`, `clicked` | Sidebar (a row's context menu - Open, Pin, Unpin, End Session, Connect to a Host - and the account header's menu) |  |
+| `action.WorkspaceStatusLine` | WorkspaceStatusLine controls | `focusChipClicked` | Status line (the focus timer chip opens its ring popover) |  |
+| `action.WorkspaceToolbar` | WorkspaceToolbar controls | `inspectorClicked`, `navigationClicked`, `notificationsClicked`, `recentsClicked`, `searchClicked`, `sidebarClicked`, `spaceClicked`, `themeClicked` | Toolbar (the sidebar shell's window toolbar: the sidebar button, Back and Forward, Recents, Home's spaces, the light/dark toggle, notifications, the inspector button and Search) |  |
 
 ## Lock-gated surfaces
 
@@ -836,6 +845,7 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.themeMode` | Saved preference `fm.themeMode` | declared in ThemeManager | Settings › Appearance (legacy key, migrated) |  |
 | `state.fm.todayCalendarRetired` | Saved preference `fm.todayCalendarRetired` | declared in TodayCalendarRetirement | System (one-time cleanup of the retired Today page's keys, unchanged) |  |
 | `state.fm.uiTextScale` | Saved preference `fm.uiTextScale` | declared in AppSettings | Settings › Appearance |  |
+| `state.fm.workspaceLayout` | Saved preference `fm.workspaceLayout` | declared in AppSettings | Settings › Appearance (Window layout; read once at launch) |  |
 
 ## Shell chrome
 
@@ -844,37 +854,37 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
-| `chrome.wordmark` | The app's logo tile and "Grand Line" wordmark | Bar, leading edge, on Home | Sidebar (the workspace header at the top of the sidebar: Grand Line, this Mac) | `DaylightBarController.swift` `NSTextField(labelWithString: "Grand Line")` |
-| `chrome.spacePills` | Five space pills that filter Home's card grid | Bar, centre, on Home | Sidebar (the four groups are the spaces; Home keeps its own card set) | `DaylightBarController.swift` `var onSelectSpace` |
+| `chrome.wordmark` | The app's logo tile and "Grand Line" wordmark | Bar, leading edge, on Home | Sidebar (the workspace header at the top of the sidebar: Grand Line, this Mac) | `DaylightBarController.swift` `NSTextField(labelWithString: "Grand Line")`; `WorkspaceSidebar.swift` `final class WorkspaceSidebarHeader` |
+| `chrome.spacePills` | Five space pills that filter Home's card grid | Bar, centre, on Home | Sidebar (the four groups are the spaces; on Home the five spaces sit in the middle of the toolbar and still filter its cards) | `DaylightBarController.swift` `var onSelectSpace`; `WorkspaceToolbar.swift` `func setSpaces(visible: Bool, selected: DaylightSpace)` |
 | `chrome.spaceFilter` | Home's canvas shows one space's cards at a time | Home canvas, picked by a pill | Home (Customize adds any card to Home; the module pages are one sidebar click away) | `DaylightSpace.swift` `func isVisible(in space` |
-| `chrome.drillBack` | Back to Home from any page | Bar's drill header back chevron | Toolbar (back and forward buttons at the leading edge) | `DaylightBarController.swift` `var onDrillBack` |
-| `chrome.drillTitle` | The page's tile and title | Bar's drill header | Toolbar (the module title; Connections and Console show none, per the captain) | `HelmDrillHeader.swift` `final class HelmDrillHeader` |
-| `chrome.drillSubtitle` | A page's live subtitle (counts, sync state) | Bar's drill header, from each page's `drillHeaderSubtitle` | Toolbar (the subtitle under the module title, same live text) | `DestinationRegistry.swift` `var drillHeaderSubtitle: String? { get }` |
-| `chrome.drillActions` | A page's own action cluster | Bar's drill header, right side, from `drillHeaderActions` | Toolbar (module toolbar items; see the Toolbar actions rows) | `DaylightBarController.swift` `func setDrillActions` |
-| `chrome.searchPill` | Search pill with its ⌘K badge | Bar, trailing | Toolbar (search field with the ⌘K hint) | `DaylightBarController.swift` `final class DaylightSearchPill` |
-| `chrome.recents` | Recents dropdown: recently visited pages and hosts | Bar, trailing, after search | Toolbar (back and forward buttons, with Recents as their menu) | `RecentDestinationsPopover.swift` `final class RecentDestinationsController` |
-| `chrome.quickAccess` | Captain-configured quick-access squares (default: Sticky Board, Code Preview, Tasks, Straw Hat, Poneglyph, Console, Hosts) | Bar, trailing | Sidebar (a Pinned section at the top, in the captain's order, from the same saved list) | `QuickAccessConfiguration.swift` `struct QuickAccessConfiguration` |
+| `chrome.drillBack` | Back to Home from any page | Bar's drill header back chevron | Toolbar (back and forward buttons at the leading edge) | `DaylightBarController.swift` `var onDrillBack`; `WorkspaceToolbar.swift` `@objc private func navigationClicked`; `NavigationHistory.swift` `struct NavigationHistory` |
+| `chrome.drillTitle` | The page's tile and title | Bar's drill header | Toolbar (the module title; Connections and Console show none, per the captain) | `HelmDrillHeader.swift` `final class HelmDrillHeader`; `MainSplitShellController.swift` `window.title = lockOverlayIsShown ? AppPaths.displayName : pageTitle` |
+| `chrome.drillSubtitle` | A page's live subtitle (counts, sync state) | Bar's drill header, from each page's `drillHeaderSubtitle` | Toolbar (the subtitle under the module title, same live text) | `DestinationRegistry.swift` `var drillHeaderSubtitle: String? { get }`; `MainSplitShellController.swift` `override func workspaceSubtitleMayHaveChanged()` |
+| `chrome.drillActions` | A page's own action cluster | Bar's drill header, right side, from `drillHeaderActions` | Toolbar (module toolbar items; see the Toolbar actions rows) | `DaylightBarController.swift` `func setDrillActions`; `WorkspaceToolbar.swift` `func setPageActions(_ views: [NSView])` |
+| `chrome.searchPill` | Search pill with its ⌘K badge | Bar, trailing | Toolbar (search field with the ⌘K hint) | `DaylightBarController.swift` `final class DaylightSearchPill`; `WorkspaceToolbar.swift` `@objc private func searchClicked()` |
+| `chrome.recents` | Recents dropdown: recently visited pages and hosts | Bar, trailing, after search | Toolbar (a Recents button beside Back and Forward opens the same panel, with the same rows) | `RecentDestinationsPopover.swift` `final class RecentDestinationsController`; `RecentDestinationsPopover.swift` `func togglePanel(under anchor: NSView)`; `WorkspaceToolbar.swift` `@objc private func recentsClicked()` |
+| `chrome.quickAccess` | Captain-configured quick-access squares (default: Sticky Board, Code Preview, Tasks, Straw Hat, Poneglyph, Console, Hosts) | Bar, trailing | Sidebar (a Pinned section at the top, in the captain's order, from the same saved list) | `QuickAccessConfiguration.swift` `struct QuickAccessConfiguration`; `WorkspaceSidebar.swift` `static let pinnedTitle = "Pinned"` |
 | `chrome.quickAccessOverflow` | "More destinations" overflow when the squares do not fit | Bar, below 1300pt | Sidebar (the Pinned section scrolls with the sidebar; nothing overflows) | `DaylightBarController.swift` `quickAccessOverflowButton` |
-| `chrome.quickAccessPin` | Pin or unpin a page to the quick-access row | Right-click a page in the ⌘⇧D map | Sidebar (Pin and Unpin on a sidebar row's context menu) | `AppShellController.swift` `func toggleQuickAccessPin` |
-| `chrome.allDestinations` | The ⌘⇧D map of every page | Floating panel over the window | Sidebar (the sidebar is the whole map; ⌘⇧D reveals and focuses it) | `AllDestinationsOverlay.swift` `final class AllDestinationsOverlayController` |
-| `chrome.themeToggle` | Light and dark quick toggle | Bar, trailing | Toolbar (trailing cluster; the captain kept it, see the header) | `DaylightBarController.swift` `final class DaylightThemeToggleButton` |
-| `chrome.notificationCenter` | The bell and the Notification Center popover (crew decisions, failing checks, lasting reports) | Bar, trailing | Toolbar (a notifications button in the trailing cluster; the captain kept it, see the header) | `NotificationCenterPopover.swift` `final class NotificationCenterController` |
-| `chrome.avatar` | Avatar menu: Settings and Log out | Bar, trailing edge | Sidebar (the workspace header's menu: Settings, Log out) | `DaylightBarController.swift` `final class AvatarLogoutPopoverController` |
-| `chrome.focusChip` | Running focus timer chip and its ring popover | Bar, before the search pill, while a timer runs | Status line (the focus timer chip and ring popover) | `FocusTimerViews.swift` `final class FocusTimerChip` |
+| `chrome.quickAccessPin` | Pin or unpin a page to the quick-access row | Right-click a page in the ⌘⇧D map | Sidebar (Pin and Unpin on a sidebar row's context menu) | `WorkspaceShellController.swift` `func toggleQuickAccessPin` |
+| `chrome.allDestinations` | The ⌘⇧D map of every page | Floating panel over the window | Sidebar (the sidebar is the whole map; ⌘⇧D reveals and focuses it) | `AllDestinationsOverlay.swift` `final class AllDestinationsOverlayController`; `MainSplitShellController.swift` `override func revealDestinationMap() -> Bool` |
+| `chrome.themeToggle` | Light and dark quick toggle | Bar, trailing | Toolbar (trailing cluster; the captain kept it, see the header) | `DaylightBarController.swift` `final class DaylightThemeToggleButton`; `WorkspaceToolbar.swift` `@objc private func themeClicked()` |
+| `chrome.notificationCenter` | The bell and the Notification Center popover (crew decisions, failing checks, lasting reports) | Bar, trailing | Toolbar (a notifications button in the trailing cluster; the captain kept it, see the header) | `NotificationCenterPopover.swift` `final class NotificationCenterController`; `NotificationCenterPopover.swift` `func togglePanel(under anchor: NSView)`; `WorkspaceToolbar.swift` `func setNotificationCount(_ count: Int)` |
+| `chrome.avatar` | Avatar menu: Settings and Log out | Bar, trailing edge | Sidebar (the workspace header's menu: Settings, Log out) | `DaylightBarController.swift` `final class AvatarLogoutPopoverController`; `WorkspaceSidebar.swift` `private func showAccountMenu()`; `HelmConfirm.swift` `static func confirmLogout() -> Bool` |
+| `chrome.focusChip` | Running focus timer chip and its ring popover | Bar, before the search pill, while a timer runs | Status line (the focus timer chip and ring popover) | `FocusTimerViews.swift` `final class FocusTimerChip`; `WorkspaceStatusLine.swift` `func attachFocusTimer(_ timer: FocusTimerController)` |
 | `chrome.scrollEdge` | The bar deepens its shadow once the page scrolls | Bar | Toolbar (the system toolbar's own scroll-edge effect) | `DaylightBarController.swift` `func setScrollEdgeActive` |
-| `chrome.windowChrome` | Traffic lights set into the bar, no title bar | Window | Window (a standard unified title bar and toolbar; traffic lights over the sidebar) | `WindowChromeFusion.swift` `enum WindowChromeFusion` |
+| `chrome.windowChrome` | Traffic lights set into the bar, no title bar | Window | Window (a standard unified title bar and toolbar; traffic lights over the sidebar) | `WindowChromeFusion.swift` `enum WindowChromeFusion`; `MainSplitShellController.swift` `window.toolbarStyle = .unified` |
 | `chrome.fullScreenFill` | Fills the menu-bar strip in full screen | Window | Window (unchanged) | `FullScreenMenuBarFill.swift` `final class FullScreenMenuBarFill` |
 | `chrome.pageCrossfade` | Crossfade between pages | Body area | Window (the content transition between modules) | `PageCrossfade.swift` `final class PageCrossfade` |
-| `chrome.statusLine` | One row of live indicators: crew needs, sessions, a failing service, vault lock, Claude usage, sync | Not in the app today; the same signals are spread over Home cards and the bell | Status line (new, from the review's Direction B; reads the existing signals) | `BackgroundSignalsPoller.swift` `final class BackgroundSignalsPoller` |
-| `chrome.toast` | Toasts for transient confirmations | Under the bar | Window (bottom centre, under the content) | `Toast.swift` `enum Toast` |
+| `chrome.statusLine` | One row of live indicators: crew needs, sessions, a failing service, vault lock, Claude usage, sync | Not in the app today; the same signals are spread over Home cards and the bell | Status line (new; stage 3 carries the live sessions and the focus timer chip, and the crew, vault, Claude and sync readouts join with their modules in stage 4) | `BackgroundSignalsPoller.swift` `final class BackgroundSignalsPoller`; `WorkspaceStatusLine.swift` `final class WorkspaceStatusLine` |
+| `chrome.toast` | Toasts for transient confirmations | Under the bar | Window (bottom centre, under the content) | `Toast.swift` `enum Toast`; `MainSplitShellController.swift` `Toast.show(in: contentPane.view, message: message)` |
 | `chrome.feedback` | One router between toast, bell entry and modal | Every page | Every module (unchanged) | `Feedback.swift` `enum Feedback` |
-| `chrome.clipboardHistory` | ⌘⇧V clipboard history panel | Drops from the bar beside Recents | Window (the same panel, anchored under the toolbar) | `ClipboardHistoryPicker.swift` `final class ClipboardHistoryController` |
+| `chrome.clipboardHistory` | ⌘⇧V clipboard history panel | Drops from the bar beside Recents | Window (the same panel, anchored under the toolbar) | `ClipboardHistoryPicker.swift` `final class ClipboardHistoryController`; `WorkspaceToolbar.swift` `let clipboardAnchor = NSView()` |
 | `chrome.shortcutsSheet` | Keyboard Shortcuts sheet, generated from the menu | Help menu, ⇧⌘/ | Main menu › Help (unchanged) | `KeyboardShortcutsSheetController.swift` `final class KeyboardShortcutsSheetController` |
 | `chrome.manualChecks` | Manual checks list | Help menu | Main menu › Help (unchanged) | `main.swift` `func showManualChecks` |
 | `chrome.welcome` | First-run welcome sheet and tour | First launch | Window (unchanged first-run sheet) | `WelcomeSheetController.swift` `final class WelcomeSheetController` |
-| `chrome.lockScreen` | App lock screen | Covers the window | Window (the lock overlay covers sidebar, toolbar, content and inspector) | `LockScreenController.swift` `final class LockScreenController`; `LockPresenter.swift` `func install(in parent: NSViewController, over root: NSView)` |
+| `chrome.lockScreen` | App lock screen | Covers the window | Window (the lock overlay covers sidebar, toolbar, content and inspector) | `LockScreenController.swift` `final class LockScreenController`; `LockPresenter.swift` `func install(in parent: NSViewController, over root: NSView)`; `MainSplitShellController.swift` `window.toolbar?.isVisible = !lockOverlayIsShown` |
 | `chrome.theme` | 26 palettes, the Daylight and Dusk pair, follow system appearance | Settings > Appearance and the bar toggle | Settings › Appearance (unchanged) | `ThemeManager.swift` `final class ThemeManager` |
-| `chrome.splitSidebars` | Seven pages with a real split-view sidebar and ⌥⌘S to toggle it | Pages' own columns | Every module (a page column stays inside its module; ⌥⌘S toggles the workspace sidebar) | `HelmSplitPage.swift` `final class HelmSplitPage` |
+| `chrome.splitSidebars` | Seven pages with a real split-view sidebar and ⌥⌘S to toggle it | Pages' own columns | Every module (a page column stays inside its module; ⌥⌘S still toggles it, and on a page without one toggles the workspace sidebar) | `HelmSplitPage.swift` `final class HelmSplitPage`; `MainSplitShellController.swift` `override func toggleSidebarFromMenu()` |
 | `chrome.singleInstance` | One running copy of the app | Launch | System (unchanged) | `SingleInstanceGuard.swift` `SingleInstanceGuard` |
 | `chrome.quitGuard` | Quit is guarded while work is in flight | Quit | System (unchanged) | `QuitGuard.swift` `final class QuitGuard` |
 
@@ -957,7 +967,7 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 | `surface.notebook.modes` | Source, Split and Preview modes | Notebook | Knowledge › Notebook (unchanged) | `NotebookController.swift` `case edit, split, preview` |
 | `surface.runbooks.grid` | Runbooks with an editor and a run in the terminal | Runbooks page | Knowledge › Runbooks | `RunbooksController.swift` `newRunbookButton` |
 | `surface.postmortems.list` | Postmortems, including SRE Lead's generated ones | Postmortems page | Knowledge › Postmortems | `SRELeadPostmortem.swift` `enum SRELeadPostmortem` |
-| `surface.docs.playbook` | The DevOps Playbook viewer with back, forward and reload | Docs page | Knowledge › Playbook | `DocsController.swift` `openLiveButton` |
+| `surface.docs.playbook` | The DevOps Playbook viewer with back, forward and reload | Docs page | Knowledge › Docs | `DocsController.swift` `openLiveButton` |
 | `surface.readingList.cards` | Saved links with titles, tags, read state and an opt-in summary | Reading List page | Knowledge › Reading list | `ReadingListAI.swift` `enum ReadingListAI` |
 
 ## Secrets

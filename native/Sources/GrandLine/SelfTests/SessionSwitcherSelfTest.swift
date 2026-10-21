@@ -749,10 +749,12 @@ enum SessionSwitcherSelfTest {
         guard controlDigitClaims.count == 1 else {
             return "⌘⌃<digit> is claimed \(controlDigitClaims.count) times (\(controlDigitClaims)) - expected only the Session N loop"
         }
-        // And the session items really are wired to the shell's own action.
-        guard text.contains("AppShellController.selectSessionByShortcut"),
-              text.contains("AppShellController.nextSession"),
-              text.contains("AppShellController.previousSession") else {
+        // And the session items really are wired to the shell's own action -
+        // declared on `WorkspaceShellController` since stage 3 of the
+        // modular-shell migration, so either window layout answers them.
+        guard text.contains("WorkspaceShellController.selectSessionByShortcut"),
+              text.contains("WorkspaceShellController.nextSession"),
+              text.contains("WorkspaceShellController.previousSession") else {
             return "the session menu items are not wired to the shell's session actions"
         }
         return nil

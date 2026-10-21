@@ -160,7 +160,7 @@ enum ProbeScratchRootSelfTest {
                       "FM_SCHEDULE_HISTORY_DIR", "FM_FLEET_LOG_DIR", "FM_DICTATION_DIR",
                       "FM_GITHUB_SYNC_CLONE_ROOT", "FM_SHIFT_GIT_CLONE_PATH", "FM_WHISPER_MODEL_DIR",
                       "FM_INSTANCE_LOCK_FILE", "FM_CREDENTIAL_VAULT_DIR", "FM_DOTFILES_AUTOSYNC_PATH",
-                      "FM_WIDGET_DIR", "FM_DOCS_DIR", "FM_SCRATCH_ROOT"]
+                      "FM_DOTFILES_PATH", "FM_WIDGET_DIR", "FM_DOCS_DIR", "FM_SCRATCH_ROOT"]
         let saved = narrow.reduce(into: [String: String]()) { out, key in
             if let value = ProcessInfo.processInfo.environment[key] { out[key] = value }
         }
@@ -186,6 +186,7 @@ enum ProbeScratchRootSelfTest {
             ("instance lock", SingleInstanceGuard.lockFileURL()),
             ("credential vault root", CredentialVaultStore.applicationSupportRoot),
             ("dotfiles auto-sync", DotfilesAutoSync.resolveDefaultWorkingTree()),
+            ("dotfiles reads", URL(fileURLWithPath: DotfilesSource.dotfilesLocation(), isDirectory: true)),
             ("widget snapshot", GrandLineWidgetContainer.directory()),
         ]
         // `SRELead`'s resolver is private; the crew's is not. Both build the

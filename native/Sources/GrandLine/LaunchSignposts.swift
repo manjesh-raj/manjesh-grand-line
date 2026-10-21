@@ -15,8 +15,10 @@
 //
 //   - each store `AppDelegate` builds in its property initialisers
 //     (`HostStore.init`, `ShiftStore.init`, ...)
-//   - `AppShellController.init`, and each store it builds
-//   - `AppShellController.loadView`, which mounts the eager destinations
+//   - `WorkspaceShellController.init`, and each store its workspace builds
+//   - `AppShellController.loadView` or `MainSplitShellController.loadView`
+//     (whichever window layout is showing), which mounts the eager
+//     destinations
 //   - `restoreSessionIfNeeded`, which runs after the first frame
 //
 // Reading them: Instruments > App Launch (or the os_signpost instrument

@@ -532,3 +532,74 @@ The toggle had no state at all to show, and its half-filled circle looked the sa
 - `DaylightBarIconTileSelfTest`'s 26-palette legibility sweep now includes the pressed ladder.
 - Six injections each failed the new suite by name: no `mouseDown` override, no overflow branch, no re-apply after a row change, the push moved back into `show(_:)`, no toggle glyph swap, and no pressed restyle.
 - The tour lab gained `bar hover|press|rest <target>` and `renderbar`, which render the bar's states side by side without a real pointer.
+
+## The sidebar shell, behind a setting (modular-shell stage 3, `fm/grandline-modular-shell-migration-1792578041`)
+
+Step 3 of the full review's migration plan (section 5.8) built a second window layout beside the floating bar.
+Settings › Appearance › Window layout picks it (`AppSettings.workspaceLayout`, `fm.workspaceLayout`), and the app delegate reads it once at launch.
+The floating bar stays the default until stage 5.
+
+### The shape
+
+- `WorkspaceShellController` is the base class both layouts extend: it builds the one `Workspace`, paints the window's ground, follows the chrome text scale, and carries the API the app delegate, the menus and the suites call on "the shell".
+  That API moved up from `AppShellController` unchanged, so every call site works on either layout.
+- `AppShellController` is the floating-bar layout and keeps only that chrome.
+- `MainSplitShellController` is an `NSSplitViewController` (sidebar, content, inspector) plus a system `NSToolbar` with the unified style, in a standard titled window.
+  The app delegate skips `WindowChromeFusion` for it, and the shell installs its toolbar when its root view reaches a window.
+- The sidebar (`WorkspaceSidebar.swift`) is a source list over `ModuleTable`: Home, the Pinned section (`AppSettings.quickAccess`), then the four groups, with live sessions as Console's children.
+  `WorkspaceSidebarModel` is the pure half and `SplitShellModelSelfTest` asserts every destination has exactly one row outside Pinned.
+- The captain renamed Knowledge's fourth tab from the prototype's Playbook to Docs during this stage, because it is the Docs page.
+  `ModuleTableSelfTest` pins Knowledge's tabs.
+
+### What was measured on the way
+
+- **A page wider than its column grows the window.**
+  The 29 pages were laid out for the floating bar's full-width body.
+  Beside a 244pt sidebar pane at 1100pt, Log Analyzer pushed the window to 1182pt and DevOps Commands to 1173pt - their content holds 938pt and 929pt at priorities above the window's 500.
+  DevOps Commands' is real: a row of eight buttons at required compression.
+  So the content column's minimum is `MainSplitShellController.contentMinimum` (940), and below that plus the sidebar the shell collapses the sidebar and brings it back when there is room.
+  `fittingSize` is no guide here: it reported 1512 for Home and 1206.5 for Kubernetes, neither of which pushes a window.
+  The working measurement is the growth itself - resize to 1100, show the page, read the window's width.
+- **The system's own collapse covers a live drag only.**
+  `canCollapseFromWindowResize` collapsed nothing for a frame set in code (the launch frame, the autosaved one, a zoom), so the shell runs the same rule on `NSWindow.didResizeNotification`.
+  By the time that notification arrives the split view has already squeezed the sidebar to its 200pt minimum, so the width the sidebar comes back at is remembered from divider drags only, never read off the pane on the way into a collapse.
+- **`NSSplitView.didResizeSubviewsNotification` carries `NSSplitViewDividerIndex` for every resize of the panes**, not only for a drag.
+  A width is taken as the captain's only while `NSEvent.pressedMouseButtons` says the mouse is down.
+- **Held at the default 260, the sidebar swung to its 320pt maximum** as pages with 480-priority grow ties came and went.
+  It is held at `HelmSplitPage.sidebarHoldingPriority` (489), that file's own measured value.
+- **A toolbar is drawn above the content view**, so the lock overlay cannot cover it.
+  `LockPresenter.onOverlayVisibilityChanged` tells the shell, which hides the toolbar and the page's title while the overlay is up.
+- **`NSToolbarItem.badge` is macOS 26 only** and absent from the SDK CI builds against, so the notifications button draws its count as a subview.
+- **A view item whose view measures zero** - a page whose four buttons are all hidden - makes AppKit warn that the view "had an ambiguous height or width".
+  The page-actions item is in the toolbar only while one of its buttons is visible, and it follows each button's `isHidden`.
+- **A source list tints a selected row's text with the system accent**, which on Gruvbox was blue text on the theme's orange wash.
+  The lit row's label takes `HelmContrast.legibleTintedText` over the theme accent, the same ink `HelmPageSidebar` gives its selected row.
+- **The stock-bezel guard (`FM_RUN_CONTRAST_TESTS`) bans the text `bezelStyle` anywhere in Sources.**
+  Toolbar buttons need no bezel style: on macOS 26 the toolbar wraps a plain `NSButton` view item in a glass capsule exactly as it does an image item (measured in a standalone probe).
+
+### Rendering it off-screen
+
+macOS 26 draws the sidebar and the toolbar's capsules as Liquid Glass, which the window server composites, so `cacheDisplay` of the window's frame view captures placeholders: an empty white panel where the sidebar's rows are, and opaque white capsules over the toolbar's buttons in a dark appearance.
+`ReviewTourLab.writeSplitShellPNG` renders the frame view (which does include the toolbar, the title and the traffic lights), draws the sidebar's own view over its panel on `HelmTheme.sidePanelFill`, redraws the traffic lights and the sidebar button over that, and in a dark render repaints the capsules as a tint of the ground with their items redrawn on top.
+Two traps in it:
+
+- A bitmap rep's plain `draw(in:)` copies rather than composites, so a transparent background replaces what is under it.
+  Pass `.sourceOver`.
+- Render each theme in its own process.
+  After a few dozen dark renders the toolbar's item views stopped drawing their icons in a later light render, while a short dark-then-light run kept them.
+  `FM_REVIEW_TOUR_LAYOUT=sidebar` picks the layout, and the stage 3 tours were split into one file per theme.
+
+### Verification
+
+- `FM_RUN_SPLIT_SHELL_MODEL_TESTS` (pure): the sidebar model, `NavigationHistory`, the layout setting, and source guards on the wiring a behaviour check cannot see.
+- `FM_RUN_MAIN_SPLIT_SHELL_TESTS` (window-backed): every route through the one mounter, no page growing a window at the narrowest sidebar width or at 1100, the sidebar's clicks, pins and menus, ⌘⇧D and ⌥⌘S, the toolbar's actions, spaces, badge and Back/Forward, the inspector, the lock hiding the toolbar, the status line and the account menu.
+- `ShellSplitSelfTest` checks both shells and their base for the responsibilities stage 2 moved into the workspace.
+- Confirmed by injection.
+  With `main.swift` always building the floating bar, the model suite fails by name.
+  With the sidebar never stepping aside for room, the window suite reports the sidebar still showing at 1100, and page after page growing the window: to 1148pt, which is the column's own minimum beside the sidebar, and to 1182pt for Log Analyzer and Kubernetes.
+- The tour lab rendered both layouts in Dusk and Daylight at 1512 and 1100.
+  In the sidebar layout no page grew the window, and the sidebar measured 236pt at 1512 and stepped aside at 1100.
+  The floating bar's renders matched the stage's baseline except where something else changed: the new Window card in Settings, the dotfiles cards (see below), the time of day and live fleet data.
+- The classic tour crashed once on the way, in a test seam's unsynchronised array.
+  The crash led to a worse finding: every tour and window-backed suite that mounted Bootstrap or Automation ran a real `git fetch` of the captain's dotfiles clone.
+  Both are fixed, and [`48-test-hermeticity.md`](48-test-hermeticity.md) has the account.

@@ -57,11 +57,16 @@ enum SelfTestSources {
     }
 
     /// The shell layer's files. Stage 2 of the modular-shell migration split
-    /// `AppShellController.swift` into these, so a guard asking "does the
-    /// shell still do X" - rather than "does this one file" - reads all of
-    /// them, and a later move between them cannot make it pass vacuously.
+    /// `AppShellController.swift` into the workspace's parts, and stage 3
+    /// added the base class both window layouts extend and the split-view
+    /// layout's chrome. A guard asking "does the shell still do X" - rather
+    /// than "does this one file" - reads all of them, and a later move between
+    /// them cannot make it pass vacuously.
     static let shellLayerFiles = [
-        "AppShellController.swift", "Workspace.swift", "WorkspaceContent.swift", "Navigator.swift",
+        "WorkspaceShellController.swift", "AppShellController.swift", "MainSplitShellController.swift",
+        "WorkspaceSidebar.swift", "WorkspaceToolbar.swift", "WorkspaceStatusLine.swift", "WorkspaceInspector.swift",
+        "NavigationHistory.swift",
+        "Workspace.swift", "WorkspaceContent.swift", "Navigator.swift",
         "HostSessionCoordinator.swift", "LockPresenter.swift", "CaptureFilingService.swift",
     ]
 

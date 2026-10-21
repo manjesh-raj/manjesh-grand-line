@@ -199,3 +199,57 @@ A new tool that reaches a real account, a shared service or the machine joins `p
 It never calls `ensureServiceRunning`: `/usr/bin/open` cannot be shadowed by a stub.
 Confirmed by injection, stubs only: the `VaultSource` layer off fails with 11 recorded launches, the backstop off fails every backstop case by name.
 With the guard in place the same tour and suites recorded zero stub launches, and the full suite passed with nothing relying on a real protected tool.
+
+
+## The dotfiles reader ran a real `git fetch` from every tour (modular-shell stage 3)
+
+The B4 section above says `git` needs no guard because the git-backed stores are already redirected.
+One was not: the reader.
+`DotfilesAutoSync`, the watcher that commits and pushes, has had `FM_DOTFILES_AUTOSYNC_PATH` since it shipped.
+`DotfilesSource.resolvedDotfilesPath()`, which everything else reads the checkout through, resolved `~/.dotfiles` directly.
+And that read is not passive: `DotfilesSource.repoState` runs `git -C <checkout> fetch origin <branch>`.
+
+### How it was found
+
+A review tour of the floating bar crashed with SIGSEGV after Bootstrap, Automation and GitHub Sync.
+The crash was in `DotfilesDataTestSeam.invocations.append`, on a background queue under `AutomationController.refreshDotfiles`.
+That is the defect `UpdatesDataTestSeam` already fixed for `FM_RUN_PANEL_AND_PAGE_MOTION_TESTS`: an unsynchronised `Array.append` from several threads.
+Its sibling seam had been missed.
+The stack also showed where the read was going: the crashing thread was inside `behindOrigin`, the function that runs the fetch, against the captain's real `manjesh-config` clone.
+That clone's `FETCH_HEAD` was written three seconds before the crash.
+Its mtime alone proves nothing, though, because the captain's own running instance fetches the same clone from its signals poller every few minutes.
+The code path is the evidence: nothing between a tour and that `git fetch` checked where it was running.
+
+### Who read it
+
+Bootstrap's and Automation's dotfiles cards, the signals poller's setup-drift check, the schedule runner and the Vault recipe export.
+So every tour, and every window-backed suite that mounted one of those pages, fetched the captain's clone over the network.
+A fetch moves only `refs/remotes/origin/<branch>` and `FETCH_HEAD`, so the working tree and the local branches were never touched.
+CI was never affected, because a runner has no `~/.dotfiles`.
+
+### Why the standing rule did not catch it
+
+AGENTS.md told a store whose default is outside Application Support to ask `AppPaths.isScratchRedirected()`.
+That is true only under `FM_SCRATCH_ROOT`, which the probe sets and a suite or a tour does not: the redirect block sets each store's narrow override instead.
+So asking it alone protects the probe and nothing else, and the rule now says so.
+
+### The fix
+
+- `DotfilesSource.dotfilesLocation(_:)` resolves `FM_DOTFILES_PATH`, then `FM_SCRATCH_ROOT`, then `~/.dotfiles`, the same order `DotfilesAutoSync` uses.
+- `main.swift`'s redirect block points `FM_DOTFILES_PATH` at a scratch path that does not exist, so a test process reads "no dotfiles here" and runs no git at all.
+- `DotfilesDataTestSeam` takes one lock, with `UpdatesDataTestSeam`'s shape: a locked `record(_:_:)` for the append, because a read-modify-write through an accessor still loses appends.
+
+### Verified
+
+- `FM_RUN_SETUP_DATA_LAYER_TESTS` gained two cases.
+  `aSelfTestProcessNeverReadsTheCaptainsDotfiles` checks the resolver's order against fixed environments, so it is the same on every machine, and then this process's own answer.
+  `dotfilesSeamRecordsEveryConcurrentRead` drives 1,600 reads from eight threads and counts the records.
+- `FM_RUN_PROBE_SCRATCH_ROOT_TESTS` lists the reader with the other stores, so a resolver that skips `FM_SCRATCH_ROOT` fails by name.
+- Confirmed by injection.
+  With the redirect line disabled, the first case fails and names `/Users/<you>/.dotfiles`.
+  With the seam's lock removed, the suite dies with SIGSEGV, the crash the tour hit, rather than failing by name.
+
+### Not covered
+
+Other `git -C` reads of a repository the captain owns, from a page a tour mounts, were not audited.
+The ones measured here were the dotfiles clone's.

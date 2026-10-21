@@ -268,6 +268,9 @@ NEEDS_SESSION=(
   "FM_RUN_KEYED_LISTS_VIEW_TESTS"
   "FM_RUN_HOME_FIT_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
   "FM_RUN_LAYOUT_STABILITY_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
+  # Stage 3 of the modular-shell migration: the sidebar shell in a real
+  # window - its toolbar, its split panes and their widths.
+  "FM_RUN_MAIN_SPLIT_SHELL_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenSplitShell()
   "FM_RUN_HELM_KIT_VIEW_TESTS"
   # `fm/grandline-claude-widget-refresh-shift`: builds a real `HelmModuleCard`
   # and a real hub in real windows and reads resolved header frames back after

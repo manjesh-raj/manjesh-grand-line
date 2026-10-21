@@ -153,6 +153,13 @@ enum ModuleTableSelfTest {
             }
             claimed[key] = row.route
         }
+        // The captain's call during stage 3: the prototype's Playbook tab is
+        // named Docs, because it is the Docs page.
+        let knowledge = WorkspaceModule.knowledge.children
+        check(knowledge == ["Notebook", "Runbooks", "Postmortems", "Docs", "Reading list"],
+              "Knowledge's tabs are \(knowledge), want Notebook, Runbooks, Postmortems, Docs, Reading list", &ok)
+        check(ModuleTable.descriptor(for: .docs)?.child == "Docs",
+              "the Docs page moves to Knowledge › \(ModuleTable.descriptor(for: .docs)?.child ?? "-"), not Knowledge › Docs", &ok)
     }
 }
 
