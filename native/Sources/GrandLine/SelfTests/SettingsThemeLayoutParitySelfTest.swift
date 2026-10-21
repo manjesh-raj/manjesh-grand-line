@@ -416,9 +416,11 @@ enum SettingsThemeLayoutParitySelfTest {
         // page's own card - moved and named here rather than relaxed, which
         // is what the note above asks of whoever adds one. Twenty-one since
         // `fm/grandline-remove-today-calendar-1792553365` removed the Daily
-        // review card and the Google Accounts page's three.
-        guard daylightFP.cardCount == 21 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 21")
+        // review card and the Google Accounts page's three. Twenty-two since
+        // stage 3 of the modular-shell migration added the Appearance page's
+        // Window card (the window layout: floating bar or sidebar).
+        guard daylightFP.cardCount == 22 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 22")
             ok = false
             return
         }

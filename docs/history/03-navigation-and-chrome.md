@@ -560,6 +560,11 @@ The floating bar stays the default until stage 5.
   So the content column's minimum is `MainSplitShellController.contentMinimum` (940), and below that plus the sidebar the shell collapses the sidebar and brings it back when there is room.
   `fittingSize` is no guide here: it reported 1512 for Home and 1206.5 for Kubernetes, neither of which pushes a window.
   The working measurement is the growth itself - resize to 1100, show the page, read the window's width.
+- **CI's runner shows scroll bars always, and every page's floor grows by one scroller's track there.**
+  The first CI run failed at the narrowest width that keeps the sidebar: Log Analyzer and Kubernetes needed 953pt, against about 938pt locally, and DevOps Commands and Vault 943pt.
+  The difference is the legacy scroller's 15pt track (gotcha (4)).
+  So `contentMinimum` adds one legacy scroller's width while the system draws them, and the shell re-fits the panes when the setting changes.
+  Measured locally with overlay scrollers and on CI with legacy ones, the window suite covers both.
 - **The system's own collapse covers a live drag only.**
   `canCollapseFromWindowResize` collapsed nothing for a frame set in code (the launch frame, the autosaved one, a zoom), so the shell runs the same rule on `NSWindow.didResizeNotification`.
   By the time that notification arrives the split view has already squeezed the sidebar to its 200pt minimum, so the width the sidebar comes back at is remembered from divider drags only, never read off the pane on the way into a collapse.

@@ -61,7 +61,18 @@ final class MainSplitShellController: WorkspaceShellController {
     ///
     /// Stage 4 lowers this as each module's page is reflowed for the column;
     /// `MainSplitShellSelfTest` fails if a page outgrows it first.
-    static let contentMinimum: CGFloat = 940
+    static let contentMinimumWithOverlayScrollers: CGFloat = 940
+
+    /// `contentMinimumWithOverlayScrollers`, plus one scroller's track while
+    /// the system draws legacy scrollers. "Show scroll bars: Always" gives a
+    /// scroll view a real track (gotcha (4)), and each page's floor grows by
+    /// exactly that. Measured on CI's runner, which shows them always: Log
+    /// Analyzer and Kubernetes need 953pt there against about 938pt with
+    /// overlay scrollers, and DevOps Commands 943pt against 929pt.
+    static var contentMinimum: CGFloat {
+        guard NSScroller.preferredScrollerStyle == .legacy else { return contentMinimumWithOverlayScrollers }
+        return contentMinimumWithOverlayScrollers + NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+    }
 
     private let splitController = NSSplitViewController()
     let sidebar = WorkspaceSidebarController()
@@ -111,6 +122,7 @@ final class MainSplitShellController: WorkspaceShellController {
     /// The room the sidebar's pane takes while it shows.
     private var sidebarPaneWidth: CGFloat { sidebarThickness + sidebarInset }
     private var dividerDragObserver: NSObjectProtocol?
+    private var scrollerStyleObserver: NSObjectProtocol?
 
     override var namesThePageInTheTitleBar: Bool { true }
     override var clipboardHistoryController: ClipboardHistoryController? { clipboardHistory }
@@ -161,6 +173,7 @@ final class MainSplitShellController: WorkspaceShellController {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
         if let windowResizeObserver { NotificationCenter.default.removeObserver(windowResizeObserver) }
         if let dividerDragObserver { NotificationCenter.default.removeObserver(dividerDragObserver) }
+        if let scrollerStyleObserver { NotificationCenter.default.removeObserver(scrollerStyleObserver) }
     }
 
     private func buildSplitView(in root: NSView) {
@@ -183,6 +196,20 @@ final class MainSplitShellController: WorkspaceShellController {
         contentItem.minimumThickness = Self.contentMinimum
         contentItem.holdingPriority = NSLayoutConstraint.Priority(rawValue: 250)
         contentItem.titlebarSeparatorStyle = .automatic
+        // The column's floor follows the scroll bar setting (`contentMinimum`).
+        // A lower floor is applied before the panes are fitted, so a sidebar
+        // that comes back is not held to the old one. A higher floor is
+        // applied after, so the sidebar steps aside before the column's
+        // minimum can push the window wider.
+        scrollerStyleObserver = NotificationCenter.default.addObserver(
+            forName: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            let floor = Self.contentMinimum
+            if floor < self.contentItem.minimumThickness { self.contentItem.minimumThickness = floor }
+            self.fitPanesToWindow()
+            self.contentItem.minimumThickness = floor
+        }
 
         inspectorItem = NSSplitViewItem(viewController: inspector)
         inspectorItem.minimumThickness = WorkspaceInspectorController.width
