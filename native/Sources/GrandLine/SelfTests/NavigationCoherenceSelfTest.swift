@@ -55,6 +55,39 @@ enum NavigationCoherenceSelfTest {
         ok = checkNavigationNamesAreDistinct() && ok
         ok = checkWindowTitleComposition() && ok
         ok = checkNoControlOwnsACharacterChord() && ok
+        ok = checkTheFeatureInventoryStaysWired() && ok
+        return ok
+    }
+
+    // MARK: The modular-shell migration's feature inventory
+
+    /// Stage 1 of the modular-shell migration made the feature inventory the
+    /// guard against losing a feature, and that guard is only as good as its
+    /// wiring: a suite whose `FM_RUN_*` block is deleted from `main.swift`
+    /// still compiles and simply never runs (the runner discovers suites from
+    /// that file), and an inventory that is moved fails every row at once
+    /// rather than catching anything. This keeps both ends attached from a
+    /// suite that already guards navigation.
+    private static func checkTheFeatureInventoryStaysWired() -> Bool {
+        var ok = true
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8) else {
+            fail("modular shell: could not read main.swift - the inventory wiring check cannot run", &ok)
+            return ok
+        }
+        for flag in ["FM_RUN_FEATURE_INVENTORY_TESTS", "FM_RUN_MODULE_TABLE_TESTS"] {
+            check(main.contains("environment[\"\(flag)\"]"),
+                  "modular shell: main.swift no longer dispatches \(flag), so the feature inventory is never checked", &ok)
+        }
+        let rows = FeatureInventorySelfTest.loadInventory() ?? []
+        check(rows.count > 300, "modular shell: docs/modular-shell/feature-inventory.md is missing or nearly empty "
+                + "(\(rows.count) rows)", &ok)
+        // Every page the Go menu lists must be a row of the module table, so
+        // the table cannot fall behind a new destination.
+        for destination in RailDestination.allCases {
+            check(ModuleTable.descriptor(for: destination) != nil,
+                  "modular shell: \(destination.rawValue) has no ModuleTable row", &ok)
+        }
         return ok
     }
 
@@ -674,6 +707,14 @@ enum NavigationCoherenceSelfTest {
         // reference, and a blank pill beside a title reads as a bug.
         check(sections.allSatisfy { $0.entries.allSatisfy { !$0.keys.isEmpty } },
               "UX3: the sheet lists an item with an empty chord", &ok)
+        // Each heading is the menu's own name, as the menu bar draws it. An
+        // untitled bar item reports "NSMenuItem", and the sheet used to print
+        // that above every section.
+        let headings = sections.map(\.title)
+        check(!headings.contains("NSMenuItem"),
+              "UX3: a sheet heading reads \"NSMenuItem\" - it is the bar item's placeholder, not the menu's name: \(headings)", &ok)
+        check(headings.first == AppPaths.displayName && headings.contains("File") && headings.contains("Edit"),
+              "UX3: the sheet's headings are not the menu bar's own names: \(headings)", &ok)
         return ok
     }
 
