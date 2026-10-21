@@ -496,14 +496,41 @@ final class CommandLibraryPageView: NSObject {
     /// render built each row twice.
     private func render() {
         if selectedCommandID.flatMap({ store.command(id: $0) }) == nil {
-            selectedCommandID = nil
-            emptyDetailState.isHidden = false
-            detailContentContainer.isHidden = true
+            // UXP-14: open on a command rather than on an empty detail pane
+            // that left most of the window blank - the last one used, or the
+            // first in the list. The placeholder is only for a library with
+            // nothing in it.
+            selectedCommandID = defaultCommandID()
+            paramValues = [:]
+            emptyDetailState.isHidden = selectedCommandID != nil
+            detailContentContainer.isHidden = selectedCommandID == nil
         }
         // Paints the chrome, then renders the column and the selected
         // command's detail in the current theme.
         applyTheme(theme)
     }
+
+    /// The command to show when none is selected: the most recently used
+    /// one that still exists, else the first read-only row the column lists -
+    /// a page should not open with a destructive command one click from the
+    /// terminal - else the first row at all.
+    private func defaultCommandID() -> String? {
+        if let recent = store.recentUsage.first(where: { store.command(id: $0.id) != nil }) {
+            return recent.id
+        }
+        let listed = leftPanelEntries().compactMap { entry -> String? in
+            if case .commandRow(_, let id, _, _) = entry { return id }
+            return nil
+        }
+        return listed.first { store.command(id: $0)?.risk == .readOnly }
+            ?? listed.first ?? store.commands.first?.id
+    }
+
+    #if FM_SELFTESTS
+    /// UXP-14: what the page opened on.
+    var debugSelectedCommandID: String? { selectedCommandID }
+    var debugDetailShowsCommand: Bool { !detailContentContainer.isHidden && emptyDetailState.isHidden }
+    #endif
 
     private func clearStack(_ stack: NSStackView) {
         for v in stack.arrangedSubviews {

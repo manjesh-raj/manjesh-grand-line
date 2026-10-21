@@ -61,6 +61,11 @@ final class CommandLibraryController: NSViewController, DaylightDrillActions {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    #if FM_SELFTESTS
+    /// UXP-14: the page itself, once the view has loaded.
+    var debugPage: CommandLibraryPageView? { isViewLoaded ? page : nil }
+    #endif
+
     // MARK: Drill header (Daylight §6.4)
 
     var onDrillSubtitleChanged: (() -> Void)?

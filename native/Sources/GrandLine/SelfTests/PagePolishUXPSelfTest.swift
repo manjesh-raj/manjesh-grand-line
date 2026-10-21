@@ -37,6 +37,7 @@ enum PagePolishUXPSelfTest {
             ("uxp04HomeCardsAreSizedToTheirContent", uxp04HomeCardsAreSizedToTheirContent),
             ("uxp10HostsNamesItselfOnceAndKeepsItsEmptyStateNearItsAction", uxp10HostsEmptyStateAndName),
             ("uxp11AnEmptyNotebookShowsOneEmptyState", uxp11AnEmptyNotebookShowsOneEmptyState),
+            ("uxp14DevOpsCommandsOpensOnACommand", uxp14DevOpsCommandsOpensOnACommand),
             ("uxp09ReviewForgePlaceholderRowIsTallEnoughToDraw", uxp09ForgePlaceholderRowIsTallEnough),
         ]
         var failed = 0
@@ -592,6 +593,37 @@ enum PagePolishUXPSelfTest {
         check(newPageButtons == 1,
               "UXP-11: an empty notebook offers New page \(newPageButtons) times in the page, want once", &ok)
         check(!sawPreviewTitle, "UXP-11: the preview card shows with no page to preview", &ok)
+        return ok
+    }
+
+    // MARK: UXP-14
+
+    /// DevOps Commands opens on a read-only command's detail, not on an
+    /// empty detail pane that left most of the window blank.
+    private static func uxp14DevOpsCommandsOpensOnACommand() -> Bool {
+        var ok = true
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("page-polish-commands-\(UUID().uuidString)", isDirectory: true)
+        setenv("FM_COMMAND_LIBRARY_DIR", root.path, 1)
+        defer {
+            unsetenv("FM_COMMAND_LIBRARY_DIR")
+            try? FileManager.default.removeItem(at: root)
+        }
+        let store = CommandLibraryStore()
+        let controller = CommandLibraryController(store: store)
+        let window = OffScreenProbe.window(width: 1400, height: 860)
+        defer { _ = window }
+        window.contentView = controller.view
+        controller.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 860)
+        controller.viewWillAppear()
+        controller.view.layoutSubtreeIfNeeded()
+        guard let page = controller.debugPage else {
+            fail("UXP-14: could not reach the commands page", &ok)
+            return ok
+        }
+        check(page.debugDetailShowsCommand, "UXP-14: DevOps Commands opened on an empty detail pane", &ok)
+        let risk = page.debugSelectedCommandID.flatMap { store.command(id: $0) }?.risk
+        check(risk == .readOnly, "UXP-14: the default command should be read-only, got \(String(describing: risk))", &ok)
         return ok
     }
 

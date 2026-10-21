@@ -383,12 +383,13 @@ enum ReviewUIUXSelfTest {
                     return "the scratch library seeded only \(store.commands.count) commands, so "
                          + "this case could not tell a rendered list from an empty one"
                 }
-                // The defect itself: the detail pane says "Pick a command
-                // from the list", so a command row has to be on screen when
-                // it says it.
-                guard page.debugEmptyDetailIsShowing else {
-                    return "the detail pane no longer shows its \"pick a command\" state on open, so "
-                         + "this case is measuring something else"
+                // The defect itself: the page asked the captain to pick from a
+                // list that was not on screen. Since UXP-14 it opens on a
+                // command instead of on "Pick a command from the list" - and
+                // that command has to be one the list is showing.
+                guard page.debugDetailShowsCommand, !page.debugEmptyDetailIsShowing,
+                      let selected = page.debugSelectedCommandID, store.command(id: selected) != nil else {
+                    return "DevOps Commands opened without a command in its detail pane (UXP-14)"
                 }
                 guard contents.commandRowCount == store.commands.count else {
                     return "DevOps Commands opens with \(contents.commandRowCount) command rows on "
