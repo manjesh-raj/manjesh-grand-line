@@ -98,13 +98,16 @@ enum KeyboardShortcutCatalog {
             guard let submenu = topLevel.submenu else { return nil }
             let entries = collect(from: submenu)
             guard !entries.isEmpty else { return nil }
-            // The app menu's own `NSMenuItem` has an empty title (AppKit
-            // substitutes the process name at draw time), so fall back to the
-            // submenu's title, which `buildMenu` does set.
-            let title = topLevel.title.isEmpty ? submenu.title : topLevel.title
-            return KeyboardShortcutSection(
-                title: title.isEmpty ? ProcessInfo.processInfo.processName : title,
-                entries: entries)
+            // `buildMenu` titles each *submenu* and leaves its bar item
+            // untitled, and an untitled `NSMenuItem()` reports "NSMenuItem"
+            // rather than an empty string - so reading the bar item first
+            // headed every section of the sheet "NSMENUITEM" (found by the
+            // feature inventory's walk of the real menu tree). The submenu's
+            // title is the name the menu bar actually draws. The app menu's
+            // submenu is the one left untitled, because AppKit draws the app's
+            // name there, so that is the fallback.
+            let title = submenu.title.isEmpty ? AppPaths.displayName : submenu.title
+            return KeyboardShortcutSection(title: title, entries: entries)
         }
     }
 

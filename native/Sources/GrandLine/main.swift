@@ -3351,6 +3351,16 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
     exit(DaylightModuleSelfTest.run() ? 0 : 1)
 }
 
+// The modular-shell migration's stage 1: `ModuleTable` (step 0) agrees with
+// the six tables it restates, and every feature the code has has a row in
+// `docs/modular-shell/feature-inventory.md`. Both pure logic.
+if ProcessInfo.processInfo.environment["FM_RUN_MODULE_TABLE_TESTS"] == "1" {
+    exit(ModuleTableSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_FEATURE_INVENTORY_TESTS"] == "1" {
+    exit(FeatureInventorySelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-engineering-cards-stale-counts`: a hub summary card must
 // reflect a change the captain made through its own detail page. Window-backed
 // (it mounts a real shell and drives the real pages), so it sits in
@@ -4578,6 +4588,21 @@ if ProcessInfo.processInfo.environment["FM_RUN_HERDR_RESTART_TESTS"] == "1" {
 // HerdrRestartButtonSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_HERDR_RESTART_BUTTON_TESTS"] == "1" {
     exit(HerdrRestartButtonSelfTest.run() ? 0 : 1)
+}
+
+// A suite flag that gets this far named no suite, because every real one above
+// `exit()`s. Falling through would start the app itself under a test flag (the
+// legacy-name migration, the single-instance guard, a window), and the runner
+// would report the typo as a pass. Measured while writing the modular-shell
+// inventory: the HelmKit guard's flag, misspelt with an extra word, "passed"
+// in 0.1s through `run-all-tests.sh` and ran nothing.
+let unknownSuiteFlags = ProcessInfo.processInfo.environment
+    .filter { $0.key.hasPrefix("FM_RUN_") && $0.key.hasSuffix("_TESTS") && $0.value == "1" }
+    .keys.sorted()
+if !unknownSuiteFlags.isEmpty {
+    print("no suite answers to \(unknownSuiteFlags.joined(separator: ", ")) - "
+          + "check the spelling against the flags this file dispatches")
+    exit(2)
 }
 
 #endif
