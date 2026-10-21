@@ -132,8 +132,10 @@ enum Audit2SecurityFixesSelfTest {
              "B36 the auto-reconnect timer, §5.1's recorded leftover"),
             ("ConsoleController.swift", "resumeDeferredReconnects",
              "B36 the resume story the gate is only safe with"),
-            ("AppShellController.swift", "resumeAfterUnlock", "§5.1 replaying what the lock deferred"),
-            ("AppShellController.swift", "closeLockSensitiveSurfaces", "§5.1(b) dismissing on the way into the lock"),
+            // `Workspace` hands both to `LockPresenter` since stage 2 of the
+            // modular-shell migration split the lock out of the shell.
+            ("Workspace.swift", "resumeAfterUnlock", "§5.1 replaying what the lock deferred"),
+            ("Workspace.swift", "closeLockSensitiveSurfaces", "§5.1(b) dismissing on the way into the lock"),
         ]
         for (file, needle, why) in expected {
             guard let source = read(file) else { return "could not read \(file)" }

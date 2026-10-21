@@ -56,6 +56,27 @@ enum SelfTestSources {
         return dir
     }
 
+    /// The shell layer's files. Stage 2 of the modular-shell migration split
+    /// `AppShellController.swift` into these, so a guard asking "does the
+    /// shell still do X" - rather than "does this one file" - reads all of
+    /// them, and a later move between them cannot make it pass vacuously.
+    static let shellLayerFiles = [
+        "AppShellController.swift", "Workspace.swift", "WorkspaceContent.swift", "Navigator.swift",
+        "HostSessionCoordinator.swift", "LockPresenter.swift", "CaptureFilingService.swift",
+    ]
+
+    /// `shellLayerFiles`' text, joined, or `nil` when any of them is missing
+    /// (a guard reading a partial layer would pass for the wrong reason).
+    static func shellLayerSource() -> String? {
+        guard let dir = appSourceDirectory() else { return nil }
+        var parts: [String] = []
+        for name in shellLayerFiles {
+            guard let text = try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8) else { return nil }
+            parts.append(text)
+        }
+        return parts.joined(separator: "\n")
+    }
+
     /// Every `.swift` file directly in the app's source root, sorted. Not
     /// recursive: `SelfTests/` is a child of that root and must stay out of
     /// every source guard's view (see above), and nothing else nests today.

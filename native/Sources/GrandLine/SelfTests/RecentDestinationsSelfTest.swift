@@ -706,6 +706,10 @@ enum RecentDestinationsSelfTest {
     /// this registry a single source of truth rather than a second, possibly-
     /// scattered notion of "where the captain has been". A behavioural check
     /// cannot see a second writer added elsewhere, so this reads the source.
+    ///
+    /// Stage 2 of the modular-shell migration moved that funnel, unchanged,
+    /// from `AppShellController` to `Navigator`, so `Navigator.swift` is the
+    /// one file allowed to record.
     private static func test_recordNavigationIsTheOnlyWriter() -> String? {
         guard let dir = SelfTestSources.appSourceDirectory() else { return nil }
         var writers: [String] = []
@@ -716,8 +720,8 @@ enum RecentDestinationsSelfTest {
                 if line.contains(".recordNavigation(leaving:") { writers.append(name) }
             }
         }
-        guard writers == ["AppShellController.swift"] else {
-            return "recordNavigation is called from \(writers) - expected only AppShellController.swift"
+        guard writers == ["Navigator.swift"] else {
+            return "recordNavigation is called from \(writers) - expected only Navigator.swift"
         }
         return nil
     }

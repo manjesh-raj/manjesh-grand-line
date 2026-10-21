@@ -361,7 +361,9 @@ enum ThemeMotionWebIslandsSelfTest {
         } else {
             print("  OK   installed from applicationDidFinishLaunching")
         }
-        if let shell = sourceFile("AppShellController.swift"),
+        // The whole shell layer since stage 2 of the modular-shell migration
+        // split the shell, so a move between its files cannot hide one.
+        if let shell = SelfTestSources.shellLayerSource(),
            shell.contains("transitionCoordinator =") {
             print("  FAIL AppShellController installs the coordinator: every window-backed suite that mounts a shell and re-themes it would then measure through a snapshot overlay")
             ok = false

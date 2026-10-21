@@ -672,6 +672,10 @@ enum SessionSwitcherSelfTest {
     /// that makes this registry a single source of truth rather than a fifth
     /// independent notion of liveness. A behavioural check cannot see a second
     /// writer added elsewhere, so this reads the source.
+    ///
+    /// Stage 2 of the modular-shell migration moved both, unchanged, from
+    /// `AppShellController` to `HostSessionCoordinator`, so that is the one
+    /// file allowed to register and unregister.
     private static func test_connectHostIsTheOnlyRegistrar() -> String? {
         let dir = SelfTestSources.appSourceDirectory()
         guard let dir else { return nil }
@@ -685,11 +689,11 @@ enum SessionSwitcherSelfTest {
                 if line.contains(".unregister(hostID:") { unregistrars.append(name) }
             }
         }
-        guard registrars == ["AppShellController.swift"] else {
-            return "sessions are registered from \(registrars) - expected only AppShellController.connectHost"
+        guard registrars == ["HostSessionCoordinator.swift"] else {
+            return "sessions are registered from \(registrars) - expected only HostSessionCoordinator.connectHost"
         }
-        guard unregistrars == ["AppShellController.swift"] else {
-            return "sessions are unregistered from \(unregistrars) - expected only AppShellController.removeHostConsole"
+        guard unregistrars == ["HostSessionCoordinator.swift"] else {
+            return "sessions are unregistered from \(unregistrars) - expected only HostSessionCoordinator.removeHostConsole"
         }
         return nil
     }

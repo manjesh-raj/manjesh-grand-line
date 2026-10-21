@@ -3360,6 +3360,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_MODULE_TABLE_TESTS"] == "1" {
 if ProcessInfo.processInfo.environment["FM_RUN_FEATURE_INVENTORY_TESTS"] == "1" {
     exit(FeatureInventorySelfTest.run() ? 0 : 1)
 }
+// Stage 2: `AppShellController` split into the floating-bar shell's chrome
+// and the parts any shell hosts. Pure logic - source guards plus scratch
+// stores.
+if ProcessInfo.processInfo.environment["FM_RUN_SHELL_SPLIT_TESTS"] == "1" {
+    exit(ShellSplitSelfTest.run() ? 0 : 1)
+}
 
 // `fm/grandline-engineering-cards-stale-counts`: a hub summary card must
 // reflect a change the captain made through its own detail page. Window-backed

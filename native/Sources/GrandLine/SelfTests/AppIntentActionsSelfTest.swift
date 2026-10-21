@@ -751,25 +751,38 @@ enum AppIntentActionsSelfTest {
     /// so could not tell the two apart - which is exactly the distinction that
     /// matters.
     private static func checkServicesAreRegisteredBeforeAnyWindow(_ check: (Bool, String) -> Void) {
+        // Stage 2 of the modular-shell migration moved the stores, and so the
+        // registration, from `AppShellController.init` into `Workspace.init`,
+        // which the shell's `init` runs before `super.init`. Both halves are
+        // read: the registration is in `Workspace`'s initialiser, and the shell
+        // builds its workspace in its own initialiser rather than later.
         guard let sources = SelfTestSources.appSourceDirectory(),
-              let text = try? String(contentsOf: sources.appendingPathComponent("AppShellController.swift"), encoding: .utf8) else {
-            check(false, "SKIPPED: could not read AppShellController.swift")
+              let text = try? String(contentsOf: sources.appendingPathComponent("Workspace.swift"), encoding: .utf8),
+              let shell = try? String(contentsOf: sources.appendingPathComponent("AppShellController.swift"), encoding: .utf8) else {
+            check(false, "SKIPPED: could not read Workspace.swift and AppShellController.swift")
             return
         }
         let calls = text.components(separatedBy: "GrandLineServices.shared.register(").count - 1
-        check(calls == 1, "AppShellController registers its stores with GrandLineServices exactly once (found \(calls))")
+        check(calls == 1, "the workspace registers its stores with GrandLineServices exactly once (found \(calls))")
+        check(!shell.contains("GrandLineServices.shared.register("),
+              "and the shell does not register a second time")
 
-        // The registration must sit before `super.init`, which is the only
-        // place in the file that is unambiguously `init` and not `loadView`.
+        // The registration must sit inside the workspace's own `init`, before
+        // the first method after it.
         guard let registerAt = text.range(of: "GrandLineServices.shared.register("),
-              let superInitAt = text.range(of: "super.init(nibName: nil, bundle: nil)"),
-              let loadViewAt = text.range(of: "override func loadView()") else {
-            check(false, "found the register call, super.init and loadView to compare")
+              let initAt = text.range(of: "    init(\n"),
+              let firstMethodAt = text.range(of: "    private func prepareForLock()"),
+              let workspaceAt = shell.range(of: "self.workspace = Workspace("),
+              let superInitAt = shell.range(of: "super.init(nibName: nil, bundle: nil)"),
+              let loadViewAt = shell.range(of: "override func loadView()") else {
+            check(false, "found the register call, the two initialisers and loadView to compare")
             return
         }
-        check(registerAt.lowerBound < superInitAt.lowerBound,
-              "the registration happens in init, before super.init - not deferred to a later hook")
-        check(registerAt.lowerBound < loadViewAt.lowerBound,
+        check(initAt.lowerBound < registerAt.lowerBound && registerAt.lowerBound < firstMethodAt.lowerBound,
+              "the registration happens in the workspace's init - not deferred to a later hook")
+        check(workspaceAt.lowerBound < superInitAt.lowerBound,
+              "the shell builds its workspace in init, before super.init")
+        check(workspaceAt.lowerBound < loadViewAt.lowerBound,
               "and strictly before loadView(), which compact mode may never run at all")
     }
 

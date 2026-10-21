@@ -957,10 +957,12 @@ enum StrawHatSelfTest {
             print("  NOTE: source tree not reachable - skipping the quit-wiring source guard")
             return
         }
-        let shell = (try? String(contentsOf: sources.appendingPathComponent("AppShellController.swift"), encoding: .utf8)) ?? ""
+        // `Workspace` owns the crew page since stage 2 of the modular-shell
+        // migration; the shell's `shutdownStrawHatCrew` forwards to it.
+        let shell = (try? String(contentsOf: sources.appendingPathComponent("Workspace.swift"), encoding: .utf8)) ?? ""
         let main = (try? String(contentsOf: sources.appendingPathComponent("main.swift"), encoding: .utf8)) ?? ""
         check(shell.contains("strawHat.shutdown()"),
-              "AppShellController must forward the quit teardown to the crew page", &ok)
+              "the workspace must forward the quit teardown to the crew page", &ok)
         check(main.contains("appShell.shutdownStrawHatCrew()"),
               "applicationWillTerminate must call that forward - an unwired shutdown is invisible", &ok)
     }

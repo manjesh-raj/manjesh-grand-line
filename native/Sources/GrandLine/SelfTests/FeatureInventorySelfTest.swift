@@ -458,9 +458,13 @@ enum FeatureInventorySelfTest {
     /// categories and their buttons, the App Intents, and the widgets.
     static func deepLinkIDs() -> [String: String] {
         var out: [String: String] = [:]
-        if let shell = source("AppShellController.swift") {
+        // The shell's own API and the navigator it forwards to since stage 2
+        // of the modular-shell migration: a route kept on either still
+        // counts, and one dropped from both fails.
+        for file in ["AppShellController.swift", "Navigator.swift"] {
+            guard let text = source(file) else { continue }
             let pattern = #"(?m)^\s*(?:@objc\s+)?func\s+((?:open|show|select|switchTo|reveal|new)[A-Za-z]*)\("#
-            for name in matches(pattern, in: shell) { out["link.route.\(name)"] = name }
+            for name in matches(pattern, in: text) { out["link.route.\(name)"] = name }
         }
         for category in NotificationActionRouting.categories() {
             out["link.notification.\(category.identifier)"] = category.identifier

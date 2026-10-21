@@ -9,8 +9,9 @@
 //   1. `RailDestination` - title and symbol,
 //   2. `RailDestination.domainHue` - the hue,
 //   3. `DestinationRegistry` - the body slot and the drill subtitle,
-//   4. `AppShellController`'s `register(...)` lines - the eager-mount flag,
-//      read from the source because the shell cannot be built headless,
+//   4. the `register(...)` lines in `Workspace.registerDestinations` - the
+//      eager-mount flag, read from the source because the workspace cannot
+//      be built headless,
 //   5. `DaylightModule` - the space, and the Home cards that open the page,
 //   6. `ContextualNewAction` - what ⌘N creates there,
 //
@@ -83,11 +84,13 @@ enum ModuleTableSelfTest {
         }
     }
 
-    /// The eager-mount flag lives in the shell's own `register(...)` lines, and
-    /// the shell needs a full app to construct, so the lines are read as text.
+    /// The eager-mount flag lives in the `register(...)` lines, and the
+    /// workspace that holds them needs a full app to construct, so the lines
+    /// are read as text. `Workspace.registerDestinations` since stage 2 of the
+    /// migration moved them out of `AppShellController.loadView`.
     private static func checkEagerMountsAgreeWithTheShell(_ ok: inout Bool) {
-        guard let shell = FeatureInventorySelfTest.source("AppShellController.swift") else {
-            fail("could not read AppShellController.swift - the eager-mount check cannot run", &ok)
+        guard let shell = FeatureInventorySelfTest.source("Workspace.swift") else {
+            fail("could not read Workspace.swift - the eager-mount check cannot run", &ok)
             return
         }
         let pattern = #"register\(DestinationSlot\(id: \.([A-Za-z]+),[^)]*mountsEagerly: (true|false)"#
