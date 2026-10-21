@@ -391,6 +391,38 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         let height = sharedTaskFollowUpBodyHeight()
         taskListHeightConstraint?.constant = height
         followUpHeightConstraint?.constant = height
+        taskOverflowHint.recount()
+        followUpOverflowHint.recount()
+    }
+
+    /// UXP-18: "3 more below" under a panel that scrolls. The two panels sit
+    /// side by side at one shared height (U15), so the hint row is shown on
+    /// both or on neither - otherwise the panel with more rows would be a
+    /// line taller than its neighbour.
+    private let taskOverflowHint = HelmOverflowHint(leadingInset: HelmMetrics.s4, bottomInset: HelmMetrics.s3)
+    private let followUpOverflowHint = HelmOverflowHint(leadingInset: HelmMetrics.s4, bottomInset: HelmMetrics.s3)
+
+    private func applyPanelOverflowHints() {
+        let taskCount = taskPanel.isHidden ? 0 : taskOverflowHint.countBelow
+        let needed = taskCount > 0 || followUpOverflowHint.countBelow > 0
+        taskOverflowHint.isHidden = !needed
+        followUpOverflowHint.isHidden = !needed
+    }
+
+    /// A scrolling list's body: the list, then the hint row under it.
+    private func panelBody(_ scroll: NSScrollView, hint: HelmOverflowHint, table: NSTableView) -> NSView {
+        hint.watch(scroll) { (0..<table.numberOfRows).map { table.rect(ofRow: $0) } }
+        hint.onCountChanged = { [weak self] _ in self?.applyPanelOverflowHints() }
+        let stack = NSStackView(views: [scroll, hint])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = HelmMetrics.s1
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            hint.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+        return stack
     }
 
     #if FM_SELFTESTS
@@ -941,7 +973,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         taskListHeightConstraint = taskHeight
 
         taskPanel.setHeader(headerRow)
-        taskPanel.setBody(taskListScroll)
+        taskPanel.setBody(panelBody(taskListScroll, hint: taskOverflowHint, table: taskListView.tableView))
         taskPanel.translatesAutoresizingMaskIntoConstraints = false
         return taskPanel
     }
@@ -968,7 +1000,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         followUpHeightConstraint = followUpHeight
 
         followUpPanel.setHeader(headerRow)
-        followUpPanel.setBody(followUpScroll)
+        followUpPanel.setBody(panelBody(followUpScroll, hint: followUpOverflowHint, table: followUpListView.tableView))
         followUpPanel.translatesAutoresizingMaskIntoConstraints = false
         return followUpPanel
     }
@@ -2559,6 +2591,12 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// behind its back.
     func debugRender() { render() }
 
+    /// UXP-18: the two list panels' hints as drawn.
+    var debugPanelOverflowHints: (tasks: String, followUps: String) {
+        (taskOverflowHint.debugText, followUpOverflowHint.debugText)
+    }
+    var debugBoardColumns: [ShiftBoardColumnView] { boardView.debugColumnViews }
+
     /// UXP-02: the project cards the last render built.
     var debugProjectCards: [ShiftProjectCardView] { projectCards }
 
@@ -2620,6 +2658,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         projectsCountBadge.textColor = muted
         taskListView.applyTheme(theme)
         followUpListView.applyTheme(theme)
+        taskOverflowHint.applyTheme(theme)
+        followUpOverflowHint.applyTheme(theme)
         // UXP-02: the project grid is built per data render, so the cards on
         // screen are repainted here rather than left in the old palette.
         for card in projectCards { card.applyTheme(theme) }

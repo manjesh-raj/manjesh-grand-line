@@ -27,6 +27,8 @@ enum PagePolishUXPSelfTest {
             ("uxp01SearchPillKeepsItsPlaceholderBesideALongSubtitle", uxp01SearchPillKeepsItsPlaceholder),
             ("uxp02ProjectCardsRepaintOnAThemeSwitch", uxp02ProjectCardsRepaintOnAThemeSwitch),
             ("uxp03WeeklyReviewKeepsThePageMargin", uxp03WeeklyReviewKeepsThePageMargin),
+            ("uxp18BoardLaneShowsACountAndNoSliver", uxp18BoardLaneShowsACountAndNoSliver),
+            ("uxp18ListPanelSaysHowManyMoreRows", uxp18ListPanelSaysHowManyMoreRows),
             ("uxp09ReviewForgePlaceholderRowIsTallEnoughToDraw", uxp09ForgePlaceholderRowIsTallEnough),
         ]
         var failed = 0
@@ -252,6 +254,60 @@ enum PagePolishUXPSelfTest {
             check(toggled.tabs >= HelmMetrics.pageGutter - 0.5,
                   "UXP-03: with the column hidden by Toggle Sidebar the content sits \(toggled.tabs)pt from the edge", &ok)
             shift.debugToggleSidebar()
+        }
+        return ok
+    }
+
+    // MARK: UXP-18
+
+    private static func seedPlainTasks(_ store: ShiftStore, count: Int) {
+        for index in 0..<count {
+            var task = ShiftTask.fresh()
+            task.title = "Plain task \(index + 1)"
+            task.status = .todo
+            store.addTask(task)
+        }
+    }
+
+    /// Seven plain cards in Backlog: the lane shows whole cards and says how
+    /// many more there are. Plain cards are the shape that left room for a
+    /// strip of the fifth under the tallest-card cap.
+    private static func uxp18BoardLaneShowsACountAndNoSliver() -> Bool {
+        var ok = true
+        withScratchShiftStore { store in
+            seedPlainTasks(store, count: 7)
+            let (window, shift) = mountShift(store)
+            defer { _ = window }
+            shift.debugShowView("board")
+            shift.view.layoutSubtreeIfNeeded()
+            shift.view.layoutSubtreeIfNeeded()
+            guard let backlog = shift.debugBoardColumns.first(where: { $0.column == .backlog }) else {
+                fail("UXP-18: the board has no Backlog lane", &ok)
+                return
+            }
+            check(backlog.debugCardViews.count == 7, "UXP-18: Backlog should hold the seven seeded cards", &ok)
+            check(!backlog.debugHasPartlyVisibleCard,
+                  "UXP-18: a Backlog card is cut by the bottom of the lane - the sliver is back", &ok)
+            let hint = backlog.debugOverflowHintText
+            check(hint.hasSuffix("more below") && !hint.hasPrefix("0"),
+                  "UXP-18: the Backlog lane should say how many cards are below, said \"\(hint)\"", &ok)
+        }
+        return ok
+    }
+
+    /// Seven open tasks on the List view: My Tasks shows four rows and says
+    /// "3 more below". It used to show four with nothing to say.
+    private static func uxp18ListPanelSaysHowManyMoreRows() -> Bool {
+        var ok = true
+        withScratchShiftStore { store in
+            seedPlainTasks(store, count: 7)
+            let (window, shift) = mountShift(store)
+            defer { _ = window }
+            shift.debugShowView("list")
+            shift.view.layoutSubtreeIfNeeded()
+            let hints = shift.debugPanelOverflowHints
+            check(hints.tasks == "3 more below",
+                  "UXP-18: My Tasks should say \"3 more below\", said \"\(hints.tasks)\"", &ok)
         }
         return ok
     }

@@ -669,6 +669,8 @@ final class ShiftBoardColumnView: NSView {
     private let scroll = NSScrollView()
     private let cardsStack = NSStackView()
     private let overflowLabel = NSTextField(labelWithString: "")
+    /// UXP-18: "3 more below" when the lane scrolls inside its card.
+    private let overflowHint = HelmOverflowHint()
     /// U1 of the review: "one empty-state shape ... pick `HelmEmptyState`
     /// everywhere". This column drew a bare centred `NSTextField` - "Nothing
     /// here." - while every other empty surface in the app draws a symbol,
@@ -801,7 +803,10 @@ final class ShiftBoardColumnView: NSView {
         dropView.onDropTask = { [weak self] id, column in self?.onDropTask?(id, column) ?? false }
         dropView.onDropTargetChanged = { [weak self] _ in self?.applyDropHighlight() }
 
-        let body = NSStackView(views: [scroll, overflowLabel, addButton])
+        overflowHint.watch(scroll) { [weak self] in self?.cardViews.map(\.frame) ?? [] }
+        overflowHint.onCountChanged = { [weak self] count in self?.overflowHint.isHidden = count == 0 }
+
+        let body = NSStackView(views: [scroll, overflowHint, overflowLabel, addButton])
         body.orientation = .vertical
         body.alignment = .leading
         body.spacing = HelmMetrics.s2
@@ -828,6 +833,7 @@ final class ShiftBoardColumnView: NSView {
             body.bottomAnchor.constraint(equalTo: dropView.bottomAnchor, constant: -HelmMetrics.s1),
             scroll.widthAnchor.constraint(equalTo: body.widthAnchor),
             overflowLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
+            overflowHint.widthAnchor.constraint(equalTo: body.widthAnchor),
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             emptyState.leadingAnchor.constraint(equalTo: dropView.leadingAnchor),
             emptyState.trailingAnchor.constraint(equalTo: dropView.trailingAnchor),
@@ -891,6 +897,7 @@ final class ShiftBoardColumnView: NSView {
     override func layout() {
         super.layout()
         applyBodyHeight()
+        overflowHint.recount()
         HelmMotion.withoutImplicitAnimation {
             dropOutline.frame = dropView.bounds
             dropOutline.path = CGPath(roundedRect: dropView.bounds.insetBy(dx: 0.5, dy: 0.5),
@@ -945,6 +952,7 @@ final class ShiftBoardColumnView: NSView {
         headerRule.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
             .withAlphaComponent(theme.isDaylight ? 1 : HelmCard.borderAlpha).cgColor
         overflowLabel.textColor = HelmTheme.mutedInk(theme)
+        overflowHint.applyTheme(theme)
         emptyState.applyTheme(theme)
         filteredEmptyState.applyTheme(theme)
         skeleton.applyTheme(theme)
@@ -993,8 +1001,29 @@ final class ShiftBoardColumnView: NSView {
         guard let bodyHeight else { return }
         let measured = cardViews.reduce(CGFloat(0)) { $0 + $1.frame.height }
             + cardsStack.spacing * CGFloat(max(0, cardViews.count - 1))
-        let desired = min(max(plannedBodyHeight, measured), Self.maxBodyHeight)
+        var desired = min(max(plannedBodyHeight, measured), Self.maxBodyHeight)
+        // UXP-18: a lane that scrolls stops on a card boundary. The cap is
+        // four of the *tallest* card shape, so four shorter cards left room
+        // for an 8pt strip of the fifth - which read as a clipped card, with
+        // "Add task" abutting it. Whole cards only, and the hint below says
+        // how many more there are.
+        if measured > desired + 0.5 { desired = Self.wholeCardHeight(cardViews.map(\.frame.height),
+                                                                       spacing: cardsStack.spacing,
+                                                                       within: desired) }
         if abs(bodyHeight.constant - desired) > 0.5 { bodyHeight.constant = desired }
+    }
+
+    /// The tallest run of whole cards, from the top, that fits `limit`.
+    /// `limit` itself when even the first card does not fit (or nothing has
+    /// been laid out yet), so a lane never collapses to nothing.
+    static func wholeCardHeight(_ heights: [CGFloat], spacing: CGFloat, within limit: CGFloat) -> CGFloat {
+        var used: CGFloat = 0
+        for (index, height) in heights.enumerated() where height > 0 {
+            let next = used + (index > 0 ? spacing : 0) + height
+            if next > limit + 0.5 { break }
+            used = next
+        }
+        return used > 0 ? used : limit
     }
 
     private var plannedBodyHeight: CGFloat = ShiftBoardColumnView.minBodyHeight
@@ -1012,6 +1041,13 @@ final class ShiftBoardColumnView: NSView {
     func debugPressClearFilter() { clearFilterButton.performClick(nil) }
     func debugSetDropTargeted(_ targeted: Bool) { dropView.debugSetTargeted(targeted) }
     var debugOverflowText: String { overflowLabel.isHidden ? "" : overflowLabel.stringValue }
+    /// UXP-18: the lane's "N more below" as drawn, and whether any card is
+    /// cut by the bottom of the visible area.
+    var debugOverflowHintText: String { overflowHint.debugText }
+    var debugHasPartlyVisibleCard: Bool {
+        let visible = scroll.contentView.bounds
+        return cardViews.contains { $0.frame.minY < visible.maxY - 0.5 && $0.frame.maxY > visible.maxY + 0.5 }
+    }
     var debugDropView: ShiftBoardDropView { dropView }
     var debugScrollHeight: CGFloat { scroll.frame.height }
     /// U1: the column's empty state, which is a `HelmEmptyState` now rather
@@ -1034,6 +1070,9 @@ final class ShiftBoardColumnView: NSView {
 final class ShiftBoardView: NSView {
 
     private let columnViews: [ShiftBoardColumnView]
+    #if FM_SELFTESTS
+    var debugColumnViews: [ShiftBoardColumnView] { columnViews }
+    #endif
     private let row = NSStackView()
 
     var onOpenTask: ((String) -> Void)?
