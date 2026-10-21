@@ -643,9 +643,14 @@ enum PagePolishUXPSelfTest {
     /// comes back. Runs only against this process's scratch data root.
     private static func uxp15DocsDrawsNoToolbarOverItsEmptyState() -> Bool {
         var ok = true
-        // `main.swift`'s self-test block points `FM_DOCS_DIR` at this
-        // process's own scratch folder; anything else is a real folder.
-        guard DocsStore.folderURL.path.contains("selftest-process-") else {
+        // Every self-test process runs with `FM_DOCS_DIR` set - `main.swift`
+        // points it at the process's own scratch folder unless a caller (CI's
+        // store redirect) already has. The real folder is only ever the
+        // unset default, so refuse anything that is not that override.
+        let override = ProcessInfo.processInfo.environment["FM_DOCS_DIR"] ?? ""
+        guard !override.isEmpty,
+              DocsStore.folderURL.standardizedFileURL.path
+                == URL(fileURLWithPath: (override as NSString).expandingTildeInPath).standardizedFileURL.path else {
             fail("UXP-15: the docs folder \(DocsStore.folderURL.path) is not this process's scratch - "
                  + "refusing to write to it", &ok)
             return ok
@@ -664,9 +669,13 @@ enum PagePolishUXPSelfTest {
 
         try? FileManager.default.createDirectory(at: DocsStore.folderURL, withIntermediateDirectories: true)
         try? "<html><body>Playbook</body></html>".write(to: index, atomically: true, encoding: .utf8)
+        // Through the real notification, which the center delivers on a later
+        // main-queue turn - so pump until it lands, with a bound.
         DocsSyncCenter.notifySynced()
-        // The center delivers on the next main-queue turn.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        let deadline = Date().addingTimeInterval(2)
+        while !docs.debugToolbarIsShowing, Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
         docs.view.layoutSubtreeIfNeeded()
         check(docs.debugToolbarIsShowing, "UXP-15: a synced playbook should bring the toolbar back", &ok)
         return ok
@@ -695,6 +704,21 @@ enum PagePolishUXPSelfTest {
               "UXP-16: a changed chord should offer the reset back to the default", &ok)
         check(!dictation.debugVocabularyPlaceholder.isEmpty,
               "UXP-16: the \"Words I use often\" field draws no placeholder", &ok)
+
+        // UXP-08 on this page, in the state CI's runner is in: no speech
+        // permission and no model. The permission request is the one
+        // primary; the download steps down, and steps back up once the
+        // permission is there.
+        dictation.debugSetModelState(.notDownloaded)
+        dictation.debugSetStatus(.needsSpeechRecognition)
+        dictation.view.layoutSubtreeIfNeeded()
+        let primaries = visiblePrimaryButtons(in: dictation.view)
+        check(primaries.count == 1,
+              "UXP-08: Dictation shows \(primaries.count) primary buttons with a permission missing and no model: "
+              + "\(primaries.map(\.title))", &ok)
+        dictation.debugSetStatus(.ready)
+        check(dictation.debugModelActionVariant == .primary,
+              "UXP-08: with nothing else to ask for, Download Model should be the page's primary", &ok)
         return ok
     }
 
