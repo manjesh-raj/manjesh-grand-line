@@ -59,6 +59,10 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// Every panel header on the page, so `applyTheme` hands each one the
     /// theme - `HelmSectionHeader` is given its theme, like `HelmCard`.
     private var sectionHeaders: [HelmSectionHeader] = []
+    /// UXP-02: the project grid's live cards (or its empty state), so the
+    /// theme pass can repaint what the last data render built.
+    private var projectCards: [ShiftProjectCardView] = []
+    private weak var projectsGridEmptyState: HelmEmptyState?
 
     // MARK: Weekly Review (phase 5, cockpit-shift-power-features)
 
@@ -1946,6 +1950,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         }
         let projects = store.projects
         guard !projects.isEmpty else {
+            projectCards.removeAll()
             // Built fresh each call (not the retained `projectsEmptyState`
             // property elsewhere) so its one-time width/height constraints
             // never accumulate across repeated rebuilds - `rebuildProjectsGrid`
@@ -1953,6 +1958,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             // down constraints, which would otherwise pile up duplicates.
             let empty = HelmEmptyState(symbol: "shippingbox", body: "No projects yet.\nCreate one to start tracking tasks against it.")
             empty.applyTheme(theme)
+            projectsGridEmptyState = empty
             empty.translatesAutoresizingMaskIntoConstraints = false
             empty.heightAnchor.constraint(equalToConstant: 110).isActive = true
             projectsGridContainer.addArrangedSubview(empty)
@@ -1963,9 +1969,11 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         let containerWidth = projectsGridContainer.frame.width > 0 ? projectsGridContainer.frame.width : 860
         let columnsPerRow = max(1, Int((containerWidth + Self.projectCardSpacing) / (Self.projectCardMinWidth + Self.projectCardSpacing)))
 
+        projectCards.removeAll()
         let cards: [NSView] = projects.map { project in
             let (completed, total) = store.taskCounts(forProject: project.id)
             let card = ShiftProjectCardView()
+            projectCards.append(card)
             card.configure(project: project, completed: completed, total: total, theme: theme)
             card.onOpenDetail = { [weak self] in
                 self?.projectsView = .detail(project.id)
@@ -2527,6 +2535,9 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// behind its back.
     func debugRender() { render() }
 
+    /// UXP-02: the project cards the last render built.
+    var debugProjectCards: [ShiftProjectCardView] { projectCards }
+
     // MARK: F7's probe surface
 
     var debugFocusPanelIsVisible: Bool { !reviewFocusPanel.isHidden }
@@ -2571,6 +2582,10 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         projectsCountBadge.textColor = muted
         taskListView.applyTheme(theme)
         followUpListView.applyTheme(theme)
+        // UXP-02: the project grid is built per data render, so the cards on
+        // screen are repainted here rather than left in the old palette.
+        for card in projectCards { card.applyTheme(theme) }
+        projectsGridEmptyState?.applyTheme(theme)
         applySyncPill()
 
         detailBackButton.contentTintColor = muted

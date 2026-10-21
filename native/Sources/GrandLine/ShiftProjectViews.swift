@@ -157,19 +157,28 @@ final class ShiftProjectCardView: NSView {
 
     func configure(project: ShiftProject, completed: Int, total: Int, theme: HelmTheme) {
         self.project = project
-        self.theme = theme
 
         nameLabel.stringValue = project.name
-        nameLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-
         descriptionLabel.isHidden = project.description.isEmpty
         descriptionLabel.stringValue = project.description
-        descriptionLabel.textColor = HelmTheme.mutedInk(theme)
-
         progressLabel.stringValue = "\(completed) of \(total) tasks completed"
-        progressLabel.textColor = HelmTheme.mutedInk(theme)
-
         progressTrack.configure(fraction: total > 0 ? Double(completed) / Double(total) : 0)
+        iconTile.configure(symbol: "shippingbox", tint: Self.tint(for: project.status))
+        applyTheme(theme)
+    }
+
+    /// Every colour this card draws, re-applied for `theme`.
+    ///
+    /// UXP-02: these used to be set only inside `configure`, and the grid
+    /// builds its cards per data render, so a theme change that did not also
+    /// re-render the grid left every card in the previous palette - Dusk's
+    /// near-white titles on Daylight's white card. The page's theme pass now
+    /// calls this over the live cards (GL-24: repaint, never rebuild).
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        nameLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        descriptionLabel.textColor = HelmTheme.mutedInk(theme)
+        progressLabel.textColor = HelmTheme.mutedInk(theme)
         // `.violet` is the hue Projects already carries in this page's own
         // section header, so the bar reads as part of the same thing rather
         // than borrowing the page-wide accent.
@@ -186,10 +195,14 @@ final class ShiftProjectCardView: NSView {
             ? HelmTheme.nsColor(theme.daylightTokens.rowHover)
             : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.18)
 
-        iconTile.configure(symbol: "shippingbox", tint: Self.tint(for: project.status))
         iconTile.applyTheme(theme)
-        applyStatusPill(project.status)
+        if let status = project?.status { applyStatusPill(status) }
     }
+
+    #if FM_SELFTESTS
+    /// UXP-02: the colour the title is painted in right now.
+    var debugNameColor: NSColor? { nameLabel.textColor }
+    #endif
 
     /// The one status -> `HelmTint` mapping this card uses for both the
     /// icon tile and the status pill, so the two can never disagree about

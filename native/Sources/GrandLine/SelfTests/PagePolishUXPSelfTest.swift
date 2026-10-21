@@ -25,6 +25,7 @@ enum PagePolishUXPSelfTest {
             ("uxp01ReviewDrawsDashesNotZerosAfterATotalFailure", uxp01ReviewDrawsDashesNotZeros),
             ("uxp01ReviewKeepsRealCountsOnAPartialFailure", uxp01ReviewKeepsRealCountsOnAPartialFailure),
             ("uxp01SearchPillKeepsItsPlaceholderBesideALongSubtitle", uxp01SearchPillKeepsItsPlaceholder),
+            ("uxp02ProjectCardsRepaintOnAThemeSwitch", uxp02ProjectCardsRepaintOnAThemeSwitch),
             ("uxp09ReviewForgePlaceholderRowIsTallEnoughToDraw", uxp09ForgePlaceholderRowIsTallEnough),
         ]
         var failed = 0
@@ -145,6 +146,71 @@ enum PagePolishUXPSelfTest {
         check(pill.frame.width >= readable - 0.5,
               "UXP-01: the pill collapsed to \(pill.frame.width)pt beside a long subtitle (needs \(readable))", &ok)
         check(!pill.debugPlaceholderIsTruncated, "UXP-01: the search placeholder is truncated", &ok)
+        return ok
+    }
+
+    // MARK: UXP-02
+
+    private static func withScratchShiftStore(_ body: (ShiftStore) -> Void) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("page-polish-uxp-\(UUID().uuidString)", isDirectory: true)
+        setenv("FM_SHIFT_DIR", root.path, 1)
+        defer {
+            unsetenv("FM_SHIFT_DIR")
+            try? FileManager.default.removeItem(at: root)
+        }
+        body(ShiftStore())
+    }
+
+    private static func mountShift(_ store: ShiftStore) -> (window: NSWindow, controller: ShiftController) {
+        let controller = ShiftController(store: store)
+        let window = OffScreenProbe.window(width: 1512, height: 950)
+        window.contentView = controller.view
+        controller.view.frame = NSRect(x: 0, y: 0, width: 1512, height: 950)
+        controller.debugRender()
+        controller.view.layoutSubtreeIfNeeded()
+        return (window, controller)
+    }
+
+    private static func sameColor(_ a: NSColor?, _ b: NSColor) -> Bool {
+        guard let a = a?.usingColorSpace(.sRGB), let b = b.usingColorSpace(.sRGB) else { return false }
+        return abs(a.redComponent - b.redComponent) < 0.01 && abs(a.greenComponent - b.greenComponent) < 0.01
+            && abs(a.blueComponent - b.blueComponent) < 0.01
+    }
+
+    /// A project card built under Dusk is repainted when the theme flips to
+    /// Daylight, with no data render in between. It used to keep Dusk's
+    /// near-white title on Daylight's white card.
+    private static func uxp02ProjectCardsRepaintOnAThemeSwitch() -> Bool {
+        var ok = true
+        guard let dusk = HelmTheme.theme(id: "dusk"), let daylight = HelmTheme.theme(id: "daylight") else {
+            fail("UXP-02: the dusk and daylight palettes should exist", &ok)
+            return ok
+        }
+        // The fixture only discriminates if the two inks really differ.
+        check(!sameColor(HelmTheme.nsColor(dusk.chromeInkHex), HelmTheme.nsColor(daylight.chromeInkHex)),
+              "UXP-02: Dusk's and Daylight's ink should differ, or this case cannot fail", &ok)
+        ThemeManager.shared.setTheme(dusk)
+        withScratchShiftStore { store in
+            var project = ShiftProject.fresh()
+            project.name = "Infra hardening"
+            store.addProject(project)
+            let (window, shift) = mountShift(store)
+            defer { _ = window }
+            guard let card = shift.debugProjectCards.first else {
+                fail("UXP-02: the Tasks page built no project card for a seeded project", &ok)
+                return
+            }
+            check(sameColor(card.debugNameColor, HelmTheme.nsColor(dusk.chromeInkHex)),
+                  "UXP-02: the card's title should start in Dusk's ink", &ok)
+            ThemeManager.shared.setTheme(daylight)
+            check(shift.debugProjectCards.first === card,
+                  "UXP-02: a theme switch should repaint the card, not rebuild it (GL-24)", &ok)
+            check(sameColor(card.debugNameColor, HelmTheme.nsColor(daylight.chromeInkHex)),
+                  "UXP-02: after a switch to Daylight the card's title is still painted "
+                  + "\(card.debugNameColor.map { "\($0)" } ?? "nil")", &ok)
+        }
+        ThemeManager.shared.setTheme(dusk)
         return ok
     }
 
