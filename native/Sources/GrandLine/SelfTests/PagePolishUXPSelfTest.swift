@@ -288,6 +288,10 @@ enum PagePolishUXPSelfTest {
         var ok = true
         withScratchShiftStore { store in
             seedPlainTasks(store, count: 7)
+            var started = ShiftTask.fresh()
+            started.title = "Started task"
+            started.status = .inProgress
+            store.addTask(started)
             let (window, shift) = mountShift(store)
             defer { _ = window }
             shift.debugShowView("board")
@@ -303,6 +307,14 @@ enum PagePolishUXPSelfTest {
             let hint = backlog.debugOverflowHintText
             check(hint.hasSuffix("more below") && !hint.hasPrefix("0"),
                   "UXP-18: the Backlog lane should say how many cards are below, said \"\(hint)\"", &ok)
+            // And the lanes still end on one line: a hint row or a whole-card
+            // snap in one lane must not drop its "Add task" below the others'.
+            let addTops = shift.debugBoardColumns.filter { $0.column != .done }.map { column -> CGFloat in
+                let button = column.debugAddButton
+                return button.convert(button.bounds, to: nil).minY
+            }
+            check((addTops.max() ?? 0) - (addTops.min() ?? 0) < 1,
+                  "UXP-18: the lanes' Add task rows sit at different heights: \(addTops)", &ok)
         }
         return ok
     }

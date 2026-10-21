@@ -698,6 +698,16 @@ final class ShiftBoardColumnView: NSView {
     private let addButton = HelmButton(title: "Add task", variant: .quiet, size: .small, symbol: "plus")
 
     private var cardViews: [ShiftBoardCardView] = []
+
+    /// UXP-18: fired when this lane's "N more below" count changes, so the
+    /// board can show the hint row on every lane or on none - a hint in one
+    /// lane alone would drop its "Add task" a line below its neighbours'.
+    var onOverflowHintChanged: (() -> Void)?
+    var overflowHintCount: Int { overflowHint.countBelow }
+    func setOverflowHintRowShown(_ shown: Bool) {
+        guard overflowHint.isHidden == shown else { return }
+        overflowHint.isHidden = !shown
+    }
     private lazy var cardRows = HelmKeyedRows(stack: cardsStack)
     private var bodyHeight: NSLayoutConstraint?
     private var theme: HelmTheme = ThemeManager.shared.theme
@@ -804,7 +814,7 @@ final class ShiftBoardColumnView: NSView {
         dropView.onDropTargetChanged = { [weak self] _ in self?.applyDropHighlight() }
 
         overflowHint.watch(scroll) { [weak self] in self?.cardViews.map(\.frame) ?? [] }
-        overflowHint.onCountChanged = { [weak self] count in self?.overflowHint.isHidden = count == 0 }
+        overflowHint.onCountChanged = { [weak self] _ in self?.onOverflowHintChanged?() }
 
         let body = NSStackView(views: [scroll, overflowHint, overflowLabel, addButton])
         body.orientation = .vertical
@@ -1007,10 +1017,30 @@ final class ShiftBoardColumnView: NSView {
         // for an 8pt strip of the fifth - which read as a clipped card, with
         // "Add task" abutting it. Whole cards only, and the hint below says
         // how many more there are.
-        if measured > desired + 0.5 { desired = Self.wholeCardHeight(cardViews.map(\.frame.height),
-                                                                       spacing: cardsStack.spacing,
-                                                                       within: desired) }
+        var snapped: CGFloat?
+        if measured > desired + 0.5 {
+            desired = Self.wholeCardHeight(cardViews.map(\.frame.height), spacing: cardsStack.spacing,
+                                           within: desired)
+            snapped = desired
+        } else if let level = levelBodyHeight, measured <= level + 0.5 {
+            // A lane that does not scroll takes the scrolling lane's height,
+            // so the lanes' feet stay on one line.
+            desired = level
+        }
         if abs(bodyHeight.constant - desired) > 0.5 { bodyHeight.constant = desired }
+        if snapped != snappedBodyHeight {
+            snappedBodyHeight = snapped
+            onSnappedBodyHeightChanged?()
+        }
+    }
+
+    /// The whole-card height this lane snapped to, or `nil` when it does not
+    /// scroll. Read by the board, which levels the other lanes to it.
+    private(set) var snappedBodyHeight: CGFloat?
+    var onSnappedBodyHeightChanged: (() -> Void)?
+    /// Set by the board: the height a lane that does not scroll should take.
+    var levelBodyHeight: CGFloat? {
+        didSet { if levelBodyHeight != oldValue { needsLayout = true } }
     }
 
     /// The tallest run of whole cards, from the top, that fits `limit`.
@@ -1093,6 +1123,8 @@ final class ShiftBoardView: NSView {
         translatesAutoresizingMaskIntoConstraints = false
 
         for column in columnViews {
+            column.onOverflowHintChanged = { [weak self] in self?.applyOverflowHintRows() }
+            column.onSnappedBodyHeightChanged = { [weak self] in self?.applyLevelBodyHeight() }
             column.onOpenTask = { [weak self] id in self?.onOpenTask?(id) }
             column.onMoveTask = { [weak self] id, target in self?.onMoveTask?(id, target) }
             column.onDeleteTask = { [weak self] id in self?.onDeleteTask?(id) }
@@ -1168,6 +1200,20 @@ final class ShiftBoardView: NSView {
     convenience init() { self.init(frame: .zero) }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// UXP-18: a lane that scrolls snaps to whole cards; the others follow
+    /// it, so the three lanes still end on one line.
+    private func applyLevelBodyHeight() {
+        let level = columnViews.compactMap(\.snappedBodyHeight).min()
+        for columnView in columnViews { columnView.levelBodyHeight = level }
+    }
+
+    /// UXP-18: the hint row on every lane or on none, so the lanes' "Add
+    /// task" rows stay on one line.
+    private func applyOverflowHintRows() {
+        let anyBelow = columnViews.contains { $0.overflowHintCount > 0 }
+        for columnView in columnViews { columnView.setOverflowHintRowShown(anyBelow) }
+    }
 
     func setTasks(_ byColumn: [ShiftBoardColumn: [ShiftTask]],
                   projects: [ShiftProject],
