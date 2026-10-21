@@ -932,9 +932,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // B4: a scratch-redirected process (a probe) has no business writing
         // real Keychain items under the app's own service names - see the
         // matching guard on `runAtLaunch()`.
+        //
+        // The Today page's and the calendar integration's leftovers go in the
+        // same block, after the migration rather than beside it: both touch
+        // the Keychain, and running them one after the other on one queue
+        // means a captain sees at most one system dialog at a time.
         if !AppPaths.isScratchRedirected() {
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
                 LegacyNameMigration.runKeychainMigrationInBackground()
+                TodayCalendarRetirement.runIfNeeded()
             }
         }
     }
@@ -2273,21 +2279,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         allDestinationsItem.target = self
         goMenu.addItem(allDestinationsItem)
         // **UX issue X3.** Everything above this point already has its own
-        // item: Home at Cmd-0, and every space pill at Cmd-1..Cmd-6. The
+        // item: Home at Cmd-0, and every space pill at Cmd-1..Cmd-5. The
         // groups below are the complete destination map (the same one the
         // All Destinations overlay draws, where completeness is the whole
-        // point), so without this a destination that *is* a space - the
-        // daily review - appeared twice in one menu: once as its pill, and
-        // again as the only item under a header carrying its own name. Home
-        // appeared a third time, under "Elsewhere".
+        // point), so without this Home appeared a second time, under
+        // "Elsewhere".
         //
         // Filtered here rather than in `groups()` because the overlay is a
         // map and must stay complete; a menu that already listed something
         // ten rows up must not list it again.
-        var alreadyListed: Set<RailDestination> = [.homeCanvas]
-        for space in DaylightSpace.allCases {
-            if let destination = space.destination { alreadyListed.insert(destination) }
-        }
+        let alreadyListed: Set<RailDestination> = [.homeCanvas]
         for group in AllDestinationsOverlayController.groups() {
             let remaining = group.destinations.filter { !alreadyListed.contains($0) }
             guard !remaining.isEmpty else { continue }
@@ -2406,29 +2407,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 }
 
-// MARK: - Scratch-root guard (review bug B4)
-//
-// `FM_SCRATCH_ROOT` moves every file-backed store at once
-// (`AppPaths.dataRoot`), which is the whole anti-drift point: a probe or a lab
-// build sets one variable instead of a list that the next store to be added
-// falls off. Two pieces of state are **not** file paths, so they cannot ride
-// that redirect and have to be swapped here.
-//
-// Both are Keychain-backed, and both were live in the 2026-09-25 review's B4:
-// an ad-hoc-signed probe reading the captain's real Google items raises a
-// Keychain ACL dialog on their screen, and a probe that reached the OAuth
-// client store could start a real sign-in against the captain's own client id.
-// A scratch-redirected process is by definition not the captain's instance, so
-// it gets an in-memory account store and "no client configured" - which is the
-// shipped state anyway.
-//
-// This is deliberately outside `#if FM_SELFTESTS`: the release binary honours
-// it too, because the hazard is the *process*, not the build configuration.
-if AppPaths.isScratchRedirected() {
-    GoogleAccountStore.shared = InMemoryGoogleAccountStore()
-    GoogleOAuthClientStore.shared.override = .some(nil)
-}
-
 // MARK: - Self-test dispatch (GL-27: debug builds only)
 //
 // Every `FM_RUN_*_TESTS` block below is compiled out of the release binary,
@@ -2530,29 +2508,6 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
            "\(KeychainServiceSweep.marker)\(ProcessInfo.processInfo.processIdentifier).",
            0)
     KeychainServiceSweep.arm()
-
-    // `fm/grandline-overview-layout-fix-gmail-settings`: the Google accounts.
-    //
-    // Not a file - a **Keychain** item - and it is exactly the shape this
-    // block exists for: `GoogleAccountStore.shared` is reachable from a bare
-    // production path (`SettingsController` builds its Gmail card on
-    // `loadView`, so every suite that mounts an `AppShellController` reaches
-    // it), and a suite that wrote there would create real Keychain items
-    // holding fabricated OAuth tokens on the captain's own machine, under the
-    // app's real service name. There is no `FM_*` path to redirect, so the
-    // store itself is swapped for the in-memory one.
-    //
-    // The client store is overridden to "no client configured", which is the
-    // shipped state anyway - a suite must never read the captain's real
-    // client id, and must certainly never be able to start a real sign-in.
-    GoogleAccountStore.shared = InMemoryGoogleAccountStore()
-    GoogleOAuthClientStore.shared.override = .some(nil)
-    // `fm/grandline-google-calendar-connection-health`: the same backstop, one
-    // layer out. Settings \u{203A} Google Accounts now runs a **real** Calendar
-    // read for a connected slot, so a suite that plants a fixture record would
-    // otherwise issue a live HTTPS request from CI carrying a fabricated
-    // bearer token. A suite that wants a reply swaps this for its own stub.
-    GoogleCalendarHealthCheck.shared.transport = RefusingGoogleCalendarTransport()
 
     if (ProcessInfo.processInfo.environment["FM_FLEET_LOG_DIR"] ?? "").isEmpty {
         setenv("FM_FLEET_LOG_DIR", scratchRoot.appendingPathComponent("fleet-log", isDirectory: true).path, 1)
@@ -2713,14 +2668,6 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     // too (see its `init`), so this is the belt to that brace.
     if (ProcessInfo.processInfo.environment["FM_NOTEBOOK_DIR"] ?? "").isEmpty {
         setenv("FM_NOTEBOOK_DIR", scratchRoot.appendingPathComponent("notebook", isDirectory: true).path, 1)
-    }
-    // X6's capture log (`CaptureInboxStore`), for the same reason as every
-    // entry around it: it is reachable from a bare production constructor
-    // *and* from a `shared` singleton, so a suite that files one capture
-    // would otherwise append a row to the captain's own log.
-    if (ProcessInfo.processInfo.environment[CaptureInboxStore.fileVariable] ?? "").isEmpty {
-        setenv(CaptureInboxStore.fileVariable,
-               scratchRoot.appendingPathComponent("capture-inbox.json").path, 1)
     }
     // F4's reading list (`fm/grandline-feature-f4-reading-list`), for exactly
     // the reason the entry above spells out: `ReadingListStore()` is reachable
@@ -3234,21 +3181,6 @@ if ProcessInfo.processInfo.environment["FM_RUN_VAULT_RECIPE_GIT_TESTS"] == "1" {
 // real, current content width across a series of resizes, and self-heals
 // if that tie is ever silently broken - see AppShellBodyWidthSelfTest.swift's
 // header.
-// `fm/grandline-overview-layout-fix-gmail-settings`: the Google sign-in flow -
-// PKCE, the authorization request, the redirect, the token exchange, the
-// record merge, the calendar read and the two-source merge. Pure logic with
-// both the browser and the network stubbed, so it guards the blocking CI
-// lane. See GoogleAccountsSelfTest.swift's header.
-// The Gmail settings category, rendered in a real window - two independent
-// slots, four states, both registers. See GmailSettingsViewSelfTest.swift.
-if ProcessInfo.processInfo.environment["FM_RUN_GMAIL_SETTINGS_VIEW_TESTS"] == "1" {
-    exit(GmailSettingsViewSelfTest.run() ? 0 : 1)
-}
-
-if ProcessInfo.processInfo.environment["FM_RUN_GOOGLE_ACCOUNTS_TESTS"] == "1" {
-    exit(GoogleAccountsSelfTest.run() ? 0 : 1)
-}
-
 if ProcessInfo.processInfo.environment["FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"] == "1" {
     exit(AppShellBodyWidthSelfTest.run() ? 0 : 1)
 }
@@ -4182,19 +4114,21 @@ if ProcessInfo.processInfo.environment["FM_RUN_MORNING_BRIEFING_TESTS"] == "1" {
 }
 
 // F20 (`fm/grandline-feature-f20-daily-review-briefing`): the daily review's
-// composer - what each of its six sources contributes, and the stated-gap
-// rule that is the whole point of the feature (a section that could not be
-// read says so rather than showing a zero). Also the source guard that keeps
-// the EventKit path read-only. `DailyReviewViewSelfTest` mounts the real
-// Overview page in a real window and measures the card's three columns, so it
-// is window-backed and lives in `run-all-tests.sh`'s NEEDS_SESSION list - the
-// split is AGENTS.md's own rule: the test is what the suite asserts, never
-// what it imports.
+// composer - what is due, which follow-ups are waiting, and the stated-gap
+// rule (a section that could not be read says so rather than showing a
+// zero). Pure logic, so it guards the blocking CI lane.
 if ProcessInfo.processInfo.environment["FM_RUN_DAILY_REVIEW_TESTS"] == "1" {
     exit(DailyReviewSelfTest.run() ? 0 : 1)
 }
-if ProcessInfo.processInfo.environment["FM_RUN_DAILY_REVIEW_VIEW_TESTS"] == "1" {
-    exit(DailyReviewViewSelfTest.run() ? 0 : 1)
+
+// `fm/grandline-remove-today-calendar-1792553365`: the Today page and the
+// calendar integration stay removed - no destination, no space pill, no
+// source that names them, no calendar usage description in either bundle,
+// and a one-time launch cleanup that deletes what they left on the Mac. Pure
+// logic with a scratch defaults domain, a prefixed Keychain service and a
+// scratch file, so it guards the blocking CI lane.
+if ProcessInfo.processInfo.environment["FM_RUN_TODAY_CALENDAR_REMOVAL_TESTS"] == "1" {
+    exit(TodayCalendarRemovalSelfTest.run() ? 0 : 1)
 }
 
 // The Home page's Needs Attention card - the captain's move of the Today

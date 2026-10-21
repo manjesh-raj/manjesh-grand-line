@@ -48,22 +48,6 @@ final class FleetController: NSViewController {
     private let quotaUsage = QuotaUsageController()
     private var isGeneratingBriefing = false
 
-    // MARK: F20 - the daily review lives on Today, not here
-    //
-    // **UX issue X3 of the 2026-09-27 review.** This page carried a second
-    // copy of `DailyReviewCard` - the captain had asked for a new page
-    // rather than a move, so for one release the same card rendered on both
-    // "Overview" (now Today) and "Fleet", from the same composer and the
-    // same dismissal key. The review found that duplication while
-    // untangling the navigation vocabulary, and the naming it asked for
-    // settles it: Home is the canvas, **Today** is the daily review, and
-    // Fleet is the crew dashboard. One card, one home.
-    //
-    // `DailyReviewViewSelfTest.checkFleetStillHostsIt` was the case that
-    // asserted the copy existed, written so that dropping it "fails here by
-    // name rather than silently". It did, and it is now
-    // `checkFleetDoesNotHostIt`.
-
     /// `fm/polish-straw-hat-overview-card-and-voice-c8d3` took four
     /// dependencies back off this page: the command library's root and the
     /// three phase-3 write stores. Every one of them existed only for the

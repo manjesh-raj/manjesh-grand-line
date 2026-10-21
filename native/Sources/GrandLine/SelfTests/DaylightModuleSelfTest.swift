@@ -273,30 +273,9 @@ enum DaylightModuleSelfTest {
         // `RailDestination.allCases` loop below, unaffected by which modules
         // Overview shows.
 
-        // Every module belongs somewhere reachable, and every space that
-        // *filters the canvas* has something in it - such a pill filtering to
-        // nothing is a dead end.
-        //
-        // `fm/grandline-overview-page-daily-review`: a space that owns a
-        // destination is not a filter and legitimately has no modules, so it
-        // is checked for the other property instead - that the page its pill
-        // opens is a real destination that maps back to this pill. Written as
-        // an either/or rather than an exemption list, so a sixth kind of pill
-        // cannot slip through by being neither.
+        // Every module belongs somewhere reachable, and every space has
+        // something in it - a pill filtering to nothing is a dead end.
         for space in DaylightSpace.allCases {
-            if let destination = space.destination {
-                if space.filtersCanvas {
-                    fail("space \(space.rawValue) owns \(destination) and still claims to filter the canvas", &ok)
-                }
-                if destination.title.isEmpty {
-                    fail("space \(space.rawValue) opens \(destination), which has no title", &ok)
-                }
-                if DaylightModule.space(forDestination: destination) != space {
-                    fail("\(destination) does not map back to the \(space.rawValue) pill - "
-                         + "every deep link and \u{2318}K would light the wrong one", &ok)
-                }
-                continue
-            }
             if DaylightModule.allCases.filter({ $0.isVisible(in: space) }).isEmpty {
                 fail("space \(space.rawValue) has no modules at all", &ok)
             }
@@ -305,15 +284,11 @@ enum DaylightModuleSelfTest {
         // §5.4's copy, and the shortcut indices `⌘1`…`⌘5` carry.
         // Review #3 §7 renamed the first pill "Overview" -> "Home"; the
         // literal list is restated here rather than derived, exactly as
-        // `checkSpaceTable`'s own header requires.
-        // `fm/grandline-overview-page-daily-review` put the new daily-review
-        // pill leftmost on the captain's own ask, which moved Home to the
-        // second slot and its shortcut from \u{2318}1 to \u{2318}2. The 2026-09-27
-        // review's X3 then renamed that pill "Overview" -> **"Today"**: the
-        // app had "Overview" and "Home" pills side by side, and "Overview"
-        // does not say what the page is, which is why it kept attaching
-        // itself to whichever landing page somebody was looking at.
-        let expectedTitles = ["Today", "Home", "Command", "Operations", "Stores", "Engineering"]
+        // `checkSpaceTable`'s own header requires. A "Today" pill sat
+        // leftmost for a while and was removed with its page
+        // (`fm/grandline-remove-today-calendar-1792553365`), which gave Home
+        // \u{2318}1 back.
+        let expectedTitles = ["Home", "Command", "Operations", "Stores", "Engineering"]
         let actualTitles = DaylightSpace.allCases.map(\.title)
         if actualTitles != expectedTitles {
             fail("space pill order/copy should be \(expectedTitles), got \(actualTitles)", &ok)
@@ -1357,12 +1332,10 @@ enum DaylightModuleSelfTest {
             fail("not enough pills to drive a selection", &ok)
             return
         }
-        // The fourth pill since `fm/grandline-overview-page-daily-review` put
-        // the Overview page's own pill leftmost - Home, Command and Operations
-        // each shifted right by one.
-        pills[3].performPrimaryAction()
+        // Home, Command, Operations - the third pill.
+        pills[2].performPrimaryAction()
         if picked != [.operations] {
-            fail("clicking the fourth pill reported \(picked.map(\.rawValue)), expected [operations]", &ok)
+            fail("clicking the third pill reported \(picked.map(\.rawValue)), expected [operations]", &ok)
         }
         if bar.selectedSpaceForTests != .operations {
             fail("the bar's own selection is \(bar.selectedSpaceForTests.rawValue) after a click on Operations", &ok)
@@ -1675,9 +1648,7 @@ enum DaylightModuleSelfTest {
                      + "\(canvas.visibleModulesForTests.map(\.rawValue))", &ok)
             }
             shell.selectSpace(.overview)
-            // A space that owns a destination is a page, not a canvas filter -
-            // it is driven in its own case below rather than swept here.
-            for space in DaylightSpace.allCases where space != .overview && space.filtersCanvas {
+            for space in DaylightSpace.allCases where space != .overview {
                 shell.selectSpace(space)
                 let visible = Set(canvas.visibleModulesForTests)
                 guard let expected = lockedMembership[space] else { continue }
@@ -1700,44 +1671,6 @@ enum DaylightModuleSelfTest {
                 }
             }
 
-            // `fm/grandline-overview-page-daily-review`: the sixth pill is a
-            // page, and this is the behavioural half of that - a real click
-            // path (`selectSpace`, which is what the pill's own handler calls)
-            // landing on a real mounted destination, with the canvas's own
-            // filter left where the captain had it.
-            //
-            // Discriminating power first: the canvas is parked on a space that
-            // is NOT the one being clicked, so "the filter survived" cannot
-            // pass by accident.
-            shell.selectSpace(.command)
-            for space in DaylightSpace.allCases where !space.filtersCanvas {
-                guard let destination = space.destination else { continue }
-                shell.selectSpace(space)
-                if !shell.mountedDestinationSlotsForTests.contains(destination.slot) {
-                    fail("selecting \(space.rawValue) did not mount \(destination)", &ok)
-                }
-                // Which page is showing, read off the shell's own current
-                // destination rather than off the drill header's title.
-                //
-                // `fm/grandline-overview-layout-fix-gmail-settings`: a pill's
-                // own page is top-level, so it has no drill header to read -
-                // and the drill header's title was never the thing under test
-                // here anyway. `currentContextTitle` is what the window title
-                // and the Recents list already read.
-                if shell.currentContextTitle != destination.title {
-                    fail("\(space.rawValue)'s pill opened "
-                         + "'\(shell.currentContextTitle ?? "nothing")', expected '\(destination.title)'", &ok)
-                }
-                if let view = shell.destinationViewIfMountedForTests(destination.slot),
-                   view.isHiddenOrHasHiddenAncestor {
-                    fail("\(space.rawValue)'s pill mounted \(destination) but left it hidden", &ok)
-                }
-                if canvas.selectedSpace != .command {
-                    fail("selecting \(space.rawValue) changed the canvas's own filter to "
-                         + "\(canvas.selectedSpace.rawValue) - a page pill must not touch it", &ok)
-                }
-            }
-
             // The canvas has no drill header; every other destination does,
             // and its back button returns to the canvas with the space intact.
             shell.selectSpace(.stores)
@@ -1755,15 +1688,8 @@ enum DaylightModuleSelfTest {
                 fail("the canvas hides the space pills - they only collapse on a drill page", &ok)
             }
 
-            // `fm/grandline-overview-layout-fix-gmail-settings`: the canvas is
-            // no longer the only top-level page. A space pill that opens a
-            // page of its own (`DaylightSpace.destination` - the Overview tab
-            // is the first) is still the top of the navigation, so it keeps
-            // the wordmark and the pills exactly as the canvas does. The
-            // sweep below is about **drill** pages; a page opened by a pill
-            // is asserted the other way, immediately after it.
-            let topLevel = Set(DaylightSpace.allCases.compactMap(\.destination) + [.homeCanvas])
-            for dest in RailDestination.allCases where !topLevel.contains(dest) {
+            // Every destination but the canvas is a drill page.
+            for dest in RailDestination.allCases where dest != .homeCanvas {
                 shell.show(dest)
                 if shell.drillHeaderIsHiddenForTests {
                     fail("\(dest) has no drill header - it would have no way back", &ok)
@@ -1804,23 +1730,6 @@ enum DaylightModuleSelfTest {
                 }
             }
 
-            // The other half of that rule: a pill that opens a page must not
-            // hide the pill strip it was pressed on. Shipped that way once -
-            // the captain reported the new Overview tab rendering with a back
-            // arrow and no tabs at all.
-            for space in DaylightSpace.allCases {
-                guard let dest = space.destination else { continue }
-                shell.selectSpace(space)
-                if !shell.drillHeaderIsHiddenForTests {
-                    fail("\(dest) is a pill's own page - it should carry no drill cluster", &ok)
-                }
-                if shell.bar.pillsAreHiddenForTests {
-                    fail("\(dest) hid the space pills the captain pressed to get there", &ok)
-                }
-                if shell.bar.wordmarkIsHiddenForTests {
-                    fail("\(dest) hid the wordmark - it is a top-level page, not a drill", &ok)
-                }
-            }
             shell.selectSpace(.stores)
             shell.show(.homeCanvas)
 

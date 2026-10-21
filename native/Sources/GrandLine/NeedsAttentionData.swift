@@ -6,17 +6,18 @@
 // ## Why this exists, and why it is not a second reading of the stores
 //
 // The captain asked for the Today page's "Due today" and "Follow-ups"
-// sections to move to Home, under one "Needs attention" section. The obvious
+// sections to move to Home, under one "Needs attention" section. (The Today
+// page itself was later removed, and this card is now the digest's only
+// reader.) The obvious
 // way to do that is to read `ShiftStore` again on the Home page and re-derive
 // what is due - and that would be a second definition of "due", which is the
 // exact mistake B22 spent a whole task collapsing (`ShiftDue.isOverdue` is one
 // function because a date-only task used to read as overdue at local midnight
 // on one surface and not until the next day on another).
 //
-// So this composer's input is a **`DailyReviewDigest`** - the same digest the
-// Today page's card renders, from the same `DailyReviewComposer`, including
-// its caps, its ordering, its `ShiftDue` overdue predicate and its stated
-// gaps. Nothing here reads a store, a date or a clock. What it owns is the
+// So this composer's input is a **`DailyReviewDigest`**, from
+// `DailyReviewComposer`, including its caps, its ordering, its `ShiftDue`
+// overdue predicate and its stated gaps. Nothing here reads a store, a date or a clock. What it owns is the
 // one thing the digest does not already decide: how the rows read when they
 // are a flat attention list rather than two labelled columns.
 //
@@ -24,10 +25,8 @@
 //
 // The captain's reference mockup words a row's chip as "Overdue 5 days, since
 // 23 Sep" and "Due today", and its headline as one plain-English sentence
-// ("Two things are late."). `DailyReviewComposer.headline` is a *different*
-// sentence - it counts the calendar too, because it introduces a whole daily
-// review - so this file has its own, built from the same
-// `DailyReviewComposer.spelled` number words rather than a second spelling
+// ("Two things are late."). That sentence is built here, from
+// `DailyReviewComposer.spelled`'s number words rather than a second spelling
 // table.
 //
 // ## The rest of the mockup, which the visual overhaul brought in
@@ -214,8 +213,8 @@ struct NeedsAttentionSummary: Equatable {
     /// The digest's own stated overflow, as one line - "+3 more in Tasks".
     /// `nil` when the digest carried everything.
     var overflowNote: String?
-    /// The stated gaps this card is responsible for - the Tasks and
-    /// Follow-ups sections only. The Today page keeps the other three.
+    /// The digest's stated gaps - its Tasks or Follow-ups section could not
+    /// be read.
     var gaps: [DailyReviewGap]
     /// The reference's closing strip: one short phrase per source that was
     /// checked and is fine ("Fleet idle", "7/7 services healthy").
@@ -254,11 +253,6 @@ struct NeedsAttentionSummary: Equatable {
 
 /// The pure composer. No store, no `Date()`, no `NSView`.
 enum NeedsAttentionComposer {
-
-    /// The digest sections this card takes over from the Today page. Named
-    /// once, because both this file and `DailyReviewCard` filter on them and
-    /// two spellings of "Follow-ups" would silently drop a stated gap.
-    static let ownedGapSections: Set<String> = ["Tasks", "Follow-ups"]
 
     /// The whole card, from the day's digest plus whatever else the hub
     /// already knows.
@@ -317,7 +311,7 @@ enum NeedsAttentionComposer {
 
         items.append(contentsOf: extra)
 
-        let gaps = digest.gaps.filter { ownedGapSections.contains($0.section) }
+        let gaps = digest.gaps
         let hidden = digest.hiddenDueTaskCount + digest.hiddenFollowUpCount
         let lateCount = items.filter { $0.tone == .late }.count
 

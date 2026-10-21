@@ -139,7 +139,7 @@ These tables are **complete in both directions**, and that is a check rather tha
 
 | Variable | What it overrides |
 | --- | --- |
-| `FM_SCRATCH_ROOT` | **The one that moves everything.** Every file-backed store's *default* is `FM_SCRATCH_ROOT/<name>` instead of `~/Library/Application Support/GrandLine/<name>` (`AppPaths.dataRoot()`), so a probe, a lab build or a suite redirects the whole app with one variable rather than the list below. A narrow per-store variable still wins over it. Setting it also puts the Google account and OAuth client stores in memory and skips the rename migrations, since neither is a path. A self-test guard fails the run on a store that resolves Application Support for itself and so drops off this |
+| `FM_SCRATCH_ROOT` | **The one that moves everything.** Every file-backed store's *default* is `FM_SCRATCH_ROOT/<name>` instead of `~/Library/Application Support/GrandLine/<name>` (`AppPaths.dataRoot()`), so a probe, a lab build or a suite redirects the whole app with one variable rather than the list below. A narrow per-store variable still wins over it. Setting it also skips the rename migrations and the one-time Today/calendar cleanup, since neither is a path. A self-test guard fails the run on a store that resolves Application Support for itself and so drops off this |
 | `FM_KEYCHAIN_SERVICE_PREFIX` | Prepended to every Keychain service name this app owns (`KeychainService.resolve`). **Debug builds only** - a prefix that reached a release build would orphan every saved SSH key. Set per process by `main.swift`'s self-test redirect block, and everything carrying it is deleted at exit, so a suite can no longer leave real items in the login Keychain |
 | `FM_HOME` / `FIRSTMATE_HOME` | The firstmate home the app reads fleet state from |
 | `FM_HOSTS_FILE` | `hosts.json` (saved SSH hosts) |
@@ -158,9 +158,6 @@ These tables are **complete in both directions**, and that is a check rather tha
 | `FM_WIDGET_DIR` | Where the app publishes `widget-snapshot.json` and reads the widgets' queued taps from. Defaults to the App Group container the WidgetKit extension reads (`~/Library/Group Containers/group.com.manjesh.grandline.native/GrandLineWidgets/`) - see `native/Widgets/README.md` |
 | `FM_CLIPBOARD_HISTORY_FILE` | The encrypted clipboard history (`clipboard-history.sealed`) |
 | `FM_PRIVATE_SCRATCH_DIR` | Where a materialized SSH key (for `ssh -i`) and SRE Lead's per-session MCP config and kubectl bridge live while in use (`AppPaths.privateScratchFolder()`, default `private-scratch/` under the data root). Kept out of the temporary directory because Code Preview snippets must not read it |
-| `FM_CAPTURE_INBOX_FILE` | The capture log behind Today's "Captured today" card (`capture-inbox.json`) - one row per filed ⌥Space capture, never the captured content's own store |
-| `FM_GOOGLE_OAUTH_CLIENT_ID` | The Google OAuth client ID the Gmail settings sign-in uses, overriding the one stored in the Keychain. There is no built-in default - a client ID comes from your own Google Cloud project (see `docs/history/43-google-accounts.md`) |
-| `FM_GOOGLE_OAUTH_CLIENT_SECRET` | The matching client secret, when the Google Cloud client has one. Only read alongside `FM_GOOGLE_OAUTH_CLIENT_ID` |
 | `FM_CLIPBOARD_HISTORY_EPHEMERAL` | `1` seals the clipboard history with a per-process random key instead of the Keychain item - what the self-test process sets, so a suite never creates or reads a real Keychain entry |
 | `FM_STRAW_HAT_DIR` | The Straw Hat crew's saved conversations (redacted). Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_SHIFT_GIT_CLONE_PATH` | Where the `manjesh-config` clone lives |

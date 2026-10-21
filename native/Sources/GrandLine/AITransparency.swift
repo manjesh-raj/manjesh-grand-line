@@ -2,33 +2,25 @@
 //
 // X11 (review UX): one definition of "where does this text go".
 //
-// The daily review card already carried a trust line - "Generated locally ·
-// no data left this Mac" - and the review's point was that it was the *only*
-// one. The Reading List's AI summary and the Straw Hat crew both send the
-// captain's own material to Claude and said nothing, so the app's single
-// visible claim about data was made by the one surface that sends none.
+// The daily review card once carried the app's only trust line ("Generated
+// locally · no data left this Mac"), while the Reading List's AI summary and
+// the Straw Hat crew both sent the captain's own material to Claude and said
+// nothing. The claims for the surfaces that send now live here, in one place,
+// so they read as one voice and cannot drift into saying different things
+// about the same runner - every AI turn in this app is a `ClaudeOneShot` run,
+// whatever surface started it.
 //
-// The fix is not five sentences written five times. Both claims live here,
-// in one place, so they read as one voice and cannot drift into saying
-// different things about the same runner - every AI turn in this app is a
-// `ClaudeOneShot` run, whatever surface started it.
+// (The local claim went with the daily review card, which was its only
+// surface, in `fm/grandline-remove-today-calendar-1792553365`.)
 //
 // **These are claims about behaviour, so they are checked against it.**
-// `AITransparencySelfTest` asserts that every surface stating `.local`
-// reaches no AI runner, and that every surface reaching `ClaudeOneShot`
-// states `.sentToClaude`. A sentence nobody verifies is worse than no
+// `AITransparencySelfTest` asserts that each surface that sends states the
+// claim through this file. A sentence nobody verifies is worse than no
 // sentence: it is a promise.
 
 import Foundation
 
 enum AITransparency {
-
-    /// For a surface that computes its answer on this machine.
-    ///
-    /// The daily review's own wording, kept byte for byte - it is the line
-    /// the captain has been reading and the review singled out as "a lovely
-    /// trust line".
-    static let local = "Generated locally \u{00B7} no data left this Mac"
 
     /// For a surface that sends the captain's own material to Claude.
     ///

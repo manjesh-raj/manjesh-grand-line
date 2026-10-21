@@ -205,8 +205,7 @@ enum StoreLoadFailure {
 
     /// The write-side guard. Call it first in a store's persist path: when it
     /// returns `true` the write must not happen, and the refusal has already
-    /// been reported through `PersistenceFailureReporter` (the CaptureInbox
-    /// pattern, plus the report that one never made).
+    /// been reported through `PersistenceFailureReporter`.
     ///
     /// Reported once per path per process, then only logged: the clipboard
     /// history refuses a write on every copy, and the Notification Center's

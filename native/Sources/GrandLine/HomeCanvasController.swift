@@ -290,8 +290,8 @@ final class HomeCanvasController: NSViewController {
     /// - the change there is purely that it now sits at the top of the page.
     private let heroCard = NSView()
     private var heroCardInsets: [NSLayoutConstraint] = []
-    /// The captain's "Needs Attention" card - the Today page's Due Today and
-    /// Follow-ups sections, moved here and merged into one flat list.
+    /// The captain's "Needs Attention" card - what is due today and which
+    /// follow-ups are waiting, merged into one flat list.
     ///
     /// It sits between the hero and the module grid because that is where the
     /// mockup puts it and because it is the one thing on this page that is
@@ -709,14 +709,6 @@ final class HomeCanvasController: NSViewController {
     /// (AGENTS.md gotcha (11) - only an `NSStackView`'s *arranged* subviews
     /// leave layout when hidden, and these live inside packed rows).
     func select(space newSpace: DaylightSpace) {
-        // `fm/grandline-overview-page-daily-review`: a space that owns a
-        // destination (`DaylightSpace.destination`) is a page, not a filter -
-        // it has no modules and no greeting of its own, and the shell routes
-        // it through `show(_:)` instead. Ignored here rather than rendered as
-        // an empty grid, and ignored rather than trapped because a canvas is
-        // presentation: the honest behaviour for "filter to a space that is
-        // not a filter" is to keep the filter the captain last chose.
-        guard newSpace.filtersCanvas else { return }
         guard newSpace != space else { return }
         space = newSpace
         render()
@@ -973,23 +965,11 @@ final class HomeCanvasController: NSViewController {
 
     // MARK: Needs Attention (the captain's move of Today's Due Today)
 
-    /// Build the card's rows from the **same digest** the Today page renders.
+    /// Build the card's rows from `DailyReviewComposer`'s digest.
     ///
-    /// The composer is `DailyReviewComposer`, unchanged and uncopied, so
-    /// "due", "overdue", the ordering and the caps are one definition rather
-    /// than two - which is the whole point of routing this through a digest
-    /// instead of filtering `activeTasks` here. Only the sections this card
-    /// owns are filled in; the calendar, the board and the reading list are
-    /// left at their empty defaults because this card does not draw them and
-    /// asking for them would mean this page reading three more sources.
-    ///
-    /// **Deliberately not gated on `AppSettings.dailyReviewEnabled` or the
-    /// day's dismissal.** Those two switches are about the Today page's daily
-    /// *review* - a briefing the captain may not want each morning. What is
-    /// due and who is waiting is not a briefing; it is the app's only
-    /// remaining home for that information now that the Today page's own
-    /// columns are gone, and hiding it behind a review toggle would make
-    /// turning the review off silently lose an overdue task.
+    /// The composer is the one definition of "due", "overdue", the ordering
+    /// and the caps - which is the whole point of routing this through a
+    /// digest instead of filtering `activeTasks` here.
     private func renderAttention() {
         // Only the hub itself. The other spaces are filters over the module
         // grid and have no day of their own to report on.

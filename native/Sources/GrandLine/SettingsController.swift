@@ -12,10 +12,9 @@
 //      and a persistent identity row. The page this replaces already had a
 //      category column (`fm/grandline-settings-page-sidebar-redesign`), but
 //      one flat, unsearchable list of eight.
-//   2. **Back/forward history, with the page's title in a toolbar.** Settings
-//      cross-references itself (the daily review's calendar row points at
-//      Google Accounts), and a cross-reference you cannot come back from is a
-//      dead end.
+//   2. **Back/forward history, with the page's title in a toolbar.** A page
+//      you cannot come back from is a dead end, and the reference draws both
+//      buttons beside the title.
 //   3. **Grouped cards of rows, not one card per topic.** A page is a hero
 //      header then N sections; a section is a small heading above one group;
 //      a group is hairline-separated rows of label-plus-control. That
@@ -25,10 +24,10 @@
 //      and dimmed *and inert* while the switch it depends on is off.
 //
 // **Everything is wired to what this app really stores.** The reference's own
-// data is illustrative - 26 named colours, five App Intents, an OAuth client
-// ID, a backup inventory - and every one of those is read here from the real
-// source instead: `HelmTheme.allThemes`, `GrandLineIntentCatalog.entries`,
-// `GoogleOAuthClientStore`, the measured `BackupStoreSection` walk. Where the
+// data is illustrative - 26 named colours, five App Intents, a backup
+// inventory - and every one of those is read here from the real source
+// instead: `HelmTheme.allThemes`, `GrandLineIntentCatalog.entries`, the
+// measured `BackupStoreSection` walk. Where the
 // reference draws a control this app has no setting behind (a "Reduce
 // transparency" switch, a per-intent enable toggle, a Spotlight switch), the
 // control is **absent** rather than faked: a switch that changes nothing is
@@ -45,12 +44,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     // MARK: - Structure
 
-    /// The sidebar's three headings, in the reference's own order.
-    ///
-    /// The grouping is by *when* a captain comes here, which is why "Your
-    /// day" holds Briefings and Google Accounts together: the only consumer
-    /// of a connected Google account today is the daily review's calendar
-    /// column, and a captain setting up their morning visits both.
+    /// The sidebar's three headings, in the reference's own order. The
+    /// grouping is by *when* a captain comes here.
     enum NavGroup: String, CaseIterable {
         case personalize
         case yourDay
@@ -77,7 +72,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         case capture
         case menuBar
         case briefings
-        case gmail
         case intents
         case security
         case backup
@@ -85,7 +79,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         var navGroup: NavGroup {
             switch self {
             case .appearance, .terminal, .capture, .menuBar: return .personalize
-            case .briefings, .gmail: return .yourDay
+            case .briefings: return .yourDay
             case .intents, .security, .backup: return .system
             }
         }
@@ -99,7 +93,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             case .capture: return "Capture"
             case .menuBar: return "Menu Bar"
             case .briefings: return "Briefings"
-            case .gmail: return "Google Accounts"
             case .intents: return "App Intents & Shortcuts"
             case .security: return "Security"
             case .backup: return "Backup & Restore"
@@ -115,7 +108,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             case .capture: return "square.and.pencil"
             case .menuBar: return "menubar.rectangle"
             case .briefings: return "sparkles"
-            case .gmail: return "envelope"
             case .intents: return "sparkle"
             case .security: return "lock.shield"
             case .backup: return "tray.and.arrow.up.fill"
@@ -131,7 +123,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         /// are illustrative, and a hardcoded colour would be off-palette in
         /// twenty-five of the twenty-six themes.
         ///
-        /// **Eight pages, seven tints, so hues repeat - and what matters is
+        /// **Eight pages, six tints, so hues repeat - and what matters is
         /// *where*.** A count of distinct colours is not the goal; a column
         /// you can scan is, and that only breaks when two rows the eye takes
         /// in together are the same colour. So every repeat is placed across
@@ -144,7 +136,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         ///     (measured: Dusk resolves both to `182/207/290`, its accent
         ///     being its own ANSI blue), so the two pages carrying them - Menu
         ///     Bar and App Intents - are likewise in different groups with
-        ///     Briefings and Google Accounts between them. This is why
+        ///     Briefings between them. This is why
         ///     Terminal is not `.accent`: Terminal sits directly under Menu
         ///     Bar, and in Dusk the two tiles would have been identical.
         ///
@@ -156,8 +148,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         /// A `HelmTint`, never one of the reference's literal hexes - those
         /// are illustrative, and a hardcoded colour would be off-palette in
         /// twenty-five of the twenty-six themes. The rest map onto the
-        /// reference's own identity: Menu Bar blue, Briefings orange, Google
-        /// Accounts red, Backup teal-green, Terminal slate.
+        /// reference's own identity: Menu Bar blue, Briefings orange, Backup
+        /// teal-green, Terminal slate.
         ///
         /// **`.terminal` is deliberately `.neutral`**, which AGENTS.md's
         /// colour rules otherwise warn off: washed as a tinted surface
@@ -178,7 +170,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             case .capture: return .good
             case .menuBar: return .info
             case .briefings: return .warn
-            case .gmail: return .critical
             case .intents: return .accent
             case .security: return .violet
             case .backup: return .good
@@ -197,9 +188,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             case .menuBar:
                 return "Run Grand Line from the status item with no main window. Nothing gets turned off."
             case .briefings:
-                return "Two cards at the top of Fleet: a generated morning summary, and a review of your own day assembled on this Mac."
-            case .gmail:
-                return "Connect work, personal, both or neither. Grand Line asks Google for read-only calendar access and your address, and for nothing else."
+                return "A generated morning summary at the top of Fleet."
             case .intents:
                 return "Actions Siri, Shortcuts, Spotlight and Raycast can run without bringing the window forward. Find them under \u{201C}Grand Line\u{201D}."
             case .security:
@@ -220,8 +209,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             case .terminal: return "shell working directory font size shortcut split pane tab ssh reconnect notification bell"
             case .capture: return "capture quick capture hotkey shortcut global option space accessibility permission note task sticky"
             case .menuBar: return "compact dock status item hotkey shortcut overdue badge menubar"
-            case .briefings: return "morning briefing daily review calendar eventkit claude summary"
-            case .gmail: return "google gmail oauth calendar work personal account sign in client id secret"
+            case .briefings: return "morning briefing claude summary"
             case .intents: return "siri spotlight raycast shortcuts automation app intents"
             case .security: return "touch id sudo pam lock vault poneglyph password credential"
             case .backup: return "export import restore glbackup archive move machine"
@@ -307,11 +295,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// effect on the next keypress rather than the next launch.
     var onQuickCaptureShortcutChanged: ((KeyChord) -> Void)?
 
-    /// Set by `AppShellController` so a sign-in that connects a calendar can
-    /// make the Overview page re-read it. Optional: this page works with
-    /// nothing wired, which every self-test that mounts it relies on.
-    var onGoogleAccountsChanged: (() -> Void)?
-
     /// What compact mode is wired to. `nil` in every self-test that mounts
     /// this page without an app delegate, and in that case the toggles still
     /// persist - they simply have nothing to tell.
@@ -322,8 +305,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// owners of one view start disagreeing.
     var onDrillSubtitleChanged: (() -> Void)?
 
-    /// Lets a cross-reference row ("1 account" on the daily review) jump to
-    /// another destination. `nil` in a suite.
+    /// Lets a row (Security's "Open Poneglyph") jump to another destination.
+    /// `nil` in a suite.
     var onNavigate: ((RailDestination) -> Void)?
 
     // MARK: - Drill header (Daylight §6.4)
@@ -466,30 +449,12 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private var resetShortcutsButton: HelmButton?
 
     private let morningBriefingSwitch = HelmToggle()
-    private let dailyReviewSwitch = HelmToggle()
-    private let dailyReviewCalendarSwitch = HelmToggle()
-    private let googleCalendarInReviewButton = HelmButton(title: "Google Accounts",
-                                                          variant: .quiet, target: nil, action: nil)
 
     private let compactModeSwitch = HelmToggle()
     private let compactDockSwitch = HelmToggle()
     private let compactBadgeSwitch = HelmToggle()
     /// X2: the way back to three separate menu-bar icons.
     private let separateMenuBarItemsSwitch = HelmToggle()
-
-    private var gmailRows: [GoogleAccountSlot: GmailAccountRow] = [:]
-    /// Both masked by default with their own Show toggle, through the one
-    /// `HelmRevealableSecretField` the credential editor's Secret row also
-    /// uses. The client ID is not a secret the way the client secret is - it
-    /// travels in the authorization URL - but it identifies the captain's own
-    /// Google Cloud project, and a Settings page read over a shoulder should
-    /// not put either on display by default.
-    private let gmailClientIDField =
-        HelmRevealableSecretField(placeholder: "1234-abcd.apps.googleusercontent.com")
-    private let gmailClientSecretField =
-        HelmRevealableSecretField(placeholder: "Client secret (optional)")
-    private let gmailCalendarSwitch = HelmToggle()
-    private var gmailStatusSection: SettingsSection?
 
     private let backupContentsStack = NSStackView()
     private var backupSummaryRow: SettingsRow?
@@ -504,7 +469,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private enum Dependency: String {
         case followSystemAppearance
         case morningBriefing
-        case dailyReview
         case compactMode
     }
 
@@ -524,7 +488,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         let states: [Dependency: Bool] = [
             .followSystemAppearance: followSystemSwitch.isOn,
             .morningBriefing: morningBriefingSwitch.isOn,
-            .dailyReview: dailyReviewSwitch.isOn,
             .compactMode: compactModeSwitch.isOn,
         ]
         for (key, rows) in dependentRows {
@@ -999,9 +962,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         onDrillSubtitleChanged?()
         view.layoutSubtreeIfNeeded()
         scrollToTop()
-        // Arriving on Google Accounts is the moment the captain is asking
-        // "is this working?", so that is when it is answered.
-        if category == .gmail { checkGoogleCalendarsIfNeeded() }
     }
 
     /// Put exactly one page in the detail pane.
@@ -1108,7 +1068,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             hasCheckedSudoTouchIDOnce = true
             checkSudoTouchID()
         }
-        if selectedCategory == .gmail { checkGoogleCalendarsIfNeeded() }
         // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
         scrollMemory.restore(scrollView) { scrollToTop() }
     }
@@ -1134,7 +1093,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         case .capture: sections = buildCaptureSections()
         case .menuBar: sections = buildMenuBarSections()
         case .briefings: sections = buildBriefingsSections()
-        case .gmail: sections = buildGmailSections()
         case .intents: sections = buildIntentsSections()
         case .security: sections = buildSecuritySections()
         case .backup: sections = buildBackupSections()
@@ -1789,11 +1747,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     private func buildBriefingsSections() -> [SettingsSection] {
         morningBriefingSwitch.onToggle = { [weak self] in self?.morningBriefingToggled() }
-        dailyReviewSwitch.onToggle = { [weak self] in self?.dailyReviewToggled() }
-        dailyReviewCalendarSwitch.onToggle = { [weak self] in self?.dailyReviewCalendarToggled() }
-
-        googleCalendarInReviewButton.target = self
-        googleCalendarInReviewButton.action = #selector(showGoogleAccounts)
 
         return [
             SettingsSection(heading: "Morning briefing", group: SettingsGroup(rows: [
@@ -1801,279 +1754,12 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                             description: "On the first visit to Fleet each day, one short generated paragraph over your fleet, PR queue, due tasks and drift - each clause linking to the page it came from.",
                             control: morningBriefingSwitch),
             ]), foot: "Uses your own `claude` login for one call per day. Only counts and titles already shown elsewhere in the app are sent - never terminal output or logs. With `claude` unavailable the card still appears as a plain, locally-computed stat line with no AI call at all."),
-
-            SettingsSection(heading: "Daily review", group: SettingsGroup(rows: [
-                SettingsRow(title: "Show the daily review on Fleet",
-                            description: "What is due today, the follow-ups waiting on you, today's calendar, the top notes on your sticky board and what is unread in your reading list.",
-                            control: dailyReviewSwitch),
-                register(SettingsRow(
-                    title: "Mac calendars",
-                    description: "Read through EventKit and never written to. macOS asks for permission the first time; turning this off stops Grand Line reading your calendar at all.",
-                    control: dailyReviewCalendarSwitch, isSubRow: true), dependingOn: .dailyReview),
-                register(SettingsRow(
-                    title: "Google Calendar",
-                    description: "Events from accounts connected under Google Accounts. The switch for it lives on that page, beside the accounts it applies to.",
-                    control: googleCalendarInReviewButton, isSubRow: true), dependingOn: .dailyReview),
-            ]), foot: "The review itself is assembled on this Mac from records the app has already loaded, with no AI call. A section it cannot read says so instead of showing a zero."),
         ]
     }
 
     @objc private func morningBriefingToggled() {
         AppSettings.shared.morningBriefingEnabled = morningBriefingSwitch.isOn
         syncDependentRows()
-    }
-
-    @objc private func dailyReviewToggled() {
-        AppSettings.shared.dailyReviewEnabled = dailyReviewSwitch.isOn
-        syncDependentRows()
-    }
-
-    /// Turning the calendar on here does **not** prompt: the permission
-    /// request belongs to a real click on the card's own button, where the
-    /// captain can see what they are about to be asked for. This flag only
-    /// says the column may read once access exists.
-    @objc private func dailyReviewCalendarToggled() {
-        AppSettings.shared.dailyReviewCalendarEnabled = dailyReviewCalendarSwitch.isOn
-    }
-
-    /// The reference's `data-go` cross-reference. It is a real navigation
-    /// within this page, and it is what the back button exists for.
-    @objc private func showGoogleAccounts() {
-        select(.gmail)
-    }
-
-    // MARK: - Google Accounts
-
-    private func buildGmailSections() -> [SettingsSection] {
-        // The account row **is** the row. `GmailAccountRow` draws its own
-        // avatar, title, address, status pill and button and has done since
-        // the Gmail task, so wrapping it in a label/control `SettingsRow`
-        // gives it a second title - which is what the first render of this
-        // page showed, "Work mail" printed twice.
-        var accountRows: [NSView] = []
-        for slot in GoogleAccountSlot.allCases {
-            let row = GmailAccountRow(slot: slot)
-            row.onConnect = { [weak self] in self?.connectGoogle(slot) }
-            row.onDisconnect = { [weak self] in self?.disconnectGoogle(slot) }
-            row.onTest = { [weak self] in self?.checkGoogleCalendar(slot) }
-            // Opened here rather than inside the row, so the row stays a view
-            // and the one `NSWorkspace.open` this page performs is visible
-            // where the rest of its side effects are.
-            row.onOpenFixURL = { NSWorkspace.shared.open($0) }
-            gmailRows[slot] = row
-            accountRows.append(row)
-        }
-
-        // The reference puts this switch on this page, under its own Calendar
-        // heading - which is where the setting belongs, since it is about the
-        // account rather than about the review. Briefings carries a *link*
-        // here rather than a second copy of the switch: one control, one
-        // setting.
-        gmailCalendarSwitch.onToggle = { [weak self] in self?.googleCalendarToggled() }
-        let calendarSection = SettingsSection(heading: "Calendar", group: SettingsGroup(rows: [
-            SettingsRow(title: "Use Google Calendar in the daily review",
-                        description: "Adds a connected account's events to the review's calendar column, alongside your Mac's own calendars rather than instead of them. Read-only: the only scope Grand Line ever asks Google for cannot write.",
-                        control: gmailCalendarSwitch),
-        ]))
-
-        // Through `configure(_:)`, never a hand-wired target/action pair.
-        // Plain AppKit target/action fires on **Return** and on nothing else,
-        // so a field wired by hand commits only for the captain who happens
-        // to press it - paste a client ID, click Connect, and the value is
-        // silently gone (gotcha (19),
-        // `fm/grandline-gmail-oauth-field-not-saving`). `configure` also
-        // wires the `delegate`, which is what carries
-        // `controlTextDidEndEditing` into the same commit.
-        //
-        // **Both halves of each control**, never only the visible one: a
-        // masked field that wired one half would reopen that same bug in the
-        // other.
-        for control in [gmailClientIDField, gmailClientSecretField] {
-            control.editableFields.forEach(configure)
-            // A field is a control, not text: a required width would be a
-            // window floor (gotcha (13)), so this is a preference below 500.
-            control.setPreferredFieldWidth(300)
-        }
-        gmailClientIDField.revealHint = "Show the OAuth client ID"
-        gmailClientSecretField.revealHint = "Show the client secret"
-
-        let statusSection = SettingsSection(
-            heading: "OAuth client",
-            group: SettingsGroup(rows: [
-                SettingsRow(title: "Client ID",
-                            description: "From your own Google Cloud project - create an OAuth client of type \u{201C}Desktop app\u{201D} and paste its ID here.",
-                            control: gmailClientIDField),
-                SettingsRow(title: "Client secret",
-                            description: "Optional. Google issues one for a Desktop client and its token endpoint expects it back.",
-                            control: gmailClientSecretField),
-            ]),
-            foot: Self.gmailStatusLine(for: GoogleOAuth.configuration()))
-        gmailStatusSection = statusSection
-
-        return [
-            SettingsSection(heading: "Accounts", group: SettingsGroup(rowViews: accountRows),
-                            foot: "Connect opens Google's own sign-in page in Safari, so Grand Line never sees your password. Signing out of one account leaves the other alone."),
-            calendarSection,
-            statusSection,
-        ]
-    }
-
-    /// Repaint every Google surface from the store. One function, called from
-    /// `refreshFromSettings` and after every sign-in or sign-out, so the two
-    /// pages that show this state can never disagree with what is stored.
-    private func refreshGmailSection() {
-        let configuration = GoogleOAuth.configuration()
-        for (slot, row) in gmailRows {
-            row.render(outcome: GoogleAccountStore.shared.outcome(for: slot),
-                       isConfigured: configuration != nil,
-                       isBusy: GoogleSignInController.shared.inFlight.contains(slot),
-                       health: GoogleCalendarHealthCheck.shared.result(for: slot),
-                       theme: theme)
-        }
-        gmailCalendarSwitch.isOn = AppSettings.shared.googleCalendarEnabled
-        let stored = GoogleOAuthClientStore.shared.configuration()
-        if gmailClientIDField.stringValue != (stored?.clientID ?? "") {
-            gmailClientIDField.stringValue = stored?.clientID ?? ""
-        }
-        if gmailClientSecretField.stringValue != (stored?.clientSecret ?? "") {
-            gmailClientSecretField.stringValue = stored?.clientSecret ?? ""
-        }
-        gmailStatusSection?.footLabel?.stringValue = Self.gmailStatusLine(for: configuration)
-
-        // The Briefings page's own cross-reference button says how many
-        // accounts are actually connected, which is GL-14 in miniature: "1
-        // account" and "no accounts" are different sentences, and a constant
-        // label would make the row look the same either way.
-        let connected = GoogleAccountSlot.allCases
-            .filter { GoogleAccountStore.shared.record(for: $0) != nil }.count
-        googleCalendarInReviewButton.title = connected == 0
-            ? "No accounts"
-            : "\(connected) account\(connected == 1 ? "" : "s")"
-    }
-
-    /// The one sentence under the client-ID field, and the honest statement
-    /// of what is and is not set up.
-    ///
-    /// A stated gap in GL-14's own spirit: "no client ID" is not "sign-in is
-    /// broken", and the captain should be able to read which of the two they
-    /// are looking at.
-    static func gmailStatusLine(for configuration: GoogleOAuthConfiguration?) -> String {
-        guard let configuration else {
-            return "No OAuth client ID yet, so Connect cannot run - Grand Line cannot create one "
-                + "for you. Create a Google Cloud project, add an OAuth client of type "
-                + "\u{201C}Desktop app\u{201D}, and paste its ID above. Both values are kept in the "
-                + "Keychain, never on disk; FM_GOOGLE_OAUTH_CLIENT_ID overrides them."
-        }
-        guard configuration.looksWellFormed else {
-            return "That does not look like a Google client ID - they end in "
-                + "\u{201C}.apps.googleusercontent.com\u{201D}. Connect will use it anyway, but "
-                + "Google will probably refuse it."
-        }
-        return "Ready. Connect opens Google\u{2019}s own sign-in page in Safari, so Grand Line "
-            + "never sees your password. Both values are kept in the Keychain, never on disk."
-    }
-
-    @objc private func gmailClientChanged() {
-        let id = gmailClientIDField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let secret = gmailClientSecretField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        do {
-            // GL-10: the write is reported, never silently dropped.
-            try GoogleOAuthClientStore.shared.setConfiguration(
-                id.isEmpty ? nil : GoogleOAuthConfiguration(clientID: id,
-                                                            clientSecret: secret.isEmpty ? nil : secret))
-        } catch {
-            Feedback.report("Grand Line could not store the Google client ID: "
-                            + error.localizedDescription,
-                            kind: .warning, persistence: .transient, in: view)
-        }
-        refreshGmailSection()
-    }
-
-    @objc private func googleCalendarToggled() {
-        AppSettings.shared.googleCalendarEnabled = gmailCalendarSwitch.isOn
-        if !gmailCalendarSwitch.isOn { DailyReviewCalendarSources.shared.forgetGoogle() }
-        onGoogleAccountsChanged?()
-    }
-
-    /// Run one **real** calendar read for `slot` and repaint the row with
-    /// whatever actually happened.
-    ///
-    /// The captain's own report is the reason this exists: OAuth succeeded,
-    /// this page said "calendar readable", and the read failed every time
-    /// with Google's "Calendar API has not been used in project N ... Enable
-    /// it by visiting <url>". That sentence was already being captured by
-    /// `GoogleCalendarSource`; the only place it ever surfaced was the daily
-    /// review card's fine print, on the Overview page, days later. This puts
-    /// it next to the account it is about, at the moment the captain is
-    /// looking at that account.
-    private func checkGoogleCalendar(_ slot: GoogleAccountSlot) {
-        GoogleCalendarHealthCheck.shared.check(slot: slot) { [weak self] _ in
-            self?.refreshGmailSection()
-        }
-    }
-
-    /// Check every connected account that has no verdict yet.
-    ///
-    /// Called when the page appears and right after a connect, never on every
-    /// repaint: `result(for:)` is `.notChecked` only until the first answer
-    /// lands, so this costs one request per account per launch rather than
-    /// one per render. "Test connection" is the way to ask again.
-    private func checkGoogleCalendarsIfNeeded() {
-        for slot in GoogleAccountSlot.allCases
-        where GoogleAccountStore.shared.record(for: slot) != nil
-            && GoogleCalendarHealthCheck.shared.result(for: slot) == .notChecked {
-            checkGoogleCalendar(slot)
-        }
-    }
-
-    private func connectGoogle(_ slot: GoogleAccountSlot) {
-        refreshGmailSection()
-        GoogleSignInController.shared.signIn(slot: slot, from: view.window) { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .success(let record):
-                if record.canReadCalendar {
-                    Feedback.report("Connected \(record.email.isEmpty ? slot.title : record.email).",
-                                    kind: .done, persistence: .transient, in: self.view)
-                    // The whole point: "connected" is not "working", so the
-                    // read is tried here rather than left for the daily
-                    // review to discover days later.
-                    GoogleCalendarHealthCheck.shared.forget(slot)
-                    self.checkGoogleCalendar(slot)
-                } else {
-                    // Signed in, no calendar. A stated gap rather than a
-                    // success that quietly does nothing.
-                    Feedback.report("Connected, but that account did not grant calendar access - "
-                                    + "the daily review will say so.",
-                                    kind: .warning, persistence: .transient, in: self.view)
-                }
-            case .failure(.cancelled):
-                break
-            case .failure(let error):
-                Feedback.report(error.errorDescription ?? "Google sign-in failed.",
-                                kind: .warning, persistence: .transient, in: self.view)
-            }
-            self.refreshGmailSection()
-            self.onGoogleAccountsChanged?()
-        }
-        refreshGmailSection()
-    }
-
-    private func disconnectGoogle(_ slot: GoogleAccountSlot) {
-        // A sign-out is not destructive in GL-06's sense - nothing of the
-        // captain's is deleted, and signing back in restores it - so it needs
-        // no `DestructiveConfirm`. It does revoke the token with Google,
-        // which is the part that cannot be undone from here, so the button
-        // says "Disconnect" rather than "Remove".
-        GoogleSignInController.shared.signOut(slot: slot)
-        // A verdict about an account that is gone is a lie about the row it
-        // sits under.
-        GoogleCalendarHealthCheck.shared.forget(slot)
-        // The cached day of events belongs to the account that just went
-        // away; keeping it would render a disconnected account's calendar.
-        DailyReviewCalendarSources.shared.forgetGoogle()
-        refreshGmailSection()
-        onGoogleAccountsChanged?()
     }
 
     // MARK: - App Intents & Shortcuts (F21)
@@ -2661,15 +2347,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     }
 
     @objc private func textFieldChanged(_ sender: NSTextField) {
-        // The Google controls are checked before the switch because the
-        // sender is one of a `HelmRevealableSecretField`'s two halves, never
-        // the control itself - a `case` on the property would match neither.
-        // Both fields write one stored pair, so either one committing
-        // re-reads both, which is what makes the editing order irrelevant.
-        if gmailClientIDField.owns(sender) || gmailClientSecretField.owns(sender) {
-            gmailClientChanged()
-            return
-        }
         let value = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         switch sender {
         case shellCwdField:
@@ -2695,15 +2372,12 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         autoReconnectSwitch.isOn = AppSettings.shared.autoReconnect
         notifySwitch.isOn = AppSettings.shared.notifyOnNeedsDecision
         morningBriefingSwitch.isOn = AppSettings.shared.morningBriefingEnabled
-        dailyReviewSwitch.isOn = AppSettings.shared.dailyReviewEnabled
-        dailyReviewCalendarSwitch.isOn = AppSettings.shared.dailyReviewCalendarEnabled
         compactModeSwitch.isOn = AppSettings.shared.compactModeEnabled
         compactDockSwitch.isOn = AppSettings.shared.compactModeHidesDockIcon
         compactBadgeSwitch.isOn = AppSettings.shared.compactModeBadgesOverdueCount
         separateMenuBarItemsSwitch.isOn = AppSettings.shared.menuBarSeparateItems
         followSystemSwitch.isOn = AppSettings.shared.followSystemAppearance
         refreshSystemPairPopUps()
-        refreshGmailSection()
         refreshCaptureControls()
         syncDependentRows()
 
@@ -2765,9 +2439,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             recorder.applyTheme(theme)
         }
         for toggle in [autoReconnectSwitch, notifySwitch, morningBriefingSwitch,
-                       dailyReviewSwitch, dailyReviewCalendarSwitch, followSystemSwitch,
-                       compactModeSwitch, compactDockSwitch, compactBadgeSwitch,
-                       gmailCalendarSwitch] {
+                       followSystemSwitch, compactModeSwitch, compactDockSwitch,
+                       compactBadgeSwitch] {
             toggle.applyTheme(theme)
         }
         themeFilterTabs?.applyTheme(theme)
@@ -2907,26 +2580,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         return dependentRows[dependency] ?? []
     }
 
-    var debugGmailRows: [GmailAccountRow] {
-        GoogleAccountSlot.allCases.compactMap { gmailRows[$0] }
-    }
-    var debugGmailStatusText: String { gmailStatusSection?.footLabel?.stringValue ?? "" }
-    var debugGmailCalendarSwitch: HelmToggle { gmailCalendarSwitch }
-    var debugGmailClientIDField: HelmRevealableSecretField { gmailClientIDField }
-    var debugGmailClientSecretField: HelmRevealableSecretField { gmailClientSecretField }
-    /// Calls the commit directly. Deliberately *not* a stand-in for the
-    /// field's own wiring: it reaches past both the Return action and the
-    /// end-editing delegate, which is exactly how
-    /// `fm/grandline-gmail-oauth-field-not-saving` shipped a field that only
-    /// ever committed on Return.
-    func debugCommitGmailClient() { gmailClientChanged() }
-    func debugRefreshGmail() { refreshGmailSection() }
-
     var debugAutoReconnectSwitch: HelmToggle { autoReconnectSwitch }
     var debugNotifySwitch: HelmToggle { notifySwitch }
     var debugMorningBriefingSwitch: HelmToggle { morningBriefingSwitch }
-    var debugDailyReviewSwitch: HelmToggle { dailyReviewSwitch }
-    var debugDailyReviewCalendarSwitch: HelmToggle { dailyReviewCalendarSwitch }
     var debugCompactModeSwitch: HelmToggle { compactModeSwitch }
     var debugCompactDockSwitch: HelmToggle { compactDockSwitch }
     var debugCompactBadgeSwitch: HelmToggle { compactBadgeSwitch }
@@ -2934,8 +2590,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// a toggle added without coming here fails by name.
     var debugToggles: [HelmToggle] {
         [followSystemSwitch, autoReconnectSwitch, notifySwitch,
-         morningBriefingSwitch, dailyReviewSwitch, dailyReviewCalendarSwitch,
-         gmailCalendarSwitch, compactModeSwitch, compactDockSwitch, compactBadgeSwitch]
+         morningBriefingSwitch, compactModeSwitch, compactDockSwitch, compactBadgeSwitch]
     }
     #endif
 }

@@ -27,14 +27,11 @@
 //      does not apply and then applies it is worse than no dimming at all, so
 //      the case presses the disabled control and asserts the store did not
 //      move.
-//   6. **The wide page survives being narrowed and widened again.** It is the
+//   5. **The wide page survives being narrowed and widened again.** It is the
 //      one page laid out in two columns, and it collapses to one below a
 //      breakpoint - so the two arrangements' constraints have to be swapped
 //      rather than accumulated. Asserted across several resizes in both
 //      directions, because a single collapse cannot see the defect.
-//   5. **The secure fields reveal and re-mask**, through the one
-//      `HelmRevealableSecretField` both OAuth rows use - and the reveal is
-//      display-only, so the stored value is the same in both states.
 //
 // Window-backed on purpose (and so listed in `NEEDS_SESSION`): the search and
 // history cases drive real `HoverHighlightView` presses and read painted
@@ -62,7 +59,6 @@ enum SettingsRedesignSelfTest {
                       checkBackAndForwardWalkTheHistory,
                       checkTheThemeGridRendersFiltersAndSelects,
                       checkADependentRowIsDimmedAndInert,
-                      checkTheSecureFieldsRevealAndReMask,
                       checkTheWidePageCollapsesAndComesBack] {
             var ok = true
             check(&ok)
@@ -493,55 +489,7 @@ enum SettingsRedesignSelfTest {
         if ok { print("  ok   two dependency keys, dimmed and inert in both directions") }
     }
 
-    // MARK: 5. The secure fields
-
-    private static func checkTheSecureFieldsRevealAndReMask(_ ok: inout Bool) {
-        print("\n-- the OAuth fields reveal and re-mask, without changing what is stored --")
-        let settings = makeSettings()
-        let window = mount(settings)
-        defer { _ = window }
-        settings.select(.gmail)
-
-        for (name, field) in [("client ID", settings.debugGmailClientIDField),
-                              ("client secret", settings.debugGmailClientSecretField)] {
-            // A value only in the control, never through the store: this case
-            // is about the reveal, and writing a fabricated client ID into
-            // the captain's real Keychain to test a display toggle would be
-            // exactly the "never touch real captain data" rule.
-            let probe = "probe-\(name.replacingOccurrences(of: " ", with: "-"))-value"
-            field.stringValue = probe
-
-            if field.isRevealed {
-                print("  FAIL the \(name) field starts revealed")
-                ok = false
-            }
-            field.toggleReveal()
-            if !field.isRevealed {
-                print("  FAIL the \(name) field did not reveal")
-                ok = false
-            }
-            // Display-only: the value the store would see is the same in both
-            // states, which is the claim that makes masking safe to apply to
-            // a field the captain edits.
-            if field.stringValue != probe {
-                print("  FAIL revealing the \(name) changed its value to \"\(field.stringValue)\"")
-                ok = false
-            }
-            field.toggleReveal()
-            if field.isRevealed {
-                print("  FAIL the \(name) field did not re-mask")
-                ok = false
-            }
-            if field.stringValue != probe {
-                print("  FAIL re-masking the \(name) changed its value to \"\(field.stringValue)\"")
-                ok = false
-            }
-            field.stringValue = ""
-        }
-        if ok { print("  ok   both OAuth fields reveal, re-mask, and keep their value") }
-    }
-
-    // MARK: 6. The wide page's collapse
+    // MARK: 5. The wide page's collapse
 
     private static func checkTheWidePageCollapsesAndComesBack(_ ok: inout Bool) {
         print("\n-- the wide page collapses when narrowed and comes back when widened --")

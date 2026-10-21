@@ -2016,9 +2016,8 @@ class DaylightBarIconButton: NSButton {
     /// The one bar control that is **not** chrome, because it is the only one
     /// that is asking for something: the panel behind it is this app's
     /// "Waiting for you" list. Amber is already this app's attention hue -
-    /// §2.2 gives it to `dailyOverview` ("here is your day") and
-    /// `DaylightModule.briefing` carries it - so a bell in amber says the same
-    /// thing those surfaces say, one control instead of a page.
+    /// `DaylightModule.briefing` carries it - so a bell in amber says the
+    /// same thing that card says, one control instead of a page.
     ///
     /// **Not `.rose`/`.critical`, deliberately.** A bell at rest is not an
     /// alarm, and this app already has a louder signal for the case that is:

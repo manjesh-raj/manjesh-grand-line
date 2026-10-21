@@ -187,16 +187,6 @@ final class AppShellController: NSViewController {
         // selected category, the way the reference mockup's "Settings /
         // Shortcuts & Siri" does.
         settings.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // `fm/grandline-overview-layout-fix-gmail-settings`: a Google account
-        // connected (or disconnected, or its calendar switch flipped) changes
-        // what the daily review's calendar column can read.
-        // Pushed from Settings rather than polled, and the pages re-read the
-        // source rather than being handed one. Only a built Overview page has
-        // anything to re-render.
-        settings.onGoogleAccountsChanged = { [weak self] in
-            guard let self, self.isBuilt(.dailyOverview) else { return }
-            self.dailyOverview.renderDailyReviewIfMounted()
-        }
         // cockpit-settings-sudo-touchid: Settings' "Touch ID for sudo" row
         // runs `sudo av harden sudo`, which needs a real interactive `sudo`
         // prompt exactly like Bootstrap's provisioning actions - same
@@ -207,30 +197,6 @@ final class AppShellController: NSViewController {
             self?.runInConsole(label: label, command: command, completion: completion)
         }
         return built(.settings, settings)
-    }()
-
-    /// `fm/grandline-overview-page-daily-review`: the Overview page - F20's
-    /// daily review on a destination of its own, opened by the leftmost space
-    /// pill. Lazily mounted like every other page that owns no live process.
-    private lazy var dailyOverview: DailyOverviewController = {
-        // The same shared `ShiftStore` (GL-23), never a second instance - the
-        // daily review reads the very lists the Tasks page is showing.
-        let dailyOverview = DailyOverviewController(shiftStore: shiftStore)
-        // F20: the daily review reads the sticky board and the reading list.
-        // GL-23: the shared instances, the same ones the canvas and the other
-        // destinations use.
-        //
-        // **One host, since X3.** Fleet used to take the same attach for its
-        // own copy of the card; the review's navigation-naming fix made Today
-        // the daily review's only home.
-        dailyOverview.attachDailyReviewSources(stickyBoardStore: stickyBoardStore,
-                                               readingListStore: readingListStore)
-        // F20's own page: the same pass-through the morning briefing uses. No
-        // drill-subtitle wiring - `fm/grandline-overview-layout-fix-gmail-
-        // settings` made Overview a top-level page, which has no drill header
-        // to update.
-        dailyOverview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
-        return built(.dailyOverview, dailyOverview)
     }()
 
     /// `fm/polish-straw-hat-overview-card-and-voice-c8d3`: the Straw Hat
@@ -1165,7 +1131,6 @@ final class AppShellController: NSViewController {
         // destinations") and why a reach-in that does not navigate asks
         // `isBuilt` first.
         mounter.register(DestinationSlot(id: .homeCanvas, title: RailDestination.homeCanvas.title, mountsEagerly: true, makeController: { [unowned self] in self.homeCanvas }))
-        mounter.register(DestinationSlot(id: .dailyOverview, title: RailDestination.dailyOverview.title, mountsEagerly: false, makeController: { [unowned self] in self.dailyOverview }))
         mounter.register(DestinationSlot(id: .overview, title: RailDestination.overview.title, mountsEagerly: true, makeController: { [unowned self] in self.overview }))
         mounter.register(DestinationSlot(id: .strawHat, title: RailDestination.strawHat.title, mountsEagerly: false, makeController: { [unowned self] in self.strawHat }))
         mounter.register(DestinationSlot(id: .console, title: RailDestination.console.title, mountsEagerly: true, makeController: { [unowned self] in self.console }))
@@ -2387,9 +2352,6 @@ final class AppShellController: NSViewController {
     /// regression coverage asserts.
     var barPillsAreHiddenForTests: Bool { bar.pillsAreHiddenForTests }
     var barWordmarkIsHiddenForTests: Bool { bar.wordmarkIsHiddenForTests }
-    /// The Overview page itself, so a suite can drive the real page the shell
-    /// mounted rather than a second instance of it.
-    var dailyOverviewForTests: DailyOverviewController { dailyOverview }
     /// A3's state, as the bar currently has it.
     var scrollEdgeActiveForTests: Bool { bar.scrollEdgeActiveForTests }
     var scrollEdgeWatchedForTests: [NSScrollView] { scrollEdge.watchedForTests }
@@ -2440,25 +2402,8 @@ final class AppShellController: NSViewController {
                          symbol: dest.symbol,
                          hue: dest.domainHue,
                          artwork: dest.drillHeaderArtwork,
-                         // `fm/grandline-overview-layout-fix-gmail-settings`:
-                         // a **top-level** page, not only the canvas. A space
-                         // pill that opens a page of its own
-                         // (`DaylightSpace.destination`) is still the top of
-                         // the navigation, so the bar keeps its wordmark and
-                         // its pill strip - the captain reported the new
-                         // Overview tab rendering with a back arrow and no
-                         // tabs at all, which is what naming the canvas here
-                         // did. Read off the same one table `selectSpace`
-                         // reads, never a second copy.
-                         isTopLevel: slot.id == .homeCanvas
-                             || DaylightSpace.owning(destination: dest) != nil,
+                         isTopLevel: slot.id == .homeCanvas,
                          slotController: slot.controller)
-
-        // The strip's second input (see `applySessionStripVisibility`): which
-        // page is showing. `currentDestinationKind` was set by
-        // `updateRecentDestinations(arriving:)` a few lines up, so this reads
-        // the destination the shell is navigating *to*.
-        applySessionStripVisibility()
 
         // A3: re-point the scroll-edge observer at what is now showing.
         // After `mounter.show` the slot's view exists but may not have been
@@ -2824,16 +2769,6 @@ final class AppShellController: NSViewController {
     /// what a canvas is, and the canvas does not know how to navigate.
     func selectSpace(_ space: DaylightSpace) {
         bar.setSelectedSpace(space)
-        // `fm/grandline-overview-page-daily-review`: a pill can now be a page
-        // rather than a filter (`DaylightSpace.destination`). The table is
-        // asked rather than the case named, so a second such pill is one line
-        // in that enum and none here - and the canvas's own space selection is
-        // left alone, which is what makes a round trip through this page land
-        // back on the space the captain was last filtering.
-        if let destination = space.destination {
-            show(destination)
-            return
-        }
         homeCanvas.select(space: space)
         show(.homeCanvas)
     }
@@ -3029,19 +2964,7 @@ final class AppShellController: NSViewController {
     func makeCaptureFiler() -> CaptureFiler {
         CaptureFiler { [weak self] destination, draft in
             guard let self else { return .refused("The app shell went away.") }
-            // **UX issue X6.** This closure is the one place every capture
-            // entry point lands - ⌥Space's panel, the compact popover, the
-            // crew's own answer - so it is the one place a capture can be
-            // logged without a second copy of the routing. A refusal is not
-            // logged: nothing was captured.
-            let outcome = self.fileCapture(destination, draft)
-            switch outcome {
-            case .filed, .handedOff:
-                CaptureInboxStore.shared.record(destination: destination, title: draft.title)
-            case .refused:
-                break
-            }
-            return outcome
+            return self.fileCapture(destination, draft)
         }
     }
 
@@ -3802,11 +3725,16 @@ final class AppShellController: NSViewController {
     /// argv, which this controller deliberately knows nothing about - the same
     /// boundary `connectHost`'s own `args` parameter draws). The app delegate
     /// handles that case; everything else is an ordinary `show(_:)`.
+    ///
+    /// A destination this build no longer has lands on Home. The Today page
+    /// (`dailyOverview`) is the case that made this explicit: a captain who
+    /// quit on it still has that raw value saved, and Home is the page its
+    /// one remaining card moved to.
     @discardableResult
     func restoreDestination(from state: SessionRestoreState) -> Bool {
         guard state.activeHostID == nil else { return false }
-        guard let raw = state.destination, let dest = RailDestination(rawValue: raw) else { return false }
-        show(dest)
+        guard let raw = state.destination else { return false }
+        show(RailDestination(rawValue: raw) ?? .homeCanvas)
         return true
     }
 
@@ -3973,35 +3901,17 @@ final class AppShellController: NSViewController {
         updateKeyViewLoop()
     }
 
-    /// Whether the strip is showing, and how much room it takes.
-    ///
-    /// Two inputs, and the second is `fm/grandline-overview-layout-fix-gmail-settings`'s:
-    /// there has to be a live session **and** the showing page has to be one
-    /// the strip belongs on (`RailDestination.showsSessionStrip`). The strip
-    /// was built to make a live session reachable "from anywhere"
-    /// (`docs/history/03-navigation-and-chrome.md`) and still is - the one
-    /// page it is now kept off is the daily-review Overview, where the
-    /// captain reported a terminal tab strip reading as leftover UI bleeding
-    /// into a page that has nothing to do with terminals.
-    ///
-    /// Called from both inputs' own change points - a registry change and a
-    /// navigation - because either alone can flip the answer.
+    /// Whether the strip is showing, and how much room it takes. The strip
+    /// makes a live session reachable "from anywhere"
+    /// (`docs/history/03-navigation-and-chrome.md`), so it shows on every
+    /// page whenever there is one.
     private func applySessionStripVisibility() {
         guard isViewLoaded, sessionStripHeightConstraint != nil else { return }
-        let visible = !sessions.isEmpty && currentDestinationShowsSessionStrip
+        let visible = !sessions.isEmpty
         sessionStrip.isHidden = !visible
         sessionStripHeightConstraint.constant = visible ? SessionStripView.height : 0
         bodyTopConstraint.constant = DaylightBarController.reservedTopHeight
             + (visible ? SessionStripView.gapBelowBar + SessionStripView.height : 0)
-    }
-
-    /// Whether the page showing right now is one the session strip belongs
-    /// on. A destination the shell has never navigated to (launch, before the
-    /// first `show`) answers `true`, which is the strip's own historical
-    /// behaviour.
-    private var currentDestinationShowsSessionStrip: Bool {
-        guard case .rail(let dest)? = currentDestinationKind else { return true }
-        return dest.showsSessionStrip
     }
 
     /// P3 of the polish report: installed by `AppDelegate` (see

@@ -414,9 +414,11 @@ enum SettingsThemeLayoutParitySelfTest {
         // into a `>=`.
         // Twenty-five since the 2026-09-27 review's X2 added the Menu bar
         // page's own card - moved and named here rather than relaxed, which
-        // is what the note above asks of whoever adds one.
-        guard daylightFP.cardCount == 25 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 25")
+        // is what the note above asks of whoever adds one. Twenty-one since
+        // `fm/grandline-remove-today-calendar-1792553365` removed the Daily
+        // review card and the Google Accounts page's three.
+        guard daylightFP.cardCount == 21 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 21")
             ok = false
             return
         }

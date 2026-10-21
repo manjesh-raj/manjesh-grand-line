@@ -19,8 +19,7 @@
 //     menus owned is still bound somewhere in the tree.
 //   * **§7** - the naming and window-title halves of review #3's "other
 //     issues". "Home" names the canvas, "Fleet" names the fleet dashboard,
-//     "Overview" names exactly one thing (the daily review page, which
-//     `fm/grandline-overview-page-daily-review` added); and
+//     "Overview" names nothing; and
 //     `AppDelegate.windowTitle(context:)` puts the current page in the window
 //     title, which is what Mission Control and the Window menu read. The
 //     *live* half - navigating actually renames the window - lives in
@@ -171,7 +170,7 @@ enum NavigationCoherenceSelfTest {
         return ok
     }
 
-    /// "Overview" names exactly one thing, and it is the daily review page.
+    /// Home and Fleet name two things, and "Overview" names none.
     ///
     /// **UX issue X3 of the 2026-09-27 review.** The rule this guard
     /// enforces has now moved twice, and the history matters because the
@@ -190,9 +189,11 @@ enum NavigationCoherenceSelfTest {
     /// The word itself was the problem. "Overview" does not say what the
     /// page is - it is what *any* landing page could be called, which is
     /// why it kept attaching itself to whichever one somebody was looking
-    /// at. The three things are named for what they are now: **Home** is
-    /// the canvas, **Today** is the daily review, **Fleet** is the crew
-    /// dashboard. "Overview" names nothing and is forbidden again.
+    /// at. The things are named for what they are now: **Home** is the
+    /// canvas and **Fleet** is the crew dashboard. (A third, **Today**, named
+    /// the daily review page until that page was removed in
+    /// `fm/grandline-remove-today-calendar-1792553365`.) "Overview" names
+    /// nothing and is forbidden again.
     ///
     /// Comments are stripped before the search, so this file's own prose
     /// (and the several doc comments that explain the rename) do not fail
@@ -200,23 +201,16 @@ enum NavigationCoherenceSelfTest {
     /// carrying a URL - that only ever makes the guard more permissive,
     /// never a false alarm.
     private static func checkNavigationNamesAreDistinct() -> Bool {
-        print("\n-- X3: Home, Today and Fleet name three things, and \"Overview\" names none --")
+        print("\n-- X3: Home and Fleet name two things, and \"Overview\" names none --")
         var ok = true
 
-        // The behavioural half: three names, three things, no two alike.
+        // The behavioural half: two names, two things.
         let canvas = RailDestination.homeCanvas.title
         let fleet = RailDestination.overview.title
-        let review = RailDestination.dailyOverview.title
-        check(review == "Today", "the daily review page is called Today, got \(review)", &ok)
         check(canvas == "Home", "the canvas is called Home, got \(canvas)", &ok)
         check(fleet == "Fleet", "the crew dashboard is called Fleet, got \(fleet)", &ok)
-        check(Set([canvas, fleet, review]).count == 3,
-              "the canvas, the fleet dashboard and the daily review page need three distinct names, got "
-              + "\(canvas)/\(fleet)/\(review)", &ok)
-        check(DaylightSpace.dailyOverview.title == review,
-              "the pill and the page it opens agree, pill says \(DaylightSpace.dailyOverview.title)", &ok)
-        check(DaylightSpace.dailyOverview.destination == .dailyOverview,
-              "...and the pill really opens that page", &ok)
+        check(canvas != fleet,
+              "the canvas and the fleet dashboard need distinct names, got \(canvas)/\(fleet)", &ok)
 
         // No two space pills may share a label with each other or with a
         // top-level destination either - the bar is the surface the review
@@ -250,7 +244,7 @@ enum NavigationCoherenceSelfTest {
             offenders.append(file.lastPathComponent)
         }
         check(offenders.isEmpty,
-              "\"Overview\" names nothing in this app - the canvas is Home, the daily review is Today, "
+              "\"Overview\" names nothing in this app - the canvas is Home and "
               + "the crew dashboard is Fleet. Still in: \(offenders.sorted())", &ok)
         return ok
     }

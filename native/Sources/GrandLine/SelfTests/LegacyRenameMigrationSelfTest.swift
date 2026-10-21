@@ -43,7 +43,6 @@ enum LegacyRenameMigrationSelfTest {
         checkKeychainMigrationGateSkipsOnceComplete(&ok)
         checkKeychainMigrationGateRetriesAFailure(&ok)
         checkKeychainMigrationGivesUpAfterABoundedNumberOfTries(&ok)
-        checkACachedAbsenceIsDroppedWhenTheMigrationCopiesAnItem(&ok)
         checkKeychainMigrationGatePerItemSurvivesOtherFailures(&ok)
         checkKeychainMigrationPersistsPerItemDuringThePass(&ok)
         checkLaunchPathNeverCallsTheKeychainMigration(&ok)
@@ -73,9 +72,9 @@ enum LegacyRenameMigrationSelfTest {
               "there is at least one service to migrate", &ok)
     }
 
-    /// A sixth secret store must join `keychainServices`, or its items are
+    /// A fourth secret store must join `keychainServices`, or its items are
     /// silently orphaned for any captain still on the old build. The grep is
-    /// the only thing that can see that, because the five stores hold their
+    /// the only thing that can see that, because the stores hold their
     /// service name `private`.
     private static func checkEveryKeychainServiceIsListed(_ ok: inout Bool) {
         guard let files = SelfTestSources.appSourceFiles() else {
@@ -411,82 +410,6 @@ enum LegacyRenameMigrationSelfTest {
         check(clean.integer(forKey: LegacyNameMigration.keychainMigrationAttemptsKey) == 0,
               "and a clean pass clears the count, got "
               + "\(clean.integer(forKey: LegacyNameMigration.keychainMigrationAttemptsKey))", &ok)
-    }
-
-    // MARK: - B30: a cached absence does not survive the migration
-
-    /// The Keychain migration runs two seconds after launch, on a background
-    /// queue. By then a card has usually already asked `GoogleAccountStore`
-    /// whether an account is connected - and that read answered "no" from the
-    /// *pre-migration* Keychain and cached it for the session. A captain whose
-    /// token was migrated a moment later still saw "Not connected", with a
-    /// Connect button that would have started a fresh OAuth flow over a token
-    /// that was there all along.
-    ///
-    /// Driven through a stand-in store, because writing a real legacy Keychain
-    /// item and migrating it is what `checkKeychainItemIsCopied` already does
-    /// and what this is not about: the defect is the *cache*, and what has to
-    /// be asserted is that it is dropped.
-    private static func checkACachedAbsenceIsDroppedWhenTheMigrationCopiesAnItem(_ ok: inout Bool) {
-        final class CountingStore: GoogleAccountStoring {
-            var reads = 0
-            var present: GoogleAccountRecord?
-            private var cached: GoogleAccountRecord?
-            private var loaded = false
-            private var observer: NSObjectProtocol?
-            init() {
-                observer = NotificationCenter.default.addObserver(
-                    forName: LegacyNameMigration.keychainItemsCopiedNotification,
-                    object: nil, queue: .main
-                ) { [weak self] _ in
-                    guard let self, self.cached == nil else { return }
-                    self.loaded = false
-                }
-            }
-            deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
-            func outcome(for slot: GoogleAccountSlot) -> GoogleAccountReadOutcome {
-                if loaded { return cached.map { .connected($0) } ?? .notConnected }
-                reads += 1
-                cached = present
-                loaded = true
-                return cached.map { .connected($0) } ?? .notConnected
-            }
-            func save(_ record: GoogleAccountRecord, for slot: GoogleAccountSlot) throws {}
-            func remove(_ slot: GoogleAccountSlot) {}
-        }
-
-        let store = CountingStore()
-        check(store.record(for: .work) == nil, "nothing is connected before the migration", &ok)
-        check(store.record(for: .work) == nil, "and the absence is cached", &ok)
-        check(store.reads == 1,
-              "fixture: the second read really was served from the cache, or this check cannot "
-              + "see B30 at all - got \(store.reads) reads", &ok)
-
-        // The migration copies the item across and says so.
-        store.present = GoogleAccountRecord(email: "captain@example.com",
-                                            accessToken: "a", refreshToken: "r",
-                                            accessTokenExpiry: Date().addingTimeInterval(3600),
-                                            grantedScopes: [])
-        NotificationCenter.default.post(name: LegacyNameMigration.keychainItemsCopiedNotification,
-                                        object: nil)
-        // The notification is delivered on the main queue; this suite is on it.
-        RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
-
-        check(store.record(for: .work) != nil,
-              "a migrated account is visible in the same session, not only after a relaunch (B30)",
-              &ok)
-        check(store.reads == 2, "which means the cache really was dropped, got \(store.reads) reads",
-              &ok)
-
-        // And the prevention half, on the real store's own rule: while the
-        // migration is outstanding an absence is not settled.
-        let pending = UserDefaults(suiteName: "fm.selftest.migration-pending.\(UUID().uuidString)")
-        check(pending.map { LegacyNameMigration.keychainMigrationIsOutstanding($0) } == true,
-              "a defaults domain with no complete flag reports the migration as outstanding", &ok)
-        pending?.set(true, forKey: LegacyNameMigration.keychainMigrationCompleteKey)
-        check(pending.map { LegacyNameMigration.keychainMigrationIsOutstanding($0) } == false,
-              "and a completed one does not", &ok)
-        if let pending { pending.removePersistentDomain(forName: pending.description) }
     }
 
     /// The fix behind this file's second round: PR #471's gate was a single

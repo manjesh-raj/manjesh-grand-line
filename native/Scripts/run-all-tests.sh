@@ -257,14 +257,9 @@ NEEDS_SESSION=(
   # real window. Its pure half (`FM_RUN_PONEGLYPH_TOTP_TESTS`) carries the RFC
   # 6238 vectors and the recovery wrap, and is deliberately NOT here.
   "FM_RUN_PONEGLYPH_TOTP_VIEW_TESTS"
-  # F20's render: mounts the real Overview page in a real window and measures
-  # the daily review's three columns, its dividers' heights and the window's
-  # own width under a shrink (gotcha (13)). Its composer half
-  # (`FM_RUN_DAILY_REVIEW_TESTS`) is pure logic and deliberately NOT here.
-  "FM_RUN_DAILY_REVIEW_VIEW_TESTS"
-  # Same split, same reason: the Home page's Needs Attention card mounts the
-  # real hub in a real window and drives real controls. Its pure half
-  # (`FM_RUN_NEEDS_ATTENTION_TESTS`) is deliberately NOT here.
+  # The Home page's Needs Attention card mounts the real hub in a real window
+  # and drives real controls. Its pure half (`FM_RUN_NEEDS_ATTENTION_TESTS`)
+  # is deliberately NOT here.
   "FM_RUN_NEEDS_ATTENTION_VIEW_TESTS"
   # Same split again: the hub's dashboard layout reads resolved `NSView`
   # frames out of a real window. Its arithmetic half
@@ -279,11 +274,6 @@ NEEDS_SESSION=(
   # a real layout pass. There is no pure half of this - the whole defect was a
   # constraint tie that only a laid-out frame can see.
   "FM_RUN_MODULE_CARD_HEADER_TESTS"
-  # `fm/grandline-overview-layout-fix-gmail-settings`: mounts a real
-  # `SettingsController` in a real window and asserts laid-out geometry and
-  # painted colour. Its sibling `FM_RUN_GOOGLE_ACCOUNTS_TESTS` is pure logic
-  # and deliberately NOT here.
-  "FM_RUN_GMAIL_SETTINGS_VIEW_TESTS"
   "FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"
   # Mounts the real shell in a real window and sweeps its width, to prove
   # Bootstrap's own labels can no longer dictate it.
