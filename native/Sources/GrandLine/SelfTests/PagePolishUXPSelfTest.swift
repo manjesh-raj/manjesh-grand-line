@@ -363,9 +363,6 @@ enum PagePolishUXPSelfTest {
             shell.view.layoutSubtreeIfNeeded()
             let primaries = visiblePrimaryButtons(in: shell.view)
             let titles = primaries.map { $0.title.isEmpty ? ($0.toolTip ?? "(icon)") : $0.title }
-            if ProcessInfo.processInfo.environment["FM_UXP08_MEASURE"] != nil {
-                print("MEASURE \(destination.rawValue): \(titles)")
-            }
             check(primaries.count <= 1,
                   "UXP-08: \(destination.rawValue) shows \(primaries.count) primary buttons at once: \(titles)", &ok)
         }
@@ -435,9 +432,6 @@ enum PagePolishUXPSelfTest {
                 // the band a centred state's midpoint must land in.
                 let third = area.height / 3
                 let midY = frame.midY
-                if ProcessInfo.processInfo.environment["FM_UXP13_MEASURE"] != nil {
-                    print("MEASURE \(destination.rawValue): midY \(midY) in \(area.minY)...\(area.maxY), width \(frame.width)")
-                }
                 check(midY >= area.minY + third - 0.5 && midY <= area.maxY - third + 0.5,
                       "UXP-13: \(destination.rawValue)'s empty state is centred at y \(Int(midY)), outside the middle "
                       + "third of its \(Int(area.minY))-\(Int(area.maxY)) content area", &ok)

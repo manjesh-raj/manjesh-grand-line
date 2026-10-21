@@ -351,12 +351,14 @@ final class ReviewPRListView: NSView {
     /// `numberOfRows`, which reports `1` for the empty-state placeholder row).
     var debugRowCount: Int { prs.count }
     var debugTableHeight: CGFloat { tableHeight.constant }
+    #if FM_SELFTESTS
     /// UXP-09: the height the table really gives its first row - the
     /// placeholder's, when the list is empty.
     var debugFirstRowHeight: CGFloat {
         tableView.layoutSubtreeIfNeeded()
         return tableView.numberOfRows > 0 ? tableView.rect(ofRow: 0).height : 0
     }
+    #endif
 
     /// Forces the real, already-dequeued/laid-out cell view at `row` and
     /// returns its two action buttons' real frames plus whether Merge is

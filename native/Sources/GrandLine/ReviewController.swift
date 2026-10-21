@@ -815,11 +815,13 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     /// `refresh()`'s background fetch entirely.
     func debugRender(_ prs: [MergedPR]) { render(prs) }
 
+    #if FM_SELFTESTS
     /// GL-14: drive the fetch-failed rendering path without a real network
     /// failure, through the same `ScanFailure` the real refresh builds.
     func debugRender(_ prs: [MergedPR], scan: OpenPRsSource.FetchResult) {
         render(prs, failure: ScanFailure(scan))
     }
+    #endif
 
     var debugSubtitle: String { subtitleLabel.stringValue }
 
