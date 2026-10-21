@@ -63,6 +63,7 @@ enum SessionRestoreSelfTest {
             ("aQueuedHostIsBuiltOnItsFirstSwitch", test_aQueuedHostIsBuiltOnItsFirstSwitch),
             ("aQueuedHostIsCapturedAndCanBeForgotten", test_aQueuedHostIsCapturedAndCanBeForgotten),
             ("captureReadsWhateverIsActuallyOpen", test_capture),
+            ("aSavedTodayPageLandsOnHome", test_removedDestinationLandsOnHome),
             ("anEmptyOrAbsentStateChangesNothing", test_emptyState),
             ("aRestoredHostPageKnowsAboutItsActiveIncident", test_incidentReattachment),
             ("theStateIsWrittenToA0600FileNotUserDefaults", test_stateLandsInA0600File),
@@ -703,6 +704,39 @@ enum SessionRestoreSelfTest {
             }
             guard shell.debugHostConsole(id: queued[0].host.id) != nil else {
                 return "removing one queued host dropped the other"
+            }
+            return nil
+        }
+    }
+
+    // MARK: A page this build no longer has
+
+    /// The Today page was removed (`fm/grandline-remove-today-calendar-1792553365`),
+    /// and a captain who quit on it still has its raw value, `dailyOverview`,
+    /// saved. That launch must land on Home rather than on whatever the shell
+    /// happened to be showing.
+    private static func test_removedDestinationLandsOnHome() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeShell()
+            defer { window.contentViewController = nil }
+
+            // Discriminating power first: the shell is on a page that is not
+            // Home, so "it stayed on Home" cannot pass by never moving.
+            shell.show(.vault)
+            guard shell.captureSessionState().destination == RailDestination.vault.rawValue else {
+                return "fixture: the shell did not move to the Vault before the restore"
+            }
+            guard RailDestination(rawValue: "dailyOverview") == nil else {
+                return "the Today page's destination still decodes - this build has it back"
+            }
+
+            let restored = shell.restoreDestination(from: SessionRestoreState(destination: "dailyOverview"))
+            guard restored else {
+                return "a saved Today page was treated as a host page and left to the app delegate"
+            }
+            let landed = shell.captureSessionState().destination
+            guard landed == RailDestination.homeCanvas.rawValue else {
+                return "a saved Today page landed on \(landed ?? "nothing"), expected Home"
             }
             return nil
         }

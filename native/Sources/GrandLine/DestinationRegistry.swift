@@ -120,8 +120,6 @@ enum DestinationSlotID: String, CaseIterable {
     /// Daylight Phase 2's home canvas - eagerly mounted, because it is the
     /// launch landing and the target of every drill page's back button.
     case homeCanvas
-    /// `fm/grandline-overview-page-daily-review`'s daily review page.
-    case dailyOverview
     case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes
     case tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, notebook, readingList, runbooks, postmortems, poneglyph, settings
     /// The four Engineering setup pages. One slot each since
@@ -135,7 +133,6 @@ extension RailDestination {
     var slot: DestinationSlotID {
         switch self {
         case .homeCanvas: return .homeCanvas
-        case .dailyOverview: return .dailyOverview
         case .overview: return .overview
         case .strawHat: return .strawHat
         case .console: return .console
@@ -183,33 +180,12 @@ extension RailDestination {
         }
     }
 
-    /// Whether the live-SSH-session strip may show while this destination is
-    /// on screen.
-    ///
-    /// `fm/grandline-overview-layout-fix-gmail-settings`. The strip exists to
-    /// make an already-live session reachable "from anywhere"
-    /// (`docs/history/03-navigation-and-chrome.md`), and that is still true of
-    /// every page but one: the daily-review Overview, where a terminal tab
-    /// strip above the review card reads as leftover UI from another
-    /// destination rather than as an affordance - the captain reported it as
-    /// exactly that. A table rather than a `dest == .dailyOverview` in the
-    /// shell, so a second such page is one line here and none there.
-    var showsSessionStrip: Bool {
-        switch self {
-        case .dailyOverview: return false
-        default: return true
-        }
-    }
-
     /// The line under a drill page's title (Daylight §6.4). Deliberately
     /// short, static, and about the *area* rather than about live data - live
     /// numbers belong on that page's own header, which Phase 4 builds.
     var drillSubtitle: String {
         switch self {
         case .homeCanvas: return ""
-        // In practice a fallback only: `DailyOverviewController` conforms to
-        // `DaylightDrillActions` and supplies its own live line.
-        case .dailyOverview: return "Today's tasks, follow-ups, calendar, board and reading"
         // `fm/polish-straw-hat-overview-card-and-voice-c8d3` narrowed this: the
         // crew chat is its own destination now, so Fleet's line is about the
         // dispatched-crewmate board it actually shows.

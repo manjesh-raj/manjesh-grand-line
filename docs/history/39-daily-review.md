@@ -667,3 +667,27 @@ The general rule, which is not new but was worth paying for twice: **a suite
 must not assert a string that a `DateFormatter` localised**, and a fixture that
 proves such a string is discriminating must not do it by naming one region's
 characters either.
+
+## Removed: the Today page and its calendar (`fm/grandline-remove-today-calendar-1792553365`)
+
+The captain asked for the Today page to go, along with both of its cards and the calendar integration behind them.
+What went:
+
+- The "Today" space pill, `RailDestination.dailyOverview`, `DailyOverviewController` and `DailyReviewCard` - the "Nothing is due today" card with its read-only Calendar column, "Show today's calendar", "Plan the day in Tasks", Settings and Dismiss.
+- The "Captured today" card and the capture log behind it (`CaptureInboxStore`, `capture-inbox.json`). The log had no other reader. ⌥Space capture itself is untouched, and every capture still lands in its own store.
+- The read-only EventKit path (`DailyReviewCalendar.swift`), the calendar usage descriptions in both bundles' `Info.plist`, and the Google sign-in and Google Calendar reader (`43-google-accounts.md` has that half).
+- Settings' Daily review rows and its switches (`fm.dailyReviewEnabled`, `fm.dailyReviewCalendarEnabled`, `fm.googleCalendarEnabled`), the dismissed-day key, and `AITransparency.local`, whose only surface was the card.
+- `DaylightSpace.destination` and the `filtersCanvas`/`owning(destination:)` seam. Today was the only pill that opened a page, so every pill filters the canvas again and Home is ⌘1.
+- `RailDestination.showsSessionStrip`, which existed only to keep the session strip off the Today page.
+
+What stayed is the digest.
+`DailyReviewComposer` is still the one definition of "due" and "overdue" for the Home page's Needs Attention card, so it keeps the task and follow-up sections, their caps and their stated gaps.
+The calendar, sticky-board, reading-list, headline, kicker and primary-task parts went, because the card was their only reader.
+
+A saved session naming `dailyOverview` lands on Home (`AppShellController.restoreDestination`).
+A one-time launch pass (`TodayCalendarRetirement`) deletes the leftover preference keys, the Google Keychain items under both the current and pre-rename service names, and the capture log.
+It does not revoke the Google grant, because that would mean reading a refresh token back out of the Keychain and sending it somewhere at launch.
+
+`TodayCalendarRemovalSelfTest` keeps all of it removed.
+`SessionRestoreSelfTest.aSavedTodayPageLandsOnHome` and `SettingsSidebarNavigationSelfTest.checkNoPageOffersTheRemovedCalendar` cover the two halves that need a window.
+Each guard was proved by reverting one removal and watching it fail by name.

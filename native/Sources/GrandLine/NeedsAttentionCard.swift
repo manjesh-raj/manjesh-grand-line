@@ -4,9 +4,8 @@
 // onto Home" ask, on the app's own components.
 //
 // `NeedsAttentionData.swift` decides every word and every count; this file
-// only draws. That is the same split `DailyReviewCard`/`DailyReviewData` and
-// `MorningBriefingCard`/`MorningBriefingData` already use, and for the same
-// reason: the numbers are then assertable from a suite with no window at all.
+// only draws. That is the same split `MorningBriefingCard`/
+// `MorningBriefingData` already uses, and for the same reason: the numbers are then assertable from a suite with no window at all.
 //
 // ## Nothing here is a new component
 //
@@ -91,8 +90,7 @@
 // ## Rebuild-on-render
 //
 // The list is rebuilt wholesale from the summary on every `render`, and
-// `applyTheme` re-renders from the cached one - `DailyReviewCard`'s own
-// arrangement, for its own reason: a rebuild removes the class of bug where a
+// `applyTheme` re-renders from the cached one, because a rebuild removes the class of bug where a
 // row that stopped being due keeps its old chip. It is still GL-24-compliant,
 // because the summary is a value this card already holds and nothing is
 // fetched.
@@ -787,7 +785,7 @@ final class NeedsAttentionCard: NSView {
     /// Every string the list is currently painting, top to bottom - what lets
     /// a suite assert the card really says what the composer decided, rather
     /// than that the composer merely computed it.
-    var debugListText: [String] { DailyReviewCard.collectText(body) }
+    var debugListText: [String] { Self.collectText(body) }
     var debugHeader: HelmSectionHeader { header }
     var debugCard: HelmCard { card }
     /// Whether the header carries the Refresh. Read off the button's own
@@ -798,9 +796,18 @@ final class NeedsAttentionCard: NSView {
     /// The closing strip's words, as painted (the lead and each note).
     var debugClearNotes: [String] {
         guard !clearStrip.isHidden else { return [] }
-        return DailyReviewCard.collectText(clearRow)
+        return Self.collectText(clearRow)
     }
     var debugClearStrip: NSView { clearStrip }
+
+    private static func collectText(_ view: NSView) -> [String] {
+        var out: [String] = []
+        if let field = view as? NSTextField, !field.stringValue.isEmpty {
+            out.append(field.stringValue)
+        }
+        for subview in view.subviews { out.append(contentsOf: collectText(subview)) }
+        return out
+    }
     var debugListScroll: NeedsAttentionListScrollView { listScroll }
     /// The "+N more" pill's count, or `nil` while it is hidden.
     var debugMoreCount: Int? { morePill.isHidden ? nil : morePill.count }

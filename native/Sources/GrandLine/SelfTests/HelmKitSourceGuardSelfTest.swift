@@ -156,7 +156,6 @@ enum HelmKitSourceGuardSelfTest {
         "CompactModePopover.swift": 4,
         "ConsoleComposerPopover.swift": 2,
         "CredentialVaultRecoverySheet.swift": 1,
-        "DailyReviewCard.swift": 3,
         "DictationController.swift": 11,
         "DictationHistoryAndVocabularyViews.swift": 1,
         "DiffResultView.swift": 4,

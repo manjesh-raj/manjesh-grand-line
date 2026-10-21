@@ -70,11 +70,11 @@ so `git log` is the tiebreaker.
 | [`36-focus-timer.md`](36-focus-timer.md) | Focus timer (F7): the task-bound Pomodoro, the bar chip and Weekly Review's "time on tasks" tile | 9KB |
 | [`37-scratchpad-calculator.md`](37-scratchpad-calculator.md) | Scratchpad calculator (F9): the Tools tab, its expression engine and unit/currency tables | 12KB |
 | [`38-snippet-expander.md`](38-snippet-expander.md) | Snippet expander (F12): the `;abbrev` trigger grammar and system-wide expansion | 13KB |
-| [`39-daily-review.md`](39-daily-review.md) | Daily review (F20): Overview's general-user briefing and its read-only calendar | 14KB |
+| [`39-daily-review.md`](39-daily-review.md) | Daily review (F20): the Today page's briefing and its read-only calendar - removed except the digest Home reads | 14KB |
 | [`40-menu-bar-mode.md`](40-menu-bar-mode.md) | Menu-bar (compact) mode (F22): the merged status item, its four-tab popover and the window/Dock lifecycle | 25KB |
 | [`41-app-intents-and-full-export.md`](41-app-intents-and-full-export.md) | App Intents / Shortcuts (F21) and the `.glbackup` bundle's five new sections (F24) | 20KB |
 | [`42-widgets.md`](42-widgets.md) | WidgetKit extension (F23): the Tasks-due and Sticky-note widgets and the Developer ID dependency | 13KB |
-| [`43-google-accounts.md`](43-google-accounts.md) | Gmail sign-in, the OAuth/PKCE flow, and Google Calendar as a second read-only source for the daily review | 9KB |
+| [`43-google-accounts.md`](43-google-accounts.md) | Gmail sign-in, the OAuth/PKCE flow and Google Calendar for the daily review - removed | 9KB |
 | [`44-new-theme-families.md`](44-new-theme-families.md) | Six new theme families: the picker from 14 palettes to 26 (Nord, Dracula, One, Ayu, Night Owl, Oxocarbon) | 11KB |
 | [`45-rename-to-grand-line.md`](45-rename-to-grand-line.md) | The rename to "Grand Line": the new bundle identifier, the Keychain and data-folder migrations, and the System Settings re-grant it costs | 9KB |
 | [`46-review-bugs-b1-b14.md`](46-review-bugs-b1-b14.md) | The 2026-09-25 review's bugs B1-B14: `FM_SCRATCH_ROOT` and the probe's safety, the Keychain service prefix, the quit-time ggml abort, the traffic-light hit-test recursion, Shift git sync's three data-loss paths | 16KB |

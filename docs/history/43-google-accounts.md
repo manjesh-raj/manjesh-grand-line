@@ -223,3 +223,23 @@ Five injections, each confirmed to fail by name:
 Without it, any suite that plants a fixture record would issue a live HTTPS request from CI carrying a fabricated bearer token, because mounting a `SettingsController` now builds a page that runs a real read.
 
 Full suite before: 207 passed / 0 failed / 1 skipped. After: see the PR.
+
+## Removed (`fm/grandline-remove-today-calendar-1792553365`)
+
+The whole feature was removed with the Today page.
+Its only consumer was the daily review's calendar column, and no other Google feature ever used the sign-in.
+That means `GoogleAccount.swift`, `GoogleOAuth.swift`, `GoogleSignIn.swift`, `GoogleCalendarSource.swift`, `GmailAccountRow.swift`, `DailyReviewCalendarSources.swift`, Settings' Google Accounts page and both of this file's suites.
+`HelmRevealableSecretField` stays, because the credential editor's Secret row uses it.
+
+Two pieces went with it because nothing else used them:
+
+- `LegacyNameMigration.keychainItemsCopiedNotification` and `keychainMigrationIsOutstanding`, the B30 pair, whose only observer was the Google account store.
+- `SettingsGroup(rowViews:)`, whose only non-`SettingsRow` rows were the account rows.
+
+The two Keychain services left on the captain's Mac are deleted once at launch by `TodayCalendarRetirement`, under both the current and the pre-rename names:
+
+- `com.manjesh.grandline.native.google-oauth`, accounts `google.work` and `google.personal`.
+- `com.manjesh.grandline.native.google-oauth-client`, account `client`.
+
+The OAuth client itself lives in the captain's own Google Cloud project, and the account grants live at Google.
+Both are outside this repository, so the PR that removed the feature lists them for the captain to remove by hand.

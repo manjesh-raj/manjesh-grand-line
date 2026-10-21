@@ -262,28 +262,17 @@ final class SettingsGroup: NSView {
     private var separators: [(view: NSView, inset: NSLayoutConstraint)] = []
     private let stack = NSStackView()
 
-    convenience init(rows: [SettingsRow]) {
-        self.init(rowViews: rows)
-    }
-
-    /// A group whose rows are not all `SettingsRow`s.
-    ///
-    /// The one real case is an account row: `GmailAccountRow` draws its own
-    /// avatar, title, address, status pill and button and has done since the
-    /// Gmail task, so wrapping it in a `SettingsRow` gives it a *second*
-    /// title - which is exactly what the first render of this page showed,
-    /// "Work mail" printed twice. A view handed in here is the whole row.
-    init(rowViews: [NSView]) {
+    init(rows: [SettingsRow]) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        self.rows = rowViews.compactMap { $0 as? SettingsRow }
+        self.rows = rows
 
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        for (index, row) in rowViews.enumerated() {
+        for (index, row) in rows.enumerated() {
             if index > 0 {
                 // `.row + .row::before` - a hairline at the top of every row
                 // but the first, inset to where that row's own label starts.
@@ -294,21 +283,16 @@ final class SettingsGroup: NSView {
                 stack.addArrangedSubview(line)
                 let inset = line.leadingAnchor.constraint(
                     equalTo: stack.leadingAnchor,
-                    constant: (row as? SettingsRow)?.separatorInset ?? SettingsRow.Metrics.separatorInset)
+                    constant: row.separatorInset)
                 NSLayoutConstraint.activate([
                     inset,
                     line.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
                 ])
                 separators.append((line, inset))
             }
-            // A `SettingsRow` carries the group's padding itself; anything
-            // else is handed in flush and has to be given it here, or its own
-            // trailing control sits hard against the card's edge - which is
-            // what the first render of the Google Accounts page showed, with
-            // both Connect buttons touching the border.
-            let hosted = (row as? SettingsRow).map { $0 as NSView } ?? Self.padded(row)
-            stack.addArrangedSubview(hosted)
-            hosted.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            // A `SettingsRow` carries the group's padding itself.
+            stack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
 
         card.setBody(stack, insets: NSEdgeInsets())
@@ -324,31 +308,10 @@ final class SettingsGroup: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    /// Wrap a flush custom row in the same insets a `SettingsRow` applies to
-    /// itself, so the two kinds of row line up.
-    private static func padded(_ view: NSView) -> NSView {
-        let host = NSView()
-        host.translatesAutoresizingMaskIntoConstraints = false
-        view.translatesAutoresizingMaskIntoConstraints = false
-        host.addSubview(view)
-        NSLayoutConstraint.activate([
-            view.leadingAnchor.constraint(equalTo: host.leadingAnchor,
-                                          constant: SettingsRow.Metrics.insetH),
-            view.trailingAnchor.constraint(equalTo: host.trailingAnchor,
-                                           constant: -SettingsRow.Metrics.insetH),
-            view.topAnchor.constraint(equalTo: host.topAnchor,
-                                      constant: SettingsRow.Metrics.insetV),
-            view.bottomAnchor.constraint(equalTo: host.bottomAnchor,
-                                         constant: -SettingsRow.Metrics.insetV),
-            host.heightAnchor.constraint(greaterThanOrEqualToConstant: SettingsRow.Metrics.minHeight),
-        ])
-        return host
-    }
-
     /// A group whose body is one arbitrary view rather than a row list - the
     /// theme grid, which is a grid and not a stack of rows.
     convenience init(custom view: NSView, insets: NSEdgeInsets = HelmCard.contentInsets) {
-        self.init(rowViews: [])
+        self.init(rows: [])
         card.setBody(view, insets: insets)
     }
 

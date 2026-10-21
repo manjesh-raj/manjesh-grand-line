@@ -95,8 +95,10 @@ enum DaylightDrillPageSlice6SelfTest {
     /// Twenty-five since the 2026-09-27 review's X2 added the Menu bar
     /// page's own card - the switch that puts Tasks', the vault's and the
     /// crew's separate status items back after the merged one became the
-    /// default.
-    private static let expectedCardCount = 25
+    /// default. Twenty-one since `fm/grandline-remove-today-calendar-1792553365`
+    /// removed the Briefings page's Daily review card and the Google Accounts
+    /// page's three (Accounts, Calendar, OAuth client).
+    private static let expectedCardCount = 21
 
 
     static func run() -> Bool {
@@ -749,15 +751,17 @@ enum DaylightDrillPageSlice6SelfTest {
         // card count above is: a toggle that appears without coming here is a
         // toggle nothing has checked renders as a Daylight pill rather than a
         // bare `NSSwitch`, which is exactly what the last check in this case
-        // is about.
+        // is about. Seven since `fm/grandline-remove-today-calendar-1792553365`
+        // removed three: the daily review's own switch, its Mac-calendar
+        // sub-row and Google Accounts' calendar switch.
         let restore = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(restore) }
         ThemeManager.shared.setTheme(daylight)
         let settings = makeSettings()
         let window = mount(settings)
         defer { _ = settings.view.window.map { _ in () }; _ = window }
-        if settings.debugToggles.count != 10 {
-            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 10")
+        if settings.debugToggles.count != 7 {
+            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 7")
             ok = false
         }
         // Reached by **name**, never by an index into `debugToggles`: that

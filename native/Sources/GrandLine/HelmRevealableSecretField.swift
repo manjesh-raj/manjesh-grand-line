@@ -3,11 +3,10 @@
 // One masked-with-reveal field, for every editable secret this app asks the
 // captain to type or paste.
 //
-// This is the component index's rule applied to a pattern that had exactly one
-// implementation and was about to get a second: the credential editor's Secret
-// row (a `HelmSecureTextField`, a `HelmTextField` and a Show/Hide toggle kept
-// in step by hand) and the Settings page's two Google OAuth fields want the
-// same control, so there is one control.
+// The credential editor's Secret row used to keep a `HelmSecureTextField`, a
+// `HelmTextField` and a Show/Hide toggle in step by hand. It was lifted into
+// this component when a second host needed the same control, and it stays one
+// so the next secret field is one line rather than a third hand-rolled copy.
 //
 // Three things about the shape are load-bearing, and all three were already
 // true of the credential editor's hand-rolled version:
@@ -32,11 +31,10 @@
 //     commit works only in whichever state the captain was not in - and the
 //     stored value is identical either way.
 //
-// `fm/grandline-gmail-oauth-field-not-saving` is the reason `editableFields`
-// is plural and named the way it is: a field whose value is *persisted* needs
-// a delegate as well as a target/action (AppKit gotcha (19)), and a masked
-// field that only wired one of its two halves would reopen that same bug in
-// the half nobody was looking at.
+// A field whose value is *persisted* needs a delegate as well as a
+// target/action (AppKit gotcha (19)), which is why `editableFields` is plural
+// and named the way it is: a masked field that only wired one of its two
+// halves would drop a commit in the half nobody was looking at.
 
 import AppKit
 

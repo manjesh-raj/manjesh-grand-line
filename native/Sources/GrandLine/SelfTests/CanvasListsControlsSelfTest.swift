@@ -1094,12 +1094,7 @@ enum CanvasListsControlsSelfTest {
         // never be true. What this case asserts is the other half of that:
         // the four spaces that still head themselves render exactly the
         // plain row they always did, and the hub renders none.
-        //
-        // `fm/grandline-overview-page-daily-review`: a space that owns a
-        // destination never reaches the canvas at all (`select(space:)`
-        // ignores it), so sweeping it here would assert the previously
-        // selected space's geometry twice under another name.
-        for space in DaylightSpace.allCases where space != .overview && space.filtersCanvas {
+        for space in DaylightSpace.allCases where space != .overview {
             canvas.select(space: space)
             canvas.debugRenderNow()
             if canvas.heroCardHiddenForTests {

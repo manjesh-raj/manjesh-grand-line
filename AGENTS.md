@@ -1109,7 +1109,6 @@ noted.
 | `CredentialVaultRecoveryKitView` as the shape for any future **print** view | a themed view sent to a printer. It draws explicit black on white and does not observe `ThemeManager` - a themed page prints a near-black rectangle under Dusk - and the same view renders the PDF, so paper and file cannot drift |
 | a menu-bar surface's **existing** content controller, at an injected width with `showsOwnHeader: false` | a lookalike pane for the same thing. F22's compact popover hosts `PoneglyphMenuBarPopoverController` and `StrawHatMenuBarPopoverController` themselves as two of its four tabs, so the countdown rings, the copy flash and the crew's reply states have exactly one implementation. Both take `init(width:showsOwnHeader:)` defaulting to their standalone behaviour - a required fixed width inside a narrower popover is a constraint conflict, and gotcha (13)'s window-size cap |
 | `GrandLineServices.shared` | a second `ShiftStore()`/`NotebookStore()`/`CredentialVaultStore()` built by a non-UI entry point. `AppShellController` registers the live instances there; an App Intent, the Backup card or anything else with no view controller reads them from it, and gets `nil` (not a fresh store) before the shell is up. It is a **registry, not a factory** - the vault is its one exception, and that file's header says why |
-| `DaylightSpace.destination` | a space pill that navigates by naming its own case. A pill is a canvas *filter* by default and a page when that table says so; `filtersCanvas` is what a canvas-shaped loop (and a canvas-shaped test sweep) filters on, so adding a page-shaped tab is one property and no edit anywhere else. **A space's own page is top-level, not a drill page**: `AppShellController.show` asks `DaylightSpace.owning(destination:)` whether the bar keeps its wordmark and space pills, so such a page has no drill header and must not conform to `DaylightDrillActions`. Naming the canvas there instead shipped once, and hid the whole tab strip the moment the new tab's own pill was pressed |
 | `SettingsRow` / `SettingsGroup` / `SettingsSection` / `SettingsHero` (`SettingsForm.swift`) | a hand-rolled Settings row, group card or page header. The Settings page is ~60 rows across eight pages, and the separator inset, the `.sub` indent, the dimmed-**and-inert** dependent state and the description re-wrap are exactly what drifts when each call site spells them out. A group is a real `HelmCard` with no header, so there is still one card surface |
 | `HelmGestureArbitration.shouldRecognize(_:with:)` (and `HoverHighlightView`, which applies it for you) | a hand-rolled `gestureRecognizer(_:shouldAttemptToRecognizeWith:)` walk. Two copies of it existed and the third row that needed one shipped dead - gotcha (20) |
 | `OffScreenProbe.window(...)` | `NSWindow(contentRect:)` in a suite - source-guarded |
@@ -1211,7 +1210,7 @@ noted.
   owns is `com.manjesh.grandline…`, and every file-backed store nests under
   `AppPaths.applicationSupportFolderName`. A hand-written copy of any of those
   is how half a rename gets left behind - `LegacyRenameMigrationSelfTest`
-  fails the run on a source that spells a pre-rename name, and on a sixth
+  fails the run on a source that spells a pre-rename name, and on a fourth
   Keychain service that does not join `LegacyNameMigration.keychainServices`.
   **Changing the bundle identifier again is not a find-and-replace**: it
   orphans the captain's Keychain items, their Application Support folder, their
@@ -1273,17 +1272,6 @@ noted.
   (`ShiftGitSync.sharedQueue`). Two queues against one tree race on
   `.git/index.lock`. A terminate-time flush dispatches **onto** that queue with
   a short bound and cancels the pending debounce inside the queue block.
-- **An OAuth refresh token is a secret, and it lives in the Keychain with the
-  metadata that describes it.** `GoogleAccount.swift` stores one generic
-  password per account slot (`ThisDeviceOnly`, never iCloud-synced) holding the
-  tokens *and* the email address and granted scopes - one item rather than two,
-  because the address a card displays is a claim about which token is stored,
-  and splitting them is how a card comes to name an account whose token was
-  already deleted. Nothing about it is written to a JSON store or git-synced.
-  There is no `FM_*` path to redirect, so `main.swift`'s `#if FM_SELFTESTS`
-  block swaps the **store itself** for `InMemoryGoogleAccountStore` - a suite
-  that reached the real one would create Keychain items holding fabricated
-  tokens on the captain's own machine.
 - **Secrets never reach disk or argv.** Private key material and vault
   passphrases live in the Keychain (`ThisDeviceOnly`, never iCloud-synced);
   credential material on a pasteboard goes through
@@ -1316,36 +1304,6 @@ noted.
   exception (`ScheduleRunner.vaultRecipeExport`, whose content *is* the secret
   names, and which only runs for a schedule the captain enabled) is documented
   at its own call site.
-
-- **One calendar path, and it is read-only: `DailyReviewCalendar.swift`.** It
-  is the only file in the app that imports `EventKit`, it never calls `save`,
-  `remove`, `commit`, `saveCalendar` or `removeCalendar`, and it hands out
-  strings (`DailyReviewEventRow`) rather than `EKEvent`s, so no caller can
-  reach an event object through it. `FM_RUN_DAILY_REVIEW_TESTS` guards both
-  halves - the forbidden calls, and the "exactly one importer" rule - because
-  the behaviour cannot be asserted without writing to a real calendar to see
-  whether it happened. Two consequences for any future calendar work: the
-  permission request belongs to a real click and never to a page appearing
-  (TCC prompts are not something a card may fire on its own), and **an
-  unbundled build must refuse to ask** - `.build/debug/GrandLine` has no
-  `Info.plist`, and TCC kills a process that requests access without a usage
-  description, so `canPrompt` checks for the key first.
-
-- **There are two calendar *sources* now, and the read-only guarantee is a
-  different mechanism in each.** The local one is the file above, guarded by a
-  source grep because EventKit hands out an object that *can* write. The remote
-  one is a connected Google account (`GoogleCalendarSource.swift`), where the
-  guarantee lives one layer lower: `calendar.readonly` is the only calendar
-  scope this app ever requests, so the token physically cannot write - assert
-  the **scope list**, not just the call sites. `DailyReviewCalendarSources` is
-  the one place that decides which sources are on, both hosts of the daily
-  review card read it, and `CompositeDailyReviewCalendar` merges them. Two
-  rules that fall out of a *remote* source and cost real thought:
-  `DailyReviewCalendarReading.events(on:)` is **synchronous and on the main
-  thread**, so a network source must serve a cached snapshot and refresh in the
-  background (GL-04/GL-12); and before that first refresh lands it must report
-  a **stated gap, never an empty day** (GL-14) - "not read yet" and "nothing
-  on" are different sentences. `docs/history/43-google-accounts.md`.
 
 - **`SubprocessResult.stdout` is trimmed, so never parse a fixed-column tool
   output by offset.** `git status --short` is `XY <path>`, which invites a
@@ -1505,11 +1463,11 @@ can correct an earlier one - and several do.
 | [`36-focus-timer.md`](docs/history/36-focus-timer.md) | The focus timer (F7): the task-bound Pomodoro, the bar chip and its ring popover, and Weekly Review's "time on tasks" tile |
 | [`37-scratchpad-calculator.md`](docs/history/37-scratchpad-calculator.md) | The Scratchpad calculator (F9): the Tools tab, the expression engine, the unit/currency tables and the date words |
 | [`38-snippet-expander.md`](docs/history/38-snippet-expander.md) | The snippet expander (F12): the `;abbrev` trigger grammar, the generalised Snippets store, and system-wide expansion over Dictation's own paste path |
-| [`39-daily-review.md`](docs/history/39-daily-review.md) | The daily review (F20): the general-user briefing, its stated-gap rule, the app's one read-only EventKit path, and the Overview page it moved onto |
+| [`39-daily-review.md`](docs/history/39-daily-review.md) | The daily review (F20): the general-user briefing, its stated-gap rule, the read-only EventKit path and the Today page it lived on - all removed except the digest Home's Needs Attention card reads |
 | [`40-menu-bar-mode.md`](docs/history/40-menu-bar-mode.md) | Menu-bar (compact) mode (F22): the merged status item, the four-tab popover that hosts the vault's and the crew's own popover controllers, and the window/Dock/last-window lifecycle |
 | [`41-app-intents-and-full-export.md`](docs/history/41-app-intents-and-full-export.md) | App Intents / Shortcuts (F21), the `.glbackup` bundle's five new sections (F24), and `GrandLineServices` |
 | [`42-widgets.md`](docs/history/42-widgets.md) | The WidgetKit extension (F23): the Tasks-due and Sticky-note widgets, the published snapshot, the queued-tap channel, and the Developer ID dependency |
-| [`43-google-accounts.md`](docs/history/43-google-accounts.md) | Gmail sign-in (two independent Google accounts), the OAuth/PKCE flow, and Google Calendar as a second read-only source for the daily review |
+| [`43-google-accounts.md`](docs/history/43-google-accounts.md) | Gmail sign-in, the OAuth/PKCE flow and Google Calendar for the daily review - all removed with the Today page |
 | [`44-new-theme-families.md`](docs/history/44-new-theme-families.md) | The six families that took the picker from 14 palettes to 26 (Nord, Dracula/Alucard, One, Ayu, Night Owl/Light Owl, Oxocarbon) |
 | [`45-rename-to-grand-line.md`](docs/history/45-rename-to-grand-line.md) | The app's name, the bundle identifier, the Keychain service names, the Application Support folder |
 | [`46-review-bugs-b1-b14.md`](docs/history/46-review-bugs-b1-b14.md) | `FM_SCRATCH_ROOT` and the probe's safety, the Keychain service prefix, the quit-time ggml abort, the traffic-light hit-test recursion, Shift git sync's three data-loss paths |

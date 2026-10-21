@@ -126,12 +126,12 @@ enum LegacyNameMigration {
 
     /// Every Keychain service this app writes a secret under.
     ///
-    /// Listed here rather than read off the five stores because three of them
+    /// Listed here rather than read off the three stores because two of them
     /// hold it `private`, and widening a secret store's API for a migration is
     /// the wrong trade. `LegacyRenameMigrationSelfTest.checkEveryKeychainServiceIsListed`
     /// is what keeps the list honest: it greps the app's own sources for
     /// `static let service = "com.manjesh.grandline…"` and fails the run if a
-    /// sixth one appears without joining this list.
+    /// fourth one appears without joining this list.
     /// Every service this app owns.
     ///
     /// Through `KeychainService.resolve` (B5) so a self-test process migrates
@@ -146,10 +146,6 @@ enum LegacyNameMigration {
         KeychainService.resolve("com.manjesh.grandline.clipboard-history"),
         // CredentialVaultKeyStore - Poneglyph's own master key wrap.
         KeychainService.resolve("com.manjesh.grandline.native.credential-vault"),
-        // GoogleAccount - the two Google slots' refresh tokens and their metadata.
-        KeychainService.resolve("com.manjesh.grandline.native.google-oauth"),
-        // GoogleOAuth - the captain's OAuth client id and secret.
-        KeychainService.resolve("com.manjesh.grandline.native.google-oauth-client"),
     ]
 
     /// The name a service string was written under before the rename, or `nil`
@@ -442,33 +438,6 @@ enum LegacyNameMigration {
     /// How many failing passes are tried before the migration gives up.
     static let keychainMigrationMaxAttempts = 3
 
-    /// Posted on the main queue after a pass that actually copied something.
-    ///
-    /// B30: the Keychain migration runs two seconds after launch, on a
-    /// background queue, and by then a card has usually already asked
-    /// `GoogleAccountStore` whether an account is connected. That read
-    /// answered "no" from the *pre-migration* Keychain and cached it for the
-    /// session, so a captain whose token was migrated a moment later still
-    /// saw "Not connected", with a Connect button that would have started a
-    /// fresh OAuth flow over a token that was there all along - until the next
-    /// relaunch.
-    ///
-    /// A notification rather than a direct call, so a migration does not have
-    /// to know which caches exist; each cache observes it and drops the
-    /// absences it recorded. `keychainMigrationIsOutstanding` below is the
-    /// other half - it stops the absence being cached in the first place.
-    static let keychainItemsCopiedNotification =
-        Notification.Name("fm.legacyNameMigration.keychainItemsCopied")
-
-    /// Whether a Keychain migration pass may still copy an item across in
-    /// this process.
-    ///
-    /// A cache that records "this item is not there" must not treat that as
-    /// settled while this is true.
-    static func keychainMigrationIsOutstanding(_ defaults: UserDefaults = AppDefaults.store) -> Bool {
-        !defaults.bool(forKey: keychainMigrationCompleteKey)
-    }
-
     enum KeychainMigrationOutcome: Equatable {
         /// The flag was already set - nothing was queried, and nothing was
         /// read. This is the case that used to not exist at all.
@@ -667,12 +636,6 @@ enum LegacyNameMigration {
                     Rename: copied \(keychain.copied.count, privacy: .public) Keychain item(s) \
                     onto the new service names. The originals were left in place on purpose.
                     """)
-                // B30: anything that cached "not there" from the pre-migration
-                // Keychain is now wrong. Posted on main, because the observers
-                // are stores the UI reads.
-                DispatchQueue.main.async {
-                    NotificationCenter.default.post(name: keychainItemsCopiedNotification, object: nil)
-                }
             }
             for failure in keychain.failures {
                 AppLog.keychain.error("Rename: Keychain copy failed - \(failure, privacy: .public)")

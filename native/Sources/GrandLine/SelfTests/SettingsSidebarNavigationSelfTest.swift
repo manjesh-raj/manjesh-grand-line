@@ -61,8 +61,10 @@ enum SettingsSidebarNavigationSelfTest {
     /// twenty-five since the 2026-09-27 review's X2 added the Menu bar
     /// page's own card - the switch that puts Tasks', the vault's and the
     /// crew's separate status items back after the merge became the
-    /// default.
-    private static let expectedCardCount = 25
+    /// default. Twenty-one since `fm/grandline-remove-today-calendar-1792553365`
+    /// removed the Briefings page's Daily review card and the Google
+    /// Accounts page's three (Accounts, Calendar, OAuth client).
+    private static let expectedCardCount = 21
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see
@@ -82,7 +84,8 @@ enum SettingsSidebarNavigationSelfTest {
                       checkTheDividerIsPainted,
                       checkEveryRowCarriesItsOwnColouredTile,
                       checkTheHeaderEndsWhereItsColumnEnds,
-                      checkTheColumnIsCentredInTheVisibleSpace] {
+                      checkTheColumnIsCentredInTheVisibleSpace,
+                      checkNoPageOffersTheRemovedCalendar] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -156,6 +159,58 @@ enum SettingsSidebarNavigationSelfTest {
     }
 
     private static func fmt(_ v: CGFloat) -> String { String(format: "%.1f", Double(v)) }
+
+    // MARK: 0. The calendar integration is gone
+
+    /// `fm/grandline-remove-today-calendar-1792553365` removed the Today page
+    /// and the calendar integration, and with them the Google Accounts page
+    /// and the Briefings page's daily-review rows. This walks every string
+    /// every page paints - headings, row titles, descriptions, footers and
+    /// button titles - plus every page's sidebar title, hero sentence and
+    /// search keywords, so a calendar row cannot come back on any page
+    /// without failing here by name.
+    private static func checkNoPageOffersTheRemovedCalendar(_ ok: inout Bool) {
+        print("\n-- no Settings page offers the removed calendar or Google sign-in --")
+        let settings = makeSettings()
+        let window = mount(settings)
+        defer { _ = window }
+
+        func painted(_ view: NSView) -> [String] {
+            var out: [String] = []
+            if let field = view as? NSTextField, !field.stringValue.isEmpty { out.append(field.stringValue) }
+            if let button = view as? NSButton, !button.title.isEmpty { out.append(button.title) }
+            for child in view.subviews { out += painted(child) }
+            return out
+        }
+
+        var strings: [(String, String)] = []
+        for category in SettingsController.Category.allCases {
+            strings.append((category.rawValue, category.title))
+            strings.append((category.rawValue, category.heroDescription))
+            strings.append((category.rawValue, category.searchKeywords))
+            for section in settings.debugSections(in: category) {
+                strings += painted(section).map { (category.rawValue, $0) }
+            }
+        }
+
+        // Discriminating power first: the walk really reads the pages, so an
+        // absence below cannot pass because nothing was collected.
+        guard strings.contains(where: { $0.1 == "Show a morning briefing on Fleet" }) else {
+            print("  FAIL the walk did not find the Briefings page's own row - it reads nothing")
+            ok = false
+            return
+        }
+
+        let needles = ["calendar", "google", "gmail", "oauth", "daily review"]
+        for (category, text) in strings {
+            let lowered = text.lowercased()
+            for needle in needles where lowered.contains(needle) {
+                print("  FAIL \(category) still says \"\(text)\" (\(needle))")
+                ok = false
+            }
+        }
+        if ok { print("  ok   \(strings.count) strings across every page, none about the calendar") }
+    }
 
     // MARK: 1. Reach
 
@@ -389,8 +444,6 @@ enum SettingsSidebarNavigationSelfTest {
              { AppSettings.shared.notifyOnNeedsDecision }, settings.debugNotifySwitch),
             (.briefings, "Show a morning briefing on Fleet",
              { AppSettings.shared.morningBriefingEnabled }, settings.debugMorningBriefingSwitch),
-            (.briefings, "Show the daily review on Fleet",
-             { AppSettings.shared.dailyReviewEnabled }, settings.debugDailyReviewSwitch),
             (.menuBar, "Badge the status item",
              { AppSettings.shared.compactModeBadgesOverdueCount }, settings.debugCompactBadgeSwitch),
         ]
@@ -827,15 +880,21 @@ enum SettingsSidebarNavigationSelfTest {
                 }
 
                 guard fills.count == SettingsController.Category.allCases.count else { return }
-                // Seven tints across eight pages, so seven distinct fills is
-                // the expected answer and anything less means two pages
-                // collapsed onto one hue (or the tint stopped being read).
+                // One distinct fill per tint the table uses, less one for
+                // `.accent` and `.info`, which some palettes resolve to the
+                // same colour (`Category.tint`'s own note). Anything less
+                // means two pages collapsed onto one hue, or the tint stopped
+                // being read. Six tints across eight pages since
+                // `fm/grandline-remove-today-calendar-1792553365` removed
+                // Google Accounts, the one `.critical` page.
+                let tints = Set(SettingsController.Category.allCases.map(\.tint)).count
                 var distinct: [NSColor] = []
                 for entry in fills where !distinct.contains(where: { distance($0, entry.color) < 0.04 }) {
                     distinct.append(entry.color)
                 }
-                if distinct.count < 6 {
-                    print("  FAIL \(id): the eight rows paint only \(distinct.count) distinct tiles")
+                if distinct.count < tints - 1 {
+                    print("  FAIL \(id): the eight rows paint only \(distinct.count) distinct tiles "
+                          + "for \(tints) tints")
                     ok = false
                     return
                 }

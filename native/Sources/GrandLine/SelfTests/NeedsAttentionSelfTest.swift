@@ -1,8 +1,7 @@
 // Grand Line - native macOS app.
 //
 // The pure half of the Home page's Needs Attention card:
-// `NeedsAttentionComposer` (what the card says), and the two structural
-// guarantees the move itself rests on.
+// `NeedsAttentionComposer` (what the card says).
 //
 // Run with `FM_RUN_NEEDS_ATTENTION_TESTS=1 .build/debug/GrandLine`.
 //
@@ -30,11 +29,7 @@
 //      `DailyReviewSelfTest` has never asserted a rendered date for exactly
 //      this reason.
 //   2. **The headline sentence**, in all four states.
-//   3. **The move is a move, not a copy** - a source guard that the Today
-//      page's card no longer builds a due or follow-up section, and that both
-//      sides filter stated gaps through one shared list rather than two
-//      spellings of "Follow-ups".
-//   4. **GL-14**: an unreadable Tasks store is a stated gap, never an
+//   3. **GL-14**: an unreadable Tasks store is a stated gap, never an
 //      all-clear.
 
 // GL-27: compiled into debug builds only. Do not remove this guard -
@@ -53,7 +48,6 @@ enum NeedsAttentionSelfTest {
         checkChipWording(&ok)
         checkAllClearAndOverflow(&ok)
         checkUnreadableTasksAreAGap(&ok)
-        checkTheTodayPageNoLongerBuildsTheseSections(&ok)
 
         if ok {
             print("NeedsAttentionSelfTest: all checks passed")
@@ -290,8 +284,7 @@ enum NeedsAttentionSelfTest {
         check(quiet.overflowNote == nil, "with nothing hidden, got \(quiet.overflowNote ?? "nil")", &ok)
 
         // The digest caps at five due tasks and three follow-ups. An overflow
-        // is *stated*, never silently dropped - the same rule the Today card
-        // already follows.
+        // is *stated*, never silently dropped.
         var many = DailyReviewInputs()
         many.now = now()
         many.tasks = .available((0..<9).map { index in
@@ -326,54 +319,6 @@ enum NeedsAttentionSelfTest {
               "with the reason carried through, got \(result.gaps)", &ok)
         check(result.symbol != "checkmark.circle.fill",
               "and never the all-clear glyph, got \(result.symbol)", &ok)
-
-        // The other three sections' gaps belong to the Today page and must not
-        // be duplicated here.
-        var calendarGap = DailyReviewInputs()
-        calendarGap.now = now()
-        calendarGap.calendar = .unavailable("the calendar is switched off")
-        check(summary(calendarGap).gaps.isEmpty,
-              "the calendar's gap stays on the Today page, got \(summary(calendarGap).gaps)", &ok)
-    }
-
-    // MARK: 6 - the move is a move
-
-    /// A source guard, because the behaviour and the duplication are different
-    /// questions: the Home card can be perfectly right while the Today page
-    /// still draws the same two sections beside it, and nothing about that
-    /// fails a render assertion.
-    private static func checkTheTodayPageNoLongerBuildsTheseSections(_ ok: inout Bool) {
-        guard let root = SelfTestSources.appSourceDirectory() else {
-            fail("could not find the app's source directory - this check is vacuous without it", &ok)
-            return
-        }
-        let path = root.appendingPathComponent("DailyReviewCard.swift")
-        guard let source = try? String(contentsOf: path, encoding: .utf8) else {
-            fail("could not read DailyReviewCard.swift at \(path.path)", &ok)
-            return
-        }
-
-        // Assert the fixture's own discriminating power first: the file must
-        // still be the card, or every absence below passes vacuously.
-        check(source.contains("buildBoardColumn"),
-              "DailyReviewCard.swift should still build its board column - "
-                  + "without that this check cannot fail", &ok)
-
-        check(!source.contains("buildDueColumn"),
-              "the Today card still builds a due column; the captain's move was to Home", &ok)
-        check(!source.contains("\"Due today \\u{00B7}"),
-              "the Today card still paints a \"Due today\" section head", &ok)
-        check(!source.contains("Follow-ups \\u{00B7}"),
-              "the Today card still paints a \"Follow-ups\" section head", &ok)
-
-        // One shared list of which sections moved. Two spellings of
-        // "Follow-ups" would silently leave a stated gap rendered on both
-        // pages or on neither.
-        check(source.contains("NeedsAttentionComposer.ownedGapSections"),
-              "the Today card should filter its gaps through the one shared list", &ok)
-        check(NeedsAttentionComposer.ownedGapSections == ["Tasks", "Follow-ups"],
-              "and that list should name exactly the two moved sections, got "
-                  + "\(NeedsAttentionComposer.ownedGapSections)", &ok)
     }
 }
 

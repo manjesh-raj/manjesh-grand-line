@@ -342,7 +342,7 @@ enum NeedsAttentionViewSelfTest {
 
             // The fixture has to actually move, or the assertion below passes
             // for a space that was never selected.
-            let other = DaylightSpace.allCases.first { $0 != .overview && $0.filtersCanvas }
+            let other = DaylightSpace.allCases.first { $0 != .overview }
             guard let other else {
                 fail("no second canvas-filtering space to switch to - this check is vacuous", &ok)
                 return
