@@ -272,10 +272,10 @@ final class HomeCanvasController: NSViewController {
     private let heroBadge = IconTileView(size: 40, cornerRadius: 12)
     private let kickerLabel = NSTextField(labelWithString: "")
     private var heroTint: HelmTint = .accent
-    /// A filled accent pill, matching Setup > Updates' own "Refresh" - one
-    /// real, shared, theme-aware definition rather than a page-local muted
-    /// `.quiet` look.
-    private let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")
+    /// The app's one Refresh (`HelmButton.refresh`, UXP-08): a labelled
+    /// secondary button, because Refresh re-reads and is never what a page
+    /// is for.
+    private let refreshButton = HelmButton.refresh()
     /// Plan B's hero *band*: the surface the greeting row sits on.
     ///
     /// The captain reviewed C1's shipped vertical centring live and rejected

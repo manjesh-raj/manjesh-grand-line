@@ -135,8 +135,7 @@ final class NeedsAttentionCard: NSView {
     /// UI-3: a line (secondary) button. Refresh is not the page's primary
     /// action - nothing on Home is - and a filled accent pill in the corner
     /// of the verdict card was the loudest thing on the page.
-    private let refreshButton = HelmButton(title: "Refresh", variant: .secondary, size: .small,
-                                           symbol: "arrow.clockwise")
+    private let refreshButton = HelmButton.refresh(size: .small)
     /// UI-1: the rows are flat, separated by hairlines, inside the one card.
     private let list = HelmFlatList()
     /// The list's own scroll view - see the file header.

@@ -29,6 +29,9 @@ enum PagePolishUXPSelfTest {
             ("uxp03WeeklyReviewKeepsThePageMargin", uxp03WeeklyReviewKeepsThePageMargin),
             ("uxp18BoardLaneShowsACountAndNoSliver", uxp18BoardLaneShowsACountAndNoSliver),
             ("uxp18ListPanelSaysHowManyMoreRows", uxp18ListPanelSaysHowManyMoreRows),
+            ("uxp08EveryPageShowsAtMostOnePrimaryButton", uxp08EveryPageShowsAtMostOnePrimaryButton),
+            ("uxp08EveryRefreshComesFromTheOneFactory", uxp08EveryRefreshComesFromTheOneFactory),
+            ("uxp08RefreshPillWearsTheSecondaryPalette", uxp08RefreshPillWearsTheSecondaryPalette),
             ("uxp09ReviewForgePlaceholderRowIsTallEnoughToDraw", uxp09ForgePlaceholderRowIsTallEnough),
         ]
         var failed = 0
@@ -309,6 +312,81 @@ enum PagePolishUXPSelfTest {
             check(hints.tasks == "3 more below",
                   "UXP-18: My Tasks should say \"3 more below\", said \"\(hints.tasks)\"", &ok)
         }
+        return ok
+    }
+
+    // MARK: UXP-08
+
+    /// Every visible `.primary` `HelmButton` in a view tree - what is drawn,
+    /// not what a file declares.
+    static func visiblePrimaryButtons(in root: NSView) -> [HelmButton] {
+        var found: [HelmButton] = []
+        func walk(_ view: NSView) {
+            if view.isHidden || view.alphaValue == 0 { return }
+            if let button = view as? HelmButton, button.variant == .primary { found.append(button) }
+            view.subviews.forEach(walk)
+        }
+        walk(root)
+        return found
+    }
+
+    /// One primary action per surface, on every page, bar included. Vault
+    /// showed three filled accent buttons at once (Refresh, Add Secret,
+    /// Export Recipe), and Refresh was a filled primary on five pages.
+    private static func uxp08EveryPageShowsAtMostOnePrimaryButton() -> Bool {
+        var ok = true
+        let (window, shell) = ReviewTourLab.makeOffScreenShell()
+        defer { _ = window }
+        for destination in RailDestination.allCases {
+            shell.show(destination)
+            shell.view.layoutSubtreeIfNeeded()
+            let primaries = visiblePrimaryButtons(in: shell.view)
+            let titles = primaries.map { $0.title.isEmpty ? ($0.toolTip ?? "(icon)") : $0.title }
+            if ProcessInfo.processInfo.environment["FM_UXP08_MEASURE"] != nil {
+                print("MEASURE \(destination.rawValue): \(titles)")
+            }
+            check(primaries.count <= 1,
+                  "UXP-08: \(destination.rawValue) shows \(primaries.count) primary buttons at once: \(titles)", &ok)
+        }
+        return ok
+    }
+
+    /// One Refresh treatment: a source that builds its own "Refresh"
+    /// `HelmButton` (rather than `HelmButton.refresh`) is how a fifth or sixth
+    /// look gets back in.
+    private static func uxp08EveryRefreshComesFromTheOneFactory() -> Bool {
+        var ok = true
+        guard let files = SelfTestSources.appSourceFiles(), !files.isEmpty else {
+            fail("UXP-08: could not locate the app sources - this check would silently pass", &ok)
+            return ok
+        }
+        var offenders: [String] = []
+        for file in files where !file.path.contains("/SelfTests/") {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            if text.contains("HelmButton(title: \"Refresh\"") && !text.contains("static func refresh(size:") {
+                offenders.append(file.lastPathComponent)
+            }
+        }
+        check(offenders.isEmpty, "UXP-08: these files build their own Refresh button: \(offenders)", &ok)
+        return ok
+    }
+
+    /// A refresh pill that is not a page's primary action wears the
+    /// secondary button's palette; only an opted-in prominent pill is filled.
+    private static func uxp08RefreshPillWearsTheSecondaryPalette() -> Bool {
+        var ok = true
+        let theme = HelmTheme.theme(id: "daylight") ?? ThemeManager.shared.theme
+        let plain = HelmRefreshPill(tooltip: "Re-check")
+        plain.applyTheme(theme)
+        let secondary = HelmButton.palette(variant: .secondary, tint: nil, theme: theme)
+        check(sameColor(plain.normalColor, secondary.fill),
+              "UXP-08: a plain refresh pill should be filled like a secondary button", &ok)
+        let prominent = HelmRefreshPill(title: "Check all", tooltip: "Check", prominent: true)
+        prominent.applyTheme(theme)
+        check(sameColor(prominent.normalColor, HelmTheme.nsColor(theme.accentHex)),
+              "UXP-08: a prominent pill should keep the accent fill", &ok)
+        check(!sameColor(secondary.fill, HelmTheme.nsColor(theme.accentHex)),
+              "UXP-08: the secondary fill and the accent should differ, or this case cannot fail", &ok)
         return ok
     }
 

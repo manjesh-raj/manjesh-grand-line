@@ -37,7 +37,8 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// header row that used to hold it (a subtitle line plus this button) is
     /// gone: the drill header states the destination and its live numbers, so
     /// a second copy a row below it was exactly the duplication §6.4 removes.
-    private let refreshButton = HelmButton(symbol: "arrow.clockwise", variant: .quiet)
+    /// UXP-08: the app's one labelled Refresh, not a bare glyph.
+    private let refreshButton = HelmButton.refresh()
 
     /// §7's "status/shortcut as two cards": the two low-content cards share
     /// one row instead of each taking a full-width band, which is §3's

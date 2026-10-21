@@ -1201,6 +1201,20 @@ final class HelmButton: NSButton {
         self.init(title: "", variant: variant, size: size, symbol: symbol, target: target, action: action)
     }
 
+    /// The app's one Refresh button: a labelled `.secondary` line button with
+    /// the clockwise arrow.
+    ///
+    /// UXP-08 and section (g) of the 2026-10 full review: Refresh was drawn
+    /// five ways - a filled primary on five pages, a quiet glyph on Dictation,
+    /// a bordered small button in a card - and as a filled primary it stood
+    /// beside each page's real primary action, so Vault showed three filled
+    /// buttons at once. Refresh re-reads; it is never the thing a page is
+    /// for. Every Refresh comes from here, which `PagePolishUXPSelfTest`
+    /// holds as a source guard. `HelmRefreshPill` wears the same palette.
+    static func refresh(size: Size = .regular) -> HelmButton {
+        HelmButton(title: "Refresh", variant: .secondary, size: size, symbol: "arrow.clockwise")
+    }
+
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     deinit {

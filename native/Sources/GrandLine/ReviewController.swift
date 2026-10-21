@@ -77,11 +77,10 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     /// background PR fetch returns - so an empty string here left the header
     /// row with nothing under the hero for the first second or two.
     private let subtitleLabel = NSTextField(labelWithString: "Open pull requests across your projects")
-    /// A filled accent pill, matching Setup > Updates' own "Refresh"
-    /// (`FleetController`, `VaultController`, `HomeCanvasController`,
-    /// `KubernetesController` follow the same recipe) rather than a
-    /// page-local muted `.quiet` look.
-    private let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")
+    /// The app's one Refresh (`HelmButton.refresh`, UXP-08): a labelled
+    /// secondary button, because Refresh re-reads and is never what a page
+    /// is for.
+    private let refreshButton = HelmButton.refresh()
     /// Kept so `loadView` can pin it to the content column's full width -
     /// without that the row shrinks to its content and Refresh stops being
     /// at the page's trailing edge.

@@ -93,8 +93,7 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
     /// the card header. Caller-owned - `SchedulesCardView` still owns the
     /// button and its handler.
     ///
-    /// Refresh is `HelmButton(.primary)` with the `arrow.clockwise` glyph, the
-    /// app-wide shape `fm/grandline-refresh-button-consistency` settled on -
+    /// Refresh is `HelmButton.refresh()`, the app's one Refresh (UXP-08) -
     /// not a second recipe invented here. It re-reads the store and the run
     /// history and re-renders: on this page that is worth an affordance
     /// because half of what a row says is *relative* ("in 13h", "6h ago",
@@ -102,8 +101,7 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
     /// events that already trigger a rebuild.
     var drillHeaderActions: [NSView] { [schedulesCard.addButton, refreshButton] }
 
-    private let refreshButton = HelmButton(title: "Refresh", variant: .primary,
-                                           symbol: "arrow.clockwise")
+    private let refreshButton = HelmButton.refresh()
 
     // MARK: The summary tiles and the two run-history panels
 

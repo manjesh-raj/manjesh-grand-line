@@ -1138,6 +1138,7 @@ final class HelmRefreshPill: HoverHighlightView {
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private var clickRecognizer: NSClickGestureRecognizer?
+    private let prominent: Bool
 
     #if FM_SELFTESTS
     /// X8: the label a captain actually reads on the pill, so a page's own
@@ -1150,7 +1151,13 @@ final class HelmRefreshPill: HoverHighlightView {
     ///   - tooltip: what *this* page's refresh actually re-runs. Every page
     ///     re-checks something different, so the component states the shape
     ///     and the caller states the subject.
-    init(title: String = "Refresh", tooltip: String) {
+    /// - prominent: draw as the page's primary action (a filled accent).
+    ///   Only for a pill that *is* the page's primary - Updates' "Check all".
+    ///   A plain Refresh wears `HelmButton.refresh`'s secondary palette
+    ///   (UXP-08), so a refresh pill never reads as a second primary beside
+    ///   the page's real one - GitHub Sync's sat beside Sync All.
+    init(title: String = "Refresh", tooltip: String, prominent: Bool = false) {
+        self.prominent = prominent
         super.init(frame: .zero)
 
         iconView.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)?
@@ -1206,9 +1213,22 @@ final class HelmRefreshPill: HoverHighlightView {
     /// (SwiftTerm's own selected-text pairing) - the exact pairing this
     /// pill's fill and label need.
     func applyTheme(_ theme: HelmTheme) {
+        guard prominent else {
+            // Taken from `HelmButton.palette` rather than restated, so the
+            // pill cannot drift from a real secondary button.
+            let secondary = HelmButton.palette(variant: .secondary, tint: nil, theme: theme)
+            normalColor = secondary.fill
+            hoverColor = secondary.hoverFill
+            layer?.borderWidth = 1
+            layer?.borderColor = secondary.border.cgColor
+            iconView.contentTintColor = secondary.label
+            titleLabel.textColor = secondary.label
+            return
+        }
         let accent = HelmTheme.nsColor(theme.accentHex)
         normalColor = accent
         hoverColor = accent.hoverShifted(by: 0.10, forMode: theme.mode)
+        layer?.borderWidth = 0
         let onAccent = HelmTheme.nsColor(theme.selectionTextHex)
         iconView.contentTintColor = onAccent
         titleLabel.textColor = onAccent

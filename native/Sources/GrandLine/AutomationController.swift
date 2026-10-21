@@ -191,7 +191,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     ///
     /// UI-55: `.secondary` now. A page carries one primary, and on this page
     /// it is Run Automation - Refresh is a read, Run changes the machine.
-    private let refreshButton = HelmButton(title: "Refresh", variant: .secondary, symbol: "arrow.clockwise")
+    private let refreshButton = HelmButton.refresh()
 
     /// Guards the manual re-check against re-entry while its two background
     /// sweeps are still out, exactly like `ReviewController.refresh`'s own
