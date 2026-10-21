@@ -35,6 +35,7 @@ enum PagePolishUXPSelfTest {
             ("uxp13PageEmptyStatesSitInTheMiddleOfTheContentArea", uxp13PageEmptyStatesSitInTheMiddle),
             ("uxp06TheFirstmateHomePathAppearsOnce", uxp06TheFirstmateHomePathAppearsOnce),
             ("uxp04HomeCardsAreSizedToTheirContent", uxp04HomeCardsAreSizedToTheirContent),
+            ("uxp10HostsNamesItselfOnceAndKeepsItsEmptyStateNearItsAction", uxp10HostsEmptyStateAndName),
             ("uxp09ReviewForgePlaceholderRowIsTallEnoughToDraw", uxp09ForgePlaceholderRowIsTallEnough),
         ]
         var failed = 0
@@ -509,6 +510,55 @@ enum PagePolishUXPSelfTest {
                       "UXP-04: \(label) the three columns should still end on one line, got \(heights)", &ok)
             }
         }
+        return ok
+    }
+
+    // MARK: UXP-10
+
+    /// An empty Hosts list: no card header restating "Hosts", the empty
+    /// state directly under the built-in row with its own Add Host button,
+    /// and the Keychain card's "Empty" in muted ink rather than amber.
+    private static func uxp10HostsEmptyStateAndName() -> Bool {
+        var ok = true
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("page-polish-hosts-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        setenv("FM_HOSTS_FILE", dir.appendingPathComponent("hosts.json").path, 1)
+        setenv("FM_KEYS_FILE", dir.appendingPathComponent("keys.json").path, 1)
+        setenv("FM_SNIPPETS_FILE", dir.appendingPathComponent("snippets.json").path, 1)
+        defer {
+            unsetenv("FM_HOSTS_FILE"); unsetenv("FM_KEYS_FILE"); unsetenv("FM_SNIPPETS_FILE")
+            try? FileManager.default.removeItem(at: dir)
+        }
+        let theme = HelmTheme.theme(id: "dusk") ?? ThemeManager.shared.theme
+        ThemeManager.shared.setTheme(theme)
+        let hosts = HostsController(hostStore: HostStore(), keyStore: SSHKeyStore(), snippetStore: SnippetStore())
+        let window = OffScreenProbe.window(width: 1400, height: 860)
+        defer { _ = window }
+        window.contentView = hosts.view
+        hosts.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 860)
+        hosts.view.layoutSubtreeIfNeeded()
+
+        check(hosts.debugHostsList.card.debugHeaderTitle == nil,
+              "UXP-10: the hosts card still carries its own header "
+              + "\"\(hosts.debugHostsList.card.debugHeaderTitle ?? "")\"", &ok)
+
+        let items = hosts.debugHostItems
+        guard let emptyIndex = items.firstIndex(where: { if case .empty = $0.kind { return true }; return false }) else {
+            fail("UXP-10: an empty Hosts list built no empty state", &ok)
+            return ok
+        }
+        let empty = items[emptyIndex]
+        check(empty.primary?.title == "Add Host", "UXP-10: the empty state should carry its own Add Host", &ok)
+        check(!empty.emptyFillsCard, "UXP-10: the empty state should sit under the rows, not fill the card", &ok)
+        let row = hosts.debugHostsList.debugRowFrame(emptyIndex)
+        check(row.height <= HostsListSection.inlineEmptyRowHeight + 0.5,
+              "UXP-10: the empty row is \(row.height)pt tall - it is centring itself in the card again", &ok)
+
+        let muted = HelmTheme.mutedInk(theme)
+        check(hosts.debugKeychainCard.debugVerdict == "Empty", "UXP-10: a new install's keychain should read Empty", &ok)
+        check(sameColor(hosts.debugKeychainCard.debugVerdictColor, muted),
+              "UXP-10: \"Empty\" should be muted ink, not a warning tint", &ok)
         return ok
     }
 
