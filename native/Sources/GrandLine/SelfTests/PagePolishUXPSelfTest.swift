@@ -36,6 +36,7 @@ enum PagePolishUXPSelfTest {
             ("uxp06TheFirstmateHomePathAppearsOnce", uxp06TheFirstmateHomePathAppearsOnce),
             ("uxp04HomeCardsAreSizedToTheirContent", uxp04HomeCardsAreSizedToTheirContent),
             ("uxp10HostsNamesItselfOnceAndKeepsItsEmptyStateNearItsAction", uxp10HostsEmptyStateAndName),
+            ("uxp11AnEmptyNotebookShowsOneEmptyState", uxp11AnEmptyNotebookShowsOneEmptyState),
             ("uxp09ReviewForgePlaceholderRowIsTallEnoughToDraw", uxp09ForgePlaceholderRowIsTallEnough),
         ]
         var failed = 0
@@ -559,6 +560,38 @@ enum PagePolishUXPSelfTest {
         check(hosts.debugKeychainCard.debugVerdict == "Empty", "UXP-10: a new install's keychain should read Empty", &ok)
         check(sameColor(hosts.debugKeychainCard.debugVerdictColor, muted),
               "UXP-10: \"Empty\" should be muted ink, not a warning tint", &ok)
+        return ok
+    }
+
+    // MARK: UXP-11
+
+    /// An empty notebook draws one empty state, in the editor, carrying both
+    /// actions, and no preview card. It used to draw three at once: the page
+    /// column's (with its own New page), the editor's and the preview's.
+    private static func uxp11AnEmptyNotebookShowsOneEmptyState() -> Bool {
+        var ok = true
+        let (window, shell) = ReviewTourLab.makeOffScreenShell()
+        defer { _ = window }
+        shell.show(.notebook)
+        shell.view.layoutSubtreeIfNeeded()
+        let body = shell.bodyContainerForTests
+        var states: [HelmEmptyState] = []
+        var newPageButtons = 0
+        var sawPreviewTitle = false
+        func walk(_ view: NSView) {
+            if view.isHidden || view.alphaValue == 0 { return }
+            if let state = view as? HelmEmptyState, state.frame.height > 0 { states.append(state) }
+            if let button = view as? NSButton, button.title == "New page" { newPageButtons += 1 }
+            if let card = view as? HelmCard, card.debugHeaderTitle == "Preview", card.frame.width > 0 {
+                sawPreviewTitle = true
+            }
+            view.subviews.forEach(walk)
+        }
+        walk(body)
+        check(states.count == 1, "UXP-11: an empty notebook draws \(states.count) empty states, want one", &ok)
+        check(newPageButtons == 1,
+              "UXP-11: an empty notebook offers New page \(newPageButtons) times in the page, want once", &ok)
+        check(!sawPreviewTitle, "UXP-11: the preview card shows with no page to preview", &ok)
         return ok
     }
 

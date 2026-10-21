@@ -395,10 +395,12 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         // **Review defect U9.** With no pages the column rendered as a blank
         // 275pt card - no heading, no sentence, no affordance. It says what
         // it is for and offers the one action that fills it.
-        sidebar.setEmptyState(.init(header: "Pages",
-                                    body: "No pages yet. Every page you add shows up here.",
-                                    actionTitle: "New page",
-                                    onAction: { [weak self] in self?.newPageFromMenu() }))
+        //
+        // UXP-11: the column keeps its heading and a word, and the one empty
+        // state - with both of its actions - is the editor's. The column used
+        // to carry a second "No pages yet" with its own New page, beside the
+        // editor's and a third in the preview.
+        sidebar.setEmptyState(.init(header: "Pages", body: "None yet."))
 
         buildEditorCard()
         buildPreviewCard()
@@ -570,8 +572,13 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     // MARK: Modes
 
     private func applyMode() {
-        let showEditor = mode != .preview
-        let showPreview = mode != .edit
+        // UXP-11: a notebook with no page open has nothing to preview, so the
+        // preview card stands down and the editor's empty state is the one
+        // thing on the page. Preview mode still shows the editor then, or the
+        // page would be empty.
+        let hasPage = currentID != nil
+        let showEditor = mode != .preview || !hasPage
+        let showPreview = mode != .edit && hasPage
         editorCard.isHidden = !showEditor
         previewCard.isHidden = !showPreview
         rail.isHidden = !railVisible
@@ -655,6 +662,7 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         editorTitleLabel.stringValue = "No page open"
         preview.render("", resolver: resolver, sourcePageID: nil, theme: theme)
         refreshRail()
+        applyMode()
         showEditorOverlay(symbol: "book.pages",
                           title: "Your notebook is empty",
                           // **Review defect U9's second half.** This said
@@ -670,7 +678,8 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
                               + "Everything you write here is a markdown file \(whereItGoes).",
                           // X5: the Welcome page, offered where the captain
                           // is actually looking.
-                          action: ("Add a Welcome page", #selector(seedWelcomePageTapped)))
+                          actions: [("New page", #selector(newPageTapped)),
+                                    ("Add a Welcome page", #selector(seedWelcomePageTapped))])
     }
 
     private func open(pageID: String) {
@@ -680,9 +689,11 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
             reload()
             return
         }
+        let hadPage = currentID != nil
         currentID = page.id
         currentContent = page.content
         editorTitleLabel.stringValue = "\(page.slug).md"
+        if !hadPage { applyMode() }
         sidebar.select(page.id)
         // Only once the page is live. Before that the bridge answers "the
         // editor is still starting up", which is not an error worth showing
@@ -1200,13 +1211,22 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     ///   Welcome page demonstrating exactly that, and it is opt-in rather
     ///   than seeded on first launch (see `SeedExamples`' header).
     private func showEditorOverlay(symbol: String, title: String, body: String,
-                                   action: (title: String, selector: Selector)? = nil) {
+                                   actions: [(title: String, selector: Selector)] = []) {
         editorOverlayState?.removeFromSuperview()
-        let accessory: NSView? = action.map { spec in
+        let buttons = actions.map { spec -> NSView in
             let button = HelmButton(title: spec.title, variant: .secondary,
                                     target: self, action: spec.selector)
             button.controlSize = .small
             return button
+        }
+        let accessory: NSView?
+        if buttons.count > 1 {
+            let row = NSStackView(views: buttons)
+            row.orientation = .horizontal
+            row.spacing = HelmMetrics.s2
+            accessory = row
+        } else {
+            accessory = buttons.first
         }
         let state = HelmEmptyState(symbol: symbol, title: title, body: body,
                                    size: .standard, accessory: accessory,
