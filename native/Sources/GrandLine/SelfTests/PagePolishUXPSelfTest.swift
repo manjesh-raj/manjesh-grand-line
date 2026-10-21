@@ -34,6 +34,7 @@ enum PagePolishUXPSelfTest {
             ("uxp08RefreshPillWearsTheSecondaryPalette", uxp08RefreshPillWearsTheSecondaryPalette),
             ("uxp13PageEmptyStatesSitInTheMiddleOfTheContentArea", uxp13PageEmptyStatesSitInTheMiddle),
             ("uxp06TheFirstmateHomePathAppearsOnce", uxp06TheFirstmateHomePathAppearsOnce),
+            ("uxp04HomeCardsAreSizedToTheirContent", uxp04HomeCardsAreSizedToTheirContent),
             ("uxp09ReviewForgePlaceholderRowIsTallEnoughToDraw", uxp09ForgePlaceholderRowIsTallEnough),
         ]
         var failed = 0
@@ -466,6 +467,48 @@ enum PagePolishUXPSelfTest {
         shell.view.layoutSubtreeIfNeeded()
         let copies = shell.debugBootstrap.debugHomePathCopies
         check(copies == 1, "UXP-06: Bootstrap prints the firstmate home's path \(copies) times, want once", &ok)
+        return ok
+    }
+
+    // MARK: UXP-04
+
+    /// Home's attention card and Health stand at their own content's height,
+    /// at the captain's width and at a narrow one, while the three columns
+    /// still end on one line. The attention card used to be stretched to the
+    /// full column (three rows, 60% empty), and Health kept its seven-row
+    /// height after dropping its rows at 1100.
+    private static func uxp04HomeCardsAreSizedToTheirContent() -> Bool {
+        var ok = true
+        let (window, shell) = ReviewTourLab.makeOffScreenShell()
+        defer { _ = window }
+        shell.show(.homeCanvas)
+        let canvas = shell.debugHomeCanvas
+        ReviewTourLab.seedDemoHome(canvas)
+        for size in [NSSize(width: 1512, height: 945), NSSize(width: 1100, height: 720)] {
+            HomeFitSelfTest.show(rows: 3, at: size, shell: shell, window: window)
+            let label = "\(Int(size.width))x\(Int(size.height))"
+            guard canvas.usesDashboardLayoutForTests else {
+                fail("UXP-04: \(label) Home is not on its three-column page", &ok)
+                continue
+            }
+            let attention = canvas.attentionCardForTests
+            let attentionFit = attention.fittingSize.height
+            check(attention.frame.height <= attentionFit + 1,
+                  "UXP-04: \(label) the attention card is \(attention.frame.height)pt around "
+                  + "\(attentionFit)pt of rows", &ok)
+            if let health = canvas.moduleCardsForTests.first(where: { $0.anatomyForTests.title == "Health" }) {
+                check(health.frame.height <= health.fittingSize.height + 1,
+                      "UXP-04: \(label) Health is \(health.frame.height)pt around "
+                      + "\(health.fittingSize.height)pt of content", &ok)
+            } else {
+                fail("UXP-04: \(label) Home has no Health card", &ok)
+            }
+            if let row = canvas.gridRowsForTests.first {
+                let heights = row.arrangedSubviews.map(\.frame.height)
+                check((heights.max() ?? 0) - (heights.min() ?? 0) <= 1,
+                      "UXP-04: \(label) the three columns should still end on one line, got \(heights)", &ok)
+            }
+        }
         return ok
     }
 

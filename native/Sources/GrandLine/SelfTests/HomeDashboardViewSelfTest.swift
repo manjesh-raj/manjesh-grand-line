@@ -211,8 +211,12 @@ enum HomeDashboardViewSelfTest {
             // Asserted by shape, because that structure is the layout.
             let columns = rows[0].arrangedSubviews
             check(columns.count == 3, "the row holds three columns, got \(columns.count)", &ok)
-            check(columns.first === canvas.attentionCardForTests,
-                  "column 1 is the attention card itself, got \(type(of: columns.first))", &ok)
+            // UXP-04: column 1 is the attention card's own column - the card
+            // at its top at its rows' height, page below it - rather than the
+            // card stretched to the column.
+            check((columns.first as? NSStackView)?.arrangedSubviews.first === canvas.attentionCardForTests,
+                  "column 1 is the attention card's column with the card at its top, got "
+                  + "\(type(of: columns.first))", &ok)
             func titles(_ view: NSView?) -> [String] {
                 ((view as? NSStackView)?.arrangedSubviews ?? []).compactMap {
                     ($0 as? HelmModuleCard)?.anatomyForTests.title

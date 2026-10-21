@@ -1557,14 +1557,15 @@ final class HomeCanvasController: NSViewController {
     /// fold with three rows and 468pt over with ten, and 384pt over at the
     /// 960x620 minimum. Columns share the height instead of adding it.
     ///
-    ///   - Column 1 is Needs Attention at the column's full height, its list
-    ///     scrolling inside it.
+    ///   - Column 1 is Needs Attention at its rows' height, capped at the
+    ///     column's, its list scrolling inside it past that.
     ///   - Column 2 is Claude (the dense usage form), Fleet and Health.
     ///   - Column 3 is the Morning briefing and the Merge queue.
     ///
-    /// Each column has exactly one member that absorbs leftover height - the
-    /// attention list, Health, and the Morning briefing - and the rest sit at
-    /// their own height (`dashboardKeepsOwnHeight`). The Merge queue fills
+    /// The columns still end on one line, but a card is never stretched past
+    /// what it holds (UXP-04): columns 1 and 2 end in a spacer that takes the
+    /// leftover height, and every card in them sits at its own height
+    /// (`dashboardKeepsOwnHeight`). In column 3 the Merge queue fills
     /// its column by *row count* instead (`mergeQueueRows`), so what the
     /// briefing absorbs is less than one row. Measured: with the Merge queue
     /// as the absorber, its peek list spread that remainder unevenly between
@@ -1635,7 +1636,8 @@ final class HomeCanvasController: NSViewController {
         let placement = CardPlacement.dashboard(span: span, width: width)
         let height = gridContainerHeight()
 
-        // Column 2: Claude and Fleet at their own height, Health absorbing.
+        // Column 2: Claude, Fleet and Health at their own heights, a spacer
+        // under them taking what is left.
         // Fleet's sentence is the first thing to go when the column is
         // short - its chip already says whether anyone needs the captain.
         let claudeContent = content(for: .claudeStatus, placement: placement)
@@ -1674,7 +1676,11 @@ final class HomeCanvasController: NSViewController {
             width: width,
             contents: [.claudeStatus: claudeContent, .fleet: fleetContent, .health: healthContent,
                        .briefing: briefingContent, .mergeQueue: mergeContent],
-            ownHeights: [.claudeStatus: claudeHeight, .fleet: fleetHeight, .mergeQueue: mergeHeight])
+            // UXP-04: Health keeps its own height too. It used to absorb its
+            // column's slack, so at a narrow width - where it drops its
+            // service rows - it kept the height it had with seven of them.
+            ownHeights: [.claudeStatus: claudeHeight, .fleet: fleetHeight,
+                         .health: probeHeight(healthContent, width: width), .mergeQueue: mergeHeight])
     }
 
     private func dashboardRowViews(available: CGFloat, modules: [DaylightModule]) -> [NSStackView]? {
@@ -1693,9 +1699,9 @@ final class HomeCanvasController: NSViewController {
 
         attentionCard.setLayoutWidth(plan.width)
         let row = HelmResponsiveGrid.proportionalRow(
-            views: [attentionCard,
+            views: [dashboardAttentionColumn(),
                     dashboardColumn([(.claudeStatus, claude), (.fleet, fleet), (.health, health)],
-                                    absorbing: .health, ownHeights: plan.ownHeights, width: plan.width),
+                                    absorbing: nil, ownHeights: plan.ownHeights, width: plan.width),
                     dashboardColumn([(.briefing, briefing), (.mergeQueue, merge)],
                                     absorbing: .briefing, ownHeights: plan.ownHeights, width: plan.width)],
             spans: Self.dashboardSpans,
@@ -1704,11 +1710,51 @@ final class HomeCanvasController: NSViewController {
         return [row]
     }
 
+    /// UXP-04: what takes a column's leftover height when no card should -
+    /// page ground below the column's last card, rather than a card drawn
+    /// taller than what it holds.
+    private static func columnSpacer() -> NSView {
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .vertical)
+        spacer.heightAnchor.constraint(greaterThanOrEqualToConstant: 0).isActive = true
+        return spacer
+    }
+
+    /// Column 1: the attention card at its rows' height, then the page.
+    ///
+    /// UXP-04: the card used to *be* the column, so the row's height tie
+    /// stretched it to the full page - three rows over a mostly empty card.
+    private func dashboardAttentionColumn() -> NSStackView {
+        attentionCard.removeFromSuperview()
+        let column = NSStackView(views: [attentionCard, Self.columnSpacer()])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.distribution = .fill
+        column.spacing = 0
+        column.translatesAutoresizingMaskIntoConstraints = false
+        column.setHuggingPriority(.defaultLow, for: .horizontal)
+        column.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        let tie = attentionCard.widthAnchor.constraint(equalTo: column.widthAnchor)
+        tie.priority = HelmDaylightPriority.contentTie
+        tie.isActive = true
+        return column
+    }
+
     /// One page column: a vertical stack whose members fill its width, and
-    /// whose every member but `absorbing` prefers its own height.
-    private func dashboardColumn(_ members: [(DaylightModule, HelmModuleCard)], absorbing: DaylightModule,
+    /// whose every member but `absorbing` prefers its own height. With no
+    /// absorber every card keeps its own height and a spacer below takes the
+    /// rest (UXP-04).
+    private func dashboardColumn(_ members: [(DaylightModule, HelmModuleCard)], absorbing: DaylightModule?,
                                  ownHeights: [DaylightModule: CGFloat], width: CGFloat) -> NSStackView {
         let column = NSStackView(views: members.map(\.1))
+        if absorbing == nil, let last = members.last?.1 {
+            column.addArrangedSubview(Self.columnSpacer())
+            // The spacer is page, not a card: no gap in front of it, or the
+            // column is a spacing taller than its cards and a tight window
+            // scrolls by exactly that.
+            column.setCustomSpacing(0, after: last)
+        }
         column.orientation = .vertical
         column.alignment = .leading
         column.distribution = .fill
