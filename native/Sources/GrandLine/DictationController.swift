@@ -821,6 +821,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
     // MARK: Rendering
 
     private func render() {
+        // UXP-16: "Reset to Right ⌥ Option" only when there is something to
+        // reset - it used to show while the chord already was the default.
+        shortcutResetButton.isHidden = shortcutRecorder.shortcut == .dictationDefault
         statusWord.setAccessibilityLabel("Dictation status: \(status.title)")
         statusDetailLabel.stringValue = status.detail(shortcutDisplay: shortcutRecorder.shortcut.displayString)
 
@@ -1022,6 +1025,16 @@ final class DictationController: NSViewController, DaylightDrillActions {
         onShortcutChanged?(newShortcut)
         render()
     }
+
+    #if FM_SELFTESTS
+    /// UXP-16: the reset button and the words well, as drawn.
+    var debugShortcutResetIsShowing: Bool { !shortcutResetButton.isHidden }
+    var debugVocabularyPlaceholder: String { vocabularyInput.debugDrawnPlaceholder }
+    func debugSetShortcut(_ chord: KeyChord) {
+        shortcutRecorder.shortcut = chord
+        shortcutChanged(chord)
+    }
+    #endif
 
     @objc private func resetShortcutTapped() {
         shortcutRecorder.shortcut = .dictationDefault

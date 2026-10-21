@@ -979,8 +979,23 @@ final class HelmChipInput: NSView, NSTextFieldDelegate {
     private var focus: HelmFocusRegistration?
     private var isFocused = false
     private var lastTheme: HelmTheme = ThemeManager.shared.theme
+    /// The placeholder's words, kept here rather than read back off the
+    /// editor.
+    ///
+    /// UXP-16: `applyTheme` used to rebuild the styled placeholder from
+    /// `editor.placeholderString`, which AppKit answers `nil` once a
+    /// `placeholderAttributedString` is set - so the second theme pass (one
+    /// runs in `init`) blanked it, and Dictation's "Words I use often" well
+    /// drew as an unlabelled empty box.
+    private let placeholderText: String
+
+    #if FM_SELFTESTS
+    /// UXP-16: the placeholder the editor will actually draw.
+    var debugDrawnPlaceholder: String { editor.placeholderAttributedString?.string ?? editor.placeholderString ?? "" }
+    #endif
 
     init(placeholder: String = "") {
+        placeholderText = placeholder
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -1120,7 +1135,7 @@ final class HelmChipInput: NSView, NSTextFieldDelegate {
                                focused: isFocused, hue: domainHue, animated: animated)
         editor.textColor = HelmField.ink(theme)
         editor.placeholderAttributedString = NSAttributedString(
-            string: editor.placeholderString ?? "",
+            string: placeholderText,
             attributes: [.font: HelmType.body(), .foregroundColor: HelmField.mutedInk(theme)])
         chips.forEach { $0.applyTheme(theme) }
         needsLayout = true

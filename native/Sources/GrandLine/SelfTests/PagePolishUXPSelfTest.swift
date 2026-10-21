@@ -38,6 +38,8 @@ enum PagePolishUXPSelfTest {
             ("uxp10HostsNamesItselfOnceAndKeepsItsEmptyStateNearItsAction", uxp10HostsEmptyStateAndName),
             ("uxp11AnEmptyNotebookShowsOneEmptyState", uxp11AnEmptyNotebookShowsOneEmptyState),
             ("uxp14DevOpsCommandsOpensOnACommand", uxp14DevOpsCommandsOpensOnACommand),
+            ("uxp15DocsDrawsNoToolbarOverItsEmptyState", uxp15DocsDrawsNoToolbarOverItsEmptyState),
+            ("uxp16DictationResetOnlyOffTheDefaultAndALabelledWordsField", uxp16DictationResetAndPlaceholder),
             ("uxp09ReviewForgePlaceholderRowIsTallEnoughToDraw", uxp09ForgePlaceholderRowIsTallEnough),
         ]
         var failed = 0
@@ -624,6 +626,68 @@ enum PagePolishUXPSelfTest {
         check(page.debugDetailShowsCommand, "UXP-14: DevOps Commands opened on an empty detail pane", &ok)
         let risk = page.debugSelectedCommandID.flatMap { store.command(id: $0) }?.risk
         check(risk == .readOnly, "UXP-14: the default command should be read-only, got \(String(describing: risk))", &ok)
+        return ok
+    }
+
+    // MARK: UXP-15 and UXP-16
+
+    /// With no playbook synced, Docs draws its empty state with no toolbar
+    /// band of back, forward and reload over it; once one lands, the band
+    /// comes back. Runs only against this process's scratch data root.
+    private static func uxp15DocsDrawsNoToolbarOverItsEmptyState() -> Bool {
+        var ok = true
+        // `main.swift`'s self-test block points `FM_DOCS_DIR` at this
+        // process's own scratch folder; anything else is a real folder.
+        guard DocsStore.folderURL.path.contains("selftest-process-") else {
+            fail("UXP-15: the docs folder \(DocsStore.folderURL.path) is not this process's scratch - "
+                 + "refusing to write to it", &ok)
+            return ok
+        }
+        let index = DocsStore.indexURL
+        try? FileManager.default.removeItem(at: index)
+        defer { try? FileManager.default.removeItem(at: index) }
+        let docs = DocsController()
+        let window = OffScreenProbe.window(width: 1400, height: 860)
+        defer { _ = window }
+        window.contentView = docs.view
+        docs.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 860)
+        docs.view.layoutSubtreeIfNeeded()
+        check(!DocsStore.isSynced, "UXP-15: the scratch docs folder should start empty", &ok)
+        check(!docs.debugToolbarIsShowing, "UXP-15: Docs draws its toolbar over \"Docs not synced yet\"", &ok)
+
+        try? FileManager.default.createDirectory(at: DocsStore.folderURL, withIntermediateDirectories: true)
+        try? "<html><body>Playbook</body></html>".write(to: index, atomically: true, encoding: .utf8)
+        DocsSyncCenter.notifySynced()
+        // The center delivers on the next main-queue turn.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        docs.view.layoutSubtreeIfNeeded()
+        check(docs.debugToolbarIsShowing, "UXP-15: a synced playbook should bring the toolbar back", &ok)
+        return ok
+    }
+
+    /// Dictation's reset button shows only when the chord is not the
+    /// default, and the "Words I use often" well draws its placeholder.
+    private static func uxp16DictationResetAndPlaceholder() -> Bool {
+        var ok = true
+        let saved = AppSettings.shared.dictationShortcut
+        defer { AppSettings.shared.dictationShortcut = saved }
+        let dictation = DictationController(store: DictationStore())
+        let window = OffScreenProbe.window(width: 1400, height: 860)
+        defer { _ = window }
+        window.contentView = dictation.view
+        dictation.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 860)
+        dictation.debugSetShortcut(.dictationDefault)
+        dictation.view.layoutSubtreeIfNeeded()
+        check(!dictation.debugShortcutResetIsShowing,
+              "UXP-16: the reset button shows while the chord already is the default", &ok)
+        var other = KeyChord.dictationDefault
+        other.keyCode = other.keyCode == 0 ? 1 : 0
+        dictation.debugSetShortcut(other)
+        check(other != .dictationDefault, "UXP-16: the fixture's other chord should differ from the default", &ok)
+        check(dictation.debugShortcutResetIsShowing,
+              "UXP-16: a changed chord should offer the reset back to the default", &ok)
+        check(!dictation.debugVocabularyPlaceholder.isEmpty,
+              "UXP-16: the \"Words I use often\" field draws no placeholder", &ok)
         return ok
     }
 
