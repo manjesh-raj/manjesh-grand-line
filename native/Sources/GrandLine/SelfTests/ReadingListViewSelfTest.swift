@@ -66,6 +66,7 @@ enum ReadingListViewSelfTest {
         checkSidebarTracksTheStore(check)
         checkFiltersDriveTheGrid(check)
         checkEmptyStates(check)
+        checkOneInstructionWhenEmpty(check)
         checkDropTargetDecision(check)
         checkS13ReaderUsesAnIsolatedDataStore(check)
         checkReaderOpensAndMarksRead(check)
@@ -320,6 +321,24 @@ enum ReadingListViewSelfTest {
             check(controller.debugEmptyStateTitle?.contains("Nothing under") == true,
                   "empty state (GL-14): a filter with no matches is a different state from an "
                   + "empty list, and must read differently")
+        }
+    }
+
+    /// UXP-12: an empty list gives its paste-or-drop instruction once, in
+    /// the empty state. The toolbar hint and the dashed drop card said the
+    /// same thing beside it, three copies on one screen; they come back with
+    /// the list.
+    private static func checkOneInstructionWhenEmpty(_ check: (Bool, String) -> Void) {
+        mounted { controller, _, _, _ in
+            let copies = controller.debugInstructionCopies
+            check(copies.emptyState, "UXP-12: an empty list shows its empty state")
+            check(!copies.toolbarHint, "UXP-12: an empty list repeats its instruction in the toolbar hint")
+            check(!copies.dropCard, "UXP-12: an empty list repeats its instruction in the dashed drop card")
+        }
+        mounted(seed: seedThreeStates) { controller, _, _, _ in
+            let copies = controller.debugInstructionCopies
+            check(!copies.emptyState && copies.toolbarHint && copies.dropCard,
+                  "UXP-12: a list with links keeps the toolbar hint and the drop card under it")
         }
     }
 

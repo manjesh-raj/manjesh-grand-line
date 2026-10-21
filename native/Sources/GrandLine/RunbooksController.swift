@@ -398,13 +398,18 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
                                        accessory: seed,
                                        hue: RailDestination.runbooks.domainHue,
                                        artwork: RailDestination.runbooks.drillHeaderArtwork)
-            empty.heightAnchor.constraint(greaterThanOrEqualToConstant: 110).isActive = true
+            // UXP-13: centred in the page's content area by the one shared
+            // rule, rather than as the first row of the (empty) list - which
+            // pinned it near the top of the page. A plain subview of the list
+            // container, so the editor hiding the list hides it too.
+            runbookGridEmptyState?.removeFromSuperview()
             runbookGridEmptyState = empty
-            runbookListStack.addArrangedSubview(empty)
-            empty.widthAnchor.constraint(equalTo: runbookListStack.widthAnchor).isActive = true
+            runbookListContainerStack.addSubview(empty)
+            empty.placeAsPageEmptyState(in: runbookListContainerStack)
             applyTheme()
             return
         }
+        runbookGridEmptyState?.removeFromSuperview()
         runbookGridEmptyState = nil
         let (rows, cards) = DocsGridSupport.layoutGrid(items: runbookGridItems, containerWidth: runbookListStack.frame.width)
         for row in rows {

@@ -32,6 +32,7 @@ enum PagePolishUXPSelfTest {
             ("uxp08EveryPageShowsAtMostOnePrimaryButton", uxp08EveryPageShowsAtMostOnePrimaryButton),
             ("uxp08EveryRefreshComesFromTheOneFactory", uxp08EveryRefreshComesFromTheOneFactory),
             ("uxp08RefreshPillWearsTheSecondaryPalette", uxp08RefreshPillWearsTheSecondaryPalette),
+            ("uxp13PageEmptyStatesSitInTheMiddleOfTheContentArea", uxp13PageEmptyStatesSitInTheMiddle),
             ("uxp09ReviewForgePlaceholderRowIsTallEnoughToDraw", uxp09ForgePlaceholderRowIsTallEnough),
         ]
         var failed = 0
@@ -388,6 +389,56 @@ enum PagePolishUXPSelfTest {
         check(!sameColor(secondary.fill, HelmTheme.nsColor(theme.accentHex)),
               "UXP-08: the secondary fill and the accent should differ, or this case cannot fail", &ok)
         return ok
+    }
+
+    // MARK: UXP-13
+
+    /// Every page-level empty state (a `.standard`, unboxed `HelmEmptyState`)
+    /// on an empty page has its centre in the middle third of the content
+    /// area, and is no wider than `HelmEmptyState.pageMaxWidth`. They used to
+    /// sit in five different places: pinned near the top, centred in the
+    /// window, top-aligned above a drop zone, centred in a card.
+    private static func uxp13PageEmptyStatesSitInTheMiddle() -> Bool {
+        var ok = true
+        let (window, shell) = ReviewTourLab.makeOffScreenShell()
+        defer { _ = window }
+        var measured = 0
+        for destination in RailDestination.allCases {
+            shell.show(destination)
+            shell.view.layoutSubtreeIfNeeded()
+            let body = shell.bodyContainerForTests
+            let area = body.convert(body.bounds, to: nil)
+            for state in visiblePageEmptyStates(in: body) {
+                measured += 1
+                let frame = state.convert(state.bounds, to: nil)
+                // A page's own content area is the body; its middle third is
+                // the band a centred state's midpoint must land in.
+                let third = area.height / 3
+                let midY = frame.midY
+                if ProcessInfo.processInfo.environment["FM_UXP13_MEASURE"] != nil {
+                    print("MEASURE \(destination.rawValue): midY \(midY) in \(area.minY)...\(area.maxY), width \(frame.width)")
+                }
+                check(midY >= area.minY + third - 0.5 && midY <= area.maxY - third + 0.5,
+                      "UXP-13: \(destination.rawValue)'s empty state is centred at y \(Int(midY)), outside the middle "
+                      + "third of its \(Int(area.minY))-\(Int(area.maxY)) content area", &ok)
+            }
+        }
+        check(measured >= 3, "UXP-13: only \(measured) page-level empty states were found - the sweep is vacuous", &ok)
+        return ok
+    }
+
+    static func visiblePageEmptyStates(in root: NSView) -> [HelmEmptyState] {
+        var found: [HelmEmptyState] = []
+        func walk(_ view: NSView) {
+            if view.isHidden || view.alphaValue == 0 { return }
+            if let state = view as? HelmEmptyState, state.debugIsPageLevel, state.frame.height > 0 {
+                found.append(state)
+                return
+            }
+            view.subviews.forEach(walk)
+        }
+        walk(root)
+        return found
     }
 
     // MARK: UXP-09

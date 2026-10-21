@@ -2143,6 +2143,7 @@ final class AppShellController: NSViewController {
     /// this controller only ever needs to add/remove/toggle a destination
     /// view, never measure the container itself.
     var bodyContainerFrameForTests: NSRect { bodyContainer.frame }
+    var bodyContainerForTests: NSView { bodyContainer }
 
     /// Full review #3's PF1. How many of `bodyContainer`'s embedded
     /// destination views are currently attached to it by active constraints,
