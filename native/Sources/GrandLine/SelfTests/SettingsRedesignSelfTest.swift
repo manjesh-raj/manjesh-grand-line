@@ -193,8 +193,8 @@ enum SettingsRedesignSelfTest {
                   + "forward=\(settings.debugCanGoForward)")
             ok = false
         }
-        if settings.debugToolbarTitle != settings.debugSelectedCategory.title {
-            print("  FAIL the toolbar reads \"\(settings.debugToolbarTitle)\" on "
+        if settings.drillHeaderSubtitle?.hasPrefix(settings.debugSelectedCategory.title) != true {
+            print("  FAIL the drill subtitle reads \"\(settings.drillHeaderSubtitle ?? "nil")\" on "
                   + "\(settings.debugSelectedCategory.rawValue)")
             ok = false
         }
@@ -217,11 +217,11 @@ enum SettingsRedesignSelfTest {
             print("  FAIL back landed on \(settings.debugSelectedCategory.rawValue), want terminal")
             ok = false
         }
-        // The toolbar title is the only thing on screen that says where you
-        // are once the pane has scrolled, so it has to follow a history move
-        // and not only a click.
-        if settings.debugToolbarTitle != SettingsController.Category.terminal.title {
-            print("  FAIL after back the toolbar reads \"\(settings.debugToolbarTitle)\"")
+        // The drill subtitle is what says where you are once the pane has
+        // scrolled (UXP-17 took the breadcrumb's copy of the name away), so
+        // it has to follow a history move and not only a click.
+        if settings.drillHeaderSubtitle?.hasPrefix(SettingsController.Category.terminal.title) != true {
+            print("  FAIL after back the drill subtitle reads \"\(settings.drillHeaderSubtitle ?? "nil")\"")
             ok = false
         }
         // And the sidebar's own selection has to follow too - a nav column

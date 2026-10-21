@@ -380,7 +380,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private let toolbar = NSStackView()
     private let backButton = HelmButton(symbol: "chevron.left", variant: .quiet, target: nil, action: nil)
     private let forwardButton = HelmButton(symbol: "chevron.right", variant: .quiet, target: nil, action: nil)
-    private let toolbarTitle = NSTextField(labelWithString: "")
     private let toolbarLocalLabel = NSTextField(labelWithString: "Saved on this Mac")
     private let toolbarLocalIcon = NSImageView()
 
@@ -882,10 +881,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         forwardButton.toolTip = "Forward"
         forwardButton.setAccessibilityLabel("Forward")
 
-        toolbarTitle.font = .systemFont(ofSize: HelmType.scaled(15), weight: .semibold)
-        toolbarTitle.lineBreakMode = .byTruncatingTail
-        toolbarTitle.translatesAutoresizingMaskIntoConstraints = false
-
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -904,16 +899,19 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         // drifts with whatever the title happens to say.
         toolbar.distribution = .fill
         toolbar.translatesAutoresizingMaskIntoConstraints = false
-        for view in [backButton, forwardButton, toolbarTitle, spacer,
+        // UXP-17: no title between the arrows and the caption. The pane's
+        // name was here, in the hero a row below, and in the drill header's
+        // subtitle - three copies of one word. The hero names the pane, and
+        // the drill subtitle (which never scrolls) says where you are once
+        // the hero has scrolled away.
+        for view in [backButton, forwardButton, spacer,
                      toolbarLocalIcon, toolbarLocalLabel] as [NSView] {
             toolbar.addArrangedSubview(view)
         }
         toolbar.setCustomSpacing(HelmMetrics.s2, after: forwardButton)
-        toolbarTitle.setContentHuggingPriority(.required, for: .horizontal)
     }
 
     private func refreshToolbar() {
-        toolbarTitle.stringValue = selectedCategory.title
         backButton.isEnabled = historyIndex > 0
         forwardButton.isEnabled = historyIndex < history.count - 1
     }
@@ -2418,7 +2416,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         identityInitial.textColor = HelmContrast.legibleOn(fill: HelmTheme.nsColor(theme.accentHex),
                                                    preferring: .white)
         identityName.textColor = ink
-        toolbarTitle.textColor = ink
         toolbarLocalIcon.contentTintColor = muted
 
         for page in pages.values {
@@ -2501,7 +2498,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         searchField.stringValue = text
         applySearchFilter(text)
     }
-    var debugToolbarTitle: String { toolbarTitle.stringValue }
+    /// UXP-17: every label in the page header row, so a suite can assert the
+    /// pane's name is not one of them.
+    var debugToolbarTexts: [String] { toolbar.arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue } }
     var debugCanGoBack: Bool { backButton.isEnabled }
     var debugCanGoForward: Bool { forwardButton.isEnabled }
     func debugGoBack() { goBack() }

@@ -304,7 +304,7 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
         // already renders rather than narrowing the list, so it must not latch
         // selected - see `HelmPageSidebar.RowKind`.
         sidebar.appendRow(id: Self.runHistoryRowID, symbol: "clock.arrow.circlepath",
-                          title: "Run History", kind: .action, showsCount: false)
+                          title: "Run history", kind: .action, showsCount: false)
         sidebar.select(SchedulesCardView.StatusFilter.all.rawValue)
 
         sidebar.onSelect = { [weak self] id in
@@ -456,8 +456,9 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
         let worthALook = schedules.filter { SchedulesCardView.group(for: $0) == .worthALook }.count
         summaryStrip.configure([
             .count(active, caption: "Active schedules"),
-            .count(attention, caption: "Need you", tintWhenNonZero: .critical),
-            .count(worthALook, caption: "Worth a look", tintWhenNonZero: .info),
+            // UXP-17: the list group's own names, as the sidebar uses.
+            .count(attention, caption: SchedulesCardView.Group.needsYou.title, tintWhenNonZero: .critical),
+            .count(worthALook, caption: SchedulesCardView.Group.worthALook.title, tintWhenNonZero: .info),
             .count(history.count, caption: "Runs \u{00B7} last 7 days"),
         ], theme: theme)
         summaryStrip.toolTip = [
@@ -744,6 +745,8 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
         return (values[0], values[1], values[3])
     }
     /// The "Worth a look" figure, added with the five-state split.
+    /// UXP-17: the stat strip's captions as drawn.
+    var debugStatCaptions: [String] { summaryStrip.debugCaptions }
     var debugWorthALookValue: String { summaryStrip.debugValues.count == 4 ? summaryStrip.debugValues[2] : "" }
     /// Whether the activity feed is showing its honest "nothing recorded yet"
     /// state rather than an empty stack that merely looks like one.

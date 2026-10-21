@@ -40,6 +40,7 @@ enum PagePolishUXPSelfTest {
             ("uxp14DevOpsCommandsOpensOnACommand", uxp14DevOpsCommandsOpensOnACommand),
             ("uxp15DocsDrawsNoToolbarOverItsEmptyState", uxp15DocsDrawsNoToolbarOverItsEmptyState),
             ("uxp16DictationResetOnlyOffTheDefaultAndALabelledWordsField", uxp16DictationResetAndPlaceholder),
+            ("uxp17OneNamePerLevel", uxp17OneNamePerLevel),
             ("uxp09ReviewForgePlaceholderRowIsTallEnoughToDraw", uxp09ForgePlaceholderRowIsTallEnough),
         ]
         var failed = 0
@@ -688,6 +689,53 @@ enum PagePolishUXPSelfTest {
               "UXP-16: a changed chord should offer the reset back to the default", &ok)
         check(!dictation.debugVocabularyPlaceholder.isEmpty,
               "UXP-16: the \"Words I use often\" field draws no placeholder", &ok)
+        return ok
+    }
+
+    // MARK: UXP-17
+
+    /// A name said once per level: Settings' header row does not repeat the
+    /// pane its hero names, Sticky Board draws no footer count under a drill
+    /// subtitle that already counts, and Schedules calls one state one thing
+    /// in its sidebar, its stat strip and its list.
+    private static func uxp17OneNamePerLevel() -> Bool {
+        var ok = true
+        let (window, shell) = ReviewTourLab.makeOffScreenShell()
+        defer { _ = window }
+
+        shell.show(.settings)
+        shell.view.layoutSubtreeIfNeeded()
+        let settings = shell.settingsForTests
+        let pane = settings.debugSelectedCategory.title
+        check(!settings.debugToolbarTexts.contains(pane),
+              "UXP-17: Settings' header row repeats the pane name \"\(pane)\" its hero already shows", &ok)
+
+        shell.show(.stickyBoard)
+        shell.view.layoutSubtreeIfNeeded()
+        if let sticky = shell.destinationViewIfMountedForTests(.stickyBoard) {
+            var labels: [String] = []
+            func walk(_ view: NSView) {
+                if view.isHidden { return }
+                if let label = view as? NSTextField { labels.append(label.stringValue) }
+                if view is NSScrollView { return }
+                view.subviews.forEach(walk)
+            }
+            walk(sticky)
+            check(!labels.contains(where: { $0.hasSuffix(" notes") || $0 == "1 note" }),
+                  "UXP-17: Sticky Board draws a note count on the page as well as in its drill subtitle", &ok)
+        } else {
+            fail("UXP-17: Sticky Board did not mount", &ok)
+        }
+
+        shell.show(.schedules)
+        shell.view.layoutSubtreeIfNeeded()
+        let schedules = shell.debugSchedules
+        let group = SchedulesCardView.Group.needsYou.title
+        check(SchedulesCardView.StatusFilter.needsYou.title == group,
+              "UXP-17: Schedules' sidebar says \"\(SchedulesCardView.StatusFilter.needsYou.title)\" where its list "
+              + "says \"\(group)\"", &ok)
+        check(schedules.debugStatCaptions.contains(group),
+              "UXP-17: Schedules' stat strip reads \(schedules.debugStatCaptions), not the list's \"\(group)\"", &ok)
         return ok
     }
 
