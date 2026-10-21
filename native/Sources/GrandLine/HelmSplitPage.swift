@@ -204,6 +204,19 @@ final class HelmSplitPage: NSSplitViewController {
         // A drag that collapses or reopens the column is the captain's choice
         // too, unless the page is forcing it.
         if !pageForcesCollapse { collapsedByCaptain = sidebarItem.isCollapsed }
+        reportCollapseIfChanged()
+    }
+
+    /// Fired when the column collapses or reopens, by any route: a page
+    /// forcing it, Toggle Sidebar, or a drag. A page whose content placement
+    /// depends on the column being there (Tasks, UXP-03) re-derives it here.
+    var onSidebarCollapseChanged: ((Bool) -> Void)?
+    private var lastReportedCollapse: Bool?
+
+    private func reportCollapseIfChanged() {
+        guard let item = sidebarItem, lastReportedCollapse != item.isCollapsed else { return }
+        lastReportedCollapse = item.isCollapsed
+        onSidebarCollapseChanged?(item.isCollapsed)
     }
 
     private func setSidebarCollapsed(_ collapsed: Bool, animated: Bool) {
@@ -219,6 +232,7 @@ final class HelmSplitPage: NSSplitViewController {
         } else {
             sidebarItem.isCollapsed = collapsed
         }
+        reportCollapseIfChanged()
     }
 
     func applyTheme(_ theme: HelmTheme) {

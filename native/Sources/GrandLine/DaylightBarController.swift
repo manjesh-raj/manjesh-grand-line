@@ -1728,6 +1728,8 @@ final class DaylightSearchPill: HoverHighlightView {
     private let iconView = NSImageView()
     private let label = NSTextField(labelWithString: "Search anything\u{2026}")
     private let badge = NSTextField(labelWithString: "\u{2318}K")
+    private let stackInsets = NSEdgeInsets(top: 0, left: 11, bottom: 0, right: 7)
+    private var floorConstraint: NSLayoutConstraint!
 
     init() {
         super.init(frame: .zero)
@@ -1760,7 +1762,7 @@ final class DaylightSearchPill: HoverHighlightView {
         stack.alignment = .centerY
         stack.spacing = HelmMetrics.s2
         stack.distribution = .fill
-        stack.edgeInsets = NSEdgeInsets(top: 0, left: 11, bottom: 0, right: 7)
+        stack.edgeInsets = stackInsets
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
@@ -1776,8 +1778,17 @@ final class DaylightSearchPill: HoverHighlightView {
         preferred.priority = Self.preferredWidthPriority
         // The floor stays at 499 - a search pill compressed past this stops
         // being a control at all.
-        let floor = widthAnchor.constraint(greaterThanOrEqualToConstant: 92)
+        //
+        // UXP-01: and the floor is the whole placeholder plus the badge, not
+        // 92pt. At 92 the pill was "Se…" whenever a drill subtitle ran long
+        // (Review's failure path did, at 1512), because the title cluster's
+        // labels hold 450 and the pill's slack sits at 400 - so the one
+        // global control on the bar vanished on exactly the page that had a
+        // problem to search for. 499 still beats the labels' 450 and still
+        // sits under the window's own 500 (gotcha (13)).
+        let floor = widthAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumReadableWidth)
         floor.priority = HelmDaylightPriority.contentTie
+        floorConstraint = floor
 
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -1796,6 +1807,30 @@ final class DaylightSearchPill: HoverHighlightView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     @objc private func clicked() { onClick?() }
+
+    /// The narrowest this pill may get: magnifier, the full "Search
+    /// anything…" placeholder and the ⌘K badge, at the current text scale.
+    /// A static fallback for the constraint's first value, before the labels
+    /// carry their themed fonts.
+    static let minimumReadableWidth: CGFloat = 160
+
+    /// The floor re-derived from the labels as they are now drawn, so a
+    /// larger chrome text scale (GL-32) raises it with the text.
+    private func readableWidth() -> CGFloat {
+        let content = iconView.intrinsicContentSize.width + label.intrinsicContentSize.width
+            + badge.intrinsicContentSize.width + 2 * HelmMetrics.s2
+        return ceil(stackInsets.left + content + stackInsets.right)
+    }
+
+    #if FM_SELFTESTS
+    /// UXP-01: the width the pill needs to show its whole placeholder, and
+    /// the floor it is actually held to.
+    var debugReadableWidth: CGFloat { readableWidth() }
+    var debugFloorWidth: CGFloat { floorConstraint.constant }
+    var debugPlaceholderIsTruncated: Bool {
+        label.frame.width + 0.5 < label.intrinsicContentSize.width
+    }
+    #endif
 
     override func layout() {
         super.layout()
@@ -1820,6 +1855,7 @@ final class DaylightSearchPill: HoverHighlightView {
         badge.textColor = muted
         badge.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         badge.layer?.borderColor = line.withAlphaComponent(theme.isDaylight ? 1.0 : 0.6).cgColor
+        floorConstraint?.constant = readableWidth()
     }
 }
 

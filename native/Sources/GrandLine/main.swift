@@ -4052,6 +4052,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_REVIEW_LOADING_STATE_TESTS"] == "
     exit(ReviewControllerLoadingStateSelfTest.run() ? 0 : 1)
 }
 
+// The full review's page-level polish findings UXP-01 to UXP-20. Window-backed:
+// every case mounts a real page in an `OffScreenProbe` window.
+if ProcessInfo.processInfo.environment["FM_RUN_PAGE_POLISH_UXP_TESTS"] == "1" {
+    exit(PagePolishUXPSelfTest.run() ? 0 : 1)
+}
+
 // The UI modernization audit's one functional finding: "ready to merge" was
 // answered by three different questions in one frame. Mounts the real Review
 // and Overview surfaces and reads the numbers off the rendered views, plus a

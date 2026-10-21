@@ -239,11 +239,15 @@ final class SchedulesCardView: NSObject {
         case paused
 
         /// The sidebar row's own label.
+        ///
+        /// UXP-17: the two states the list also sections by take the list
+        /// group's own names. The sidebar said "Needs You", the stat strip
+        /// "Need you" and the list "Needs you" - one state, three wordings.
         var title: String {
             switch self {
-            case .all: return "All Schedules"
-            case .needsYou: return "Needs You"
-            case .worthALook: return "Worth a Look"
+            case .all: return "All schedules"
+            case .needsYou: return Group.needsYou.title
+            case .worthALook: return Group.worthALook.title
             case .active: return "Active"
             case .paused: return "Paused"
             }

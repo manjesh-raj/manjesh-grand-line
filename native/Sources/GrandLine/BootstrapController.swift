@@ -234,6 +234,11 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private var isRefreshingAll = false
 
     private let currentPathLabel = NSTextField(labelWithString: "")
+    /// UXP-06: "In use instead" plus `currentPathLabel`, shown only when the
+    /// home in use is not the one in the field - an `FM_HOME` or
+    /// `FIRSTMATE_HOME` override. Otherwise the field is the one place the
+    /// path appears.
+    private let activePathLabel = NSTextField(labelWithString: "In use instead (set by FM_HOME or FIRSTMATE_HOME)")
     private let pathField = HelmTextField(placeholder: "~/manjesh/firstmate")
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
     private let saveButton = HelmButton(title: "", variant: .secondary)
@@ -741,7 +746,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     // MARK: Firstmate home
 
     private func buildHomeSection() -> NSView {
-        let currentLabel = NSTextField(labelWithString: "Currently active")
+        let currentLabel = activePathLabel
         currentLabel.setScaledFont(ofSize: 12.5, weight: .medium)
         Self.yieldsToWindowWidth(currentLabel)
 
@@ -784,7 +789,9 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         statusLabel.preferredMaxLayoutWidth = 520
         statusLabel.isHidden = true
 
-        let section = NSStackView(views: [currentLabel, currentPathLabel, desc, fieldRow, actionRow, statusLabel])
+        // UXP-06: the field comes first and carries the path; the override
+        // line under it appears only when something else is in use.
+        let section = NSStackView(views: [desc, fieldRow, currentLabel, currentPathLabel, actionRow, statusLabel])
         section.orientation = .vertical
         section.alignment = .leading
         section.spacing = 8
@@ -1165,16 +1172,15 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func stepDetail(for kind: SetupStepKind) -> String {
         switch kind {
         case .firstmateHome:
-            return FirstmateHome.root.path
+            return SetupStepCaption.firstmateHome()
         case .dotfiles:
-            if isLoadingDotfiles { return "Checking ~/.dotfiles\u{2026}" }
-            return dotfilesRepoPath ?? "~/.dotfiles was not found on this machine."
+            return SetupStepCaption.dotfiles(isLoading: isLoadingDotfiles, repoPath: dotfilesRepoPath)
         case .agentInstructions:
             return "Verifies the three harness-expected AGENTS.md/CLAUDE.md symlinks resolve to the dotfiles repo."
         case .software:
             return "\(softwareRows.count) tracked dependencies across \(DependencyCatalog.categoryOrder.count) categories."
         case .restoreConfig:
-            return "Import a .glbackup file exported from another machine to bring in its saved hosts, snippets, and preferences here."
+            return SetupStepCaption.restoreConfig
         }
     }
 
@@ -1431,7 +1437,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func rebuildRestoreSection() {
         clearStack(restoreStack)
 
-        let desc = NSTextField(wrappingLabelWithString: "Bring in saved hosts, snippets, and preferences exported from another machine. SSH private keys never leave the Keychain - a restored host referencing a key not on this machine needs that key re-added from the Keys screen.")
+        let desc = NSTextField(wrappingLabelWithString: "It brings in saved hosts, snippets and preferences. SSH private keys never leave the Keychain, so a restored host that uses a key not on this machine needs that key re-added from the Keys screen.")
         desc.setScaledFont(ofSize: 11)
         desc.textColor = HelmTheme.mutedInk(theme)
         desc.preferredMaxLayoutWidth = 520
@@ -1670,7 +1676,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     }
 
     private func buildDotfilesAbsentSection() -> NSView {
-        let desc = NSTextField(wrappingLabelWithString: "~/.dotfiles was not found on this machine. Clone the captain's dotfiles repo and run its bootstrap script to set one up.")
+        let desc = NSTextField(wrappingLabelWithString: "Clone the captain's dotfiles repo and run its bootstrap script to set one up.")
         desc.setScaledFont(ofSize: 11)
         desc.textColor = HelmTheme.mutedInk(theme)
         desc.preferredMaxLayoutWidth = 520
@@ -2798,6 +2804,20 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     /// drives the same label directly instead. Deliberately the *label*, not a
     /// string setter, so the test measures whatever the page really renders.
     var debugHomePathLabel: NSTextField { currentPathLabel }
+    /// UXP-06: how many places on the page print the firstmate home's path,
+    /// as drawn - the field, the step caption and the override line.
+    var debugHomePathCopies: Int {
+        let path = FirstmateHome.root.path
+        var count = pathField.stringValue == path ? 1 : 0
+        if stepRowViews[.firstmateHome]?.detailLabel.stringValue.contains(path) == true { count += 1 }
+        if !currentPathLabel.isHidden && currentPathLabel.stringValue.contains(path) { count += 1 }
+        return count
+    }
+    /// Shows the override line regardless, for a check on its width.
+    func debugShowActivePathRow() {
+        activePathLabel.isHidden = false
+        currentPathLabel.isHidden = false
+    }
 
     /// A step title's painted colour, for the hidden-theme-switch check.
     func debugStepTitleColor(_ kind: SetupStepKind) -> NSColor? { stepRowViews[kind]?.titleLabel.textColor }
@@ -2914,6 +2934,11 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         if pathField.stringValue.isEmpty {
             pathField.stringValue = AppSettings.shared.fmHome ?? FirstmateHome.root.path
         }
+        let configured = URL(fileURLWithPath: (pathField.stringValue as NSString).expandingTildeInPath)
+            .standardizedFileURL.path
+        let overridden = configured != FirstmateHome.root.standardizedFileURL.path
+        activePathLabel.isHidden = !overridden
+        currentPathLabel.isHidden = !overridden
     }
 
     private func applyTheme() {

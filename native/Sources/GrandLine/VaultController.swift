@@ -57,11 +57,9 @@ final class VaultController: NSViewController, DaylightDrillActions {
     // Daylight §6.4: the page's own standing subtitle row is gone - the drill
     // header carries that line now (`drillHeaderSubtitle`), computed from the
     // same counts, and Refresh moved into its action cluster.
-    // A filled accent pill, matching Setup > Updates' own "Refresh" - one
-    // real, shared, theme-aware definition (`FleetController`,
-    // `ReviewController`, `HomeCanvasController`, `KubernetesController`
-    // follow the same recipe) rather than a page-local muted `.quiet` look.
-    private let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")
+    // UXP-08: the app's one Refresh (`HelmButton.refresh`), secondary - Add
+    // Secret is this page's one primary action.
+    private let refreshButton = HelmButton.refresh()
 
     // Whether `av` itself is installed - checked in the background (reusing
     // the same `UpdatesSource`/`DependencyCatalog` "automic-vault" entry the
@@ -96,7 +94,8 @@ final class VaultController: NSViewController, DaylightDrillActions {
     // see VaultRecipe.swift/VaultRecipeGit.swift for what's recorded and why.
     private let recipePanel = HelmCard()
     private let recipeDetailLabel = NSTextField(wrappingLabelWithString: "")
-    private let exportRecipeButton = HelmButton(title: "", variant: .primary)
+    /// UXP-08: secondary - Add Secret is this page's one primary action.
+    private let exportRecipeButton = HelmButton(title: "", variant: .secondary)
     private let checkBackupButton = HelmButton(title: "", variant: .secondary)
     private let recipeSpinner = HelmProgressBar.inlineActivity(hue: RailDestination.vault.domainHue)
     private var isRecipeBusy = false

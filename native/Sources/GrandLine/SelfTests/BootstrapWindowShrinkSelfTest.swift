@@ -112,6 +112,7 @@ enum BootstrapWindowShrinkSelfTest {
             // and nothing has come back, which is also what puts the page at
             // its narrowest and leaves the path label setting the width.
             bootstrap.viewWillAppear()
+            bootstrap.debugShowActivePathRow()
             bootstrap.debugHomePathLabel.stringValue = longPath
             window.contentView?.layoutSubtreeIfNeeded()
 
@@ -161,6 +162,7 @@ enum BootstrapWindowShrinkSelfTest {
             shell.show(.bootstrap)
             let bootstrap = shell.debugBootstrap
             bootstrap.viewWillAppear()
+            bootstrap.debugShowActivePathRow()
             bootstrap.debugHomePathLabel.stringValue = longPath
             window.contentView?.layoutSubtreeIfNeeded()
 

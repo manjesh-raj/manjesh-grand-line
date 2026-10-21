@@ -1201,6 +1201,20 @@ final class HelmButton: NSButton {
         self.init(title: "", variant: variant, size: size, symbol: symbol, target: target, action: action)
     }
 
+    /// The app's one Refresh button: a labelled `.secondary` line button with
+    /// the clockwise arrow.
+    ///
+    /// UXP-08 and section (g) of the 2026-10 full review: Refresh was drawn
+    /// five ways - a filled primary on five pages, a quiet glyph on Dictation,
+    /// a bordered small button in a card - and as a filled primary it stood
+    /// beside each page's real primary action, so Vault showed three filled
+    /// buttons at once. Refresh re-reads; it is never the thing a page is
+    /// for. Every Refresh comes from here, which `PagePolishUXPSelfTest`
+    /// holds as a source guard. `HelmRefreshPill` wears the same palette.
+    static func refresh(size: Size = .regular) -> HelmButton {
+        HelmButton(title: "Refresh", variant: .secondary, size: size, symbol: "arrow.clockwise")
+    }
+
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     deinit {
@@ -3781,6 +3795,10 @@ final class HelmEmptyState: NSView {
 
     #if FM_SELFTESTS
     var debugBodyText: String { bodyLabel.stringValue }
+    /// UXP-13: whether this is a page-level state - a `.standard` one that
+    /// is not boxed as an object in a flow - which is what the placement
+    /// rule governs.
+    var debugIsPageLevel: Bool { size == .standard && !boxed }
     /// UI-26: a `.quiet` state draws neither the gradient tile nor the glyph.
     var debugArtworkHidden: Bool { tile.isHidden && iconView.isHidden }
     /// What the watermark is *actually drawing* - review #3's B4. A check that
@@ -3868,6 +3886,40 @@ final class HelmEmptyState: NSView {
 
     /// A `.standard` state's widest line of body copy.
     static let standardBodyCap: CGFloat = 360
+
+    /// The widest a page-level empty state is laid out.
+    static let pageMaxWidth: CGFloat = 420
+
+    /// UXP-13: the one placement for a page-level empty state - centred in
+    /// the page's content area, both ways, and no wider than `pageMaxWidth`.
+    ///
+    /// Pages used to place their own, and the 2026-10 review found five
+    /// placements: pinned near the top (Runbooks), centred in the window,
+    /// top-aligned above a drop zone, centred in a card. A page hands its
+    /// content area here and stops positioning the state itself.
+    ///
+    /// The edge inequalities hold at 490, under the window's own 500, so a
+    /// content area shorter than the state never resizes the window
+    /// (AGENTS.md gotcha (13)); the state overflows its area instead.
+    func placeAsPageEmptyState(in area: NSView) {
+        translatesAutoresizingMaskIntoConstraints = false
+        if superview == nil { area.addSubview(self) }
+        let edges = [
+            leadingAnchor.constraint(greaterThanOrEqualTo: area.leadingAnchor, constant: HelmMetrics.s4),
+            trailingAnchor.constraint(lessThanOrEqualTo: area.trailingAnchor, constant: -HelmMetrics.s4),
+            topAnchor.constraint(greaterThanOrEqualTo: area.topAnchor),
+            bottomAnchor.constraint(lessThanOrEqualTo: area.bottomAnchor),
+        ]
+        edges.forEach { $0.priority = NSLayoutConstraint.Priority(490) }
+        let preferredWidth = widthAnchor.constraint(equalToConstant: Self.pageMaxWidth)
+        preferredWidth.priority = .defaultLow
+        NSLayoutConstraint.activate(edges + [
+            centerXAnchor.constraint(equalTo: area.centerXAnchor),
+            centerYAnchor.constraint(equalTo: area.centerYAnchor),
+            widthAnchor.constraint(lessThanOrEqualToConstant: Self.pageMaxWidth),
+            preferredWidth,
+        ])
+    }
 
     /// Lets the body copy give way to the container's width instead of
     /// setting it.

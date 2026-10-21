@@ -171,16 +171,20 @@ final class HostsKeychainCard: NSView {
         // A hue is safe as a fill and is not automatically safe as text
         // (audit §5.7), so the verdict goes through the correction rather than
         // taking the raw tint.
-        let tint: HelmTint = protected ? .good : .warn
-        verdictLabel.textColor = HelmContrast.legibleTintedText(
-            tintHex: tint.hex(in: theme),
-            over: HelmTheme.nsColor(theme.chromeBackgroundHex),
-            theme: theme)
+        // UXP-10: "Empty" is a new install with no keys yet, which needs
+        // nothing from the captain - muted ink, not the amber that means
+        // "look at this".
+        verdictLabel.textColor = protected
+            ? HelmContrast.legibleTintedText(tintHex: HelmTint.good.hex(in: theme),
+                                            over: HelmTheme.nsColor(theme.chromeBackgroundHex),
+                                            theme: theme)
+            : muted
         bar.applyTheme(theme, hue: .teal)
     }
 
     #if FM_SELFTESTS
     var debugVerdict: String { verdictLabel.stringValue }
+    var debugVerdictColor: NSColor? { verdictLabel.textColor }
     var debugDetail: String { detailLabel.stringValue }
     var debugFraction: Double { bar.debugFraction }
     #endif

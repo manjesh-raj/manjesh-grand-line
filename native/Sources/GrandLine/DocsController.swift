@@ -71,6 +71,13 @@ final class DocsController: NSViewController, DaylightDrillActions {
     /// below them.
     var drillHeaderActions: [NSView] { [openLiveButton] }
 
+    /// UXP-15: the card's top edge, under the toolbar while a page is loaded
+    /// and at the page's own top while there is none - so the toolbar can
+    /// stand down without leaving its 56pt band behind (a hidden view keeps
+    /// its constraints).
+    private var cardTopUnderToolbar: NSLayoutConstraint?
+    private var cardTopAtRoot: NSLayoutConstraint?
+
     /// §6.4's live subtitle - the real sync state, never fabricated: an
     /// unsynced playbook says so rather than claiming an offline copy exists.
     var drillHeaderSubtitle: String? {
@@ -195,14 +202,17 @@ final class DocsController: NSViewController, DaylightDrillActions {
         playbookCard.addSubview(webView)
         playbookCard.addSubview(emptyStateContainer)
         emptyStateContainer.translatesAutoresizingMaskIntoConstraints = false
+        cardTopUnderToolbar = playbookCard.topAnchor.constraint(equalTo: pageToolbar.bottomAnchor,
+                                                                constant: Self.playbookCardInset)
+        cardTopAtRoot = playbookCard.topAnchor.constraint(equalTo: root.topAnchor,
+                                                          constant: Self.playbookCardInset)
+        cardTopUnderToolbar?.isActive = true
 
         NSLayoutConstraint.activate([
             playbookCard.leadingAnchor.constraint(equalTo: root.leadingAnchor,
                                                   constant: Self.playbookCardInset),
             playbookCard.trailingAnchor.constraint(equalTo: root.trailingAnchor,
                                                    constant: -Self.playbookCardInset),
-            playbookCard.topAnchor.constraint(equalTo: pageToolbar.bottomAnchor,
-                                              constant: Self.playbookCardInset),
             playbookCard.bottomAnchor.constraint(equalTo: root.bottomAnchor,
                                                  constant: -Self.playbookCardInset),
 
@@ -345,15 +355,31 @@ final class DocsController: NSViewController, DaylightDrillActions {
         }
     }
 
+    /// UXP-15: back, forward and reload act on a loaded page, so with no
+    /// playbook the band that carries them is not drawn at all - it used to
+    /// sit, full width, over "Docs not synced yet".
+    private func showToolbar(_ shown: Bool) {
+        pageToolbar.isHidden = !shown
+        // Deactivate before activating, so the two tops never both hold.
+        (shown ? cardTopAtRoot : cardTopUnderToolbar)?.isActive = false
+        (shown ? cardTopUnderToolbar : cardTopAtRoot)?.isActive = true
+    }
+
+    #if FM_SELFTESTS
+    var debugToolbarIsShowing: Bool { !pageToolbar.isHidden }
+    #endif
+
     private func loadDocsIfAvailable() {
         defer { onDrillSubtitleChanged?() }
         guard DocsStore.isSynced else {
             webView.isHidden = true
             emptyStateContainer.isHidden = false
+            showToolbar(false)
             return
         }
         emptyStateContainer.isHidden = true
         webView.isHidden = false
+        showToolbar(true)
         // PF5: a sync can land while the page is parked off screen. Loading
         // it back in here would undo the parking for a page nobody is looking
         // at - so record that the restore should land on the freshly synced

@@ -14,8 +14,9 @@
 //     torn/rotated cards, a typewriter header font).
 //   - A cleaner "Sticky Board" mockup (a toolbar, a dotted-grid board,
 //     draggable colored cards with a small header + "\u{2022}\u{2022}\u{2022}"
-//     menu, an editable body, free positioning, a slight per-note rotation, a
-//     footer note count) - this is the interaction model this build follows,
+//     menu, an editable body, free positioning, a slight per-note rotation and
+//     a footer note count, since dropped for the drill subtitle's own count
+//     by UXP-17) - this is the interaction model this build follows,
 //     built natively rather than as embedded web content.
 //
 // **v1 took the second one and explicitly refused the first's decoration;
@@ -96,7 +97,6 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     private let scrollView = NSScrollView()
     private let canvas = StickyBoardCanvasView(frame: NSRect(origin: .zero, size: StickyBoardMetrics.canvasSize))
 
-    private let footer = NSTextField(labelWithString: "")
 
     // MARK: The board's own case-file header
     //
@@ -234,10 +234,6 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         boardCard.layer?.masksToBounds = true
         root.addSubview(boardCard)
 
-        footer.translatesAutoresizingMaskIntoConstraints = false
-        footer.font = HelmType.caption()
-        root.addSubview(footer)
-
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
@@ -262,10 +258,10 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
             boardCard.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardInset),
             boardCard.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -Self.cardInset),
             boardCard.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.cardInset),
-            boardCard.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -HelmMetrics.s2),
-
-            footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardInset + HelmMetrics.s1),
-            footer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -HelmMetrics.s2),
+            // UXP-17: the board runs to the page's foot. A footer under it
+            // read "0 notes" right below a drill subtitle that already said
+            // "0 notes · saved on this machine".
+            boardCard.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.cardInset),
 
             // Inset on all four sides by the frame width, so `boardCard`'s own
             // fill shows as a wood picture-frame band around the cork. The
@@ -483,7 +479,7 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         }
         for note in visible { noteViews[note.id]?.isArchived = note.isArchived }
         updateArchiveButton()
-        updateFooter()
+        refreshBoardChrome()
         updateOverlay()
     }
 
@@ -609,7 +605,7 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         guard let removed = store.deleteNote(id: id) else { return }
         noteViews[id]?.removeFromSuperview()
         noteViews.removeValue(forKey: id)
-        updateFooter()
+        refreshBoardChrome()
         updateOverlay()
         onDrillSubtitleChanged?()
         // GL-33: undo restores the exact value already in hand, matching
@@ -619,15 +615,15 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
             guard let self else { return }
             self.store.restoreNote(removed)
             self.addNoteView(for: removed)
-            self.updateFooter()
+            self.refreshBoardChrome()
             self.updateOverlay()
             self.onDrillSubtitleChanged?()
         }
     }
 
-    private func updateFooter() {
-        let count = visibleNotes.count
-        footer.stringValue = count == 1 ? "1 note" : "\(count) notes"
+    /// The board's header follows the notes on it. (This also set a footer
+    /// note count, until UXP-17 left the count to the drill subtitle.)
+    private func refreshBoardChrome() {
         applyBoardHeaderTheme()
     }
 
@@ -696,7 +692,7 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
             x: Double(position.x), y: Double(position.y),
             rotationDegrees: Double.random(in: -4...4))
         addNoteView(for: note)
-        updateFooter()
+        refreshBoardChrome()
         updateOverlay()
         onDrillSubtitleChanged?()
         // A fresh note is worth naming right away - the reference photo's
@@ -719,7 +715,7 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
             x: Double(position.x), y: Double(position.y),
             rotationDegrees: Double.random(in: -4...4))
         addNoteView(for: note)
-        updateFooter()
+        refreshBoardChrome()
         updateOverlay()
         onDrillSubtitleChanged?()
     }
@@ -743,7 +739,7 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
             rotationDegrees: Double.random(in: -4...4))
         if isViewLoaded {
             addNoteView(for: note)
-            updateFooter()
+            refreshBoardChrome()
             updateOverlay()
         }
         onDrillSubtitleChanged?()
@@ -822,7 +818,6 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         overlayContainer.wantsLayer = true
         overlayContainer.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         overlay?.applyTheme(theme)
-        footer.textColor = HelmTheme.mutedInk(theme)
     }
 
     /// The case-file header sits **on the cork**, not on a theme surface, so
@@ -867,7 +862,11 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     }
     var debugNoteViews: [String: StickyNoteView] { noteViews }
     var debugOverlayVisible: Bool { !overlayContainer.isHidden }
-    var debugFooterText: String { footer.stringValue }
+    /// UXP-17: every label drawn on the page outside the board's cards, so a
+    /// suite can assert the note count is not repeated there.
+    var debugPageLabels: [String] {
+        view.subviews.compactMap { ($0 as? NSTextField)?.stringValue }
+    }
     var debugBoardHeader: NSView { boardHeader }
     var debugBoardIcon: NSImageView { boardIcon }
     var debugBoardTitle: NSTextField { boardTitle }

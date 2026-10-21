@@ -2143,6 +2143,7 @@ final class AppShellController: NSViewController {
     /// this controller only ever needs to add/remove/toggle a destination
     /// view, never measure the container itself.
     var bodyContainerFrameForTests: NSRect { bodyContainer.frame }
+    var bodyContainerForTests: NSView { bodyContainer }
 
     /// Full review #3's PF1. How many of `bodyContainer`'s embedded
     /// destination views are currently attached to it by active constraints,
@@ -2360,6 +2361,9 @@ final class AppShellController: NSViewController {
     /// master/detail, and which pane is showing decides how tall its
     /// document is.
     var settingsForTests: SettingsController { settings }
+    /// The bar itself, for a check on its own controls (UXP-01's search
+    /// pill floor) under a drill context the suite chooses.
+    var barForTests: DaylightBarController { bar }
     #endif
 
     /// The view a mounted slot owns, for identity comparison across a

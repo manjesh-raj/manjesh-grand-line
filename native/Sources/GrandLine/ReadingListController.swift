@@ -110,7 +110,6 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
     /// can assert *which* of the three states is on screen - `HelmEmptyState`
     /// exposes no title of its own.
     private var emptyStateTitle: String?
-    private let emptyStateHost = NSView()
 
     private let readerCard = NSView()
     private var readerWebView: WKWebView!
@@ -316,9 +315,6 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         gridStack.translatesAutoresizingMaskIntoConstraints = false
         gridDocument.addSubview(gridStack)
 
-        emptyStateHost.translatesAutoresizingMaskIntoConstraints = false
-        gridDocument.addSubview(emptyStateHost)
-
         dropHintCard.translatesAutoresizingMaskIntoConstraints = false
         dropHintCard.onDropText = { [weak self] text in self?.capture(text, source: "drop") }
         dropHintCard.onClick = { [weak self] in self?.pasteTapped() }
@@ -359,13 +355,9 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
             gridStack.trailingAnchor.constraint(equalTo: gridDocument.trailingAnchor),
             gridStack.topAnchor.constraint(equalTo: gridDocument.topAnchor),
 
-            emptyStateHost.leadingAnchor.constraint(equalTo: gridDocument.leadingAnchor),
-            emptyStateHost.trailingAnchor.constraint(equalTo: gridDocument.trailingAnchor),
-            emptyStateHost.topAnchor.constraint(equalTo: gridStack.bottomAnchor),
-
             dropHintCard.leadingAnchor.constraint(equalTo: gridDocument.leadingAnchor),
             dropHintCard.trailingAnchor.constraint(equalTo: gridDocument.trailingAnchor),
-            dropHintCard.topAnchor.constraint(equalTo: emptyStateHost.bottomAnchor,
+            dropHintCard.topAnchor.constraint(equalTo: gridStack.bottomAnchor,
                                               constant: HelmResponsiveGrid.spacing),
             dropHintCard.bottomAnchor.constraint(equalTo: gridDocument.bottomAnchor,
                                                  constant: -Self.gutter),
@@ -841,11 +833,22 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
     /// one: nothing saved, nothing matching this filter, and a file that could
     /// not be read are three different situations and a captain needs to know
     /// which one they are looking at.
+    ///
+    /// UXP-12: with nothing listed the empty state is the page's one
+    /// instruction. The toolbar hint and the dashed drop card used to say the
+    /// same thing beside it - three copies on one screen - so both stand down
+    /// until there is a list for them to sit under. The whole page is a drop
+    /// target (`ReadingListDropRootView`) either way.
+    ///
+    /// UXP-13: placed by `HelmEmptyState.placeAsPageEmptyState`, centred in
+    /// the content pane, rather than top-aligned above the drop card.
     private func refreshEmptyState(visibleCount: Int) {
         emptyState?.removeFromSuperview()
         emptyState = nil
         emptyStateTitle = nil
-        guard visibleCount == 0 else { return }
+        hintLabel.isHidden = visibleCount == 0
+        dropHintCard.isHidden = visibleCount == 0
+        guard visibleCount == 0, let contentPane = splitPage?.contentPane else { return }
 
         let state: HelmEmptyState
         if store.isInFailedLoadState {
@@ -860,8 +863,8 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
             state = HelmEmptyState(
                 symbol: "link",
                 title: "Nothing saved yet",
-                body: "Paste a URL here, drop one from any browser, or press \u{2318}6 in the "
-                    + "\u{2325}Space capture panel. Titles are read on this machine.",
+                body: "Paste a link with \u{2318}V, drop one anywhere on this page, or press \u{2318}6 "
+                    + "in the \u{2325}Space capture panel. Titles are read on this machine.",
                 size: .standard,
                 hue: RailDestination.readingList.domainHue)
         } else {
@@ -872,14 +875,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
                 size: .standard,
                 hue: .slate)
         }
-        state.translatesAutoresizingMaskIntoConstraints = false
-        emptyStateHost.addSubview(state)
-        NSLayoutConstraint.activate([
-            state.leadingAnchor.constraint(equalTo: emptyStateHost.leadingAnchor),
-            state.trailingAnchor.constraint(equalTo: emptyStateHost.trailingAnchor),
-            state.topAnchor.constraint(equalTo: emptyStateHost.topAnchor, constant: HelmMetrics.s5),
-            state.bottomAnchor.constraint(equalTo: emptyStateHost.bottomAnchor, constant: -HelmMetrics.s5),
-        ])
+        state.placeAsPageEmptyState(in: contentPane)
         state.applyTheme(theme)
         emptyState = state
         emptyStateTitle = emptyStateTitleForCurrentState()
@@ -949,6 +945,11 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
     var debugEmptyStateTitle: String? { emptyState == nil ? nil : emptyStateTitle }
     var debugGridDocument: NSView { gridDocument }
     var debugDropHint: ReadingListDropHintView { dropHintCard }
+    /// UXP-12: the three places the page could give its paste-or-drop
+    /// instruction, as drawn.
+    var debugInstructionCopies: (toolbarHint: Bool, dropCard: Bool, emptyState: Bool) {
+        (!hintLabel.isHidden, !dropHintCard.isHidden, emptyState != nil)
+    }
     var debugRoot: NSView { view }
     func debugReload() { reload() }
     func debugSelectFilter(_ filter: ReadingListFilter) {

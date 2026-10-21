@@ -73,6 +73,11 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
         /// Double-click. Preserves each list's existing double-click
         /// behaviour: connect a host, edit a key, run a snippet.
         var activate: (() -> Void)?
+        /// For an empty row: whether it fills the card's remaining height
+        /// (centred) or sits directly under the rows above it at its own
+        /// height. UXP-10: Hosts' empty state sat about 500pt below the
+        /// built-in row and the Add Host button it was talking about.
+        var emptyFillsCard = true
 
         init(content: HelmAccentRow.Content) { self.content = content }
 
@@ -82,9 +87,14 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
             return item
         }
 
-        static func empty(symbol: String, title: String, body: String) -> Item {
+        /// `action` is drawn as the empty state's own button, so the thing to
+        /// do is beside the sentence that says so (UXP-10).
+        static func empty(symbol: String, title: String, body: String,
+                          action: Action? = nil, fillsCard: Bool = true) -> Item {
             var item = Item(content: .init(tint: .neutral, kicker: ""))
             item.kind = .empty(symbol: symbol, title: title, body: body)
+            item.primary = action
+            item.emptyFillsCard = fillsCard
             return item
         }
 
@@ -128,6 +138,13 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
     private static let recordID = NSUserInterfaceItemIdentifier("hostsListRecord")
     private static let groupID = NSUserInterfaceItemIdentifier("hostsListGroup")
     private static let emptyID = NSUserInterfaceItemIdentifier("hostsListEmpty")
+    private static let emptyWithActionID = NSUserInterfaceItemIdentifier("hostsListEmptyWithAction")
+    /// An inline empty row's height: the quiet state's caption, its button
+    /// and their padding.
+    static let inlineEmptyRowHeight: CGFloat = 120
+    /// The action the current inline empty row's button runs.
+    private var emptyAction: Action?
+    private let emptyActionButton = HelmButton(title: "", variant: .secondary, size: .small)
 
     override init() {
         super.init()
@@ -278,6 +295,8 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
         switch items[row].kind {
         case .record: return Self.recordRowHeight
         case .group: return Self.groupRowHeight
+        case .empty where !items[row].emptyFillsCard:
+            return Self.inlineEmptyRowHeight
         case .empty:
             // Fill whatever the other rows leave behind, so an empty state is
             // centred in the card body rather than sitting in its top 180pt.
@@ -294,6 +313,14 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
             return max(Self.minimumEmptyRowHeight, available)
         }
     }
+
+    @objc private func emptyActionPressed() { emptyAction?.run() }
+
+    #if FM_SELFTESTS
+    /// UXP-10: the inline empty row's button, as drawn.
+    var debugEmptyActionButton: HelmButton { emptyActionButton }
+    func debugRowFrame(_ row: Int) -> NSRect { table.rect(ofRow: row) }
+    #endif
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
         row < items.count && items[row].isRecord
@@ -313,6 +340,21 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
             // under the card's header, so it is the card-level recipe: one
             // muted caption, no tile. The title becomes its first sentence.
             let caption = title.isEmpty ? body : "\(title). \(body)"
+            if let action = item.primary {
+                emptyAction = action
+                emptyActionButton.title = action.title
+                emptyActionButton.symbolName = action.symbol
+                emptyActionButton.target = self
+                emptyActionButton.action = #selector(emptyActionPressed)
+                let cell = (tableView.makeView(withIdentifier: Self.emptyWithActionID, owner: nil) as? HelmEmptyState)
+                    ?? { let v = HelmEmptyState(symbol: symbol, body: caption, size: .quiet,
+                                                accessory: emptyActionButton)
+                         v.identifier = Self.emptyWithActionID
+                         return v }()
+                cell.setText(body: caption)
+                cell.applyTheme(theme)
+                return cell
+            }
             let reused = tableView.makeView(withIdentifier: Self.emptyID, owner: nil) as? HelmEmptyState
             let cell = (reused?.symbolName == symbol ? reused : nil)
                 ?? { let v = HelmEmptyState(symbol: symbol, body: caption, size: .quiet)

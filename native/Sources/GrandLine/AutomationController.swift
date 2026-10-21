@@ -191,7 +191,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     ///
     /// UI-55: `.secondary` now. A page carries one primary, and on this page
     /// it is Run Automation - Refresh is a read, Run changes the machine.
-    private let refreshButton = HelmButton(title: "Refresh", variant: .secondary, symbol: "arrow.clockwise")
+    private let refreshButton = HelmButton.refresh()
 
     /// Guards the manual re-check against re-entry while its two background
     /// sweeps are still out, exactly like `ReviewController.refresh`'s own
@@ -229,7 +229,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         refreshButton.toolTip = "Re-check this machine's setup state"
         refreshButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let runCard = card(icon: "bolt.fill", title: "Run Automation", content: buildRunSection())
+        let runCard = buildRunCard()
 
         stepperStack.orientation = .vertical
         stepperStack.alignment = .leading
@@ -349,21 +349,27 @@ final class AutomationController: NSViewController, DaylightDrillActions {
 
     // MARK: Run Automation
 
-    private func buildRunSection() -> NSView {
+    /// UXP-07: Bootstrap's "Run full setup" card shape - the line under the
+    /// title, the button at the right, no body. This card used to title
+    /// itself "Run Automation", repeat that as a button in its body, and put
+    /// the description under the button.
+    private func buildRunCard() -> HelmCard {
         runButton.title = "Run Automation"
         runButton.target = self
         runButton.action = #selector(runAutomationClicked)
         runButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        progressSummaryLabel.setScaledFont(ofSize: 11.5)
         progressSummaryLabel.preferredMaxLayoutWidth = 500
+        progressSummaryLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        progressSummaryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let section = NSStackView(views: [runButton, progressSummaryLabel])
-        section.orientation = .vertical
-        section.alignment = .leading
-        section.spacing = 8
-        progressSummaryLabel.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
-        return section
+        let card = HelmCard()
+        card.setHeader(symbol: "bolt.fill",
+                       titleLabel: NSTextField(labelWithString: "Set up this machine"),
+                       subtitleLabel: progressSummaryLabel,
+                       actions: [runButton])
+        cards.append(card)
+        return card
     }
 
     private var progressSummary: String {
@@ -1036,10 +1042,9 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     private func stepDetail(for kind: SetupStepKind) -> String {
         switch kind {
         case .firstmateHome:
-            return FirstmateHome.root.path
+            return SetupStepCaption.firstmateHome()
         case .dotfiles:
-            if isLoadingDotfiles { return "Checking ~/.dotfiles\u{2026}" }
-            return dotfilesRepoPath ?? "~/.dotfiles was not found on this machine."
+            return SetupStepCaption.dotfiles(isLoading: isLoadingDotfiles, repoPath: dotfilesRepoPath)
         case .agentInstructions:
             return "Verifies the three harness-expected AGENTS.md/CLAUDE.md symlinks resolve to the dotfiles repo."
         case .software:
@@ -1047,7 +1052,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
             let missing = toolRows.filter { $0.status == .notInstalled }.count
             return missing == 0 ? "All \(toolRows.count) tracked tools installed." : "\(missing) of \(toolRows.count) tracked tools not installed."
         case .restoreConfig:
-            return "Import a .glbackup file exported from another machine to bring in its saved hosts, snippets, and preferences here."
+            return SetupStepCaption.restoreConfig
         }
     }
 

@@ -509,6 +509,17 @@ enum OpenPRsSource {
             }
             return "Couldn't reach the forge for \(failedRepos.count) repositories."
         }
+
+        /// The same failure as one short sentence, for a place with no room
+        /// for a path - a drill header's subtitle, a tile's tooltip line.
+        ///
+        /// UXP-01: the projects path is ~130 characters on a real machine,
+        /// and as the drill subtitle it out-ranked the bar's search pill and
+        /// squeezed it to "Se…". The path belongs in the page body, once.
+        var failureHeadline: String? {
+            if projectsUnreadable { return "Couldn't read your projects" }
+            return failureSummary
+        }
     }
 
     /// The pre-GL-14 signature, kept for callers that genuinely only want the
@@ -981,7 +992,9 @@ enum FleetGreeting {
                 tint: .info,
                 kicker: "Finish setup",
                 title: "Point Grand Line at your firstmate home",
-                meta: "Nothing was found at \(FirstmateHome.root.path). Open Setup to choose the directory firstmate keeps its projects, backlog and crew state in.",
+                // UXP-06: the state in words. The path itself is shown once,
+                // in Bootstrap's editable field, where it can be changed.
+                meta: "No firstmate home was found where Grand Line is looking. Open Setup to choose the directory firstmate keeps its projects, backlog and crew state in.",
                 badgeSymbol: "wrench.and.screwdriver.fill",
                 isSetupPrompt: true,
                 metaRestatesCards: false)

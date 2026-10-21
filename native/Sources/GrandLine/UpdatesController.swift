@@ -292,7 +292,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// "Refresh" - there the rows *are* the thing being refreshed, and this
     /// is a label decision per page rather than a component one.
     private let checkAllPill = HelmRefreshPill(
-        title: "Check all", tooltip: "Check every tool for updates")
+        title: "Check all", tooltip: "Check every tool for updates", prominent: true)
     private let checkAllProgressBar = HelmProgressBar()
     private let checkAllProgressLabel = NSTextField(labelWithString: "")
     private var isCheckingAll = false

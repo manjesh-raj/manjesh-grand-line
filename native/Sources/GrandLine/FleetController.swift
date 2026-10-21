@@ -67,11 +67,10 @@ final class FleetController: NSViewController {
 
     private let greetingLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
-    /// A labeled `HelmButton(.primary)` - a filled accent pill matching Setup
-    /// > Updates' own "Refresh" action, so every refresh-style button in the
-    /// app now shares one real, theme-aware definition rather than each page
-    /// picking its own muted `.quiet` look.
-    private let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")
+    /// The app's one Refresh (`HelmButton.refresh`, UXP-08): a labelled
+    /// secondary button, because Refresh re-reads and is never what a page
+    /// is for.
+    private let refreshButton = HelmButton.refresh()
     /// Review #3 §7's replacement for the dashboard's quick-ask composer -
     /// see `onOpenCrew`. `.secondary`, so the page still has exactly one
     /// primary action (Refresh) and this reads as the navigation it is.

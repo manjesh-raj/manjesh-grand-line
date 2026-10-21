@@ -920,13 +920,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         top.spacing = HelmMetrics.s2
         top.translatesAutoresizingMaskIntoConstraints = false
 
-        // No `actions:` - §6.4 puts this page's primary action in the drill
-        // header, and a copy in the card header too would be the same button
-        // twice, a row apart.
-        hostsList.card.setHeader(symbol: "server.rack",
-                                 titleLabel: hostsTitleLabel,
-                                 subtitleLabel: NSTextField(wrappingLabelWithString:
-                                    "Saved SSH connections. Connect opens the host's own page."))
+        // UXP-10: no card header. The drill header and the selected sidebar
+        // row already name this list "Hosts"; a third copy inside the card
+        // was the same word a row down.
 
         hostsTabView.addSubview(top)
         hostsTabView.addSubview(hostsList.card)
@@ -1220,12 +1216,16 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         if hosts.isEmpty {
             let filtering = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !selectedTags.isEmpty || onlineOnly || selectedGroup != nil
+            // UXP-10: directly under the built-in row, with its own Add Host,
+            // rather than centred in the card some 500pt below both.
             items.append(.empty(
                 symbol: filtering ? "line.3.horizontal.decrease.circle" : "server.rack",
                 title: filtering ? "No matching hosts" : "No saved hosts yet",
                 body: filtering
                     ? "Nothing matches the current search or filters. Clear them to see every saved host."
-                    : "Add a host to save its connection details, or type ssh user@host in the field above to connect right now."))
+                    : "Save a host's connection details, or type ssh user@host in the field above to connect right now.",
+                action: filtering ? nil : .init(title: "Add Host", symbol: "plus") { [weak self] in self?.newHost() },
+                fillsCard: false))
         }
 
         // Review #3's UI1: the count came off this header. It is stated once
@@ -1287,6 +1287,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// really showing rather than re-deriving it from the stores.
     var debugSidebar: HelmPageSidebar { sidebar }
     var debugKeychainCard: HostsKeychainCard { keychainCard }
+    /// UXP-10: the hosts list as built and drawn.
+    var debugHostsList: HostsListSection { hostsList }
+    var debugHostItems: [HostsListSection.Item] { lastHostItems }
     var debugUserRow: HostsUserRow { userRow }
     #endif
 

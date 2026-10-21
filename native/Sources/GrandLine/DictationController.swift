@@ -37,7 +37,8 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// header row that used to hold it (a subtitle line plus this button) is
     /// gone: the drill header states the destination and its live numbers, so
     /// a second copy a row below it was exactly the duplication §6.4 removes.
-    private let refreshButton = HelmButton(symbol: "arrow.clockwise", variant: .quiet)
+    /// UXP-08: the app's one labelled Refresh, not a bare glyph.
+    private let refreshButton = HelmButton.refresh()
 
     /// §7's "status/shortcut as two cards": the two low-content cards share
     /// one row instead of each taking a full-width band, which is §3's
@@ -820,6 +821,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
     // MARK: Rendering
 
     private func render() {
+        // UXP-16: "Reset to Right ⌥ Option" only when there is something to
+        // reset - it used to show while the chord already was the default.
+        shortcutResetButton.isHidden = shortcutRecorder.shortcut == .dictationDefault
         statusWord.setAccessibilityLabel("Dictation status: \(status.title)")
         statusDetailLabel.stringValue = status.detail(shortcutDisplay: shortcutRecorder.shortcut.displayString)
 
@@ -854,6 +858,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
             statusActionButton.isHidden = true
             statusChip.isHidden = true
         }
+        applyActionEmphasis()
         applyTheme()
     }
 
@@ -920,7 +925,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
             modelReadyPill.isHidden = true
             modelProgressBar.isHidden = true
             modelActionButton.title = "Download Model"
-            modelActionButton.variant = .primary
+            modelActionIsMain = true
             modelActionButton.isEnabled = true
             modelDeleteButton.isHidden = true
         case .downloading(let progress):
@@ -930,7 +935,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
             modelProgressBar.isHidden = false
             modelProgressBar.configure(fraction: progress)
             modelActionButton.title = "Cancel"
-            modelActionButton.variant = .secondary
+            modelActionIsMain = false
             modelActionButton.isEnabled = true
             modelDeleteButton.isHidden = true
         case .ready:
@@ -944,7 +949,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
             // UI-53: the model is already here, so re-fetching it is not the
             // card's main action.
             modelActionButton.title = "Re-download"
-            modelActionButton.variant = .secondary
+            modelActionIsMain = false
             modelActionButton.isEnabled = true
             modelDeleteButton.isHidden = false
         case .failed(let message):
@@ -953,13 +958,28 @@ final class DictationController: NSViewController, DaylightDrillActions {
             modelReadyPill.isHidden = true
             modelProgressBar.isHidden = true
             modelActionButton.title = "Retry Download"
-            modelActionButton.variant = .primary
+            modelActionIsMain = true
             modelActionButton.isEnabled = true
             // A failed *download* leaves nothing on disk; a failed delete does
             // - so this follows the file, not the state's name.
             modelDeleteButton.isHidden = WhisperModelManager.shared.downloadedByteCount == nil
         }
+        applyActionEmphasis()
         applyTheme()
+    }
+
+    /// Whether the model row's button is that card's main action - Download
+    /// or Retry, as opposed to Cancel or Re-download.
+    private var modelActionIsMain = false
+
+    /// UXP-08: one primary on the page. A missing permission blocks
+    /// dictation outright, so while the status card asks for one, its button
+    /// is the primary and the model download steps down to secondary. Found
+    /// by CI's window-backed lane, on a runner with neither the permission
+    /// nor the model: two filled buttons at once.
+    private func applyActionEmphasis() {
+        let variant: HelmButton.Variant = modelActionIsMain && statusActionButton.isHidden ? .primary : .secondary
+        if modelActionButton.variant != variant { modelActionButton.variant = variant }
     }
 
     /// Re-reads `store.vocabulary` and re-seeds the well's tokens - called on
@@ -1021,6 +1041,16 @@ final class DictationController: NSViewController, DaylightDrillActions {
         onShortcutChanged?(newShortcut)
         render()
     }
+
+    #if FM_SELFTESTS
+    /// UXP-16: the reset button and the words well, as drawn.
+    var debugShortcutResetIsShowing: Bool { !shortcutResetButton.isHidden }
+    var debugVocabularyPlaceholder: String { vocabularyInput.debugDrawnPlaceholder }
+    func debugSetShortcut(_ chord: KeyChord) {
+        shortcutRecorder.shortcut = chord
+        shortcutChanged(chord)
+    }
+    #endif
 
     @objc private func resetShortcutTapped() {
         shortcutRecorder.shortcut = .dictationDefault
@@ -1101,6 +1131,13 @@ final class DictationController: NSViewController, DaylightDrillActions {
         [statusPanel, shortcutPanel, cleanupPanel, localWhisperPanel, vocabularyPanel, historyPanel]
     }
     func debugSetStatus(_ status: DictationStatus) { setStatus(status) }
+    /// UXP-08: put the model row into a state, as `WhisperModelManager`'s
+    /// observation would.
+    func debugSetModelState(_ state: WhisperModelState) {
+        modelState = state
+        renderLocalWhisperSection()
+    }
+    var debugModelActionVariant: HelmButton.Variant { modelActionButton.variant }
     func debugRenderVocabulary() { renderVocabulary() }
     /// The chip's rendered frame - review #3's B10 is a *width*, and the
     /// property that was wrong (`setContentHuggingPriority` on a view with no
