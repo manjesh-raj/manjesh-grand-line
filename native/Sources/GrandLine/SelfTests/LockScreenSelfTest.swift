@@ -509,16 +509,18 @@ enum LockScreenSelfTest {
             }
         }
 
+        // `LockPresenter` since stage 2 of the modular-shell migration moved
+        // the lock out of the shell unchanged.
         guard let dir = SelfTestSources.appSourceDirectory(),
-              let shell = try? String(contentsOf: dir.appendingPathComponent("AppShellController.swift"), encoding: .utf8) else {
+              let shell = try? String(contentsOf: dir.appendingPathComponent("LockPresenter.swift"), encoding: .utf8) else {
             print("  SKIP: app sources not reachable for the wiring guard")
             return
         }
         if !shell.contains("lockScreen.stopAnimations()") {
-            fail(&ok, "AppShellController.hideLock no longer stops the animations")
+            fail(&ok, "LockPresenter.hideLock no longer stops the animations")
         }
         if !shell.contains("lockScreen.restartAnimationsIfNeeded()") {
-            fail(&ok, "AppShellController.showLock no longer restarts them, so a re-lock would show a frozen scene")
+            fail(&ok, "LockPresenter.showLock no longer restarts them, so a re-lock would show a frozen scene")
         }
         if ok { print("  attached while locked, detached on unlock, re-attached on re-lock, and both call sites present") }
     }
@@ -563,7 +565,7 @@ enum LockScreenSelfTest {
             return
         }
         guard let lock = try? String(contentsOf: dir.appendingPathComponent("LockScreenController.swift"), encoding: .utf8),
-              let shell = try? String(contentsOf: dir.appendingPathComponent("AppShellController.swift"), encoding: .utf8) else {
+              let shell = try? String(contentsOf: dir.appendingPathComponent("LockPresenter.swift"), encoding: .utf8) else {
             print("  SKIP: could not read the sources")
             return
         }
@@ -571,12 +573,12 @@ enum LockScreenSelfTest {
         // This controller must stay ignorant of how the password is checked.
         for banned in ["LAContext", "VaultSource.verifyAppPassword", "av inject", "Subprocess"] {
             if lock.contains(banned) && !lock.split(separator: "\n").filter({ $0.contains(banned) }).allSatisfy({ $0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }) {
-                fail(&ok, "\(banned) appears in executable code in LockScreenController - verification belongs to AppShellController, and there is no biometric path on this screen")
+                fail(&ok, "\(banned) appears in executable code in LockScreenController - verification belongs to LockPresenter, and there is no biometric path on this screen")
             }
         }
         // And the shell must still be the one doing it, off the main thread.
         if !shell.contains("VaultSource.verifyAppPassword") {
-            fail(&ok, "AppShellController no longer calls VaultSource.verifyAppPassword")
+            fail(&ok, "LockPresenter no longer calls VaultSource.verifyAppPassword")
         }
         // The unlock handshake: the overlay is hidden from the animation's
         // completion, never from `onAttempt`'s.
@@ -590,7 +592,7 @@ enum LockScreenSelfTest {
         if !lock.contains("HelmMotion.isReduced") {
             fail(&ok, "the looping decoration is no longer Reduce-Motion gated (GL-16)")
         }
-        if ok { print("  verification still lives in AppShellController; handshake and motion gating intact") }
+        if ok { print("  verification still lives in LockPresenter; handshake and motion gating intact") }
     }
 }
 

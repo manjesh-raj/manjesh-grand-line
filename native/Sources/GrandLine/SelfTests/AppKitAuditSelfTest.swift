@@ -513,7 +513,10 @@ enum AppKitAuditSelfTest {
               let shell = try? String(contentsOf: dir.appendingPathComponent("AppShellController.swift"), encoding: .utf8) else {
             return nil
         }
-        guard shell.contains("bar.setSelectedSpace(homeCanvas.selectedSpace)") else {
+        // Since stage 2 of the modular-shell migration the canvas is reached
+        // through the workspace, and this branch is `show(_:)`'s chrome half
+        // (`workspaceDidShow`).
+        guard shell.contains("bar.setSelectedSpace(workspace.homeCanvas.selectedSpace)") else {
             return "show(_:) no longer syncs the pill for .homeCanvas - the back button leaves the previous drill page's space lit"
         }
         // And the canvas has to be the one that owns the space, not a second copy.

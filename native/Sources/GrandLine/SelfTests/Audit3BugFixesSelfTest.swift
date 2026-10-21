@@ -787,7 +787,9 @@ enum Audit3BugFixesSelfTest {
         // real method needs a whole mounted shell plus a real host page; the
         // regression worth catching is one word at one call site.
         guard let dir = SelfTestSources.appSourceDirectory(),
-              let source = try? String(contentsOf: dir.appendingPathComponent("AppShellController.swift"),
+              // `HostSessionCoordinator` since stage 2 of the modular-shell
+              // migration, which moved the hand-off out of the shell unchanged.
+              let source = try? String(contentsOf: dir.appendingPathComponent("HostSessionCoordinator.swift"),
                                        encoding: .utf8) else {
             print("  NOTE could not locate the app's sources; skipping B16's wiring guard")
             return

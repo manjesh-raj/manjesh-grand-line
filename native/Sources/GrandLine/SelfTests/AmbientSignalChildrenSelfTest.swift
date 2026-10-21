@@ -230,11 +230,13 @@ enum AmbientSignalChildrenSelfTest {
         check(main.contains("onUpdateTool = ") && main.contains("onSyncFork = "),
               "main.swift no longer wires the poller's per-tool/per-repo routing hooks, so every ambient child's button is dead", &ok)
 
-        let shell = read("AppShellController.swift")
+        // The whole shell layer, since stage 2 of the modular-shell migration
+        // moved these routes from `AppShellController` to `Navigator`.
+        let shell = SelfTestSources.shellLayerSource() ?? ""
         check(shell.contains("requestUpdateFromNotification"),
-              "AppShellController no longer asks the Updates page to run the update it was handed", &ok)
+              "the shell no longer asks the Updates page to run the update it was handed", &ok)
         check(shell.contains("requestSyncFromNotification"),
-              "AppShellController no longer asks the GitHub Sync page to run the sync it was handed", &ok)
+              "the shell no longer asks the GitHub Sync page to run the sync it was handed", &ok)
 
         // And the page halves really run the real action rather than only
         // scrolling somewhere.

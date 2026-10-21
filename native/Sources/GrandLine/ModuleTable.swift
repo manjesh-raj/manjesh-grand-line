@@ -9,7 +9,8 @@
 //   - `RailDestination` - its title and symbol,
 //   - `HelmDaylight`'s `RailDestination.domainHue` - its hue,
 //   - `DestinationRegistry` - its body slot and its drill subtitle,
-//   - `AppShellController`'s `register(...)` lines - whether it mounts eagerly,
+//   - the `register(...)` lines in `Workspace.registerDestinations` - whether
+//     it mounts eagerly,
 //   - `DaylightModule` - the space it lives in and the Home cards that open it,
 //   - `ContextualNewAction` - what ⌘N creates on it.
 //

@@ -66,11 +66,28 @@
 // The one genuinely new destination is `.homeCanvas` (`HomeCanvasController`),
 // eagerly mounted because it is the launch landing and the target of every
 // back button.
+//
+// **Stage 2 of the modular-shell migration split this controller in two**
+// (full review section 5.8, step 2). What a shell *hosts* moved to
+// `Workspace` and its parts - the pages and stores, `WorkspaceContent` (the
+// body area and the mounter), `Navigator` (every route), `HostSessionCoordinator`
+// (host pages and live sessions), `LockPresenter` and `CaptureFilingService` -
+// so the split-view shell that step 3 builds can host the same pages. What is
+// left here is the floating-bar shell's own chrome: the bar, the session
+// strip, the drill header's wiring, the scroll edge, the window's
+// width-tie repair and the keyboard loop. Every method the app delegate and
+// the suites call on this controller still exists, and forwards to the part
+// that now does the work (see "The workspace's API, forwarded"), so nothing
+// that called the shell had to change.
+
 
 import AppKit
 import LocalAuthentication
 
-final class AppShellController: NSViewController {
+final class AppShellController: NSViewController, WorkspaceChrome {
+
+    /// Everything this shell hosts - see this file's header.
+    let workspace: Workspace
 
     private var chromeTextScaleObservation: ChromeTextScaleObservation?
 
@@ -90,563 +107,6 @@ final class AppShellController: NSViewController {
     private var lastDrillContext: (title: String, subtitle: String, symbol: String,
                                    hue: HelmDomainHue, artwork: NSImage?, controller: NSViewController?)?
 
-    /// The hub. Owns the space filter and the module grid; knows nothing about
-    /// navigation beyond the closures wired below.
-    private let homeCanvas: HomeCanvasController
-
-    private let console: ConsoleController
-    private let overview: FleetController
-    private let review = ReviewController()
-
-    // MARK: Lazy destinations (PERF-01)
-    //
-    // **The 2026-10 end-to-end review's PERF-01.** GL-37 made destinations
-    // *mount* lazily, but every controller was still *constructed* in this
-    // class's `init`, before the window existed - 26 pages the captain may
-    // never open this session, with their stores, two YAML directory walks
-    // and three `WKWebView`s among them. So each non-eager destination is a
-    // `lazy var` now, built the first time something asks for it - which for
-    // nearly every page is its first `show(_:)`, through the controller
-    // closure its `DestinationSlot` holds.
-    //
-    // Three rules keep that true:
-    //
-    //   - **A page's wiring lives in its own initialiser below**, not in
-    //     `loadView`. Assigning a callback to a lazy property builds it, so
-    //     wiring every page from `loadView` would have built all of them at
-    //     launch again.
-    //   - **Anything that reaches a page from outside its own visit asks
-    //     `isBuilt` first** when the answer for an unbuilt page is already
-    //     known (a quit-time flush with nothing to flush, a bridge that cannot
-    //     be busy on a page that does not exist). A menu action or a deep
-    //     link that navigates there anyway simply builds it.
-    //   - **A store another surface reads lives on the shell**, never only on
-    //     the page (`stickyBoardStore`, `readingListStore`, ...), so the canvas,
-    //     ⌘K and the widgets never have to build a page to read its data.
-    //
-    // `homeCanvas`, `overview`, `console` and `review` stay eager for the
-    // reasons `DestinationRegistry.swift`'s header gives.
-
-    /// Which lazy destinations have been built. Written only by `built(_:_:)`.
-    private var builtDestinations: Set<DestinationSlotID> = []
-
-    /// Records that `id`'s controller exists and hands it back - the one
-    /// line at the end of every lazy initialiser below.
-    private func built<Controller: NSViewController>(_ id: DestinationSlotID,
-                                                     _ controller: Controller) -> Controller {
-        builtDestinations.insert(id)
-        return controller
-    }
-
-    /// Whether `id`'s controller has been built yet. Asking never builds it.
-    private func isBuilt(_ id: DestinationSlotID) -> Bool { builtDestinations.contains(id) }
-
-    // The stores the lazy initialisers below are built from. Held here
-    // because a lazy initialiser runs long after `init` has returned.
-    private let hostStore: HostStore
-    private let keyStore: SSHKeyStore
-    private let snippetStore: SnippetStore
-    private let dictationStore: DictationStore
-    private let commandLibraryStore: CommandLibraryStore
-    private let scheduleStore: ScheduleStore
-    private let docsRunbookStore: DocsRunbookStore
-    private let logAnalyzerStore: LogAnalyzerStore
-
-    /// The app delegate builds Hosts and Settings (it wires them to the host
-    /// store, the console and the menu), so the shell holds how to reach
-    /// them rather than the pages themselves.
-    private let makeHostsPanel: () -> HostsController
-    private let makeSettings: () -> SettingsController
-
-    private lazy var hostsPanel: HostsController = {
-        let hostsPanel = makeHostsPanel()
-        hostsPanel.onAddOrEdit = { [weak self] host in self?.onPresentHostEditor?(host) }
-        hostsPanel.onRunSnippet = { [weak self] snippet in self?.onRunSnippet?(snippet) }
-        hostsPanel.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // Hosts is the first migrated page whose *actions* change while it is
-        // on screen: §6.4's cluster carries the add action for the tab that is
-        // showing, and the three tabs add three different records. Same shape
-        // as the subtitle callback - the page says "re-ask me", the shell owns
-        // the header.
-        hostsPanel.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
-        // `fm/grandline-session-switcher`: the Hosts list reads liveness from
-        // the same registry the strip does, through a closure, so that page
-        // never learns what a `ConsoleController` is - the same
-        // forward-don't-own shape as every other `hostsPanel` hook here.
-        hostsPanel.liveSession = { [weak self] hostID in self?.sessions.session(for: hostID) }
-        hostsPanel.onSwitchToSession = { [weak self] hostID in self?.switchToSession(hostID: hostID) }
-        hostsPanel.onEndSession = { [weak self] hostID in self?.confirmEndSession(hostID: hostID) }
-        return built(.hosts, hostsPanel)
-    }()
-
-    private lazy var settings: SettingsController = {
-        let settings = makeSettings()
-        settings.onTerminalShortcutsChanged = { [weak self] shortcuts in self?.onTerminalShortcutsChanged?(shortcuts) }
-        settings.onQuickCaptureShortcutChanged = { [weak self] chord in self?.onQuickCaptureShortcutChanged?(chord) }
-        // Settings' own sidebar moves the header's subtitle - it names the
-        // selected category, the way the reference mockup's "Settings /
-        // Shortcuts & Siri" does.
-        settings.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // cockpit-settings-sudo-touchid: Settings' "Touch ID for sudo" row
-        // runs `sudo av harden sudo`, which needs a real interactive `sudo`
-        // prompt exactly like Bootstrap's provisioning actions - same
-        // one-shot Console command-tab mechanism, just reached from Settings
-        // instead.
-        settings.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
-        settings.onRunCommandTracked = { [weak self] label, command, completion in
-            self?.runInConsole(label: label, command: command, completion: completion)
-        }
-        return built(.settings, settings)
-    }()
-
-    /// `fm/polish-straw-hat-overview-card-and-voice-c8d3`: the Straw Hat
-    /// Pirates chat, its own destination since the captain asked for it to be
-    /// its own Overview card rather than a tab inside Fleet's page. Built on
-    /// first use since PERF-01: its canvas summary starts empty either way
-    /// (`StrawHatCanvasState()`), so an unbuilt page has nothing to report.
-    private lazy var strawHat: StrawHatController = {
-        // The four store dependencies below were `FleetController`'s while the
-        // crew chat was a tab on that page; they came here with it. All three
-        // stores are the shared instances: each caches its records as well as
-        // writing them, so a second instance would be a second writer to the
-        // same file. The command library is handed over as a *root* URL
-        // because the crew only ever reads it through their `command_search`
-        // tool - constructing a second store for that would be the mistake
-        // GL-24 fixed.
-        let strawHat = StrawHatController(shiftStore: shiftStore,
-                                          commandLibraryRoot: commandLibraryStore.root,
-                                          commandLibraryStore: commandLibraryStore,
-                                          stickyStore: stickyBoardStore,
-                                          scheduleStore: scheduleStore)
-        // Straw Hat phase 3 (M3.2): the crew's two navigation handoffs. Both
-        // are pass-throughs into navigation this object already owns - a
-        // handoff writes nothing, which is what lets its link row run on a
-        // single click with no confirm card in front of it.
-        strawHat.onOpenDestination = { [weak self] dest, hint in
-            self?.openDestinationForCrew(dest, hint: hint)
-        }
-        strawHat.onOpenSRELead = { [weak self] hint in
-            self?.openSRELeadForCrew(hostHint: hint)
-                ?? "I couldn't reach your host pages from here."
-        }
-        strawHat.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // The Overview card's own summary line - see
-        // `StrawHatCanvasState`. Pushed rather than polled, the
-        // same shape `FleetController.onSnapshotChanged` already uses for the
-        // Fleet card.
-        strawHat.onCanvasStateChanged = { [weak self] in
-            guard let self else { return }
-            self.homeCanvas.applyStrawHat(self.strawHat.canvasState)
-        }
-        return built(.strawHat, strawHat)
-    }()
-
-    private lazy var shift: ShiftController = {
-        let shift = ShiftController(store: shiftStore, focusTimer: focusTimer)
-        shift.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // The Tasks column's footer links, forwarded rather than owned - that
-        // page knows nothing about the shell or the palette
-        // (`onSearchTapped`'s own convention).
-        shift.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
-        shift.onOpenCommandPalette = { [weak self] in self?.onSearchTapped?() }
-        return built(.shift, shift)
-    }()
-
-    /// `fm/grandline-log-analyzer-build`: the Log / Output Analyzer page.
-    /// PERF-02: handed the shell's one `DocsRunbookStore` and
-    /// `LogAnalyzerStore` rather than building its own.
-    private lazy var logAnalyzer: LogAnalyzerController = {
-        // GL-23: the same `CommandLibraryStore` instance the Tasks page uses.
-        let logAnalyzer = LogAnalyzerController(commandLibrary: commandLibraryStore,
-                                                runbookStore: docsRunbookStore,
-                                                store: logAnalyzerStore)
-        // `fm/grandline-log-analyzer-build`: the Log Analyzer forwards the
-        // same two things Shift's Command Library already does - "run this
-        // command" goes to whichever console tab is in front, and a runbook
-        // or postmortem it just wrote opens in Docs. It owns neither.
-        logAnalyzer.onSendCommandToTerminal = { [weak self] text in
-            self?.console.sendCommandLibraryTextToActiveTab(text)
-        }
-        logAnalyzer.onOpenRunbook = { [weak self] id in self?.openRunbook(id: id) }
-        // `fm/grandline-docs-split-runbooks-postmortems`: `createIncident()`
-        // used to route its saved-postmortem confirmation through
-        // `onOpenRunbook` too, which opened it as a runbook - a postmortem id
-        // is never in `listRunbooks()`, so that silently no-opped. Fixed by
-        // giving it its own closure, wired to the postmortem destination.
-        logAnalyzer.onOpenPostmortem = { [weak self] id in self?.openPostmortem(id: id) }
-        // F8 (incident mode): a saved investigation attaches as openable
-        // evidence to the incident on whichever host page handed over the
-        // capture this investigation was built from - which is the only
-        // honest correlation available, since the Log Analyzer itself has no
-        // notion of a host. A clipboard analysis or an investigation reopened
-        // from history clears that association first (see
-        // `logAnalyzerCaptureSource`), so a save then attaches to nothing
-        // rather than to whichever host happened to be last.
-        logAnalyzer.onInvestigationSaved = { [weak self] id, title in
-            self?.logAnalyzerCaptureSource?.noteInvestigationSaved(id: id, title: title)
-        }
-        logAnalyzer.onOpenConsole = { [weak self] in self?.show(.console) }
-        logAnalyzer.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        return built(.logAnalyzer, logAnalyzer)
-    }()
-
-    /// `fm/grandline-k8s-cluster-tail`. It needs *this* controller's own
-    /// `sessions` registry (there is exactly one - a second would be a second
-    /// source of truth for "which hosts are live").
-    private lazy var kubernetes: KubernetesController = {
-        let kubernetes = KubernetesController(sessions: sessions)
-        // `fm/grandline-k8s-cluster-tail`: everything the `.kubernetes`
-        // destination needs from the shell, as closures. Forward-don't-own -
-        // that page knows nothing about `hostConsoles` or `ConsoleController`,
-        // and this controller knows nothing about pods.
-        kubernetes.configure(access: KubeSessionAccess(
-            tabs: { [weak self] hostID in self?.hostConsoles[hostID]?.kubeFeedTabs() ?? [] },
-            duplicateTabForFeed: { [weak self] hostID in self?.hostConsoles[hostID]?.duplicateTabForKubeFeed() },
-            isTabBusyElsewhere: { [weak self] hostID, tabID in
-                self?.hostConsoles[hostID]?.isTabBusyForKubeFeed(tabID) ?? false
-            },
-            revealHost: { [weak self] hostID in self?.switchToSession(hostID: hostID) },
-            openHosts: { [weak self] in self?.show(.hosts) }))
-        return built(.kubernetes, kubernetes)
-    }()
-
-    /// The reverse direction of the Kubernetes feed guard (full-app audit,
-    /// finding 4.1), shared by the Firstmate console and every host page: a
-    /// console-side bridge asks whether the `.kubernetes` page's feed bridge
-    /// is using a tab. A page that has not been built has no feed bridge, so
-    /// asking must not build it - the console bridges ask on every tick.
-    private func isKubernetesFeedBridgeBusy(onTab tabID: UUID) -> Bool {
-        guard isBuilt(.kubernetes) else { return false }
-        return kubernetes.isFeedBridgeBusy(onTab: tabID)
-    }
-
-    /// F8: the host page whose capture seeded whatever the Log Analyzer is
-    /// currently showing, so a save can be attached to that host's incident.
-    /// Weak - a deleted host's page is torn down and must not be kept alive
-    /// by this.
-    private weak var logAnalyzerCaptureSource: ConsoleController?
-
-    private lazy var tools: ToolsController = {
-        let tools = ToolsController()
-        // Tools' subtitle counts open tool tabs, which the captain can change
-        // without leaving the page.
-        tools.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        return built(.tools, tools)
-    }()
-
-    /// `fm/grand-line-whiteboard-excalidraw`: the embedded Excalidraw canvas.
-    /// Lazy like every other utility destination, and deliberately so - see
-    /// `WhiteboardWebView`'s gating note: a session that never opens it never
-    /// starts a web content process.
-    private lazy var whiteboard: WhiteboardController = {
-        let whiteboard = WhiteboardController()
-        whiteboard.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        return built(.whiteboard, whiteboard)
-    }()
-
-    /// `fm/grandline-sticky-board`: a freeform corkboard of draggable, colored
-    /// sticky notes. Lazy like every other utility destination - see
-    /// `StickyBoardController.swift`'s header. Its store is the shell's.
-    private lazy var stickyBoard: StickyBoardController = {
-        let stickyBoard = StickyBoardController(store: stickyBoardStore)
-        // UX10: the board raises a note to promote; this controller is the
-        // one place that holds both destinations.
-        stickyBoard.onMakeTaskFromNote = { [weak self] note in self?.makeTaskFromStickyNote(note) }
-        return built(.stickyBoard, stickyBoard)
-    }()
-
-    /// `fm/grandline-monaco-code-preview`: the embedded Monaco editor. Lazy
-    /// for the same reason the Whiteboard is - see `CodePreviewWebView`'s
-    /// gating note: a session that never opens it never starts a web content
-    /// process, never loads the 4MB bundle and never builds an editor.
-    private lazy var codePreview: CodePreviewController = {
-        let codePreview = CodePreviewController(store: codePreviewStore)
-        codePreview.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        return built(.codePreview, codePreview)
-    }()
-
-    /// `fm/grandline-tasks-kanban-devops-split`: the Command Library's own
-    /// destination. Was the third tab of `shift` - see
-    /// `CommandLibraryController`'s header for why it moved.
-    private lazy var commandLibrary: CommandLibraryController = {
-        // GL-23 again: the same shared instance the Log Analyzer, the crew's
-        // `command_search` tool and the ⌘K palette already read.
-        let commandLibrary = CommandLibraryController(store: commandLibraryStore)
-        // fm/grandline-devops-command-library-phase2: the Command Library's
-        // "Send to Terminal" types straight into whichever console tab is
-        // currently in front - not a new one-shot command tab (`runInConsole`
-        // below), the exact same "type this into the active tab" behavior
-        // Snippets' own "Run" already uses.
-        commandLibrary.onSendCommandToTerminal = { [weak self] text in self?.console.sendCommandLibraryTextToActiveTab(text) }
-        // F9 (v1): straight up to the app delegate - see `onSendCommandToHosts`.
-        commandLibrary.onSendCommandToHosts = { [weak self] command, values, generated in
-            self?.onSendCommandToHosts?(command, values, generated)
-        }
-        commandLibrary.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        return built(.commandLibrary, commandLibrary)
-    }()
-
-    /// The same `CodePreviewStore` instance the page uses, exposed so ⌘K's
-    /// provider searches what the page shows rather than a second reader
-    /// (audit §6.6b).
-    let codePreviewStore: CodePreviewStore
-
-    /// The same `ReadingListStore` instance the page and the canvas card use,
-    /// exposed for ⌘K's own provider - same reason as `notebookStore` below:
-    /// the palette must search what the page shows, not a second reader of the
-    /// same folder (GL-23).
-    let readingListStore: ReadingListStore
-
-    /// The same `NotebookStore` instance the page and the canvas card use,
-    /// exposed for ⌘K's own provider - same reason as `codePreviewStore`
-    /// above: the palette must search what the page shows, not a second
-    /// reader of the same folder.
-    let notebookStore: NotebookStore
-
-    /// The Sticky Board's one store (GL-23: it caches its notes *and* writes
-    /// them, so a second instance would be a second writer to one file).
-    /// Built here rather than inside the page since PERF-01, so the canvas,
-    /// ⌘K, the crew and the widgets can read it while the page is unbuilt.
-    let stickyBoardStore: StickyBoardStore
-
-    /// The one `ShiftStore` (GL-23), held rather than only passed through, so
-    /// F2's capture filer can write a task without a second instance. Every
-    /// other reader on this controller already shares it via `ShiftController`.
-    let shiftStore: ShiftStore
-    /// F7's one timer. See the note at its construction in `init`.
-    let focusTimer: FocusTimerController
-    /// `fm/swap-vault-poneglyph-naming-in-grand-lin-1f`: the `.vault`
-    /// destination is Automic Vault's hardening panel again (`vault`,
-    /// `VaultController`), and the captain's own personal credential vault is
-    /// `poneglyph` below, labeled "Poneglyph", now its own destination rather
-    /// than a Setup tab (`fm/poneglyph-own-destination-and-strawhat-toolbar-
-    /// shortcut`) - see `VaultController.swift`'s and
-    /// `CredentialVaultController.swift`'s headers for the full history.
-    private lazy var vault: VaultController = {
-        let vault = VaultController()
-        // fm/grandline-vault-tab: `av save`/`av inject` both need a real
-        // interactive terminal (see `VaultController`'s header) - same
-        // one-shot Console command-tab mechanism as every other
-        // interactive/sudo action in this app.
-        vault.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
-        vault.onRunCommandTracked = { [weak self] label, command, completion in
-            self?.runInConsole(label: label, command: command, completion: completion)
-        }
-        vault.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        return built(.vault, vault)
-    }()
-
-    private lazy var poneglyph: CredentialVaultController = {
-        let poneglyph = CredentialVaultController()
-        // Poneglyph is its own destination now
-        // (`fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut`), so
-        // it wires this exactly like every other conforming destination
-        // rather than through `SetupContainerController`'s own per-tab
-        // forwarding.
-        poneglyph.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        return built(.poneglyph, poneglyph)
-    }()
-
-    /// The credential vault's one store, for the readers that do not need the
-    /// page: `GrandLineServices` owns it (F21), and the page holds the same
-    /// instance. Reading it never builds the page.
-    private var credentialVaultStore: CredentialVaultStore {
-        isBuilt(.poneglyph) ? poneglyph.credentialStore : GrandLineServices.shared.vault
-    }
-
-    #if FM_SELFTESTS
-    /// The Poneglyph page and its store, so a suite can drive the real
-    /// destination inside a real shell. `CredentialVaultViewSelfTest`'s
-    /// list-geometry case needs the shell specifically: the bug it guards
-    /// (`HelmCard.headerCollapsed`) was an *ambiguous* layout, and a card
-    /// mounted in a simpler hierarchy resolves it the harmless way.
-    var debugPoneglyph: CredentialVaultController { poneglyph }
-    var debugPoneglyphStore: CredentialVaultStore { poneglyph.credentialStore }
-    #endif
-
-    private lazy var dictation: DictationController = {
-        let dictation = DictationController(store: dictationStore)
-        dictation.onShortcutChanged = { [weak self] chord in self?.onKeyChordChanged?(chord) }
-        dictation.onLocalWhisperEnabledChanged = { [weak self] enabled in self?.onDictationLocalWhisperChanged?(enabled) }
-        dictation.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        return built(.dictation, dictation)
-    }()
-
-    /// `fm/grandline-schedules-sidebar-move`: F11's Schedules card, promoted
-    /// off the Automation page onto its own rail destination - see
-    /// `SchedulesController.swift`'s header.
-    private lazy var schedules: SchedulesController = {
-        let schedules = SchedulesController(scheduleStore: scheduleStore)
-        schedules.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // `fm/grand-line-schedules-page-redesign`: a needs-you row's "Review"
-        // button hands off to the page that owns that action
-        // (`ScheduledActionKind.reviewDestination`). Same seam as Overview's.
-        schedules.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
-        return built(.schedules, schedules)
-    }()
-
-    /// `fm/grandline-health-sidebar-move`: F1/GL-11's Health card, promoted
-    /// off the Settings page onto its own rail destination - see
-    /// `HealthController.swift`'s header.
-    private lazy var health: HealthController = {
-        let health = HealthController()
-        health.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // UI12: both pages' empty states now offer a way out of themselves.
-        health.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
-        return built(.health, health)
-    }()
-
-    private lazy var docs: DocsController = {
-        let docs = DocsController()
-        // Docs' subtitle still tracks the Playbook's own real sync state; its
-        // action cluster no longer changes while it's on screen now that the
-        // runbook editor (and the per-tab switch that used to empty the
-        // cluster for it) moved to `.runbooks`.
-        docs.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        return built(.docs, docs)
-    }()
-
-    /// `fm/grandline-docs-split-runbooks-postmortems`: Runbooks and
-    /// Postmortems are their own top-level destinations now, split out of
-    /// `DocsController`'s former tabs - see that file's own header.
-    private lazy var runbooks: RunbooksController = {
-        let runbooks = RunbooksController(runbookStore: docsRunbookStore)
-        // Runbooks inherited Docs' old per-editor-state cluster: "New
-        // Runbook" beside a form already creating one is a second, competing
-        // action, so its cluster empties while the editor is open.
-        runbooks.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        runbooks.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
-        return built(.runbooks, runbooks)
-    }()
-
-    /// F1 of full review #3 §8 - see `NotebookController.swift`'s header. Its
-    /// store is built in `init` rather than inside the page, like every other
-    /// store the canvas also reads (`HomeCanvasController`'s rule 1).
-    private lazy var notebook: NotebookController = {
-        let notebook = NotebookController(store: notebookStore)
-        notebook.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        notebook.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
-        return built(.notebook, notebook)
-    }()
-
-    /// F4 of full review #3 §8 - see `ReadingListController.swift`'s header.
-    /// Its store is built in `init` beside every other store the canvas also
-    /// reads (`HomeCanvasController`'s rule 1).
-    private lazy var readingList: ReadingListController = {
-        let readingList = ReadingListController(store: readingListStore)
-        readingList.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        readingList.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
-        return built(.readingList, readingList)
-    }()
-
-    private lazy var postmortems: PostmortemsController = {
-        let postmortems = PostmortemsController(runbookStore: docsRunbookStore)
-        postmortems.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        postmortems.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
-        return built(.postmortems, postmortems)
-    }()
-
-    // The four Engineering setup pages, each wired exactly like every other
-    // conforming destination since `fm/grandline-separate-setup-destinations`.
-    // They used to route through `SetupContainerController`'s own per-tab
-    // forwarding, which also had to fire on a tab switch because the line was
-    // per-tab; each page owns its own header line now, so a page's own numbers
-    // moving is the only thing that can change it.
-
-    private lazy var updates: UpdatesController = {
-        let updates = UpdatesController()
-        // cockpit-bootstrap-software: a `.notInstalled` row on the Updates
-        // page no longer installs inline - it links to the Bootstrap page's
-        // own Software checklist card instead (same catalog, same install
-        // action, just relocated).
-        updates.onNavigateToBootstrap = { [weak self] in self?.show(.bootstrap) }
-        // An update that needs the captain's `sudo` password is never started
-        // in the background (`BrewCaskSudo`); its row's "Run in Terminal"
-        // opens the exact command here instead, then re-checks on exit.
-        updates.onRunCommandTracked = { [weak self] label, command, completion in
-            self?.runInConsole(label: label, command: command, completion: completion)
-        }
-        updates.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        return built(.updates, updates)
-    }()
-
-    private lazy var bootstrap: BootstrapController = {
-        let bootstrap = BootstrapController(hostStore: hostStore, keyStore: keyStore,
-                                            snippetStore: snippetStore, dictationStore: dictationStore)
-        // cockpit-bootstrap-dotfiles: every command the Bootstrap page can run
-        // that touches `darwin-rebuild switch` (needs an interactive `sudo`
-        // TTY) opens as a real tab in the shared Firstmate console rather
-        // than a silent background process - see `runInConsole` below.
-        bootstrap.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
-        // cockpit-bootstrap-full-setup: the "Run full setup" sequencer needs
-        // to know a step's Console command actually finished (not a fixed
-        // timer) before starting the next one - same tab, same command
-        // string, just with a completion callback threaded through.
-        bootstrap.onRunCommandTracked = { [weak self] label, command, completion in
-            self?.runInConsole(label: label, command: command, completion: completion)
-        }
-        bootstrap.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        return built(.bootstrap, bootstrap)
-    }()
-
-    private lazy var automation: AutomationController = {
-        let automation = AutomationController(hostStore: hostStore, keyStore: keyStore,
-                                              snippetStore: snippetStore, dictationStore: dictationStore)
-        // fm/grandline-automation-pipeline: the automation pipeline's own
-        // dotfiles step needs the exact same real Console-tab/completion
-        // wiring as Bootstrap's - it runs the identical clone/rebuild command
-        // (`DotfilesRunCommand`, shared by both pages).
-        automation.onRunCommandTracked = { [weak self] label, command, completion in
-            self?.runInConsole(label: label, command: command, completion: completion)
-        }
-        automation.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        return built(.automation, automation)
-    }()
-
-    private lazy var githubSync: GitHubSyncController = {
-        let githubSync = GitHubSyncController()
-        githubSync.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        return built(.githubSync, githubSync)
-    }()
-
-    /// Fix 1: builds a fresh, host-scoped `ConsoleController` (its own ssh
-    /// tab(s) only, no Firstmate host's own Shell tab - see
-    /// `ConsoleController.init(isFirstmateConsole:)`). Injected so this
-    /// controller doesn't need to know about
-    /// `SSHKeyStore`/`SnippetStore`, matching how it already knows nothing
-    /// about host persistence (see `onPresentHostEditor` below).
-    private let makeHostConsole: () -> ConsoleController
-
-    /// One dedicated page per connected host, keyed by `Host.id`. Built
-    /// lazily by `connectHost`, torn down by `removeHostConsole` when a host
-    /// is deleted from the store.
-    private var hostConsoles: [UUID: ConsoleController] = [:]
-
-    /// The body area every destination view (fixed or host page) is added
-    /// to - a stored property (rather than a `loadView`-local `let`) so
-    /// `connectHost`/`removeHostConsole` can add and remove host pages after
-    /// the initial layout pass.
-    private let bodyContainer = NSView()
-    /// Puts the window back inside its screen when a page's content pushed it
-    /// past the edge (`fm/grandline-layout-breaks-refresh-reply`).
-    let windowOverflowGuard = WindowOverflowGuard()
-
-    /// GL-37: the destination table plus the lazy-mount mechanics - see
-    /// `DestinationRegistry.swift`. `unowned self` rather than `weak`: this
-    /// closure only ever runs from `show(_:)`/`mountEagerSlots()`, both of
-    /// which are reached through `self`, so `self` is alive by construction,
-    /// and the mounter is owned by `self` so there is no retain cycle to
-    /// break beyond that.
-    private lazy var mounter = DestinationMounter(
-        mount: { [unowned self] controller in
-            self.addChild(controller)
-            self.embed(controller.view)
-        },
-        setVisible: { [unowned self] controller, visible in
-            self.setDestinationVisible(controller.view, visible)
-        }
-    )
-
     /// `fm/grandline-live-gap-rootcause-scout`: named (rather than anonymous,
     /// like every other constraint activated in `loadView`) so
     /// `reassertBodyContainerWidthTie()` can check/repair them on every
@@ -661,61 +121,6 @@ final class AppShellController: NSViewController {
     /// width that no longer matches the window's current content area.
     private var windowResizeObserver: NSObjectProtocol?
 
-    /// Set while a host's dedicated page is showing; `nil` whenever a fixed
-    /// `RailDestination` is current, so `removeHostConsole` knows whether to
-    /// navigate away. It used to be mirrored by the rail's own
-    /// `activeHostID` for per-host icon highlighting; with the rail gone
-    /// (Daylight §5.1) this is the only copy.
-    private var activeHostID: UUID?
-
-    // MARK: The Console canvas card's peek rows (review #3's UI9)
-
-    /// How one console tab reads on the Console canvas card.
-    ///
-    /// **Review #3's UI9.** Every non-running tab used to read "exited",
-    /// which is the word a crash gets - and a shell the captain closed on
-    /// purpose is the overwhelmingly common case, so the card reported an
-    /// alarming state for the most ordinary event a terminal has. It was
-    /// honest (the process really had exited) and that is exactly why it
-    /// could not simply be softened: GL-14 forbids painting an unknown or a
-    /// failure as a clean result.
-    ///
-    /// `TabModel.ExitOutcome` is recorded where the termination actually
-    /// happens, which is what lets this tell the four cases apart rather than
-    /// collapsing them:
-    ///
-    /// - running -> `live`
-    /// - exit 0 -> `closed`, and `.idle` - the ordinary end of a shell
-    /// - exit N -> `exit N`, and `.warn` - the case that really is a fault
-    /// - ended with no status -> `ended`, and `.warn` - not a clean exit
-    /// - never started -> `idle`
-    ///
-    /// A static taking the three values rather than a `TabModel`, so the
-    /// mapping can be asserted without a live terminal and a real child
-    /// process (`Audit3UIFixesSelfTest`).
-    static func consolePeekRow(name: String,
-                               running: Bool,
-                               lastExit: TabModel.ExitOutcome) -> HelmModulePeekRow {
-        guard !running else { return HelmModulePeekRow(state: .ok, text: name, value: "live") }
-        switch lastExit {
-        case .clean: return HelmModulePeekRow(state: .idle, text: name, value: "closed")
-        case .failed(let status): return HelmModulePeekRow(state: .warn, text: name, value: "exit \(status)")
-        case .unknown: return HelmModulePeekRow(state: .warn, text: name, value: "ended")
-        case .none: return HelmModulePeekRow(state: .idle, text: name, value: "idle")
-        }
-    }
-
-    // MARK: Live SSH sessions (`fm/grandline-session-switcher`)
-
-    /// The app's one answer to "which hosts are live right now". Written only
-    /// from the three moments this controller already owned that fact
-    /// (`connectHost`, `revealHostConsole`, `removeHostConsole`); read by the
-    /// session strip, the Hosts list's per-row live state, the ⌘K palette's
-    /// pinned "Active sessions" group and the session shortcuts. `hostConsoles`
-    /// above is still the only thing that maps an id back to a real console -
-    /// this registry carries no controller reference, deliberately.
-    let sessions = HostSessionRegistry()
-
     /// The persistent pill strip, docked under the bar. Visible only while at
     /// least one session is live, and collapsed to height 0 as well as hidden
     /// when it is not - an ordinary hidden `NSView`'s constraints still
@@ -724,145 +129,12 @@ final class AppShellController: NSViewController {
     private let sessionStrip = SessionStripView()
     private var sessionStripHeightConstraint: NSLayoutConstraint!
     private var bodyTopConstraint: NSLayoutConstraint!
-    private var sessionsToken: UUID?
-
-    // MARK: Recent destinations (`fm/grandline-recents-navigation`)
-
-    /// The app's one recency tracker across every destination - rail or host
-    /// page alike. Written only from the moments this controller already
-    /// owns "what's on screen changed" (`show(_:)`, `revealHostConsole`, and
-    /// the one narrow bypass that jumps straight to a host's tab from a
-    /// background SRE Lead reply notification) via `updateRecentDestinations
-    /// (arriving:)`. Read by `DaylightBarController`'s own Recents popover,
-    /// wired once in `loadView()`.
-    let recentDestinations = RecentDestinations()
-
-    /// F2: fires whenever the captured session state may have changed - i.e.
-    /// on every navigation. Wired by the app delegate to its own
-    /// `saveSessionState()`, which is what makes the restore survive a crash
-    /// or a force-quit rather than only a clean ⌘Q.
-    var onSessionStateChanged: (() -> Void)?
-
-    /// Review #3 §7: the window title used to be the static app name, so
-    /// Mission Control, the Window menu and the window's proxy menu all
-    /// showed twenty-seven identical entries. Fires with
-    /// `currentContextTitle` on every navigation - the app delegate composes
-    /// the real title from it (`AppDelegate.windowTitle(context:)`).
-    ///
-    /// Wired from the same funnel `onSessionStateChanged` uses
-    /// (`updateRecentDestinations`), for the same reason: `show(_:)`,
-    /// `revealHostConsole` and the SRE Lead reply-jump bypass all pass
-    /// through it, so there is one place that can know where the captain is
-    /// and no second notion of it to drift.
-    var onCurrentDestinationChanged: ((String?) -> Void)?
-
-    /// The human-readable name of whatever is on screen - a destination's own
-    /// title, or a host page's label. `nil` before the first navigation.
-    ///
-    /// Read off `currentDestinationKind` through `RecentDestinationKind
-    /// .title`, which is already the one place that answers "what is this
-    /// page called" for the Recents dropdown. A second switch here would be a
-    /// second answer.
-    var currentContextTitle: String? { currentDestinationKind?.title }
-
-    /// Whatever `updateRecentDestinations(arriving:)` last recorded as
-    /// current - the one piece of state that lets it know what was "on
-    /// screen" a moment ago, so the *next* navigation can record the right
-    /// outgoing destination. `nil` only before the app's very first
-    /// navigation.
-    private var currentDestinationKind: RecentDestinationKind?
-
-    /// `currentDestinationKind`, for the menu actions in this file that must
-    /// only fire on one page. Read-only on purpose: a menu action may ask
-    /// where the captain is, never move them.
-    private var currentDestinationKindForMenus: RecentDestinationKind? { currentDestinationKind }
-
-    /// F12's `.consoleOnly` question: is a terminal what the captain is
-    /// typing into right now? True on the Console destination and on a host
-    /// page, which is a console with a saved host behind it.
-    ///
-    /// Read off the same `currentDestinationKind` the Recents dropdown and the
-    /// menu actions use, for that property's own reason - a second notion of
-    /// "which page is showing" is a second thing to keep in step. The app's
-    /// *frontmost-ness* is deliberately not folded in here:
-    /// `SnippetExpander.currentContext` asks the workspace about that, and
-    /// keeping the two readings separate is what lets the policy state them as
-    /// two conditions rather than one opaque Bool.
-    var isTerminalDestinationShowing: Bool {
-        switch currentDestinationKind {
-        case .rail(let destination): return destination == .console
-        case .host: return true
-        case nil: return false
-        }
-    }
-
-    /// Add/Edit Host, requested from the Hosts panel - forwarded to whoever
-    /// owns the host store (the app delegate), since this controller only
-    /// arranges views and knows nothing about persistence.
-    var onPresentHostEditor: ((Host?) -> Void)?
-
-    /// F9 (v1) - the Command Library's "Send to…" action, forwarded on for
-    /// the same reason `onPresentHostEditor` above is: the picker reads the
-    /// saved hosts and the send opens their dedicated pages, and the host
-    /// store lives with the app delegate.
-    var onSendCommandToHosts: ((DevOpsCommand, [String: String], String) -> Void)?
-
-    // MARK: App-level password lock (fm/grandline-app-lock)
-
-    private let lockScreen = LockScreenController()
-
-    /// Fired once a correct password is entered - the app delegate's
-    /// `AppLockController` owns turning this into "unlocked" state (and
-    /// starting its own idle/hard-logout timers from this moment); this
-    /// controller only knows "the form was accepted."
-    var onUnlocked: (() -> Void)?
-
-    /// Fired whenever the lock overlay's visibility changes, `true` while
-    /// locked - the app delegate uses this to disable the main menu's
-    /// content-bearing items (see `AppDelegate.setContentMenusEnabled`) so a
-    /// keyboard shortcut like ⌘N can't reach a hidden destination's action
-    /// while the overlay is covering it.
-    var onLockStateChanged: ((Bool) -> Void)?
 
     /// The avatar's Logout action (confirmed inside `DaylightBarController`
     /// itself) - forwarded to the app delegate's `AppLockController`, which
     /// is what actually flips the lock state, matching how host-editor
     /// presentation is forwarded rather than owned here.
     var onLogoutRequested: (() -> Void)?
-
-    /// Fired whenever the Dictation page's shortcut recorder captures a new
-    /// combo - the app delegate is what actually owns the live
-    /// `DictationHotkey` instance, matching `onFontSizeStep`'s own
-    /// forward-don't-own convention.
-    ///
-    /// Held here rather than forwarded into the page since PERF-01, so the
-    /// app delegate wiring it at launch does not build the Dictation page.
-    var onKeyChordChanged: ((KeyChord) -> Void)?
-
-    /// Fired whenever a Settings > Terminal Shortcuts recorder captures a new
-    /// combo, or the captain resets them all. Forwarded to the app delegate,
-    /// which owns the live `TabKeyboardShortcuts` monitor - the same
-    /// forward-don't-own convention `onKeyChordChanged` above already follows
-    /// for Dictation's own hotkey.
-    var onTerminalShortcutsChanged: ((TerminalShortcutSet) -> Void)?
-
-    /// Fired whenever Settings > Capture's recorder captures a new chord.
-    /// Forwarded to the app delegate, which owns the live `ShiftGlobalHotkey`
-    /// and the Shift menu's Capture item - the same forward-don't-own
-    /// convention the two above already follow.
-    var onQuickCaptureShortcutChanged: ((KeyChord) -> Void)?
-
-    /// E2: the Dictation page's local-Whisper toggle, forwarded the same way -
-    /// switching it off must be able to release a resident engine (and with it
-    /// the ggml Metal residency thread), not just stop future dictations from
-    /// using one.
-    var onDictationLocalWhisperChanged: ((Bool) -> Void)?
-
-    /// Phase 4 ("Knowledge and speed"): the topbar Search pill's click,
-    /// forwarded to whoever owns the unified `⌘K` search palette (the app
-    /// delegate, mirroring `onPresentHostEditor`'s own forward-don't-own
-    /// convention) rather than presented here.
-    var onSearchTapped: (() -> Void)?
 
     /// `hostsPanel` and `settings` are autoclosures since PERF-01: the app
     /// delegate (and every suite) still writes the page's construction at the
@@ -877,120 +149,27 @@ final class AppShellController: NSViewController {
         makeHostConsole: @escaping () -> ConsoleController
     ) {
         // T-14d: the launch interval Instruments reads, ended as the last
-        // line of this initialiser - see `LaunchSignposts.swift`.
+        // line of this initialiser - see `LaunchSignposts.swift`. The stores
+        // and the eager pages it measures are built by `Workspace` now, inside
+        // the same interval.
         let initInterval = LaunchSignposts.begin("AppShellController.init")
-        // PERF-01: only the four eager pages (`homeCanvas`, `overview`,
-        // `console`, `review`) and the stores other surfaces read are built
-        // here. Every other destination is a lazy property, built on first
-        // use - see "Lazy destinations" above.
-        self.makeHostsPanel = hostsPanel
-        self.makeSettings = settings
-        self.console = console
-        self.hostStore = hostStore
-        self.keyStore = keyStore
-        self.snippetStore = snippetStore
-        self.dictationStore = dictationStore
-        self.commandLibraryStore = commandLibraryStore
-        self.scheduleStore = scheduleStore
-        self.docsRunbookStore = docsRunbookStore
-        // The shared `ShiftStore`, never a second instance - two consumers
-        // on this page now. F12: the briefing's due-task count is the same
-        // one the Tasks page shows. F6: Overview's "Log" tab reads the task
-        // half of its feed straight from Shift's own activity YAML rather
-        // than a second copy of it (see `FleetLogFeed`'s header).
-        self.overview = FleetController(shiftStore: shiftStore)
-        // Phase 5 (cockpit-shift-power-features): `shiftStore` is now built
-        // once by the app delegate and shared with the menu bar item, the
-        // search palette, and quick capture - all of which need to read/
-        // write the same tasks/follow-ups this page shows, not a second
-        // independent store instance.
-        self.shiftStore = shiftStore
-        // F7: the app's one focus timer, built from the one shared store
-        // and handed to both surfaces that render it - the Tasks page's row
-        // actions and the bar's chip. Never a second instance: two timers
-        // would each believe they were the only one running.
-        let focusTimer = FocusTimerController(store: shiftStore)
-        self.focusTimer = focusTimer
-        // PERF-02: one `DocsRunbookStore` (the app delegate's, which ⌘K
-        // already reads) and one `LogAnalyzerStore` for every reader on this
-        // shell - the Log Analyzer, Runbooks, Postmortems and the canvas.
-        // Each of them used to build its own, and every one of those `init`s
-        // started a git sync at launch; `GitSyncStartGate` makes a second
-        // start a no-op, and this stops the second store existing at all.
-        let logAnalyzerStore = LaunchSignposts.measure("LogAnalyzerStore.init") { LogAnalyzerStore() }
-        self.logAnalyzerStore = logAnalyzerStore
-        self.makeHostConsole = makeHostConsole
-        // Daylight Phase 2: the canvas reads already-owned stores, never its
-        // own - see `HomeCanvasController`'s header, and the source guard in
-        // `DaylightModuleSelfTest` that enforces it. `DocsRunbookStore` and
-        // `LogAnalyzerStore` are the same two instances the pages are handed
-        // (PERF-02), not a second pair of the canvas's own.
-        // One more store the shell did not already hold: it re-reads its own
-        // git-synced folder per call, and
-        // it honours `FM_CODE_PREVIEW_DIR`/`FM_SHIFT_DIR` so a self-test never
-        // reaches the captain's real clone.
-        // GL-23's lesson: **one** store instance shared by both consumers on
-        // this page, not two. Neither caches, so two would not diverge the way
-        // the two `CommandLibraryStore`s once did - but one is still the
-        // cheaper and more obviously-correct answer.
-        let codePreviewStore = LaunchSignposts.measure("CodePreviewStore.init") { CodePreviewStore() }
-        self.codePreviewStore = codePreviewStore
-        // GL-23's lesson again: **one** `NotebookStore`, shared by the page
-        // and the canvas card. It re-reads its own git-synced folder per call
-        // rather than caching, so two would not diverge - one is still the
-        // cheaper and more obviously-correct answer.
-        let notebookStore = LaunchSignposts.measure("NotebookStore.init") { NotebookStore() }
-        self.notebookStore = notebookStore
-        // GL-23 again: **one** `ReadingListStore`, shared by the page, the
-        // canvas card, ⌘K's provider and ⌥Space's filer. This one caches its
-        // decoded array, so a second instance would genuinely be a second
-        // source of truth racing the first's writes.
-        //
-        // PERF-01: it and the Sticky Board's store below start empty and read
-        // their YAML file on a background thread (`HelmBackgroundReload`).
-        // Anything that reads their contents before that read lands reads the
-        // file synchronously instead, so nothing ever sees an unloaded store
-        // as an empty one - the canvas asks `isLoaded` and says "reading"
-        // rather than paying for that read before the first frame.
-        let readingListStore = LaunchSignposts.measure("ReadingListStore.init") {
-            ReadingListStore(loadsInBackground: true)
-        }
-        self.readingListStore = readingListStore
-        let stickyBoardStore = LaunchSignposts.measure("StickyBoardStore.init") {
-            StickyBoardStore(loadsInBackground: true)
-        }
-        self.stickyBoardStore = stickyBoardStore
-        let homeCanvas = HomeCanvasController(sources: .init(
-            shiftStore: shiftStore,
-            hostStore: hostStore,
-            scheduleStore: scheduleStore,
-            logAnalyzerStore: logAnalyzerStore,
-            docsRunbookStore: docsRunbookStore,
-            codePreviewStore: codePreviewStore,
-            notebookStore: notebookStore,
-            readingListStore: readingListStore,
-            commandLibraryStore: commandLibraryStore,
-            stickyBoardStore: stickyBoardStore))
-        self.homeCanvas = homeCanvas
-        // The canvas renders "reading" for either card until its store has
-        // loaded; this is what puts the real contents there once it has.
-        readingListStore.whenLoaded { [weak homeCanvas] in homeCanvas?.storeDidLoad() }
-        stickyBoardStore.whenLoaded { [weak homeCanvas] in homeCanvas?.storeDidLoad() }
-        // F21/F24: hand the four file-backed stores and the focus timer to
-        // `GrandLineServices`, which is how an App Intent (no view controller,
-        // possibly a launch it triggered itself) and Settings' Backup card
-        // reach the *same* instances this shell just built - never a second
-        // one (GL-23). A registry, not a factory: see that file's header.
-        GrandLineServices.shared.register(shiftStore: shiftStore,
-                                          notebookStore: notebookStore,
-                                          stickyBoardStore: stickyBoardStore,
-                                          codePreviewStore: codePreviewStore,
-                                          focusTimer: focusTimer)
+        self.workspace = Workspace(
+            hostsPanel: hostsPanel, console: console, settings: settings,
+            hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: shiftStore,
+            dictationStore: dictationStore, commandLibraryStore: commandLibraryStore,
+            scheduleStore: scheduleStore, docsRunbookStore: docsRunbookStore,
+            makeHostConsole: makeHostConsole)
         super.init(nibName: nil, bundle: nil)
+        workspace.chrome = self
+        workspace.content.parentController = self
         LaunchSignposts.end("AppShellController.init", initInterval)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// The body area the workspace's pages are mounted into, pinned under
+    /// this shell's floating bar.
+    private var bodyContainer: NSView { workspace.content.bodyContainer }
 
     override func loadView() {
         // T-14d: everything below, including the eager destinations' own
@@ -1086,21 +265,21 @@ final class AppShellController: NSViewController {
         // click from anywhere in the app, straight to the destination, using
         // the same `show(_:)` every other entry point uses rather than a
         // second navigation path (`fm/grandline-sticky-code-preview-polish`).
-        bar.onSelectDestination = { [weak self] destination in self?.show(destination) }
-        bar.onSelectSettings = { [weak self] in self?.show(.settings) }
+        bar.onSelectDestination = { [weak self] destination in self?.workspace.navigator.show(destination) }
+        bar.onSelectSettings = { [weak self] in self?.workspace.navigator.show(.settings) }
         bar.onLogoutRequested = { [weak self] in self?.onLogoutRequested?() }
         // `fm/grandline-recents-navigation`: the Recents popover reads this
         // controller's own registry and dispatches a click back through
         // whichever navigation primitive already handles that kind - never a
         // third path.
-        bar.recentDestinations.configure(registry: recentDestinations) { [weak self] kind in
-            self?.navigateToRecentDestination(kind)
+        bar.recentDestinations.configure(registry: workspace.navigator.recentDestinations) { [weak self] kind in
+            self?.workspace.navigator.navigateToRecentDestination(kind)
         }
 
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(bodyContainer)
 
-        bar.onDrillBack = { [weak self] in self?.show(.homeCanvas) }
+        bar.onDrillBack = { [weak self] in self?.workspace.navigator.show(.homeCanvas) }
         // A3: the bar is the only thing that reacts to the scroll edge, and
         // the observer is the only thing that knows about it.
         scrollEdge.onChange = { [weak self] active in self?.bar.setScrollEdgeActive(active) }
@@ -1112,65 +291,21 @@ final class AppShellController: NSViewController {
         // owned by this controller. Plain find-in-terminal is unaffected -
         // it's still reachable via the console toolbar's own magnifying-glass
         // icon (`ConsoleController.showFind`) and the Edit menu's `⌘F`.
-        bar.onSearchTapped = { [weak self] in self?.onSearchTapped?() }
+        bar.onSearchTapped = { [weak self] in self?.workspace.onSearchTapped?() }
         // F7: the chip is the feature's "it follows you off the Tasks page"
         // half, so the bar gets the timer as soon as both exist.
-        bar.attachFocusTimer(focusTimer)
+        bar.attachFocusTimer(workspace.focusTimer)
 
-        // GL-37: the destination table. One line per body view replaces the
-        // six hand-maintained per-destination edit sites this used to need
-        // (see `DestinationRegistry.swift`'s header). Registration order is
-        // the rail's own order, purely for readability - `show(_:)` looks
-        // slots up by id.
-        //
-        // PERF-01: each slot holds how to reach its controller rather than
-        // the controller, so a lazy page is *constructed* on its first
-        // `show(_:)` as well as mounted there. Reading a lazy property
-        // anywhere else in this file builds the page too, which is why the
-        // pages' wiring lives in their own initialisers (see "Lazy
-        // destinations") and why a reach-in that does not navigate asks
-        // `isBuilt` first.
-        mounter.register(DestinationSlot(id: .homeCanvas, title: RailDestination.homeCanvas.title, mountsEagerly: true, makeController: { [unowned self] in self.homeCanvas }))
-        mounter.register(DestinationSlot(id: .overview, title: RailDestination.overview.title, mountsEagerly: true, makeController: { [unowned self] in self.overview }))
-        mounter.register(DestinationSlot(id: .strawHat, title: RailDestination.strawHat.title, mountsEagerly: false, makeController: { [unowned self] in self.strawHat }))
-        mounter.register(DestinationSlot(id: .console, title: RailDestination.console.title, mountsEagerly: true, makeController: { [unowned self] in self.console }))
-        mounter.register(DestinationSlot(id: .hosts, title: RailDestination.hosts.title, mountsEagerly: false, makeController: { [unowned self] in self.hostsPanel }))
-        mounter.register(DestinationSlot(id: .shift, title: RailDestination.shift.title, mountsEagerly: false, makeController: { [unowned self] in self.shift }))
-        mounter.register(DestinationSlot(id: .review, title: RailDestination.review.title, mountsEagerly: true, makeController: { [unowned self] in self.review }))
-        mounter.register(DestinationSlot(id: .logAnalyzer, title: RailDestination.logAnalyzer.title, mountsEagerly: false, makeController: { [unowned self] in self.logAnalyzer }))
-        mounter.register(DestinationSlot(id: .kubernetes, title: RailDestination.kubernetes.title, mountsEagerly: false, makeController: { [unowned self] in self.kubernetes }))
-        mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.title, mountsEagerly: false, makeController: { [unowned self] in self.tools }))
-        mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.title, mountsEagerly: false, makeController: { [unowned self] in self.whiteboard }))
-        mounter.register(DestinationSlot(id: .stickyBoard, title: RailDestination.stickyBoard.title, mountsEagerly: false, makeController: { [unowned self] in self.stickyBoard }))
-        mounter.register(DestinationSlot(id: .codePreview, title: RailDestination.codePreview.title, mountsEagerly: false, makeController: { [unowned self] in self.codePreview }))
-        mounter.register(DestinationSlot(id: .commandLibrary, title: RailDestination.commandLibrary.title, mountsEagerly: false, makeController: { [unowned self] in self.commandLibrary }))
-        mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.title, mountsEagerly: false, makeController: { [unowned self] in self.vault }))
-        mounter.register(DestinationSlot(id: .dictation, title: RailDestination.dictation.title, mountsEagerly: false, makeController: { [unowned self] in self.dictation }))
-        mounter.register(DestinationSlot(id: .schedules, title: RailDestination.schedules.title, mountsEagerly: false, makeController: { [unowned self] in self.schedules }))
-        mounter.register(DestinationSlot(id: .health, title: RailDestination.health.title, mountsEagerly: false, makeController: { [unowned self] in self.health }))
-        mounter.register(DestinationSlot(id: .docs, title: RailDestination.docs.title, mountsEagerly: false, makeController: { [unowned self] in self.docs }))
-        mounter.register(DestinationSlot(id: .notebook, title: RailDestination.notebook.title, mountsEagerly: false, makeController: { [unowned self] in self.notebook }))
-        mounter.register(DestinationSlot(id: .readingList, title: RailDestination.readingList.title, mountsEagerly: false, makeController: { [unowned self] in self.readingList }))
-        mounter.register(DestinationSlot(id: .runbooks, title: RailDestination.runbooks.title, mountsEagerly: false, makeController: { [unowned self] in self.runbooks }))
-        mounter.register(DestinationSlot(id: .postmortems, title: RailDestination.postmortems.title, mountsEagerly: false, makeController: { [unowned self] in self.postmortems }))
-        // `fm/grandline-separate-setup-destinations`: four ordinary lines,
-        // where this was one `.setup` slot holding a
-        // `SetupContainerController` that parented all four pages. Each of
-        // them is now registered, titled, mounted and lazily built exactly
-        // like every other destination in this table - see
-        // `RailDestination.slot` for the captain's own reasoning.
-        mounter.register(DestinationSlot(id: .updates, title: RailDestination.updates.title, mountsEagerly: false, makeController: { [unowned self] in self.updates }))
-        mounter.register(DestinationSlot(id: .bootstrap, title: RailDestination.bootstrap.title, mountsEagerly: false, makeController: { [unowned self] in self.bootstrap }))
-        mounter.register(DestinationSlot(id: .automation, title: RailDestination.automation.title, mountsEagerly: false, makeController: { [unowned self] in self.automation }))
-        mounter.register(DestinationSlot(id: .githubSync, title: RailDestination.githubSync.title, mountsEagerly: false, makeController: { [unowned self] in self.githubSync }))
-        mounter.register(DestinationSlot(id: .poneglyph, title: RailDestination.poneglyph.title, mountsEagerly: false, makeController: { [unowned self] in self.poneglyph }))
-        mounter.register(DestinationSlot(id: .settings, title: RailDestination.settings.title, mountsEagerly: false, makeController: { [unowned self] in self.settings }))
+        // GL-37: the destination table - see `Workspace.registerDestinations`,
+        // which holds the one `register(...)` line per body view this method
+        // used to carry.
+        workspace.registerDestinations()
 
         // Built here, before the window is ever shown, for the three
         // invariants `DestinationRegistry.swift` documents (a live PTY, and
         // two launch-seeded rail badges that render through their own
         // views). Every other slot waits for its first `show(_:)`.
-        mounter.mountEagerSlots()
+        workspace.content.mounter.mountEagerSlots()
 
         // Daylight Phase 2: `bodyContainer` now spans the window's full width -
         // there is no rail to sit beside - and starts below the floating bar's
@@ -1190,9 +325,9 @@ final class AppShellController: NSViewController {
         // chains, B4's pill-label priority band) is measured and self-tested
         // as-is.
         root.addSubview(sessionStrip)
-        sessionStrip.onSelect = { [weak self] id in self?.switchToSession(hostID: id) }
-        sessionStrip.onClose = { [weak self] id in self?.confirmEndSession(hostID: id) }
-        sessionStrip.onAddRequested = { [weak self] in self?.show(.hosts) }
+        sessionStrip.onSelect = { [weak self] id in self?.workspace.hosts.switchToSession(hostID: id) }
+        sessionStrip.onClose = { [weak self] id in self?.workspace.hosts.confirmEndSession(hostID: id) }
+        sessionStrip.onAddRequested = { [weak self] in self?.workspace.navigator.show(.hosts) }
         sessionStripHeightConstraint = sessionStrip.heightAnchor.constraint(equalToConstant: 0)
         bodyTopConstraint = bodyContainer.topAnchor.constraint(
             equalTo: root.topAnchor, constant: DaylightBarController.reservedTopHeight)
@@ -1258,592 +393,17 @@ final class AppShellController: NSViewController {
         ) { [weak self] note in
             guard let self, let window = note.object as? NSWindow, window === self.view.window else { return }
             self.reassertBodyContainerWidthTie()
-            self.windowOverflowGuard.windowDidResize(window)
+            self.workspace.windowOverflowGuard.windowDidResize(window)
         }
 
-        // PERF-01: only the four eager pages are wired here. Every lazy
-        // destination is wired inside its own initialiser (see "Lazy
-        // destinations"), because assigning a callback to a lazy property
-        // here would build the page at launch.
+        // The four eager pages' wiring, then the launch landing - both moved
+        // to `Workspace` with the pages, and run from exactly here.
+        workspace.wireEagerPages()
+        workspace.showLaunchLanding()
 
-        // fm/grandline-overview-drop-duplicate-pr-list: Overview's own
-        // itemized "Ready to merge" list was removed as a duplicate of
-        // `.review`'s - the stat tile that's left jumps straight there.
-        overview.onNavigateToReview = { [weak self] in self?.show(.review) }
-
-        // The reverse direction of the Kubernetes feed guard (full-app audit,
-        // finding 4.1). `isTabBusyElsewhere` lets the Kubernetes feed bridge
-        // see the two console-side bridges; this lets them see it. Both halves
-        // are wired by this object because it is the only one that holds both
-        // a `ConsoleController` and the `.kubernetes` destination - neither of
-        // them knows the other exists, and neither should.
-        console.isKubernetesFeedBridgeBusy = { [weak self] tabID in
-            self?.isKubernetesFeedBridgeBusy(onTab: tabID) ?? false
-        }
-        // GL-31: Overview's unconfigured banner leads straight into the
-        // Bootstrap stepper, which is where firstmate home is actually set.
-        overview.onNavigateToSetup = { [weak self] in self?.show(.bootstrap) }
-        // F12: the morning briefing's clause deep links. `show(_:)` and
-        // `openShiftTask(id:)` are both already the one way this app navigates
-        // to a destination / opens a task, so these are pass-throughs rather
-        // than new behaviour.
-        overview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
-        overview.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
-        // Review #3 §7: the fleet dashboard's "Ask your crew" header button.
-        // Plain navigation - the composer it replaced is gone, and the crew
-        // page's own composer is the one place a message to them is written.
-        overview.onOpenCrew = { [weak self] in self?.show(.strawHat) }
-
-        // fm/grandline-sidebar-badges: forward each page's own already-
-        // computed "needs you" count straight to its rail icon - no new
-        // signal invented here, just the counts these two pages already
-        // render every time they refresh.
-        // fm/grandline-notification-center: these two signals already
-        // recompute on every Overview/Review refresh (page visit, manual
-        // refresh, and the `refreshIfNeeded()` calls just below) - piggy-
-        // backing on the existing count callbacks means no new detection
-        // logic and no new poll for either signal.
-        // Daylight Phase 2: the rail badge these fed is gone. The same
-        // already-computed counts now reach the captain through the bell (the
-        // Notification Center, unchanged) and through the Fleet / Merge queue
-        // modules' own chips, which read the snapshot pushed below. No new
-        // signal was invented for either.
-        overview.onNeedsDecisionCountChanged = { [weak self] count in
-            NotificationSources.setFleetDecisions(count: count) { self?.show(.overview) }
-        }
-        // The canvas's Fleet and Merge queue modules, fed from Overview's own
-        // refresh rather than a fetch of their own - see
-        // `FleetController.onSnapshotChanged`.
-        overview.onQuotaChanged = { [weak self] result in
-            self?.homeCanvas.applyQuota(result)
-        }
-        overview.onSnapshotChanged = { [weak self] snapshot, prs, failure in
-            self?.homeCanvas.applyFleet(snapshot: snapshot, mergedPRs: prs, prFetchFailure: failure)
-        }
-        // GL-11/GL-30: the two failure signals (a background service failing
-        // repeatedly, a save that did not reach disk) are raised from
-        // background queues that know nothing about destinations, so they get
-        // their navigation from here - the same forward-don't-own split every
-        // other signal in `NotificationSources` uses. Set once; both entries
-        // point at `.health` - fm/grandline-health-sidebar-move gave the
-        // Health card its own rail destination, off the Settings page.
-        NotificationSources.navigateToHealth = { [weak self] in self?.show(.health) }
-
-        review.onReadyToMergeCountChanged = { [weak self] count in
-            NotificationSources.setPRReady(count: count) { self?.show(.review) }
-        }
-        // F4: the OS-banner half of the same signal. The in-app entry above is
-        // a count; this is the per-PR post that carries Merge / Open PR, and it
-        // needs the rows themselves (URL, task id, checks) rather than a count.
-        review.onPRsChanged = { prs in FleetNotifier.shared.reconcilePRs(prs) }
-        // Daylight §6.4: every migrated drill page carries live numbers in the
-        // header's subtitle, and the header is the shell's. They ask; nothing
-        // writes into it but `applyDrillHeader`/`refreshDrillHeaderSubtitle`.
-
-        review.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-
-        // One observer turns every registry change into the two things that
-        // have to follow it: the strip re-renders (and appears/disappears),
-        // and the Hosts list's live rows are rebuilt if it is showing. Fired
-        // synchronously at registration, which for an empty registry is
-        // exactly the collapsed strip this wants at launch.
-        sessionsToken = sessions.observe { [weak self] registry in
-            self?.applySessionRegistry(registry)
-        }
-        console.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // Trigger both pages' own refresh once at launch so the badges have
-        // a real count before the captain ever visits Overview or Review -
-        // every later update comes from those pages' existing refresh
-        // triggers (page visit, manual refresh, a merge action), not a new
-        // poll loop.
-        overview.refreshIfNeeded()
-        review.refreshIfNeeded()
-
-        // Daylight Phase 2: the canvas's own forwarded actions. Every one is a
-        // pass-through to something that already existed - `show(_:)`,
-        // `openShiftTask(id:)`, and the two pages' own refresh entry points -
-        // so the hub adds no behaviour of its own, only a faster way to reach
-        // it.
-        homeCanvas.onOpenDestination = { [weak self] dest in self?.show(dest) }
-        homeCanvas.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
-        homeCanvas.onRefresh = { [weak self] in
-            self?.overview.refreshIfNeeded()
-            self?.review.refreshIfNeeded()
-        }
-        // The Claude status card's own Refresh. Overview already owns the
-        // quota reading and both its readers; this forces it past the
-        // freshness window rather than adding a second fetch path.
-        homeCanvas.onRefreshQuota = { [weak self] in self?.overview.refreshQuotaNow() }
-        // The Console module's peek rows. A closure, so the canvas never holds
-        // a console or learns what a tab is.
-        homeCanvas.consoleTabsProvider = { [weak self] in
-            guard let self else { return [] }
-            return self.console.tabs.map {
-                Self.consolePeekRow(name: $0.name,
-                                    running: $0.terminal.process.running,
-                                    lastExit: $0.lastExit)
-            }
-        }
-        homeCanvas.connectedHostIDs = { [weak self] in
-            guard let self else { return [] }
-            // Audit 2 §4.6: genuinely-connected pages, not merely built ones.
-            // Every one of this closure's readers phrases the count as *live*
-            // ("N host live", "N live", "N live sessions", and an `.ok` peek
-            // row per host), so `Set(hostConsoles.keys)` had the canvas
-            // reporting three live sessions for three F2-restored pages with
-            // no process between them.
-            return Set(self.hostConsoles.filter { $0.value.hasLiveSession }.keys)
-        }
-        // `fm/implement-grand-line-secrets-vault-poneg-ad`: the credential
-        // vault's card reads this rather than constructing a store of its own
-        // (`DaylightModuleSelfTest.checkCanvasConstructsNoStores` bans that,
-        // and here it would also reach the production git sync). `loadState()`
-        // is a `fileExists` plus, only on a genuine decode failure, GL-01's
-        // one-time backup - no decryption and no subprocess, so it is safe on
-        // every hub render. The count is `nil` while locked, because it is
-        // inside the ciphertext.
-        homeCanvas.credentialVaultState = { [weak self] in
-            guard let self else { return (.absent, false, nil) }
-            let store = self.credentialVaultStore
-            return (store.loadState(), store.isUnlocked, store.isUnlocked ? store.credentials.count : nil)
-        }
-
-        // GL-31: a machine with no firstmate home resolved lands on Bootstrap, not
-        // on a Console tab in front of an Overview that can only report
-        // zeroes. `FirstmateHome.root` is resolved once at launch, so this is
-        // a one-time decision and cannot flap.
-        //
-        // Deliberately only this one condition: the app is genuinely usable
-        // with no saved hosts, no Shift data and no Vault password beyond the
-        // lock screen's own, so none of those should redirect a captain who
-        // knows where they were going.
-        // Daylight §5.2: the canvas is the launch landing - it is the
-        // navigation, so landing anywhere else would hide it behind a back
-        // button on the first run of every session. GL-31's own exception
-        // stands unchanged: a machine with no firstmate home resolved lands on
-        // Setup instead, because a canvas of modules that can only report
-        // zeroes is worse than the page that fixes the cause.
-        if FirstmateHome.homeOk() {
-            show(.homeCanvas)
-        } else {
-            AppLog.lifecycle.info("firstmate home not configured - opening Setup instead of the home canvas")
-            show(.bootstrap)
-        }
-
-        // Added last (and therefore topmost in z-order) so it covers the
-        // rail as well as the body area - no fleet/secrets/hosts content, or
-        // the rail itself, should be visible or reachable while locked.
-        addChild(lockScreen)
-        root.addSubview(lockScreen.view)
-        lockScreen.view.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            lockScreen.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            lockScreen.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            lockScreen.view.topAnchor.constraint(equalTo: root.topAnchor),
-            lockScreen.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-        ])
-        lockScreen.view.isHidden = true
-        lockScreen.onAttempt = { typed, completion in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let ok = VaultSource.verifyAppPassword(typed)
-                DispatchQueue.main.async { completion(ok) }
-            }
-        }
-        // Fires only once the success animation has actually played out
-        // (see `LockScreenController.playUnlockSuccessAnimation`) - hiding
-        // the overlay from `onAttempt`'s own completion instead would cut
-        // that animation off before it's visible at all.
-        lockScreen.onUnlockAnimationFinished = { [weak self] in
-            self?.hideLock()
-            self?.onUnlocked?()
-        }
-        // **UX issue X1.** The local fallback, for the two states where
-        // Automic Vault cannot answer and the retry loop had nothing else
-        // to offer. `.deviceOwnerAuthentication` explicitly rather than the
-        // per-item reveal gate's biometrics-first choice: a Mac with no
-        // Touch ID still has a login password, and on this screen that is a
-        // wanted second door rather than a weakening.
-        //
-        // Off the main thread, because `evaluatePolicy` blocks behind a
-        // system panel (GL-25, and `LAContextFactory.evaluate`'s own
-        // `dispatchPrecondition` enforces it).
-        lockScreen.localAuthAvailable = { LAContextFactory.deviceOwnerAuthAvailable }
-        lockScreen.onLocalAuthAttempt = { completion in
-            let context = LAContextFactory.make(
-                reason: "unlock Grand Line while Automic Vault is unreachable")
-            DispatchQueue.global(qos: .userInitiated).async {
-                let allowed = LAContextFactory.evaluate(context, policy: .deviceOwnerAuthentication)
-                DispatchQueue.main.async { completion(allowed) }
-            }
-        }
-        // fm/grandline-vault-bootstrap-fix: "Install Automic Vault" on the
-        // `.avUnavailable` state - a plain Homebrew-cask install
-        // (`VaultSource.updateInstall()`, the same mechanism the
-        // Updates/Vault pages already use for this catalog entry), so it
-        // needs no prior unlock and is safe to trigger straight from here.
-        lockScreen.onInstallAutomicVault = { completion in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let outcome = VaultSource.updateInstall()
-                DispatchQueue.main.async {
-                    let message = outcome.ok
-                        ? "Installed. Set a password with \u{201c}av save GRANDLINE_APP_PASSWORD\u{201d}, then relaunch Grand Line."
-                        : "Install failed: \(outcome.detail)"
-                    completion(outcome.ok, message)
-                }
-            }
-        }
-    }
-
-    // MARK: App-level password lock (fm/grandline-app-lock)
-
-    /// Shows the lock overlay for `reason`, re-checking whether
-    /// `GRANDLINE_APP_PASSWORD` is actually configured in Automic Vault
-    /// (never cached - the captain could set it between one lock and the
-    /// next) before deciding which of the lock screen's two states to show.
-    func showLock(reason: AppLockReason) {
-        // Audit #2 §5.1(b): before `setLocked(true)` below, because a console
-        // page's incident card is an `NSPopover` and the gate's generic
-        // secondary-window sweep can only `orderOut` its window - which would
-        // leave `NSPopover.isShown` believing it is still up, so the next
-        // `showIncidentCard()` would skip its own `show()` and the card would
-        // never come back. Closing it properly first means that sweep finds
-        // nothing to do; the registration in `buildIncidentCard` stays as the
-        // backstop for any future path that opens one without coming through
-        // here.
-        forEachConsole { $0.closeLockSensitiveSurfaces() }
-        // `fm/implement-grand-line-secrets-vault-poneg-ad`: the credential
-        // vault's own gate is independent of this one (the captain's decision:
-        // two separate passwords), but the app locking means he has walked
-        // away - so an unlocked vault behind the overlay must not still be
-        // unlocked when he comes back. This is a *view-side* re-lock rather
-        // than an `AppLockedSurface` case: the vault page (now `poneglyph`,
-        // labeled "Poneglyph" - see `VaultController.swift`'s header for why)
-        // is a subview of this window, so the overlay already blocks reaching
-        // it; what has to happen is dropping the derived key and every
-        // decrypted value from memory.
-        //
-        // PERF-01: this runs at launch (the `.launch` lock), so it only builds
-        // the page when there is something to drop - the page exists, or the
-        // vault's one store is open without it (an App Intent can do that).
-        if isBuilt(.poneglyph) || credentialVaultStore.isUnlocked {
-            poneglyph.lockForAppLock()
-        }
-        lockScreen.view.isHidden = false
-        // E4: re-add what `hideLock` removed. A re-lock does not necessarily
-        // re-lay-out an already-sized overlay, so this cannot be left to
-        // `viewDidLayout`'s own call.
-        lockScreen.restartAnimationsIfNeeded()
-        // GL-09: the overlay only covers this window. Everything that lives
-        // outside it - the menu-bar status item, ⌥Space quick capture, the
-        // dictation hotkey, an already-open Host Editor - consults
-        // `AppLockGate`, and this is the one place it is set. Set *before*
-        // anything else in this method, so there is no window in which the
-        // overlay is up but a global hotkey still fires.
-        AppLockGate.shared.setLocked(true)
-        onLockStateChanged?(true)
-        // `fm/grandline-lock-and-rail-fixes` used this moment to make the
-        // rail's sailboat mark inert. The rail is gone (Daylight §5.1) and the
-        // bar's logo tile is a static gradient with no animation to stop, so
-        // there is nothing left to do here - the lock overlay covers the whole
-        // window including the bar, which was always the real guarantee.
-        // Optimistic default so the overlay never shows a blank subtitle for
-        // the fraction of a second the background `av list` check takes -
-        // corrected below once that check actually resolves.
-        let optimisticSubtitle = reason == .sessionExpired
-            ? "Your session expired - please log in again."
-            : "Grand Line is locked."
-        lockScreen.apply(.locked(subtitle: optimisticSubtitle))
-        lockScreen.focusPasswordField()
-        // fm/grandline-vault-bootstrap-fix: proactively try to start Automic
-        // Vault's own background approval service before the very first
-        // check - avoids ever hitting the "service not running" state below
-        // on an ordinary launch where the captain just hasn't opened the
-        // menu-bar app yet (e.g. right after a reboot). Fire-and-forget on
-        // the same background queue as the check that follows.
-        DispatchQueue.global(qos: .userInitiated).async {
-            VaultSource.ensureServiceRunning()
-        }
-        // A new lock screen always gets the fast first retry, whatever the
-        // previous one ended on.
-        appPasswordRetryAttempt = 0
-        checkAppPasswordAvailability(reason: reason)
-    }
-
-    /// Re-checks `VaultSource.checkAppPasswordConfigured()` and updates the
-    /// lock screen's content state. When the service genuinely isn't running
-    /// yet (`.serviceNotRunning`), retries on a short timer rather than
-    /// immediately settling on a message - `ensureServiceRunning()` above
-    /// usually resolves this before the first attempt even lands; this is
-    /// the fallback for a slower start (e.g. right after a reboot).
-    private func checkAppPasswordAvailability(reason: AppLockReason) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let availability = VaultSource.checkAppPasswordConfigured()
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.applyPasswordAvailability(availability, reason: reason)
-            }
-        }
-    }
-
-    private func applyPasswordAvailability(_ availability: VaultSource.AppPasswordAvailability, reason: AppLockReason) {
-        switch availability {
-        case .configured:
-            // A settled outcome ends the retry sequence, so the next lock that
-            // does need one starts back at `appPasswordRetryBaseDelay`.
-            appPasswordRetryAttempt = 0
-            let subtitle = reason == .sessionExpired
-                ? "Your session expired - please log in again."
-                : "Grand Line is locked."
-            lockScreen.apply(.locked(subtitle: subtitle))
-            lockScreen.focusPasswordField()
-        case .notConfigured:
-            appPasswordRetryAttempt = 0
-            lockScreen.apply(.noPasswordConfigured)
-            lockScreen.focusPasswordField()
-        case .avUnavailable:
-            appPasswordRetryAttempt = 0
-            lockScreen.apply(.avUnavailable)
-        case .serviceNotRunning:
-            lockScreen.apply(.serviceNotRunning)
-            scheduleAppPasswordAvailabilityRetry(reason: reason)
-        case .transientFailure:
-            // Any `av list` failure/timeout that isn't the specific
-            // `.serviceNotRunning` marker text (fm/grandline-vault-wake-
-            // recheck-fix) - live-confirmed that a suspended/unresponsive
-            // approval helper (e.g. right after a long sleep/wake) can make
-            // `av list` fail or hang in a way that previously fell through
-            // to a hard, misleading `.avUnavailable` state with no retry at
-            // all, even though `av` is genuinely installed and the
-            // password secret genuinely exists. Retried on the same cadence
-            // as `.serviceNotRunning` below.
-            lockScreen.apply(.transientFailure)
-            scheduleAppPasswordAvailabilityRetry(reason: reason)
-        }
-    }
-
-    /// Retries while the lock screen is up, on a **backoff** - fast at first
-    /// so the ordinary "Automic Vault is still starting" case recovers within
-    /// a couple of seconds, then slower so a genuinely wedged approval service
-    /// is not hammered for the rest of the session.
-    ///
-    /// This used to be a flat 1.5s forever, on the reasoning that the retry is
-    /// "a cheap subprocess call, not a real cost". That reasoning was wrong in
-    /// a way nothing here could see: the call is `av list`, and `av list` is
-    /// the one `av` read that goes through Automic Vault's approval service -
-    /// every attempt is an approval-service round trip, and one that is
-    /// entitled to raise Automic Vault's own modal dialog. Measured, each `av
-    /// list` writes a row to Automic Vault's authorization log, so a lock
-    /// screen left up against an unresponsive helper was asking it ~2,400
-    /// times an hour. `VaultData.swift`'s "approval-prompt split" comment
-    /// block has the measurements.
-    ///
-    /// The backoff is deliberately not a give-up: the lock screen has nothing
-    /// else useful to show and the captain cannot get past it any other way,
-    /// so it keeps asking - just at `appPasswordRetryCeiling` rather than at 1.5s.
-    private func scheduleAppPasswordAvailabilityRetry(reason: AppLockReason) {
-        let delay = Self.appPasswordRetryDelay(attempt: appPasswordRetryAttempt)
-        appPasswordRetryAttempt += 1
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, !self.lockScreen.view.isHidden else { return }
-            self.checkAppPasswordAvailability(reason: reason)
-        }
-    }
-
-    /// How many consecutive retries the current lock screen has scheduled.
-    /// Reset by `applyPasswordAvailability` on any outcome that is not a
-    /// retryable one, and by `showLock`, so a fresh lock always starts fast.
-    private var appPasswordRetryAttempt = 0
-
-    /// The first delay, and the one the ordinary "the helper is still coming
-    /// up" case is answered at.
-    static let appPasswordRetryBaseDelay: TimeInterval = 1.5
-
-    /// The slowest this ever gets. Chosen so a captain who starts Automic
-    /// Vault by hand while staring at the lock screen still sees it clear
-    /// within a few seconds of doing so, rather than a minute later.
-    static let appPasswordRetryCeiling: TimeInterval = 15
-
-    /// Doubles from `appPasswordRetryBaseDelay` and stops at
-    /// `appPasswordRetryCeiling`: 1.5, 3, 6, 12, 15, 15, ... - so the first
-    /// four retries fire at 1.5s, 4.5s, 10.5s and 22.5s, i.e. all inside the
-    /// first 23 seconds, which is the window the flat 1.5s cadence actually
-    /// existed for.
-    ///
-    /// `static` and pure so a suite can assert the schedule without a window,
-    /// a lock screen or an `av` on PATH.
-    static func appPasswordRetryDelay(attempt: Int) -> TimeInterval {
-        guard attempt > 0 else { return appPasswordRetryBaseDelay }
-        let scaled = appPasswordRetryBaseDelay * pow(2, Double(min(attempt, 16)))
-        return min(scaled, appPasswordRetryCeiling)
-    }
-
-    private func hideLock() {
-        lockScreen.view.isHidden = true
-        // E4: the scene's three infinite animations used to stay attached to
-        // hidden layers for the rest of the session. `isHidden` alone does not
-        // stop a `CAAnimation`.
-        lockScreen.stopAnimations()
-        AppLockGate.shared.setLocked(false)
-        onLockStateChanged?(false)
-        // Audit #2 §5.1: after `setLocked(false)`, so the work each console
-        // replays actually passes its own gate. Only a page that appeared
-        // while locked has anything owed - see
-        // `ConsoleController.appearanceWorkDeferredByLock`.
-        forEachConsole { $0.resumeAfterUnlock() }
-    }
-
-    /// Compact mode's own escape hatch (F22, the menu-bar-only shape): the
-    /// same password check `lockScreen.onAttempt` runs, and on success the
-    /// same unlock transition `onUnlockAnimationFinished` runs, minus the
-    /// lock screen's own boat-and-wave flourish - a 330pt popover has no room
-    /// to play it, and the check itself is the thing that must not be
-    /// re-derived a second time (this app's "one component, not N copies"
-    /// convention, applied to a verification rather than a view).
-    ///
-    /// Before this, `CompactModeController.iconClicked()` refused the popover
-    /// outright whenever the app was locked - which, since every launch locks
-    /// immediately, meant a captain who had compact mode already enabled from
-    /// a previous session had no way back in at all: no popover, no lock
-    /// screen, nothing but a beep. This is that escape hatch, reachable from
-    /// the menu bar alone with no other window ever appearing.
-    func attemptUnlockFromCompactMode(password: String, completion: @escaping (Bool) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let ok = VaultSource.verifyAppPassword(password)
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { completion(false); return }
-                if ok {
-                    self.hideLock()
-                    self.onUnlocked?()
-                }
-                completion(ok)
-            }
-        }
-    }
-
-    /// The shared Firstmate console plus every dedicated host page, in one
-    /// place, so a lock-state change reaches all of them without either half
-    /// being forgotten.
-    ///
-    /// A push from here rather than each console registering with
-    /// `AppLockGate.observe`: that API has no unregister, and a per-host
-    /// `ConsoleController` is deallocated when its host is deleted - the same
-    /// dead-closure leak this app already keeps theme/font observation
-    /// *tokens* to avoid.
-    private func forEachConsole(_ body: (ConsoleController) -> Void) {
-        body(console)
-        for controller in hostConsoles.values { body(controller) }
-    }
-
-    /// Open `command` as a new tab in the shared Firstmate console and bring
-    /// Console forward, so its output (and any `sudo` prompt) is visible
-    /// immediately - the one path every Bootstrap-page action that can invoke
-    /// `darwin-rebuild switch` uses (`bootstrap.sh`, `rebuild.sh`, the initial
-    /// clone).
-    func runInConsole(label: String, command: String, completion: ((Bool) -> Void)? = nil) {
-        console.openCommandTab(label: label, command: command) { exitCode in completion?(exitCode == 0) }
-        show(.console)
-    }
-
-    /// Pin a destination view to fill `bodyContainer` below the top bar -
-    /// the same anchors every fixed destination and every host page use.
-    private func embed(_ destinationView: NSView) {
-        destinationView.translatesAutoresizingMaskIntoConstraints = false
-        bodyContainer.addSubview(destinationView)
-        let pins = [
-            destinationView.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
-            destinationView.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
-            // A2: the drill header no longer sits between the bar and the
-            // page, so a destination starts at the body container's own top.
-            destinationView.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
-            destinationView.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
-        ]
-        NSLayoutConstraint.activate(pins)
-        destinationPins[ObjectIdentifier(destinationView)] = pins
-    }
-
-    /// The four pins `embed` put on each destination view, so
-    /// `setDestinationVisible` can take a hidden page out of the window's
-    /// constraint graph without taking it out of the view hierarchy.
-    private var destinationPins: [ObjectIdentifier: [NSLayoutConstraint]] = [:]
-
-    /// Show or hide one destination, and attach or detach it from the
-    /// window's constraint graph to match (full review #3's PF1).
-    ///
-    /// ## Why this is not just `isHidden`
-    ///
-    /// **A hidden `NSView` still participates fully in Auto Layout** -
-    /// AGENTS.md gotcha (11) says so in the other direction, and it is what
-    /// makes GL-37's "mounted, only ever hidden" expensive rather than free.
-    /// Every mounted destination is pinned to `bodyContainer`, so all ~27 of
-    /// them are one required-constraint chain inside the window, and AppKit
-    /// walks that entire chain every time it has to re-derive
-    /// `minFullScreenContentSize` for a full-screen-capable window.
-    ///
-    /// Measured with a standalone stock-AppKit probe (5s `sample` at 1ms,
-    /// main-thread samples in
-    /// `_doUpdateTilingConstraintsImmediately -> minFullScreenContentSize ->
-    /// NSISEngine`), one mounted-destination count per row, with a label's
-    /// text changing 20x/second as the invalidation source:
-    ///
-    ///     1 mounted     16 samples    0.4% of the main thread
-    ///     3 mounted    134            3.1%
-    ///     7 mounted    357            8.3%
-    ///    14 mounted    973           22.7%
-    ///    27 mounted   1877           43.4%
-    ///
-    /// Near-linear in the number of mounted destinations, and the captain's
-    /// own running instance measured 1090 samples (26.8% of its main thread,
-    /// 76% of everything it was doing other than blocking) - squarely on that
-    /// curve. A settled graph of any size costs **zero**: this is not stock
-    /// AppKit idle work, it is the re-solve that any invalidation triggers.
-    ///
-    /// Deactivating a hidden page's four pins leaves its subtree with no
-    /// required path to the window, so the derivation skips it. Same probe,
-    /// 27 mounted, same 20Hz invalidation: **1777 samples -> 34**, i.e.
-    /// 41.2% of the main thread -> 0.8%.
-    ///
-    /// ## What this deliberately does not do
-    ///
-    /// Nothing is torn down. GL-37's "a mounted slot is only ever hidden,
-    /// never torn down" holds exactly as before - the controller, its view
-    /// hierarchy, its scroll position, its in-flight fetches and any live ssh
-    /// session are all untouched. This changes only whether a *hidden* page's
-    /// geometry is something Auto Layout still has to solve for, which by
-    /// definition nothing can observe while it is hidden. Unmounting cold
-    /// destinations - GL-37's other half, and what the review reached for -
-    /// would buy the same thing and cost a great deal more.
-    private func setDestinationVisible(_ destinationView: NSView, _ visible: Bool) {
-        guard let pins = destinationPins[ObjectIdentifier(destinationView)] else {
-            // A view this controller did not embed. Honour the visibility
-            // change rather than silently ignoring it - the detach is an
-            // optimisation, and it must never be the reason a page fails to
-            // appear.
-            destinationView.isHidden = !visible
-            return
-        }
-        if visible {
-            // Re-pin *before* unhiding, so the page is never on screen for a
-            // pass with no constraints tying it to the container - which is
-            // the one way this could read as a layout bug rather than as a
-            // saving.
-            for pin in pins where !pin.isActive { pin.isActive = true }
-            // And lay the page out at the container's *current* size before
-            // it is shown. Unhiding is what makes AppKit send the page its
-            // `viewWillAppear`, synchronously, and a page whose pins were
-            // only just re-activated still holds the frame it had when it
-            // was hidden. Home's `viewWillAppear` rebuilds its grid from its
-            // own clip width, so after a resize on another page it built the
-            // grid for the old width and nothing rebuilt it: the polish
-            // report's B1, measured as a Morning briefing column at maxX
-            // 1488 in an 1100pt window. The page itself, not the container,
-            // so the other mounted pages are not laid out for nothing.
-            destinationView.layoutSubtreeIfNeeded()
-            destinationView.isHidden = false
-            destinationView.needsLayout = true
-        } else {
-            destinationView.isHidden = true
-            for pin in pins where pin.isActive { pin.isActive = false }
-        }
+        // Added last (and therefore topmost in z-order) so it covers the bar
+        // as well as the body area - see `LockPresenter.install`.
+        workspace.lock.install(in: self, over: root)
     }
 
     /// `fm/grandline-live-gap-rootcause-scout`: re-derives `bodyContainer`'s
@@ -2075,7 +635,7 @@ final class AppShellController: NSViewController {
     /// recurrence is then attributable from the log alone rather than needing
     /// a render sweep to work out where 973.5 came from.
     private func showingDestinationWidthIsStale() -> Bool {
-        guard let destination = visibleDestinationView() else { return false }
+        guard let destination = workspace.content.visibleDestinationView() else { return false }
         let expected = bodyContainer.bounds.width
         guard expected > 0, destination.frame.width > 0 else { return false }
         guard abs(destination.frame.width - expected) > 0.5 else { return false }
@@ -2156,12 +716,12 @@ final class AppShellController: NSViewController {
     var destinationLayoutAttachmentForTests: (attached: Int, showing: Int, embedded: Int) {
         var attached = 0
         var showing = 0
-        for (key, pins) in destinationPins {
+        for (key, pins) in workspace.content.destinationPins {
             guard let view = bodyContainer.subviews.first(where: { ObjectIdentifier($0) == key }) else { continue }
             if pins.contains(where: { $0.isActive }) { attached += 1 }
             if !view.isHidden { showing += 1 }
         }
-        return (attached, showing, destinationPins.count)
+        return (attached, showing, workspace.content.destinationPins.count)
     }
 
     // MARK: Session-switcher probe surface (`fm/grandline-session-switcher`)
@@ -2175,7 +735,7 @@ final class AppShellController: NSViewController {
     /// height plus its gap when the strip is showing, which is the half of
     /// this that a plain `isHidden` check cannot see (AGENTS.md gotcha (11)).
     var bodyTopInsetForTests: CGFloat { bodyTopConstraint.constant }
-    var activeHostIDForTests: UUID? { activeHostID }
+    var activeHostIDForTests: UUID? { workspace.navigator.activeHostID }
 
     // MARK: Recents probe surface (`fm/grandline-recents-navigation`)
 
@@ -2187,7 +747,7 @@ final class AppShellController: NSViewController {
     /// a real entry in `hostConsoles`.
     /// F2: the restored page for a host, so a self-test can assert it exists
     /// and - the property that matters - has not started its `ssh`.
-    func debugHostConsole(id: UUID) -> ConsoleController? { hostConsoles[id] }
+    func debugHostConsole(id: UUID) -> ConsoleController? { workspace.hosts.hostConsoles[id] }
 
     /// The shared Firstmate console, so audit 2 §4.1's own case can drive the
     /// real `restoreTabs(from:)` launch path and then read the tabs that
@@ -2198,7 +758,7 @@ final class AppShellController: NSViewController {
     /// that a `debug*` hook living in a production file keeps shipping unless
     /// it says otherwise, so a *new* one is compiled into debug builds only.
     #if FM_SELFTESTS
-    var debugConsole: ConsoleController { console }
+    var debugConsole: ConsoleController { workspace.console }
 
     /// Which destination is showing, in the same terms `show(_:)` takes.
     ///
@@ -2207,51 +767,52 @@ final class AppShellController: NSViewController {
     /// a second notion of "what is on screen", which is how those three would
     /// start disagreeing.
     var debugCurrentDestination: RailDestination? {
-        guard case .rail(let dest)? = currentDestinationKind else { return nil }
+        guard case .rail(let dest)? = workspace.navigator.currentDestinationKind else { return nil }
         return dest
     }
 
     /// Which host page is showing, or nil. Straw Hat phase 3's handoff suite
     /// asserts a refusal *did not* switch, which needs the nil case.
-    var debugActiveHostID: UUID? { activeHostID }
+    var debugActiveHostID: UUID? { workspace.navigator.activeHostID }
 
     /// The Whiteboard destination, so the crew's "draw it out" handoff can be
     /// asserted against that page's own composer rather than against a copy
     /// of the prefill this suite passed in.
-    var debugWhiteboard: WhiteboardController { whiteboard }
+    var debugWhiteboard: WhiteboardController { workspace.whiteboard }
 
-    var debugBootstrap: BootstrapController { bootstrap }
+    var debugBootstrap: BootstrapController { workspace.bootstrap }
 
     /// The Home page and the Tasks page, for `ReviewTourLab`'s `demo home`
     /// and `tasks <view>` verbs - so a tour can render both pages in the
     /// state the captain sees rather than in their first paint.
-    var debugHomeCanvas: HomeCanvasController { homeCanvas }
-    var debugSchedules: SchedulesController { schedules }
+    var debugHomeCanvas: HomeCanvasController { workspace.homeCanvas }
+    var debugSchedules: SchedulesController { workspace.schedules }
     /// P9: a destination's mounted controller, for `SplitSidebarSelfTest`.
-    func debugSlotController(_ dest: RailDestination) -> NSViewController? { mounter.slot(for: dest.slot)?.controller }
-    var debugShift: ShiftController { shift }
+    func debugSlotController(_ dest: RailDestination) -> NSViewController? { workspace.content.mounter.slot(for: dest.slot)?.controller }
+    var debugShift: ShiftController { workspace.shift }
     /// The Fleet page, for the tour lab's `demo decision` and `fleet reply`.
-    var debugOverview: FleetController { overview }
+    var debugOverview: FleetController { workspace.overview }
     #endif
 
+    #if FM_SELFTESTS
+    /// Compiled into debug builds only since stage 2 moved the seeding into
+    /// `HostSessionCoordinator`, where it is guarded (GL-27).
     func debugSeedHostConsole(_ controller: ConsoleController, hostID: UUID) {
-        hostConsoles[hostID] = controller
-        addChild(controller)
-        embed(controller.view)
-        setDestinationVisible(controller.view, false)
+        workspace.hosts.debugSeedHostConsole(controller, hostID: hostID)
     }
+    #endif
 
     /// The set the Home canvas's own "N live sessions" reads, resolved through
     /// the real closure (audit 2 §4.6). A test that rebuilt the predicate
     /// would be asserting its own copy rather than the shipped one.
-    func debugConnectedHostIDs() -> Set<UUID> { homeCanvas.connectedHostIDs?() ?? [] }
+    func debugConnectedHostIDs() -> Set<UUID> { workspace.homeCanvas.connectedHostIDs?() ?? [] }
 
     /// Drives the real Recents click handler (finding 4.3), which is
     /// `private` because the bar's own popover is its only production caller.
     /// A test that reimplemented its switch-vs-reconnect decision would be
     /// asserting its own copy of the logic rather than the shipped one.
     func debugNavigateToRecent(_ kind: RecentDestinationKind) {
-        navigateToRecentDestination(kind)
+        workspace.navigator.navigateToRecentDestination(kind)
     }
 
     /// Simulates the exact failure this task's scout report captured live:
@@ -2296,7 +857,7 @@ final class AppShellController: NSViewController {
     /// exposed so a suite can read the same number the repair reads rather
     /// than re-deriving which view is showing.
     var showingDestinationWidthForTests: CGFloat? {
-        visibleDestinationView()?.frame.width
+        workspace.content.visibleDestinationView()?.frame.width
     }
 
     /// What `showingDestinationWidthIsStale()` currently answers.
@@ -2312,7 +873,7 @@ final class AppShellController: NSViewController {
     /// neither of the other two comparisons could see it - both of their own
     /// operands were correct throughout.
     func debugShrinkShowingDestinationForTests(to width: CGFloat) {
-        guard let destination = visibleDestinationView() else { return }
+        guard let destination = workspace.content.visibleDestinationView() else { return }
         var frame = destination.frame
         frame.size.width = width
         destination.frame = frame
@@ -2323,7 +884,7 @@ final class AppShellController: NSViewController {
     /// at launch, grows by one on a first visit, and does not grow again on
     /// a revisit.
     var mountedDestinationSlotsForTests: [DestinationSlotID] {
-        mounter.mountedSlots.map(\.id)
+        workspace.content.mounter.mountedSlots.map(\.id)
     }
 
     /// Daylight Phase 2: the hub and the drill header, so
@@ -2333,14 +894,14 @@ final class AppShellController: NSViewController {
     /// PERF-01: which lazy destinations have been *constructed* - a wider
     /// question than `mountedDestinationSlotsForTests`, because a page can be
     /// built without being mounted (a reach-in that forgot `isBuilt`).
-    var builtLazyDestinationsForTests: Set<DestinationSlotID> { builtDestinations }
-    var homeCanvasForTests: HomeCanvasController { homeCanvas }
+    var builtLazyDestinationsForTests: Set<DestinationSlotID> { workspace.builtDestinations }
+    var homeCanvasForTests: HomeCanvasController { workspace.homeCanvas }
     /// `fm/grandline-engineering-cards-stale-counts`: the two detail pages
     /// whose own state the Engineering hub's cards summarise, so
     /// `SummaryFreshnessSelfTest` can drive the real page and read the real
     /// card rather than standing either of them in.
-    var updatesForTests: UpdatesController { updates }
-    var githubSyncForTests: GitHubSyncController { githubSync }
+    var updatesForTests: UpdatesController { workspace.updates }
+    var githubSyncForTests: GitHubSyncController { workspace.githubSync }
     /// A2: the drill cluster lives in the bar now. These keep their names so
     /// the suites that already read them still read the same *fact* - which
     /// destination the chrome is naming, and whether it is showing at all -
@@ -2360,7 +921,7 @@ final class AppShellController: NSViewController {
     /// sidebar - `fm/grandline-settings-page-sidebar-redesign` made the page
     /// master/detail, and which pane is showing decides how tall its
     /// document is.
-    var settingsForTests: SettingsController { settings }
+    var settingsForTests: SettingsController { workspace.settings }
     /// The bar itself, for a check on its own controls (UXP-01's search
     /// pill floor) under a drill context the suite chooses.
     var barForTests: DaylightBarController { bar }
@@ -2371,210 +932,8 @@ final class AppShellController: NSViewController {
     /// deliberately, so a test cannot accidentally build the thing it is
     /// asserting stays unbuilt.
     func destinationViewIfMountedForTests(_ id: DestinationSlotID) -> NSView? {
-        guard let slot = mounter.slot(for: id), slot.isMounted else { return nil }
+        guard let slot = workspace.content.mounter.slot(for: id), slot.isMounted else { return nil }
         return slot.controller.view
-    }
-
-    // MARK: Destination switching
-
-    /// Internal (not `private`): the app delegate also calls this directly
-    /// after connecting the Firstmate console, so the new tab is visible
-    /// immediately instead of landing silently in the background.
-    func show(_ dest: RailDestination) {
-        // B4 (UI modernization audit §3B): the report asks for the transition
-        // to be "skipped when the destination is already visible", and this is
-        // the only point where that is still knowable - `hideAllDestinations()`
-        // one line down erases it.
-        let wasAlreadyShowing = currentDestinationKind == .rail(dest)
-        crossfadeOutgoingPage(unless: wasAlreadyShowing)
-        hideAllDestinations()
-
-        // GL-37: one table lookup replaces the fifteen-case switch this used
-        // to be (and the matching line-per-destination in
-        // `hideAllDestinations`). The slot is mounted here if this is its
-        // first visit - see `DestinationRegistry.swift`.
-        guard let slot = mounter.show(dest.slot) else { return }
-
-        // `fm/grandline-recents-navigation`: records whatever was showing a
-        // moment ago and removes `dest` itself from the list - see
-        // `RecentDestinations`'s own recording method's doc comment for why a
-        // captain never sees "where I already am" in the dropdown.
-        updateRecentDestinations(arriving: .rail(dest))
-
-        applyDrillHeader(title: slot.title,
-                         subtitle: dest.drillSubtitle,
-                         symbol: dest.symbol,
-                         hue: dest.domainHue,
-                         artwork: dest.drillHeaderArtwork,
-                         isTopLevel: slot.id == .homeCanvas,
-                         slotController: slot.controller)
-
-        // A3: re-point the scroll-edge observer at what is now showing.
-        // After `mounter.show` the slot's view exists but may not have been
-        // laid out yet, and the observer's own test is geometric, so this
-        // waits for the layout pass the navigation just scheduled.
-        retargetScrollEdge(to: slot.controller.view)
-
-        // B5 (`data/grand-line-e2e-audit/report.md`): keep the bar's selected
-        // space honest on **every** navigation, not only a pill click.
-        //
-        // `selectSpace` was the one place that called `setSelectedSpace`, so
-        // reaching a page any other way - ⌘K, a notification's deep link, a
-        // canvas module card, a menu item - left the previously selected pill
-        // lit while showing a page that belongs to a different space. The
-        // audit's own walk caught it: every drill-page render showed
-        // "Engineering" highlighted, including Schedules and Health (which are
-        // `.operations`) and Tasks (`.command`). A highlight that asserts the
-        // wrong location is worse than none.
-        //
-        // Derived from the module table (`DaylightModule.space(forDestination:)`),
-        // never a second copy of that mapping. A destination no module opens,
-        // and the canvas itself, leave the pills alone - the canvas's space is
-        // whatever the captain last chose, which `selectSpace` still owns.
-
-        if let space = DaylightModule.space(forDestination: dest) {
-            bar.setSelectedSpace(space)
-        } else if dest == .homeCanvas {
-            // M1: `space(forDestination:)` returns nil for the canvas itself,
-            // and both the drill-header back button and `showHomeCanvas()`
-            // reach it through `show(_:)` rather than `selectSpace`. Without
-            // this the pill kept asserting the drill page's space while the
-            // canvas rendered the space the captain last chose - B5's own
-            // failure ("a highlight that asserts the wrong location is worse
-            // than none") one navigation later. The canvas owns that state, so
-            // this reads it rather than keeping a second copy.
-            bar.setSelectedSpace(homeCanvas.selectedSpace)
-        }
-
-        // B2: the bar's lit shortcut is pushed from `updateRecentDestinations`
-        // a few lines up, the one call every navigation route makes - not
-        // from here, which the SRE Lead reply-jump bypasses.
-
-        // B4: the page arrives rather than teleporting. Nothing above this
-        // line knows or cares that it animates; see `animateDestinationEntrance`.
-        animateDestinationEntrance(slot.controller.view,
-                                   direction: dest == .homeCanvas ? .back : .drillIn,
-                                   skip: wasAlreadyShowing)
-
-        // §8 Phase 6: which destination is showing decides where the bar's
-        // chain hands off, so the loop is re-derived on every navigation.
-        updateKeyViewLoop()
-    }
-
-    // MARK: B4 - the navigation transition
-
-    /// Which way a navigation reads, and therefore which way the incoming page
-    /// slides in from.
-    enum TransitionDirection {
-        /// Going deeper: the page enters from the trailing side and settles
-        /// leftward, the way a push reads.
-        case drillIn
-        /// Coming back out to the hub: the mirror image.
-        case back
-
-        var entryOffset: CGFloat {
-            switch self {
-            case .drillIn: return AppShellController.destinationTransitionOffset
-            case .back: return -AppShellController.destinationTransitionOffset
-            }
-        }
-    }
-
-    /// §3B B4's spec, measured from its own text: "a 150-200ms crossfade + 8-12pt
-    /// slide".
-    static let destinationTransitionDuration: TimeInterval = HelmMotion.moveDuration
-    static let destinationTransitionOffset: CGFloat = 10
-
-    #if FM_SELFTESTS
-    /// What the last navigation decided. The *decision* (which direction, and
-    /// whether it was skipped) is not otherwise observable once the animation
-    /// has settled, and "was this skipped?" is exactly what B4's own text asks
-    /// to be true - so it is recorded rather than inferred from a frame read
-    /// that would be identical either way a moment later.
-    /// `entryOffset` is what was actually applied, not what the direction
-    /// *would* give: a frame read cannot answer this, because
-    /// `NSAnimationContext.runAnimationGroup`'s body runs synchronously, so
-    /// the model transform is already back at identity by the time this method
-    /// returns. The animation's own existence on the layer is what the suite
-    /// checks alongside this.
-    private(set) var lastTransitionForTests: (direction: TransitionDirection, skipped: Bool,
-                                              reducedMotion: Bool, entryOffset: CGFloat)?
-    #endif
-
-    /// B4: fade and slide a freshly-shown destination in.
-    ///
-    /// **What the report asks for, and the one place this deviates.** §3B B4
-    /// describes "outgoing view fades to 0 / incoming from 0". This animates
-    /// the incoming page only, and hides the outgoing one immediately exactly
-    /// as `hideAllDestinations()` always did. The reason is not effort: three
-    /// things in this shell ask "which destination is on screen?" by looking
-    /// for the one mounted view that is not hidden -
-    /// `visibleDestinationView()` (which feeds `firstBodyKeyView()` and
-    /// therefore the whole key view loop, and which returns the *first* match),
-    /// plus accessibility and hit-testing. Keeping a second destination
-    /// visible for 180ms makes all three temporarily answer wrong, and the
-    /// alternative - snapshotting the outgoing page into a throwaway layer -
-    /// puts a full-page `cacheDisplay` on the main thread on every single
-    /// navigation, which is precisely the class of cost the same audit's §3
-    /// energy work went looking for. Both pages are opaque and cover the same
-    /// rect, so a true crossfade would render them muddled through each other
-    /// for those 180ms rather than reading cleaner; a page fading and sliding
-    /// in over the app's own ground is the motion the finding describes,
-    /// minus a double render.
-    ///
-    /// Gated through `HelmMotion`, which per its own rule means the end state
-    /// *instantly* - never the same motion, slower.
-    private func animateDestinationEntrance(_ destinationView: NSView,
-                                            direction: TransitionDirection,
-                                            skip: Bool) {
-        // A navigation to the page already showing is not a navigation. It
-        // still re-runs everything else `show(_:)` does (a Setup tab switch, a
-        // drill-header refresh), it just does not re-announce itself.
-        #if FM_SELFTESTS
-        lastTransitionForTests = (direction: direction, skipped: skip,
-                                  reducedMotion: HelmMotion.isReduced,
-                                  entryOffset: skip || HelmMotion.isReduced ? 0 : direction.entryOffset)
-        #endif
-        guard !skip else {
-            destinationView.alphaValue = 1
-            destinationView.layer?.transform = CATransform3DIdentity
-            return
-        }
-        guard !HelmMotion.isReduced else {
-            destinationView.alphaValue = 1
-            destinationView.layer?.transform = CATransform3DIdentity
-            return
-        }
-
-        // Snap to the entry state. `CATransaction` with actions disabled,
-        // because a view-backed layer's `transform` would otherwise pick up
-        // Core Animation's default implicit animation and slide *into* the
-        // start position (`HelmMotion.withoutImplicitAnimation` is the same
-        // mechanism, but it is deliberately Reduce-Motion-gated and this has
-        // to happen in both states).
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        destinationView.alphaValue = 0
-        destinationView.layer?.transform = CATransform3DMakeTranslation(direction.entryOffset, 0, 0)
-        CATransaction.commit()
-
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.destinationTransitionDuration
-            // One ease-out, which is the audit's §3L motion spec's own second
-            // curve ("one spring ... and one ease-out (0.15s) as the only two
-            // curves"). A spring belongs on a gesture-driven or interruptible
-            // move; a 180pt-per-second settle into place does not need one.
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            destinationView.animator().alphaValue = 1
-            // The slide is a *layer* property, which `allowsImplicitAnimation`
-            // does not animate on a view-backed layer (measured, P1 of the
-            // polish report): it used to land in one frame while only the
-            // fade ran. `animateLayers` attaches the travel explicitly.
-            HelmMotion.animateLayers(duration: Self.destinationTransitionDuration,
-                                     on: [destinationView.layer]) {
-                destinationView.layer?.transform = CATransform3DIdentity
-            }
-        }
     }
 
     // MARK: Key view loop (Daylight section 8, Phase 6)
@@ -2646,7 +1005,7 @@ final class AppShellController: NSViewController {
     /// head of `bar.keyViewChain` now rather than the first thing below it -
     /// which is the same reading order it always had, one row up.
     private func firstBodyKeyView() -> NSView? {
-        guard let body = visibleDestinationView() else { return nil }
+        guard let body = workspace.content.visibleDestinationView() else { return nil }
         return Self.firstKeyView(in: body)
     }
 
@@ -2662,17 +1021,6 @@ final class AppShellController: NSViewController {
     private func retargetScrollEdge(to destinationView: NSView?) {
         destinationView?.layoutSubtreeIfNeeded()
         scrollEdge.observe(destination: destinationView)
-    }
-
-    private func visibleDestinationView() -> NSView? {
-        for slot in mounter.mountedSlots where !slot.controller.view.isHidden {
-            return slot.controller.view
-        }
-        for controller in hostConsoles.values
-        where controller.isViewLoaded && !controller.view.isHidden {
-            return controller.view
-        }
-        return nil
     }
 
     /// Depth-first, in subview order, for the first view that can actually
@@ -2773,13 +1121,13 @@ final class AppShellController: NSViewController {
     /// what a canvas is, and the canvas does not know how to navigate.
     func selectSpace(_ space: DaylightSpace) {
         bar.setSelectedSpace(space)
-        homeCanvas.select(space: space)
-        show(.homeCanvas)
+        workspace.homeCanvas.select(space: space)
+        workspace.navigator.show(.homeCanvas)
     }
 
     /// The canvas itself, for a caller that wants the hub without changing
     /// the space (the app delegate's launch landing).
-    @objc func showHomeCanvas() { show(.homeCanvas) }
+    @objc func showHomeCanvas() { workspace.navigator.show(.homeCanvas) }
 
     /// The Go menu's five space items (⌘1-⌘5) - UX4's "give ⌘1-⌘5 to the
     /// spaces (the original Daylight spec)".
@@ -2804,7 +1152,7 @@ final class AppShellController: NSViewController {
     @objc func selectDestinationFromMenu(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
               let destination = RailDestination(rawValue: raw) else { return }
-        show(destination)
+        workspace.navigator.show(destination)
     }
 
     // MARK: The configurable quick-access row and the all-destinations map (UX1/UX2)
@@ -2844,82 +1192,6 @@ final class AppShellController: NSViewController {
         AppSettings.shared.quickAccess.contains(destination)
     }
 
-    // MARK: Contextual ⌘N (UX4)
-
-    /// What ⌘N would create right now - the File menu re-reads this on every
-    /// open so the item's own title says which thing it means.
-    ///
-    /// `hostsPanel.currentTab` is consulted only for `.hosts`; see
-    /// `ContextualNewAction.forDestination`.
-    var contextualNewAction: ContextualNewAction {
-        guard case .rail(let destination)? = currentDestinationKind else {
-            // A host page is not a `RailDestination` at all. It is a console,
-            // and a console owns nothing creatable, so it takes the same
-            // universal-capture fallback every other such page takes.
-            return .task
-        }
-        return ContextualNewAction.forDestination(
-            destination,
-            hostsTab: destination == .hosts ? hostsPanel.currentTab : nil)
-    }
-
-    /// Perform whatever ⌘N means on the page that is showing.
-    ///
-    /// Every branch dispatches the *existing* menu action rather than
-    /// re-implementing the creation, which is the same rule
-    /// `UnifiedSearchActionProvider` follows: one way to create each thing, so
-    /// a fix to the sheet cannot miss an entry point.
-    @objc func newContextualItem() {
-        switch contextualNewAction {
-        case .task: newShiftTaskFromMenu()
-        case .host: newHostFromMenu()
-        case .sshKey: newKeyFromMenu()
-        case .snippet: newSnippetFromMenu()
-        case .stickyNote: newStickyNoteFromMenu()
-        case .codeSnippet: newCodeSnippetFromMenu()
-        case .credential: newCredentialFromMenu()
-        case .schedule: newScheduleFromMenu()
-        case .command: newCommandFromMenu()
-        case .runbook: newRunbookFromMenu()
-        case .notebookPage: newNotebookPageFromMenu()
-        case .savedLink: newSavedLinkFromMenu()
-        }
-    }
-
-    /// The five creation verbs UX4 found with no shortcut and no menu item at
-    /// all. Each follows the established shape - select the destination first
-    /// so the sheet has something to present over, then act on it - so they
-    /// work from wherever the captain happened to be.
-    /// F1's own creation verb, following the established shape: select the
-    /// destination first so the page exists, then act on it.
-    /// F4's own creation verb, the same shape as every other one here: select
-    /// the destination first so the page exists, then act on it.
-    @objc func newSavedLinkFromMenu() {
-        show(.readingList)
-        readingList.newLinkFromMenu()
-    }
-
-    @objc func newNotebookPageFromMenu() {
-        show(.notebook)
-        notebook.newPageFromMenu()
-    }
-
-    @objc func newStickyNoteFromMenu() {
-        show(.stickyBoard)
-        stickyBoard.addNoteFromMenu()
-    }
-
-    /// UX10's "Make a task" promotion. The board raises a note; this navigates
-    /// to Tasks and opens the editor already filled in.
-    ///
-    /// Wired here rather than on the board because this controller is the one
-    /// place that holds both destinations - the same forward-don't-own shape
-    /// every other cross-destination action in this app uses.
-    private func makeTaskFromStickyNote(_ note: StickyNote) {
-        show(.shift)
-        shift.presentTaskEditor(prefilledFrom: note)
-    }
-
     // MARK: Clipboard history (F3)
 
     /// ⌘⇧V. The panel and its store live on the bar (see
@@ -2946,950 +1218,6 @@ final class AppShellController: NSViewController {
         }
     }
 
-    // MARK: Universal capture (F2)
-
-    /// The five writes ⌥Space's router reaches, bound to the stores this
-    /// controller already owns.
-    ///
-    /// **Why the panel does not own any of this.** GL-23: `CredentialVaultStore`
-    /// and `StickyBoardStore` cache, so a second instance is a second source
-    /// of truth, and this controller is the one place all five destinations
-    /// are already in scope. The same "forward, never own" shape
-    /// `RecentDestinationsController.configure` uses, for the same reason.
-    ///
-    /// **Four of the five file silently; ⌘4 hands off, on purpose.** A
-    /// captured credential is a *secret* with no title, category or location,
-    /// and the vault may well be locked when ⌥Space fires (a locked
-    /// `CredentialVaultStore.add` refuses outright). So ⌘4 navigates to
-    /// Poneglyph and opens its own Add sheet with the secret already filled -
-    /// the same "select the destination first, then act on it" shape every
-    /// creation verb above uses, and the one destination where a silent write
-    /// would be the wrong answer even if it were possible.
-    func makeCaptureFiler() -> CaptureFiler {
-        CaptureFiler { [weak self] destination, draft in
-            guard let self else { return .refused("The app shell went away.") }
-            return self.fileCapture(destination, draft)
-        }
-    }
-
-    private func fileCapture(_ destination: CaptureDestination,
-                             _ draft: CaptureDraft) -> CaptureFilingOutcome {
-        switch destination {
-        case .task:
-            var task = ShiftTask.fresh()
-            task.title = draft.title
-            task.description = draft.body
-            if let due = draft.dueDate {
-                let (dateStr, timeStr) = ShiftDateFormatting.components(from: due)
-                task.dueDate = dateStr
-                task.dueTime = draft.dueHasTime ? timeStr : nil
-            }
-            self.shiftStore.addTask(task)
-            return .filed(.task)
-
-        case .sticky:
-            self.stickyBoard.addCapturedNote(title: draft.title, text: draft.body)
-            return .filed(.sticky)
-
-        case .note:
-            _ = self.notebookStore.createPage(
-                title: CaptureRouter.notebookTitle(for: draft),
-                content: draft.text)
-            return .filed(.note)
-
-        case .codeSnippet:
-            _ = self.codePreviewStore.create(name: CaptureRouter.snippetName(for: draft),
-                                             content: draft.text)
-            return .filed(.codeSnippet)
-
-        case .link:
-            // The one destination whose store decides whether the capture
-            // is even a link, so the panel is told what actually happened
-            // rather than being told "filed" unconditionally. A duplicate
-            // and a non-URL are both `.refused`, and the panel keeps the
-            // captain in the loop - the same posture ⌘4 takes below for a
-            // different reason.
-            switch self.readingListStore.add(draft.text) {
-            case .added:
-                // The page may never have been mounted, so the card it
-                // will show is built on first visit from the store this
-                // just wrote - nothing here has to reach into a view.
-                return .filed(.link)
-            case .duplicate(let existing):
-                return .refused("\(existing.host) is already on the reading list.")
-            case .rejected(let why):
-                return .refused(why)
-            }
-
-        case .credential:
-            self.show(.poneglyph)
-            self.poneglyph.presentCapturedCredential(secret: draft.text)
-            return .handedOff(.credential)
-        }
-    }
-
-    @objc func newCodeSnippetFromMenu() {
-        show(.codePreview)
-        codePreview.newSnippetFromMenu()
-    }
-
-    /// F11's ⌘R. Unlike every creation verb above, this one deliberately does
-    /// **not** navigate first: ⌘R means "run what I am looking at", and a
-    /// chord that jumps to another destination and executes a snippet the
-    /// captain was not looking at is the wrong answer in a way a no-op is not.
-    ///
-    /// So it is a no-op anywhere but Code Preview. This app implements no
-    /// `validateMenuItem` (see `NavigationCoherenceSelfTest`'s note on why
-    /// that matters for chords), so the item stays enabled everywhere and the
-    /// guard lives here.
-    @objc func runCodeSnippetFromMenu() {
-        guard case .rail(.codePreview)? = currentDestinationKindForMenus else { return }
-        codePreview.runCodeSnippet()
-    }
-
-    /// P9's Toggle Sidebar (⌥⌘S): collapse or reopen the showing page's
-    /// split-view sidebar, animated. A no-op on a page without one, for
-    /// `runCodeSnippetFromMenu`'s reason - this app implements no
-    /// `validateMenuItem`, so the guard lives here.
-    @objc func toggleSidebarFromMenu() {
-        guard case .rail(let dest)? = currentDestinationKindForMenus,
-              let host = mounter.slot(for: dest.slot)?.controller as? HelmSplitPageHosting,
-              let split = host.splitPage else { return }
-        split.toggleSidebar(nil)
-    }
-
-    /// Code Preview's ⌘B: show or hide the snippet list. A no-op anywhere
-    /// else, for `runCodeSnippetFromMenu`'s reason - a chord that navigated to
-    /// toggle a column the captain is not looking at would be a surprise.
-    @objc func toggleCodePreviewSidebarFromMenu() {
-        guard case .rail(.codePreview)? = currentDestinationKindForMenus else { return }
-        codePreview.toggleSidebarFromMenu()
-    }
-
-    /// F15's ⌘⇧S. Unlike `runCodeSnippetFromMenu` - which refuses off its own
-    /// page because ⌘R has a page-local meaning - this one *navigates*: the
-    /// capture is the thing the captain asked for, the Whiteboard is only
-    /// where it lands, and refusing because they happened to be on Console
-    /// would make the chord feel broken. Same shape as every `new*FromMenu`
-    /// below.
-    @objc func captureScreenRegionFromMenu() {
-        show(.whiteboard)
-        whiteboard.captureTapped()
-    }
-
-    /// The copy half. This one *does* refuse off-page: there is no board to
-    /// copy anywhere else, and navigating to the Whiteboard to copy whatever
-    /// happens to be on it is not what the item says.
-    @objc func copyWhiteboardImageFromMenu() {
-        guard case .rail(.whiteboard)? = currentDestinationKindForMenus else { return }
-        whiteboard.copyImageTapped()
-    }
-
-    @objc func newCredentialFromMenu() {
-        show(.poneglyph)
-        poneglyph.newCredentialFromMenu()
-    }
-
-    @objc func newScheduleFromMenu() {
-        show(.schedules)
-        schedules.newScheduleFromMenu()
-    }
-
-    @objc func newCommandFromMenu() {
-        show(.commandLibrary)
-        commandLibrary.newCommandFromMenu()
-    }
-
-    @objc func newRunbookFromMenu() {
-        show(.runbooks)
-        runbooks.newRunbookFromMenu()
-    }
-
-    /// UX1's "Lock Poneglyph" ⌘K verb.
-    ///
-    /// Deliberately does **not** navigate first, unlike every creation verb
-    /// above: locking the vault is a thing a captain does *because* they are
-    /// walking away, and dragging them onto the vault page to do it would be
-    /// the opposite of what they asked for. The slot is mounted if this is its
-    /// first use - GL-37 - and locking an already-locked vault is a no-op.
-    @objc func lockPoneglyph() {
-        // A vault whose page has never been built has never been unlocked, so
-        // there is nothing to lock - and `lockFromMenu` reaches the page's own
-        // views, which would force a full mount just to re-lock an already
-        // locked store. `isViewLoaded` is the honest test for "has this page
-        // ever existed", and it is what keeps this verb free on a cold app.
-        guard isBuilt(.poneglyph), poneglyph.isViewLoaded else { return }
-        poneglyph.lockFromMenu()
-    }
-
-    /// Fix 1: connect to `host` (its own dedicated page). The first call for
-    /// a given host builds its `ConsoleController` (via `makeHostConsole`),
-    /// embeds it, and opens its one ssh tab; every later call for the same
-    /// host just brings that already-built page forward and re-focuses its
-    /// current tab - `ConsoleController.connectSSHIfNeeded` is what actually
-    /// makes the "open a tab" half of that a no-op after the first time.
-    /// `args` is the host's resolved `ssh` argv (`Host.sshArguments(allHosts:)`)
-    /// - built by the caller, since this controller knows nothing about the
-    /// host store, matching `onPresentHostEditor` above.
-    // MARK: Restored host pages, one per run-loop turn (PERF-08)
-    //
-    // **The 2026-10 end-to-end review's PERF-08.** F2's restore used to call
-    // `connectHost(navigate: false)` for every host that had a page, in one
-    // run-loop turn right after the first frame - one `ConsoleController`,
-    // its `loadView`, a `CockpitTerminalView` and a block tracker per host,
-    // back to back, while the captain is looking at a window that cannot
-    // respond yet. None of those pages forks `ssh` before it is opened
-    // (`ConsoleController.addTab`'s `hasAppeared` guard), so the cost was
-    // the construction itself.
-    //
-    // Now the showing host is connected straight away (the app delegate
-    // does that, with navigation), and the others queue here: one page is
-    // built per main-queue turn, so input and drawing get a turn between
-    // each. A host the captain switches to before its turn is built on the
-    // spot - `switchToSession`, the strip, Recents, ⌘⌃1…9 and the crew's
-    // handoff all go through `materializePendingRestoredHost`.
-    //
-    // Every queued host gets its strip pill immediately, in plan order, so
-    // the strip and the ⌘⌃ shortcuts read exactly what a one-turn restore
-    // produced (`HostSessionRegistry` is insertion-ordered, and the showing
-    // host still registers last).
-
-    /// Hosts whose restored page has not been built yet, oldest first.
-    private var pendingRestoredHosts: [(host: Host, args: [String])] = []
-    private var restoreTurnScheduled = false
-
-    /// How the next restore turn is scheduled - the next main-queue turn.
-    /// A suite swaps in a manual scheduler to step through the turns.
-    var restoreTurnScheduler: (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }
-
-    /// F2: queue `hosts`' pages to be rebuilt hidden, one per run-loop turn.
-    /// A host that already has a page (or is already queued) is skipped.
-    func queueRestoredHostConsoles(_ hosts: [(host: Host, args: [String])]) {
-        for entry in hosts where hostConsoles[entry.host.id] == nil
-            && !pendingRestoredHosts.contains(where: { $0.host.id == entry.host.id }) {
-            pendingRestoredHosts.append(entry)
-            // `.restored`, exactly what `connectHost` registers for a page
-            // that has not started anything - the page itself moves it.
-            registerSession(for: entry.host, state: .restored)
-        }
-        scheduleRestoreTurn()
-    }
-
-    private func scheduleRestoreTurn() {
-        guard !restoreTurnScheduled, !pendingRestoredHosts.isEmpty else { return }
-        restoreTurnScheduled = true
-        restoreTurnScheduler { [weak self] in
-            guard let self else { return }
-            self.restoreTurnScheduled = false
-            if let next = self.pendingRestoredHosts.first {
-                self.materializePendingRestoredHost(next.host.id)
-            }
-            self.scheduleRestoreTurn()
-        }
-    }
-
-    /// The registry's one registrar (`SessionSwitcherSelfTest` holds it to
-    /// one call site): `connectHost` for a page that exists, and the restore
-    /// queue for a page that will on its turn.
-    private func registerSession(for host: Host, state: HostSessionState) {
-        sessions.register(hostID: host.id, label: host.label, accentHex: host.accentHex, state: state)
-    }
-
-    /// Builds a queued host's page now, rather than on its turn. Returns
-    /// whether `id` was queued.
-    @discardableResult
-    private func materializePendingRestoredHost(_ id: UUID) -> Bool {
-        guard let index = pendingRestoredHosts.firstIndex(where: { $0.host.id == id }) else { return false }
-        let entry = pendingRestoredHosts.remove(at: index)
-        connectHost(entry.host, args: entry.args, navigate: false)
-        return true
-    }
-
-    /// Drops a queued host that will never be built - a host deleted, or a
-    /// session ended, before its turn.
-    @discardableResult
-    private func forgetPendingRestoredHost(_ id: UUID) -> Bool {
-        guard let index = pendingRestoredHosts.firstIndex(where: { $0.host.id == id }) else { return false }
-        pendingRestoredHosts.remove(at: index)
-        return true
-    }
-
-    #if FM_SELFTESTS
-    var pendingRestoredHostIDsForTests: [UUID] { pendingRestoredHosts.map(\.host.id) }
-    #endif
-
-    func connectHost(_ host: Host, args: [String], navigate: Bool = true) {
-        // PERF-08: an explicit connect supersedes a queued restore of the
-        // same host, which would otherwise connect it a second time.
-        forgetPendingRestoredHost(host.id)
-        let controller: ConsoleController
-        if let existing = hostConsoles[host.id] {
-            controller = existing
-        } else {
-            controller = makeHostConsole()
-            hostConsoles[host.id] = controller
-            addChild(controller)
-            embed(controller.view)
-            setDestinationVisible(controller.view, false)
-            // The cross-bridge collision guard's third direction (full-app
-            // audit, finding 4.1), and the console this one actually matters
-            // for: the `.kubernetes` destination scopes to a *saved host*, so
-            // its feed tab is always one of these pages' tabs, never the
-            // shared Firstmate console's. Set once at creation - unlike the
-            // per-connect closures below it depends on nothing about the host
-            // record, only on which two objects the shell holds.
-            controller.isKubernetesFeedBridgeBusy = { [weak self] tabID in
-                self?.isKubernetesFeedBridgeBusy(onTab: tabID) ?? false
-            }
-        }
-        controller.connectSSHIfNeeded(
-            label: host.label, args: args, accentHex: host.accentHex,
-            keyID: host.keyID, startupSnippetID: host.startupSnippetID,
-            blockViewOptIn: host.blockViewOptIn, kubeContextBadgeOptIn: host.kubeContextBadgeOptIn
-        )
-
-        // Audit 2 §4.6: keep the registry's own reading of this page current.
-        // Assigned before the `register` below, so an already-started page
-        // (a re-reveal) reports `.connected` immediately rather than after
-        // whatever its next start/close happens to be.
-        //
-        // `startTab` is the only place `TabModel.started` is ever set, so this
-        // fires exactly when the answer can have changed - never on a timer,
-        // and never inferred by the registry itself.
-        let sessionHostID = host.id
-        controller.onLiveSessionMayHaveChanged = { [weak self, weak controller] in
-            guard let self, let controller else { return }
-            self.sessions.setState(hostID: sessionHostID,
-                                   controller.hasLiveSession ? .connected : .restored)
-        }
-
-        // `fm/grandline-session-switcher`: this host now has a live session.
-        // Idempotent, and re-called on every connect for the same reason the
-        // closures below are reassigned - a renamed host or a recoloured
-        // accent should be current on the strip without needing a reconnect.
-        //
-        // Audit 2 §4.6: `.restored` unless the page has *already* started
-        // something. This runs before the page appears, so a first connect is
-        // genuinely not connected yet at this instant; `setState` above moves
-        // it the moment `startTab` runs, which for an ordinary connect is one
-        // layout pass later and for a restored (or lock-deferred) page is
-        // whenever the captain actually opens it. `register` never downgrades
-        // an already-live entry, so a re-reveal cannot blank a live pill.
-        registerSession(for: host, state: controller.hasLiveSession ? .connected : .restored)
-
-        // fm/grandline-notification-center: reassigned on every call (not
-        // just the first) so a renamed host label is always current in the
-        // notification's own subtext - cheap, and `host.label` is only read
-        // at the moment a reply actually lands, not cached earlier than
-        // that either.
-        let hostID = host.id
-        let hostLabel = host.label
-        controller.onSRELeadReplyWhileBackground = { [weak self, weak controller] tab in
-            guard let self else { return }
-            NotificationSources.setSRELeadReply(tabID: tab.id, tabName: tab.name, hostLabel: hostLabel) { [weak self, weak controller] in
-                guard let self, let controller else { return }
-                self.hideAllDestinations()
-                self.setDestinationVisible(controller.view, true)
-                // `fm/grandline-recents-navigation`: this bypasses `revealHost
-                // Console` (it also needs to focus one specific tab), but it
-                // is a real navigation like any other - and skipping this
-                // would leave `currentDestinationKind` stale for whatever the
-                // *next* real navigation tries to record as "outgoing".
-                self.updateRecentDestinations(arriving: .host(id: hostID, label: hostLabel))
-                self.applyDrillHeader(title: hostLabel, subtitle: "Dedicated host page",
-                                      symbol: RailDestination.hosts.symbol,
-                                      hue: RailDestination.hosts.domainHue, isTopLevel: false,
-                                      slotController: controller)
-                self.retargetScrollEdge(to: controller.view)
-                self.activeHostID = hostID
-                controller.selectAndFocusTab(id: tab.id)
-            }
-        }
-
-        // `fm/grandline-k8s-cluster-tail`: the Shape-C deep link. Assigned
-        // here (rather than in `makeHostConsole`) for the same reason every
-        // closure around it is - this is where the host id exists, and a
-        // reassign on every connect keeps a renamed host current.
-        controller.onTailLogs = { [weak self] in self?.openKubernetes(hostID: hostID, showTail: true) }
-
-        // `fm/grandline-log-analyzer-build`: reassigned on every call for
-        // the same reason `onSRELeadReplyWhileBackground` above is - a
-        // renamed host should show its current label on the imported
-        // evidence, and the closure only reads it when a capture actually
-        // happens.
-        controller.onAnalyzeLogs = { [weak self, weak controller] capture, tabName in
-            guard let self else { return }
-            self.logAnalyzerCaptureSource = controller
-            self.openLogAnalyzer(with: capture, hostLabel: "\(hostLabel) · \(tabName)")
-        }
-
-        // F8 (incident mode): this page's host identity. Set on every call
-        // for the same reason the two closures above are reassigned - a
-        // renamed host should show its current label on a new incident - and
-        // it is what makes the incident toolbar action appear at all (the
-        // shared Firstmate console never gets one).
-        controller.hostIdentity = ConsoleHostIdentity(id: host.id.uuidString, label: host.label)
-
-        // Daylight §6.4: a dedicated host page routes through this same
-        // controller class, so it gets the same live header subtitle the
-        // shared Console destination does. Assigned on every call for the same
-        // reason the closures above are - the page is created once and
-        // reconnected many times.
-        controller.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-
-        // The incident card's Evidence tab reopening a saved Log Analyzer
-        // investigation. Routed through this controller because a console
-        // page knows nothing about rail destinations, exactly like
-        // `onAnalyzeLogs` above.
-        controller.onOpenInvestigation = { [weak self] investigationID in
-            guard let self else { return }
-            self.show(.logAnalyzer)
-            self.logAnalyzerCaptureSource = nil
-            self.logAnalyzer.openSavedInvestigation(id: investigationID)
-        }
-
-        // F9 (v1): a multi-host send connects several hosts in one pass and
-        // navigates once, at the end, to the first of them - so every
-        // intermediate host is connected with `navigate: false` rather than
-        // yanking the window through N pages the captain never asked to look
-        // at. Every other caller (the rail icon, the Hosts list's Connect, the
-        // ⌘K palette) keeps the default and behaves exactly as before.
-        guard navigate else { return }
-
-        // `revealHostConsole` is the shared tail (see its own note): it hides
-        // every other destination, shows this page, sets the drill header,
-        // records this session as the active one and re-focuses its terminal -
-        // including the `markCurrentTabAsRead` that clears this page's own SRE
-        // Lead unread entry, exactly as this method did inline before.
-        revealHostConsole(controller, hostID: host.id, label: host.label)
-    }
-
-    /// F9 (v1): does this host already have a live dedicated page? Read by
-    /// the "Send to…" picker for each row's connected/not-connected line -
-    /// the same piece of state the rail's own per-host highlighting uses, not
-    /// a second notion of "connected" invented for the picker.
-    /// Whether `host` has a genuinely live session - a page with a running
-    /// child process, not merely a page this shell has built.
-    ///
-    /// Audit 2 §4.5/§4.6: this used to be `hostConsoles[host.id] != nil`,
-    /// which after F2 was true for a restored page that had forked nothing.
-    /// F9's picker showed such a host as "Connected" and `sendCommandToHost`
-    /// took its immediate-send branch, typing into a terminal with no process
-    /// on the other end - silently, since nothing reports a dropped send.
-    func isHostConnected(_ host: Host) -> Bool {
-        guard let controller = hostConsoles[host.id] else { return false }
-        return controller.hasLiveSession
-    }
-
-    /// F9 (v1): type `text` into `host`'s own dedicated page, connecting it
-    /// first if it has none yet.
-    ///
-    /// This is the *existing* connect-then-`send(txt:)` path per host, not a
-    /// second mechanism: `connectHost` (whose `connectSSHIfNeeded` is what
-    /// makes a re-send to an already-open host reuse its tab instead of
-    /// stacking a second one) followed by the same
-    /// `sendCommandLibraryTextToActiveTab` a single-host send already calls -
-    /// just on that host's console rather than the shared one.
-    ///
-    /// A host that was already open receives the text immediately. A host that
-    /// had to be connected first gets it after a short delay, for the same
-    /// reason - and with the same honest "best-effort, there is no protocol
-    /// signal for *the remote shell is ready now*" caveat - as
-    /// `ConsoleController.runStartupSnippet`, whose delay this matches.
-    func sendCommandToHost(_ host: Host, args: [String], text: String) {
-        let wasConnected = isHostConnected(host)
-        connectHost(host, args: args, navigate: false)
-        guard let controller = hostConsoles[host.id] else { return }
-        if wasConnected {
-            controller.sendCommandLibraryTextToActiveTab(text)
-            return
-        }
-        // Audit 2 §4.5, the half that `isHostConnected` telling the truth
-        // (above) does not fix on its own. `navigate: false` means this page
-        // never appears, so `viewDidAppear` - and therefore `startTab` - never
-        // fires, and the delayed send below would type into a terminal with no
-        // process on the other end. That was true of this branch even before
-        // F2; F2 only widened which hosts reach it (a restored page used to
-        // take the *immediate* branch instead, which is worse).
-        //
-        // `runAppearanceWorkIfUnlocked` rather than `startTab` directly: it is
-        // the lock-gated entry point (#340 / §5.1), so a send that arrives
-        // while the app is locked defers the fork exactly like every other
-        // path and replays it on unlock, instead of this being a way around
-        // the gate. A page that is already started no-ops.
-        controller.runAppearanceWorkIfUnlocked()
-        DispatchQueue.main.asyncAfter(deadline: .now() + ConsoleController.remoteShellReadyDelay) { [weak controller] in
-            controller?.sendCommandLibraryTextToActiveTab(text)
-        }
-    }
-
-    /// F9 (v1): bring one host's page forward after a multi-host send, so the
-    /// captain lands somewhere deliberate rather than on whichever page
-    /// happened to be connected last.
-    func revealHost(_ host: Host, args: [String]) {
-        connectHost(host, args: args)
-    }
-
-    /// A host was deleted from the store - tear down its dedicated page
-    /// (if it was ever connected to) so a stale, unreachable-from-the-rail
-    /// destination can't linger. Navigates back to the Firstmate console if
-    /// the deleted host's page happened to be the one showing.
-    /// Flush anything the Sticky Board's debounced local write is still
-    /// holding, on the way to quitting (findings 3.3/4.6).
-    ///
-    /// The store owns the debounce; this is only the shell's forward, needed
-    /// because `stickyBoard` is `private` and the app delegate is where
-    /// `applicationWillTerminate` lives. It is safe to call on a destination
-    /// that was never mounted: the controller is constructed eagerly, its
-    /// store with it, and a store with nothing queued flushes nothing.
-    /// Drop a deleted host's Recents row (finding 4.3). Called by the app
-    /// delegate's own host-delete diffing, which is the one place that knows
-    /// a host has genuinely left the store - `removeHostConsole` cannot be
-    /// that place, because it is also what "End session" calls, and an ended
-    /// session's row must stay listed and reconnect.
-    func forgetRecentHost(id: UUID) {
-        recentDestinations.forget(.host(id: id, label: ""))
-    }
-
-    func shutdownStickyBoard() {
-        // PERF-01: the store can hold a pending write while the page was never
-        // built - ⌘K, the crew and a widget tap all write to it directly - so
-        // an unbuilt page still gets the store's two quit-time halves, in the
-        // page's own order.
-        guard isBuilt(.stickyBoard) else {
-            stickyBoardStore.flushPendingWrite()
-            _ = stickyBoardStore.gitSync?.flushForTerminationNow()
-            return
-        }
-        stickyBoard.shutdown()
-    }
-
-    /// Flush every open Scratchpad tab's debounced text on the way to quitting
-    /// (F9, `fm/grandline-feature-f9-scratchpad-calculator`).
-    ///
-    /// The shell's forward for the same reason its neighbours are: `tools` is
-    /// `private` and the app delegate is where `applicationWillTerminate`
-    /// lives. Without it, ⌘Q inside the pad's 500ms save debounce loses the
-    /// last thing typed - which for a pad you come back to is the one failure
-    /// that would make the feature untrustworthy. Safe on a page with no
-    /// Scratchpad tab open: a tab of another kind flushes nothing.
-    func shutdownScratchpads() {
-        // A scratchpad is a Tools tab, so an unbuilt page has none to flush.
-        guard isBuilt(.tools) else { return }
-        tools.flushScratchpads()
-    }
-
-    /// Flush the reading list's debounced git commit on the way to quitting
-    /// (F4, `fm/grandline-feature-f4-reading-list`).
-    ///
-    /// The shell's forward for the same reason the three below are:
-    /// `readingList` is `private` and the app delegate is where
-    /// `applicationWillTerminate` lives. Safe on a destination that was never
-    /// mounted - the controller and its store are built eagerly at init, and a
-    /// store with nothing queued flushes nothing.
-    func shutdownReadingList() {
-        // PERF-01: ⌥Space and ⌘K write links without building the page, so
-        // an unbuilt page still drains the store - the page's own two halves.
-        guard isBuilt(.readingList) else {
-            readingListStore.flush()
-            readingListStore.gitSync?.flushForTerminationNow()
-            return
-        }
-        readingList.shutdown()
-    }
-
-    /// Flush and commit anything Code Preview still has in flight, on the way
-    /// to quitting (audit 2 §6.8 / §2.8).
-    ///
-    /// The shell's forward for the same reason `shutdownStickyBoard` is one:
-    /// `codePreview` is `private` and the app delegate is where
-    /// `applicationWillTerminate` lives.
-    ///
-    /// Safe on a destination that was never mounted - this page is lazily
-    /// mounted, but its controller and store are built eagerly at init, and
-    /// `CodePreviewController.shutdown()` no-ops on a page whose editor never
-    /// loaded while its store still commits anything genuinely queued.
-    func shutdownCodePreview() {
-        // PERF-01: an unbuilt page has no editor edits to wait for, but a
-        // capture can still have written a snippet, so the git half runs.
-        guard isBuilt(.codePreview) else {
-            codePreviewStore.gitSync?.flushForTerminationNow()
-            return
-        }
-        codePreview.shutdown()
-    }
-
-    /// Flush the Notebook's debounced edit and its git commit on the way to
-    /// quitting (**review bug B7's second half**).
-    ///
-    /// `NotebookController.shutdown()` has been documented as "called on quit"
-    /// since it shipped and had **no caller at all** - `main.swift` flushes
-    /// every other debounced store and not this one. A ⌘Q inside the page's
-    /// 500ms edit debounce lost the last keystrokes, which for a notebook is
-    /// the sentence the captain had just finished typing.
-    ///
-    /// The shell's forward for the same reason the others here are: `notebook`
-    /// is `private` and the app delegate is where quit is handled.
-    func shutdownNotebook() {
-        // PERF-01: the same split as Code Preview's, for the same reason.
-        guard isBuilt(.notebook) else {
-            notebookStore.gitSync?.flushForTerminationNow()
-            return
-        }
-        notebook.shutdown()
-    }
-
-    /// Flush the credential vault's debounced backup on the way to quitting,
-    /// so a credential added seconds before quitting is still pushed to the
-    /// captain's private config repo (`fm/implement-grand-line-secrets-vault-poneg-ad`).
-    ///
-    /// The shell's forward for the same reason the two above are: `poneglyph`
-    /// (the credential vault, labeled "Poneglyph" - see
-    /// `VaultController.swift`'s header for the full history) is `private`
-    /// and the app delegate is where `applicationWillTerminate` lives. Safe on
-    /// a destination that was never mounted - the controller and its store
-    /// are built eagerly, and a store with nothing queued (or a vault that was
-    /// never unlocked) flushes nothing.
-    func shutdownCredentialVault() {
-        // PERF-01: the page and `GrandLineServices` hold one store; a store
-        // nobody built has nothing to flush, and quitting must not build one.
-        guard isBuilt(.poneglyph) else {
-            if GrandLineServices.shared.hasBuiltVault { GrandLineServices.shared.vault.flushForTermination() }
-            return
-        }
-        poneglyph.shutdown()
-    }
-
-    /// Cancel any in-flight Straw Hat turn on the way to quitting
-    /// (`fm/implement-straw-hat-pirates-phase1-luffy-fb98`).
-    ///
-    /// The shell's forward for the same reason the three above are: `overview`
-    /// is `private` and the app delegate is where `applicationWillTerminate`
-    /// lives. Unlike those, this flushes nothing - there is no on-disk chat
-    /// history in phase 1 by explicit scope. What it stops is a `claude -p`
-    /// child outliving the app that spawned it: a turn is bounded at
-    /// `ClaudeOneShot.conversationTimeout` (300s), so without this a captain
-    /// who sends a message and immediately quits leaves a subprocess running
-    /// for up to five minutes with nowhere to deliver its answer. GL-13's rule
-    /// - background work stops when the thing it serves goes away.
-    ///
-    /// Safe on a page whose Crew tab was never opened: the runner is built
-    /// lazily on the first send, so there is usually nothing to cancel.
-    func shutdownStrawHatCrew() {
-        // An unbuilt crew page has no runner to cancel.
-        guard isBuilt(.strawHat) else { return }
-        strawHat.shutdown()
-    }
-
-    func removeHostConsole(id: UUID) {
-        // PERF-08: a host still queued for restore has no page to tear down,
-        // only its strip entry - which the one `unregister` below removes.
-        let wasQueued = forgetPendingRestoredHost(id)
-        let controller = hostConsoles.removeValue(forKey: id)
-        guard controller != nil || wasQueued else { return }
-        let wasActive = activeHostID == id
-        if let controller {
-            controller.shutdown()
-            controller.view.removeFromSuperview()
-            controller.removeFromParent()
-        }
-        // `fm/grandline-session-switcher`: this is the app's one teardown path
-        // for a host page (a deleted host, or an explicit "end session"), so it
-        // is where the registry stops claiming that host is live. Unregistering
-        // anywhere else would be a second writer.
-        sessions.unregister(hostID: id)
-        if wasActive {
-            // Prefer a sibling live session over dumping the captain on the
-            // shared Firstmate console: with two sessions open, closing one
-            // should land on the other rather than somewhere neither of them
-            // was. Falls back to the previous behaviour when nothing is left.
-            if let next = sessions.sessions.first {
-                switchToSession(hostID: next.hostID)
-            } else {
-                show(.console)
-            }
-        }
-    }
-
-    // MARK: Session switching (`fm/grandline-session-switcher`)
-
-    /// Bring an **already live** session's page forward. Deliberately separate
-    /// from `connectHost`: that one needs the host's resolved `ssh` argv (so
-    /// its caller needs the host store), while switching back into a session
-    /// that already exists needs nothing but its id - which is what lets the
-    /// strip, the ⌘K palette and the keyboard shortcuts all reach it without
-    /// any of them learning how a host's argv is built.
-    ///
-    /// A no-op for a host with no live session, so every caller can fire it
-    /// against a possibly-stale id without checking first.
-    func switchToSession(hostID: UUID) {
-        // PERF-08: a restored page still waiting for its turn is built now -
-        // a switch never waits for the queue.
-        materializePendingRestoredHost(hostID)
-        guard let controller = hostConsoles[hostID],
-              let session = sessions.session(for: hostID) else { return }
-        revealHostConsole(controller, hostID: hostID, label: session.label)
-    }
-
-    /// The shared tail of `connectHost` and `switchToSession` - one definition
-    /// of "this host's page is now the thing on screen", so the drill header,
-    /// the registry's active session and the focused terminal can never
-    /// disagree about which of them is showing.
-    private func revealHostConsole(_ controller: ConsoleController, hostID: UUID, label: String) {
-        let wasAlreadyShowing = currentDestinationKind == .host(id: hostID, label: label)
-        crossfadeOutgoingPage(unless: wasAlreadyShowing)
-        hideAllDestinations()
-        setDestinationVisible(controller.view, true)
-        // B4: a host page is a drill-in like any other.
-        animateDestinationEntrance(controller.view, direction: .drillIn, skip: wasAlreadyShowing)
-        // `fm/grandline-recents-navigation`: a saved host's own page is one of
-        // the destinations the captain explicitly wants tracked - this is the
-        // one place both a fresh connect and switching back into a live
-        // session reach, so it needs no separate hook at either call site.
-        updateRecentDestinations(arriving: .host(id: hostID, label: label))
-        applyDrillHeader(title: label, subtitle: "Dedicated host page",
-                         symbol: RailDestination.hosts.symbol,
-                         hue: RailDestination.hosts.domainHue, isTopLevel: false,
-                         slotController: controller)
-        // A3: a host console has no page scroll view, so this correctly
-        // clears the edge rather than leaving the previous page's state.
-        retargetScrollEdge(to: controller.view)
-        activeHostID = hostID
-        sessions.setActive(hostID)
-        controller.focusCurrentTab()
-        controller.markCurrentTabAsRead()
-        updateKeyViewLoop()
-    }
-
-    // MARK: F2 - session restoration
-
-    /// Where the captain is right now, in a form that survives a relaunch.
-    ///
-    /// Reads the same `currentDestinationKind` the Recents dropdown and the
-    /// tab shortcuts already read, and the same `hostConsoles` dictionary the
-    /// session strip does - never a second notion of "what is open".
-    ///
-    /// See `SessionRestore.swift` for exactly what is and is not captured.
-    func captureSessionState() -> SessionRestoreState {
-        var destination: String?
-        var activeHost: String?
-        switch currentDestinationKind {
-        case .rail(let dest): destination = dest.rawValue
-        case .host(let id, _): activeHost = id.uuidString
-        case nil: break
-        }
-        return SessionRestoreState(
-            destination: destination,
-            activeHostID: activeHost,
-            // Sorted so an unchanged session encodes to identical bytes -
-            // `Dictionary.keys` has no defined order, and without this the
-            // save-only-when-changed check below would write on every
-            // navigation regardless.
-            // PERF-08: a page still queued for restore is open too - this
-            // runs on every navigation, including the one restore itself
-            // makes before the queue has drained.
-            openHostIDs: (Array(hostConsoles.keys) + pendingRestoredHosts.map(\.host.id))
-                .map(\.uuidString).sorted(),
-            consoleTabs: console.isViewLoaded ? console.restorableConsoleTabs() : [],
-            // `isBuilt` first: this runs on every navigation, and asking an
-            // unbuilt Tools page whether its view is loaded would build it.
-            toolTabs: isBuilt(.tools) && tools.isViewLoaded ? tools.restorableToolTabs() : []
-        )
-    }
-
-    /// Restores the halves that need no host store: the shared Console's tabs
-    /// and the Tools page's tabs.
-    ///
-    /// Mounting each page here is deliberate and is what makes the lazy half
-    /// work: `DestinationRegistry` would otherwise not build these until the
-    /// captain visited them, and a page that does not exist cannot hold
-    /// restored tabs. Mounting is not showing - `ConsoleController.addTab`
-    /// only starts a tab's process `if hasAppeared`, so a restored Console the
-    /// captain does not open forks no shells until they do.
-    func restoreTabs(from state: SessionRestoreState) {
-        if !state.consoleTabs.isEmpty {
-            // Touching `view` forces `loadView` - enough for a controller to
-            // hold tabs. It is NOT a mount: `DestinationRegistry` still embeds
-            // the page on its first visit, and `ConsoleController.addTab` only
-            // starts a tab's process `if hasAppeared`, so a restored Console
-            // the captain does not open forks no shells until they do.
-            _ = console.view
-            console.restoreConsoleTabs(state.consoleTabs)
-        }
-        if !state.toolTabs.isEmpty {
-            _ = tools.view
-            tools.restoreToolTabs(state.toolTabs)
-        }
-    }
-
-    /// Restores the destination that was showing.
-    ///
-    /// Returns `false` when the state named a host page, which this method
-    /// cannot open on its own (it needs the host record and its resolved `ssh`
-    /// argv, which this controller deliberately knows nothing about - the same
-    /// boundary `connectHost`'s own `args` parameter draws). The app delegate
-    /// handles that case; everything else is an ordinary `show(_:)`.
-    ///
-    /// A destination this build no longer has lands on Home. The Today page
-    /// (`dailyOverview`) is the case that made this explicit: a captain who
-    /// quit on it still has that raw value saved, and Home is the page its
-    /// one remaining card moved to.
-    @discardableResult
-    func restoreDestination(from state: SessionRestoreState) -> Bool {
-        guard state.activeHostID == nil else { return false }
-        guard let raw = state.destination else { return false }
-        show(RailDestination(rawValue: raw) ?? .homeCanvas)
-        return true
-    }
-
-    /// Audit §2 item 7: which page a tab keyboard shortcut should act on
-    /// right now, or `nil` when none should.
-    ///
-    /// Derived from `currentDestinationKind` - the state the Recents dropdown
-    /// already keeps current on *every* navigation path (`show(_:)`,
-    /// `revealHostConsole`, and the SRE Lead reply-jump bypass all funnel
-    /// through `updateRecentDestinations`) - rather than a second notion of
-    /// "what is showing" invented for the shortcuts. A dedicated host page is
-    /// a `ConsoleController` with its own tabs, so ⌘T/⌘W/⌘1 mean exactly what
-    /// they mean on the shared Console; that is the reason this resolves a
-    /// controller instead of switching on `RailDestination` alone.
-    ///
-    /// Everything else answers `nil`, which is what keeps ⌘R on the Docs page
-    /// (or in the Whiteboard's web view) out of this feature's hands.
-    func activeTabShortcutTarget() -> TabShortcutHandling? {
-        switch currentDestinationKind {
-        case .host(let id, _):
-            return hostConsoles[id]
-        case .rail(let dest):
-            switch dest {
-            case .console: return console
-            case .tools: return tools
-            default: return nil
-            }
-        case nil:
-            return nil
-        }
-    }
-
-    /// Records the navigation into `recentDestinations` and remembers
-    /// `kind` as the new "current" - the one call site both `show(_:)` and
-    /// `revealHostConsole` (and the SRE Lead reply-jump bypass) make, so the
-    /// leaving/arriving bookkeeping can never drift between them.
-    private func updateRecentDestinations(arriving kind: RecentDestinationKind) {
-        recentDestinations.recordNavigation(leaving: currentDestinationKind, arriving: kind)
-        currentDestinationKind = kind
-        // B2: light the bar square for this page, and darken whichever was lit
-        // before. Here rather than at each route because this is the one call
-        // they all make - the SRE Lead reply-jump used to bypass the push and
-        // left the previous page's square lit over a host page. A host page is
-        // not a `RailDestination`, so no square stands for it and it clears
-        // the bar. The bar draws state, it does not track navigation.
-        if case .rail(let dest) = kind {
-            bar.setActiveDestination(dest)
-        } else {
-            bar.setActiveDestination(nil)
-        }
-        // Review #3 §7: the window title carries the current destination, so
-        // Mission Control and the Window menu name a page rather than the app.
-        onCurrentDestinationChanged?(kind.title)
-        // A page that pushed the window past its screen is usually the page
-        // being left - see `WindowOverflowGuard`.
-        windowOverflowGuard.destinationDidChange(in: view.window)
-        // F2: every navigation path funnels through here, so this is the one
-        // hook that keeps the saved session current without a timer. The app
-        // delegate's own handler writes only when the state actually changed.
-        onSessionStateChanged?()
-    }
-
-    /// A Recents row was clicked - dispatched to whichever navigation
-    /// primitive already handles that kind, never a third path.
-    /// Open whatever a Recents row names.
-    ///
-    /// **A `.host` row whose session has since ended reconnects rather than
-    /// doing nothing** (full-app audit, finding 4.3). `RecentDestinations`'
-    /// own header is explicit that a host page the captain closed deliberately
-    /// stays listed until it ages out of the cap - which made
-    /// `switchToSession`'s "no-op for a host with no live session" guard
-    /// (correct for the strip and the shortcuts, which only ever name live
-    /// ones) reachable here as a silently dead click: the row is still there,
-    /// looks exactly like every other row, and does nothing. The three ways a
-    /// session ends - the strip's ✕, the Hosts row's "End session", deleting
-    /// the host - all clear `hostConsoles`, so all three produced it.
-    ///
-    /// Reconnecting is the honest reading of what the row means: "take me back
-    /// to that host page". A host that is no longer saved at all cannot be
-    /// reconnected, so its row is dropped instead of pretending - see
-    /// `onReconnectHost`.
-    /// Reconnect a saved host that no longer has a live session, by id.
-    /// Returns whether the host still exists to be reconnected to.
-    ///
-    /// Forward-don't-own (`onSearchTapped`'s convention): this controller has
-    /// no `HostStore` and does not know how a host's `ssh` argv is built -
-    /// `connectHost` needs both, which is exactly why `switchToSession` was
-    /// written to need neither. The app delegate owns the store and already
-    /// has the one `connectToHost` path every other reconnect goes through.
-    var onReconnectHost: ((UUID) -> Bool)?
-
-    private func navigateToRecentDestination(_ kind: RecentDestinationKind) {
-        switch kind {
-        case .rail(let dest):
-            show(dest)
-        case .host(let id, _):
-            if sessions.session(for: id) != nil {
-                switchToSession(hostID: id)
-            } else if onReconnectHost?(id) != true {
-                // The host is gone from the store entirely - nothing to
-                // reconnect to, so stop listing it rather than leaving a row
-                // that can only ever do nothing.
-                recentDestinations.forget(.host(id: id, label: ""))
-            }
-        }
-    }
-
-    /// End a live session, after a confirm.
-    ///
-    /// **Always confirmed, never conditionally.** The mockup asks for a
-    /// confirm "if a command may be mid-flight", and this app has no reliable
-    /// signal for that: the only structured record of a running command is
-    /// `TerminalBlockTracker`'s OSC 133 markers, which exist solely on a host
-    /// that opted into Block View (off by default, one host at a time - see
-    /// AGENTS.md's Block View section), so on every other host "is something
-    /// running?" is genuinely unknown. Confirming only when we happen to know
-    /// would mean silently killing whatever was running on every host that
-    /// cannot answer - so the alert is unconditional, and says why.
-    func confirmEndSession(hostID: UUID) {
-        guard let session = sessions.session(for: hostID) else { return }
-        // G3: themed; Return still ends the session, as it did here.
-        guard HelmConfirm.confirm(
-            title: "End the session on \(session.label)?",
-            body: "Anything still running in that terminal will be terminated.",
-            confirmTitle: "End Session",
-            destructive: true,
-            symbol: "xmark.circle.fill",
-            hue: .rose) else { return }
-        removeHostConsole(id: hostID)
-    }
-
-    /// The Hosts menu's "Session N" items (⌘⌃1…⌘⌃9). The tag is 1-based and
-    /// past the end is simply nothing to do - a captain with two sessions
-    /// pressing ⌘⌃5 should get silence, not the nearest session.
-    @objc func selectSessionByShortcut(_ sender: NSMenuItem) {
-        let index = sender.tag - 1
-        guard sessions.sessions.indices.contains(index) else { return }
-        switchToSession(hostID: sessions.sessions[index].hostID)
-    }
-
-    /// ⌘] / ⌘[ - cycle forward/back through the live sessions, wrapping.
-    @objc func nextSession() {
-        guard let next = sessions.session(steppedBy: 1) else { return }
-        switchToSession(hostID: next.hostID)
-    }
-
-    @objc func previousSession() {
-        guard let previous = sessions.session(steppedBy: -1) else { return }
-        switchToSession(hostID: previous.hostID)
-    }
-
     /// Every registry change lands here: the strip re-renders and shows or
     /// collapses, and the Hosts list's rows are rebuilt so a row that just
     /// went live (or just died) reads correctly the moment it is looked at.
@@ -3899,8 +1227,8 @@ final class AppShellController: NSViewController {
         applySessionStripVisibility()
         // Rebuilding a hidden page's rows would be work nobody can see; it
         // gets them on its next `viewWillAppear` instead.
-        if isBuilt(.hosts), hostsPanel.isViewLoaded, !hostsPanel.view.isHidden {
-            hostsPanel.refreshLiveSessionState()
+        if workspace.isBuilt(.hosts), workspace.hostsPanel.isViewLoaded, !workspace.hostsPanel.view.isHidden {
+            workspace.hostsPanel.refreshLiveSessionState()
         }
         updateKeyViewLoop()
     }
@@ -3911,512 +1239,16 @@ final class AppShellController: NSViewController {
     /// page whenever there is one.
     private func applySessionStripVisibility() {
         guard isViewLoaded, sessionStripHeightConstraint != nil else { return }
-        let visible = !sessions.isEmpty
+        let visible = !workspace.hosts.sessions.isEmpty
         sessionStrip.isHidden = !visible
         sessionStripHeightConstraint.constant = visible ? SessionStripView.height : 0
         bodyTopConstraint.constant = DaylightBarController.reservedTopHeight
             + (visible ? SessionStripView.gapBelowBar + SessionStripView.height : 0)
     }
 
-    /// P3 of the polish report: installed by `AppDelegate` (see
-    /// `PageCrossfade`'s header for why never by this controller). `nil` means
-    /// the outgoing page cuts, which is what every self-test's shell does.
-    var pageCrossfade: PageCrossfade?
-
-    /// Hand the page on screen now to `pageCrossfade`, before
-    /// `hideAllDestinations` takes it away.
-    private func crossfadeOutgoingPage(unless repeated: Bool) {
-        guard !repeated, let pageCrossfade else { return }
-        guard let page = bodyContainer.subviews.first(where: {
-            !$0.isHidden && destinationPins[ObjectIdentifier($0)] != nil
-        }) else { return }
-        pageCrossfade.crossfade(from: page, in: bodyContainer)
-    }
-
-    private func hideAllDestinations() {
-        // Only mounted slots have a view to hide - asking an unmounted one
-        // for `controller.view` here would build it and defeat GL-37's whole
-        // point. Host pages are tracked separately (they are not fixed
-        // `RailDestination` cases) and were always lazily built.
-        mounter.hideAll()
-        for controller in hostConsoles.values where controller.isViewLoaded {
-            setDestinationVisible(controller.view, false)
-        }
-        activeHostID = nil
-        // `fm/grandline-session-switcher`: no session's page is on screen any
-        // more. The sessions themselves are untouched - a live session that is
-        // not showing is still live, just not active - so the strip keeps its
-        // pills and simply stops filling one of them in.
-        sessions.setActive(nil)
-    }
-
-    /// The Hosts menu's "Quick Connect" (⌘K): reveal the Hosts destination
-    /// and focus its quick-connect field, regardless of which destination
-    /// was active. No longer shared with the topbar Search control (Fix 4).
-    @objc func revealHostsQuickConnect() {
-        show(.hosts)
-        hostsPanel.focusQuickConnect()
-    }
-
-    /// Wired by the app delegate: the Snippets tab's "Run" sends a snippet to
-    /// the console's active tab. Forwarded rather than owned, matching
-    /// `onPresentHostEditor` - this controller knows nothing about snippets.
-    var onRunSnippet: ((Snippet) -> Void)?
-
-    /// The Edit menu's "Find in Terminal" (no longer ⌘K as of phase 4 - see
-    /// main.swift's Edit menu comment; ⌘K now opens the unified search
-    /// palette instead): invoke the exact same find action the console
-    /// toolbar's magnifying-glass icon uses, on whichever console is actually
-    /// on screen. Fix 1: if a host's dedicated page is showing, find there
-    /// rather than yanking the captain over to the unrelated shared
-    /// Firstmate console just because that's this method's historical
-    /// default - otherwise this action would silently navigate away from the
-    /// session being read and search the wrong terminal. With no host page
-    /// active, the original behaviour holds: bring Console forward (so the
-    /// find bar it triggers is visible) first.
-    @objc func activateConsoleFind() {
-        if let activeHostID, let controller = hostConsoles[activeHostID] {
-            controller.showFind()
-            return
-        }
-        show(.console)
-        console.showFind()
-    }
-
-    /// The App menu's "Settings…" (⌘,): select the Settings rail destination
-    /// rather than opening a separate window.
-    @objc func selectSettings() {
-        show(.settings)
-    }
-
-    /// The Hosts menu's "Show Hosts": select the Hosts rail destination.
-    @objc func selectHosts() {
-        show(.hosts)
-        hostsPanel.select(tab: .hosts)
-    }
-
-    /// The Hosts menu's "New Host…".
-    ///
-    /// GL-37: this used to target `HostsController` directly, which was the
-    /// one menu item in the app that could reach a destination's own
-    /// view-touching method without going through `show(_:)` first. With the
-    /// Hosts slot mounted lazily that would mean invoking a page that has
-    /// not been built yet, so it now follows the same shape every other
-    /// menu item here already uses - select the destination, then act on it.
-    @objc func newHostFromMenu() {
-        show(.hosts)
-        hostsPanel.newHost()
-    }
-
-    /// The Keys menu's "Manage Keys…" (⌘⇧K). Phase 5 of the full-app UI audit
-    /// folded the SSH Keys window into the Hosts destination as a tab, so
-    /// this now selects that destination and that tab rather than opening a
-    /// second window.
-    @objc func selectKeys() {
-        show(.hosts)
-        hostsPanel.select(tab: .keys)
-    }
-
-    /// The Snippets menu's "Manage Snippets…" (⌘⌥P) - same shape as
-    /// `selectKeys`.
-    @objc func selectSnippets() {
-        show(.hosts)
-        hostsPanel.select(tab: .snippets)
-    }
-
-    /// The Keys menu's "New Key…" (⌘⇧N): reveal the Keys tab and open the key
-    /// editor sheet on it, regardless of which destination was showing.
-    @objc func newKeyFromMenu() {
-        show(.hosts)
-        hostsPanel.newKey()
-    }
-
-    /// The Snippets menu's "New Snippet…" (⌘⌥N) - same shape.
-    @objc func newSnippetFromMenu() {
-        show(.hosts)
-        hostsPanel.newSnippet()
-    }
-
-    /// The Shift menu's "New Task…" (⌘N) - selects the Shift destination
-    /// first so the sheet has something to present over, then opens the New
-    /// Task editor regardless of whichever destination was showing before.
-    @objc func newShiftTaskFromMenu() {
-        show(.shift)
-        shift.presentNewTaskEditor()
-    }
-
-    /// The Shift menu's "New Follow-up…" (⌘⇧F) - same shape as
-    /// `newShiftTaskFromMenu` above.
-    @objc func newShiftFollowUpFromMenu() {
-        show(.shift)
-        shift.presentNewFollowUpEditor()
-    }
-
-    /// The Shift menu's "New Project…" (cockpit-fix-shift-new-project) - no
-    /// keyboard shortcut, since ⌘⇧P (the pattern ⌘N/⌘⇧F would suggest for a
-    /// third Shift creation action) is already claimed by "Search Shift…"
-    /// below - same shape as "Weekly Review", which also has no shortcut.
-    @objc func newShiftProjectFromMenu() {
-        show(.shift)
-        shift.presentNewProjectEditor()
-    }
-
-    // MARK: Search / menu bar / quick-capture navigation (phase 5)
-
-    /// The Shift menu's "Search Shift…" (⌘⇧P) and the search palette's own
-    /// entry point - selects the Shift destination so a result's editor
-    /// sheet (below) has somewhere to present over.
-    func showShiftDestination() { show(.shift) }
-
-    /// The ⌘⇧P search palette's "Weekly Review" navigation, and the Shift
-    /// menu's own "Weekly Review" item.
-    @objc func showShiftWeeklyReview() {
-        show(.shift)
-        shift.showWeeklyReview()
-    }
-
-    /// A search-palette or menu-bar-popover selection resolving to a task/
-    /// follow-up/project - each opens the same editor sheet the Shift page's
-    /// own row click already uses, so there is exactly one "open this task"
-    /// behavior regardless of entry point.
-    /// The app's own activity feed - Overview's captain's log.
-    ///
-    /// Wired to the Hosts sidebar's TOOLS > Activity row. `show(_:)` mounts
-    /// the destination if this is its first visit, which is why the tab switch
-    /// follows rather than precedes it.
-    func openFleetLog() {
-        show(.overview)
-        overview.showLogTab()
-    }
-
     /// The Hosts sidebar's user row, routed into the bar's own single logout
     /// confirmation rather than a second copy of it.
     func requestLogout() { bar.requestLogout() }
-
-    func openShiftTask(id: String) {
-        show(.shift)
-        shift.openTask(id: id)
-    }
-
-    /// `fm/straw-hat-menubar-quick-chat-popover`: one turn from the crew
-    /// menu-bar popover, forwarded straight to `StrawHatController`'s own
-    /// runner and real transcript - never a second, page-less conversation.
-    /// See `StrawHatController.send(_:completion:)`'s own doc comment for
-    /// the full reasoning, including why a proposal surfaced here is still
-    /// confirmable on the real page afterward.
-    func askCrewFromMenuBar(_ text: String, completion: @escaping (Result<[StrawHatSection], StrawHatError>) -> Void) {
-        strawHat.send(text, completion: completion)
-    }
-
-    // MARK: F16 - the Poneglyph menu-bar popover
-
-    /// The rows the status item's popover shows, and the copy it performs.
-    ///
-    /// Forwarded into the one `CredentialVaultController` rather than given
-    /// a store of its own: `CredentialVaultStore` caches, GL-23 says a
-    /// caching store gets exactly one instance, and two would hold two
-    /// copies of the decrypted set and race each other's writes. Same
-    /// forward-don't-own shape as `askCrewFromMenuBar` above.
-    ///
-    /// PERF-01: a locked store has no codes to list, so asking does not build
-    /// the page unless the vault is open (an App Intent can open it without
-    /// the page ever having been shown).
-    var poneglyphQuickCodes: [PoneglyphQuickCode] {
-        guard credentialVaultStore.isUnlocked else { return [] }
-        return poneglyph.quickCodeEntries
-    }
-
-    var poneglyphIsUnlocked: Bool { credentialVaultStore.isUnlocked }
-
-    @discardableResult
-    func copyPoneglyphCodeFromMenuBar(id: String) -> String? {
-        poneglyph.copyQuickCode(id: id)
-    }
-
-    /// `fm/grandline-k8s-cluster-tail`: the Shape-C deep link. A host page's
-    /// own "Tail Logs" / "Cluster" toolbar buttons land here with that host
-    /// already selected as the scope, so the captain reaches the same one
-    /// implementation from either front door - the identical idiom Overview's
-    /// ready-to-merge tile already uses to reach Review.
-    func openKubernetes(hostID: UUID, showTail: Bool) {
-        show(.kubernetes)
-        kubernetes.openScoped(hostID: hostID, showTail: showTail)
-    }
-
-    func openShiftFollowUp(id: String) {
-        show(.shift)
-        shift.openFollowUp(id: id)
-    }
-
-    func openShiftProject(id: String) {
-        show(.shift)
-        shift.openProject(id: id)
-    }
-
-    // MARK: Unified search navigation (phase 4, "Knowledge and speed")
-
-    /// The `⌘K` unified search palette's own entry point for a Runbook/
-    /// Postmortem result, and the Log Analyzer's "Create Runbook"/"Generate
-    /// Postmortem" actions - switches to the item's own destination first,
-    /// exactly like every other `open*(id:)` wrapper above, so it has
-    /// somewhere to open into. `fm/grandline-docs-split-runbooks-postmortems`
-    /// renamed these from `openDocsRunbook`/`openDocsPostmortem` once
-    /// Runbooks/Postmortems stopped being Docs tabs.
-    func openRunbook(id: String) {
-        show(.runbooks)
-        runbooks.openRunbook(id: id)
-    }
-
-    /// ⌘K's own deep link into a saved link - it opens the page's own reader,
-    /// not the system browser, because the palette is inside this app.
-    func openReadingListLink(id: String) {
-        show(.readingList)
-        readingList.openReader(id: id)
-    }
-
-    /// ⌘K's own deep link into a notebook page.
-    func openNotebookPage(id: String) {
-        show(.notebook)
-        notebook.openPage(id: id)
-    }
-
-    func openPostmortem(id: String) {
-        show(.postmortems)
-        postmortems.openPostmortem(id: id)
-    }
-
-    // MARK: Straw Hat crew handoffs (phase 3, M3.2)
-
-    /// `open_destination`: select the page, and where that page has an entry
-    /// point worth landing on, open it carrying what the crew was talking
-    /// about.
-    ///
-    /// The second half is the app's own established convention rather than an
-    /// extra: every `open*(id:)` wrapper above *reveals the record* rather
-    /// than only selecting its destination, because audit bug 4.3 corrected
-    /// exactly that dead end once for Recents. A "draw it out" handoff that
-    /// left the captain on an empty whiteboard, having discarded the idea
-    /// Usopp was describing, is the same shape.
-    ///
-    /// The Whiteboard is the only destination with such an entry point today
-    /// (its own "Generate diagram" composer - reused, never a second
-    /// generator), so it is the only special case, and every other
-    /// destination ignores the hint.
-    func openDestinationForCrew(_ dest: RailDestination, hint: String?) {
-        show(dest)
-        guard dest == .whiteboard, let hint, !hint.isEmpty else { return }
-        // Deferred one turn: the composer is an `NSPopover` anchored on the
-        // "Generate diagram" button, which lives in the *drill header* that
-        // `show(_:)` has only just repopulated - showing a popover relative to
-        // a button that has not been laid out yet places it against a zero
-        // rect.
-        DispatchQueue.main.async { [weak self] in
-            self?.whiteboard.openDiagramComposer(prefill: hint)
-        }
-    }
-
-    /// `open_sre_lead`: reveal a host's SRE Lead pane, or say why not.
-    ///
-    /// **This deliberately never connects a host that is not already
-    /// connected**, and that restraint is what makes "a handoff writes
-    /// nothing, so its link runs on a single click" literally true rather
-    /// than approximately. Forking a real `/usr/bin/ssh` - and possibly
-    /// prompting for Touch ID to materialise a key - is not navigation, and a
-    /// model-authored link row is not where the captain should be asked for
-    /// it. A host with no live session lands on the Hosts page, where Connect
-    /// is their own deliberate click.
-    ///
-    /// **The app resolves which host, never the crew.** They cannot see hosts
-    /// at all (`StrawHatCrew.persona`'s bounded-visibility rule), so a hint is
-    /// only ever a name the captain themselves used earlier in the
-    /// conversation. It is matched against the live-session registry - and
-    /// refuses to choose between two rather than guessing, the same
-    /// conservative shape `KubeContextParser`/`MultiHostSend` already use.
-    ///
-    /// Returns nil once the app has moved, or a message the crew's link row
-    /// shows in place.
-    func openSRELeadForCrew(hostHint: String?) -> String? {
-        // **`isConnected`, not merely "in the registry"** - review #3's B16.
-        // Since the two-state registry (#338) `sessions` also carries
-        // `.restored` entries: a host page F2 brought back at launch, mounted
-        // but deliberately never started, precisely so a relaunch does not
-        // fork every saved host's `ssh` at once. Revealing one of those from a
-        // one-click crew link is what makes its `viewDidAppear` fork the
-        // connection - and prompt for Touch ID to materialise the key - which
-        // is exactly the thing this method's own header says it will not do.
-        // The header predates the registry gaining a second state; the
-        // predicate is what makes it true again.
-        let live = sessions.sessions.filter(\.isConnected)
-        guard !live.isEmpty else {
-            // Distinguished on purpose: "you have pages open but nothing is
-            // actually connected" is a different thing to say than "you have
-            // no host sessions", and only one of them is answered by opening
-            // Hosts and pressing Connect on a row that is already there.
-            show(.hosts)
-            return sessions.sessions.isEmpty
-                ? "You don't have a live host session right now - connect one from Hosts and ask me again."
-                : "None of your host pages are connected right now - open one from Hosts and connect it, then ask me again."
-        }
-
-        let chosen: HostSession
-        if let hint = hostHint?.trimmingCharacters(in: .whitespacesAndNewlines), !hint.isEmpty {
-            let needle = hint.lowercased()
-            // Exact label first, then a unique substring - a host called
-            // "prod" must not be ambiguous just because "prod-bastion" also
-            // exists.
-            let exact = live.filter { $0.label.lowercased() == needle }
-            let partial = live.filter { $0.label.lowercased().contains(needle) }
-            if let only = exact.first, exact.count == 1 {
-                chosen = only
-            } else if let only = partial.first, partial.count == 1 {
-                chosen = only
-            } else if partial.isEmpty {
-                show(.hosts)
-                // B16: a hint that matches a page which is open but not
-                // connected gets its own answer rather than "I don't have a
-                // session called that" - the captain can see that page in
-                // Hosts, so denying it exists would read as a bug.
-                let restoredMatch = sessions.sessions.contains {
-                    !$0.isConnected && $0.label.lowercased().contains(needle)
-                }
-                return restoredMatch
-                    ? "\u{201C}\(hint)\u{201D} is open but not connected - connect it from Hosts and ask me again."
-                    : "I don't have a live session called \u{201C}\(hint)\u{201D} - here are your hosts."
-            } else {
-                show(.hosts)
-                return "More than one live session matches \u{201C}\(hint)\u{201D}, so I'd rather you picked."
-            }
-        } else if live.count == 1, let only = live.first {
-            chosen = only
-        } else {
-            show(.hosts)
-            return "You have \(live.count) live sessions - pick the one you meant and I'll follow you there."
-        }
-
-        // Two distinct near-misses, kept distinct because saying "I opened it"
-        // about a page that never appeared is the same kind of overclaim the
-        // whole feature's honesty rules exist to prevent. A session can be in
-        // the registry with no page behind it at all (`connectHost(navigate:
-        // false)`, or an F2-restored entry), in which case `switchToSession`
-        // is a documented no-op and nothing moved. A page only queued for
-        // restore (PERF-08) is built first, so it is not one of those.
-        materializePendingRestoredHost(chosen.hostID)
-        guard let controller = hostConsoles[chosen.hostID] else {
-            show(.hosts)
-            return "I couldn't reach \u{201C}\(chosen.label)\u{201D}'s page - open it from Hosts and ask me again."
-        }
-        switchToSession(hostID: chosen.hostID)
-        guard controller.openSRELeadFromCrewHandoff() else {
-            return "I opened \u{201C}\(chosen.label)\u{201D}, but there was no tab there to start SRE Lead on."
-        }
-        AppLog.ai.info("straw hat: opened SRE Lead from a crew handoff")
-        return nil
-    }
-
-    /// ⌘K landing actions for the two newest stores (audit §6.5b / §6.6b).
-    ///
-    /// Same shape as the two above: select the destination, then reveal the
-    /// record. Selecting alone would leave the captain to hunt for the note
-    /// or snippet they just searched for, which is the dead-end shape bug 4.3
-    /// already corrected once for Recents.
-    func openStickyNote(id: String) {
-        show(.stickyBoard)
-        stickyBoard.revealNote(id: id)
-    }
-
-    func openCodeSnippet(named name: String) {
-        show(.codePreview)
-        codePreview.openSnippet(named: name)
-    }
-
-    // MARK: Command palette navigation (F5)
-
-    /// F5 (`fm/grandline-feature-f5-command-palette-expansion`): the command
-    /// palette's action for a saved command that still needs a parameter
-    /// filled in - switches to the DevOps Commands destination and selects
-    /// it, so the captain completes it on the real form (with its real
-    /// Copy/Send buttons and their real risk gate) rather than the palette
-    /// sending a half-substituted template.
-    ///
-    /// `fm/grandline-tasks-kanban-devops-split`: this used to `show(.shift)`
-    /// and ask that page to switch to its third tab. The library is its own
-    /// destination now, so the navigation is a plain `show` like every other
-    /// palette landing.
-    func openCommandLibraryCommand(id: String) {
-        show(.commandLibrary)
-        commandLibrary.openCommand(id: id)
-    }
-
-    /// The command palette's send action for a command that needs no input -
-    /// the identical call `shift.onSendCommandToTerminal` is wired to above,
-    /// so both surfaces type into whichever console tab is in front. The risk
-    /// gate runs *before* this (see `CommandRiskConfirmation`); this method is
-    /// only the delivery half.
-    func sendCommandToConsole(_ text: String) {
-        console.sendCommandLibraryTextToActiveTab(text)
-    }
-
-    // MARK: Log Analyzer (`fm/grandline-log-analyzer-build`)
-
-    /// ⌘⇧L / the Log Analyzer menu's "Open Log Analyzer" - switches to the
-    /// destination and focuses its input so a paste lands immediately (spec
-    /// §24's own success-criteria flow: ⌘⇧L → paste → ⌘↵).
-    @objc func showLogAnalyzer() {
-        show(.logAnalyzer)
-        logAnalyzer.focusForPaste()
-    }
-
-    /// The clipboard quick action (spec §2).
-    @objc func analyzeClipboardInLogAnalyzer() {
-        show(.logAnalyzer)
-        logAnalyzerCaptureSource = nil
-        logAnalyzer.analyzeClipboard()
-    }
-
-    /// Spec §2's terminal bridge. Called from the app delegate, which owns
-    /// the host consoles' `onAnalyzeLogs` closure - the capture decision
-    /// itself is made in `ConsoleController` (which has the tab, its block
-    /// tracker and its selection) via `LogTerminalCaptureBuilder`, so this
-    /// only routes an already-built capture to the page.
-    func openLogAnalyzer(with capture: LogTerminalCapture, hostLabel: String) {
-        show(.logAnalyzer)
-        logAnalyzer.importTerminalCapture(capture, hostLabel: hostLabel)
-    }
-
-    /// The remaining spec §24 shortcuts, all routed through the destination
-    /// so they behave identically whether they came from the menu or the
-    /// page's own buttons.
-    @objc func logAnalyzerCopyAnalysis() { showThenRun { $0.menuCopyAnalysis() } }
-    @objc func logAnalyzerSendToTerminal() { showThenRun { $0.menuSendToTerminal() } }
-    @objc func logAnalyzerInvestigateFurther() { showThenRun { $0.menuInvestigateFurther() } }
-    @objc func logAnalyzerCreateRCA() { showThenRun { $0.menuCreateRCA() } }
-
-    // MARK: The notification popover's expanded rows
-    //
-    // `fm/grandline-notification-ambient-expand-fix`. The popover can be open
-    // before either page has ever been mounted - that is the normal case at
-    // launch - so a child row's Update/Sync arrives here as an id rather than
-    // as a closure over a row that does not exist yet. Same shape as
-    // `showLogAnalyzer`/`showThenRun` above: show the destination, which
-    // mounts it on a first visit, then hand the page the work. The page owns
-    // the confirmation, the busy state and the log; see
-    // `BackgroundSignalsPoller.onUpdateTool` for why none of that is done
-    // here.
-
-    func updateToolFromNotification(_ toolID: String) {
-        show(.updates)
-        updates.requestUpdateFromNotification(toolID: toolID)
-    }
-
-    func syncForkFromNotification(_ repoFullName: String) {
-        show(.githubSync)
-        githubSync.requestSyncFromNotification(repoFullName: repoFullName)
-    }
-
-    private func showThenRun(_ body: (LogAnalyzerController) -> Void) {
-        show(.logAnalyzer)
-        body(logAnalyzer)
-    }
 
     /// Fix 5: a host save closes its own (separate) editor window
     /// immediately, so the confirmation has to live somewhere that's still
@@ -4425,33 +1257,306 @@ final class AppShellController: NSViewController {
     func showToast(_ message: String) {
         Toast.show(in: view, message: message)
     }
+    // MARK: WorkspaceChrome - what this shell draws when the workspace navigates
 
-    /// fm/grandline-dictation-mvp: forwards the shared `DictationEngine`'s
-    /// live state (recording/transcribing/back to a real permission-derived
-    /// status) to the Dictation page, so it reflects reality in real time
-    /// while visible rather than only on each `viewWillAppear`. A no-op if
-    /// the page hasn't been visited yet - `DictationController.setEngineStatus`
-    /// itself guards on `isViewLoaded`.
-    /// Daylight Phase 3 also forwards it to the hub's Dictation module.
-    /// `HomeCanvasController.applyDictationStatus` existed from Phase 2 but
-    /// nothing ever called it, so that module's chip showed the initial
-    /// `.ready` regardless of what the engine was actually doing - a card
-    /// claiming "Ready" mid-recording, and claiming it on a machine that had
-    /// never been granted microphone access. The engine already fans this
-    /// status out to two subscribers (the Dictation page and the floating
-    /// HUD); this is a third, not a new signal.
-    func setDictationEngineStatus(_ status: DictationStatus) {
-        // The page only renders a status once its view is loaded, so an
-        // unbuilt page has nothing to update - and must not be built for it.
-        if isBuilt(.dictation) { dictation.setEngineStatus(status) }
-        homeCanvas.applyDictationStatus(status)
+    /// `show(_:)`'s chrome half, in the order it has always run: the drill
+    /// header, the scroll edge, then the space pill.
+    func workspaceDidShow(_ dest: RailDestination, slot: DestinationSlot) {
+        applyDrillHeader(title: slot.title,
+                         subtitle: dest.drillSubtitle,
+                         symbol: dest.symbol,
+                         hue: dest.domainHue,
+                         artwork: dest.drillHeaderArtwork,
+                         isTopLevel: slot.id == .homeCanvas,
+                         slotController: slot.controller)
+
+        // A3: re-point the scroll-edge observer at what is now showing.
+        // After `mounter.show` the slot's view exists but may not have been
+        // laid out yet, and the observer's own test is geometric, so this
+        // waits for the layout pass the navigation just scheduled.
+        retargetScrollEdge(to: slot.controller.view)
+
+        // B5 (`data/grand-line-e2e-audit/report.md`): keep the bar's selected
+        // space honest on **every** navigation, not only a pill click.
+        //
+        // `selectSpace` was the one place that called `setSelectedSpace`, so
+        // reaching a page any other way - ⌘K, a notification's deep link, a
+        // canvas module card, a menu item - left the previously selected pill
+        // lit while showing a page that belongs to a different space. The
+        // audit's own walk caught it: every drill-page render showed
+        // "Engineering" highlighted, including Schedules and Health (which are
+        // `.operations`) and Tasks (`.command`). A highlight that asserts the
+        // wrong location is worse than none.
+        //
+        // Derived from the module table (`DaylightModule.space(forDestination:)`),
+        // never a second copy of that mapping. A destination no module opens,
+        // and the canvas itself, leave the pills alone - the canvas's space is
+        // whatever the captain last chose, which `selectSpace` still owns.
+
+        if let space = DaylightModule.space(forDestination: dest) {
+            bar.setSelectedSpace(space)
+        } else if dest == .homeCanvas {
+            // M1: `space(forDestination:)` returns nil for the canvas itself,
+            // and both the drill-header back button and `showHomeCanvas()`
+            // reach it through `show(_:)` rather than `selectSpace`. Without
+            // this the pill kept asserting the drill page's space while the
+            // canvas rendered the space the captain last chose - B5's own
+            // failure ("a highlight that asserts the wrong location is worse
+            // than none") one navigation later. The canvas owns that state, so
+            // this reads it rather than keeping a second copy.
+            bar.setSelectedSpace(workspace.homeCanvas.selectedSpace)
+        }
+
+        // B2: the bar's lit shortcut is pushed from
+        // `workspaceCurrentDestinationDidChange`, the one call every
+        // navigation route makes - not from here, which the SRE Lead
+        // reply-jump bypasses.
     }
 
-    /// Fix 1: does for every host page what `AppDelegate.applicationWillTerminate`
-    /// already does for the shared Firstmate `console` - tear down its
-    /// materialized SSH keys and SRE Lead sessions on quit, not just the
-    /// destination that happened to be visible.
-    func shutdownAllHostConsoles() {
-        for controller in hostConsoles.values { controller.shutdown() }
+    /// A host page's chrome: the drill header names the host, and the scroll
+    /// edge is re-pointed (a host console has no page scroll view, so this
+    /// correctly clears the edge rather than leaving the previous page's
+    /// state).
+    func workspaceDidRevealHostPage(_ controller: ConsoleController, label: String) {
+        applyDrillHeader(title: label, subtitle: "Dedicated host page",
+                         symbol: RailDestination.hosts.symbol,
+                         hue: RailDestination.hosts.domainHue, isTopLevel: false,
+                         slotController: controller)
+        retargetScrollEdge(to: controller.view)
     }
+
+    /// B2: light the bar square for this page, and darken whichever was lit
+    /// before. A host page is not a `RailDestination`, so no square stands for
+    /// it and it clears the bar.
+    func workspaceCurrentDestinationDidChange(_ kind: RecentDestinationKind) {
+        if case .rail(let dest) = kind {
+            bar.setActiveDestination(dest)
+        } else {
+            bar.setActiveDestination(nil)
+        }
+    }
+
+    func workspaceSubtitleMayHaveChanged() { refreshDrillHeaderSubtitle() }
+
+    func workspaceActionsMayHaveChanged() { refreshDrillHeaderActions() }
+
+    func workspaceSessionsDidChange(_ registry: HostSessionRegistry) { applySessionRegistry(registry) }
+
+    func workspaceKeyViewLoopMayHaveChanged() { updateKeyViewLoop() }
+
+    var workspaceWindow: NSWindow? { view.window }
+
+    // MARK: The workspace's API, forwarded
+    //
+    // Everything below is a one-line forward to the part that does the work
+    // since stage 2 (see this file's header). The app delegate, the menu and
+    // the suites still call these on the shell; step 3 points the ones that
+    // must work in either shell at the workspace itself.
+
+    // The stores other surfaces read.
+    var codePreviewStore: CodePreviewStore { workspace.codePreviewStore }
+    var readingListStore: ReadingListStore { workspace.readingListStore }
+    var notebookStore: NotebookStore { workspace.notebookStore }
+    var stickyBoardStore: StickyBoardStore { workspace.stickyBoardStore }
+    var shiftStore: ShiftStore { workspace.shiftStore }
+    var focusTimer: FocusTimerController { workspace.focusTimer }
+    var windowOverflowGuard: WindowOverflowGuard { workspace.windowOverflowGuard }
+
+    static func consolePeekRow(name: String,
+                               running: Bool,
+                               lastExit: TabModel.ExitOutcome) -> HelmModulePeekRow {
+        Workspace.consolePeekRow(name: name, running: running, lastExit: lastExit)
+    }
+
+    // The callbacks the app delegate wires.
+    var onPresentHostEditor: ((Host?) -> Void)? {
+        get { workspace.onPresentHostEditor } set { workspace.onPresentHostEditor = newValue }
+    }
+    var onSendCommandToHosts: ((DevOpsCommand, [String: String], String) -> Void)? {
+        get { workspace.onSendCommandToHosts } set { workspace.onSendCommandToHosts = newValue }
+    }
+    var onKeyChordChanged: ((KeyChord) -> Void)? {
+        get { workspace.onKeyChordChanged } set { workspace.onKeyChordChanged = newValue }
+    }
+    var onTerminalShortcutsChanged: ((TerminalShortcutSet) -> Void)? {
+        get { workspace.onTerminalShortcutsChanged } set { workspace.onTerminalShortcutsChanged = newValue }
+    }
+    var onQuickCaptureShortcutChanged: ((KeyChord) -> Void)? {
+        get { workspace.onQuickCaptureShortcutChanged } set { workspace.onQuickCaptureShortcutChanged = newValue }
+    }
+    var onDictationLocalWhisperChanged: ((Bool) -> Void)? {
+        get { workspace.onDictationLocalWhisperChanged } set { workspace.onDictationLocalWhisperChanged = newValue }
+    }
+    var onSearchTapped: (() -> Void)? {
+        get { workspace.onSearchTapped } set { workspace.onSearchTapped = newValue }
+    }
+    var onRunSnippet: ((Snippet) -> Void)? {
+        get { workspace.onRunSnippet } set { workspace.onRunSnippet = newValue }
+    }
+    var onSessionStateChanged: (() -> Void)? {
+        get { workspace.navigator.onSessionStateChanged } set { workspace.navigator.onSessionStateChanged = newValue }
+    }
+    var onCurrentDestinationChanged: ((String?) -> Void)? {
+        get { workspace.navigator.onCurrentDestinationChanged }
+        set { workspace.navigator.onCurrentDestinationChanged = newValue }
+    }
+    var onReconnectHost: ((UUID) -> Bool)? {
+        get { workspace.navigator.onReconnectHost } set { workspace.navigator.onReconnectHost = newValue }
+    }
+    var onUnlocked: (() -> Void)? {
+        get { workspace.lock.onUnlocked } set { workspace.lock.onUnlocked = newValue }
+    }
+    var onLockStateChanged: ((Bool) -> Void)? {
+        get { workspace.lock.onLockStateChanged } set { workspace.lock.onLockStateChanged = newValue }
+    }
+
+    // The lock.
+    func showLock(reason: AppLockReason) { workspace.lock.showLock(reason: reason) }
+    func attemptUnlockFromCompactMode(password: String, completion: @escaping (Bool) -> Void) {
+        workspace.lock.attemptUnlockFromCompactMode(password: password, completion: completion)
+    }
+    static var appPasswordRetryBaseDelay: TimeInterval { LockPresenter.appPasswordRetryBaseDelay }
+    static var appPasswordRetryCeiling: TimeInterval { LockPresenter.appPasswordRetryCeiling }
+    static func appPasswordRetryDelay(attempt: Int) -> TimeInterval { LockPresenter.appPasswordRetryDelay(attempt: attempt) }
+
+    // The body area's transition.
+    typealias TransitionDirection = WorkspaceContent.TransitionDirection
+    static var destinationTransitionDuration: TimeInterval { WorkspaceContent.destinationTransitionDuration }
+    static var destinationTransitionOffset: CGFloat { WorkspaceContent.destinationTransitionOffset }
+    var pageCrossfade: PageCrossfade? {
+        get { workspace.content.pageCrossfade } set { workspace.content.pageCrossfade = newValue }
+    }
+    #if FM_SELFTESTS
+    var lastTransitionForTests: (direction: TransitionDirection, skipped: Bool,
+                                 reducedMotion: Bool, entryOffset: CGFloat)? {
+        workspace.content.lastTransitionForTests
+    }
+    #endif
+
+    // Navigation.
+    func show(_ dest: RailDestination) { workspace.navigator.show(dest) }
+    var recentDestinations: RecentDestinations { workspace.navigator.recentDestinations }
+    var currentContextTitle: String? { workspace.navigator.currentContextTitle }
+    var isTerminalDestinationShowing: Bool { workspace.navigator.isTerminalDestinationShowing }
+    var contextualNewAction: ContextualNewAction { workspace.navigator.contextualNewAction }
+    func runInConsole(label: String, command: String, completion: ((Bool) -> Void)? = nil) {
+        workspace.navigator.runInConsole(label: label, command: command, completion: completion)
+    }
+    func captureSessionState() -> SessionRestoreState { workspace.navigator.captureSessionState() }
+    func restoreTabs(from state: SessionRestoreState) { workspace.navigator.restoreTabs(from: state) }
+    @discardableResult
+    func restoreDestination(from state: SessionRestoreState) -> Bool {
+        workspace.navigator.restoreDestination(from: state)
+    }
+    func activeTabShortcutTarget() -> TabShortcutHandling? { workspace.navigator.activeTabShortcutTarget() }
+    func forgetRecentHost(id: UUID) { workspace.navigator.forgetRecentHost(id: id) }
+    func showShiftDestination() { workspace.navigator.showShiftDestination() }
+    func openFleetLog() { workspace.navigator.openFleetLog() }
+    func openShiftTask(id: String) { workspace.navigator.openShiftTask(id: id) }
+    func openShiftFollowUp(id: String) { workspace.navigator.openShiftFollowUp(id: id) }
+    func openShiftProject(id: String) { workspace.navigator.openShiftProject(id: id) }
+    func openKubernetes(hostID: UUID, showTail: Bool) { workspace.navigator.openKubernetes(hostID: hostID, showTail: showTail) }
+    func openRunbook(id: String) { workspace.navigator.openRunbook(id: id) }
+    func openReadingListLink(id: String) { workspace.navigator.openReadingListLink(id: id) }
+    func openNotebookPage(id: String) { workspace.navigator.openNotebookPage(id: id) }
+    func openPostmortem(id: String) { workspace.navigator.openPostmortem(id: id) }
+    func openDestinationForCrew(_ dest: RailDestination, hint: String?) {
+        workspace.navigator.openDestinationForCrew(dest, hint: hint)
+    }
+    func openStickyNote(id: String) { workspace.navigator.openStickyNote(id: id) }
+    func openCodeSnippet(named name: String) { workspace.navigator.openCodeSnippet(named: name) }
+    func openCommandLibraryCommand(id: String) { workspace.navigator.openCommandLibraryCommand(id: id) }
+    func sendCommandToConsole(_ text: String) { workspace.navigator.sendCommandToConsole(text) }
+    func openLogAnalyzer(with capture: LogTerminalCapture, hostLabel: String) {
+        workspace.navigator.openLogAnalyzer(with: capture, hostLabel: hostLabel)
+    }
+    func updateToolFromNotification(_ toolID: String) { workspace.navigator.updateToolFromNotification(toolID) }
+    func syncForkFromNotification(_ repoFullName: String) { workspace.navigator.syncForkFromNotification(repoFullName) }
+
+    // The menu's verbs. Their selectors are what `buildMenu` names, so they
+    // stay on this controller and forward.
+    @objc func newContextualItem() { workspace.navigator.newContextualItem() }
+    @objc func newSavedLinkFromMenu() { workspace.navigator.newSavedLinkFromMenu() }
+    @objc func newNotebookPageFromMenu() { workspace.navigator.newNotebookPageFromMenu() }
+    @objc func newStickyNoteFromMenu() { workspace.navigator.newStickyNoteFromMenu() }
+    @objc func newCodeSnippetFromMenu() { workspace.navigator.newCodeSnippetFromMenu() }
+    @objc func runCodeSnippetFromMenu() { workspace.navigator.runCodeSnippetFromMenu() }
+    @objc func toggleSidebarFromMenu() { workspace.navigator.toggleSidebarFromMenu() }
+    @objc func toggleCodePreviewSidebarFromMenu() { workspace.navigator.toggleCodePreviewSidebarFromMenu() }
+    @objc func captureScreenRegionFromMenu() { workspace.navigator.captureScreenRegionFromMenu() }
+    @objc func copyWhiteboardImageFromMenu() { workspace.navigator.copyWhiteboardImageFromMenu() }
+    @objc func newCredentialFromMenu() { workspace.navigator.newCredentialFromMenu() }
+    @objc func newScheduleFromMenu() { workspace.navigator.newScheduleFromMenu() }
+    @objc func newCommandFromMenu() { workspace.navigator.newCommandFromMenu() }
+    @objc func newRunbookFromMenu() { workspace.navigator.newRunbookFromMenu() }
+    @objc func lockPoneglyph() { workspace.navigator.lockPoneglyph() }
+    @objc func revealHostsQuickConnect() { workspace.navigator.revealHostsQuickConnect() }
+    @objc func activateConsoleFind() { workspace.navigator.activateConsoleFind() }
+    @objc func selectSettings() { workspace.navigator.selectSettings() }
+    @objc func selectHosts() { workspace.navigator.selectHosts() }
+    @objc func newHostFromMenu() { workspace.navigator.newHostFromMenu() }
+    @objc func selectKeys() { workspace.navigator.selectKeys() }
+    @objc func selectSnippets() { workspace.navigator.selectSnippets() }
+    @objc func newKeyFromMenu() { workspace.navigator.newKeyFromMenu() }
+    @objc func newSnippetFromMenu() { workspace.navigator.newSnippetFromMenu() }
+    @objc func newShiftTaskFromMenu() { workspace.navigator.newShiftTaskFromMenu() }
+    @objc func newShiftFollowUpFromMenu() { workspace.navigator.newShiftFollowUpFromMenu() }
+    @objc func newShiftProjectFromMenu() { workspace.navigator.newShiftProjectFromMenu() }
+    @objc func showShiftWeeklyReview() { workspace.navigator.showShiftWeeklyReview() }
+    @objc func showLogAnalyzer() { workspace.navigator.showLogAnalyzer() }
+    @objc func analyzeClipboardInLogAnalyzer() { workspace.navigator.analyzeClipboardInLogAnalyzer() }
+    @objc func logAnalyzerCopyAnalysis() { workspace.navigator.logAnalyzerCopyAnalysis() }
+    @objc func logAnalyzerSendToTerminal() { workspace.navigator.logAnalyzerSendToTerminal() }
+    @objc func logAnalyzerInvestigateFurther() { workspace.navigator.logAnalyzerInvestigateFurther() }
+    @objc func logAnalyzerCreateRCA() { workspace.navigator.logAnalyzerCreateRCA() }
+    @objc func selectSessionByShortcut(_ sender: NSMenuItem) { workspace.hosts.selectSession(atShortcutIndex: sender.tag) }
+    @objc func nextSession() { workspace.hosts.nextSession() }
+    @objc func previousSession() { workspace.hosts.previousSession() }
+
+    // Host pages and live sessions.
+    var sessions: HostSessionRegistry { workspace.hosts.sessions }
+    var restoreTurnScheduler: (@escaping () -> Void) -> Void {
+        get { workspace.hosts.restoreTurnScheduler } set { workspace.hosts.restoreTurnScheduler = newValue }
+    }
+    func queueRestoredHostConsoles(_ hosts: [(host: Host, args: [String])]) {
+        workspace.hosts.queueRestoredHostConsoles(hosts)
+    }
+    func connectHost(_ host: Host, args: [String], navigate: Bool = true) {
+        workspace.hosts.connectHost(host, args: args, navigate: navigate)
+    }
+    func isHostConnected(_ host: Host) -> Bool { workspace.hosts.isHostConnected(host) }
+    func sendCommandToHost(_ host: Host, args: [String], text: String) {
+        workspace.hosts.sendCommandToHost(host, args: args, text: text)
+    }
+    func revealHost(_ host: Host, args: [String]) { workspace.hosts.revealHost(host, args: args) }
+    func removeHostConsole(id: UUID) { workspace.hosts.removeHostConsole(id: id) }
+    func switchToSession(hostID: UUID) { workspace.hosts.switchToSession(hostID: hostID) }
+    func confirmEndSession(hostID: UUID) { workspace.hosts.confirmEndSession(hostID: hostID) }
+    func openSRELeadForCrew(hostHint: String?) -> String? { workspace.hosts.openSRELeadForCrew(hostHint: hostHint) }
+    func shutdownAllHostConsoles() { workspace.hosts.shutdownAllHostConsoles() }
+    #if FM_SELFTESTS
+    var pendingRestoredHostIDsForTests: [UUID] { workspace.hosts.pendingRestoredHostIDsForTests }
+    #endif
+
+    // The pages' own quit-time flushes and menu-bar surfaces.
+    func shutdownStickyBoard() { workspace.shutdownStickyBoard() }
+    func shutdownScratchpads() { workspace.shutdownScratchpads() }
+    func shutdownReadingList() { workspace.shutdownReadingList() }
+    func shutdownCodePreview() { workspace.shutdownCodePreview() }
+    func shutdownNotebook() { workspace.shutdownNotebook() }
+    func shutdownCredentialVault() { workspace.shutdownCredentialVault() }
+    func shutdownStrawHatCrew() { workspace.shutdownStrawHatCrew() }
+    func askCrewFromMenuBar(_ text: String, completion: @escaping (Result<[StrawHatSection], StrawHatError>) -> Void) {
+        workspace.askCrewFromMenuBar(text, completion: completion)
+    }
+    var poneglyphQuickCodes: [PoneglyphQuickCode] { workspace.poneglyphQuickCodes }
+    var poneglyphIsUnlocked: Bool { workspace.poneglyphIsUnlocked }
+    @discardableResult
+    func copyPoneglyphCodeFromMenuBar(id: String) -> String? { workspace.copyPoneglyphCodeFromMenuBar(id: id) }
+    func setDictationEngineStatus(_ status: DictationStatus) { workspace.setDictationEngineStatus(status) }
+    func makeCaptureFiler() -> CaptureFiler { workspace.makeCaptureFiler() }
+    #if FM_SELFTESTS
+    var debugPoneglyph: CredentialVaultController { workspace.debugPoneglyph }
+    var debugPoneglyphStore: CredentialVaultStore { workspace.debugPoneglyphStore }
+    #endif
 }

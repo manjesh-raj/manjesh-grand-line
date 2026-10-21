@@ -921,7 +921,9 @@ enum KubernetesDestinationSelfTest {
         }
         guard let tabs = read("ConsoleController+Tabs.swift"),
               let sreLead = read("ConsoleController+SRELead.swift"),
-              let shell = read("AppShellController.swift") else { return "could not read sources" }
+              // The host pages are `HostSessionCoordinator`'s since stage 2 of
+              // the modular-shell migration.
+              let shell = read("HostSessionCoordinator.swift") else { return "could not read sources" }
 
         guard sreLead.contains("isTabBusy(tab.id, excluding: .sreLead)") else {
             return "SRE Lead's bridge does not route through the symmetric guard"
@@ -943,7 +945,7 @@ enum KubernetesDestinationSelfTest {
         // And the shell wires the third direction for a *host* console, which
         // is the only console the Kubernetes page can ever scope to.
         guard shell.contains("controller.isKubernetesFeedBridgeBusy = { [weak self] tabID in") else {
-            return "AppShellController does not wire a host console's Kubernetes-feed seam"
+            return "HostSessionCoordinator does not wire a host console's Kubernetes-feed seam"
         }
         return nil
     }

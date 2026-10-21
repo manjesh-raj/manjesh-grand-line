@@ -373,10 +373,22 @@ enum LaunchPathSelfTest {
                 return "main.swift builds \(store) without its launch interval"
             }
         }
+        // Stage 2 of the modular-shell migration moved these five stores into
+        // `Workspace.init`, which the shell's `init` runs inside its own
+        // interval - so both halves are read.
+        guard let workspace = source("Workspace.swift") else {
+            return "could not read Workspace.swift - the guard would silently pass"
+        }
         for store in ["CodePreviewStore", "NotebookStore", "ReadingListStore", "StickyBoardStore", "LogAnalyzerStore"] {
-            guard shell.contains("LaunchSignposts.measure(\"\(store).init\")") else {
-                return "AppShellController.init builds \(store) without its launch interval"
+            guard workspace.contains("LaunchSignposts.measure(\"\(store).init\")") else {
+                return "Workspace.init builds \(store) without its launch interval"
             }
+        }
+        guard let begin = shell.range(of: "LaunchSignposts.begin(\"AppShellController.init\")"),
+              let build = shell.range(of: "self.workspace = Workspace("),
+              let end = shell.range(of: "LaunchSignposts.end(\"AppShellController.init\""),
+              begin.lowerBound < build.lowerBound, build.lowerBound < end.lowerBound else {
+            return "AppShellController.init no longer builds its workspace inside its launch interval"
         }
         return nil
     }

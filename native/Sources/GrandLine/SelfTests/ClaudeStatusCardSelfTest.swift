@@ -1371,8 +1371,10 @@ enum ClaudeStatusCardSelfTest {
         func read(_ name: String) -> String? {
             try? String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
         }
+        // `Workspace` wires the canvas since stage 2 of the modular-shell
+        // migration moved the pages' wiring out of the shell.
         guard let canvas = read("HomeCanvasController.swift"),
-              let shell = read("AppShellController.swift"),
+              let shell = read("Workspace.swift"),
               let fleet = read("FleetController.swift") else {
             fail("could not read the three files this guard is written against", &ok)
             return

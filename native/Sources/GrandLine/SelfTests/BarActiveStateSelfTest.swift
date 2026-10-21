@@ -290,25 +290,45 @@ enum BarActiveStateSelfTest {
     /// The behaviour above cannot drive the SRE Lead reply-jump (it needs a
     /// live SRE Lead reply), and that is the route that used to skip the
     /// push. So the push has one home, and this asserts it is the only one.
+    ///
+    /// Stage 2 of the modular-shell migration split the funnel from the bar:
+    /// `Navigator.updateRecentDestinations` is the one call every route makes,
+    /// and it tells the chrome once (`workspaceCurrentDestinationDidChange`),
+    /// which is the only place the floating-bar shell lights a square. Both
+    /// halves of "one push site" are asserted, so a second call on either
+    /// side fails here.
     private static func checkTheShellPushesFromOnePlace(_ ok: inout Bool) {
         guard let dir = SelfTestSources.appSourceDirectory() else {
             return fail("could not find the app's sources - this guard cannot run", &ok)
         }
-        let file = dir.appendingPathComponent("AppShellController.swift")
-        guard let source = try? String(contentsOf: file, encoding: .utf8),
-              source.contains("func updateRecentDestinations(arriving") else {
-            return fail("AppShellController.swift has no updateRecentDestinations - the sentinel moved", &ok)
+        func read(_ name: String) -> String? {
+            try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)
         }
-        let calls = source.components(separatedBy: "bar.setActiveDestination(").count - 1
-        guard let start = source.range(of: "private func updateRecentDestinations(arriving"),
-              let end = source.range(of: "\n    }\n", range: start.upperBound..<source.endIndex) else {
-            return fail("could not isolate updateRecentDestinations' body", &ok)
+        func body(of signature: String, in source: String) -> String? {
+            guard let start = source.range(of: signature),
+                  let end = source.range(of: "\n    }\n", range: start.upperBound..<source.endIndex) else { return nil }
+            return String(source[start.lowerBound..<end.upperBound])
         }
-        let inside = String(source[start.lowerBound..<end.upperBound])
-            .components(separatedBy: "bar.setActiveDestination(").count - 1
+        func count(_ needle: String, in text: String) -> Int { text.components(separatedBy: needle).count - 1 }
+
+        guard let navigator = read("Navigator.swift"),
+              let funnel = body(of: "func updateRecentDestinations(arriving", in: navigator) else {
+            return fail("Navigator.swift has no updateRecentDestinations - the sentinel moved", &ok)
+        }
+        let tells = count("workspaceCurrentDestinationDidChange(", in: navigator)
+        check(tells == 1 && count("workspaceCurrentDestinationDidChange(", in: funnel) == 1,
+              "the navigator tells the chrome what is showing \(tells) times, not once from "
+              + "updateRecentDestinations - a second call site is how one route came to skip it", &ok)
+
+        guard let shell = read("AppShellController.swift"),
+              let lighting = body(of: "func workspaceCurrentDestinationDidChange(", in: shell) else {
+            return fail("AppShellController.swift has no workspaceCurrentDestinationDidChange - the sentinel moved", &ok)
+        }
+        let calls = count("bar.setActiveDestination(", in: shell)
+        let inside = count("bar.setActiveDestination(", in: lighting)
         check(calls > 0 && calls == inside,
               "bar.setActiveDestination is called \(calls) times in the shell and \(inside) of them are in "
-              + "updateRecentDestinations - a second push site is how one route came to skip it", &ok)
+              + "workspaceCurrentDestinationDidChange - a second push site is how one route came to skip it", &ok)
     }
 
     // MARK: 4. A real press
