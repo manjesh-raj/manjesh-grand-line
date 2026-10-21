@@ -21,10 +21,12 @@
 // `ModuleTableSelfTest` asserts that every row agrees with each of the six old
 // tables, so the two sources of truth cannot drift while both exist.
 //
-// **What it does not do yet.** Nothing in the shell reads this table.
-// It changes no behaviour, mounts nothing and draws nothing.
-// Step 3 of the migration builds the split-view shell over it, and step 4 makes
-// the sidebar's groups and children come from it.
+// **Who reads it.** Since step 3, the sidebar layout does
+// (`WorkspaceSidebarModel`): its four groups, and the order of the pages inside
+// them, come from the `module` and `child` columns.
+// The floating bar reads none of it, and nothing here mounts or draws anything.
+// Step 4 makes the modules themselves the sidebar's rows, with their children
+// as tabs.
 //
 // **The planned home of each destination** is the `module` and `child` columns.
 // They follow the captain's modular workspace prototype (Version 2): eighteen
@@ -119,12 +121,14 @@ enum WorkspaceModule: String, CaseIterable {
     ///
     /// Where the prototype drew different tabs from the ones the real page has,
     /// the real page wins: Kubernetes keeps its Cluster and Log Tail tabs.
+    /// Knowledge's fourth tab is Docs, the captain's rename of the prototype's
+    /// Playbook: it is the Docs page, which shows the DevOps Playbook.
     var children: [String] {
         switch self {
         case .tasks: return ["Board", "List", "Calendar", "Weekly review"]
         case .crew: return ["Needs you", "In flight", "Merge queue", "Review", "Ask the crew", "Log"]
         case .connections: return ["Hosts", "Sessions", "Keys", "Snippets", "Commands"]
-        case .knowledge: return ["Notebook", "Runbooks", "Postmortems", "Playbook", "Reading list"]
+        case .knowledge: return ["Notebook", "Runbooks", "Postmortems", "Docs", "Reading list"]
         case .secrets: return ["Poneglyph", "Automic Vault"]
         case .kubernetes: return ["Cluster", "Log Tail"]
         case .setup: return ["Updates", "Setup steps", "Automation", "GitHub sync"]
@@ -248,7 +252,7 @@ enum ModuleTable {
         ModuleDescriptor(route: .docs, title: "Docs", symbol: "book.closed", hue: .blue,
                          slot: .docs, subtitle: "The DevOps Playbook, browsable offline",
                          mountsEagerly: false, space: .stores, homeCards: [.docs],
-                         newAction: .task, module: .knowledge, child: "Playbook"),
+                         newAction: .task, module: .knowledge, child: "Docs"),
         ModuleDescriptor(route: .notebook, title: "Notebook", symbol: "book.and.wrench", hue: .blue,
                          slot: .notebook, subtitle: "Linked markdown pages, in your own config repo",
                          mountsEagerly: false, space: .stores, homeCards: [.notebook],

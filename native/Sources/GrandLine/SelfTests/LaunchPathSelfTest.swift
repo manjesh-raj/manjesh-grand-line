@@ -355,13 +355,18 @@ enum LaunchPathSelfTest {
     /// A source guard rather than a behaviour check, because an
     /// `OSSignposter` interval has no observable effect inside a process.
     private static func test_theLaunchPathCarriesItsSignposts() -> String? {
-        guard let shell = source("AppShellController.swift"), let main = source("main.swift") else {
+        // Stage 3 of the modular-shell migration: the shell's `init` is the
+        // base class's, and each window layout has a `loadView` of its own.
+        guard let shell = source("WorkspaceShellController.swift"), let main = source("main.swift"),
+              let classic = source("AppShellController.swift"), let split = source("MainSplitShellController.swift") else {
             return "could not read the app's sources - the guard would silently pass"
         }
-        for name in ["AppShellController.init", "AppShellController.loadView"] {
-            guard shell.contains("LaunchSignposts.begin(\"\(name)\")"),
-                  shell.contains("LaunchSignposts.end(\"\(name)\"") else {
-                return "AppShellController.swift has no \(name) interval"
+        for (name, file, text) in [("WorkspaceShellController.init", "WorkspaceShellController.swift", shell),
+                                   ("AppShellController.loadView", "AppShellController.swift", classic),
+                                   ("MainSplitShellController.loadView", "MainSplitShellController.swift", split)] {
+            guard text.contains("LaunchSignposts.begin(\"\(name)\")"),
+                  text.contains("LaunchSignposts.end(\"\(name)\"") else {
+                return "\(file) has no \(name) interval"
             }
         }
         guard main.contains("LaunchSignposts.begin(\"restoreSessionIfNeeded\")") else {
@@ -384,11 +389,11 @@ enum LaunchPathSelfTest {
                 return "Workspace.init builds \(store) without its launch interval"
             }
         }
-        guard let begin = shell.range(of: "LaunchSignposts.begin(\"AppShellController.init\")"),
+        guard let begin = shell.range(of: "LaunchSignposts.begin(\"WorkspaceShellController.init\")"),
               let build = shell.range(of: "self.workspace = Workspace("),
-              let end = shell.range(of: "LaunchSignposts.end(\"AppShellController.init\""),
+              let end = shell.range(of: "LaunchSignposts.end(\"WorkspaceShellController.init\""),
               begin.lowerBound < build.lowerBound, build.lowerBound < end.lowerBound else {
-            return "AppShellController.init no longer builds its workspace inside its launch interval"
+            return "WorkspaceShellController.init no longer builds its workspace inside its launch interval"
         }
         return nil
     }

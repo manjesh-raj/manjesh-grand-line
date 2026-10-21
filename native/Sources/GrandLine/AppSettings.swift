@@ -53,6 +53,7 @@ final class AppSettings {
         static let followSystemAppearance = "fm.followSystemAppearance"
         static let systemLightThemeID = "fm.systemLightThemeID"
         static let systemDarkThemeID = "fm.systemDarkThemeID"
+        static let workspaceLayout = "fm.workspaceLayout"
     }
 
     /// GL-P3 (audit §6.10): the defaults store is injectable.
@@ -506,5 +507,21 @@ final class AppSettings {
             guard let data = try? JSONEncoder().encode(newValue) else { return }
             defaults.set(data, forKey: Keys.quickAccess)
         }
+    }
+
+    /// Which shell the main window hosts - the floating bar or the sidebar
+    /// (stage 3 of the modular-shell migration). Settings > Appearance writes
+    /// it, and the app delegate reads it **once**, when it builds the window,
+    /// so a change applies the next time the app opens: the two shells draw
+    /// different window chrome (a hidden title bar against a system toolbar),
+    /// and swapping that under a running window is not something either
+    /// shell is built to survive.
+    ///
+    /// The floating bar until the captain picks otherwise, and for any value
+    /// this build does not recognise - an unknown layout must never leave the
+    /// app without a shell.
+    var workspaceLayout: WorkspaceLayout {
+        get { defaults.string(forKey: Keys.workspaceLayout).flatMap(WorkspaceLayout.init(rawValue:)) ?? .floatingBar }
+        set { defaults.set(newValue.rawValue, forKey: Keys.workspaceLayout) }
     }
 }

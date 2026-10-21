@@ -753,37 +753,47 @@ enum AppIntentActionsSelfTest {
     private static func checkServicesAreRegisteredBeforeAnyWindow(_ check: (Bool, String) -> Void) {
         // Stage 2 of the modular-shell migration moved the stores, and so the
         // registration, from `AppShellController.init` into `Workspace.init`,
-        // which the shell's `init` runs before `super.init`. Both halves are
-        // read: the registration is in `Workspace`'s initialiser, and the shell
-        // builds its workspace in its own initialiser rather than later.
+        // which the shell's `init` runs before `super.init`. Stage 3 moved
+        // that `init` into `WorkspaceShellController`, the base class both
+        // layouts extend, so it is read there - and each layout is checked
+        // for not declaring an initialiser of its own, which is what would
+        // let one of them build its workspace later.
         guard let sources = SelfTestSources.appSourceDirectory(),
               let text = try? String(contentsOf: sources.appendingPathComponent("Workspace.swift"), encoding: .utf8),
-              let shell = try? String(contentsOf: sources.appendingPathComponent("AppShellController.swift"), encoding: .utf8) else {
-            check(false, "SKIPPED: could not read Workspace.swift and AppShellController.swift")
+              let base = try? String(contentsOf: sources.appendingPathComponent("WorkspaceShellController.swift"), encoding: .utf8),
+              let classic = try? String(contentsOf: sources.appendingPathComponent("AppShellController.swift"), encoding: .utf8),
+              let split = try? String(contentsOf: sources.appendingPathComponent("MainSplitShellController.swift"), encoding: .utf8) else {
+            check(false, "SKIPPED: could not read Workspace.swift and the three shell files")
             return
         }
         let calls = text.components(separatedBy: "GrandLineServices.shared.register(").count - 1
         check(calls == 1, "the workspace registers its stores with GrandLineServices exactly once (found \(calls))")
-        check(!shell.contains("GrandLineServices.shared.register("),
-              "and the shell does not register a second time")
+        for (name, shell) in [("WorkspaceShellController", base), ("AppShellController", classic), ("MainSplitShellController", split)] {
+            check(!shell.contains("GrandLineServices.shared.register("),
+                  "and \(name) does not register a second time")
+        }
 
         // The registration must sit inside the workspace's own `init`, before
         // the first method after it.
         guard let registerAt = text.range(of: "GrandLineServices.shared.register("),
               let initAt = text.range(of: "    init(\n"),
               let firstMethodAt = text.range(of: "    private func prepareForLock()"),
-              let workspaceAt = shell.range(of: "self.workspace = Workspace("),
-              let superInitAt = shell.range(of: "super.init(nibName: nil, bundle: nil)"),
-              let loadViewAt = shell.range(of: "override func loadView()") else {
-            check(false, "found the register call, the two initialisers and loadView to compare")
+              let shellInitAt = base.range(of: "    required init("),
+              let workspaceAt = base.range(of: "self.workspace = Workspace("),
+              let superInitAt = base.range(of: "super.init(nibName: nil, bundle: nil)") else {
+            check(false, "found the register call and the two initialisers to compare")
             return
         }
         check(initAt.lowerBound < registerAt.lowerBound && registerAt.lowerBound < firstMethodAt.lowerBound,
               "the registration happens in the workspace's init - not deferred to a later hook")
-        check(workspaceAt.lowerBound < superInitAt.lowerBound,
-              "the shell builds its workspace in init, before super.init")
-        check(workspaceAt.lowerBound < loadViewAt.lowerBound,
-              "and strictly before loadView(), which compact mode may never run at all")
+        check(shellInitAt.lowerBound < workspaceAt.lowerBound && workspaceAt.lowerBound < superInitAt.lowerBound,
+              "the shells' shared init builds the workspace, before super.init")
+        // A layout's `loadView` - which compact mode may never run at all -
+        // can only come after an initialiser it does not override.
+        for (name, shell) in [("AppShellController", classic), ("MainSplitShellController", split)] {
+            check(!shell.contains("init(hostsPanel:") && shell.contains("override func loadView()"),
+                  "\(name) inherits the shared init and builds its chrome in loadView")
+        }
     }
 
     /// The Settings card lists `GrandLineIntentCatalog`, and App Intents

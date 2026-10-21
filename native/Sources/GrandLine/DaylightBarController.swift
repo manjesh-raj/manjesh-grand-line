@@ -1362,14 +1362,10 @@ final class DaylightBarController: NSViewController {
     func requestLogout() { logoutClicked() }
 
     private func logoutClicked() {
-        // G3: themed; Return still logs out, as it did here.
-        guard HelmConfirm.confirm(
-            title: "Log out of Grand Line?",
-            body: "This locks the app immediately. You'll need your Grand Line password to get back in. Your terminal sessions keep running in the background.",
-            confirmTitle: "Log Out",
-            destructive: true,
-            symbol: "lock.fill",
-            hue: .rose) else { return }
+        // G3: themed; Return still logs out, as it did here. The copy is
+        // `HelmConfirm.confirmLogout`'s, shared with the sidebar shell's
+        // account menu since stage 3.
+        guard HelmConfirm.confirmLogout() else { return }
         onLogoutRequested?()
     }
 
@@ -2485,8 +2481,13 @@ final class DaylightThemeToggleButton: DaylightBarIconButton {
         super.applyTheme(theme)
     }
 
-    private static func tooltip(isDark: Bool) -> String {
-        isDark ? "Dark appearance - switch to Light (⌘⌥T)" : "Light appearance - switch to Dark (⌘⌥T)"
+    /// Shared with the sidebar shell's toolbar item, so both say the same.
+    ///
+    /// No chord in it: the "(⌘⌥T)" this used to promise went with the View
+    /// menu (`buildMenu`'s note on its removal), so the tooltip was offering a
+    /// shortcut that did nothing.
+    static func tooltip(isDark: Bool) -> String {
+        isDark ? "Dark appearance - switch to Light" : "Light appearance - switch to Dark"
     }
 
     /// What VoiceOver reads after the label: "Toggle Light/Dark, Dark".

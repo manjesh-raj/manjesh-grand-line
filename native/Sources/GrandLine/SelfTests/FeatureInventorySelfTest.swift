@@ -460,8 +460,11 @@ enum FeatureInventorySelfTest {
         var out: [String: String] = [:]
         // The shell's own API and the navigator it forwards to since stage 2
         // of the modular-shell migration: a route kept on either still
-        // counts, and one dropped from both fails.
-        for file in ["AppShellController.swift", "Navigator.swift"] {
+        // counts, and one dropped from all of them fails. Since stage 3 the
+        // API is the base class both window layouts extend, and each layout
+        // may answer a route of its own.
+        for file in ["WorkspaceShellController.swift", "AppShellController.swift", "MainSplitShellController.swift",
+                     "Navigator.swift"] {
             guard let text = source(file) else { continue }
             let pattern = #"(?m)^\s*(?:@objc\s+)?func\s+((?:open|show|select|switchTo|reveal|new)[A-Za-z]*)\("#
             for name in matches(pattern, in: text) { out["link.route.\(name)"] = name }

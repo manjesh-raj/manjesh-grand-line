@@ -97,8 +97,10 @@ enum DaylightDrillPageSlice6SelfTest {
     /// crew's separate status items back after the merged one became the
     /// default. Twenty-one since `fm/grandline-remove-today-calendar-1792553365`
     /// removed the Briefings page's Daily review card and the Google Accounts
-    /// page's three (Accounts, Calendar, OAuth client).
-    private static let expectedCardCount = 21
+    /// page's three (Accounts, Calendar, OAuth client). Twenty-two since stage
+    /// 3 of the modular-shell migration added the Appearance page's Window
+    /// card (the window layout: floating bar or sidebar).
+    private static let expectedCardCount = 22
 
 
     static func run() -> Bool {

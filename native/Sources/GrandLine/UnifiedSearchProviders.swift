@@ -743,7 +743,7 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
     /// discipline - the app delegate owns both this palette and the shell, so
     /// a strong capture here would be a retain cycle waiting for the day one
     /// of them is no longer app-lifetime.
-    static func standard(shell: AppShellController) -> UnifiedSearchActionProvider {
+    static func standard(shell: WorkspaceShellController) -> UnifiedSearchActionProvider {
         var actions: [Action] = RailDestination.allCases.map { destination in
             Action(
                 title: "Switch to \(destination.title)",

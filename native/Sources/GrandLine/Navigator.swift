@@ -269,10 +269,17 @@ final class Navigator: NSObject {
     /// `runCodeSnippetFromMenu`'s reason - this app implements no
     /// `validateMenuItem`, so the guard lives here.
     @objc func toggleSidebarFromMenu() {
+        showingSplitPage?.toggleSidebar(nil)
+    }
+
+    /// The showing page's own split view, when it has one - the seven pages
+    /// whose column is a real `HelmSplitPage`. The sidebar shell asks, so ⌥⌘S
+    /// toggles the page's column where there is one and its own sidebar
+    /// everywhere else.
+    var showingSplitPage: HelmSplitPage? {
         guard case .rail(let dest)? = currentDestinationKindForMenus,
-              let host = content.mounter.slot(for: dest.slot)?.controller as? HelmSplitPageHosting,
-              let split = host.splitPage else { return }
-        split.toggleSidebar(nil)
+              let host = content.mounter.slot(for: dest.slot)?.controller as? HelmSplitPageHosting else { return nil }
+        return host.splitPage
     }
 
     /// Code Preview's ⌘B: show or hide the snippet list. A no-op anywhere

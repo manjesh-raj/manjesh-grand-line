@@ -37,6 +37,13 @@ final class LockPresenter {
     /// while the overlay is covering it.
     var onLockStateChanged: ((Bool) -> Void)?
 
+    /// The showing shell's half of the same moment, `true` while the overlay
+    /// is up. The overlay covers the root view it is installed over, which is
+    /// everything the floating bar draws; the sidebar shell's window toolbar
+    /// and title are drawn above the content view, so that shell hides them
+    /// itself from here. Set by a shell, never by the app delegate.
+    var onOverlayVisibilityChanged: ((Bool) -> Void)?
+
     /// The way into a lock, run before anything else `showLock` does - see
     /// that method's first two comments for what it has to close and drop.
     var prepareForLock: () -> Void = {}
@@ -161,6 +168,7 @@ final class LockPresenter {
         // overlay is up but a global hotkey still fires.
         AppLockGate.shared.setLocked(true)
         onLockStateChanged?(true)
+        onOverlayVisibilityChanged?(true)
         // `fm/grandline-lock-and-rail-fixes` used this moment to make the
         // rail's sailboat mark inert. The rail is gone (Daylight §5.1) and the
         // bar's logo tile is a static gradient with no animation to stop, so
@@ -305,6 +313,7 @@ final class LockPresenter {
         lockScreen.stopAnimations()
         AppLockGate.shared.setLocked(false)
         onLockStateChanged?(false)
+        onOverlayVisibilityChanged?(false)
         // Audit #2 §5.1: after `setLocked(false)`, so the work each console
         // replays actually passes its own gate. Only a page that appeared
         // while locked has anything owed - see

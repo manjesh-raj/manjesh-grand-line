@@ -301,6 +301,13 @@ final class NotificationCenterController: NSObject {
     private var themeObservation: ThemeObservation?
     private var storeObservation: NotificationCenterObservation?
 
+    /// The badge count, for a surface that draws it somewhere other than
+    /// `bell` - the sidebar shell's toolbar button. Fires on every change,
+    /// and once with the current count when it is assigned.
+    var onBadgeCountChanged: ((Int) -> Void)? {
+        didSet { onBadgeCountChanged?(lastBadgeCount) }
+    }
+
     override init() {
         panel = HelmBarPanel(content: content)
         super.init()
@@ -329,17 +336,26 @@ final class NotificationCenterController: NSObject {
             let arrived = count > self.lastBadgeCount
             self.lastBadgeCount = count
             self.bell.setBadgeCount(count)
+            self.onBadgeCountChanged?(count)
             if arrived { self.bell.playArrivalBounce() }
             if self.panel.isShown { self.content.reload() }
         }
     }
 
     @objc private func bellClicked() {
+        togglePanel(under: bell)
+    }
+
+    /// Open or close the panel under `anchor`. The floating bar's bell passes
+    /// itself; the sidebar shell's toolbar passes its own notifications
+    /// button, so both shells show the one panel, the one store and the one
+    /// badge count.
+    func togglePanel(under anchor: NSView) {
         if panel.isShown {
             panel.close()
         } else {
             content.reload()
-            panel.show(under: bell)
+            panel.show(under: anchor)
         }
     }
 

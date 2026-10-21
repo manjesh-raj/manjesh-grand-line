@@ -70,6 +70,8 @@ enum SetupDataLayerSelfTest {
             ("aFailedCheckCarriesTheToolsRealOutput", test_failureCarriesLog),
             ("dotfilesReadsBranchRemoteAndDirtyFilesFromGit", test_dotfilesParsesGit),
             ("dotfilesReportsBehindOriginFromRevListCounts", test_dotfilesBehindOrigin),
+            ("dotfilesSeamRecordsEveryConcurrentRead", test_dotfilesSeamIsThreadSafe),
+            ("aSelfTestProcessNeverReadsTheCaptainsDotfiles", test_dotfilesLocationIsRedirected),
             ("aClonePathWithShellMetacharactersStaysOneLiteralArgument", test_clonePathIsShellQuoted),
             ("theRebuildCommandQuotesItsRepoPathToo", test_rebuildPathIsShellQuoted),
             ("shellQuoteSurvivesARoundTripThroughARealShell", test_shellQuoteRoundTripsThroughSh),
@@ -465,6 +467,62 @@ enum SetupDataLayerSelfTest {
         guard unknown.commitsBehindOrigin == nil else {
             return "an unreachable remote must report behind-count as unknown (nil), not "
                  + "\(unknown.commitsBehindOrigin.map(String.init) ?? "nil") - a confident 0 would read as up to date"
+        }
+        return nil
+    }
+
+    /// Bootstrap, Automation, the schedule runner and the signals poller each
+    /// read the dotfiles repository on a queue of their own, and every read
+    /// records itself in the seam. Unsynchronised, that append corrupted the
+    /// heap: a review tour crashed in `Array.append` under
+    /// `AutomationController.refreshDotfiles`. Every concurrent read must be
+    /// recorded exactly once.
+    private static func test_dotfilesSeamIsThreadSafe() -> String? {
+        let repo = "/tmp/not-a-real-repo"
+        fakeGit { _ in result("") }
+        let threads = 8, perThread = 200
+        DispatchQueue.concurrentPerform(iterations: threads) { _ in
+            for _ in 0..<perThread { _ = DotfilesSource.repoState(at: repo) }
+        }
+        let recorded = DotfilesDataTestSeam.invocations.count
+        // Every read makes the same calls, so measure one, serially.
+        DotfilesDataTestSeam.reset()
+        fakeGit { _ in result("") }
+        _ = DotfilesSource.repoState(at: repo)
+        let perRead = DotfilesDataTestSeam.invocations.count
+        guard perRead > 0 else { return "a single read recorded nothing - the case is vacuous" }
+        guard recorded == perRead * threads * perThread else {
+            return "\(threads * perThread) concurrent reads recorded \(recorded) invocations, "
+                 + "expected \(perRead * threads * perThread) - appends were lost"
+        }
+        return nil
+    }
+
+    /// A suite or a tour must never read the captain's real `~/.dotfiles`,
+    /// because `repoState` runs a real `git fetch origin` against it. The
+    /// resolver's order first, against fixed environments so the answer is
+    /// the same on every machine, then this process's own answer, which is
+    /// what `main.swift`'s redirect block decides.
+    private static func test_dotfilesLocationIsRedirected() -> String? {
+        let real = (DotfilesSource.dotfilesMarker as NSString).expandingTildeInPath
+        let root = "/tmp/gl-dotfiles-root", narrow = "/tmp/gl-dotfiles-narrow"
+        let variable = DotfilesSource.locationOverrideVariable
+        let bare = DotfilesSource.dotfilesLocation([:])
+        guard bare == real else { return "with nothing set the checkout is \(bare), want \(real)" }
+        let underRoot = DotfilesSource.dotfilesLocation([AppPaths.scratchRootVariable: root])
+        guard underRoot == root + "/dotfiles" else {
+            return "under FM_SCRATCH_ROOT the checkout is \(underRoot), want \(root)/dotfiles"
+        }
+        let both = DotfilesSource.dotfilesLocation([AppPaths.scratchRootVariable: root, variable: narrow])
+        guard both == narrow else { return "\(variable) does not win over FM_SCRATCH_ROOT: \(both)" }
+
+        let here = DotfilesSource.dotfilesLocation()
+        guard here != real, !FileManager.default.fileExists(atPath: here) else {
+            return "this self-test process reads its dotfiles from \(here) - main.swift's redirect block "
+                 + "must point \(variable) at a scratch path that does not exist"
+        }
+        guard DotfilesSource.resolvedDotfilesPath() == nil else {
+            return "this self-test process resolved a dotfiles checkout, so it would run git against it"
         }
         return nil
     }

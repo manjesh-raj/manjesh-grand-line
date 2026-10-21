@@ -179,6 +179,26 @@ enum HelmConfirm {
                symbol: "exclamationmark.triangle.fill", hue: .rose)
     }
 
+    /// The app's one logout confirmation, for every place Log Out is offered:
+    /// the floating bar's avatar panel, the Hosts sidebar's user row and the
+    /// sidebar shell's account menu. One definition of the copy, the
+    /// destructiveness and the Return mapping, rather than near-copies that
+    /// drift.
+    ///
+    /// Unchanged from the rail's own Logout: one confirmation, same copy.
+    /// `fm/grandline-avatar-menu-and-setup-guide` collapsed this from two
+    /// alerts to one after live captain feedback; that decision stands.
+    /// G3: themed; Return still logs out.
+    static func confirmLogout() -> Bool {
+        confirm(
+            title: "Log out of Grand Line?",
+            body: "This locks the app immediately. You'll need your Grand Line password to get back in. Your terminal sessions keep running in the background.",
+            confirmTitle: "Log Out",
+            destructive: true,
+            symbol: "lock.fill",
+            hue: .rose)
+    }
+
     // MARK: The panel
 
     /// Build the real dialog view without running it - so a self-test can read

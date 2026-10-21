@@ -1257,6 +1257,18 @@ final class Workspace {
     /// A page's own actions changed - see `chromeSubtitleMayHaveChanged`.
     func chromeActionsMayHaveChanged() { chrome?.workspaceActionsMayHaveChanged() }
 
+    /// The live-session registry changed: rebuild the Hosts list's rows so a
+    /// row that just went live (or just died) reads correctly the moment it
+    /// is looked at. Both shells call this from `workspaceSessionsDidChange`.
+    ///
+    /// Rebuilding a hidden page's rows would be work nobody can see; it gets
+    /// them on its next `viewWillAppear` instead.
+    func refreshShowingHostsLiveSessionState() {
+        if isBuilt(.hosts), hostsPanel.isViewLoaded, !hostsPanel.view.isHidden {
+            hostsPanel.refreshLiveSessionState()
+        }
+    }
+
     /// ⌥Space's filer, bound to the stores and the two pages a capture can
     /// land in. See `CaptureFilingService`.
     func makeCaptureFiler() -> CaptureFiler {
