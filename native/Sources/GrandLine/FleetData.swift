@@ -992,7 +992,9 @@ enum FleetGreeting {
                 tint: .info,
                 kicker: "Finish setup",
                 title: "Point Grand Line at your firstmate home",
-                meta: "Nothing was found at \(FirstmateHome.root.path). Open Setup to choose the directory firstmate keeps its projects, backlog and crew state in.",
+                // UXP-06: the state in words. The path itself is shown once,
+                // in Bootstrap's editable field, where it can be changed.
+                meta: "No firstmate home was found where Grand Line is looking. Open Setup to choose the directory firstmate keeps its projects, backlog and crew state in.",
                 badgeSymbol: "wrench.and.screwdriver.fill",
                 isSetupPrompt: true,
                 metaRestatesCards: false)

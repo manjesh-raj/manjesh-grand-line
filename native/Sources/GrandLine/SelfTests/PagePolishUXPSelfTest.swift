@@ -33,6 +33,7 @@ enum PagePolishUXPSelfTest {
             ("uxp08EveryRefreshComesFromTheOneFactory", uxp08EveryRefreshComesFromTheOneFactory),
             ("uxp08RefreshPillWearsTheSecondaryPalette", uxp08RefreshPillWearsTheSecondaryPalette),
             ("uxp13PageEmptyStatesSitInTheMiddleOfTheContentArea", uxp13PageEmptyStatesSitInTheMiddle),
+            ("uxp06TheFirstmateHomePathAppearsOnce", uxp06TheFirstmateHomePathAppearsOnce),
             ("uxp09ReviewForgePlaceholderRowIsTallEnoughToDraw", uxp09ForgePlaceholderRowIsTallEnough),
         ]
         var failed = 0
@@ -439,6 +440,33 @@ enum PagePolishUXPSelfTest {
         }
         walk(root)
         return found
+    }
+
+    // MARK: UXP-06 and UXP-07
+
+    /// The firstmate home's path is printed once on Bootstrap - in the field
+    /// where it can be changed - and the step captions and Fleet's setup
+    /// banner say the state in words. It used to be on one Bootstrap card
+    /// three times and in Fleet's banner besides.
+    private static func uxp06TheFirstmateHomePathAppearsOnce() -> Bool {
+        var ok = true
+        let path = FirstmateHome.root.path
+        check(!SetupStepCaption.firstmateHome().contains(path),
+              "UXP-06: the firstmate home step's caption prints the path", &ok)
+        check(!SetupStepCaption.dotfiles(isLoading: false, repoPath: "/tmp/dotfiles").contains("/tmp/dotfiles"),
+              "UXP-06: the dotfiles step's caption prints the repo path its body already shows", &ok)
+        check(SetupStepCaption.dotfiles(isLoading: true, repoPath: nil) != "Checking ~/.dotfiles\u{2026}",
+              "UXP-07: the dotfiles caption repeats the body's loading line while checking", &ok)
+        let banner = FleetGreeting.answer(tasks: [], prs: .value(0), homeOk: false)
+        check(!banner.meta.contains(path), "UXP-06: Fleet's finish-setup banner prints the path", &ok)
+
+        let (window, shell) = ReviewTourLab.makeOffScreenShell()
+        defer { _ = window }
+        shell.show(.bootstrap)
+        shell.view.layoutSubtreeIfNeeded()
+        let copies = shell.debugBootstrap.debugHomePathCopies
+        check(copies == 1, "UXP-06: Bootstrap prints the firstmate home's path \(copies) times, want once", &ok)
+        return ok
     }
 
     // MARK: UXP-09

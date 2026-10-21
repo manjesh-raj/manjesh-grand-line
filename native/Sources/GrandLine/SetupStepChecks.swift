@@ -89,6 +89,34 @@ enum SetupStepChecks {
     }
 }
 
+/// The one-line captions under a setup step's title, shared by Bootstrap and
+/// Automation so the two pages cannot word one step two ways.
+///
+/// UXP-06 and UXP-07 of the 2026-10 full review: these used to be the raw
+/// paths - the firstmate home's printed three times on one Bootstrap card
+/// (this caption, a "Currently active" line and the field), and the dotfiles
+/// repo's twice - and the loading caption repeated the body under it word for
+/// word. A caption says the step's state in words; a path appears once, in
+/// the step's own body.
+enum SetupStepCaption {
+    static func firstmateHome() -> String {
+        guard SetupStepChecks.firstmateHomeDone() else {
+            return "No firstmate home found yet"
+        }
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: FirstmateHome.projects, includingPropertiesForKeys: [.isDirectoryKey]) else { return "Found" }
+        let projects = entries.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        return "Found, \(projects.count) project\(projects.count == 1 ? "" : "s")"
+    }
+
+    static func dotfiles(isLoading: Bool, repoPath: String?) -> String {
+        if isLoading { return "Your dotfiles repo and the machine config it manages" }
+        return repoPath == nil ? "~/.dotfiles was not found on this machine." : "Cloned on this machine"
+    }
+
+    static let restoreConfig = "Import a .glbackup file exported from another machine."
+}
+
 /// How far through the setup checklist this machine is, as both pages report
 /// it.
 ///
