@@ -2360,6 +2360,9 @@ final class AppShellController: NSViewController {
     /// master/detail, and which pane is showing decides how tall its
     /// document is.
     var settingsForTests: SettingsController { settings }
+    /// The bar itself, for a check on its own controls (UXP-01's search
+    /// pill floor) under a drill context the suite chooses.
+    var barForTests: DaylightBarController { bar }
     #endif
 
     /// The view a mounted slot owns, for identity comparison across a

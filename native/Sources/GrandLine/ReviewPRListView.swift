@@ -351,6 +351,12 @@ final class ReviewPRListView: NSView {
     /// `numberOfRows`, which reports `1` for the empty-state placeholder row).
     var debugRowCount: Int { prs.count }
     var debugTableHeight: CGFloat { tableHeight.constant }
+    /// UXP-09: the height the table really gives its first row - the
+    /// placeholder's, when the list is empty.
+    var debugFirstRowHeight: CGFloat {
+        tableView.layoutSubtreeIfNeeded()
+        return tableView.numberOfRows > 0 ? tableView.rect(ofRow: 0).height : 0
+    }
 
     /// Forces the real, already-dequeued/laid-out cell view at `row` and
     /// returns its two action buttons' real frames plus whether Merge is
@@ -384,6 +390,17 @@ final class ReviewPRListView: NSView {
 
 extension ReviewPRListView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { prs.isEmpty ? 1 : prs.count }
+
+    /// UXP-09: the placeholder row is as tall as the table it sits in.
+    ///
+    /// The table is sized to `emptyRowHeight` when there are no PRs, but its
+    /// one row stayed at the 64pt `rowHeight` - too short for a `.standard`
+    /// `HelmEmptyState`, so the glyph, title and body were laid out outside
+    /// the row and the forge card showed an empty bordered box, both for an
+    /// all-clear and for a failed read.
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        prs.isEmpty ? Self.emptyRowHeight : Self.rowHeight
+    }
 
     /// D1's discoverability rule, shared by every list that hides its row
     /// actions: a short list keeps them, and a long one keeps them on its

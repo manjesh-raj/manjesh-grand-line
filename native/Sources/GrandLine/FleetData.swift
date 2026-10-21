@@ -509,6 +509,17 @@ enum OpenPRsSource {
             }
             return "Couldn't reach the forge for \(failedRepos.count) repositories."
         }
+
+        /// The same failure as one short sentence, for a place with no room
+        /// for a path - a drill header's subtitle, a tile's tooltip line.
+        ///
+        /// UXP-01: the projects path is ~130 characters on a real machine,
+        /// and as the drill subtitle it out-ranked the bar's search pill and
+        /// squeezed it to "Se…". The path belongs in the page body, once.
+        var failureHeadline: String? {
+            if projectsUnreadable { return "Couldn't read your projects" }
+            return failureSummary
+        }
     }
 
     /// The pre-GL-14 signature, kept for callers that genuinely only want the

@@ -404,6 +404,9 @@ NEEDS_SESSION=(
   "FM_RUN_STRAW_HAT_MENUBAR_TESTS"
   "FM_RUN_INPUT_SURFACE_TESTS"
   "FM_RUN_REVIEW_LOADING_STATE_TESTS"
+  # The full review's page polish findings (UXP-01 to UXP-20): real pages in
+  # an `OffScreenProbe` window, read for resolved geometry and painted state.
+  "FM_RUN_PAGE_POLISH_UXP_TESTS"
   "FM_RUN_REVIEW_PR_LIST_VOLUME_TESTS"
   "FM_RUN_REVIEW_PR_ROW_BUTTON_LAYOUT_TESTS"
   "FM_RUN_UNIFIED_SEARCH_LAYOUT_TESTS"  # session-not-window: UnifiedSearchController builds a real NSPanel

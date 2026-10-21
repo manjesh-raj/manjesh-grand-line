@@ -136,11 +136,52 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     private var isLoading = false
     /// The PR set behind what is currently on screen - see `render`.
     private var lastRenderedPRs: [MergedPR] = []
-    /// The last fetch's degraded-state explanation, or `nil` for a clean
-    /// fetch. Read by `drillHeaderSubtitle`, so a header on a machine that
-    /// could not reach a forge says so instead of reporting a confident zero
-    /// (GL-14).
-    private var lastFetchFailure: String?
+    /// The last fetch's degraded state, or `nil` for a clean fetch. Read by
+    /// `drillHeaderSubtitle`, so a header on a machine that could not reach a
+    /// forge says so instead of reporting a confident zero (GL-14).
+    private var lastFetchFailure: ScanFailure?
+
+    /// A degraded scan in the two lengths this page shows it at.
+    ///
+    /// UXP-01: the failure used to travel as one string, so the drill
+    /// subtitle carried the same ~130-character projects path the page body
+    /// did - and at the subtitle's compression priority that squeezed the
+    /// bar's search pill down to "Se…".
+    struct ScanFailure: Equatable {
+        /// One short sentence for the drill subtitle and a forge card. Never
+        /// a path.
+        let headline: String
+        /// The full explanation, path included, for the page body.
+        let detail: String
+        /// `$FM_HOME/projects` could not be listed, so no forge was asked
+        /// anything: every number on this page is unknown rather than zero.
+        let isTotal: Bool
+
+        init?(_ scan: OpenPRsSource.FetchResult) {
+            guard let detail = scan.failureSummary, let headline = scan.failureHeadline else { return nil }
+            self.init(headline: headline, detail: detail, isTotal: scan.projectsUnreadable)
+        }
+
+        init(headline: String, detail: String, isTotal: Bool) {
+            self.headline = headline
+            self.detail = detail
+            self.isTotal = isTotal
+        }
+    }
+
+    /// UXP-01 and UXP-09: a total failure is one block in the page body
+    /// instead of two forge cards that each have nothing to say. It carries
+    /// the projects path once, behind a disclosure, which is the only place
+    /// on the page that path appears.
+    private let failureDetailButton = HelmButton(title: "Show folder path", variant: .quiet,
+                                                 symbol: "chevron.down")
+    private lazy var failureState = HelmEmptyState(
+        symbol: "folder.badge.questionmark", title: "Couldn't read your projects",
+        body: Self.failureBody, size: .standard, boxed: true,
+        accessory: failureDetailButton, hue: RailDestination.review.domainHue)
+    private var failureDetailShown = false
+    private static let failureBody = "Open pull requests are read from the clones in your firstmate home's "
+        + "projects folder. If it has moved, set the firstmate home again on Bootstrap."
 
     /// Set by `AppShellController`: "my live numbers changed, re-read my
     /// subtitle". See `DaylightDrillActions.drillHeaderSubtitle`.
@@ -219,6 +260,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         contentStack.addArrangedSubview(header)
         contentStack.addArrangedSubview(loadingSection)
         contentStack.addArrangedSubview(statsRow)
+        contentStack.addArrangedSubview(failureState)
         contentStack.addArrangedSubview(githubSection)
         contentStack.addArrangedSubview(bitbucketSection)
         contentStack.addArrangedSubview(otherSection)
@@ -227,6 +269,9 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         // loading skeleton until the first successful `render(...)` - see
         // `buildLoadingState`.
         statsRow.isHidden = true
+        failureState.isHidden = true
+        failureDetailButton.target = self
+        failureDetailButton.action = #selector(toggleFailureDetail)
         githubSection.isHidden = true
         bitbucketSection.isHidden = true
         otherSection.isHidden = true
@@ -240,6 +285,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
             headerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             loadingSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             statsRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            failureState.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             githubSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             bitbucketSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             otherSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
@@ -434,7 +480,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     /// GL-14's rule rides along: a failed fetch reports its own explanation
     /// rather than a confident "0 open".
     var drillHeaderSubtitle: String? {
-        if let failure = lastFetchFailure { return failure }
+        if let failure = lastFetchFailure { return failure.headline }
         guard hasLoadedOnce else { return "Checking your projects\u{2026}" }
         let ready = FleetDataSource.readyToMergeCount(lastRenderedPRs)
         let open = lastRenderedPRs.count
@@ -472,27 +518,33 @@ final class ReviewController: NSViewController, DaylightDrillActions {
                 guard let self else { return }
                 self.isLoading = false
                 self.refreshButton.isEnabled = true
-                self.render(merged, fetchFailure: fetched.failureSummary)
+                self.render(merged, failure: ScanFailure(fetched))
             }
         }
     }
 
     // MARK: Rendering
 
-    /// `fetchFailure` (GL-14) is a short reason string when the forge scan
-    /// behind `prs` did not fully succeed. It is the difference between "no
+    /// `failure` (GL-14) is set when the forge scan behind `prs` did not
+    /// fully succeed. It is the difference between "no
     /// open pull requests" (a real all-clear) and "couldn't check" - the worst
     /// possible ambiguity on a page whose only job is telling the captain
     /// whether something needs them. A partial failure still renders whatever
     /// did come back; it just stops claiming the rest is clear.
-    private func render(_ prs: [MergedPR], fetchFailure: String? = nil) {
+    private func render(_ prs: [MergedPR], failure: ScanFailure? = nil) {
         if !hasLoadedOnce {
             hasLoadedOnce = true
             loadingContainer.isHidden = true
             statsRow.isHidden = false
-            githubSectionView.isHidden = false
-            bitbucketSectionView.isHidden = false
         }
+        // UXP-09: a total failure has nothing to say per forge, so it is one
+        // block rather than two empty cards.
+        let isTotalFailure = failure?.isTotal == true && prs.isEmpty
+        failureState.isHidden = !isTotalFailure
+        githubSectionView.isHidden = isTotalFailure
+        bitbucketSectionView.isHidden = isTotalFailure
+        headerRow.isHidden = isTotalFailure
+        if !isTotalFailure, failureDetailShown { toggleFailureDetail() }
 
         onReadyToMergeCountChanged?(FleetDataSource.readyToMergeCount(prs))
         onPRsChanged?(prs)
@@ -502,7 +554,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         // the argv contract (GL-38) - so the display fields have to come from
         // the list this page already rendered.
         lastRenderedPRs = prs
-        lastFetchFailure = fetchFailure
+        lastFetchFailure = failure
         // §6.4: the header's subtitle is live, and the shell owns the header -
         // so the page asks for a re-read rather than writing into it.
         onDrillSubtitleChanged?()
@@ -512,10 +564,10 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         let bitbucket = sorted.filter { $0.forge == "bitbucket" }
         let other = sorted.filter { $0.forge != "github" && $0.forge != "bitbucket" }
 
-        if let fetchFailure {
+        if let failure {
             subtitleLabel.stringValue = prs.isEmpty
-                ? fetchFailure
-                : "\(prs.count) open pull request\(prs.count == 1 ? "" : "s") found - \(fetchFailure)"
+                ? failure.detail
+                : "\(prs.count) open pull request\(prs.count == 1 ? "" : "s") found - \(failure.detail)"
         } else if prs.isEmpty {
             subtitleLabel.stringValue = "No open pull requests right now"
         } else {
@@ -524,13 +576,13 @@ final class ReviewController: NSViewController, DaylightDrillActions {
                 + "across \(forgesRepresented) forge\(forgesRepresented == 1 ? "" : "s")"
         }
 
-        rebuildStats(prs)
+        rebuildStats(prs, failure: failure)
 
-        githubList.setPRs(github, theme: theme, unavailable: fetchFailure)
-        githubCountLabel.stringValue = fetchFailure != nil && github.isEmpty ? "?" : "\(github.count)"
+        githubList.setPRs(github, theme: theme, unavailable: failure?.headline)
+        githubCountLabel.stringValue = failure != nil && github.isEmpty ? "?" : "\(github.count)"
         applyAccountSubtitle(githubSubtitle, prs: github)
-        bitbucketList.setPRs(bitbucket, theme: theme, unavailable: fetchFailure)
-        bitbucketCountLabel.stringValue = fetchFailure != nil && bitbucket.isEmpty ? "?" : "\(bitbucket.count)"
+        bitbucketList.setPRs(bitbucket, theme: theme, unavailable: failure?.headline)
+        bitbucketCountLabel.stringValue = failure != nil && bitbucket.isEmpty ? "?" : "\(bitbucket.count)"
         applyAccountSubtitle(bitbucketSubtitle, prs: bitbucket)
         otherSection.isHidden = other.isEmpty
         if !other.isEmpty {
@@ -557,7 +609,13 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     /// number is itself a signal" (`FleetController.rebuildStats`'s rule):
     /// the open-PR count and the two status counts qualify, so all three are
     /// tinted here, unlike a page mixing signal and plain counts.
-    private func rebuildStats(_ prs: [MergedPR]) {
+    ///
+    /// UXP-01: a scan that read nothing draws a dash in each tile, with the
+    /// failure as the tooltip - never "0 open PRs" under a sentence saying the
+    /// projects could not be read. A partial failure keeps its real counts,
+    /// since every PR in them was genuinely found, and says in the tooltip
+    /// that they cover only the repositories that answered.
+    private func rebuildStats(_ prs: [MergedPR], failure: ScanFailure? = nil) {
         for v in statsRow.arrangedSubviews {
             statsRow.removeArrangedSubview(v)
             v.removeFromSuperview()
@@ -572,9 +630,29 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         let ready = FleetDataSource.readyToMergeCount(prs)
         let running = prs.filter { $0.checks == "pending" }.count
 
-        statsRow.addArrangedSubview(statTile(icon: "arrow.triangle.branch", value: "\(prs.count)", label: "open PRs", tint: .accent))
-        statsRow.addArrangedSubview(statTile(icon: "checkmark.circle", value: "\(ready)", label: "ready to merge", tint: .good))
-        statsRow.addArrangedSubview(statTile(icon: "clock", value: "\(running)", label: "checks running", tint: .warn))
+        let unknown = failure != nil && prs.isEmpty
+        func reading(_ count: Int) -> String {
+            (unknown ? HelmReading<Int>.failed(failure?.detail ?? "") : .value(count)).text { "\($0)" }
+        }
+        statsRow.addArrangedSubview(statTile(icon: "arrow.triangle.branch", value: reading(prs.count), label: "open PRs", tint: .accent))
+        statsRow.addArrangedSubview(statTile(icon: "checkmark.circle", value: reading(ready), label: "ready to merge", tint: .good))
+        statsRow.addArrangedSubview(statTile(icon: "clock", value: reading(running), label: "checks running", tint: .warn))
+        if let failure {
+            let tip = unknown ? failure.detail
+                : "\(failure.detail) These counts cover only the repositories that answered."
+            for tile in statTiles { tile.toolTip = tip }
+        }
+    }
+
+    /// The disclosure on the total-failure block: the projects path, on
+    /// request, in the one place on the page it is shown.
+    @objc private func toggleFailureDetail() {
+        failureDetailShown.toggle()
+        let path = FirstmateHome.projects.path
+        failureState.setText(title: "Couldn't read your projects",
+                             body: failureDetailShown ? Self.failureBody + "\n\n" + path : Self.failureBody)
+        failureDetailButton.title = failureDetailShown ? "Hide folder path" : "Show folder path"
+        failureDetailButton.symbolName = failureDetailShown ? "chevron.up" : "chevron.down"
     }
 
     /// The prototype's forge-card subtitle (`manjesh-raj` under "GitHub") -
@@ -716,6 +794,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         loadingSkeleton.applyTheme(theme)
 
         for tile in statTiles { tile.applyTheme(theme) }
+        failureState.applyTheme(theme)
         githubList?.applyTheme(theme)
         bitbucketList?.applyTheme(theme)
         otherList?.applyTheme(theme)
@@ -738,8 +817,10 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     func debugRender(_ prs: [MergedPR]) { render(prs) }
 
     /// GL-14: drive the fetch-failed rendering path without a real network
-    /// failure. See `ReviewControllerLoadingStateSelfTest`.
-    func debugRender(_ prs: [MergedPR], fetchFailure: String?) { render(prs, fetchFailure: fetchFailure) }
+    /// failure, through the same `ScanFailure` the real refresh builds.
+    func debugRender(_ prs: [MergedPR], scan: OpenPRsSource.FetchResult) {
+        render(prs, failure: ScanFailure(scan))
+    }
 
     var debugSubtitle: String { subtitleLabel.stringValue }
 
@@ -769,6 +850,12 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     /// subtitle and its "ready to merge" tile once disagreed in one
     /// screenshot; only reading both off the rendered views catches that.
     var debugStatTiles: [(value: String, caption: String)] { statTiles.map { $0.debugMetric } }
+    var debugStatTileToolTips: [String?] { statTiles.map { $0.toolTip } }
+    var debugIsFailureStateVisible: Bool { !failureState.isHidden }
+    var debugIsBodySubtitleVisible: Bool { !headerRow.isHidden }
+    func debugToggleFailureDetail() { failureDetailButton.performClick(nil) }
+    var debugFailureStateBody: String { failureState.debugBodyText }
+    var debugGithubPlaceholderRowHeight: CGFloat { githubList.debugFirstRowHeight }
     #endif
     var debugBitbucketRowCount: Int { bitbucketList.debugRowCount }
 }
