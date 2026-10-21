@@ -86,6 +86,17 @@ final class HelmSplitPage: NSSplitViewController {
         sidebar.minimumThickness = minimum
         sidebar.maximumThickness = maximum
         sidebar.canCollapse = true
+        // A collapse or a reopen moves the divider through constraints at the
+        // sidebar's holding priority (489), under the window's own 500, so a
+        // page's column never resizes the window (AGENTS.md gotcha (13)). The
+        // default behaviour grows the window instead whenever the window's
+        // minimum width plus the column would not fit, and in the sidebar
+        // layout, with the shell's sidebar collapsed for room, that minimum
+        // is the shell's 940pt content floor. Measured: Tasks' column coming
+        // back for its board at 1100pt grew the window by the column's
+        // 249pt, to 1349, where the floating bar shrank the content to 851;
+        // a 500pt floor kept it at 1100 and an 860pt one grew it.
+        sidebar.collapseBehavior = .useConstraints
         // The content takes what the window gains; the sidebar keeps its
         // width (a split view's own resizing rule, the same as Mail's).
         sidebar.holdingPriority = Self.sidebarHoldingPriority

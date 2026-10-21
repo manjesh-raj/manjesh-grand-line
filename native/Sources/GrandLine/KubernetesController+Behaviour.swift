@@ -31,6 +31,21 @@ extension KubernetesController {
         }
         restartTimers()
         render()
+        onModuleTabChanged?()
+    }
+
+    /// The page tab control's own path: a click, and the sidebar layout's
+    /// toolbar, both land here.
+    func showPageTab(_ tab: PageTab) {
+        pageTab = tab
+        pageTabs.select(tab.rawValue)
+        restartTimers()
+        render()
+        // Whichever page just became visible gets the data it shows. The
+        // Log Tail's picker is built from the pod list, which the sweep
+        // now skips while a non-Pods cluster tab is up (`sweepCommands`).
+        if pods.isEmpty, clusterMessage == nil { refreshCluster() }
+        onModuleTabChanged?()
     }
 
     // MARK: - Scope
@@ -851,5 +866,23 @@ extension KubernetesController {
             self.renderTailStatus()
             self.renderFeedStatus()
         }
+    }
+}
+
+// MARK: - Cluster and Log Tail in the sidebar layout
+
+extension KubernetesController: ModuleTabHosting {
+    var moduleTabNames: [String] { ["Cluster", "Log Tail"] }
+
+    var selectedModuleTabName: String { pageTab == .logTail ? "Log Tail" : "Cluster" }
+
+    func selectModuleTab(named name: String) {
+        _ = view
+        showPageTab(name == "Log Tail" ? .logTail : .cluster)
+    }
+
+    func setModuleTabControlHidden(_ hidden: Bool) {
+        _ = view
+        pageTabs.isHidden = hidden
     }
 }

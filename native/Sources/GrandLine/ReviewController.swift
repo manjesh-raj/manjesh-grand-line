@@ -558,7 +558,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         // so the page asks for a re-read rather than writing into it.
         onDrillSubtitleChanged?()
 
-        let sorted = prs.sorted { ($0.repo, $0.number ?? 0) < ($1.repo, $1.number ?? 0) }
+        let sorted = prs.sorted(by: MergedPR.listOrder)
         let github = sorted.filter { $0.forge == "github" }
         let bitbucket = sorted.filter { $0.forge == "bitbucket" }
         let other = sorted.filter { $0.forge != "github" && $0.forge != "bitbucket" }

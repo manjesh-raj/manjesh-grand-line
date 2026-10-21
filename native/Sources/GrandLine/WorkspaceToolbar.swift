@@ -1,6 +1,7 @@
 // Grand Line - native macOS app.
 //
-// The sidebar shell's window toolbar (stage 3 of the modular-shell migration).
+// The sidebar shell's window toolbar (stages 3 and 4 of the modular-shell
+// migration).
 //
 // The floating bar draws its own chrome; this shell lets the system draw it.
 // Every control is a standard `NSToolbarItem` - an image item, or a view item
@@ -12,12 +13,14 @@
 //
 //   - over the sidebar: the sidebar toggle,
 //   - Back and Forward, then Recents (the floating bar's Recents panel, the
-//     same `RecentDestinationsController`); the window title and subtitle
-//     follow, drawn by the system - the page's name and its live subtitle,
-//   - in the middle, on Home only: the five spaces, which still filter
-//     Home's cards,
+//     same `RecentDestinationsController`), then the crumb - "Work › Crew",
+//     the module and the group it sits in, as the prototype draws it,
+//   - in the middle: the showing module's tabs, or on Home its five spaces,
+//     which still filter Home's cards,
 //   - the showing page's own actions (its `drillHeaderActions`, which the
-//     floating bar drew in its drill header),
+//     floating bar drew in its drill header), and the module's one action
+//     where a real verb has no other home in this layout (Home's Customize,
+//     Console's Quick Connect, Connections' Activity),
 //   - the trailing cluster: the light/dark toggle and the notifications
 //     button (the captain kept both), the inspector toggle, then Search.
 //
@@ -35,8 +38,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         static let sidebar = NSToolbarItem.Identifier("workspace.sidebar")
         static let navigation = NSToolbarItem.Identifier("workspace.navigation")
         static let recents = NSToolbarItem.Identifier("workspace.recents")
-        static let spaces = NSToolbarItem.Identifier("workspace.spaces")
+        static let crumb = NSToolbarItem.Identifier("workspace.crumb")
+        static let tabs = NSToolbarItem.Identifier("workspace.tabs")
         static let pageActions = NSToolbarItem.Identifier("workspace.pageActions")
+        static let moduleAction = NSToolbarItem.Identifier("workspace.moduleAction")
         static let theme = NSToolbarItem.Identifier("workspace.theme")
         static let notifications = NSToolbarItem.Identifier("workspace.notifications")
         static let inspector = NSToolbarItem.Identifier("workspace.inspector")
@@ -50,7 +55,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     var onBack: (() -> Void)?
     var onForward: (() -> Void)?
     var onRecents: ((NSView) -> Void)?
-    var onSelectSpace: ((DaylightSpace) -> Void)?
+    /// A tab was picked, by its index in what `setTabs` last showed.
+    var onSelectTab: ((Int) -> Void)?
+    var onModuleAction: (() -> Void)?
     var onToggleTheme: (() -> Void)?
     var onNotifications: ((NSView) -> Void)?
     var onToggleInspector: (() -> Void)?
@@ -69,8 +76,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// that opens Recents' panel on top of it.
     let clipboardAnchor = NSView()
     private let recentsHost = NSView()
-    private let spaces = NSSegmentedControl()
+    private let crumb = NSTextField(labelWithString: "")
+    private let tabs = NSSegmentedControl()
     private let pageActions = NSStackView()
+    private let moduleActionButton = NSButton()
     private let bellButton = NSButton()
     /// The unread count on the bell's corner. Drawn here rather than with
     /// `NSToolbarItem.badge`, which is macOS 26 only and absent from the SDK
@@ -87,7 +96,17 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// real items rather than cached as "done": a navigation before the
     /// toolbar is in a window (the launch landing) finds no items to insert
     /// beside, so `reconcileDynamicItems()` runs again once it is attached.
-    private var wantsSpaces = false
+    private var wantsTabs = false
+    private var wantsModuleAction = false
+    private var crumbParts: (group: String?, module: String) = (nil, "")
+    /// The prototype's narrow toolbar, below `compactWidth`: Search is its
+    /// glyph and the crumb names only the module.
+    private var isCompact = false
+
+    /// The prototype's own breakpoint. At 1100 a module with five tabs left no
+    /// room for Search, the bell or the light/dark toggle, and AppKit put all
+    /// three in the overflow menu (measured on Knowledge).
+    static let compactWidth: CGFloat = 1240
     private var shownActions: [NSView] = []
     /// A page hides and shows its own buttons as its state changes (a vault
     /// that is not set up offers none of its four), so the item follows each
@@ -101,7 +120,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = false
         toolbar.autosavesConfiguration = false
-        toolbar.centeredItemIdentifier = ItemID.spaces
+        toolbar.centeredItemIdentifier = ItemID.tabs
         buildControls()
     }
 
@@ -153,15 +172,17 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             clipboardAnchor.bottomAnchor.constraint(equalTo: recentsButton.bottomAnchor),
         ])
 
-        spaces.segmentCount = DaylightSpace.allCases.count
-        for (index, space) in DaylightSpace.allCases.enumerated() {
-            spaces.setLabel(space.title, forSegment: index)
-            spaces.setToolTip("\(space.subtitle) (\u{2318}\(space.shortcutIndex))", forSegment: index)
-        }
-        spaces.trackingMode = .selectOne
-        spaces.target = self
-        spaces.action = #selector(spaceClicked(_:))
-        spaces.setAccessibilityLabel("Home spaces")
+        crumb.lineBreakMode = .byTruncatingTail
+        crumb.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        crumb.setAccessibilityRole(.staticText)
+
+        tabs.trackingMode = .selectOne
+        tabs.target = self
+        tabs.action = #selector(tabClicked(_:))
+
+        moduleActionButton.imagePosition = .imageLeading
+        moduleActionButton.target = self
+        moduleActionButton.action = #selector(moduleActionClicked)
 
         pageActions.translatesAutoresizingMaskIntoConstraints = false
         pageActions.orientation = .horizontal
@@ -215,6 +236,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// form: both in the theme's muted ink, the hint a step quieter, so the
     /// button still reads as one word.
     private func setSearchHint(_ theme: HelmTheme) {
+        guard !isCompact else {
+            searchButton.attributedTitle = NSAttributedString(string: "")
+            return
+        }
         let muted = HelmTheme.mutedInk(theme)
         let title = NSMutableAttributedString(string: "Search  ", attributes: [
             .font: NSFont.systemFont(ofSize: HelmType.scaled(13)),
@@ -230,18 +255,34 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     // MARK: NSToolbarDelegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        // Two flexible spaces, so Home's spaces - inserted between them - sit
-        // in the middle rather than against the trailing cluster.
-        [ItemID.sidebar, .sidebarTrackingSeparator, ItemID.navigation, ItemID.recents, .flexibleSpace,
+        // Two flexible spaces, so the tabs - inserted between them - sit in
+        // the middle rather than against the trailing cluster.
+        [ItemID.sidebar, .sidebarTrackingSeparator, ItemID.navigation, ItemID.recents, ItemID.crumb, .flexibleSpace,
          .flexibleSpace, ItemID.theme, ItemID.notifications, ItemID.inspector, ItemID.search]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar) + [ItemID.spaces, ItemID.pageActions]
+        toolbarDefaultItemIdentifiers(toolbar) + [ItemID.tabs, ItemID.pageActions, ItemID.moduleAction]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        let item = makeItem(identifier)
+        // When the toolbar runs out of room AppKit moves items into its
+        // overflow menu, lowest priority first. The crumb (the module's
+        // header names it too), Recents and the inspector toggle go first;
+        // Search, the bell, the light/dark toggle, the tabs and the sidebar
+        // button never do.
+        switch identifier {
+        case ItemID.crumb, ItemID.recents, ItemID.inspector: item?.visibilityPriority = .low
+        case ItemID.search, ItemID.notifications, ItemID.theme, ItemID.tabs, ItemID.sidebar, ItemID.navigation:
+            item?.visibilityPriority = .high
+        default: break
+        }
+        return item
+    }
+
+    private func makeItem(_ identifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
         switch identifier {
         case .sidebarTrackingSeparator:
             guard let splitView else { return nil }
@@ -255,11 +296,25 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         case ItemID.recents:
             let item = viewItem(identifier, view: recentsHost, label: "Recents")
             item.isNavigational = true
+            // In the overflow menu a view item does nothing without a menu
+            // form, and its button is out of the window, so the panel opens
+            // under Back and Forward, which never overflow.
+            let menuForm = NSMenuItem(title: "Recents", action: #selector(recentsFromOverflow), keyEquivalent: "")
+            menuForm.target = self
+            item.menuFormRepresentation = menuForm
             return item
-        case ItemID.spaces:
-            return viewItem(identifier, view: spaces, label: "Spaces")
+        case ItemID.crumb:
+            return viewItem(identifier, view: crumb, label: "Location")
+        case ItemID.tabs:
+            return viewItem(identifier, view: tabs, label: "Tabs")
         case ItemID.pageActions:
             return viewItem(identifier, view: pageActions, label: "Page actions")
+        case ItemID.moduleAction:
+            let item = viewItem(identifier, view: moduleActionButton, label: moduleActionButton.title)
+            let menuForm = NSMenuItem(title: moduleActionButton.title, action: #selector(moduleActionClicked), keyEquivalent: "")
+            menuForm.target = self
+            item.menuFormRepresentation = menuForm
+            return item
         case ItemID.theme:
             let item = imageItem(identifier, symbol: DaylightThemeToggleButton.lightSymbol, label: "Appearance",
                                  help: "", action: #selector(themeClicked))
@@ -310,13 +365,67 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         navigation.setEnabled(canGoForward, forSegment: 1)
     }
 
-    /// The spaces sit in the toolbar's centre on Home and nowhere else, which
-    /// is where the floating bar showed its pills.
-    func setSpaces(visible: Bool, selected: DaylightSpace) {
-        if let index = DaylightSpace.allCases.firstIndex(of: selected) {
-            spaces.selectedSegment = index
+    /// The crumb: the module, after the group it sits in. Home has no group.
+    func setCrumb(group: String?, module: String) {
+        crumbParts = (group, module)
+        applyCrumb(ThemeManager.shared.theme)
+    }
+
+    /// Narrow or not, from the window's width.
+    func setCompact(_ compact: Bool) {
+        guard compact != isCompact else { return }
+        isCompact = compact
+        searchButton.imagePosition = compact ? .imageOnly : .imageLeading
+        setSearchHint(ThemeManager.shared.theme)
+        applyCrumb(ThemeManager.shared.theme)
+    }
+
+    private func applyCrumb(_ theme: HelmTheme) {
+        let text = NSMutableAttributedString()
+        if let group = crumbParts.group, !isCompact {
+            text.append(NSAttributedString(string: "\(group)  \u{203A}  ", attributes: [
+                .font: NSFont.systemFont(ofSize: HelmType.scaled(13)),
+                .foregroundColor: HelmTheme.mutedInk(theme),
+            ]))
         }
-        wantsSpaces = visible
+        text.append(NSAttributedString(string: crumbParts.module, attributes: [
+            .font: NSFont.systemFont(ofSize: HelmType.scaled(13.5), weight: .semibold),
+            .foregroundColor: HelmTheme.nsColor(theme.chromeInkHex),
+        ]))
+        crumb.attributedStringValue = text
+        crumb.setAccessibilityLabel(crumbParts.group.map { "\($0), \(crumbParts.module)" } ?? crumbParts.module)
+    }
+
+    /// The tabs in the toolbar's centre - a module's tabs, or Home's spaces -
+    /// or none. `tooltips` runs parallel to `names`.
+    func setTabs(_ names: [String], tooltips: [String?] = [], selected: Int?, accessibilityLabel: String = "Tabs") {
+        if tabs.segmentCount != names.count || (0..<names.count).contains(where: { tabs.label(forSegment: $0) != names[$0] }) {
+            tabs.segmentCount = names.count
+            for (index, name) in names.enumerated() {
+                tabs.setLabel(name, forSegment: index)
+                tabs.setWidth(0, forSegment: index)
+            }
+        }
+        for index in 0..<names.count {
+            tabs.setToolTip(index < tooltips.count ? tooltips[index] : nil, forSegment: index)
+        }
+        tabs.selectedSegment = selected ?? -1
+        tabs.setAccessibilityLabel(accessibilityLabel)
+        wantsTabs = !names.isEmpty
+        reconcileDynamicItems()
+    }
+
+    /// The module's one action, or none.
+    func setModuleAction(title: String?, symbol name: String? = nil, tooltip: String? = nil) {
+        moduleActionButton.title = title ?? ""
+        moduleActionButton.image = name.flatMap(symbol)
+        moduleActionButton.toolTip = tooltip
+        moduleActionButton.setAccessibilityLabel(title)
+        if let item = toolbar.items.first(where: { $0.itemIdentifier == ItemID.moduleAction }) {
+            item.label = title ?? ""
+            item.menuFormRepresentation?.title = title ?? ""
+        }
+        wantsModuleAction = title != nil
         reconcileDynamicItems()
     }
 
@@ -342,12 +451,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// its default items, which it gets once it is in a window.
     func reconcileDynamicItems() {
         guard !toolbar.items.isEmpty else { return }
-        let hasSpaces = toolbar.items.contains { $0.itemIdentifier == ItemID.spaces }
-        if wantsSpaces, !hasSpaces {
+        let hasTabs = toolbar.items.contains { $0.itemIdentifier == ItemID.tabs }
+        if wantsTabs, !hasTabs {
             // After the first flexible space, so the system centres it.
             let at = (toolbar.items.firstIndex { $0.itemIdentifier == .flexibleSpace } ?? toolbar.items.count - 1) + 1
-            toolbar.insertItem(withItemIdentifier: ItemID.spaces, at: at)
-        } else if !wantsSpaces, let index = toolbar.items.firstIndex(where: { $0.itemIdentifier == ItemID.spaces }) {
+            toolbar.insertItem(withItemIdentifier: ItemID.tabs, at: at)
+        } else if !wantsTabs, let index = toolbar.items.firstIndex(where: { $0.itemIdentifier == ItemID.tabs }) {
             toolbar.removeItem(at: index)
         }
         let actionsIndex = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.pageActions }
@@ -358,6 +467,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         } else if actionsIndex == nil {
             let at = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.theme } ?? toolbar.items.count
             toolbar.insertItem(withItemIdentifier: ItemID.pageActions, at: at)
+        }
+        let moduleActionIndex = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.moduleAction }
+        if !wantsModuleAction {
+            if let moduleActionIndex { toolbar.removeItem(at: moduleActionIndex) }
+        } else if moduleActionIndex == nil {
+            let at = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.theme } ?? toolbar.items.count
+            toolbar.insertItem(withItemIdentifier: ItemID.moduleAction, at: at)
         }
     }
 
@@ -377,6 +493,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
 
     func applyThemeSymbol(_ theme: HelmTheme) {
         setSearchHint(theme)
+        applyCrumb(theme)
         let isDark = theme.mode == .dark
         themeItem?.image = symbol(isDark ? DaylightThemeToggleButton.darkSymbol : DaylightThemeToggleButton.lightSymbol)
         themeItem?.toolTip = DaylightThemeToggleButton.tooltip(isDark: isDark)
@@ -386,10 +503,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
 
     @objc private func sidebarClicked() { onToggleSidebar?() }
     @objc private func recentsClicked() { onRecents?(recentsButton) }
+    @objc private func recentsFromOverflow() { onRecents?(navigation) }
     @objc private func themeClicked() { onToggleTheme?() }
     @objc private func notificationsClicked() { onNotifications?(bellButton) }
     @objc private func inspectorClicked() { onToggleInspector?() }
     @objc private func searchClicked() { onSearch?() }
+    @objc private func moduleActionClicked() { onModuleAction?() }
 
     @objc private func navigationClicked(_ sender: NSSegmentedControl) {
         // A momentary control reports the segment being clicked; anything
@@ -401,10 +520,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         }
     }
 
-    @objc private func spaceClicked(_ sender: NSSegmentedControl) {
-        let all = DaylightSpace.allCases
-        guard sender.selectedSegment >= 0, sender.selectedSegment < all.count else { return }
-        onSelectSpace?(all[sender.selectedSegment])
+    @objc private func tabClicked(_ sender: NSSegmentedControl) {
+        guard sender.selectedSegment >= 0, sender.selectedSegment < sender.segmentCount else { return }
+        onSelectTab?(sender.selectedSegment)
     }
 
     #if FM_SELFTESTS
@@ -414,7 +532,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     var debugPageActions: [NSView] { pageActions.arrangedSubviews }
     var debugNavigation: NSSegmentedControl { navigation }
     var debugSidebarButton: NSButton { sidebarButton }
-    var debugSpaces: NSSegmentedControl { spaces }
+    var debugTabs: NSSegmentedControl { tabs }
+    /// The tab labels, as the toolbar draws them.
+    var debugTabNames: [String] { wantsTabs ? (0..<tabs.segmentCount).compactMap { tabs.label(forSegment: $0) } : [] }
+    var debugCrumb: String { crumb.stringValue }
+    var debugIsCompact: Bool { isCompact }
+    var debugModuleActionButton: NSButton? { wantsModuleAction ? moduleActionButton : nil }
     var debugBellButton: NSButton { bellButton }
     var debugRecentsButton: NSButton { recentsButton }
     var debugSearchButton: NSButton { searchButton }

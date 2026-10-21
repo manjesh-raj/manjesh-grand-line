@@ -1,24 +1,34 @@
 // Grand Line - native macOS app.
 //
-// `MainSplitShellController` - the sidebar layout (stage 3 of the modular-shell
-// migration, full review section 5.8 step 3).
+// `MainSplitShellController` - the sidebar layout (stages 3 and 4 of the
+// modular-shell migration, full review section 5.8 steps 3 and 4).
 //
 // The window root the captain gets with Settings > Appearance > Window layout
 // set to Sidebar:
 //
 //   root                                  (the window's content view)
 //   ├── NSSplitViewController.view
-//   │   ├── sidebar   WorkspaceSidebarController - every page, the pins, the
-//   │   │             live sessions, the account menu
-//   │   ├── content   the workspace's body container (the same
-//   │   │             `DestinationMounter`, the same 29 pages), with the
-//   │   │             status line under it
+//   │   ├── sidebar   WorkspaceSidebarController - Home and the seventeen
+//   │   │             modules, the pins, the live sessions, the account menu
+//   │   ├── content   the module's large title, Console's session strip, the
+//   │   │             workspace's body container (the same
+//   │   │             `DestinationMounter`, the same 29 pages), and the
+//   │   │             status line
 //   │   └── inspector WorkspaceInspectorController - collapsed, empty until
-//   │                 stage 4 gives pages something to show in it
+//   │                 a page has something to show in it
 //   └── the lock overlay (LockPresenter), over all three
 //
-// plus the window's own toolbar (`WorkspaceToolbar`), title and subtitle,
-// which name the page the way the floating bar's drill header did.
+// plus the window's own toolbar (`WorkspaceToolbar`): the crumb that names
+// the module, the module's tabs in the middle, and the page's own actions.
+//
+// **A module is the table's, not a new controller.** Step 4 consolidates the
+// 29 destinations into the seventeen modules in the module table only: a
+// module's tabs are its pages (`WorkspaceModule.tabs`), a click on one shows
+// that page through the navigator, and a deep link to any of the 29 routes
+// lands on its page and lights its module and tab. Where a module's tabs are
+// one page's own tabs (Tasks, Crew's In flight and Log, Connections' Hosts,
+// Keys and Snippets, Kubernetes), the page hides its own control in this
+// layout and the toolbar drives it (`ModuleTabHosting`).
 //
 // **It hosts exactly what the floating bar hosts.** The pages, the stores, the
 // navigator, the host sessions and the lock are the `Workspace` this shell
@@ -94,13 +104,21 @@ final class MainSplitShellController: WorkspaceShellController {
 
     private var history = NavigationHistory()
 
-    /// What the title bar names: the page's title and its live subtitle -
-    /// the drill header's two lines (`chrome.drillTitle`, `chrome.drillSubtitle`).
-    private var pageTitle = ""
+    /// The module showing, and the page in it. The crumb and the header name
+    /// the module; the header's second line is the page's live subtitle, the
+    /// drill header's second line (`chrome.drillTitle`, `chrome.drillSubtitle`).
+    private(set) var currentModule: WorkspaceModule = .home
+    private var currentRoute: RailDestination = .homeCanvas
+    /// Console's dedicated host page is showing, which is not a route.
+    private var showingHostPage = false
+    private var hostPageLabel = ""
     private var pageSubtitle = ""
+    /// The tab each module showed last, so its sidebar row reopens it.
+    private var lastTab: [WorkspaceModule: ModuleTab] = [:]
+    /// The pages whose own tab control the toolbar has taken over.
+    private var adoptedTabHosts: Set<ObjectIdentifier> = []
     /// The showing page, for re-reading its live subtitle and actions.
     private weak var pageController: NSViewController?
-    private var pageIsHome = true
     private var lockOverlayIsShown = false
     private var didSettleInitialSidebarWidth = false
     private var themeToken: ThemeObservation?
@@ -123,6 +141,7 @@ final class MainSplitShellController: WorkspaceShellController {
     private var sidebarPaneWidth: CGFloat { sidebarThickness + sidebarInset }
     private var dividerDragObserver: NSObjectProtocol?
     private var scrollerStyleObserver: NSObjectProtocol?
+    private var dayChangeObserver: NSObjectProtocol?
 
     override var namesThePageInTheTitleBar: Bool { true }
     override var clipboardHistoryController: ClipboardHistoryController? { clipboardHistory }
@@ -150,6 +169,17 @@ final class MainSplitShellController: WorkspaceShellController {
         }
         clipboardHistory.anchor = toolbar.clipboardAnchor
         notificationCenter.onBadgeCountChanged = { [weak self] count in self?.toolbar.setNotificationCount(count) }
+        // Console's session strip: the floating bar's own, with its verbs.
+        contentPane.sessionStrip.onSelect = { [weak self] id in self?.workspace.hosts.switchToSession(hostID: id) }
+        contentPane.sessionStrip.onClose = { [weak self] id in self?.workspace.hosts.confirmEndSession(hostID: id) }
+        contentPane.sessionStrip.onAddRequested = { [weak self] in self?.workspace.navigator.show(.hosts) }
+
+        // Home's own space shows the captain's arranged cards in this layout
+        // only, set before Home's first render (it mounts eagerly). The
+        // floating bar never sets one, so its hub is unchanged.
+        workspace.homeCanvas.cardLayout = AppSettings.shared.homeCardLayout
+        workspace.homeCanvas.onCardLayoutChanged = { layout in AppSettings.shared.homeCardLayout = layout }
+        workspace.homeCanvas.onCustomizingChanged = { [weak self] _ in self?.refreshModuleChrome() }
 
         // The pages go into the content pane, as its children - the same
         // registration, mount, wiring and landing the floating bar runs, in
@@ -167,6 +197,21 @@ final class MainSplitShellController: WorkspaceShellController {
         workspace.lock.onOverlayVisibilityChanged = { [weak self] shown in self?.lockOverlayDidChange(shown) }
 
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.toolbar?.applyThemeSymbol(theme) }
+        // Home's subtitle is the date, so it turns over at midnight.
+        dayChangeObserver = NotificationCenter.default.addObserver(
+            forName: .NSCalendarDayChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.currentModule == .home else { return }
+            self.pageSubtitle = Self.homeSubtitle()
+            self.refreshModuleChrome()
+        }
+    }
+
+    /// Home's header under its title: the day, as the prototype draws it.
+    /// Home has no live subtitle of its own - its attention card says what
+    /// needs the captain - so the date is the one line that adds something.
+    static func homeSubtitle(_ date: Date = Date()) -> String {
+        date.formatted(.dateTime.weekday(.wide).day().month(.wide))
     }
 
     deinit {
@@ -174,6 +219,7 @@ final class MainSplitShellController: WorkspaceShellController {
         if let windowResizeObserver { NotificationCenter.default.removeObserver(windowResizeObserver) }
         if let dividerDragObserver { NotificationCenter.default.removeObserver(dividerDragObserver) }
         if let scrollerStyleObserver { NotificationCenter.default.removeObserver(scrollerStyleObserver) }
+        if let dayChangeObserver { NotificationCenter.default.removeObserver(dayChangeObserver) }
     }
 
     private func buildSplitView(in root: NSView) {
@@ -266,7 +312,8 @@ final class MainSplitShellController: WorkspaceShellController {
         toolbar.onBack = { [weak self] in self?.step(.back) }
         toolbar.onForward = { [weak self] in self?.step(.forward) }
         toolbar.onRecents = { [weak self] anchor in self?.recents.togglePanel(under: anchor) }
-        toolbar.onSelectSpace = { [weak self] space in self?.selectSpace(space) }
+        toolbar.onSelectTab = { [weak self] index in self?.tabClicked(index) }
+        toolbar.onModuleAction = { [weak self] in self?.moduleActionClicked() }
         toolbar.onToggleTheme = { ThemeManager.shared.toggle() }
         toolbar.onNotifications = { [weak self] anchor in self?.notificationCenter.togglePanel(under: anchor) }
         toolbar.onToggleInspector = { [weak self] in
@@ -277,6 +324,7 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     private func wireSidebar() {
+        sidebar.onSelectModule = { [weak self] module in self?.openModule(module) }
         sidebar.onSelectDestination = { [weak self] destination in self?.workspace.navigator.show(destination) }
         sidebar.onSelectSession = { [weak self] id in self?.workspace.hosts.switchToSession(hostID: id) }
         sidebar.onEndSession = { [weak self] id in self?.workspace.hosts.confirmEndSession(hostID: id) }
@@ -341,6 +389,7 @@ final class MainSplitShellController: WorkspaceShellController {
         guard let window = view.window, sidebarItem != nil else { return }
         let width = window.contentRect(forFrameRect: window.frame).width
         guard width > 0 else { return }
+        toolbar.setCompact(width < WorkspaceToolbar.compactWidth)
         if !sidebarItem.isCollapsed {
             if columnWidthWithSidebar(windowWidth: width) < Self.contentMinimum {
                 setSidebarCollapsed(true, animated: false)
@@ -381,7 +430,14 @@ final class MainSplitShellController: WorkspaceShellController {
         guard animate else {
             sidebarItem.isCollapsed = collapsed
             splitController.splitView.layoutSubtreeIfNeeded()
-            release()
+            // The pin holds for one more main-queue turn. A page re-lays out
+            // for the narrower column on that turn (Home's grid,
+            // `HomeCanvasController`'s clip-view observer), and until it has,
+            // its cards still hold the wider column's widths at `contentTie`
+            // (499) - above the sidebar's own 489. Released at once, the
+            // sidebar came back squeezed to its 200pt minimum (measured on
+            // Home after a 1100-to-1512 round trip).
+            if collapsed { release() } else { DispatchQueue.main.async(execute: release) }
             return
         }
         NSAnimationContext.runAnimationGroup({ context in
@@ -412,16 +468,22 @@ final class MainSplitShellController: WorkspaceShellController {
         window.setFrame(frame, display: true)
     }
 
-    /// The window's title and subtitle, or nothing at all while the lock
-    /// overlay is up - the title would name the page it is hiding.
+    /// The toolbar, or nothing at all while the lock overlay is up - the
+    /// crumb and the tabs would name what it is hiding.
+    ///
+    /// The crumb names the module, so the system title stays out of the
+    /// toolbar. It still names the window - for the Window menu, Mission
+    /// Control and VoiceOver - and says only the app's name under the lock.
     private func applyTitleBar() {
         guard let window = view.window else { return }
         window.toolbar?.isVisible = !lockOverlayIsShown
-        window.titleVisibility = lockOverlayIsShown ? .hidden : .visible
+        window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = lockOverlayIsShown
-        window.title = lockOverlayIsShown ? AppPaths.displayName : pageTitle
-        window.subtitle = lockOverlayIsShown ? "" : pageSubtitle
+        window.title = lockOverlayIsShown ? AppPaths.displayName : windowTitle
+        window.subtitle = ""
     }
+
+    private var windowTitle: String { showingHostPage ? hostPageLabel : currentModule.title }
 
     private func lockOverlayDidChange(_ shown: Bool) {
         lockOverlayIsShown = shown
@@ -475,16 +537,132 @@ final class MainSplitShellController: WorkspaceShellController {
         return true
     }
 
-    /// ⌥⌘S, Go > Toggle Sidebar. On the seven pages with a column of their
-    /// own it still toggles that column, exactly as in the floating bar; on
-    /// every other page, where it used to do nothing, it shows or hides this
-    /// shell's sidebar.
+    /// ⌥⌘S, Go > Toggle Sidebar. On a page with a column of its own it still
+    /// toggles that column, exactly as in the floating bar; everywhere else -
+    /// including a page whose column is put away, as Connections' is while the
+    /// toolbar draws its tabs - it shows or hides this shell's sidebar.
     override func toggleSidebarFromMenu() {
-        if workspace.navigator.showingSplitPage != nil {
+        if let page = workspace.navigator.showingSplitPage, !page.pageForcesCollapse {
             super.toggleSidebarFromMenu()
         } else {
             toggleWorkspaceSidebar()
         }
+    }
+
+    // MARK: Modules and their tabs
+
+    /// A module's sidebar row: the tab it showed last, or its first.
+    private func openModule(_ module: WorkspaceModule) {
+        if let tab = lastTab[module] ?? module.tabs.first {
+            open(tab)
+        } else {
+            workspace.navigator.show(module.primaryRoute)
+        }
+    }
+
+    /// Show a tab: its page through the navigator, like every other route,
+    /// then - for one of a page's own tabs - that tab, through the page.
+    private func open(_ tab: ModuleTab) {
+        if showingHostPage || currentRoute != tab.route { workspace.navigator.show(tab.route) }
+        guard !showingHostPage, currentRoute == tab.route else { return }
+        if tab.isPageTab, let host = pageController as? ModuleTabHosting {
+            host.selectModuleTab(named: tab.name)
+        }
+        refreshModuleChrome()
+    }
+
+    private func tabClicked(_ index: Int) {
+        if currentModule == .home {
+            let spaces = DaylightSpace.allCases
+            guard spaces.indices.contains(index) else { return }
+            selectSpace(spaces[index])
+            refreshModuleChrome()
+            return
+        }
+        let tabs = currentModule.tabs
+        guard tabs.indices.contains(index) else { return }
+        open(tabs[index])
+    }
+
+    /// The tab the showing page stands for.
+    private var currentTab: ModuleTab? {
+        guard !showingHostPage else { return nil }
+        let host = currentRoute == currentModule.pageTabHost ? pageController as? ModuleTabHosting : nil
+        return ModuleTable.tab(for: currentRoute, pageTab: host?.selectedModuleTabName)
+    }
+
+    /// The first time a page that draws its module's tabs shows here, the
+    /// toolbar takes them over: the page hides its own control, and reports
+    /// every switch it makes by itself so the toolbar follows.
+    private func adoptTabHost(_ host: ModuleTabHosting) {
+        guard adoptedTabHosts.insert(ObjectIdentifier(host)).inserted else { return }
+        host.setModuleTabControlHidden(true)
+        host.onModuleTabChanged = { [weak self, weak host] in
+            guard let self, let host, (self.pageController as? ModuleTabHosting) === host else { return }
+            self.refreshModuleChrome()
+        }
+    }
+
+    /// The module's one action: a real verb with no other home in this
+    /// layout.
+    private func moduleActionClicked() {
+        switch currentModule {
+        case .home: setHomeCustomizing(!workspace.homeCanvas.isCustomizing)
+        case .console: revealHostsQuickConnect()
+        case .connections: openFleetLog()
+        default: break
+        }
+    }
+
+    /// Everything that names or belongs to the showing module: the crumb, the
+    /// tabs, the module's action, the header and the session strip.
+    private func refreshModuleChrome() {
+        guard toolbar != nil else { return }
+        let module = currentModule
+        if showingHostPage {
+            toolbar.setCrumb(group: module.title, module: hostPageLabel)
+        } else {
+            toolbar.setCrumb(group: module.group?.title, module: module.title)
+        }
+        if module == .home {
+            let spaces = DaylightSpace.allCases
+            toolbar.setTabs(spaces.map(\.title),
+                            tooltips: spaces.map { "\($0.subtitle) (\u{2318}\($0.shortcutIndex))" },
+                            selected: spaces.firstIndex(of: workspace.homeCanvas.selectedSpace),
+                            accessibilityLabel: "Home spaces")
+        } else {
+            let tabs = module.tabs
+            let current = currentTab
+            if let current { lastTab[module] = current }
+            toolbar.setTabs(tabs.map(\.name), selected: current.flatMap { tabs.firstIndex(of: $0) },
+                            accessibilityLabel: "\(module.title) tabs")
+        }
+        switch module {
+        case .home:
+            let customizing = workspace.homeCanvas.isCustomizing
+            toolbar.setModuleAction(title: customizing ? "Done" : "Customize",
+                                    symbol: customizing ? "checkmark" : "square.grid.2x2",
+                                    tooltip: customizing ? "Finish arranging Home" : "Choose Home's cards, their size and order")
+        case .console:
+            toolbar.setModuleAction(title: "Quick Connect", symbol: "bolt.horizontal.circle",
+                                    tooltip: "Connect to a host by typing ssh user@host")
+        case .connections:
+            toolbar.setModuleAction(title: "Activity", symbol: "clock.arrow.circlepath",
+                                    tooltip: "The captain's log, where every connection is recorded")
+        default:
+            toolbar.setModuleAction(title: nil)
+        }
+        contentPane.setHeader(title: module.showsHeader ? module.title : nil, subtitle: pageSubtitle)
+        contentPane.setSessionStripVisible(module == .console && !workspace.hosts.sessions.isEmpty)
+        applyTitleBar()
+    }
+
+    /// Home's Customize mode, on Home's own space - the one whose cards are
+    /// the captain's to arrange.
+    func setHomeCustomizing(_ customizing: Bool) {
+        if customizing, workspace.homeCanvas.selectedSpace != .overview { selectSpace(.overview) }
+        workspace.homeCanvas.setCustomizing(customizing)
+        refreshModuleChrome()
     }
 
     // MARK: Back and forward
@@ -515,24 +693,26 @@ final class MainSplitShellController: WorkspaceShellController {
     override func workspaceDidShow(_ dest: RailDestination, slot: DestinationSlot) {
         let page = slot.controller as? DaylightDrillActions
         pageController = slot.controller
-        pageIsHome = dest == .homeCanvas
-        pageTitle = slot.title
+        currentRoute = dest
+        showingHostPage = false
+        currentModule = ModuleTable.module(for: dest)
         pageSubtitle = page?.drillHeaderSubtitle ?? dest.drillSubtitle
-        applyTitleBar()
+        if dest == .homeCanvas, pageSubtitle.isEmpty { pageSubtitle = Self.homeSubtitle() }
+        if dest == currentModule.pageTabHost, let host = slot.controller as? ModuleTabHosting { adoptTabHost(host) }
         // Home has no actions of its own; its spaces sit in the middle
         // instead, where the floating bar showed its pills.
-        toolbar.setPageActions(pageIsHome ? [] : page?.drillHeaderActions ?? [])
-        toolbar.setSpaces(visible: pageIsHome, selected: workspace.homeCanvas.selectedSpace)
+        toolbar.setPageActions(dest == .homeCanvas ? [] : page?.drillHeaderActions ?? [])
+        refreshModuleChrome()
     }
 
     override func workspaceDidRevealHostPage(_ controller: ConsoleController, label: String) {
         pageController = controller
-        pageIsHome = false
-        pageTitle = label
+        showingHostPage = true
+        hostPageLabel = label
+        currentModule = .console
         pageSubtitle = "Dedicated host page"
-        applyTitleBar()
         toolbar.setPageActions(controller.drillHeaderActions)
-        toolbar.setSpaces(visible: false, selected: workspace.homeCanvas.selectedSpace)
+        refreshModuleChrome()
     }
 
     override func workspaceCurrentDestinationDidChange(_ kind: RecentDestinationKind) {
@@ -544,17 +724,19 @@ final class MainSplitShellController: WorkspaceShellController {
     override func workspaceSubtitleMayHaveChanged() {
         guard let page = pageController as? DaylightDrillActions, let subtitle = page.drillHeaderSubtitle else { return }
         pageSubtitle = subtitle
-        applyTitleBar()
+        contentPane.setHeader(title: currentModule.showsHeader ? currentModule.title : nil, subtitle: pageSubtitle)
     }
 
     override func workspaceActionsMayHaveChanged() {
-        guard !pageIsHome else { return }
+        guard currentModule != .home else { return }
         toolbar.setPageActions((pageController as? DaylightDrillActions)?.drillHeaderActions ?? [])
     }
 
     override func workspaceSessionsDidChange(_ registry: HostSessionRegistry) {
         sidebar.reload(pinned: AppSettings.shared.quickAccess.pinned, sessions: registry)
         statusLine.render(sessions: registry.sessions)
+        contentPane.sessionStrip.render(registry)
+        contentPane.setSessionStripVisible(currentModule == .console && !registry.sessions.isEmpty)
         workspace.refreshShowingHostsLiveSessionState()
     }
 
@@ -568,17 +750,34 @@ final class MainSplitShellController: WorkspaceShellController {
     /// tour lab paints under its render of the sidebar.
     var debugSidebarPane: NSView? { splitController.splitView.arrangedSubviews.first }
     var debugHistory: NavigationHistory { history }
-    var debugPageTitle: (title: String, subtitle: String) { (pageTitle, pageSubtitle) }
+    /// The module header as drawn, or nil when the module has none.
+    var debugHeader: (title: String, subtitle: String)? {
+        contentPane.header.isHidden ? nil : (contentPane.header.debugTitle, contentPane.header.debugSubtitle)
+    }
+    var debugSessionStripIsShown: Bool { !contentPane.sessionStrip.isHidden }
+    var debugCurrentTab: ModuleTab? { currentTab }
+    var debugLastTab: [WorkspaceModule: ModuleTab] { lastTab }
+    func debugOpenModule(_ module: WorkspaceModule) { openModule(module) }
+    func debugClickTab(_ index: Int) { tabClicked(index) }
+    func debugModuleAction() { moduleActionClicked() }
     var debugLockOverlayIsShown: Bool { lockOverlayIsShown }
     func debugStep(_ step: NavigationHistory.Step) { self.step(step) }
     #endif
 }
 
-/// The content column: the workspace's body container under the toolbar,
-/// and the status line under that.
+/// The content column, top to bottom: the module's large title, Console's
+/// session strip, the workspace's body container, and the status line.
 final class WorkspaceContentPaneController: NSViewController {
     private let body: NSView
     private let statusLine: WorkspaceStatusLine
+    let header = WorkspaceModuleHeader()
+    /// The floating bar's session strip, on Console only: one chip per live
+    /// session, the same view and the same three verbs.
+    let sessionStrip = SessionStripView()
+    /// The header and the strip, each in layout only while it shows - a
+    /// stack that detaches its hidden views, so neither needs a height
+    /// constraint fighting its own content to collapse.
+    private let topStack = NSStackView()
     private var themeToken: ThemeObservation?
 
     init(body: NSView, statusLine: WorkspaceStatusLine) {
@@ -593,13 +792,36 @@ final class WorkspaceContentPaneController: NSViewController {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 984, height: 720))
         root.wantsLayer = true
         view = root
+        topStack.orientation = .vertical
+        topStack.alignment = .leading
+        topStack.spacing = 0
+        topStack.detachesHiddenViews = true
+        topStack.translatesAutoresizingMaskIntoConstraints = false
+        for view in [header, sessionStrip] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.isHidden = true
+            topStack.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: topStack.widthAnchor).isActive = true
+        }
+        sessionStrip.heightAnchor.constraint(equalToConstant: SessionStripView.height).isActive = true
+        // With both hidden the stack has no content to measure, so nothing
+        // else says how tall it is. Below the window's 500 (gotcha (13)), and
+        // below every arranged view's own height, so it only ever settles the
+        // empty case.
+        let collapsed = topStack.heightAnchor.constraint(equalToConstant: 0)
+        collapsed.priority = .defaultLow
+        collapsed.isActive = true
         body.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(topStack)
         root.addSubview(body)
         root.addSubview(statusLine)
         NSLayoutConstraint.activate([
             // The toolbar is drawn over the top of this pane (the window has
-            // a full-size content view), so the pages start under it.
-            body.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
+            // a full-size content view), so everything starts under it.
+            topStack.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
+            topStack.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            topStack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            body.topAnchor.constraint(equalTo: topStack.bottomAnchor),
             body.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             body.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             body.bottomAnchor.constraint(equalTo: statusLine.topAnchor),
@@ -616,6 +838,18 @@ final class WorkspaceContentPaneController: NSViewController {
 
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
+    }
+
+    /// The module's title and its page's subtitle, or no header at all.
+    func setHeader(title: String?, subtitle: String) {
+        _ = view
+        if let title { header.configure(title: title, subtitle: subtitle) }
+        header.isHidden = title == nil
+    }
+
+    func setSessionStripVisible(_ visible: Bool) {
+        _ = view
+        sessionStrip.isHidden = !visible
     }
 }
 

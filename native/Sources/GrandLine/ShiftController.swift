@@ -109,6 +109,9 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// keeps its Shift-menu item and its ⌘K entry, both of which call
     /// `showWeeklyReview()`.
     private static let reviewViewID = "review"
+    /// The sidebar layout's toolbar draws these four views as Tasks' tabs
+    /// (`ModuleTabHosting`, at the end of this file).
+    var onModuleTabChanged: (() -> Void)?
     private let viewTabs = HelmSegmentedTabs(items: [
         .init(id: ShiftTasksView.board.rawValue, title: "Board"),
         .init(id: ShiftTasksView.list.rawValue, title: "List"),
@@ -1157,6 +1160,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         tasksView = view
         viewTabs.select(view.rawValue)
         render()
+        onModuleTabChanged?()
     }
 
     @objc private func sortChanged() {
@@ -1641,6 +1645,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         applyContentLeadingInset()
         if view == .weeklyReview { renderWeeklyReview() }
         applyTheme()
+        onModuleTabChanged?()
     }
 
     /// The Shift menu / search palette's entry point into Weekly Review -
@@ -2784,4 +2789,34 @@ enum ShiftSyncPresentation {
             "no route to host", "the internet connection appears to be offline",
         ].contains { lowered.contains($0) }
     }
+}
+
+// MARK: - Tasks' tabs in the sidebar layout
+
+extension ShiftController: ModuleTabHosting {
+    var moduleTabNames: [String] { ["Board", "List", "Calendar", "Weekly review"] }
+
+    var selectedModuleTabName: String {
+        guard topLevelView == .dashboard else { return "Weekly review" }
+        switch tasksView {
+        case .board: return "Board"
+        case .list: return "List"
+        case .calendar: return "Calendar"
+        }
+    }
+
+    /// Through the view switcher's own handler, so a toolbar click and a click
+    /// on the page's pill are one path.
+    func selectModuleTab(named name: String) {
+        switch name {
+        case "Weekly review": viewTabs.onSelect?(Self.reviewViewID)
+        case "List": viewTabs.onSelect?(ShiftTasksView.list.rawValue)
+        case "Calendar": viewTabs.onSelect?(ShiftTasksView.calendar.rawValue)
+        default: viewTabs.onSelect?(ShiftTasksView.board.rawValue)
+        }
+    }
+
+    /// Only the switcher: the sort and the Done window beside it stay, since
+    /// the toolbar does not carry them.
+    func setModuleTabControlHidden(_ hidden: Bool) { viewTabs.isHidden = hidden }
 }

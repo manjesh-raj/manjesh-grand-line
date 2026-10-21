@@ -64,6 +64,7 @@ enum HomeDashboardViewSelfTest {
         checkBothThemesPaint(&ok)
         checkTheCardShadowIsPainted(&ok)
         checkMergeQueueRowsAreClickable(&ok)
+        checkAnUntitledPRIsNamed(&ok)
         checkUnknownStatesAreNeverZero(&ok)
         checkALiveResizeRebuildsOnceAtTheEnd(&ok)
         checkASettledRenderReusesItsProbes(&ok)
@@ -526,6 +527,39 @@ enum HomeDashboardViewSelfTest {
             let headerY = card.isFlipped ? firstRow.minY / 2 : (firstRow.maxY + card.bounds.height) / 2
             check(!card.debugCardClickWouldBeDeclined(at: NSPoint(x: 40, y: headerY)),
                   "a click on the card's own surface still opens it, or the check above cannot fail", &ok)
+        }
+    }
+
+    /// A task's PR that the forge scan never returned has no title. Review
+    /// names it by its number, and the Merge queue drew a blank line for it
+    /// instead, which is what a captain saw on Home.
+    private static func checkAnUntitledPRIsNamed(_ ok: inout Bool) {
+        withScratchShift { store in
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            let prs = [
+                MergedPR(source: "forge", taskID: nil, repo: "grand-line", url: "https://example.invalid/1",
+                         number: 1, title: "pull request 1", checks: "green", forge: "github"),
+                MergedPR(source: "work", taskID: "t42", repo: "grand-line", url: "https://example.invalid/42",
+                         number: 42, title: "", checks: "none", forge: nil),
+            ]
+            canvas.applyFleet(snapshot: FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
+                                                      queuedCount: 0, doneCount: 0, projectsCount: 1,
+                                                      watcher: WatcherHealth(status: "healthy")),
+                              mergedPRs: prs, prFetchFailure: nil)
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+            guard let card = canvas.moduleCardsForTests.first(where: { !$0.debugPeekRows.isEmpty }) else {
+                fail("the merge queue card drew no rows, so the untitled PR check is vacuous", &ok)
+                return
+            }
+            func labels(in view: NSView) -> [String] {
+                ((view as? NSTextField).map { [$0.stringValue] } ?? []) + view.subviews.flatMap { labels(in: $0) }
+            }
+            let rows = card.debugPeekRows.map { labels(in: $0) }
+            check(rows.count == 2, "both PRs should be rows, got \(rows.count)", &ok)
+            check(rows.contains { $0.contains("PR #42") }, "the untitled PR is not named \"PR #42\": \(rows)", &ok)
         }
     }
 

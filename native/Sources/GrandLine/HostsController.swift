@@ -140,6 +140,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
 
 
     private var activeTab: HostsTab = .hosts
+    /// The sidebar layout's toolbar draws the three tabs as Connections' Hosts,
+    /// Keys and Snippets (`ModuleTabHosting`, at the end of this file).
+    var onModuleTabChanged: (() -> Void)?
 
     private let hostsTabView = NSView()
     private let keysTabView = NSView()
@@ -177,6 +180,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// alternative constraints rather than a collapsing width).
     private var contentToInspector: NSLayoutConstraint?
     private var contentToGutter: NSLayoutConstraint?
+    /// The content column's inset from the split's content pane: the gap
+    /// beside the page's own column, or the page gutter while the column is
+    /// put away (`setModuleTabControlHidden`).
+    private var contentLeading: NSLayoutConstraint?
 
     /// The reference mockup's **left** navigation column.
     ///
@@ -484,9 +491,11 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         let toGutter = content.trailingAnchor.constraint(equalTo: column.trailingAnchor)
         contentToInspector = toInspector
         contentToGutter = toGutter
+        let leading = content.leadingAnchor.constraint(equalTo: split.contentPane.leadingAnchor,
+                                                       constant: HelmMetrics.s4 - HelmSplitPage.dividerThickness)
+        contentLeading = leading
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: split.contentPane.leadingAnchor,
-                                             constant: HelmMetrics.s4 - HelmSplitPage.dividerThickness),
+            leading,
             content.topAnchor.constraint(equalTo: column.topAnchor),
             content.bottomAnchor.constraint(equalTo: column.bottomAnchor),
             toGutter,
@@ -991,6 +1000,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         // §6.4: both halves of the header describe the tab that is showing.
         onDrillActionsChanged?()
         onDrillSubtitleChanged?()
+        onModuleTabChanged?()
     }
 
     // MARK: Drill header (Daylight §6.4)
@@ -1729,4 +1739,37 @@ private func copyToPasteboard(_ text: String) {
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
     pasteboard.setString(text, forType: .string)
+}
+
+// MARK: - Connections' tabs in the sidebar layout
+
+extension HostsController: ModuleTabHosting {
+    var moduleTabNames: [String] { ["Hosts", "Keys", "Snippets"] }
+
+    var selectedModuleTabName: String {
+        switch activeTab {
+        case .hosts: return "Hosts"
+        case .keys: return "Keys"
+        case .snippets: return "Snippets"
+        }
+    }
+
+    func selectModuleTab(named name: String) {
+        switch name {
+        case "Keys": select(tab: .keys)
+        case "Snippets": select(tab: .snippets)
+        default: select(tab: .hosts)
+        }
+    }
+
+    /// The page's column is its tab control, so the split puts it away. Its
+    /// other rows have homes in the sidebar layout: Commands is Connections'
+    /// fourth tab, Activity is a Connections toolbar button, and the keychain
+    /// card's counts are in the page's own stat strip.
+    func setModuleTabControlHidden(_ hidden: Bool) {
+        splitPage?.pageForcesCollapse = hidden
+        // With no column beside it the content starts at the page gutter,
+        // like every other page's.
+        contentLeading?.constant = hidden ? HelmMetrics.pageGutter : HelmMetrics.s4 - HelmSplitPage.dividerThickness
+    }
 }

@@ -187,10 +187,30 @@ enum FleetDataSelfTest {
         }
         if only.number != 12 { fail("PR number should be derivable from the URL, got \(String(describing: only.number))", &ok) }
         if only.checks != "none" { fail("unknown checks should read \"none\", got \(only.checks)", &ok) }
+        // It has no title, so a row names it by its number rather than
+        // drawing a blank line.
+        if only.displayTitle != "PR #12" { fail("an untitled PR should read \"PR #12\", got \"\(only.displayTitle)\"", &ok) }
 
         // 5. A task with no PR at all contributes no row.
         if !FleetDataSource.mergedPRs(openPRs: [], tasks: [makeTask(pr: nil)]).isEmpty {
             fail("a task with no PR produced a row", &ok)
+        }
+
+        // 6. The list's order is the PRs' own, by repo and then number, never
+        //    the scan's or the dictionary's. Six PRs fed in two orders: a
+        //    dictionary-ordered result matches the expected one by chance
+        //    once in 720 runs.
+        func openPR(_ repo: String, _ number: Int) -> OpenPRInfo {
+            OpenPRInfo(repo: repo, number: number, title: "\(repo) #\(number)",
+                       url: "https://github.com/o/\(repo)/pull/\(number)", forge: "github", checks: "none")
+        }
+        let scanned = [openPR("beta", 2), openPR("alpha", 10), openPR("gamma", 1), openPR("alpha", 3),
+                       openPR("beta", 1), openPR("alpha", 1)]
+        let expected = ["alpha #1", "alpha #3", "alpha #10", "beta #1", "beta #2", "gamma #1"]
+        let forward = FleetDataSource.mergedPRs(openPRs: scanned, tasks: []).map(\.title)
+        let backward = FleetDataSource.mergedPRs(openPRs: Array(scanned.reversed()), tasks: []).map(\.title)
+        if forward != expected || backward != expected {
+            fail("the merged list is in scan or dictionary order: \(forward) and \(backward)", &ok)
         }
         print("  OK - merge/dedup/fallback shape holds")
     }

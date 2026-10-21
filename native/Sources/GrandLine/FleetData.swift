@@ -67,6 +67,22 @@ struct MergedPR {
     let title: String
     let checks: String
     let forge: String?
+
+    /// The one order a list of these is shown in: by repo, then by number,
+    /// then by URL for two rows the first two cannot tell apart. Review
+    /// groups by forge over it, and the Fleet page and Home's Merge queue
+    /// show it as it is.
+    static func listOrder(_ a: MergedPR, _ b: MergedPR) -> Bool {
+        (a.repo, a.number ?? 0, a.url) < (b.repo, b.number ?? 0, b.url)
+    }
+
+    /// What a row names the PR by. A task's PR that the forge scan never
+    /// returned has no title, and Home's Merge queue drew that row as a blank
+    /// line while Review already named it by its number.
+    var displayTitle: String {
+        guard title.isEmpty else { return title }
+        return number.map { "PR #\($0)" } ?? "PR"
+    }
 }
 
 enum FleetDataSource {
@@ -333,7 +349,10 @@ enum FleetDataSource {
                 forge: existing?.forge
             )
         }
-        return Array(byURL.values)
+        // Never the dictionary's own order: Swift seeds it per process, and
+        // the scan appends each repo's PRs as its worker finishes, so Home's
+        // Merge queue showed the same PRs in a new order on every launch.
+        return byURL.values.sorted(by: MergedPR.listOrder)
     }
 
     // MARK: Merge action (bin/fm-pr-merge.sh - firstmate's guarded merge helper)

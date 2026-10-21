@@ -1,15 +1,15 @@
 // Grand Line - native macOS app.
 //
-// The sidebar shell's sidebar (stage 3 of the modular-shell migration, full
-// review section 5.8 step 3): a source list over the module table, hosted in
-// the split view's sidebar item.
+// The sidebar shell's sidebar (stages 3 and 4 of the modular-shell migration,
+// full review section 5.8): a source list over the module table, hosted in the
+// split view's sidebar item.
 //
-// It lists every page the app has, by its real name, under the four groups
-// the module table assigns (Work, Observe, Workbench, Machine), with Home at
-// the top, the captain's quick-access pins in a Pinned section, and the live
-// host sessions as children of Console. Stage 4 folds the pages into the
-// seventeen modules; until then every one of the 29 destinations is one row,
-// so nothing the floating bar reaches is further away here.
+// It lists Home and the seventeen modules under the four groups the module
+// table assigns (Work, Observe, Workbench, Machine), the captain's quick-access
+// pins in a Pinned section, and the live host sessions as children of Console.
+// A module's pages are its tabs in the window toolbar, so every one of the 29
+// destinations is one click on its module and one on its tab; a pin keeps a
+// page itself one click away.
 //
 // Two halves, the same split the rest of this app uses:
 //
@@ -29,9 +29,10 @@ import AppKit
 enum WorkspaceSidebarEntry: Equatable {
     /// A section header: "Pinned", or one of the four groups.
     case section(String)
-    /// A page. `pinned` marks the copy in the Pinned section, so the two rows
-    /// for one pinned page can be told apart.
-    case destination(RailDestination, pinned: Bool)
+    /// Home, or one of the seventeen modules.
+    case module(WorkspaceModule)
+    /// A pinned page, in the Pinned section.
+    case pinned(RailDestination)
     /// A live host session, a child of Console.
     case session(hostID: UUID)
 }
@@ -46,49 +47,63 @@ enum WorkspaceSidebarModel {
 
     static let pinnedTitle = "Pinned"
 
-    /// The sidebar's top level: Home, the Pinned section (when anything is
-    /// pinned), then the four groups.
+    /// The sidebar's top level: Home, the Pinned section (when a pin needs
+    /// one), then the four groups.
+    ///
+    /// The Pinned section lists only the pins that are one of several pages
+    /// in their module - Straw Hat Pirates inside Crew, Hosts inside
+    /// Connections - because a page that is its module's only page already
+    /// has a row of its own here, and listing it twice was most of the
+    /// section (four of the floating bar's seven default pins). The pins
+    /// themselves are unchanged: the floating bar still draws every one.
     static func roots(pinned: [RailDestination], sessions: [HostSession]) -> [Node] {
-        var roots = [Node(entry: .destination(.homeCanvas, pinned: false))]
-        if !pinned.isEmpty {
-            roots.append(Node(entry: .section(pinnedTitle),
-                              children: pinned.map { Node(entry: .destination($0, pinned: true)) }))
+        var roots = [Node(entry: .module(.home))]
+        let nested = pinned.filter(\.isNestedInItsModule)
+        if !nested.isEmpty {
+            roots.append(Node(entry: .section(pinnedTitle), children: nested.map { Node(entry: .pinned($0)) }))
         }
         for group in WorkspaceGroup.allCases {
-            let rows = destinations(in: group).map { destination -> Node in
-                guard destination == .console else { return Node(entry: .destination(destination, pinned: false)) }
-                return Node(entry: .destination(.console, pinned: false),
-                            children: sessions.map { Node(entry: .session(hostID: $0.hostID)) })
+            let rows = modules(in: group).map { module -> Node in
+                guard module == .console else { return Node(entry: .module(module)) }
+                return Node(entry: .module(.console), children: sessions.map { Node(entry: .session(hostID: $0.hostID)) })
             }
             roots.append(Node(entry: .section(group.title), children: rows))
         }
         return roots
     }
 
-    /// Every page in `group`, in sidebar order: the module table's order of
-    /// modules, and inside a module the order of its children - so Knowledge
-    /// lists Notebook, Runbooks, Postmortems, Docs, Reading List, the order the
-    /// prototype gave its tabs.
-    static func destinations(in group: WorkspaceGroup) -> [RailDestination] {
-        let declared = RailDestination.allCases
-        return WorkspaceModule.allCases.filter { $0.group == group }.flatMap { module -> [RailDestination] in
-            ModuleTable.rows.filter { $0.module == module }
-                .sorted { a, b in
-                    let ia = a.child.flatMap { module.children.firstIndex(of: $0) } ?? 0
-                    let ib = b.child.flatMap { module.children.firstIndex(of: $0) } ?? 0
-                    if ia != ib { return ia < ib }
-                    return (declared.firstIndex(of: a.route) ?? 0) < (declared.firstIndex(of: b.route) ?? 0)
-                }
-                .map(\.route)
-        }
+    /// The modules in `group`, in the module table's sidebar order.
+    static func modules(in group: WorkspaceGroup) -> [WorkspaceModule] {
+        WorkspaceModule.allCases.filter { $0.group == group }
     }
 
-    /// Every page the sidebar lists once, outside the Pinned section - the
-    /// completeness `SplitShellModelSelfTest` asserts against
-    /// `RailDestination.allCases`.
-    static func listedDestinations() -> [RailDestination] {
-        [.homeCanvas] + WorkspaceGroup.allCases.flatMap(destinations(in:))
+    /// Every module the sidebar lists once, outside the Pinned section - the
+    /// completeness `SplitShellModelSelfTest` asserts against the module table.
+    static func listedModules() -> [WorkspaceModule] {
+        [.home] + WorkspaceGroup.allCases.flatMap(modules(in:))
     }
+}
+
+extension WorkspaceModule {
+    /// The page a module opens on the first time: its first tab, or its one
+    /// page.
+    var primaryRoute: RailDestination {
+        tabs.first?.route ?? ModuleTable.routes(in: self).first ?? .homeCanvas
+    }
+
+    /// The module's pages, each once, in tab order: what its row offers to pin
+    /// when it has more than one.
+    var pages: [RailDestination] {
+        let fromTabs = tabs.map(\.route)
+        let ordered = fromTabs + ModuleTable.routes(in: self).filter { !fromTabs.contains($0) }
+        return ordered.enumerated().filter { index, route in ordered.firstIndex(of: route) == index }.map(\.element)
+    }
+}
+
+extension RailDestination {
+    /// Whether this page is one of several in its module, so a pin is the
+    /// only way to reach it in one click from the sidebar.
+    var isNestedInItsModule: Bool { ModuleTable.module(for: self).pages.count > 1 }
 }
 
 /// The outline view's item: a node with object identity, which is what
@@ -111,6 +126,7 @@ final class WorkspaceSidebarItem: NSObject {
 final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate {
 
     // Forwarded, never owned - the sidebar has no idea what navigating is.
+    var onSelectModule: ((WorkspaceModule) -> Void)?
     var onSelectDestination: ((RailDestination) -> Void)?
     var onSelectSession: ((UUID) -> Void)?
     var onEndSession: ((UUID) -> Void)?
@@ -135,13 +151,13 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// What the workspace last said is showing, so a rebuild can light the
     /// same row again.
     private var current: RecentDestinationKind?
-    /// Whether the lit page row is its Pinned copy: true when the captain
+    /// Whether the lit row is a page's Pinned copy: true when the captain
     /// picked it from the Pinned section, so that row stays lit rather than
-    /// the highlight jumping to the page's group row a moment after the click.
+    /// the highlight jumping to the page's module a moment after the click.
     private var currentIsFromPinned = false
-    /// The row the captain just picked, until the navigation it causes comes
-    /// back through `select(_:)`.
-    private var pendingPick: (destination: RailDestination, pinned: Bool)?
+    /// The pinned page the captain just picked, until the navigation it
+    /// causes comes back through `select(_:)`.
+    private var pendingPinnedPick: RailDestination?
     /// Guards the programmatic selection that lights a row, so it is never
     /// mistaken for the captain picking one.
     private var isApplyingSelection = false
@@ -223,12 +239,12 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// What is showing changed. Lights its row, opening the section (and, for
     /// a session, Console) it sits in.
     func select(_ kind: RecentDestinationKind?) {
-        if let pendingPick, kind == .rail(pendingPick.destination) {
-            currentIsFromPinned = pendingPick.pinned
+        if let pendingPinnedPick, kind == .rail(pendingPinnedPick) {
+            currentIsFromPinned = true
         } else if kind?.identityKey != current?.identityKey {
             currentIsFromPinned = false
         }
-        pendingPick = nil
+        pendingPinnedPick = nil
         current = kind
         guard isViewLoaded else { return }
         applySelection()
@@ -276,19 +292,19 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     }
 
     /// The row that stands for `kind`: a session row for a host page, the
-    /// Pinned copy when the captain picked it from there, otherwise the
-    /// page's row in its group.
+    /// Pinned copy when the captain picked it from there, otherwise the row of
+    /// the module the page lives in.
     private func item(for kind: RecentDestinationKind?) -> WorkspaceSidebarItem? {
         guard let kind else { return nil }
         let all = roots.flatMap { [$0] + $0.children + $0.children.flatMap(\.children) }
         switch kind {
         case .host(let id, _):
-            return all.first { $0.entry == .session(hostID: id) }
+            return all.first { $0.entry == .session(hostID: id) } ?? all.first { $0.entry == .module(.console) }
         case .rail(let destination):
-            if currentIsFromPinned, let pinned = all.first(where: { $0.entry == .destination(destination, pinned: true) }) {
+            if currentIsFromPinned, let pinned = all.first(where: { $0.entry == .pinned(destination) }) {
                 return pinned
             }
-            return all.first { $0.entry == .destination(destination, pinned: false) }
+            return all.first { $0.entry == .module(ModuleTable.module(for: destination)) }
         }
     }
 
@@ -323,7 +339,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         guard let item = item as? WorkspaceSidebarItem else { return HelmType.scaledRowHeight(28) }
         switch item.entry {
         case .section: return HelmType.scaledRowHeight(30)
-        case .destination: return HelmType.scaledRowHeight(28)
+        case .module, .pinned: return HelmType.scaledRowHeight(28)
         case .session: return HelmType.scaledRowHeight(26)
         }
     }
@@ -343,12 +359,18 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             let cell = WorkspaceSidebarSectionCell()
             cell.configure(title: title, theme: theme)
             return cell
-        case .destination(let destination, _):
+        case .module(let module):
             let cell = WorkspaceSidebarPageCell()
-            let liveCount = destination == .console ? sessions.filter(\.isConnected).count : 0
-            cell.configure(destination: destination,
+            let liveCount = module == .console ? sessions.filter(\.isConnected).count : 0
+            cell.configure(symbol: module.symbol, title: module.title,
                            trailing: liveCount > 0 ? "\(liveCount)" : nil,
                            trailingHelp: liveCount > 0 ? "\(liveCount) connected" : nil,
+                           theme: theme)
+            cell.setLit(lit, theme: theme)
+            return cell
+        case .pinned(let destination):
+            let cell = WorkspaceSidebarPageCell()
+            cell.configure(symbol: destination.symbol, title: destination.title, trailing: nil, trailingHelp: nil,
                            theme: theme)
             cell.setLit(lit, theme: theme)
             return cell
@@ -400,11 +422,14 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         switch item.entry {
         case .section:
             return
-        case .destination(let destination, let pinned):
-            pendingPick = (destination, pinned)
+        case .module(let module):
+            pendingPinnedPick = nil
+            onSelectModule?(module)
+        case .pinned(let destination):
+            pendingPinnedPick = destination
             onSelectDestination?(destination)
         case .session(let hostID):
-            pendingPick = nil
+            pendingPinnedPick = nil
             onSelectSession?(hostID)
         }
     }
@@ -418,24 +443,30 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         switch item.entry {
         case .section:
             return
-        case .destination(let destination, _):
-            menu.addItem(menuItem("Open \(destination.title)", symbol: destination.symbol) { [weak self] in
-                self?.onSelectDestination?(destination)
+        case .module(let module):
+            menu.addItem(menuItem("Open \(module.title)", symbol: module.symbol) { [weak self] in
+                self?.onSelectModule?(module)
             })
-            if destination == .console {
+            if module == .console {
                 menu.addItem(menuItem("Connect to a Host\u{2026}", symbol: "plus.circle") { [weak self] in
                     self?.onConnectHost?()
                 })
             }
             // The quick-access pins, edited where they are drawn - the
-            // floating bar's ⌘⇧D map offered the same two verbs.
-            guard destination != .homeCanvas else { return }
+            // floating bar's ⌘⇧D map offered the same two verbs - for each
+            // page a module holds several of. A module that is one page is
+            // already its own row.
+            guard module.pages.count > 1 else { return }
             menu.addItem(.separator())
-            let pinned = isPinned?(destination) ?? false
-            menu.addItem(menuItem(pinned ? "Unpin from Sidebar" : "Pin to Sidebar",
-                                  symbol: pinned ? "pin.slash" : "pin") { [weak self] in
-                self?.onTogglePin?(destination)
+            for destination in module.pages {
+                addPinItem(for: destination, to: menu)
+            }
+        case .pinned(let destination):
+            menu.addItem(menuItem("Open \(destination.title)", symbol: destination.symbol) { [weak self] in
+                self?.onSelectDestination?(destination)
             })
+            menu.addItem(.separator())
+            addPinItem(for: destination, to: menu)
         case .session(let hostID):
             let label = sessions.first { $0.hostID == hostID }?.label ?? "Session"
             menu.addItem(menuItem("Open \(label)", symbol: "terminal") { [weak self] in
@@ -446,6 +477,14 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
                 self?.onEndSession?(hostID)
             })
         }
+    }
+
+    private func addPinItem(for destination: RailDestination, to menu: NSMenu) {
+        let pinned = isPinned?(destination) ?? false
+        let title = pinned ? "Unpin \(destination.title) from Sidebar" : "Pin \(destination.title) to Sidebar"
+        menu.addItem(menuItem(title, symbol: pinned ? "pin.slash" : "pin") { [weak self] in
+            self?.onTogglePin?(destination)
+        })
     }
 
     private func menuItem(_ title: String, symbol: String, _ action: @escaping () -> Void) -> NSMenuItem {
@@ -621,8 +660,8 @@ final class WorkspaceSidebarSectionCell: NSTableCellView {
     }
 }
 
-/// A page row: its own symbol in the theme's accent, its real name, and an
-/// optional count on the trailing edge.
+/// A module or a pinned page: its symbol in the theme's accent, its name, and
+/// an optional count on the trailing edge.
 final class WorkspaceSidebarPageCell: NSTableCellView {
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
@@ -659,16 +698,16 @@ final class WorkspaceSidebarPageCell: NSTableCellView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    func configure(destination: RailDestination, trailing: String?, trailingHelp: String?, theme: HelmTheme) {
-        icon.image = HelmSymbol.image(destination.symbol, pointSize: HelmType.scaled(13), weight: .medium)
+    func configure(symbol: String, title: String, trailing: String?, trailingHelp: String?, theme: HelmTheme) {
+        icon.image = HelmSymbol.image(symbol, pointSize: HelmType.scaled(13), weight: .medium)
         icon.contentTintColor = HelmTheme.nsColor(theme.accentHex)
         setLit(false, theme: theme)
-        label.stringValue = destination.title
+        label.stringValue = title
         count.textColor = HelmTheme.mutedInk(theme)
         count.stringValue = trailing ?? ""
         count.isHidden = trailing == nil
         count.toolTip = trailingHelp
-        setAccessibilityLabel(trailingHelp.map { "\(destination.title), \($0)" } ?? destination.title)
+        setAccessibilityLabel(trailingHelp.map { "\(title), \($0)" } ?? title)
     }
 
     func setLit(_ lit: Bool, theme: HelmTheme) {

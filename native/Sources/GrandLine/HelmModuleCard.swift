@@ -1140,6 +1140,37 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// "View all"), which is the page that holds the whole list.
     @objc private func footerActionTapped() { (footerActionHandler ?? onOpen)?() }
 
+    // MARK: Arranging
+
+    /// A view that takes the header's trailing place - the status and the
+    /// header action - while Home is being arranged
+    /// (`HomeCardCustomizeStrip`). It sits in the header row itself, so the
+    /// title still truncates before it and nothing of the card's own status or
+    /// action shows around it: pinned over the card instead, the strip let
+    /// the bottom of the Claude card's Refresh show under it (measured in
+    /// Daylight at 1512pt). `nil` gives the place back.
+    func setHeaderAccessory(_ accessory: NSView?) {
+        headerAccessory?.removeFromSuperview()
+        headerAccessory = accessory
+        if let accessory {
+            // A leaf accessory holds its width with these. A container has no
+            // intrinsic size, so they do nothing for it (gotcha (12)), and it
+            // must hug its own width, as `HomeCardCustomizeStrip` does.
+            accessory.setContentHuggingPriority(.required, for: .horizontal)
+            accessory.setContentCompressionResistancePriority(.required, for: .horizontal)
+            headerRowRef?.addArrangedSubview(accessory)
+        }
+        applyHeaderAccessory()
+    }
+
+    private var headerAccessory: NSView?
+
+    private func applyHeaderAccessory() {
+        let arranging = headerAccessory != nil
+        statusColumn.isHidden = arranging || (chipView.isHidden && headerCaptionLabel.isHidden)
+        actionButton.isHidden = arranging || content?.headerAction == nil
+    }
+
     // MARK: Configure
 
     /// `configure(_:)`, skipped when `content` would lay the card out exactly
@@ -1202,6 +1233,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             actionButton.isHidden = true
             headerActionHandler = nil
         }
+        // Live data keeps arriving while Home is arranged, and the two
+        // branches above would show what the accessory stands in for.
+        applyHeaderAccessory()
 
         if let footer = content.footer {
             footerContainer.isHidden = false
@@ -2695,6 +2729,13 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     var debugHeaderActionFrameInCard: NSRect? {
         actionButton.isHidden ? nil : actionButton.convert(actionButton.bounds, to: card)
     }
+
+    #if FM_SELFTESTS
+    /// Where Home's arranging controls landed, in the inner card's space.
+    var debugHeaderAccessoryFrameInCard: NSRect? {
+        headerAccessory.map { $0.convert($0.bounds, to: card) }
+    }
+    #endif
 
     /// The header's three columns in the card's own space: the whole row,
     /// the text column and the status column.

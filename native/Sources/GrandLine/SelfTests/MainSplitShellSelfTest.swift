@@ -1,26 +1,35 @@
 // Grand Line - native macOS app.
 //
-// Stage 3 of the modular-shell migration: the sidebar shell
+// Stages 3 and 4 of the modular-shell migration: the sidebar shell
 // (`MainSplitShellController`), mounted in a real off-screen window and
 // driven through its own controls.
 //
-//   1. **Every route shows, through the one mounter.** Each of the 29
-//      destinations lands in the same `DestinationMounter` slot the floating
-//      bar uses, lights its sidebar row and names itself in the title bar.
+//   1. **Every route shows, through the one mounter, in its module.** Each of
+//      the 29 destinations lands in the same `DestinationMounter` slot the
+//      floating bar uses, lights its module's row and tab, and is named by
+//      the crumb and the module's header.
 //   2. **No page grows the window.** At the narrowest width the sidebar is
 //      kept for, and at 1100 (where it steps aside), visiting every page
-//      leaves the window the width it was - gotcha (13), which the content
-//      column's minimum and the sidebar's collapse exist to hold.
-//   3. **The sidebar is the map.** A click navigates, a Pinned row stays lit,
-//      Pin and Unpin edit the quick-access list in place, sessions are
-//      Console's children, ⌘⇧D reveals it, and ⌥⌘S toggles the page's own
-//      column where there is one and the sidebar everywhere else.
-//   4. **The toolbar carries the chrome.** The page's actions, Home's
-//      spaces, the notifications badge from the bell's store, Back and
-//      Forward, the inspector.
-//   5. **The lock hides what the overlay cannot cover** - the toolbar and the
-//      title, which sit above the content view.
-//   6. **The status line** shows the live sessions and the focus timer chip.
+//      leaves the window the size it was - gotcha (13), which the content
+//      column's minimum and the sidebar's collapse exist to hold. A page's
+//      own column coming back (Tasks' board, ⌥⌘S on Settings) does too.
+//   3. **The sidebar is the map.** A module row opens the tab it showed last,
+//      a Pinned row stays lit, Pin and Unpin edit the quick-access list in
+//      place for every page of a module, sessions are Console's children,
+//      ⌘⇧D reveals it, and ⌥⌘S toggles the page's own column where there is
+//      one and the sidebar everywhere else.
+//   4. **A module's tabs are its pages.** A tab shows its page; on the four
+//      pages whose own tabs are the module's, the toolbar drives the page,
+//      the page hides its own control, and a switch the page makes by itself
+//      moves the toolbar's tab too.
+//   5. **The toolbar carries the chrome.** The page's actions, Home's spaces,
+//      the module's one action, the notifications badge from the bell's
+//      store, Back and Forward, the inspector.
+//   6. **Console is a module**: no header, its session strip, Quick Connect.
+//   7. **Home is the captain's to arrange**: Customize hides, adds, moves and
+//      resizes the real cards, keeps the result, and gets out of the way.
+//   8. **The lock hides what the overlay cannot cover** - the toolbar.
+//   9. **The status line** shows the live sessions and the focus timer chip.
 //
 // Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
 //
@@ -40,15 +49,21 @@ enum MainSplitShellSelfTest {
         defer { HelmMotion.reducedOverrideForTests = nil }
         let savedPins = AppSettings.shared.quickAccess
         defer { AppSettings.shared.quickAccess = savedPins }
+        let savedHome = AppSettings.shared.homeCardLayout
+        defer { AppSettings.shared.homeCardLayout = savedHome }
+        AppSettings.shared.homeCardLayout = .standard
 
         var allOK = true
         let (window, shell) = ReviewTourLab.makeOffScreenSplitShell()
         window.orderFront(nil)
         defer { window.orderOut(nil) }
         settle(shell)
-        for check in [checkEveryRouteShowsThroughTheMounter, checkNoPageGrowsTheWindow, checkTheSidebarIsTheMap,
-                      checkPinsEditInPlace, checkTheMapAndTheSidebarToggle, checkTheToolbar, checkBackAndForward,
-                      checkTheInspector, checkTheLockHidesTheToolbar, checkTheStatusLine, checkToastsLandInTheColumn,
+        for check in [checkEveryRouteShowsThroughTheMounter, checkNoPageGrowsTheWindow,
+                      checkAPageColumnNeverGrowsTheWindow, checkTheSidebarIsTheMap,
+                      checkPinsEditInPlace, checkTheMapAndTheSidebarToggle, checkModuleTabsArePages,
+                      checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
+                      checkHomeIsTheCaptainsToArrange, checkBackAndForward, checkTheInspector,
+                      checkTheLockHidesTheToolbar, checkTheStatusLine, checkToastsLandInTheColumn,
                       checkTheAccountMenu] {
             var ok = true
             check(shell, window, &ok)
@@ -71,6 +86,24 @@ enum MainSplitShellSelfTest {
         settle(shell)
     }
 
+    /// Click the toolbar's tab with this name, through the control's own
+    /// target and action, the way a real click reaches it.
+    @discardableResult
+    private static func clickTab(_ name: String, _ shell: MainSplitShellController) -> Bool {
+        let tabs = shell.toolbar.debugTabs
+        guard let index = shell.toolbar.debugTabNames.firstIndex(of: name) else { return false }
+        tabs.selectedSegment = index
+        _ = tabs.sendAction(tabs.action, to: tabs.target)
+        settle(shell)
+        return true
+    }
+
+    private static func selectedTabName(_ shell: MainSplitShellController) -> String? {
+        let tabs = shell.toolbar.debugTabs
+        let names = shell.toolbar.debugTabNames
+        return names.indices.contains(tabs.selectedSegment) ? names[tabs.selectedSegment] : nil
+    }
+
     // MARK: 1 - every route
 
     private static func checkEveryRouteShowsThroughTheMounter(_ shell: MainSplitShellController, _ window: NSWindow,
@@ -79,20 +112,44 @@ enum MainSplitShellSelfTest {
         for destination in RailDestination.allCases {
             shell.show(destination)
             settle(shell)
+            let module = ModuleTable.module(for: destination)
             check(shell.debugCurrentDestination == destination, "\(destination.rawValue) did not show", &ok)
             let slotView = shell.destinationViewIfMountedForTests(destination.slot)
             check(slotView != nil && slotView === shell.workspace.content.visibleDestinationView(),
                   "\(destination.rawValue) is not showing its own mounter slot", &ok)
             check(slotView?.isDescendant(of: shell.debugContentPane) == true,
                   "\(destination.rawValue)'s page is not in the content column", &ok)
-            check(shell.sidebar.debugSelectedEntry == .destination(destination, pinned: false),
-                  "\(destination.rawValue) did not light its sidebar row (lit: \(String(describing: shell.sidebar.debugSelectedEntry)))", &ok)
-            let title = shell.workspace.content.mounter.slot(for: destination.slot)?.title
-            check(window.title == title && shell.debugPageTitle.title == title,
-                  "the title bar says \"\(window.title)\" on \(destination.rawValue), want \"\(title ?? "-")\"", &ok)
-            let spaces = shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.spaces)
-            check(spaces == (destination == .homeCanvas),
-                  "the spaces are \(spaces ? "shown" : "hidden") on \(destination.rawValue)", &ok)
+            check(shell.sidebar.debugSelectedEntry == .module(module),
+                  "\(destination.rawValue) did not light \(module.title)'s row (lit: \(String(describing: shell.sidebar.debugSelectedEntry)))", &ok)
+            check(shell.currentModule == module && window.title == module.title,
+                  "the window is titled \"\(window.title)\" on \(destination.rawValue), want \"\(module.title)\"", &ok)
+            check(shell.toolbar.debugCrumb.hasSuffix(module.title) && window.titleVisibility == .hidden,
+                  "the crumb reads \"\(shell.toolbar.debugCrumb)\" on \(destination.rawValue)", &ok)
+            // The big title, with the page's live subtitle under it - except
+            // on Connections and Console, where the captain dropped it.
+            let page = shell.debugSlotController(destination) as? DaylightDrillActions
+            let live = page?.drillHeaderSubtitle ?? destination.drillSubtitle
+            // Home has no live subtitle of its own, so its header carries the day.
+            let subtitle = destination == .homeCanvas && live.isEmpty ? MainSplitShellController.homeSubtitle() : live
+            if module.showsHeader {
+                check(shell.debugHeader?.title == module.title && shell.debugHeader?.subtitle == subtitle,
+                      "\(destination.rawValue)'s header is \(String(describing: shell.debugHeader)), want \(module.title) / \(subtitle)", &ok)
+            } else {
+                check(shell.debugHeader == nil, "\(module.title) draws a header the captain dropped", &ok)
+            }
+            // The middle of the toolbar: Home's spaces, the module's tabs with
+            // this page's lit, or nothing for a module that is one page.
+            let names = shell.toolbar.debugTabNames
+            if module == .home {
+                check(names == DaylightSpace.allCases.map(\.title), "Home's toolbar shows \(names), not its spaces", &ok)
+            } else if module.drawsToolbarTabs {
+                check(names == module.tabs.map(\.name), "\(module.title)'s toolbar shows \(names)", &ok)
+                let lit = selectedTabName(shell).flatMap { name in module.tabs.first { $0.name == name } }
+                check(lit?.route == destination,
+                      "\(destination.rawValue) lit the \(String(describing: selectedTabName(shell))) tab", &ok)
+            } else {
+                check(names.isEmpty, "\(module.title), one page, shows tabs \(names)", &ok)
+            }
         }
         // The mounter is the floating bar's, untouched: every slot mounted
         // once, and no second copy of any page.
@@ -100,7 +157,7 @@ enum MainSplitShellSelfTest {
               "visiting every page mounted \(Set(shell.mountedDestinationSlotsForTests).count) of \(DestinationSlotID.allCases.count) slots", &ok)
     }
 
-    // MARK: 2 - the window keeps its width
+    // MARK: 2 - the window keeps its size
 
     private static func checkNoPageGrowsTheWindow(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         // The narrowest width that keeps the sidebar: its pane plus the
@@ -108,6 +165,7 @@ enum MainSplitShellSelfTest {
         resize(window, width: 1512, shell)
         let pane = shell.debugSidebarPane?.frame.width ?? MainSplitShellController.sidebarWidth
         let narrowest = (pane + MainSplitShellController.contentMinimum).rounded(.up) + 1
+        let height = window.frame.height
         for (width, sidebarShown) in [(narrowest, true), (CGFloat(1100), false)] {
             resize(window, width: width, shell)
             check(shell.debugSidebarIsCollapsed == !sidebarShown,
@@ -117,44 +175,116 @@ enum MainSplitShellSelfTest {
                 settle(shell)
                 check(abs(window.frame.width - width) < 0.5,
                       "\(destination.rawValue) grew a \(Int(width))pt window to \(Int(window.frame.width))pt", &ok)
-                if abs(window.frame.width - width) >= 0.5 { resize(window, width: width, shell) }
+                // The module's header takes height, so no page may push the
+                // window taller to make up for it either.
+                check(abs(window.frame.height - height) < 0.5,
+                      "\(destination.rawValue) grew the window's height to \(Int(window.frame.height))pt", &ok)
+                if abs(window.frame.width - width) >= 0.5 || abs(window.frame.height - height) >= 0.5 {
+                    var frame = window.frame
+                    frame.size = NSSize(width: width, height: height)
+                    window.setFrame(frame, display: true)
+                    settle(shell)
+                }
             }
         }
         // Wide again: the sidebar comes back at the width it opened at.
         resize(window, width: 1512, shell)
         check(!shell.debugSidebarIsCollapsed && abs(shell.debugSidebarWidth - MainSplitShellController.sidebarWidth) < 0.5,
               "widening the window brought the sidebar back at \(shell.debugSidebarWidth)pt (collapsed: \(shell.debugSidebarIsCollapsed))", &ok)
+        // The same round trip on Home, whose grid still holds the wider
+        // column's widths (at 499, above the sidebar's 489) while the sidebar
+        // comes back - measured: squeezed to its 200pt minimum when the
+        // sidebar's pin was released in the same turn.
+        shell.show(.homeCanvas)
+        settle(shell)
+        resize(window, width: 1100, shell)
+        resize(window, width: 1512, shell)
+        check(!shell.debugSidebarIsCollapsed && abs(shell.debugSidebarWidth - MainSplitShellController.sidebarWidth) < 0.5,
+              "a 1100-to-1512 round trip on Home brought the sidebar back at \(shell.debugSidebarWidth)pt", &ok)
+    }
+
+    /// A page's own column coming back takes its room from the page, never
+    /// from the window - measured before `HelmSplitPage` reopened it through
+    /// constraints: Tasks' column back for the board at 1100pt grew the
+    /// window to 1349 and brought the sidebar out with it.
+    private static func checkAPageColumnNeverGrowsTheWindow(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                            _ ok: inout Bool) {
+        resize(window, width: 1100, shell)
+        check(shell.debugSidebarIsCollapsed, "at 1100pt the sidebar did not step aside", &ok)
+        shell.show(.shift)
+        settle(shell)
+        clickTab("Board", shell)
+        if let split = (shell.debugSlotController(.shift) as? HelmSplitPageHosting)?.splitPage {
+            let column = split.debugSidebarWidth
+            check(!split.isSidebarCollapsed && column > 0, "Tasks' board opened without its column", &ok)
+            clickTab("Weekly review", shell)
+            check(split.isSidebarCollapsed, "Weekly review left the board's column out", &ok)
+            clickTab("Board", shell)
+            check(!split.isSidebarCollapsed && abs(split.debugSidebarWidth - column) < 0.5,
+                  "back on the board, Tasks' column is \(split.debugSidebarWidth)pt, it was \(column)pt", &ok)
+            check(abs(window.frame.width - 1100) < 0.5,
+                  "Tasks' column coming back grew a 1100pt window to \(Int(window.frame.width))pt", &ok)
+            check(shell.debugSidebarIsCollapsed, "Tasks' column coming back brought the sidebar out too", &ok)
+        } else {
+            fail("Tasks has no column of its own", &ok)
+        }
+        // The same reopen from ⌥⌘S, on a page whose column is the captain's.
+        shell.show(.settings)
+        settle(shell)
+        if let split = (shell.debugSlotController(.settings) as? HelmSplitPageHosting)?.splitPage {
+            shell.toggleSidebarFromMenu()
+            settle(shell)
+            check(split.isSidebarCollapsed, "⌥⌘S did not put Settings' column away", &ok)
+            shell.toggleSidebarFromMenu()
+            settle(shell)
+            check(!split.isSidebarCollapsed, "⌥⌘S did not bring Settings' column back", &ok)
+            check(abs(window.frame.width - 1100) < 0.5,
+                  "Settings' column coming back grew a 1100pt window to \(Int(window.frame.width))pt", &ok)
+        } else {
+            fail("Settings has no column of its own", &ok)
+        }
+        var frame = window.frame
+        frame.size.width = 1100
+        window.setFrame(frame, display: true)
+        shell.show(.homeCanvas)
+        resize(window, width: 1512, shell)
     }
 
     // MARK: 3 - the sidebar
 
     private static func checkTheSidebarIsTheMap(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
-        shell.show(.homeCanvas)
+        // A module's row reopens the tab it showed last. (Which tab a module
+        // opens on before it has shown one is `primaryRoute`, which the model
+        // suite checks; every module has been shown by now.)
+        shell.show(.notebook)
         settle(shell)
-        check(shell.sidebar.debugClick(.destination(.hosts, pinned: false)), "the Hosts row is not in the sidebar", &ok)
+        clickTab("Runbooks", shell)
+        check(shell.sidebar.debugClick(.module(.crew)), "the Crew row is not in the sidebar", &ok)
         settle(shell)
-        check(shell.debugCurrentDestination == .hosts, "clicking Hosts showed \(String(describing: shell.debugCurrentDestination))", &ok)
+        check(shell.currentModule == .crew, "the Crew row opened \(shell.currentModule.title)", &ok)
+        check(shell.sidebar.debugClick(.module(.knowledge)), "the Knowledge row is not in the sidebar", &ok)
+        settle(shell)
+        check(shell.debugCurrentDestination == .runbooks,
+              "Knowledge's row reopened \(String(describing: shell.debugCurrentDestination)), not the Runbooks tab it showed last", &ok)
 
         // A pinned row stays the lit one.
-        AppSettings.shared.quickAccess = QuickAccessConfiguration(pinned: [.console, .stickyBoard])
+        AppSettings.shared.quickAccess = QuickAccessConfiguration(pinned: [.console, .strawHat])
         shell.quickAccessDidChange(AppSettings.shared.quickAccess)
-        check(shell.sidebar.debugClick(.destination(.stickyBoard, pinned: true)), "the pinned Sticky Board row is missing", &ok)
+        check(shell.sidebar.debugClick(.pinned(.strawHat)), "the pinned Straw Hat Pirates row is missing", &ok)
         settle(shell)
-        check(shell.debugCurrentDestination == .stickyBoard
-                && shell.sidebar.debugSelectedEntry == .destination(.stickyBoard, pinned: true),
+        check(shell.debugCurrentDestination == .strawHat && shell.sidebar.debugSelectedEntry == .pinned(.strawHat),
               "the pinned row did not stay lit (lit: \(String(describing: shell.sidebar.debugSelectedEntry)))", &ok)
-        // Reached any other way, the group row lights.
-        shell.show(.stickyBoard)
+        // Reached any other way, its module's row lights.
         shell.show(.review)
-        shell.show(.stickyBoard)
+        shell.show(.strawHat)
         settle(shell)
-        check(shell.sidebar.debugSelectedEntry == .destination(.stickyBoard, pinned: false),
+        check(shell.sidebar.debugSelectedEntry == .module(.crew),
               "a page reached from outside the sidebar lit \(String(describing: shell.sidebar.debugSelectedEntry))", &ok)
 
-        // Every visible page row carries the page's real name.
+        // Home and every module have a visible row, under their own names.
         let entries = shell.sidebar.debugVisibleEntries
-        for destination in RailDestination.allCases {
-            check(entries.contains(.destination(destination, pinned: false)), "no visible row for \(destination.rawValue)", &ok)
+        for module in WorkspaceModule.allCases {
+            check(entries.contains(.module(module)), "no visible row for \(module.title)", &ok)
         }
     }
 
@@ -162,23 +292,30 @@ enum MainSplitShellSelfTest {
         AppSettings.shared.quickAccess = QuickAccessConfiguration(pinned: [.console])
         shell.quickAccessDidChange(AppSettings.shared.quickAccess)
         settle(shell)
-        let row = WorkspaceSidebarEntry.destination(.review, pinned: false)
-        check(shell.sidebar.debugContextMenuTitles(for: row).contains("Pin to Sidebar"),
-              "Review's menu does not offer Pin: \(shell.sidebar.debugContextMenuTitles(for: row))", &ok)
-        check(shell.sidebar.debugPerformContextMenuItem("Pin to Sidebar", on: row), "could not run Pin to Sidebar", &ok)
+        // Every page of a module can be pinned from its row - Straw Hat
+        // Pirates is Crew's third, which the floating bar's map could pin.
+        let crew = WorkspaceSidebarEntry.module(.crew)
+        let titles = shell.sidebar.debugContextMenuTitles(for: crew)
+        for page in WorkspaceModule.crew.pages {
+            check(titles.contains("Pin \(page.title) to Sidebar"), "Crew's menu does not offer to pin \(page.title): \(titles)", &ok)
+        }
+        check(shell.sidebar.debugPerformContextMenuItem("Pin Straw Hat Pirates to Sidebar", on: crew),
+              "could not run Pin Straw Hat Pirates", &ok)
         settle(shell)
-        check(AppSettings.shared.quickAccess.contains(.review), "Pin did not write the quick-access list", &ok)
-        check(shell.sidebar.debugVisibleEntries.contains(.destination(.review, pinned: true)),
-              "Pin did not add Review to the Pinned section", &ok)
-        check(shell.sidebar.debugPerformContextMenuItem("Unpin from Sidebar", on: .destination(.review, pinned: true)),
+        check(AppSettings.shared.quickAccess.contains(.strawHat), "Pin did not write the quick-access list", &ok)
+        check(shell.sidebar.debugVisibleEntries.contains(.pinned(.strawHat)),
+              "Pin did not add Straw Hat Pirates to the Pinned section", &ok)
+        check(shell.sidebar.debugPerformContextMenuItem("Unpin Straw Hat Pirates from Sidebar", on: .pinned(.strawHat)),
               "the pinned row does not offer Unpin", &ok)
         settle(shell)
-        check(!AppSettings.shared.quickAccess.contains(.review)
-                && !shell.sidebar.debugVisibleEntries.contains(.destination(.review, pinned: true)),
-              "Unpin did not take Review back out", &ok)
-        // Home is always first, so there is nothing to pin.
-        check(!shell.sidebar.debugContextMenuTitles(for: .destination(.homeCanvas, pinned: false)).contains("Pin to Sidebar"),
-              "Home offers Pin", &ok)
+        check(!AppSettings.shared.quickAccess.contains(.strawHat)
+                && !shell.sidebar.debugVisibleEntries.contains(.pinned(.strawHat)),
+              "Unpin did not take Straw Hat Pirates back out", &ok)
+        // Home, and a module that is one page, are already their own rows.
+        for module in [WorkspaceModule.home, .stickyBoard] {
+            check(!shell.sidebar.debugContextMenuTitles(for: .module(module)).contains { $0.hasPrefix("Pin ") },
+                  "\(module.title), one page, offers Pin", &ok)
+        }
     }
 
     private static func checkTheMapAndTheSidebarToggle(_ shell: MainSplitShellController, _ window: NSWindow,
@@ -210,9 +347,97 @@ enum MainSplitShellSelfTest {
               "⌥⌘S on Settings did not toggle Settings' own column (or hid the sidebar instead)", &ok)
         shell.toggleSidebarFromMenu()
         settle(shell)
+
+        // On Connections the page's column is put away for the toolbar's
+        // tabs, so ⌥⌘S does what it does on any page without one.
+        shell.show(.hosts)
+        settle(shell)
+        shell.toggleSidebarFromMenu()
+        settle(shell)
+        check(shell.debugSidebarIsCollapsed, "⌥⌘S on Connections did nothing", &ok)
+        shell.toggleSidebarFromMenu()
+        settle(shell)
+        check(!shell.debugSidebarIsCollapsed, "a second ⌥⌘S on Connections did not bring the sidebar back", &ok)
     }
 
-    // MARK: 4 - the toolbar
+    // MARK: 4 - a module's tabs
+
+    private static func checkModuleTabsArePages(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        for module in WorkspaceModule.allCases where module.drawsToolbarTabs {
+            shell.show(module.primaryRoute)
+            settle(shell)
+            for tab in module.tabs {
+                check(clickTab(tab.name, shell), "\(module.title)'s toolbar has no \(tab.name) tab", &ok)
+                check(shell.debugCurrentDestination == tab.route,
+                      "\(module.title) › \(tab.name) showed \(String(describing: shell.debugCurrentDestination))", &ok)
+                check(selectedTabName(shell) == tab.name && shell.debugCurrentTab == tab,
+                      "\(module.title) › \(tab.name) left \(String(describing: selectedTabName(shell))) lit", &ok)
+                if tab.isPageTab {
+                    let host = shell.debugSlotController(tab.route) as? ModuleTabHosting
+                    check(host?.selectedModuleTabName == tab.name,
+                          "\(module.title) › \(tab.name) left the page on \(host?.selectedModuleTabName ?? "nothing")", &ok)
+                }
+            }
+        }
+        // A deep link to a page lands on its tab; the page keeps the tab of
+        // its own it last showed.
+        shell.show(.hosts)
+        settle(shell)
+        clickTab("Keys", shell)
+        shell.show(.review)
+        shell.show(.hosts)
+        settle(shell)
+        check(selectedTabName(shell) == "Keys", "returning to Hosts lit \(String(describing: selectedTabName(shell))), not Keys", &ok)
+        clickTab("Hosts", shell)
+    }
+
+    private static func checkPageTabsAreDrivenFromTheToolbar(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                            _ ok: inout Bool) {
+        // Each page's own tabs are its module's, name for name.
+        for module in WorkspaceModule.allCases {
+            guard let route = module.pageTabHost else { continue }
+            shell.show(route)
+            settle(shell)
+            guard let host = shell.debugSlotController(route) as? ModuleTabHosting else {
+                fail("\(route.rawValue) draws \(module.title)'s tabs but is not a ModuleTabHosting page", &ok)
+                continue
+            }
+            check(host.moduleTabNames == module.tabs.filter(\.isPageTab).map(\.name),
+                  "\(route.rawValue)'s own tabs are \(host.moduleTabNames), \(module.title)'s are \(module.tabs.map(\.name))", &ok)
+        }
+        // The page's own control is put away while the toolbar draws it...
+        if let shift = shell.debugSlotController(.shift) as? ShiftController {
+            check(shift.debugViewTabs.isHidden, "Tasks still draws its own view switcher under the toolbar's tabs", &ok)
+            // ...and a switch the page makes by itself moves the toolbar's tab.
+            shell.show(.shift)
+            settle(shell)
+            shift.showWeeklyReview()
+            settle(shell)
+            check(selectedTabName(shell) == "Weekly review",
+                  "Tasks switched to Weekly review but the toolbar lit \(String(describing: selectedTabName(shell)))", &ok)
+            shift.showDashboard()
+            settle(shell)
+        } else {
+            fail("Tasks did not mount", &ok)
+        }
+        if let fleet = shell.debugSlotController(.overview) as? FleetController {
+            check(fleet.debugTabsAreHidden, "the Fleet page still draws its own tabs under Crew's", &ok)
+            shell.openFleetLog()
+            settle(shell)
+            check(shell.currentModule == .crew && selectedTabName(shell) == "Log",
+                  "opening the captain's log lit \(String(describing: selectedTabName(shell))) in \(shell.currentModule.title)", &ok)
+        }
+        if let hosts = shell.debugSlotController(.hosts) as? HostsController {
+            check(hosts.splitPage?.pageForcesCollapse == true && hosts.splitPage?.isSidebarCollapsed == true,
+                  "the Hosts page's own column is still out beside Connections' tabs", &ok)
+        }
+        if let kubernetes = shell.debugSlotController(.kubernetes) as? KubernetesController {
+            check(kubernetes.pageTabs.isHidden, "Kubernetes still draws its own Cluster and Log Tail tabs", &ok)
+        }
+    }
+
+    // MARK: 5 - the toolbar
 
     private static func checkTheToolbar(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         resize(window, width: 1512, shell)
@@ -234,21 +459,24 @@ enum MainSplitShellSelfTest {
         zip(hostsActions, wasHidden).forEach { $0.isHidden = $1 }
         check(shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.pageActions),
               "showing Hosts' buttons again did not bring the actions item back", &ok)
-        if let subtitle = (shell.debugSlotController(.hosts) as? DaylightDrillActions)?.drillHeaderSubtitle {
-            check(window.subtitle == subtitle, "the subtitle is \"\(window.subtitle)\", want Hosts' live \"\(subtitle)\"", &ok)
-        }
+        // Connections' Activity: the captain's log, which the Hosts page's
+        // column linked to before the toolbar's tabs replaced it.
+        check(shell.toolbar.debugModuleActionButton?.title == "Activity", "Connections offers no Activity button", &ok)
+        shell.debugModuleAction()
+        settle(shell)
+        check(shell.debugCurrentDestination == .overview && selectedTabName(shell) == "Log",
+              "Activity opened \(String(describing: shell.debugCurrentDestination)), not Crew › Log", &ok)
+
         shell.show(.homeCanvas)
         settle(shell)
         check(shell.toolbar.debugPageActions.isEmpty
                 && !shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.pageActions),
               "Home still shows the previous page's actions", &ok)
         // Home's spaces filter its cards, as the pills did.
-        let spaces = shell.toolbar.debugSpaces
-        spaces.selectedSegment = DaylightSpace.allCases.firstIndex(of: .operations) ?? 0
-        _ = spaces.sendAction(spaces.action, to: spaces.target)
-        settle(shell)
+        check(clickTab(DaylightSpace.operations.title, shell), "Home's toolbar has no Operations space", &ok)
         check(shell.debugHomeCanvas.selectedSpace == .operations, "the toolbar's spaces did not filter Home", &ok)
-        shell.selectSpace(.overview)
+        clickTab(DaylightSpace.overview.title, shell)
+        check(shell.debugHomeCanvas.selectedSpace == .overview, "the Home space did not come back", &ok)
 
         // The badge is the bell's own count, from the one store. (`resetForTesting`
         // tells no observer, so the first real change is what the toolbar sees.)
@@ -263,11 +491,184 @@ enum MainSplitShellSelfTest {
         check(center.badgeCount == 0 && shell.toolbar.debugBadgeText == nil,
               "the badge stayed after the notification resolved", &ok)
 
+        // Narrow, the prototype's compact toolbar: Search is its glyph, and
+        // when room still runs out the crumb, Recents and the inspector
+        // toggle overflow first - never Search, the bell or the toggle.
+        resize(window, width: 1100, shell)
+        check(shell.toolbar.debugIsCompact, "at 1100 the toolbar is not compact", &ok)
+        resize(window, width: 1512, shell)
+        check(!shell.toolbar.debugIsCompact, "at 1512 the toolbar is still compact", &ok)
+        let items = shell.toolbar.toolbar.items
+        func priority(_ id: NSToolbarItem.Identifier) -> NSToolbarItem.VisibilityPriority? {
+            items.first { $0.itemIdentifier == id }?.visibilityPriority
+        }
+        for id in [WorkspaceToolbar.ItemID.search, WorkspaceToolbar.ItemID.notifications, WorkspaceToolbar.ItemID.theme] {
+            check(priority(id) == .high, "\(id.rawValue) can overflow before the crumb", &ok)
+        }
+        for id in [WorkspaceToolbar.ItemID.crumb, WorkspaceToolbar.ItemID.recents, WorkspaceToolbar.ItemID.inspector] {
+            check(priority(id) == .low, "\(id.rawValue) is not among the first to overflow", &ok)
+        }
+        check(items.first { $0.itemIdentifier == WorkspaceToolbar.ItemID.recents }?.menuFormRepresentation?.action != nil,
+              "Recents does nothing from the overflow menu", &ok)
+
         // The light/dark toggle flips the theme within its family.
         let before = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(before) }
         check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.theme), "the light/dark item has no action", &ok)
         check(ThemeManager.shared.theme.mode != before.mode, "the light/dark item did not flip the appearance", &ok)
+    }
+
+    // MARK: 6 - Console
+
+    private static func checkConsoleIsAModule(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        let host = UUID()
+        shell.sessions.register(hostID: host, label: "DEV Bastion", accentHex: nil, state: .connected)
+        defer {
+            shell.sessions.unregister(hostID: host)
+            settle(shell)
+        }
+        shell.show(.console)
+        settle(shell)
+        check(shell.debugHeader == nil && shell.toolbar.debugCrumb.hasSuffix("Console"),
+              "Console draws a header, or the crumb reads \"\(shell.toolbar.debugCrumb)\"", &ok)
+        check(shell.debugSessionStripIsShown, "Console has a live session but no session strip", &ok)
+        check(shell.sidebar.debugSelectedEntry == .module(.console), "the Console row is not lit", &ok)
+        // The strip is Console's: no other module carries it.
+        shell.show(.review)
+        settle(shell)
+        check(!shell.debugSessionStripIsShown, "the session strip followed the captain out of Console", &ok)
+        // Quick Connect: Hosts' own quick-connect field.
+        shell.show(.console)
+        settle(shell)
+        check(shell.toolbar.debugModuleActionButton?.title == "Quick Connect", "Console offers no Quick Connect", &ok)
+        shell.debugModuleAction()
+        settle(shell)
+        check(shell.debugCurrentDestination == .hosts && shell.currentModule == .connections,
+              "Quick Connect opened \(String(describing: shell.debugCurrentDestination))", &ok)
+    }
+
+    // MARK: 7 - Home's cards
+
+    private static func checkHomeIsTheCaptainsToArrange(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                       _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        AppSettings.shared.homeCardLayout = .standard
+        shell.debugHomeCanvas.cardLayout = .standard
+        shell.show(.homeCanvas)
+        settle(shell)
+        let canvas = shell.debugHomeCanvas
+        check(canvas.visibleModulesForTests == HomeCardLayout.standard.shown && !canvas.usesDashboardLayoutForTests,
+              "Home shows \(canvas.visibleModulesForTests.map(\.rawValue)), not its arranged cards", &ok)
+        check(shell.toolbar.debugModuleActionButton?.title == "Customize", "Home offers no Customize", &ok)
+        // Claude's card carries a header action (Refresh), which the arranging
+        // controls once let show under them.
+        check(canvas.cardForTests(.claudeStatus)?.debugHeaderActionFrameInCard != nil,
+              "Claude's card has no header action, so the check on its arranging controls is vacuous", &ok)
+        let headerHeight = canvas.cardForTests(.claudeStatus)?.debugHeaderGeometry?.row.height ?? 0
+
+        // Customize: the tray, and controls on every card.
+        shell.debugModuleAction()
+        settle(shell)
+        check(canvas.isCustomizing && canvas.customizeTrayForTests != nil
+                && shell.toolbar.debugModuleActionButton?.title == "Done",
+              "Customize did not open (tray: \(canvas.customizeTrayForTests != nil))", &ok)
+        check(Set(canvas.cardStripsForTests.keys) == Set(HomeCardLayout.standard.shown),
+              "not every card wears its controls in Customize", &ok)
+        // Each strip keeps its own width, on a large card too, so the title
+        // takes the header's spare room.
+        for (module, strip) in canvas.cardStripsForTests {
+            check(abs(strip.frame.width - strip.fittingSize.width) < 1,
+                  "\(module.rawValue)'s controls are \(strip.frame.width)pt wide, their own width is \(strip.fittingSize.width)pt", &ok)
+        }
+        // The controls take the header's trailing place rather than covering
+        // it: the card's own action is put away, and the controls sit in the
+        // header row beside the title.
+        if let claude = canvas.cardForTests(.claudeStatus) {
+            check(claude.debugHeaderActionFrameInCard == nil, "Claude's Refresh still shows under Customize's controls", &ok)
+            if let header = claude.debugHeaderGeometry, let controls = claude.debugHeaderAccessoryFrameInCard {
+                check(header.row.insetBy(dx: -0.5, dy: -0.5).contains(controls) && !controls.intersects(header.text),
+                      "Customize's controls on Claude's card sit at \(controls), outside its header row \(header.row) "
+                      + "or over its title \(header.text)", &ok)
+                check(abs(header.row.height - headerHeight) < 0.5,
+                      "Claude's header is \(header.row.height)pt while arranged and \(headerHeight)pt otherwise", &ok)
+            } else {
+                fail("Claude's card has no arranging controls in its header", &ok)
+            }
+        } else {
+            fail("Claude's card is not on Home in Customize", &ok)
+        }
+        // A card does not navigate while it is being arranged.
+        let open = shell.debugCurrentDestination
+        canvas.cardForTests(.fleet)?.onOpen?()
+        check(shell.debugCurrentDestination == open, "a card click navigated away from Customize", &ok)
+
+        // Hide, through the card's own button.
+        guard let first = HomeCardLayout.standard.shown.first, let strip = canvas.cardStripsForTests[first] else {
+            fail("the first card has no controls - the rest is vacuous", &ok)
+            return
+        }
+        strip.debugHideButton.performClick(nil)
+        settle(shell)
+        check(!canvas.visibleModulesForTests.contains(first) && canvas.cardForTests(first) == nil,
+              "hiding \(first.rawValue) left it on Home", &ok)
+        check(!AppSettings.shared.homeCardLayout.shown.contains(first), "the hidden card was not kept", &ok)
+        check(canvas.customizeTrayForTests?.hiddenCards.contains(first) == true, "the tray does not offer the hidden card back", &ok)
+
+        // Add it back, from the tray's own menu.
+        if let tray = canvas.customizeTrayForTests {
+            let menu = tray.addMenu()
+            if let index = menu.items.firstIndex(where: { $0.title == first.title }) {
+                menu.performActionForItem(at: index)
+            }
+        }
+        settle(shell)
+        check(canvas.visibleModulesForTests.last == first, "adding \(first.rawValue) back did not put it at the end", &ok)
+
+        // Full width: the card spans the grid.
+        if let strip = canvas.cardStripsForTests[first] {
+            let menu = strip.sizeMenu()
+            if let index = menu.items.firstIndex(where: { $0.title == HomeCardLayout.Size.wide.title }) {
+                menu.performActionForItem(at: index)
+            }
+        }
+        settle(shell)
+        let widths = canvas.gridRowsForTests.map(\.frame.width)
+        if let card = canvas.cardForTests(first), let widest = widths.max() {
+            check(abs(card.frame.width - widest) < 1, "a full-width card is \(card.frame.width)pt in a \(widest)pt grid", &ok)
+        } else {
+            fail("the resized card is not on Home", &ok)
+        }
+        check(AppSettings.shared.homeCardLayout.size(of: first) == .wide, "the card's size was not kept", &ok)
+
+        // Move earlier, through its button.
+        let before = canvas.visibleModulesForTests
+        canvas.cardStripsForTests[first]?.debugEarlierButton.performClick(nil)
+        settle(shell)
+        let after = canvas.visibleModulesForTests
+        check(after.count == before.count && after.last != first && after.firstIndex(of: first) == before.count - 2,
+              "moving \(first.rawValue) earlier gave \(after.map(\.rawValue))", &ok)
+
+        // Done, from the toolbar: the controls go, the arrangement stays.
+        shell.debugModuleAction()
+        settle(shell)
+        check(!canvas.isCustomizing && canvas.customizeTrayForTests == nil && canvas.cardStripsForTests.isEmpty,
+              "Done left Customize's controls on Home", &ok)
+        check(canvas.visibleModulesForTests == after, "Done changed the arrangement", &ok)
+        check(canvas.cardForTests(.claudeStatus)?.debugHeaderActionFrameInCard != nil,
+              "Done did not give Claude's card its Refresh back", &ok)
+
+        // Reset brings Home's own set back.
+        shell.debugModuleAction()
+        settle(shell)
+        canvas.customizeTrayForTests?.debugResetButton.performClick(nil)
+        settle(shell)
+        check(canvas.visibleModulesForTests == HomeCardLayout.standard.shown && AppSettings.shared.homeCardLayout == .standard,
+              "Reset left \(canvas.visibleModulesForTests.map(\.rawValue))", &ok)
+        // Leaving Home's own space ends Customize.
+        clickTab(DaylightSpace.stores.title, shell)
+        check(!canvas.isCustomizing && shell.toolbar.debugModuleActionButton?.title == "Customize",
+              "switching to Stores kept Customize on", &ok)
+        clickTab(DaylightSpace.overview.title, shell)
     }
 
     private static func checkBackAndForward(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
@@ -309,7 +710,7 @@ enum MainSplitShellSelfTest {
         check(shell.debugInspectorIsCollapsed, "the inspector's close button did not close it", &ok)
     }
 
-    // MARK: 5 - the lock
+    // MARK: 8 - the lock
 
     private static func checkTheLockHidesTheToolbar(_ shell: MainSplitShellController, _ window: NSWindow,
                                                    _ ok: inout Bool) {
@@ -323,14 +724,14 @@ enum MainSplitShellSelfTest {
             return
         }
         overlay(true)
-        check(window.toolbar?.isVisible == false && window.titleVisibility == .hidden && window.title != "Hosts",
-              "with the lock up the toolbar or the page's title is still showing", &ok)
+        check(window.toolbar?.isVisible == false && window.title == AppPaths.displayName,
+              "with the lock up the toolbar shows, or the window is titled \"\(window.title)\"", &ok)
         overlay(false)
-        check(window.toolbar?.isVisible == true && window.titleVisibility == .visible && window.title == "Hosts",
-              "the toolbar and the title did not come back after the lock", &ok)
+        check(window.toolbar?.isVisible == true && window.title == WorkspaceModule.connections.title,
+              "the toolbar and the module's name did not come back after the lock (\"\(window.title)\")", &ok)
     }
 
-    // MARK: 6 - the status line
+    // MARK: 9 - the status line
 
     private static func checkTheStatusLine(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         let status = shell.debugStatusLine
@@ -343,7 +744,7 @@ enum MainSplitShellSelfTest {
         check(status.debugSessionsText == "1 session live \u{00B7} 1 restored, not connected",
               "two sessions read \"\(status.debugSessionsText)\"", &ok)
         let entries = shell.sidebar.debugVisibleEntries
-        if let console = entries.firstIndex(of: .destination(.console, pinned: false)) {
+        if let console = entries.firstIndex(of: .module(.console)) {
             check(Array(entries.dropFirst(console + 1).prefix(2)) == [.session(hostID: live), .session(hostID: restored)],
                   "the sessions are not listed under Console", &ok)
         } else {

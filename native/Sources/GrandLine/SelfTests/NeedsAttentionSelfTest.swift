@@ -238,6 +238,15 @@ enum NeedsAttentionSelfTest {
               "a lone signal names itself, got \"\(riskOnly)\"", &ok)
         check(lateAndRisk == "One thing is late, and Claude is near its spend cap.",
               "a count and a named signal join with \", and \", got \"\(lateAndRisk)\"", &ok)
+        // The fleet's clause is lower case so it can follow another, and a
+        // sentence it leads still starts with a capital. Home's card read
+        // "nothing known needs you right now." with the fleet alone.
+        let fleetFirst = headline(.risk, [toneRow(.risk, clause: "nothing known needs you right now")])
+        check(fleetFirst == "Nothing known needs you right now.",
+              "a lower-case clause that leads the sentence, got \"\(fleetFirst)\"", &ok)
+        let fleetSecond = headline(.late, [toneRow(.late), toneRow(.risk, clause: "nothing known needs you right now")])
+        check(fleetSecond == "One thing is late, and nothing known needs you right now.",
+              "a lower-case clause that follows another, got \"\(fleetSecond)\"", &ok)
         check(infoOnly == "Two checks are waiting.",
               "info-only falls back to the check count, got \"\(infoOnly)\"", &ok)
         // The digest's own overflow is counted with the due rows and never
