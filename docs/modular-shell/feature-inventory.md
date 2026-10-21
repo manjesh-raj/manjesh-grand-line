@@ -36,14 +36,14 @@ A page action wired through a closure rather than a selector (a `HoverHighlightV
 Those are covered by their page's destination row, its surface rows and its Home card row rather than one by one.
 Dialog Return and Escape buttons are part of the dialog they belong to and are not listed separately.
 
-## Decisions taken, and open ones
+## Decisions taken
 
 - The prototype's Snippets caption that mentioned ⌘; reads "run in any terminal tab" when Connections › Snippets is built, because the real app has no ⌘; shortcut. The real Snippets empty state already says "send it to any terminal tab".
 - The big page title is dropped on Connections and Console only. Home and the other modules keep their subtitles.
 - There is no Today page and no calendar integration anywhere, and neither comes back.
 - Honest state stays: a number that is not known yet is a dash with "scanning", never 0, and a failed read keeps the last good value and says when.
-- **Open (needs the captain):** the prototype removed the toolbar bell together with the Inbox row. The real Notification Center holds lasting reports that have no other home (backup and persistence failures, crew decisions, failing checks). The default here keeps a notifications button in the toolbar's trailing cluster, where the review's plan puts it, rather than an Inbox row in the sidebar. The alternative is a status-line button.
-- **Open (needs the captain):** the bar's light/dark toggle. The prototype follows the system appearance and has no toggle. The default here keeps the toggle in the toolbar's trailing cluster, because it is a real feature with a real preference behind it.
+- **The bell stays, as a toolbar button.** The prototype removed it together with the Inbox row, but the real Notification Center holds lasting reports that have no other home (backup and persistence failures, crew decisions, failing checks). A notifications button sits in the toolbar's trailing cluster, where the review's plan puts it, and there is no Inbox row in the sidebar. The captain kept this default.
+- **The light/dark toggle stays, in the toolbar.** The prototype follows the system appearance and has no toggle, but the toggle is a real feature with a real preference behind it, so it sits in the toolbar's trailing cluster. The captain kept this default.
 
 ## Destinations
 
@@ -857,8 +857,8 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 | `chrome.quickAccessOverflow` | "More destinations" overflow when the squares do not fit | Bar, below 1300pt | Sidebar (the Pinned section scrolls with the sidebar; nothing overflows) | `DaylightBarController.swift` `quickAccessOverflowButton` |
 | `chrome.quickAccessPin` | Pin or unpin a page to the quick-access row | Right-click a page in the ⌘⇧D map | Sidebar (Pin and Unpin on a sidebar row's context menu) | `AppShellController.swift` `func toggleQuickAccessPin` |
 | `chrome.allDestinations` | The ⌘⇧D map of every page | Floating panel over the window | Sidebar (the sidebar is the whole map; ⌘⇧D reveals and focuses it) | `AllDestinationsOverlay.swift` `final class AllDestinationsOverlayController` |
-| `chrome.themeToggle` | Light and dark quick toggle | Bar, trailing | Toolbar (trailing cluster; needs the captain's call, see the header) | `DaylightBarController.swift` `final class DaylightThemeToggleButton` |
-| `chrome.notificationCenter` | The bell and the Notification Center popover (crew decisions, failing checks, lasting reports) | Bar, trailing | Toolbar (a notifications button in the trailing cluster; needs the captain's call, see the header) | `NotificationCenterPopover.swift` `final class NotificationCenterController` |
+| `chrome.themeToggle` | Light and dark quick toggle | Bar, trailing | Toolbar (trailing cluster; the captain kept it, see the header) | `DaylightBarController.swift` `final class DaylightThemeToggleButton` |
+| `chrome.notificationCenter` | The bell and the Notification Center popover (crew decisions, failing checks, lasting reports) | Bar, trailing | Toolbar (a notifications button in the trailing cluster; the captain kept it, see the header) | `NotificationCenterPopover.swift` `final class NotificationCenterController` |
 | `chrome.avatar` | Avatar menu: Settings and Log out | Bar, trailing edge | Sidebar (the workspace header's menu: Settings, Log out) | `DaylightBarController.swift` `final class AvatarLogoutPopoverController` |
 | `chrome.focusChip` | Running focus timer chip and its ring popover | Bar, before the search pill, while a timer runs | Status line (the focus timer chip and ring popover) | `FocusTimerViews.swift` `final class FocusTimerChip` |
 | `chrome.scrollEdge` | The bar deepens its shadow once the page scrolls | Bar | Toolbar (the system toolbar's own scroll-edge effect) | `DaylightBarController.swift` `func setScrollEdgeActive` |
