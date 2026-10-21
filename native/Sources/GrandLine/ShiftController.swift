@@ -194,6 +194,27 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// the column itself on Weekly Review.
     /// P9: the page's split view, which holds `sidebar` as a real sidebar.
     private(set) var splitPage: HelmSplitPage?
+    /// The content column's leading inset - see `applyContentLeadingInset`.
+    private var contentStackLeading: NSLayoutConstraint?
+
+    /// The content's distance from whatever is to its left.
+    ///
+    /// Beside the open column, the column's own trailing gap and the divider
+    /// already separate the two, so the content sits `pageGutter` from the
+    /// column's *content* rather than from the divider - where it has always
+    /// been. With the column collapsed there is nothing to its left but the
+    /// window edge, so the content keeps the whole `pageGutter`.
+    ///
+    /// UXP-03: this used to be a fixed negative inset on the scroll view,
+    /// which was right only while the column showed. Weekly Review collapses
+    /// the column, and its "Week of …" header sat about 7pt from the window
+    /// edge - the one view in the app whose content touched it.
+    private func applyContentLeadingInset() {
+        let collapsed = splitPage?.isSidebarCollapsed ?? true
+        contentStackLeading?.constant = collapsed
+            ? HelmMetrics.pageGutter
+            : HelmMetrics.pageGutter - (HelmMetrics.s4 + HelmSplitPage.dividerThickness)
+    }
 
     /// Action rows: these scroll to a panel rather than filtering anything, so
     /// they are `.action` rows and never take the selection.
@@ -499,8 +520,11 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         contentStack.addArrangedSubview(weeklyReviewSection)
 
         content.addSubview(contentStack)
+        let contentLeading = contentStack.leadingAnchor.constraint(equalTo: content.leadingAnchor,
+                                                                   constant: HelmMetrics.pageGutter)
+        contentStackLeading = contentLeading
         NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
+            contentLeading,
             contentStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
             contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
             contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -HelmMetrics.s5),
@@ -558,13 +582,12 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         HelmSplitPage.pin(sidebar, in: split.sidebarPane,
                           insets: NSEdgeInsets(top: 24, left: HelmMetrics.pageGutter,
                                                bottom: HelmMetrics.pageGutter, right: HelmMetrics.s4))
-        // `contentStack` carries its own `pageGutter` inset inside the scroll,
-        // so the scroll starts at the column's trailing edge - which is the
-        // hairline's gap and the divider itself back from the content pane.
-        HelmSplitPage.pin(scroll, in: split.contentPane,
-                          insets: NSEdgeInsets(top: 0, left: -(HelmMetrics.s4 + HelmSplitPage.dividerThickness),
-                                               bottom: 0, right: 0))
+        // The scroll fills the content pane, and `contentStack` carries the
+        // page's own leading inset inside it - see `applyContentLeadingInset`.
+        HelmSplitPage.pin(scroll, in: split.contentPane, insets: NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0))
         splitPage = split
+        split.onSidebarCollapseChanged = { [weak self] _ in self?.applyContentLeadingInset() }
+        applyContentLeadingInset()
         NSLayoutConstraint.activate([
             // AGENTS.md gotcha #4: the document view is pinned to the *clip*
             // view, never the outer scroll view.
@@ -1583,6 +1606,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         // P9: the split collapses the column, which takes its gap and its
         // hairline with it, and restores the captain's own choice on return.
         splitPage?.pageForcesCollapse = view != .dashboard
+        applyContentLeadingInset()
         if view == .weeklyReview { renderWeeklyReview() }
         applyTheme()
     }
@@ -2537,6 +2561,20 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     /// UXP-02: the project cards the last render built.
     var debugProjectCards: [ShiftProjectCardView] { projectCards }
+
+    /// UXP-03: the leading edges, in window coordinates, of the Weekly
+    /// Review's header and of the view switcher, after a real layout pass.
+    var debugContentLeadingInWindow: (reviewHeader: CGFloat, tabs: CGFloat) {
+        view.layoutSubtreeIfNeeded()
+        // The alignment rect, not the frame: a label's frame carries 2pt of
+        // cell padding outside the text, and the stack aligns the rect.
+        func leading(_ v: NSView) -> CGFloat {
+            guard let parent = v.superview else { return 0 }
+            return parent.convert(v.alignmentRect(forFrame: v.frame), to: nil).minX
+        }
+        return (leading(reviewGreeting), leading(viewTabs))
+    }
+    func debugToggleSidebar() { splitPage?.toggleSidebar(nil) }
 
     // MARK: F7's probe surface
 

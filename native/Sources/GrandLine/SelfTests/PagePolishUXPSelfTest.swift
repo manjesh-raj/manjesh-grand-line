@@ -26,6 +26,7 @@ enum PagePolishUXPSelfTest {
             ("uxp01ReviewKeepsRealCountsOnAPartialFailure", uxp01ReviewKeepsRealCountsOnAPartialFailure),
             ("uxp01SearchPillKeepsItsPlaceholderBesideALongSubtitle", uxp01SearchPillKeepsItsPlaceholder),
             ("uxp02ProjectCardsRepaintOnAThemeSwitch", uxp02ProjectCardsRepaintOnAThemeSwitch),
+            ("uxp03WeeklyReviewKeepsThePageMargin", uxp03WeeklyReviewKeepsThePageMargin),
             ("uxp09ReviewForgePlaceholderRowIsTallEnoughToDraw", uxp09ForgePlaceholderRowIsTallEnough),
         ]
         var failed = 0
@@ -211,6 +212,47 @@ enum PagePolishUXPSelfTest {
                   + "\(card.debugNameColor.map { "\($0)" } ?? "nil")", &ok)
         }
         ThemeManager.shared.setTheme(dusk)
+        return ok
+    }
+
+    // MARK: UXP-03
+
+    /// Weekly Review collapses the column, and its content keeps the page's
+    /// own gutter from the window edge. It used to sit about 7pt from it,
+    /// because the inset the other views had came from the column.
+    private static func uxp03WeeklyReviewKeepsThePageMargin() -> Bool {
+        var ok = true
+        withScratchShiftStore { store in
+            let (window, shift) = mountShift(store)
+            defer { _ = window }
+            let board = shift.debugContentLeadingInWindow
+            check(shift.debugContentStartsAfterSidebar, "UXP-03: the board should show the column", &ok)
+            // The fixture discriminates only if the board's content really
+            // starts past a column.
+            check(board.tabs > 200, "UXP-03: the board's content should start after the column, at \(board.tabs)", &ok)
+
+            shift.debugShowView("review")
+            let review = shift.debugContentLeadingInWindow
+            check(!shift.debugContentStartsAfterSidebar, "UXP-03: Weekly Review should collapse the column", &ok)
+            check(review.reviewHeader >= HelmMetrics.pageGutter - 0.5,
+                  "UXP-03: the review header sits \(review.reviewHeader)pt (tabs \(review.tabs)) from the window edge, "
+                  + "under the \(HelmMetrics.pageGutter)pt page gutter", &ok)
+            check(review.tabs >= HelmMetrics.pageGutter - 0.5,
+                  "UXP-03: the view switcher sits \(review.tabs)pt from the window edge on Review", &ok)
+
+            // Back on the board the content returns to where it was.
+            shift.debugShowView("board")
+            let back = shift.debugContentLeadingInWindow
+            check(abs(back.tabs - board.tabs) < 0.5,
+                  "UXP-03: the board's content moved from \(board.tabs) to \(back.tabs) after a visit to Review", &ok)
+
+            // The captain's own Toggle Sidebar on the board gets the same gutter.
+            shift.debugToggleSidebar()
+            let toggled = shift.debugContentLeadingInWindow
+            check(toggled.tabs >= HelmMetrics.pageGutter - 0.5,
+                  "UXP-03: with the column hidden by Toggle Sidebar the content sits \(toggled.tabs)pt from the edge", &ok)
+            shift.debugToggleSidebar()
+        }
         return ok
     }
 
