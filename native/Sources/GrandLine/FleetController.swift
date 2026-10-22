@@ -967,7 +967,7 @@ final class FleetController: NSViewController {
         // Needs you keeps a task it cannot read this time (see
         // `noteNeedsYouRead`). The floating bar lists this read as it is. The
         // bookkeeping runs in both layouts, because the sidebar layout's
-        // Crew badge and status line read it before Crew is ever opened; only
+        // Crew badge reads it before Crew is ever opened; only
         // the sidebar layout lists its result.
         let carried = noteNeedsYouRead(snapshot, needs: needs)
         needsYouListedCount = carried.count
@@ -1519,7 +1519,7 @@ extension FleetController: SidebarLayoutAdopting {
     @objc private func needsYouSetupTapped() { onNavigateToSetup?() }
 
     /// Needs you's own reading of the crew, for the sidebar layout's Crew
-    /// badge and status line: the same count Needs you lists, and the same
+    /// badge: the same count Needs you lists, and the same
     /// honest states its summary states. Read after `onSnapshotChanged`,
     /// which every read fires.
     var needsYouReading: FleetNeedsYouReading {
@@ -1634,7 +1634,7 @@ extension FleetController: SidebarLayoutAdopting {
 }
 
 /// What Crew › Needs you last read, without its rows - the sidebar layout's
-/// Crew badge and status line (`WorkspaceSignals`).
+/// Crew badge (`WorkspaceSignals`).
 struct FleetNeedsYouReading: Equatable {
     /// A read has landed. Until then the launch refresh is still reading.
     let hasRead: Bool

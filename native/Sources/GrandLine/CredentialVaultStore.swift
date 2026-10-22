@@ -124,8 +124,7 @@ final class CredentialVaultStore {
 
     /// Observe the vault locking and unlocking: `fn` gets `isUnlocked`, on
     /// the main thread, each time it flips - and only then, never for a
-    /// content change. The sidebar layout's Secrets badge and status line
-    /// read it.
+    /// content change. The sidebar layout's Secrets badge reads it.
     ///
     /// A list rather than a second `onChange`: that closure is Poneglyph's
     /// own (ARCH-04), and assigning it anywhere else would take the page's

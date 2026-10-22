@@ -194,12 +194,17 @@ enum ReviewTourLab {
         /// through the page's own selection path - a host, a key, a snippet
         /// or a credential.
         case select(String)
-        /// `demo signals`: the sidebar layout's badges and status line with
-        /// something to say - a service failing three times, two tool
-        /// updates and a fork behind, a Claude reading, one live session,
-        /// and Poneglyph locked if a vault exists. Each through its real
+        /// `demo signals`: the sidebar layout's badges with something to say
+        /// - a service failing three times, two tool updates and a fork
+        /// behind, one live session, and Poneglyph locked if a vault exists -
+        /// and a Claude reading for Home's card. Each through its real
         /// source's own API, in this tour process.
         case demoSignals
+        /// `demo focus`: start F7's focus timer on a fixture task, so a render
+        /// shows its chip - the floating bar's beside its search pill, the
+        /// sidebar layout's in the window toolbar. Through
+        /// `FocusTimerController.start`, the timer's own API.
+        case demoFocus
         case comment
     }
 
@@ -280,6 +285,7 @@ enum ReviewTourLab {
             if argument == "knowledge" { return .success(.demoKnowledge) }
             if argument == "automic" { return .success(.demoAutomic) }
             if argument == "signals" { return .success(.demoSignals) }
+            if argument == "focus" { return .success(.demoFocus) }
             if argument == "logs" { return .success(.demoLogs) }
             if argument == "health" { return .success(.demoHealth) }
             if argument.hasPrefix("loading ") {
@@ -537,6 +543,13 @@ enum ReviewTourLab {
             case .demoSignals:
                 log.append(seedDemoSignals(shell))
                 shell.view.layoutSubtreeIfNeeded()
+            case .demoFocus:
+                var task = ShiftTask.fresh()
+                task.title = "Rotate the staging certificate"
+                shell.focusTimer.start(task: task)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo focus (\(task.title))")
             case .demoHosts:
                 seedDemoHosts(shell.workspace)
                 shell.view.layoutSubtreeIfNeeded()

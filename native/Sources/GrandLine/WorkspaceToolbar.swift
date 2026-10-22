@@ -21,6 +21,9 @@
 //     floating bar drew in its drill header), and the module's one action
 //     where a real verb has no other home in this layout (Home's Customize,
 //     Console's Quick Connect, Connections' Activity),
+//   - while a focus timer runs, F7's chip (the floating bar shows it beside
+//     its search pill), just before the trailing cluster - it was on the
+//     layout's status strip until the captain had the strip removed,
 //   - the trailing cluster: the light/dark toggle and the notifications
 //     button (the captain kept both), the inspector toggle, then Search,
 //   - and last, at the far right after Search, the page's one primary action
@@ -50,6 +53,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         static let inspector = NSToolbarItem.Identifier("workspace.inspector")
         static let search = NSToolbarItem.Identifier("workspace.search")
         static let primaryAction = NSToolbarItem.Identifier("workspace.primaryAction")
+        static let focusTimer = NSToolbarItem.Identifier("workspace.focusTimer")
     }
 
     let toolbar = NSToolbar(identifier: "workspace.toolbar")
@@ -66,6 +70,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     var onNotifications: ((NSView) -> Void)?
     var onToggleInspector: (() -> Void)?
     var onSearch: (() -> Void)?
+    /// The focus timer chip was clicked; the view is where its popover hangs.
+    var onFocusChip: ((NSView) -> Void)?
 
     private weak var splitView: NSSplitView?
 
@@ -100,6 +106,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     private let bellBadge = NSView()
     private let bellBadgeLabel = NSTextField(labelWithString: "")
     private let searchButton = NSButton()
+    /// F7's running timer. The floating bar's own chip; the toolbar draws it
+    /// only while a session runs (`setFocusChip`).
+    private let focusChip = FocusTimerChip()
+    private var wantsFocusChip = false
 
     private var themeItem: NSToolbarItem?
     private var notificationsItem: NSToolbarItem?
@@ -244,6 +254,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         searchButton.toolTip = "Search and commands (\u{2318}K)"
         searchButton.setAccessibilityLabel("Search")
         setSearchHint(ThemeManager.shared.theme)
+
+        // `HoverHighlightView` reads its primary action off a real click
+        // recognizer (`performPrimaryAction`, which is also what makes the
+        // chip keyboard-activatable under GL-16) - the floating bar wires it
+        // the same way.
+        focusChip.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(focusChipClicked)))
     }
 
     private func symbol(_ name: String) -> NSImage? {
@@ -280,7 +296,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar) + [ItemID.tabs, ItemID.pageActions, ItemID.moduleAction, ItemID.primaryAction]
+        toolbarDefaultItemIdentifiers(toolbar) + [ItemID.tabs, ItemID.pageActions, ItemID.moduleAction, ItemID.primaryAction,
+                                                  ItemID.focusTimer]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
@@ -290,11 +307,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         // overflow menu, lowest priority first. The crumb (the module's
         // header names it too), Recents and the inspector toggle go first;
         // Search, the bell, the light/dark toggle, the tabs, the page's
-        // primary action and the sidebar button never do.
+        // primary action, a running focus timer and the sidebar button never
+        // do.
         switch identifier {
         case ItemID.crumb, ItemID.recents, ItemID.inspector: item?.visibilityPriority = .low
         case ItemID.search, ItemID.notifications, ItemID.theme, ItemID.tabs, ItemID.sidebar, ItemID.navigation,
-             ItemID.primaryAction:
+             ItemID.primaryAction, ItemID.focusTimer:
             item?.visibilityPriority = .high
         default: break
         }
@@ -353,6 +371,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             return item
         case ItemID.search:
             return viewItem(identifier, view: searchButton, label: "Search")
+        case ItemID.focusTimer:
+            let item = viewItem(identifier, view: focusChip, label: "Focus timer")
+            // Recents' reason: in the overflow menu a view item needs a menu
+            // form, and its chip is out of the window, so the popover hangs
+            // under Back and Forward, which never overflow.
+            let menuForm = NSMenuItem(title: "Focus Timer", action: #selector(focusChipFromOverflow), keyEquivalent: "")
+            menuForm.target = self
+            item.menuFormRepresentation = menuForm
+            return item
         default:
             return nil
         }
@@ -524,6 +551,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             let at = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.theme } ?? toolbar.items.count
             toolbar.insertItem(withItemIdentifier: ItemID.moduleAction, at: at)
         }
+        let focusIndex = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.focusTimer }
+        if !wantsFocusChip {
+            if let focusIndex { toolbar.removeItem(at: focusIndex) }
+        } else if focusIndex == nil {
+            // Just before the trailing cluster, after the page's and the
+            // module's actions.
+            let at = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.theme } ?? toolbar.items.count
+            toolbar.insertItem(withItemIdentifier: ItemID.focusTimer, at: at)
+        }
         let primaryIndex = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.primaryAction }
         if shownPrimary.map({ $0.isHidden }) ?? true {
             if let primaryIndex { toolbar.removeItem(at: primaryIndex) }
@@ -544,6 +580,20 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         bellButton.setAccessibilityLabel(count > 0 ? "Notifications, \(count) unread" : "Notifications")
     }
 
+    /// F7's chip, from the running session, or no chip at all while nothing
+    /// runs. The values are the `FocusTimerController`'s own, so the chip and
+    /// every other surface read one clock.
+    func setFocusChip(_ state: (fraction: Double, countdown: String, title: String, paused: Bool)?) {
+        if let state {
+            focusChip.configure(fraction: state.fraction, countdown: state.countdown, title: state.title,
+                                paused: state.paused)
+            focusChip.applyTheme(ThemeManager.shared.theme)
+        }
+        guard wantsFocusChip != (state != nil) else { return }
+        wantsFocusChip = state != nil
+        reconcileDynamicItems()
+    }
+
     func setInspectorShown(_ shown: Bool) {
         inspectorItem?.toolTip = shown ? "Hide the inspector" : "Show the inspector"
     }
@@ -554,6 +604,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         let isDark = theme.mode == .dark
         themeItem?.image = symbol(isDark ? DaylightThemeToggleButton.darkSymbol : DaylightThemeToggleButton.lightSymbol)
         themeItem?.toolTip = DaylightThemeToggleButton.tooltip(isDark: isDark)
+        if wantsFocusChip { focusChip.applyTheme(theme) }
     }
 
     // MARK: Actions
@@ -566,6 +617,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     @objc private func inspectorClicked() { onToggleInspector?() }
     @objc private func searchClicked() { onSearch?() }
     @objc private func moduleActionClicked() { onModuleAction?() }
+    @objc private func focusChipClicked() { onFocusChip?(focusChip) }
+    @objc private func focusChipFromOverflow() { onFocusChip?(navigation) }
 
     @objc private func navigationClicked(_ sender: NSSegmentedControl) {
         // A momentary control reports the segment being clicked; anything
@@ -606,6 +659,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     var debugNotificationsItem: NSToolbarItem? { notificationsItem }
     var debugBadgeText: String? { bellBadge.isHidden ? nil : bellBadgeLabel.stringValue }
     var debugThemeItem: NSToolbarItem? { themeItem }
+    var debugFocusChip: FocusTimerChip { focusChip }
+    /// The chip is in the toolbar, not only asked for.
+    var debugFocusChipIsShown: Bool { toolbar.items.contains { $0.itemIdentifier == ItemID.focusTimer } }
     /// Fire an image item's action the way a click does.
     func debugPerform(_ identifier: NSToolbarItem.Identifier) -> Bool {
         guard let item = toolbar.items.first(where: { $0.itemIdentifier == identifier }),

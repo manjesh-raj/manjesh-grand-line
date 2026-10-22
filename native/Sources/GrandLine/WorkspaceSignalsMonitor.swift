@@ -1,20 +1,19 @@
 // Grand Line - native macOS app.
 //
-// The sidebar layout's subscription to the signals its badges and status line
-// draw (`WorkspaceSignals`). One per sidebar shell; the floating bar never
+// The sidebar layout's subscription to the signals its badges draw
+// (`WorkspaceSignals`). One per sidebar shell; the floating bar never
 // builds one, so nothing here runs in the default layout.
 //
 // **It only listens.** Every source below already reads what it reads, on its
 // own cadence, for its own page: the Fleet page's refresh, the Shift store,
-// the vault store, the background signals poller, the Health registry and the
-// Tasks git sync. This subscribes to what they publish and adds no timer, no
+// the vault store, the background signals poller and the Health registry.
+// This subscribes to what they publish and adds no timer, no
 // pass and no subprocess - the same rule `BackgroundSignalsPoller.observeCounts`
 // states for the Home canvas (GL-13, GL-24).
 //
-// The Fleet page's two readings (the crew, Claude usage) are single closures
-// Home already holds, so they arrive through the workspace's chrome hooks
-// (`workspaceCrewDidRead`, `workspaceQuotaDidRead`) rather than a second
-// subscription. The vault's lock comes from the store's own lock observers,
+// The Fleet page's crew reading is a single closure Home already holds, so it
+// arrives through the workspace's chrome hook (`workspaceCrewDidRead`) rather
+// than a second subscription. The vault's lock comes from the store's own lock observers,
 // never from `onChange`, which is Poneglyph's (ARCH-04).
 
 import Foundation
@@ -58,10 +57,6 @@ final class WorkspaceSignalsMonitor {
         workspace.shiftStore.observe { [weak self] in self?.readTasks() }
         ServiceHealthRegistry.shared.observe { [weak self] _ in self?.readRegistry() }
         countsToken = BackgroundSignalsPoller.shared.observeCounts { [weak self] _ in self?.readRegistry() }
-        // Fires at once with the current value, which before any pull or push
-        // is only the sync's default - `readRegistry` asks whether it has
-        // really reported.
-        workspace.shiftStore.gitSync?.observeStatus { [weak self] _ in self?.readRegistry() }
         // Followed once something has built the store - Poneglyph, Home's
         // card, an App Intent - and never built from here, because building
         // it starts the vault's git sync. Until then a vault on disk is
@@ -93,23 +88,6 @@ final class WorkspaceSignalsMonitor {
         let failedAt = reading.checkedAt ?? Date()
         guard let readAt = reading.readAt else { return .failed(last: nil, lastReadAt: nil, failedAt: failedAt) }
         return .failed(last: reading.waiting, lastReadAt: readAt, failedAt: failedAt)
-    }
-
-    /// The Fleet page has a Claude usage reading - the five-hour window's.
-    func quotaDidRead(_ result: QuotaFetchResult, at date: Date = Date()) {
-        switch result {
-        case .success(let snapshot):
-            guard let session = snapshot.session else {
-                // An account whose reading carries no five-hour window has
-                // nothing for this readout to say.
-                update { $0.claude = .unknown }
-                return
-            }
-            let usage = WorkspaceSignals.ClaudeUsage(percentUsed: session.percentUsed, resetsAt: session.resetsAt)
-            update { $0.claude = .read(usage, at: date) }
-        case .failure:
-            update { $0.claude = $0.claude.failing(at: date) }
-        }
     }
 
     func sessionsDidChange(_ sessions: [HostSession]) {
@@ -158,8 +136,8 @@ final class WorkspaceSignalsMonitor {
         update { $0.vault = state }
     }
 
-    /// The Health registry's services, and the two signals whose times it
-    /// keeps: Setup's counts and Tasks' sync.
+    /// The Health registry's services, and Setup's counts, whose times it
+    /// keeps.
     private func readRegistry() {
         let registry = ServiceHealthRegistry.shared
         var failing: [WorkspaceSignals.ServiceIssue] = []
@@ -199,16 +177,10 @@ final class WorkspaceSignalsMonitor {
             }
         }
 
-        var sync: WorkspaceSignals.Sync?
-        if let gitSync = workspace?.shiftStore.gitSync, gitSync.hasReportedStatus {
-            sync = WorkspaceSignals.Sync(status: gitSync.status, lastSuccess: registry.state(.shiftGitSync).lastSuccess)
-        }
-
         update {
             $0.failingServices = failing
             $0.degradedServices = degraded
             $0.setup = setup
-            $0.sync = sync
         }
     }
 

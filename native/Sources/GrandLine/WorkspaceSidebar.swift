@@ -468,8 +468,8 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 
     private func applyTheme(_ theme: HelmTheme) {
         header.applyTheme(theme)
-        // The status line's own edge recipe, so the two rules in this layout
-        // are one weight.
+        // The divider recipe the layout's other rules use, so they are one
+        // weight.
         headerRule.layer?.backgroundColor = HelmDisplayAccessibility.strengthenedEdge(
             HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.dividerAlpha), theme: theme).cgColor
         guard isViewLoaded else { return }

@@ -21,8 +21,10 @@
 //      last count), Tasks from the Shift store, Secrets from the vault's lock,
 //      Health and Setup from the registry and the poller, Console from the
 //      session registry - each with its accessibility label, and the pill
-//      legible in Dusk and Daylight.
-//   5. **The status line** shows the same readouts and opens each one's page.
+//      legible in Dusk and Daylight. The layout's status strip, which said
+//      the same things in words, is gone at the captain's call; Claude usage,
+//      which only the strip drew from the monitor, still reaches Home's
+//      Claude card through the Fleet page's own closure.
 //
 // Every store this suite writes is its own (`SelfTestScratchStores`), and the
 // caller's are fingerprinted either side.
@@ -63,8 +65,7 @@ enum SidebarPolishSelfTest {
             // Crew first: its badge must come from the Fleet page's read
             // before Crew has ever been opened.
             for check in [checkCrewBadge, checkPaneMotion, checkInspectorEntrance, checkTabMotion, checkSidebarRowMotion,
-                          checkTasksBadge, checkVaultBadge, checkHealthAndSetup, checkSessionsAndClaude,
-                          checkTheStatusLineOpensItsPage] {
+                          checkTasksBadge, checkVaultBadge, checkHealthAndSetup, checkSessionsAndClaude] {
                 var ok = true
                 HelmMotion.reducedOverrideForTests = true
                 check(shell, window, scratch, &ok)
@@ -134,10 +135,6 @@ enum SidebarPolishSelfTest {
 
     private static func badge(_ module: WorkspaceModule, _ shell: MainSplitShellController) -> WorkspaceBadge? {
         cell(module, shell)?.debugBadge
-    }
-
-    private static func readouts(_ shell: MainSplitShellController) -> [String] {
-        shell.debugStatusLine.debugReadoutTexts
     }
 
     private static func translationX(_ value: Any?) -> CGFloat? {
@@ -431,7 +428,6 @@ enum SidebarPolishSelfTest {
               "one task waiting drew \(String(describing: crew)), before Crew was ever opened", &ok)
         check(cell(.crew, shell)?.accessibilityLabel() == "Crew, 1 task is waiting on you",
               "Crew's row reads \"\(cell(.crew, shell)?.accessibilityLabel() ?? "")\" to VoiceOver", &ok)
-        check(readouts(shell).contains("1 need you"), "the status line reads \(readouts(shell))", &ok)
 
         // The next read cannot list the crew's tasks: the count stays, and
         // says when it was read.
@@ -442,7 +438,6 @@ enum SidebarPolishSelfTest {
         let stale = badge(.crew, shell)
         check(stale?.mark == .count("1") && (stale?.description.contains("when last read") ?? false),
               "a failed read drew \(String(describing: stale)), want the last count and when it was read", &ok)
-        check(readouts(shell).contains { $0.hasPrefix("1 need you \u{00B7} as of") }, "a failed read's readout is \(readouts(shell))", &ok)
 
         // Legible in both palettes.
         for id in ["daylight", "dusk"] {
@@ -490,20 +485,17 @@ enum SidebarPolishSelfTest {
         let monitor = shell.debugSignalsMonitor
         check(monitor.signals.vault == .none && badge(.secrets, shell) == nil,
               "a scratch Mac with no vault drew \(String(describing: badge(.secrets, shell)))", &ok)
-        check(!readouts(shell).contains { $0.hasPrefix("Poneglyph") }, "no vault, and the line names one", &ok)
         let store = shell.workspace.credentialVaultStore
         let seeded = ReviewTourLab.seedDemoVault(store)
         settle(shell)
         check(!seeded.contains("FAILED"), "the scratch vault was not created: \(seeded)", &ok)
         check(monitor.signals.vault == .unlocked && badge(.secrets, shell) == nil,
               "an unlocked vault drew \(String(describing: badge(.secrets, shell)))", &ok)
-        check(readouts(shell).contains("Poneglyph unlocked"), "the line reads \(readouts(shell))", &ok)
         store.lock(reason: "sidebar polish self-test")
         settle(shell)
         check(badge(.secrets, shell)?.mark == .symbol("lock.fill"), "locking drew \(String(describing: badge(.secrets, shell)))", &ok)
         check(cell(.secrets, shell)?.accessibilityLabel() == "Secrets, Poneglyph is locked",
               "Secrets' row reads \"\(cell(.secrets, shell)?.accessibilityLabel() ?? "")\"", &ok)
-        check(readouts(shell).contains("Poneglyph locked"), "the line reads \(readouts(shell))", &ok)
         if ok { print("  OK   none, unlocked, locked - through the store's lock, not its onChange") }
     }
 
@@ -520,13 +512,13 @@ enum SidebarPolishSelfTest {
         settle(shell)
         check(badge(.health, shell)?.mark == .dot && badge(.health, shell)?.tone == .alarm,
               "a failing service drew \(String(describing: badge(.health, shell)))", &ok)
-        check(readouts(shell).contains("Docs & runbooks sync failing"), "the line reads \(readouts(shell))", &ok)
+        check(badge(.health, shell)?.description == "Docs & runbooks sync is failing",
+              "Health's badge does not name the failing service: \(String(describing: badge(.health, shell)))", &ok)
         registry.recordSuccess(.docsSync)
         NotificationSources.clearServiceFailing(.docsSync)
         pump { shell.debugSignalsMonitor.signals.failingServices.isEmpty }
         settle(shell)
-        check(badge(.health, shell) == nil && !readouts(shell).contains { $0.hasSuffix("failing") },
-              "a recovered service left its mark", &ok)
+        check(badge(.health, shell) == nil, "a recovered service left its mark", &ok)
 
         var counts = BackgroundSignalsPoller.shared.lastCounts
         counts.toolUpdates = 2
@@ -552,47 +544,23 @@ enum SidebarPolishSelfTest {
         settle(shell)
         check(badge(.console, shell) == nil, "no live sessions left a count", &ok)
 
-        // The Fleet page's own closure, the one Home's card reads.
+        // The Fleet page's own closure, the one Home's card reads - Claude
+        // usage's home now the strip is gone, and in the sidebar layout's
+        // standard Home.
         let reading = QuotaSnapshot(plan: "team",
                                     session: QuotaWindow(kind: .session, percentUsed: 62, resetsAt: nil, pace: .onPace),
                                     weekly: nil, fable: nil, extraUsage: nil, latency: 1, log: "")
         shell.workspace.overview.onQuotaChanged?(.success(reading))
-        settle(shell)
-        check(readouts(shell).contains("Claude 62% of 5 h"), "a Claude reading reads \(readouts(shell))", &ok)
-        shell.workspace.overview.onQuotaChanged?(.failure("quota-axi is not installed"))
-        settle(shell)
-        check(readouts(shell).contains { $0.hasPrefix("Claude 62% of 5 h \u{00B7} as of") },
-              "a failed Claude reading reads \(readouts(shell)), want the last reading and its time", &ok)
-        if ok { print("  OK   a live session counted and gone; a reading, then a failure keeping it") }
-    }
-
-    // MARK: 5 - the status line
-
-    private static func checkTheStatusLineOpensItsPage(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
-                                                       _ ok: inout Bool) {
-        print("\n-- a status line readout opens its page --")
         shell.show(.homeCanvas)
         settle(shell)
-        let line = shell.debugStatusLine.debugReadouts
-        for (id, destination) in [(WorkspaceStatusItem.ID.crew, RailDestination.overview), (.vault, .poneglyph)] {
-            guard let readout = line.first(where: { $0.debugItem?.id == id }) else {
-                fail("the line has no \(id.rawValue) readout (\(readouts(shell)))", &ok)
-                continue
-            }
-            check(readout.accessibilityLabel() == readout.debugText, "the \(id.rawValue) readout's label is not its words", &ok)
-            // Through its own click recognizer, which is what Return, Space
-            // and VoiceOver's press reach too (`HoverHighlightView`).
-            check(readout.performPrimaryAction(), "the \(id.rawValue) readout has no click", &ok)
-            settle(shell)
-            check(shell.debugCurrentDestination == destination,
-                  "the \(id.rawValue) readout opened \(String(describing: shell.debugCurrentDestination))", &ok)
-            if id == .crew {
-                check(shell.debugCurrentTab?.name == "Needs you", "the crew readout did not open Crew › Needs you", &ok)
-            }
-            shell.show(.homeCanvas)
-            settle(shell)
-        }
-        if ok { print("  OK   the crew readout opens Needs you, the vault's Poneglyph") }
+        let home = shell.workspace.homeCanvas
+        check(home.cardForTests(.claudeStatus) != nil, "the sidebar layout's Home draws no Claude card", &ok)
+        check(home.debugQuota.snapshot?.session?.percentUsed == 62, "Home's Claude card did not get the reading", &ok)
+        shell.workspace.overview.onQuotaChanged?(.failure("quota-axi is not installed"))
+        settle(shell)
+        check(home.debugQuota.snapshot?.session?.percentUsed == 62 && home.debugQuota.failure != nil,
+              "a failed Claude reading left Home's card with \(String(describing: home.debugQuota)), want the last reading kept", &ok)
+        if ok { print("  OK   a live session counted and gone; Home's Claude card keeps a reading through a failure") }
     }
 }
 

@@ -269,7 +269,7 @@ enum FeatureInventorySelfTest {
     /// own. Kept short on purpose: a new place is a design decision, and
     /// adding it here is where that decision becomes visible.
     static let shellPlaces = [
-        "Sidebar", "Toolbar", "Status line", "Inspector", "Main menu", "Window",
+        "Sidebar", "Toolbar", "Inspector", "Main menu", "Window",
         "Menu bar extra", "System", "Navigator", "Every module",
     ]
 
