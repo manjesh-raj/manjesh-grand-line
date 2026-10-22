@@ -3826,6 +3826,9 @@ final class HomeCanvasController: NSViewController {
     /// The fleet snapshot the page last applied, so the tour lab's
     /// `demo refresh` can replay the interim push a real refresh makes.
     var debugFleetSnapshot: FleetSnapshot? { fleetSnapshot }
+    /// The Claude reading the card draws, and the failure it would show
+    /// with no reading to keep.
+    var debugQuota: (snapshot: QuotaSnapshot?, failure: String?) { (quotaSnapshot, quotaFailure) }
 
     /// A fabricated attention summary, rendered in place of the one the
     /// digest would compose. The tour lab's `demo attention N` and

@@ -12,14 +12,15 @@
 //   │   │             modules, the live sessions, the account menu
 //   │   ├── content   the module's large title, Console's session strip, the
 //   │   │             workspace's body container (the same
-//   │   │             `DestinationMounter`, the same 29 pages), and the
-//   │   │             status line (on every module but Console)
+//   │   │             `DestinationMounter`, the same 29 pages), down to
+//   │   │             the foot of the window
 //   │   └── inspector WorkspaceInspectorController - collapsed, empty until
 //   │                 a page has something to show in it
 //   └── the lock overlay (LockPresenter), over all three
 //
 // plus the window's own toolbar (`WorkspaceToolbar`): the crumb that names
-// the module, the module's tabs in the middle, and the page's own actions.
+// the module, the module's tabs in the middle, the page's own actions, and a
+// running focus timer's chip.
 //
 // **A module is the table's, not a new controller.** Step 4 consolidates the
 // 29 destinations into the seventeen modules in the module table only: a
@@ -95,11 +96,9 @@ final class MainSplitShellController: WorkspaceShellController {
     private let splitController = NSSplitViewController()
     let sidebar = WorkspaceSidebarController()
     let inspector = WorkspaceInspectorController()
-    private let statusLine = WorkspaceStatusLine()
-    /// What the sidebar's badges and the status line's readouts draw from.
+    /// What the sidebar's badges draw from.
     private lazy var signalsMonitor = WorkspaceSignalsMonitor(workspace: workspace)
-    private lazy var contentPane = WorkspaceContentPaneController(body: workspace.content.bodyContainer,
-                                                                   statusLine: statusLine)
+    private lazy var contentPane = WorkspaceContentPaneController(body: workspace.content.bodyContainer)
     private var sidebarItem: NSSplitViewItem!
     private var contentItem: NSSplitViewItem!
     private var inspectorItem: NSSplitViewItem!
@@ -156,6 +155,9 @@ final class MainSplitShellController: WorkspaceShellController {
     private var didSettleInitialSidebarWidth = false
     private var themeToken: ThemeObservation?
     private var windowResizeObserver: NSObjectProtocol?
+    /// F7's ring popover, hanging off the toolbar's focus chip.
+    private var focusPopover: NSPopover?
+    private var focusTimerToken: UUID?
 
     /// Whether the sidebar is collapsed because the window is too narrow for
     /// it, rather than because the captain hid it - only then does widening
@@ -196,8 +198,7 @@ final class MainSplitShellController: WorkspaceShellController {
         buildSplitView(in: root)
         buildToolbar()
         wireSidebar()
-        statusLine.attachFocusTimer(workspace.focusTimer)
-        statusLine.onOpen = { [weak self] destination in self?.openFromStatusLine(destination) }
+        attachFocusTimer()
         signalsMonitor.onChange = { [weak self] signals in self?.signalsDidChange(signals) }
         signalsMonitor.start()
         signalsDidChange(signalsMonitor.signals)
@@ -257,6 +258,7 @@ final class MainSplitShellController: WorkspaceShellController {
         if let dividerDragObserver { NotificationCenter.default.removeObserver(dividerDragObserver) }
         if let scrollerStyleObserver { NotificationCenter.default.removeObserver(scrollerStyleObserver) }
         if let dayChangeObserver { NotificationCenter.default.removeObserver(dayChangeObserver) }
+        if let focusTimerToken { workspace.focusTimer.unobserve(focusTimerToken) }
     }
 
     private func buildSplitView(in root: NSView) {
@@ -334,14 +336,29 @@ final class MainSplitShellController: WorkspaceShellController {
         // every other resize of the panes is the window's (or the split
         // view's own) doing. The notification's divider index cannot tell
         // them apart - measured: it is set for every resize of the panes -
-        // so a width is taken as chosen only while the mouse is down on it.
+        // so a width is taken as chosen only while this window is handling
+        // a mouse drag that is not a live resize of the window itself.
         dividerDragObserver = NotificationCenter.default.addObserver(
             forName: NSSplitView.didResizeSubviewsNotification, object: splitController.splitView, queue: .main
         ) { [weak self] _ in
-            guard let self, NSEvent.pressedMouseButtons & 1 != 0,
+            guard let self, let window = self.view.window, Self.isDividerDrag(NSApp?.currentEvent, in: window),
                   !self.sidebarItem.isCollapsed, self.sidebar.view.frame.width > 0 else { return }
             self.sidebarThickness = self.sidebar.view.frame.width
         }
+    }
+
+    /// Whether `event` is the captain dragging a divider in `window`.
+    ///
+    /// Not `NSEvent.pressedMouseButtons`, which is the whole machine's mouse:
+    /// a button held anywhere - another app, or dragging this window's own
+    /// edge narrower - made a resize of the panes read as a choice, and the
+    /// sidebar's squeezed width then became the width it came back at.
+    /// Measured in `MainSplitShellSelfTest`, about one run in ten on main: the
+    /// sidebar came back at 200pt, 203.5pt and 212.5pt because its remembered
+    /// width already was that.
+    static func isDividerDrag(_ event: NSEvent?, in window: NSWindow) -> Bool {
+        guard let event, event.type == .leftMouseDragged, event.window === window else { return false }
+        return !window.inLiveResize
     }
 
     private func buildToolbar() {
@@ -359,6 +376,7 @@ final class MainSplitShellController: WorkspaceShellController {
             self.setInspectorShown(self.inspectorItem.isCollapsed)
         }
         toolbar.onSearch = { [weak self] in self?.workspace.onSearchTapped?() }
+        toolbar.onFocusChip = { [weak self] anchor in self?.toggleFocusPopover(under: anchor) }
     }
 
     private func wireSidebar() {
@@ -833,17 +851,9 @@ final class MainSplitShellController: WorkspaceShellController {
         }
         contentPane.setHeader(title: module.showsHeader ? module.title : nil, subtitle: pageSubtitle)
         contentPane.setSessionStripVisible(module == .console && !workspace.hosts.sessions.isEmpty)
-        // Console's own session strip already lists the live sessions at the
-        // top of the module, so the status line under the terminal said the
-        // same thing again (stage 6, the captain's call).
-        contentPane.setStatusLineVisible(Self.showsStatusLine(in: module))
         contentPane.setLeadingColumn(showsKnowledgeTree ? knowledgeTree.view : nil)
         applyTitleBar()
     }
-
-    /// Whether the status line shows under `module`'s pages: everywhere but
-    /// Console.
-    static func showsStatusLine(in module: WorkspaceModule) -> Bool { module != .console }
 
     /// The mounted page that draws `module`'s tabs, if it has one and it has
     /// mounted.
@@ -902,18 +912,68 @@ final class MainSplitShellController: WorkspaceShellController {
         refreshModuleChrome()
     }
 
-    // MARK: Badges and the status line
+    // MARK: Badges
 
     private func signalsDidChange(_ signals: WorkspaceSignals) {
         sidebar.setSignals(signals)
-        statusLine.render(signals: signals)
     }
 
-    /// A status line readout: its page, and for the crew, the decisions
-    /// themselves - the bell's own way in.
-    private func openFromStatusLine(_ destination: RailDestination) {
-        workspace.navigator.show(destination)
-        if destination == .overview { workspace.overview.revealNeedsYou() }
+    // MARK: F7 - the focus timer chip
+
+    /// Follow the app's one `FocusTimerController` into the toolbar's chip.
+    /// Every button in the popover acts on the controller directly - the
+    /// floating bar's own contract.
+    private func attachFocusTimer() {
+        // GL-09 / §5.1(b): a popover left open when the app lock fires stays
+        // readable and interactive above the overlay, so it is closed on the
+        // way in - it names the captain's current task.
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.focusPopover }
+        focusTimerToken = workspace.focusTimer.observe { [weak self] in self?.renderFocusChip() }
+        renderFocusChip()
+    }
+
+    /// Repaint the chip from the live session, and take it out of the
+    /// toolbar entirely when nothing is running.
+    private func renderFocusChip() {
+        let timer = workspace.focusTimer
+        guard let session = timer.session else {
+            toolbar.setFocusChip(nil)
+            // The popover is about a session that no longer exists.
+            focusPopover?.performClose(nil)
+            focusPopover = nil
+            return
+        }
+        // Read through the controller, never off a `Date()` of this shell's
+        // own - see `FocusTimerController.fraction` for why.
+        toolbar.setFocusChip((fraction: timer.fraction ?? 0, countdown: timer.countdownText ?? "0:00",
+                              title: session.taskTitle, paused: timer.isPaused))
+    }
+
+    private func toggleFocusPopover(under anchor: NSView) {
+        let timer = workspace.focusTimer
+        // An anchor out of any window (a chip the toolbar has not placed)
+        // is no place to hang a popover - AppKit raises on it.
+        guard timer.isRunning, anchor.window != nil else { return }
+        if let focusPopover, focusPopover.isShown {
+            focusPopover.performClose(nil)
+            self.focusPopover = nil
+            return
+        }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        // ThemeManager's checklist item 2: the popover's own chrome resolves
+        // system semantic colours, so it needs the theme's light/dark mode.
+        popover.appearance = NSAppearance(named: ThemeManager.shared.theme.mode == .dark ? .darkAqua : .aqua)
+        let panel = FocusTimerPanelController(timer: timer)
+        // B28: the panel closes *this* popover, never a window.
+        panel.onRequestClose = { [weak self, weak popover] in
+            popover?.performClose(nil)
+            self?.focusPopover = nil
+        }
+        popover.contentViewController = panel
+        // Under the chip: the toolbar is the top edge of the window.
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: anchor.isFlipped ? .maxY : .minY)
+        focusPopover = popover
     }
 
     // MARK: Back and forward
@@ -990,16 +1050,11 @@ final class MainSplitShellController: WorkspaceShellController {
         signalsMonitor.crewDidRead()
     }
 
-    override func workspaceQuotaDidRead(_ result: QuotaFetchResult) {
-        signalsMonitor.quotaDidRead(result)
-    }
-
     override func workspaceSessionsDidChange(_ registry: HostSessionRegistry) {
         // The signals first, so the rows the reload below builds carry
         // Console's new count.
         signalsMonitor.sessionsDidChange(registry.sessions)
         sidebar.reload(sessions: registry)
-        statusLine.render(sessions: registry.sessions)
         contentPane.sessionStrip.render(registry)
         contentPane.setSessionStripVisible(currentModule == .console && !registry.sessions.isEmpty)
         workspace.refreshShowingHostsLiveSessionState()
@@ -1009,7 +1064,7 @@ final class MainSplitShellController: WorkspaceShellController {
     /// The last time a pane collapsed or expanded: which, which way, and the
     /// duration it eased over (nil when it landed at once).
     private(set) var lastPaneMotionForTests: (pane: String, collapsed: Bool, duration: TimeInterval?)?
-    var debugStatusLine: WorkspaceStatusLine { statusLine }
+    var debugFocusPopoverIsShown: Bool { focusPopover?.isShown ?? false }
     var debugSignalsMonitor: WorkspaceSignalsMonitor { signalsMonitor }
     var debugInspector: WorkspaceInspectorController { inspector }
     var debugContentPane: NSView { contentPane.view }
@@ -1035,7 +1090,11 @@ final class MainSplitShellController: WorkspaceShellController {
         contentPane.header.isHidden ? nil : (contentPane.header.debugTitle, contentPane.header.debugSubtitle)
     }
     var debugSessionStripIsShown: Bool { !contentPane.sessionStrip.isHidden }
-    var debugStatusLineIsShown: Bool { contentPane.debugStatusLineIsShown }
+    var debugSessionStrip: SessionStripView { contentPane.sessionStrip }
+    /// The content pane's own views, front to back - what the guard against
+    /// a strip under the body counts.
+    var debugContentPaneSubviews: [NSView] { contentPane.view.subviews }
+    var debugLeadingColumnHost: NSView { contentPane.debugColumnHost }
     var debugCurrentTab: ModuleTab? { currentTab }
     var debugLastTab: [WorkspaceModule: ModuleTab] { lastTab }
     func debugOpenModule(_ module: WorkspaceModule) { openModule(module) }
@@ -1047,10 +1106,13 @@ final class MainSplitShellController: WorkspaceShellController {
 }
 
 /// The content column, top to bottom: the module's large title, Console's
-/// session strip, the workspace's body container, and the status line.
+/// session strip, and the workspace's body container, which runs to the foot
+/// of the window. The layout drew a status strip under the body until the
+/// captain had it removed from every module; its readouts live in the
+/// sidebar's badges, Console's session strip, Home's Claude card, the Tasks
+/// sync pill and the toolbar's focus chip.
 final class WorkspaceContentPaneController: NSViewController {
     private let body: NSView
-    private let statusLine: WorkspaceStatusLine
     let header = WorkspaceModuleHeader()
     /// The floating bar's session strip, on Console only: one chip per live
     /// session, the same view and the same three verbs.
@@ -1066,19 +1128,11 @@ final class WorkspaceContentPaneController: NSViewController {
     private let columnHost = NSView()
     private var bodyAfterColumn: NSLayoutConstraint!
     private var bodyAtEdge: NSLayoutConstraint!
-    /// The body and the column end at the status line, or at the pane's
-    /// bottom while it is hidden: alternative constraints, exactly one of
-    /// each pair active (gotcha (17)'s footnote). A hidden view still sits in
-    /// the constraint graph (gotcha (11)), so hiding the line alone would
-    /// leave its 30pt gap under Console's terminal.
-    private var aboveStatusLine: [NSLayoutConstraint] = []
-    private var atPaneBottom: [NSLayoutConstraint] = []
     private weak var columnView: NSView?
     private var themeToken: ThemeObservation?
 
-    init(body: NSView, statusLine: WorkspaceStatusLine) {
+    init(body: NSView) {
         self.body = body
-        self.statusLine = statusLine
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -1113,17 +1167,8 @@ final class WorkspaceContentPaneController: NSViewController {
         root.addSubview(topStack)
         root.addSubview(columnHost)
         root.addSubview(body)
-        root.addSubview(statusLine)
         bodyAfterColumn = body.leadingAnchor.constraint(equalTo: columnHost.trailingAnchor)
         bodyAtEdge = body.leadingAnchor.constraint(equalTo: root.leadingAnchor)
-        aboveStatusLine = [
-            columnHost.bottomAnchor.constraint(equalTo: statusLine.topAnchor),
-            body.bottomAnchor.constraint(equalTo: statusLine.topAnchor),
-        ]
-        atPaneBottom = [
-            columnHost.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            body.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-        ]
         NSLayoutConstraint.activate([
             // The toolbar is drawn over the top of this pane (the window has
             // a full-size content view), so everything starts under it.
@@ -1133,13 +1178,12 @@ final class WorkspaceContentPaneController: NSViewController {
             columnHost.topAnchor.constraint(equalTo: topStack.bottomAnchor),
             columnHost.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             columnHost.widthAnchor.constraint(equalToConstant: KnowledgeTreeController.width),
+            columnHost.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             body.topAnchor.constraint(equalTo: topStack.bottomAnchor),
             bodyAtEdge,
             body.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            statusLine.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            statusLine.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            statusLine.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-        ] + aboveStatusLine)
+            body.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+        ])
         // The pane paints the page ground under the toolbar too, which is
         // what the toolbar's glass samples.
         themeToken = ThemeManager.shared.observe { [weak self] theme in
@@ -1163,23 +1207,8 @@ final class WorkspaceContentPaneController: NSViewController {
         sessionStrip.isHidden = !visible
     }
 
-    /// Show the status line under the body, or give its height to the body.
-    func setStatusLineVisible(_ visible: Bool) {
-        _ = view
-        guard statusLine.isHidden == visible else { return }
-        // Deactivate before activating, so the two are never both live.
-        if visible {
-            NSLayoutConstraint.deactivate(atPaneBottom)
-            NSLayoutConstraint.activate(aboveStatusLine)
-        } else {
-            NSLayoutConstraint.deactivate(aboveStatusLine)
-            NSLayoutConstraint.activate(atPaneBottom)
-        }
-        statusLine.isHidden = !visible
-    }
-
     #if FM_SELFTESTS
-    var debugStatusLineIsShown: Bool { !statusLine.isHidden && aboveStatusLine.allSatisfy(\.isActive) }
+    var debugColumnHost: NSView { columnHost }
     #endif
 
     /// Show `column` at the body's leading edge, or no column at all.

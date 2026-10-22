@@ -64,7 +64,7 @@ enum SelfTestSources {
     /// them cannot make it pass vacuously.
     static let shellLayerFiles = [
         "WorkspaceShellController.swift", "AppShellController.swift", "MainSplitShellController.swift",
-        "WorkspaceSidebar.swift", "WorkspaceToolbar.swift", "WorkspaceStatusLine.swift", "WorkspaceInspector.swift",
+        "WorkspaceSidebar.swift", "WorkspaceToolbar.swift", "WorkspaceInspector.swift",
         "NavigationHistory.swift",
         "Workspace.swift", "WorkspaceContent.swift", "Navigator.swift",
         "HostSessionCoordinator.swift", "LockPresenter.swift", "CaptureFilingService.swift",

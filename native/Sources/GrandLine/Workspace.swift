@@ -47,8 +47,6 @@ protocol WorkspaceChrome: AnyObject {
     /// The Fleet page finished a read of the crew (`FleetController`'s
     /// `needsYouReading` has the result).
     func workspaceCrewDidRead()
-    /// The Fleet page has a Claude usage reading, the one Home's card reads.
-    func workspaceQuotaDidRead(_ result: QuotaFetchResult)
     /// Which page is showing decides where the keyboard loop hands off.
     func workspaceKeyViewLoopMayHaveChanged()
     /// The window the workspace is showing in.
@@ -953,7 +951,6 @@ final class Workspace {
         // `FleetController.onSnapshotChanged`.
         overview.onQuotaChanged = { [weak self] result in
             self?.homeCanvas.applyQuota(result)
-            self?.chrome?.workspaceQuotaDidRead(result)
         }
         overview.onSnapshotChanged = { [weak self] snapshot, prs, failure in
             self?.homeCanvas.applyFleet(snapshot: snapshot, mergedPRs: prs, prFetchFailure: failure)

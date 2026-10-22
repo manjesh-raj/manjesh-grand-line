@@ -28,8 +28,11 @@
 //   7. **Home is the captain's to arrange**: Customize hides, adds, moves and
 //      resizes the real cards, keeps the result, and gets out of the way.
 //   8. **The lock hides what the overlay cannot cover** - the toolbar.
-//   9. **The status line** shows the live sessions and the focus timer chip,
-//      on every module but Console, whose session strip already lists them.
+//   9. **No status strip, on any module.** The captain had it removed
+//      everywhere: under every module the content reaches the foot of the
+//      window. What it carried is elsewhere and checked here - the live
+//      sessions in Console's session strip and the sidebar, and the focus
+//      timer's chip, with its ring popover, in the toolbar.
 //  10. **The account menu** is Log Out only, under a rule that sets the
 //      header apart from Home.
 //
@@ -65,7 +68,9 @@ enum MainSplitShellSelfTest {
                       checkTheSidebarDrawsNoPins, checkTheMapAndTheSidebarToggle, checkModuleTabsArePages,
                       checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
                       checkHomeIsTheCaptainsToArrange, checkBackAndForward, checkTheInspector,
-                      checkTheLockHidesTheToolbar, checkTheStatusLine, checkToastsLandInTheColumn,
+                      checkTheLockHidesTheToolbar, checkTheContentReachesTheFoot, checkTheFocusChipIsInTheToolbar,
+                      checkTheFocusChipFitsTheNarrowToolbar, checkOnlyADividerDragIsAChosenWidth,
+                      checkToastsLandInTheColumn,
                       checkTheAccountMenu] {
             var ok = true
             check(shell, window, &ok)
@@ -746,34 +751,47 @@ enum MainSplitShellSelfTest {
               "the toolbar and the module's name did not come back after the lock (\"\(window.title)\")", &ok)
     }
 
-    // MARK: 9 - the status line
+    // MARK: 9 - no status strip
 
-    private static func checkTheStatusLine(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
-        // Stage 6: not under Console, whose session strip lists the sessions
-        // at the top of the module already - and the terminal takes the room.
-        shell.show(.console)
-        settle(shell)
-        check(!shell.debugStatusLineIsShown, "the status line still shows under Console", &ok)
+    private static func checkTheContentReachesTheFoot(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                      _ ok: inout Bool) {
+        // The captain: "Yes have this removed everywhere". Every module, so a
+        // strip that came back under one of them fails by name.
         let pane = shell.debugContentPane
         let body = shell.debugBodyContainer
-        let bodyBottom = body.convert(body.bounds, to: pane).minY
-        check(abs(bodyBottom - (pane.isFlipped ? pane.bounds.maxY : 0)) < 0.5,
-              "under Console the body stops \(bodyBottom)pt from the pane's foot, so the line's room is left empty", &ok)
-        // Every other module keeps it.
-        for route in [RailDestination.hosts, .homeCanvas, .logAnalyzer, .health] {
-            shell.show(route)
+        let foot = pane.isFlipped ? pane.bounds.maxY : pane.bounds.minY
+        // The pane itself must reach the window's foot, or the body reaching
+        // the pane's would prove nothing.
+        let paneInWindow = pane.convert(pane.bounds, to: nil)
+        check(paneInWindow.minY.magnitude < 0.5, "the content pane stops \(paneInWindow.minY)pt above the window's foot", &ok)
+        for module in WorkspaceModule.allCases {
+            shell.debugOpenModule(module)
             settle(shell)
-            check(shell.debugStatusLineIsShown, "the status line is gone under \(route.rawValue)", &ok)
+            let frame = body.convert(body.bounds, to: pane)
+            let bodyFoot = pane.isFlipped ? frame.maxY : frame.minY
+            check(abs(bodyFoot - foot) < 0.5,
+                  "under \(module.title) the body stops \(abs(bodyFoot - foot))pt from the window's foot", &ok)
         }
-        let status = shell.debugStatusLine
-        check(status.debugSessionsText == "No live sessions", "with no sessions the line says \"\(status.debugSessionsText)\"", &ok)
+        // Knowledge's tree is the one column beside the body; it runs down
+        // as far.
+        shell.show(.notebook)
+        settle(shell)
+        let column = shell.debugLeadingColumnHost
+        let columnFrame = column.convert(column.bounds, to: pane)
+        check(!column.isHidden && abs((pane.isFlipped ? columnFrame.maxY : columnFrame.minY) - foot) < 0.5,
+              "Knowledge's tree stops short of the window's foot (\(columnFrame))", &ok)
+
+        // The live sessions the strip counted are Console's: its session
+        // strip lists each one, connected or restored, and so does the
+        // sidebar under Console.
         let live = UUID()
         let restored = UUID()
         shell.sessions.register(hostID: live, label: "DEV Bastion", accentHex: nil, state: .connected)
         shell.sessions.register(hostID: restored, label: "PROD Web", accentHex: nil, state: .restored)
+        shell.show(.console)
         settle(shell)
-        check(status.debugSessionsText == "1 session live \u{00B7} 1 restored, not connected",
-              "two sessions read \"\(status.debugSessionsText)\"", &ok)
+        check(shell.debugSessionStripIsShown && shell.debugSessionStrip.debugPillHostIDs() == [live, restored],
+              "Console's session strip lists \(shell.debugSessionStrip.debugPillHostIDs()), want both sessions", &ok)
         let entries = shell.sidebar.debugVisibleEntries
         if let console = entries.firstIndex(of: .module(.console)) {
             check(Array(entries.dropFirst(console + 1).prefix(2)) == [.session(hostID: live), .session(hostID: restored)],
@@ -784,16 +802,126 @@ enum MainSplitShellSelfTest {
         shell.sessions.unregister(hostID: live)
         shell.sessions.unregister(hostID: restored)
         settle(shell)
-        check(status.debugSessionsText == "No live sessions", "unregistering left \"\(status.debugSessionsText)\"", &ok)
+        check(!shell.debugSessionStripIsShown, "Console's session strip stayed with no sessions", &ok)
+    }
 
-        // F7's chip rides the status line here.
-        check(!status.debugFocusChipIsVisible, "a focus chip shows with no timer running", &ok)
+    private static func checkTheFocusChipIsInTheToolbar(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                        _ ok: inout Bool) {
+        let toolbar = shell.toolbar!
+        shell.show(.homeCanvas)
+        settle(shell)
+        check(!toolbar.debugFocusChipIsShown, "the toolbar shows a focus chip with no timer running", &ok)
         var task = ShiftTask.fresh()
         task.title = "Rotate the staging certificate"
         shell.focusTimer.start(task: task)
-        check(status.debugFocusChipIsVisible, "a running timer did not put its chip on the status line", &ok)
+        settle(shell)
+        let chip = toolbar.debugFocusChip
+        guard toolbar.debugFocusChipIsShown else {
+            fail("a running timer put no chip in the toolbar", &ok)
+            _ = shell.focusTimer.stop()
+            return
+        }
+        check(chip.debugTitleText == task.title && chip.debugCountdownText == "25:00",
+              "a running timer put \"\(chip.debugCountdownText) \(chip.debugTitleText)\" in the toolbar", &ok)
+        let ids = toolbar.debugItemIdentifiers
+        let focus = ids.firstIndex(of: WorkspaceToolbar.ItemID.focusTimer)
+        check(focus.map { $0 + 1 } == ids.firstIndex(of: WorkspaceToolbar.ItemID.theme),
+              "the chip is not just before the trailing cluster: \(ids.map(\.rawValue))", &ok)
+        // On every module, Console included - the strip never showed it
+        // there - and still beside the trailing cluster after a module's own
+        // action has come and gone around it.
+        for route in [RailDestination.console, .health, .notebook, .homeCanvas] {
+            shell.show(route)
+            settle(shell)
+            check(toolbar.debugFocusChipIsShown, "the focus chip is not in the toolbar under \(route.rawValue)", &ok)
+            let ids = toolbar.debugItemIdentifiers
+            check(ids.firstIndex(of: WorkspaceToolbar.ItemID.focusTimer).map { $0 + 1 } == ids.firstIndex(of: WorkspaceToolbar.ItemID.theme),
+                  "under \(route.rawValue) the chip is not just before the trailing cluster: \(ids.map(\.rawValue))", &ok)
+        }
+        // Through its own click recognizer, which is what Return, Space and
+        // VoiceOver's press reach too (`HoverHighlightView`).
+        check(chip.performPrimaryAction(), "the focus chip has no click", &ok)
+        check(shell.debugFocusPopoverIsShown, "clicking the focus chip opened no ring popover", &ok)
+        check(chip.performPrimaryAction() && !shell.debugFocusPopoverIsShown, "a second click left the popover open", &ok)
+        _ = chip.performPrimaryAction()
         _ = shell.focusTimer.stop()
-        check(!status.debugFocusChipIsVisible, "the chip stayed after the timer stopped", &ok)
+        settle(shell)
+        check(!toolbar.debugFocusChipIsShown, "the chip stayed in the toolbar after the timer stopped", &ok)
+        check(!shell.debugFocusPopoverIsShown, "the ring popover stayed open after the timer stopped", &ok)
+    }
+
+    /// The sidebar's remembered width changes only on a drag in this window.
+    /// The predicate used to be the machine's mouse button, so a button held
+    /// anywhere while the panes resized recorded a squeezed sidebar as the
+    /// captain's choice - the "came back at 200pt" flake in
+    /// `checkNoPageGrowsTheWindow`, about one run in ten.
+    private static func checkOnlyADividerDragIsAChosenWidth(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                           _ ok: inout Bool) {
+        func event(_ type: NSEvent.EventType, in target: NSWindow?) -> NSEvent? {
+            NSEvent.mouseEvent(with: type, location: NSPoint(x: 240, y: 300), modifierFlags: [], timestamp: 0,
+                               windowNumber: target?.windowNumber ?? 0, context: nil, eventNumber: 0,
+                               clickCount: 1, pressure: 1)
+        }
+        let other = OffScreenProbe.window(width: 400, height: 300)
+        defer { other.close() }
+        check(MainSplitShellController.isDividerDrag(event(.leftMouseDragged, in: window), in: window),
+              "a drag in the shell's window is not taken as a divider drag", &ok)
+        check(!MainSplitShellController.isDividerDrag(nil, in: window),
+              "a resize with no event (a mouse held anywhere else) counts as a divider drag", &ok)
+        check(!MainSplitShellController.isDividerDrag(event(.leftMouseDragged, in: other), in: window),
+              "a drag in another window counts as a divider drag", &ok)
+        check(!MainSplitShellController.isDividerDrag(event(.leftMouseDown, in: window), in: window),
+              "a mouse-down counts as a divider drag", &ok)
+    }
+
+    /// At 1100 the narrow toolbar drops the chip's task name, and a running
+    /// timer never pushes the page's own actions into the overflow menu -
+    /// measured on Knowledge, whose five tabs leave the least room.
+    private static func checkTheFocusChipFitsTheNarrowToolbar(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                               _ ok: inout Bool) {
+        let toolbar = shell.toolbar!
+        let width = window.frame.width
+        defer { resize(window, width: width, shell) }
+        resize(window, width: 1100, shell)
+        shell.show(.notebook)
+        settle(shell)
+        let actionsAlone = toolbar.debugPageActions.first?.window != nil
+        var task = ShiftTask.fresh()
+        task.title = "Rotate the staging certificate"
+        shell.focusTimer.start(task: task)
+        settle(shell)
+        defer { _ = shell.focusTimer.stop() }
+        let chip = toolbar.debugFocusChip
+        check(toolbar.debugIsCompact && !chip.debugTitleIsShown && chip.toolTip?.contains(task.title) == true,
+              "at 1100 the chip still names its task, or its tooltip does not", &ok)
+        // The fixture can fail: the page's actions fit at 1100 without a
+        // timer, or there is nothing to push out.
+        check(actionsAlone, "Knowledge's actions are already in the overflow at 1100 with no timer", &ok)
+        check(toolbar.debugPageActions.first?.window != nil,
+              "at 1100 a running timer pushed Knowledge's actions into the toolbar's overflow menu", &ok)
+        // Where even the compact chip leaves no room, it is the chip that
+        // yields, and its overflow item still opens the ring popover.
+        if chip.window == nil {
+            check(toolbar.debugPerformFocusChipMenuForm() && shell.debugFocusPopoverIsShown,
+                  "with the chip in the overflow menu its item opened no ring popover", &ok)
+            _ = toolbar.debugPerformFocusChipMenuForm()
+        }
+        // On a module with room, the compact chip is in the toolbar beside
+        // the page's actions.
+        shell.show(.health)
+        settle(shell)
+        check(chip.window != nil && toolbar.debugPageActions.first?.window != nil,
+              "at 1100 on Health the compact chip or the page's actions went to the overflow menu", &ok)
+        // On Home the chip outranks Customize, whose overflow item still
+        // opens Customize.
+        // Through a resize, as the window gets there: the toolbar decides
+        // what overflows when its width changes, not when an item is added.
+        shell.show(.homeCanvas)
+        resize(window, width: 1512, shell)
+        resize(window, width: 1100, shell)
+        check(chip.window != nil, "at 1100 on Home the chip went to the overflow menu ahead of Customize", &ok)
+        resize(window, width: 1512, shell)
+        check(chip.debugTitleIsShown, "at 1512 the chip does not name its task", &ok)
     }
 
     private static func checkToastsLandInTheColumn(_ shell: MainSplitShellController, _ window: NSWindow,

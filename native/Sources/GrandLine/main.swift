@@ -3410,10 +3410,10 @@ if ProcessInfo.processInfo.environment["FM_RUN_MAIN_SPLIT_SHELL_TESTS"] == "1" {
 if ProcessInfo.processInfo.environment["FM_RUN_PAGE_REDESIGNS_TESTS"] == "1" {
     exit(PageRedesignsSelfTest.run() ? 0 : 1)
 }
-// The polish stage: the sidebar layout's badges and status line readouts as
-// pure logic (every honest state, the words, the contrast, and the source
-// guards that keep the monitor a listener), then the badges, the readouts
-// and the motion in a real off-screen sidebar shell.
+// The polish stage: the sidebar layout's badges as pure logic (every honest
+// state, the words, the contrast, and the source guards that keep the
+// monitor a listener), then the badges and the motion in a real off-screen
+// sidebar shell.
 if ProcessInfo.processInfo.environment["FM_RUN_WORKSPACE_SIGNALS_TESTS"] == "1" {
     exit(WorkspaceSignalsSelfTest.run() ? 0 : 1)
 }

@@ -30,6 +30,7 @@ enum Phase3PolishSelfTest {
         checkUndoToastShape(&ok)
         checkSuitesRestoreTheTheme(&ok)
         checkTheRealDomainIsNeverWritten(&ok)
+        checkTheSweepSparesLiveRuns(&ok)
         checkNoTrappingDictionaryInit(&ok)
         print(ok ? "Phase3PolishSelfTest: all checks passed" : "Phase3PolishSelfTest: FAILED")
         return ok
@@ -451,6 +452,38 @@ enum Phase3PolishSelfTest {
                 fail("main.swift arms AppDefaultsSweep before setting AppDefaults.suiteVariable", &ok)
             }
         }
+    }
+
+    /// A suite process sweeps the domains earlier runs left behind, and must
+    /// leave alone the domain of a run that is still going - another lane's,
+    /// on the same machine at the same time.
+    private static func checkTheSweepSparesLiveRuns(_ ok: inout Bool) {
+        print("\n-- the defaults sweep spares a run that is still going --")
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fm-sweep-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let marker = AppDefaultsSweep.marker
+        let current = "\(marker)\(getpid())"
+        let live = "\(marker)\(getppid())"
+        // The dead pid must really be dead, or the fixture cannot tell a
+        // sweep that checks from one that does not.
+        let deadPID = (900_000..<900_100).first { !AppDefaultsSweep.isRunning(pid_t($0)) } ?? 0
+        let dead = "\(marker)\(deadPID)"
+        let legacy = "\(marker)no-pid"
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            for name in [current, live, dead, legacy, "com.example.other"] {
+                try Data().write(to: dir.appendingPathComponent("\(name).plist"))
+            }
+        } catch {
+            fail("could not write the sweep's fixture: \(error)", &ok)
+            return
+        }
+        check(deadPID > 0 && AppDefaultsSweep.isRunning(getppid()),
+              "the fixture's dead pid is alive, or its live one is not", &ok)
+        let stale = Set(AppDefaultsSweep.staleSuiteNames(except: current, in: dir))
+        check(stale == [dead, legacy], "the sweep would remove \(stale.sorted()), want only \([dead, legacy])", &ok)
+        if ok { print("  OK   a live run's domain is kept; a dead run's and a pid-less one are swept") }
     }
 }
 

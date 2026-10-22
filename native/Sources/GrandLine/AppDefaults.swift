@@ -121,7 +121,13 @@ enum AppDefaultsSweep {
     }
 
     /// Every domain this app's suites have ever created, minus this process's
-    /// own.
+    /// own and any whose process is still running.
+    ///
+    /// Several worktrees run suites on one machine at once, so another live
+    /// run's domain is not stale. Removing it emptied that run's preferences
+    /// mid-case - measured in `MainSplitShellSelfTest`, which read the
+    /// floating bar's pins back as the default while a sibling lane's suite
+    /// started. A name with no readable pid is an older run's and is swept.
     ///
     /// A suite domain lands in `~/Library/Preferences/<name>.plist` for an
     /// unsandboxed process, so the names are discoverable without knowing any
@@ -131,11 +137,21 @@ enum AppDefaultsSweep {
         for name in staleSuiteNames(except: current) { remove(name) }
     }
 
-    static func staleSuiteNames(except current: String? = nil,
-                                in directory: URL? = nil) -> [String] {
+    static func staleSuiteNames(except current: String? = nil, in directory: URL? = nil,
+                                isRunning: (pid_t) -> Bool = AppDefaultsSweep.isRunning) -> [String] {
         plistURLs(in: directory) { $0 != current }.map {
             String($0.lastPathComponent.dropLast(".plist".count))
+        }.filter { name in
+            guard let pid = pid_t(name.dropFirst(marker.count)) else { return true }
+            return !isRunning(pid)
         }
+    }
+
+    /// `kill(pid, 0)` delivers nothing; it only asks whether the process
+    /// exists. `EPERM` means it does and belongs to someone else.
+    static func isRunning(_ pid: pid_t) -> Bool {
+        guard pid > 0 else { return false }
+        return kill(pid, 0) == 0 || errno == EPERM
     }
 
     private static func plistURLs(in directory: URL? = nil,

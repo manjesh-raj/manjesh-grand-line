@@ -7,10 +7,11 @@
 // adds a second shell beside the floating bar, so there are two layouts now:
 //
 //   - `AppShellController` - the floating bar, the space pills and the drill
-//     header. Still the default, and unchanged.
+//     header. Unchanged, and still a choice in Settings > Appearance.
 //   - `MainSplitShellController` - a sidebar, a window toolbar, the content
-//     column with a status line under it, and an inspector. Chosen in
-//     Settings > Appearance, and applied the next time the app opens.
+//     column, and an inspector. The default since PR #523.
+//
+// A change of layout is applied the next time the app opens.
 //
 // Both host the same `Workspace`: the same 29 pages, the same
 // `DestinationMounter`, the same host pages, the same lock. This class is
@@ -34,7 +35,7 @@ enum WorkspaceLayout: String, CaseIterable {
     /// The floating bar with its space pills and drill header. Still a
     /// first-class choice in Settings, never removed.
     case floatingBar
-    /// The sidebar, window toolbar, status line and inspector - the default.
+    /// The sidebar, window toolbar, content column and inspector - the default.
     case sidebar
 
     /// The layout a fresh install gets, and anyone who never chose one. The
@@ -170,7 +171,6 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     func workspaceActionsMayHaveChanged() {}
     func workspaceSessionsDidChange(_ registry: HostSessionRegistry) {}
     func workspaceCrewDidRead() {}
-    func workspaceQuotaDidRead(_ result: QuotaFetchResult) {}
     func workspaceKeyViewLoopMayHaveChanged() {}
     var workspaceWindow: NSWindow? { view.window }
 

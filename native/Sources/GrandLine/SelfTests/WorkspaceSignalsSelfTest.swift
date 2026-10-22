@@ -1,18 +1,18 @@
 // Grand Line - native macOS app.
 //
-// The sidebar layout's badges and status line readouts (`WorkspaceSignals`),
+// The sidebar layout's badges (`WorkspaceSignals`),
 // as pure logic: every honest state of every signal, the words each one says,
 // the colours each one paints in every palette, and the source guards that
 // keep the monitor a listener.
 //
 //   1. **A failed read keeps the last good value** (`WorkspaceReading.failing`).
-//   2. **Each signal's states**, badge and readout: nothing for unknown, a
+//   2. **Each signal's states** on its badge: nothing for unknown, a
 //      dash for a first read in flight, the value for a read, the last good
 //      value and its time for a failed read, and no badge for a real zero.
 //   3. **Tasks due** counts by day, the way compact mode does.
 //   4. **Contrast**: an attention pill's digits on its fill, and every
-//      attention or alarm mark on the sidebar and the line, clear the text
-//      floor in all palettes.
+//      attention or alarm mark on the sidebar, clear the text floor in all
+//      palettes.
 //   5. **Source guards**: the monitor starts no timer, pass or subprocess,
 //      takes no one's single closure, and only the sidebar layout builds one;
 //      the Fleet page keeps Needs you's bookkeeping in both layouts.
@@ -33,7 +33,7 @@ enum WorkspaceSignalsSelfTest {
     static func run() -> Bool {
         var ok = true
         for check in [checkFailingKeepsTheLastGoodValue, checkCrew, checkTasks, checkTasksCountByDay, checkVault,
-                      checkHealth, checkSetup, checkClaude, checkSync, checkConsole, checkContrast,
+                      checkHealth, checkSetup, checkConsole, checkContrast,
                       checkTheMonitorOnlyListens] {
             var caseOK = true
             check(&caseOK)
@@ -50,10 +50,6 @@ enum WorkspaceSignalsSelfTest {
         var s = WorkspaceSignals()
         edit(&s)
         return s
-    }
-
-    private static func item(_ id: WorkspaceStatusItem.ID, _ s: WorkspaceSignals, now: Date = t1) -> WorkspaceStatusItem? {
-        s.statusItems(now: now).first { $0.id == id }
     }
 
     // MARK: 1
@@ -76,38 +72,31 @@ enum WorkspaceSignalsSelfTest {
     // MARK: 2
 
     private static func checkCrew(_ ok: inout Bool) {
-        print("\n-- Crew: the badge and the readout in every state --")
+        print("\n-- Crew: the badge in every state --")
         let unknown = signals { $0.crew = .unknown }
-        check(unknown.badge(for: .crew) == nil && item(.crew, unknown) == nil,
+        check(unknown.badge(for: .crew) == nil,
               "a crew nobody can read (no firstmate home) drew something", &ok)
 
         let reading = signals { $0.crew = .reading }
         check(reading.badge(for: .crew)?.mark == .count(WorkspaceSignals.scanningMark),
               "the first read in flight is not a dash: \(String(describing: reading.badge(for: .crew)))", &ok)
-        check(item(.crew, reading)?.text == "Crew \u{2013} scanning", "the line while reading says \(item(.crew, reading)?.text ?? "nothing")", &ok)
 
         let two = signals { $0.crew = .read(2, at: t0) }
         let badge = two.badge(for: .crew)
         check(badge == WorkspaceBadge(mark: .count("2"), tone: .attention, description: "2 tasks are waiting on you"),
               "two waiting drew \(String(describing: badge))", &ok)
-        check(item(.crew, two)?.text == "2 need you" && item(.crew, two)?.lead == .dot(.attention, quiet: false),
-              "two waiting read \(item(.crew, two)?.text ?? "nothing")", &ok)
-        check(item(.crew, two)?.destination == .overview, "the crew readout does not open Crew", &ok)
 
         let clear = signals { $0.crew = .read(0, at: t0) }
         check(clear.badge(for: .crew) == nil, "a real zero drew a badge", &ok)
-        check(item(.crew, clear)?.text == "Crew all clear", "nothing waiting read \(item(.crew, clear)?.text ?? "nothing")", &ok)
 
         let stale = signals { $0.crew = .failed(last: 2, lastReadAt: t0, failedAt: t1) }
         check(stale.badge(for: .crew)?.mark == .count("2"), "a failed read dropped the last good count", &ok)
         let staleDescription = stale.badge(for: .crew)?.description ?? ""
         check(staleDescription.contains(WorkspaceSignals.clock(t0)) && staleDescription.contains("Couldn\u{2019}t read"),
               "a failed read's badge does not say when it was last read: \(staleDescription)", &ok)
-        check(item(.crew, stale)?.text == "2 need you \u{00B7} as of \(WorkspaceSignals.clock(t0))",
-              "a failed read's readout is \(item(.crew, stale)?.text ?? "nothing")", &ok)
 
         let never = signals { $0.crew = .failed(last: nil, lastReadAt: nil, failedAt: t1) }
-        check(never.badge(for: .crew)?.mark == .count("?") && item(.crew, never)?.text == "Crew unreadable",
+        check(never.badge(for: .crew)?.mark == .count("?"),
               "a failed first read is not stated as one", &ok)
 
         // Needs you's own reading, mapped: before the first read, with no
@@ -176,18 +165,15 @@ enum WorkspaceSignalsSelfTest {
 
     private static func checkVault(_ ok: inout Bool) {
         print("\n-- Secrets: Poneglyph's lock --")
-        check(signals { $0.vault = .none }.badge(for: .secrets) == nil && item(.vault, signals { $0.vault = .none }) == nil,
+        check(signals { $0.vault = .none }.badge(for: .secrets) == nil,
               "a Mac with no vault drew a lock", &ok)
         let locked = signals { $0.vault = .locked }
         check(locked.badge(for: .secrets) == WorkspaceBadge(mark: .symbol("lock.fill"), tone: .neutral, description: "Poneglyph is locked"),
               "a locked vault drew \(String(describing: locked.badge(for: .secrets)))", &ok)
-        check(item(.vault, locked)?.text == "Poneglyph locked" && item(.vault, locked)?.destination == .poneglyph,
-              "a locked vault's readout is \(item(.vault, locked)?.text ?? "nothing")", &ok)
         let unlocked = signals { $0.vault = .unlocked }
-        check(unlocked.badge(for: .secrets) == nil && item(.vault, unlocked)?.text == "Poneglyph unlocked",
-              "an unlocked vault drew a badge or no readout", &ok)
+        check(unlocked.badge(for: .secrets) == nil, "an unlocked vault drew a badge", &ok)
         let unreadable = signals { $0.vault = .unreadable }
-        check(unreadable.badge(for: .secrets)?.tone == .alarm && item(.vault, unreadable)?.text == "Poneglyph unreadable",
+        check(unreadable.badge(for: .secrets)?.tone == .alarm,
               "an unreadable vault file is not an alarm", &ok)
         if ok { print("  OK   none, locked, unlocked and unreadable") }
     }
@@ -199,16 +185,17 @@ enum WorkspaceSignalsSelfTest {
         let one = signals { $0.failingServices = [docs] }
         check(one.badge(for: .health)?.mark == .dot && one.badge(for: .health)?.tone == .alarm,
               "a failing service is not an alarm dot", &ok)
-        check(item(.health, one)?.text == "Docs & runbooks sync failing" && item(.health, one)?.destination == .health,
-              "one failing service read \(item(.health, one)?.text ?? "nothing")", &ok)
+        // The badge names the service, which is what the status strip said
+        // in words before the captain had it removed.
+        check(one.badge(for: .health)?.description == "Docs & runbooks sync is failing",
+              "one failing service's badge reads \(one.badge(for: .health)?.description ?? "nothing")", &ok)
         let two = signals { $0.failingServices = [docs, tasks] }
-        check(item(.health, two)?.text == "2 services failing", "two failing read \(item(.health, two)?.text ?? "nothing")", &ok)
-        check(item(.health, two)?.toolTip.contains(WorkspaceSignals.clock(t1)) == true,
-              "the readout does not say when the last failure was", &ok)
+        check(two.badge(for: .health)?.description
+                == "2 services are failing: Docs & runbooks sync, \(HealthService.shiftGitSync.title)",
+              "two failing services' badge reads \(two.badge(for: .health)?.description ?? "nothing")", &ok)
         let degraded = signals { $0.degradedServices = [docs] }
-        check(degraded.badge(for: .health)?.tone == .attention && item(.health, degraded) == nil,
-              "a degraded service is an alarm, or is on the line", &ok)
-        check(WorkspaceSignals().badge(for: .health) == nil && item(.health, WorkspaceSignals()) == nil,
+        check(degraded.badge(for: .health)?.tone == .attention, "a degraded service is an alarm", &ok)
+        check(WorkspaceSignals().badge(for: .health) == nil,
               "a healthy app drew a Health mark", &ok)
         if ok { print("  OK   failing, two failing, degraded, healthy") }
     }
@@ -230,40 +217,6 @@ enum WorkspaceSignalsSelfTest {
               && (stale.badge(for: .setup)?.description.contains(WorkspaceSignals.clock(t1)) ?? false),
               "a failed check dropped the count or did not say when it failed", &ok)
         if ok { print("  OK   unknown, checking, counted with its parts, zero, failed") }
-    }
-
-    private static func checkClaude(_ ok: inout Bool) {
-        print("\n-- Claude usage --")
-        check(item(.claude, signals { $0.claude = .unknown }) == nil, "unread Claude usage drew a readout", &ok)
-        check(item(.claude, signals { $0.claude = .reading })?.text == "Claude \u{2013} scanning", "reading Claude usage is not a dash", &ok)
-        let usage = WorkspaceSignals.ClaudeUsage(percentUsed: 61.6, resetsAt: nil)
-        let read = signals { $0.claude = .read(usage, at: t0) }
-        check(item(.claude, read)?.text == "Claude 62% of 5 h", "a reading read \(item(.claude, read)?.text ?? "nothing")", &ok)
-        check(item(.claude, read)?.trailing == true, "Claude usage is not in the line's right-hand group", &ok)
-        let stale = signals { $0.claude = .failed(last: usage, lastReadAt: t0, failedAt: t1) }
-        check(item(.claude, stale)?.text == "Claude 62% of 5 h \u{00B7} as of \(WorkspaceSignals.clock(t0))",
-              "a failed reading read \(item(.claude, stale)?.text ?? "nothing")", &ok)
-        let never = signals { $0.claude = .failed(last: nil, lastReadAt: nil, failedAt: t1) }
-        check(item(.claude, never)?.text == "Claude usage unavailable", "a failed first reading is not stated as one", &ok)
-        if ok { print("  OK   unknown, reading, read, failed with and without a last reading") }
-    }
-
-    private static func checkSync(_ ok: inout Bool) {
-        print("\n-- Tasks sync --")
-        check(item(.sync, WorkspaceSignals()) == nil, "a Tasks store with no reported sync drew a readout", &ok)
-        let synced = signals { $0.sync = .init(status: .synced, lastSuccess: t0) }
-        check(item(.sync, synced, now: t0.addingTimeInterval(4 * 60 + 5))?.text == "Synced 4 min ago",
-              "a sync four minutes ago read \(item(.sync, synced, now: t0.addingTimeInterval(245))?.text ?? "nothing")", &ok)
-        check(item(.sync, synced, now: t0.addingTimeInterval(20))?.text == "Synced just now", "a fresh sync is not \"just now\"", &ok)
-        check(item(.sync, synced, now: t0.addingTimeInterval(2 * 3600 + 1))?.text == "Synced 2 h ago", "two hours is not \"2 h ago\"", &ok)
-        let failed = signals { $0.sync = .init(status: .failed("fatal: refusing to merge"), lastSuccess: t0) }
-        check(item(.sync, failed)?.text == "Sync failed" && item(.sync, failed)?.lead == .dot(.alarm, quiet: false),
-              "a failed sync is not an alarm", &ok)
-        check(item(.sync, failed)?.toolTip.contains(WorkspaceSignals.clock(t0)) == true, "a failed sync does not say when it last synced", &ok)
-        let offline = signals { $0.sync = .init(status: .failed("Could not resolve host: github.com"), lastSuccess: t0) }
-        check(item(.sync, offline)?.lead == .dot(.neutral, quiet: true), "being offline is an alarm, which the Tasks pill says it is not", &ok)
-        check(item(.sync, synced)?.destination == .shift, "the sync readout does not open Tasks", &ok)
-        if ok { print("  OK   unreported, synced and its age, failed, offline") }
     }
 
     private static func checkConsole(_ ok: inout Bool) {
@@ -288,21 +241,18 @@ enum WorkspaceSignalsSelfTest {
         var failures: [String] = []
         for theme in HelmTheme.allThemes {
             let panel = HelmTheme.sidePanelFill(theme)
-            let ground = HelmTheme.nsColor(theme.backgroundHex)
             for tone in [WorkspaceBadge.Tone.attention, .alarm] {
                 let fill = WorkspaceSidebarBadgeView.pillFill(for: tone, theme: theme)
                 let digits = HelmContrast.legibleOn(fill: fill, preferring: WorkspaceSidebarBadgeView.hue(tone, theme))
                 let pill = HelmContrast.ratio(digits, fill)
                 if pill < HelmContrast.textTarget { failures.append("\(theme.id) \(tone) pill \(String(format: "%.2f", pill))") }
-                for (name, surface) in [("sidebar", panel), ("line", ground)] {
-                    let mark = HelmContrast.ratio(WorkspaceSidebarBadgeView.ink(for: tone, over: surface, theme: theme), surface)
-                    if mark < HelmContrast.textTarget {
-                        failures.append("\(theme.id) \(tone) mark on the \(name) \(String(format: "%.2f", mark))")
-                    }
+                let mark = HelmContrast.ratio(WorkspaceSidebarBadgeView.ink(for: tone, over: panel, theme: theme), panel)
+                if mark < HelmContrast.textTarget {
+                    failures.append("\(theme.id) \(tone) mark on the sidebar \(String(format: "%.2f", mark))")
                 }
             }
         }
-        check(failures.isEmpty, "a badge or readout mark is below the text floor: \(failures)", &ok)
+        check(failures.isEmpty, "a badge mark is below the text floor: \(failures)", &ok)
         // The fixture can fail: the raw warn hue on its own pill does not
         // clear the floor in every palette, which is why the digits are
         // corrected at all.
@@ -338,7 +288,7 @@ enum WorkspaceSignalsSelfTest {
             || monitor.range(of: #"shared\.vault\b"#, options: .regularExpression) != nil
         check(!builds && monitor.contains("whenVaultIsBuilt"),
               "the monitor builds the vault store, which starts its git sync at launch", &ok)
-        for source in ["shiftStore.observe", "ServiceHealthRegistry.shared.observe", "observeCounts", "observeStatus"] {
+        for source in ["shiftStore.observe", "ServiceHealthRegistry.shared.observe", "observeCounts"] {
             check(monitor.contains(source), "the monitor no longer follows \(source)", &ok)
         }
         let builders = (SelfTestSources.appSourceFiles() ?? []).filter { url in
@@ -351,9 +301,9 @@ enum WorkspaceSignalsSelfTest {
         check(fleet.contains("let carried = noteNeedsYouRead(snapshot, needs: needs)"),
               "the Fleet page's Needs you bookkeeping is no longer run for every read, so Crew's badge waits for a visit", &ok)
         let workspace = read("Workspace.swift")
-        check(workspace.contains("chrome?.workspaceCrewDidRead()") && workspace.contains("chrome?.workspaceQuotaDidRead(result)"),
-              "the workspace no longer forwards the Fleet page's readings to the shell", &ok)
-        if ok { print("  OK   no timer, pass or subprocess; Poneglyph's closure untouched; one builder; both readings forwarded") }
+        check(workspace.contains("chrome?.workspaceCrewDidRead()"),
+              "the workspace no longer forwards the Fleet page's crew reading to the shell", &ok)
+        if ok { print("  OK   no timer, pass or subprocess; Poneglyph's closure untouched; one builder; the crew forwarded") }
     }
 }
 

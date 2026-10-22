@@ -23,6 +23,10 @@
 //      for the sidebar; ⌘⇧D asks the shell first; the lock overlay tells the
 //      shell when it shows; the toolbar's trailing cluster keeps the
 //      captain's light/dark toggle and notifications button.
+//   5. **No status strip, anywhere.** The captain had the layout's status
+//      strip removed from every module, so no source draws one, the content
+//      pane runs its body to its foot, and the focus timer's chip - the one
+//      control the strip carried - is the toolbar's.
 //
 // Pure logic: no window. `MainSplitShellSelfTest` is the window-backed half.
 //
@@ -43,7 +47,7 @@ enum SplitShellModelSelfTest {
                       checkTheTabsAreTheRealViews, checkTheSidebarDrawsNoPins, checkSessionsAreConsoleChildren,
                       checkHistoryWalksBackAndForward, checkHistoryEdges, checkTheLayoutSetting,
                       checkTheDefaultIsTheSidebar, checkTheDefaultIsSpelledOnce, checkHomeCardLayout,
-                      checkTheWiring] {
+                      checkTheWiring, checkTheLayoutDrawsNoStatusStrip] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -495,6 +499,61 @@ enum SplitShellModelSelfTest {
               "the sidebar button no longer sits over the sidebar", &ok)
         check(!toolbar.toolbar.autosavesConfiguration && !toolbar.toolbar.allowsUserCustomization,
               "the toolbar autosaves its configuration, which writes UserDefaults.standard outside AppDefaults.store", &ok)
+    }
+
+    // MARK: 5 - no status strip
+
+    /// The captain: "Yes have this removed everywhere". A source guard,
+    /// because the strip could come back on one module only, which a
+    /// behaviour check on a sample of modules would miss; the window-backed
+    /// half (`MainSplitShellSelfTest.checkTheContentReachesTheFoot`) measures
+    /// every module.
+    private static func checkTheLayoutDrawsNoStatusStrip(_ ok: inout Bool) {
+        guard let files = SelfTestSources.appSourceFiles(), files.count > 100,
+              let shell = code("MainSplitShellController.swift") else {
+            fail("could not read the app's sources - the guard would pass vacuously", &ok)
+            return
+        }
+        let strip = ["WorkspaceStatusLine", "WorkspaceStatusReadout", "WorkspaceStatusItem", "func statusItems(",
+                     "setStatusLineVisible", "showsStatusLine"]
+        for file in files {
+            guard let text = code(file.lastPathComponent) else { continue }
+            for token in strip where text.contains(token) {
+                fail("\(file.lastPathComponent) draws the sidebar layout's status strip again (`\(token)`)", &ok)
+            }
+        }
+        // The pane's body and Knowledge's column end at the pane's foot, and
+        // nothing else is laid out under them.
+        for tie in ["body.bottomAnchor.constraint(equalTo: root.bottomAnchor)",
+                    "columnHost.bottomAnchor.constraint(equalTo: root.bottomAnchor)"] {
+            check(shell.contains(tie), "the content pane no longer runs its content to its foot (`\(tie)`)", &ok)
+        }
+        check(!FeatureInventorySelfTest.shellPlaces.contains("Status line"),
+              "the inventory still offers the status line as a place a feature can live", &ok)
+
+        // The focus timer's chip is the toolbar's. When the toolbar runs out
+        // of room it yields to the page's own actions, whose overflow form
+        // does nothing, and keeps a menu form that opens its popover.
+        let toolbar = WorkspaceToolbar(splitView: NSSplitView())
+        check(toolbar.toolbarAllowedItemIdentifiers(toolbar.toolbar).contains(WorkspaceToolbar.ItemID.focusTimer),
+              "the toolbar can no longer show the focus timer's chip", &ok)
+        let item = toolbar.toolbar(toolbar.toolbar, itemForItemIdentifier: WorkspaceToolbar.ItemID.focusTimer,
+                                   willBeInsertedIntoToolbar: true)
+        let priority = item?.visibilityPriority.rawValue ?? 0
+        let moduleAction = toolbar.toolbar(toolbar.toolbar, itemForItemIdentifier: WorkspaceToolbar.ItemID.moduleAction,
+                                           willBeInsertedIntoToolbar: true)?.visibilityPriority.rawValue ?? 0
+        check(item?.view is FocusTimerChip && item?.menuFormRepresentation != nil
+                && priority > moduleAction && moduleAction > NSToolbarItem.VisibilityPriority.low.rawValue
+                && priority < NSToolbarItem.VisibilityPriority.standard.rawValue,
+              "the toolbar's focus item is not the chip, does nothing from the overflow menu, or does not overflow "
+                + "after the crumb and the module's action and before the page's actions (chip \(priority), "
+                + "module action \(moduleAction))", &ok)
+        check(shell.contains("toolbar.setFocusChip(") && shell.contains("toolbar.onFocusChip ="),
+              "the sidebar shell no longer puts the running timer in the toolbar", &ok)
+        // Not this check's subject, but the same file and the same review:
+        // the machine's mouse button is not a divider drag in this window.
+        check(!shell.contains("pressedMouseButtons") && shell.contains("Self.isDividerDrag(NSApp?.currentEvent, in: window)"),
+              "the sidebar's remembered width follows the machine's mouse button again, not a drag in its window", &ok)
     }
 }
 
