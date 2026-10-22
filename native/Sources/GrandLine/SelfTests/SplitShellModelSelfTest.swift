@@ -540,11 +540,14 @@ enum SplitShellModelSelfTest {
         let item = toolbar.toolbar(toolbar.toolbar, itemForItemIdentifier: WorkspaceToolbar.ItemID.focusTimer,
                                    willBeInsertedIntoToolbar: true)
         let priority = item?.visibilityPriority.rawValue ?? 0
+        let moduleAction = toolbar.toolbar(toolbar.toolbar, itemForItemIdentifier: WorkspaceToolbar.ItemID.moduleAction,
+                                           willBeInsertedIntoToolbar: true)?.visibilityPriority.rawValue ?? 0
         check(item?.view is FocusTimerChip && item?.menuFormRepresentation != nil
-                && priority > NSToolbarItem.VisibilityPriority.low.rawValue
+                && priority > moduleAction && moduleAction > NSToolbarItem.VisibilityPriority.low.rawValue
                 && priority < NSToolbarItem.VisibilityPriority.standard.rawValue,
-              "the toolbar's focus item is not the chip, does nothing from the overflow menu, or overflows "
-                + "before the crumb or after the page's actions (priority \(priority))", &ok)
+              "the toolbar's focus item is not the chip, does nothing from the overflow menu, or does not overflow "
+                + "after the crumb and the module's action and before the page's actions (chip \(priority), "
+                + "module action \(moduleAction))", &ok)
         check(shell.contains("toolbar.setFocusChip(") && shell.contains("toolbar.onFocusChip ="),
               "the sidebar shell no longer puts the running timer in the toolbar", &ok)
         // Not this check's subject, but the same file and the same review:

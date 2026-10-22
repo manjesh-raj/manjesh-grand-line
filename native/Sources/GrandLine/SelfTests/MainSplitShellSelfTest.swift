@@ -912,6 +912,14 @@ enum MainSplitShellSelfTest {
         settle(shell)
         check(chip.window != nil && toolbar.debugPageActions.first?.window != nil,
               "at 1100 on Health the compact chip or the page's actions went to the overflow menu", &ok)
+        // On Home the chip outranks Customize, whose overflow item still
+        // opens Customize.
+        // Through a resize, as the window gets there: the toolbar decides
+        // what overflows when its width changes, not when an item is added.
+        shell.show(.homeCanvas)
+        resize(window, width: 1512, shell)
+        resize(window, width: 1100, shell)
+        check(chip.window != nil, "at 1100 on Home the chip went to the overflow menu ahead of Customize", &ok)
         resize(window, width: 1512, shell)
         check(chip.debugTitleIsShown, "at 1512 the chip does not name its task", &ok)
     }

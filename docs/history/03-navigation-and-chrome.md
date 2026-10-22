@@ -985,6 +985,8 @@ The floating bar never drew one and is unchanged.
   Measured on Knowledge at 1100: its five tabs leave room for the page's actions (222pt) or the chip, not both.
   The page's actions are one view item with no menu form, so in the overflow menu they would do nothing.
   The chip's menu form ("Focus Timer") opens the same popover, so the chip takes a priority between the low items (the crumb, Recents, the inspector) and the page's actions (`WorkspaceToolbar.focusChipPriority`).
+  The module's one action (Customize, Quick Connect, Activity) goes before the chip (`moduleActionPriority`), because its menu form does what its button does and a running timer is the thing to keep in sight.
+  Measured on Home at 1100, where Customize and the chip did not both fit.
 - **Below the toolbar's compact width the chip shows its ring and countdown without the task's name**, the same breakpoint that makes Search a glyph.
   The name stays in its tooltip and accessibility label.
   With that, the chip fits beside the page's actions on every module with fewer tabs than Knowledge.

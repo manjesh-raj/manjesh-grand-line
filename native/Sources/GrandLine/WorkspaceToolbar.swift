@@ -308,13 +308,16 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         // overflow menu, lowest priority first. The crumb (the module's
         // header names it too), Recents and the inspector toggle go first;
         // Search, the bell, the light/dark toggle, the tabs, the page's
-        // primary action and the sidebar button never do. A running focus
-        // timer's chip goes after the first three and before the page's own
-        // actions, because its menu form opens the same popover and theirs
-        // would do nothing - measured on Knowledge at 1100, whose five tabs
-        // leave room for one or the other.
+        // primary action and the sidebar button never do. Between them, the
+        // module's one action goes next (its menu form does what its button
+        // does), then a running focus timer's chip (its menu form opens the
+        // same popover), and the page's own actions last, whose overflow form
+        // would do nothing - measured at 1100 on Knowledge, whose five tabs
+        // leave room for the page's actions or the chip, and on Home, where
+        // Customize and the chip did not both fit.
         switch identifier {
         case ItemID.crumb, ItemID.recents, ItemID.inspector: item?.visibilityPriority = .low
+        case ItemID.moduleAction: item?.visibilityPriority = Self.moduleActionPriority
         case ItemID.focusTimer: item?.visibilityPriority = Self.focusChipPriority
         case ItemID.search, ItemID.notifications, ItemID.theme, ItemID.tabs, ItemID.sidebar, ItemID.navigation,
              ItemID.primaryAction:
@@ -583,7 +586,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     }
 
     /// Between `.low` (-1000) and `.standard` (0), which the page's actions
-    /// take.
+    /// take: the module's action overflows before the chip.
+    static let moduleActionPriority = NSToolbarItem.VisibilityPriority(rawValue: -750)
     static let focusChipPriority = NSToolbarItem.VisibilityPriority(rawValue: -500)
 
     static let badgeHeight: CGFloat = 15
