@@ -108,21 +108,8 @@ enum CompactModeDigest {
         }
 
         let dated: [Dated] = tasks.compactMap { task in
-            guard task.status != .completed, task.status != .cancelled else { return nil }
-            guard let dueDay = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return nil }
-            // Compared by *day*, not by instant: a task due today at 09:00
-            // read at 17:00 is still "due today", not overdue. Using the
-            // task's own time here would make the tab flip a row to red
-            // mid-afternoon, which is not what "overdue" means anywhere else
-            // in this app (`ShiftController`'s own list agrees).
-            let dueStart = calendar.startOfDay(for: dueDay)
-            let urgency: CompactTaskRow.Urgency
-            if dueStart < startOfToday {
-                urgency = .overdue
-            } else if calendar.isDate(dueStart, inSameDayAs: startOfToday) {
-                urgency = .today
-            } else {
-                urgency = .later
+            guard let (dueStart, urgency) = dueDay(of: task, startOfToday: startOfToday, calendar: calendar) else {
+                return nil
             }
             return Dated(task: task, due: dueStart, urgency: urgency)
         }
@@ -158,6 +145,39 @@ enum CompactModeDigest {
             overdueCount: dated.filter { $0.urgency == .overdue }.count,
             focusChip: focusSecondsToday > 0 ? "\(focusText(seconds: focusSecondsToday)) focus" : nil,
             followUpChip: pending > 0 ? "\(pending) follow-up\(pending == 1 ? "" : "s")" : nil)
+    }
+
+    /// How many open tasks are due today and how many are overdue, by the
+    /// same day rule the Today tab uses - the sidebar layout's Tasks badge.
+    static func dueCounts(tasks: [ShiftTask], now: Date = Date(),
+                          calendar: Calendar = .current) -> (today: Int, overdue: Int) {
+        let startOfToday = calendar.startOfDay(for: now)
+        var today = 0, overdue = 0
+        for task in tasks {
+            switch dueDay(of: task, startOfToday: startOfToday, calendar: calendar)?.urgency {
+            case .today?: today += 1
+            case .overdue?: overdue += 1
+            default: break
+            }
+        }
+        return (today, overdue)
+    }
+
+    /// An open task's due day and how urgent it is, or nil for a task with
+    /// no due date or one that is finished.
+    private static func dueDay(of task: ShiftTask, startOfToday: Date,
+                               calendar: Calendar) -> (due: Date, urgency: CompactTaskRow.Urgency)? {
+        guard task.status != .completed, task.status != .cancelled else { return nil }
+        guard let dueDay = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return nil }
+        // Compared by *day*, not by instant: a task due today at 09:00
+        // read at 17:00 is still "due today", not overdue. Using the
+        // task's own time here would make the tab flip a row to red
+        // mid-afternoon, which is not what "overdue" means anywhere else
+        // in this app (`ShiftController`'s own list agrees).
+        let dueStart = calendar.startOfDay(for: dueDay)
+        if dueStart < startOfToday { return (dueStart, .overdue) }
+        if calendar.isDate(dueStart, inSameDayAs: startOfToday) { return (dueStart, .today) }
+        return (dueStart, .later)
     }
 
     /// The caption under one task title.

@@ -826,3 +826,40 @@ The layout is chosen at launch, so nothing ever switches back.
 - Every affected page was rendered with the tour lab in Dusk and Daylight, at 1512 and 1100, in both layouts, before and after.
   The floating bar's renders differ only by time (TOTP codes, relative times, a Refresh pill caught mid-load, Monaco still loading) and by the Hosts footer.
 - Not verified: the real app was not launched, VoiceOver was not run, a real pointer never moved over a table, and a real drag never ran.
+
+## The polish: motion, sidebar badges and the rest of the status line (`fm/grandline-sidebar-polish-1792641688`)
+
+The last of what stages 4 and the page work left out, for the sidebar layout only.
+The floating bar does not build any of it.
+
+### The shape
+
+- **`WorkspaceSignals`** is one pure model of what every badge and readout draws, with the honest states as a type (`WorkspaceReading`): unknown draws nothing, a first read in flight is a dash, a read is its value, and a failed read keeps the last good value with the time it was read.
+- **`WorkspaceSignalsMonitor`** only listens.
+  It follows the Shift store, the Health registry, the background signals poller, Tasks' git sync, the vault store's new lock observers, and the Fleet page's two readings (forwarded through `workspaceCrewDidRead` and `workspaceQuotaDidRead`, because both of the Fleet page's closures are already Home's).
+  It starts no timer, pass or subprocess, and a source guard keeps it that way.
+- **The badges**: Crew's waiting tasks, Tasks due today and overdue, Poneglyph's lock, Health's failing or degraded dot, Setup's updates and drift, Console's live sessions.
+  Logs has no signal anywhere in the app, so it has no badge.
+- **The status line** gained the crew, a failing service and Poneglyph's lock, then Claude usage and Tasks sync on the right.
+  Each readout opens its page; the crew's opens Crew › Needs you.
+- **Motion**, on the motion table: the panes through `WorkspaceMotion.setCollapsed`, the inspector's panel sliding 16pt in, a page's own tab or a Home space taking the page change's entrance, and row hover and selection easing through `HelmRowWash`.
+  The prototype's 200 and 220ms became the table's 180ms move row rather than new numbers.
+
+### Decisions
+
+- **The badge never builds the vault store.**
+  Building it is what starts the vault's git sync (`CredentialVaultStore.init`), and nothing built it at launch before.
+  So the monitor waits for whatever builds it first (`GrandLineServices.whenVaultIsBuilt`) and until then reads only whether a vault file exists, which can only be locked.
+- **The vault's lock is a list of observers on the store, not a second `onChange`.**
+  That closure is Poneglyph's (ARCH-04), and the new list carries a Bool and nothing else.
+- **Needs you's bookkeeping runs in both layouts**, so Crew's badge is right before Crew is ever opened.
+  Only the sidebar layout lists its result; the floating bar's dashboard lists each read as before.
+- **A real zero draws no badge**, as a source list's counts do; the status line says it in words ("Crew all clear").
+- **The Tasks badge counts tasks only, by day**, through the same rule compact mode's Today tab uses (`CompactModeDigest.dueCounts`).
+- **A row's first paint is instant, and only a change eases.** A sidebar rebuild (a session coming or going) recreates every row view, and the wash fading in from clear on each one would read as a flash.
+  A flag that suppressed the fade during a rebuild was built first and then removed: a revert proof showed it did nothing, because the outline view builds its row views after the selection is applied, so the new row's first paint is already the lit state.
+
+### What was measured on the way
+
+- An off-screen sidebar does not realise a row below the fold, so a badge change repaints only the rows that are on screen; a row scrolled in later is built from the current signals.
+- `HelmDataTable`'s rows are reused, so a reused row view is handed its new row's state at once, and only a change to a row already on screen eases.

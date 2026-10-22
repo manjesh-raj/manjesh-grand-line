@@ -179,6 +179,14 @@ final class WorkspaceInspectorController: NSViewController {
     /// The view the pane is hosting, if any.
     var hostedContentView: NSView? { hostedView }
 
+    /// The panel slides in from the trailing edge as the pane opens, or as it
+    /// changes to another page's details - the prototype's inspector entrance
+    /// (`WorkspaceMotion`). Nothing moves under Reduce Motion.
+    func playEntrance() {
+        _ = view
+        WorkspaceMotion.slideIn(panel)
+    }
+
     private func applyTheme(_ theme: HelmTheme) {
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         panel.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
@@ -195,5 +203,6 @@ final class WorkspaceInspectorController: NSViewController {
     var debugCloseButton: NSButton { closeButton }
     var debugEmptyState: HelmEmptyState { empty }
     var debugIsShowingContent: Bool { hostedView != nil }
+    var debugPanelLayer: CALayer? { panel.layer }
     #endif
 }

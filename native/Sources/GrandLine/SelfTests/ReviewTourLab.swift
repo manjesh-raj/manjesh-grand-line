@@ -181,6 +181,12 @@ enum ReviewTourLab {
         /// through the page's own selection path - a host, a key, a snippet
         /// or a credential.
         case select(String)
+        /// `demo signals`: the sidebar layout's badges and status line with
+        /// something to say - a service failing three times, two tool
+        /// updates and a fork behind, a Claude reading, one live session,
+        /// and Poneglyph locked if a vault exists. Each through its real
+        /// source's own API, in this tour process.
+        case demoSignals
         case comment
     }
 
@@ -260,6 +266,7 @@ enum ReviewTourLab {
             if argument == "vault" { return .success(.demoVault) }
             if argument == "knowledge" { return .success(.demoKnowledge) }
             if argument == "automic" { return .success(.demoAutomic) }
+            if argument == "signals" { return .success(.demoSignals) }
             if argument.hasPrefix("loading ") {
                 let card = String(argument.dropFirst("loading ".count))
                 guard ["claude", "fleet", "merge"].contains(card) else { return .failure(.badArgument(argument)) }
@@ -512,6 +519,9 @@ enum ReviewTourLab {
                 split.setHomeCustomizing(on)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("\(step)")
+            case .demoSignals:
+                log.append(seedDemoSignals(shell))
+                shell.view.layoutSubtreeIfNeeded()
             case .demoHosts:
                 seedDemoHosts(shell.workspace)
                 shell.view.layoutSubtreeIfNeeded()
@@ -790,6 +800,31 @@ enum ReviewTourLab {
             Host(label: "lab-box", address: "lab.example.test"),
         ]
         for host in hosts { workspace.hostStore.add(host) }
+    }
+
+    /// `demo signals`' fixture - see the step's own comment.
+    static func seedDemoSignals(_ shell: WorkspaceShellController) -> String {
+        for _ in 0..<ServiceHealthRegistry.failureThreshold {
+            ServiceHealthRegistry.shared.recordFailure(.docsSync, "demo: the playbook remote did not answer")
+        }
+        var counts = BackgroundSignalsPoller.shared.lastCounts
+        counts.toolUpdates = 2
+        counts.forkDrift = 1
+        counts.setupDrift = 0
+        BackgroundSignalsPoller.shared.debugSetCounts(counts)
+        shell.workspace.overview.onQuotaChanged?(.success(QuotaSnapshot(
+            plan: "team",
+            session: QuotaWindow(kind: .session, percentUsed: 62,
+                                 resetsAt: Date().addingTimeInterval(2 * 3600), pace: .onPace),
+            weekly: nil, fable: nil, extraUsage: nil, latency: 1.2, log: "")))
+        shell.sessions.register(hostID: UUID(), label: "DEV Bastion", accentHex: nil, state: .connected)
+        var locked = ""
+        if GrandLineServices.shared.hasBuiltVault, GrandLineServices.shared.vault.isUnlocked {
+            GrandLineServices.shared.vault.lock(reason: "tour demo")
+            locked = ", Poneglyph locked"
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        return "demo signals (a failing service, 3 setup items, Claude 62%, 1 live session\(locked))"
     }
 
     /// `demo vault`: a scratch vault under the tour's scratch root, created

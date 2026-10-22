@@ -109,7 +109,48 @@ final class CredentialVaultStore {
     /// cache is therefore invalidated by the one thing that can invalidate it,
     /// at the one place that thing happens.
     private var vaultKey: CredentialVaultKey? {
-        didSet { sealedItemCache.removeAll(); sealedSettings = nil }
+        didSet {
+            sealedItemCache.removeAll(); sealedSettings = nil
+            if (oldValue == nil) != (vaultKey == nil) { notifyLockObservers() }
+        }
+    }
+
+    // MARK: Lock observers
+
+    /// Token returned by `observeLock`, for `unobserveLock`.
+    final class LockObservation {}
+
+    private var lockObservers: [(token: LockObservation, fn: (Bool) -> Void)] = []
+
+    /// Observe the vault locking and unlocking: `fn` gets `isUnlocked`, on
+    /// the main thread, each time it flips - and only then, never for a
+    /// content change. The sidebar layout's Secrets badge and status line
+    /// read it.
+    ///
+    /// A list rather than a second `onChange`: that closure is Poneglyph's
+    /// own (ARCH-04), and assigning it anywhere else would take the page's
+    /// re-render away. It carries a Bool and nothing else - no title, no
+    /// count, nothing a locked vault would not already show.
+    @discardableResult
+    func observeLock(_ fn: @escaping (Bool) -> Void) -> LockObservation {
+        let token = LockObservation()
+        lockObservers.append((token, fn))
+        return token
+    }
+
+    func unobserveLock(_ token: LockObservation) {
+        lockObservers.removeAll { $0.token === token }
+    }
+
+    private func notifyLockObservers() {
+        let unlocked = isUnlocked
+        let observers = lockObservers.map(\.fn)
+        guard !observers.isEmpty else { return }
+        if Thread.isMainThread {
+            observers.forEach { $0(unlocked) }
+        } else {
+            DispatchQueue.main.async { observers.forEach { $0(unlocked) } }
+        }
     }
 
     // MARK: PF7 - re-seal only what changed

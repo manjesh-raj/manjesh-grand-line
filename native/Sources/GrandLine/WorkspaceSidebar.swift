@@ -257,6 +257,22 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 
     private var pinnedCache: [RailDestination] = AppSettings.shared.quickAccess.pinned
 
+    /// What the badges draw from (`WorkspaceSignals`).
+    private var signals = WorkspaceSignals()
+
+    /// The signals changed: repaint each module row's badge in place.
+    func setSignals(_ signals: WorkspaceSignals) {
+        self.signals = signals
+        guard isViewLoaded else { return }
+        let theme = ThemeManager.shared.theme
+        for row in 0..<outlineView.numberOfRows {
+            guard let item = outlineView.item(atRow: row) as? WorkspaceSidebarItem, case .module(let module) = item.entry,
+                  let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? WorkspaceSidebarPageCell
+            else { continue }
+            cell.setBadge(signals.badge(for: module), theme: theme)
+        }
+    }
+
     private func rebuild() {
         roots = WorkspaceSidebarModel.roots(pinned: pinnedCache, sessions: sessions).map(WorkspaceSidebarItem.init)
         isApplyingSelection = true
@@ -361,17 +377,12 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             return cell
         case .module(let module):
             let cell = WorkspaceSidebarPageCell()
-            let liveCount = module == .console ? sessions.filter(\.isConnected).count : 0
-            cell.configure(symbol: module.symbol, title: module.title,
-                           trailing: liveCount > 0 ? "\(liveCount)" : nil,
-                           trailingHelp: liveCount > 0 ? "\(liveCount) connected" : nil,
-                           theme: theme)
+            cell.configure(symbol: module.symbol, title: module.title, badge: signals.badge(for: module), theme: theme)
             cell.setLit(lit, theme: theme)
             return cell
         case .pinned(let destination):
             let cell = WorkspaceSidebarPageCell()
-            cell.configure(symbol: destination.symbol, title: destination.title, trailing: nil, trailingHelp: nil,
-                           theme: theme)
+            cell.configure(symbol: destination.symbol, title: destination.title, badge: nil, theme: theme)
             cell.setLit(lit, theme: theme)
             return cell
         case .session(let hostID):
@@ -571,6 +582,23 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         return true
     }
     var debugHeader: WorkspaceSidebarHeader { header }
+    /// The cell drawn for `entry`, scrolled into view first - the way the
+    /// list draws a row the captain scrolls to.
+    func debugCell(for entry: WorkspaceSidebarEntry) -> NSView? {
+        guard let row = (0..<outlineView.numberOfRows).first(where: {
+            (outlineView.item(atRow: $0) as? WorkspaceSidebarItem)?.entry == entry
+        }) else { return nil }
+        outlineView.scrollRowToVisible(row)
+        outlineView.layoutSubtreeIfNeeded()
+        return outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
+    }
+    /// The row view drawn for `entry`.
+    func debugRowView(for entry: WorkspaceSidebarEntry) -> WorkspaceSidebarRowView? {
+        guard let row = (0..<outlineView.numberOfRows).first(where: {
+            (outlineView.item(atRow: $0) as? WorkspaceSidebarItem)?.entry == entry
+        }) else { return nil }
+        return outlineView.rowView(atRow: row, makeIfNecessary: false) as? WorkspaceSidebarRowView
+    }
     #endif
 }
 
@@ -599,18 +627,80 @@ final class WorkspaceSidebarMenuItem: NSMenuItem {
 /// object. It is the same wash, and the same corrected accent ink, that a
 /// page's own column (`HelmPageSidebar`) gives its selected row, so the two
 /// sidebars side by side on Tasks or Settings read as one idiom.
+///
+/// The wash and the hover fill ease (`HelmRowWash`, the motion table's state
+/// row), as the prototype's rows do: the lit row's wash fades across to the
+/// new row on a navigation, and a row under the pointer takes a faint ink
+/// fill. Neither moves under Reduce Motion, and a rebuild of the rows paints
+/// at once: the list builds its row views after the selection is applied, so
+/// a new row's first paint is already the lit state (`HelmRowWash`).
 final class WorkspaceSidebarRowView: NSTableRowView {
-    override func drawSelection(in dirtyRect: NSRect) {
-        guard selectionHighlightStyle != .none else { return }
-        let rect = bounds.insetBy(dx: HelmMetrics.s2, dy: 1)
-        let path = NSBezierPath(roundedRect: rect, xRadius: HelmMetrics.rChip + 1, yRadius: HelmMetrics.rChip + 1)
-        Self.wash(ThemeManager.shared.theme).setFill()
-        path.fill()
+    private let fill: HelmRowWash
+    private var hovering = false
+
+    override init(frame frameRect: NSRect) {
+        fill = HelmRowWash(frame: .zero)
+        super.init(frame: frameRect)
+        addSubview(fill, positioned: .below, relativeTo: nil)
+        // `.inVisibleRect`: AppKit keeps the area matched to the row, so
+        // there is no `updateTrackingAreas` bookkeeping per resize.
+        addTrackingArea(NSTrackingArea(rect: .zero,
+                                       options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// The wash replaces the drawn selection.
+    override func drawSelection(in dirtyRect: NSRect) {}
+
+    override var isSelected: Bool {
+        didSet { if isSelected != oldValue { paintFill() } }
+    }
+
+    override func layout() {
+        super.layout()
+        fill.frame = bounds.insetBy(dx: HelmMetrics.s2, dy: 1)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        paintFill()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        paintFill()
+    }
+
+    /// The lit row's wash, a hovered row's fill, or nothing. A section header
+    /// takes no hover: it is a label, not a place.
+    private func paintFill() {
+        let theme = ThemeManager.shared.theme
+        let color: NSColor?
+        if isSelected && selectionHighlightStyle != .none {
+            color = Self.wash(theme)
+        } else if hovering && !isGroupRowStyle {
+            color = Self.hover(theme)
+        } else {
+            color = nil
+        }
+        fill.paint(color, cornerRadius: HelmMetrics.rChip + 1)
     }
 
     static func wash(_ theme: HelmTheme) -> NSColor {
         HelmTheme.nsColor(theme.accentHex).withAlphaComponent(HelmAccentRow.selectionWash)
     }
+
+    /// The prototype's row hover: the page ink at 6%, the same fill the
+    /// account header above the list takes.
+    static func hover(_ theme: HelmTheme) -> NSColor {
+        HelmTheme.nsColor(theme.chromeInkHex).withAlphaComponent(WorkspaceSidebarHeader.hoverAlpha)
+    }
+
+    #if FM_SELFTESTS
+    var debugFill: HelmRowWash { fill }
+    #endif
 
     /// The lit row's label: the accent, corrected until it clears the text
     /// floor on the wash over the sidebar's own fill. Set by the controller
@@ -661,11 +751,12 @@ final class WorkspaceSidebarSectionCell: NSTableCellView {
 }
 
 /// A module or a pinned page: its symbol in the theme's accent, its name, and
-/// an optional count on the trailing edge.
+/// the module's badge on the trailing edge (`WorkspaceSignals.badge`).
 final class WorkspaceSidebarPageCell: NSTableCellView {
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
-    private let count = NSTextField(labelWithString: "")
+    let badgeView = WorkspaceSidebarBadgeView()
+    private var title = ""
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -676,13 +767,10 @@ final class WorkspaceSidebarPageCell: NSTableCellView {
         label.lineBreakMode = .byTruncatingTail
         // Gotcha (5): only the title may give way.
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        count.translatesAutoresizingMaskIntoConstraints = false
-        count.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(11), weight: .regular)
-        count.setContentHuggingPriority(.required, for: .horizontal)
-        count.setContentCompressionResistancePriority(.required, for: .horizontal)
+        badgeView.translatesAutoresizingMaskIntoConstraints = false
         imageView = icon
         textField = label
-        for view in [icon, label, count] { addSubview(view) }
+        for view in [icon, label, badgeView] { addSubview(view) }
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s1),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -690,24 +778,29 @@ final class WorkspaceSidebarPageCell: NSTableCellView {
             icon.heightAnchor.constraint(equalToConstant: HelmType.scaled(18)),
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: HelmMetrics.s2),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            count.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: HelmMetrics.s1),
-            count.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s2),
-            count.centerYAnchor.constraint(equalTo: centerYAnchor),
+            badgeView.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: HelmMetrics.s1),
+            badgeView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s2),
+            badgeView.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    func configure(symbol: String, title: String, trailing: String?, trailingHelp: String?, theme: HelmTheme) {
+    func configure(symbol: String, title: String, badge: WorkspaceBadge?, theme: HelmTheme) {
         icon.image = HelmSymbol.image(symbol, pointSize: HelmType.scaled(13), weight: .medium)
         icon.contentTintColor = HelmTheme.nsColor(theme.accentHex)
+        self.title = title
         setLit(false, theme: theme)
         label.stringValue = title
-        count.textColor = HelmTheme.mutedInk(theme)
-        count.stringValue = trailing ?? ""
-        count.isHidden = trailing == nil
-        count.toolTip = trailingHelp
-        setAccessibilityLabel(trailingHelp.map { "\(title), \($0)" } ?? title)
+        setBadge(badge, theme: theme)
+    }
+
+    /// The badge alone, in place - a signal changing repaints one row's
+    /// trailing edge, never the list.
+    func setBadge(_ badge: WorkspaceBadge?, theme: HelmTheme) {
+        badgeView.configure(badge, theme: theme)
+        // VoiceOver hears the module and then what its badge says.
+        setAccessibilityLabel(badge.map { "\(title), \($0.description)" } ?? title)
     }
 
     func setLit(_ lit: Bool, theme: HelmTheme) {
@@ -716,9 +809,144 @@ final class WorkspaceSidebarPageCell: NSTableCellView {
 
     #if FM_SELFTESTS
     var debugTitle: String { label.stringValue }
-    var debugTrailing: String? { count.isHidden ? nil : count.stringValue }
+    var debugBadge: WorkspaceBadge? { badgeView.badge }
     var debugIconTint: NSColor? { icon.contentTintColor }
     var debugLabelColor: NSColor? { label.textColor }
+    #endif
+}
+
+/// A module row's badge: a count, a dot or a symbol. A quiet count is the
+/// row's muted ink, as the prototype draws Tasks' and Setup's; one that wants
+/// the captain (Crew's) is a pill, its fill the attention hue washed over the
+/// sidebar and its digits corrected to clear the text floor on that fill
+/// (`FM_RUN_CONTRAST_TESTS`' rule: a hue is a safe fill, not automatically
+/// safe text). Hidden, not empty, when there is nothing to say - an empty
+/// pill reads as a zero (GL-14).
+final class WorkspaceSidebarBadgeView: NSView {
+    static let height: CGFloat = 17
+    /// How much of the attention hue the pill's fill takes.
+    static let pillWash: CGFloat = 0.22
+
+    private let label = NSTextField(labelWithString: "")
+    private let symbol = NSImageView()
+    private let dot = NSView()
+    private var labelInset: [NSLayoutConstraint] = []
+    private(set) var badge: WorkspaceBadge?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = Self.height / 2
+        label.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(11), weight: .regular)
+        label.alignment = .center
+        symbol.imageScaling = .scaleProportionallyDown
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = WorkspaceSidebarSessionCell.dotSide / 2
+        for view in [label, symbol, dot] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
+        labelInset = [
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 0),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: 0),
+        ]
+        NSLayoutConstraint.activate(labelInset + [
+            heightAnchor.constraint(equalToConstant: Self.height),
+            widthAnchor.constraint(greaterThanOrEqualToConstant: WorkspaceSidebarSessionCell.dotSide),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            symbol.centerXAnchor.constraint(equalTo: centerXAnchor),
+            symbol.centerYAnchor.constraint(equalTo: centerYAnchor),
+            symbol.widthAnchor.constraint(equalToConstant: HelmType.scaled(12)),
+            symbol.heightAnchor.constraint(equalToConstant: HelmType.scaled(12)),
+            symbol.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor),
+            dot.centerXAnchor.constraint(equalTo: centerXAnchor),
+            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: WorkspaceSidebarSessionCell.dotSide),
+            dot.heightAnchor.constraint(equalToConstant: WorkspaceSidebarSessionCell.dotSide),
+        ])
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        label.setContentHuggingPriority(.required, for: .horizontal)
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // The row carries the words; the badge is their picture.
+        setAccessibilityElement(false)
+        configure(nil, theme: ThemeManager.shared.theme)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func configure(_ badge: WorkspaceBadge?, theme: HelmTheme) {
+        self.badge = badge
+        isHidden = badge == nil
+        toolTip = badge?.description
+        label.isHidden = true
+        symbol.isHidden = true
+        dot.isHidden = true
+        layer?.backgroundColor = nil
+        guard let badge else { return }
+        let panel = HelmTheme.sidePanelFill(theme)
+        switch badge.mark {
+        case .count(let text):
+            label.isHidden = false
+            label.stringValue = text
+            let pill = badge.tone != .neutral
+            let inset = pill ? HelmMetrics.s2 - 2 : 0
+            labelInset[0].constant = inset
+            labelInset[1].constant = -inset
+            if pill {
+                let fill = Self.pillFill(for: badge.tone, theme: theme)
+                layer?.backgroundColor = fill.cgColor
+                label.textColor = HelmContrast.legibleOn(fill: fill, preferring: Self.hue(badge.tone, theme))
+                label.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(11), weight: .semibold)
+            } else {
+                label.textColor = HelmTheme.mutedInk(theme)
+                label.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(11), weight: .regular)
+            }
+        case .dot:
+            dot.isHidden = false
+            dot.layer?.backgroundColor = Self.ink(for: badge.tone, over: panel, theme: theme).cgColor
+        case .symbol(let name):
+            symbol.isHidden = false
+            symbol.image = HelmSymbol.image(name, pointSize: HelmType.scaled(11), weight: .semibold)
+            symbol.contentTintColor = badge.tone == .neutral
+                ? HelmTheme.mutedInk(theme) : Self.ink(for: badge.tone, over: panel, theme: theme)
+        }
+    }
+
+    static func hue(_ tone: WorkspaceBadge.Tone, _ theme: HelmTheme) -> NSColor {
+        switch tone {
+        case .neutral: return HelmTheme.mutedInk(theme)
+        case .attention: return HelmTheme.nsColor(HelmTint.warn.hex(in: theme))
+        case .alarm: return HelmTheme.nsColor(HelmTint.critical.hex(in: theme))
+        }
+    }
+
+    /// A tone as a mark on `surface`: the hue, corrected until it clears the
+    /// text floor there (a dot or a glyph that says "failing" is read like a
+    /// word).
+    static func ink(for tone: WorkspaceBadge.Tone, over surface: NSColor, theme: HelmTheme) -> NSColor {
+        switch tone {
+        case .neutral: return HelmTheme.mutedInk(theme)
+        case .attention: return HelmContrast.legibleTintedText(tintHex: HelmTint.warn.hex(in: theme), over: surface, theme: theme)
+        case .alarm: return HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme), over: surface, theme: theme)
+        }
+    }
+
+    /// The attention pill's opaque fill over the sidebar's.
+    static func pillFill(for tone: WorkspaceBadge.Tone, theme: HelmTheme) -> NSColor {
+        let panel = HelmTheme.sidePanelFill(theme)
+        return panel.blended(withFraction: pillWash, of: hue(tone, theme)) ?? panel
+    }
+
+    #if FM_SELFTESTS
+    var debugText: String? { label.isHidden ? nil : label.stringValue }
+    var debugTextColor: NSColor? { label.isHidden ? nil : label.textColor }
+    var debugFill: NSColor? { layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
+    var debugMarkColor: NSColor? {
+        if !dot.isHidden { return dot.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
+        if !symbol.isHidden { return symbol.contentTintColor }
+        return nil
+    }
     #endif
 }
 
@@ -850,8 +1078,11 @@ final class WorkspaceSidebarHeader: HoverHighlightView {
         title.textColor = ink
         subtitle.textColor = HelmTheme.mutedInk(theme)
         chevron.contentTintColor = HelmTheme.mutedInk(theme)
-        hoverColor = ink.withAlphaComponent(0.06)
+        hoverColor = ink.withAlphaComponent(Self.hoverAlpha)
     }
+
+    /// The page ink's share of a hovered row or header in the sidebar.
+    static let hoverAlpha: CGFloat = 0.06
 
     #if FM_SELFTESTS
     var debugTitle: String { title.stringValue }

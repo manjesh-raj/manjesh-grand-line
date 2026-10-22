@@ -80,7 +80,31 @@ final class GrandLineServices {
         if let vaultStore { return vaultStore }
         let store = CredentialVaultStore()
         vaultStore = store
+        noteVaultBuilt(store)
         return store
+    }
+
+    private var vaultBuiltObservers: [(CredentialVaultStore) -> Void] = []
+
+    /// Run `fn` with the vault store once it exists: now, if it has been
+    /// built, or the moment something first builds it.
+    ///
+    /// For a reader that must not build it - building it is what starts the
+    /// vault's git sync (`CredentialVaultStore.init`) - and still wants to
+    /// follow it from then on: the sidebar layout's lock badge.
+    func whenVaultIsBuilt(_ fn: @escaping (CredentialVaultStore) -> Void) {
+        if let vaultStore { fn(vaultStore) } else { vaultBuiltObservers.append(fn) }
+    }
+
+    /// Whether a vault file is on disk, read without building the store.
+    var vaultFileExistsWithoutBuildingTheStore: Bool {
+        FileManager.default.fileExists(atPath: vaultFileURLWithoutBuildingTheStore().path)
+    }
+
+    private func noteVaultBuilt(_ store: CredentialVaultStore) {
+        let observers = vaultBuiltObservers
+        vaultBuiltObservers = []
+        observers.forEach { $0(store) }
     }
 
     /// Whether a vault store has actually been built yet. Used by the export
@@ -92,6 +116,7 @@ final class GrandLineServices {
     /// production code.
     func replaceVaultForTests(_ store: CredentialVaultStore?) {
         vaultStore = store
+        if let store { noteVaultBuilt(store) }
     }
 
     /// Re-read from disk after a restore wrote files underneath the live

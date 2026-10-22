@@ -96,6 +96,8 @@ final class MainSplitShellController: WorkspaceShellController {
     let sidebar = WorkspaceSidebarController()
     let inspector = WorkspaceInspectorController()
     private let statusLine = WorkspaceStatusLine()
+    /// What the sidebar's badges and the status line's readouts draw from.
+    private lazy var signalsMonitor = WorkspaceSignalsMonitor(workspace: workspace)
     private lazy var contentPane = WorkspaceContentPaneController(body: workspace.content.bodyContainer,
                                                                    statusLine: statusLine)
     private var sidebarItem: NSSplitViewItem!
@@ -146,6 +148,8 @@ final class MainSplitShellController: WorkspaceShellController {
     /// The captain opened the inspector themselves, so it stays open with its
     /// empty state while nothing is selected.
     private var inspectorPinnedOpen = false
+    /// The page whose details the open inspector last brought in.
+    private var inspectorEntranceSource: ObjectIdentifier?
     /// The showing page, for re-reading its live subtitle and actions.
     private weak var pageController: NSViewController?
     private var lockOverlayIsShown = false
@@ -193,6 +197,10 @@ final class MainSplitShellController: WorkspaceShellController {
         buildToolbar()
         wireSidebar()
         statusLine.attachFocusTimer(workspace.focusTimer)
+        statusLine.onOpen = { [weak self] destination in self?.openFromStatusLine(destination) }
+        signalsMonitor.onChange = { [weak self] signals in self?.signalsDidChange(signals) }
+        signalsMonitor.start()
+        signalsDidChange(signalsMonitor.signals)
         recents.configure(registry: workspace.navigator.recentDestinations) { [weak self] kind in
             self?.workspace.navigator.navigateToRecentDestination(kind)
         }
@@ -449,6 +457,9 @@ final class MainSplitShellController: WorkspaceShellController {
     private func setSidebarCollapsed(_ collapsed: Bool, animated: Bool) {
         guard sidebarItem.isCollapsed != collapsed else { return }
         let animate = animated && view.window != nil && !HelmMotion.isReduced
+        #if FM_SELFTESTS
+        lastPaneMotionForTests = (pane: "sidebar", collapsed: collapsed, duration: animate ? WorkspaceMotion.paneDuration : nil)
+        #endif
         if !collapsed {
             sidebarItem.minimumThickness = sidebarThickness
             sidebarItem.maximumThickness = sidebarThickness
@@ -471,11 +482,7 @@ final class MainSplitShellController: WorkspaceShellController {
             if collapsed { release() } else { DispatchQueue.main.async(execute: release) }
             return
         }
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = HelmMotion.moveDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            self.sidebarItem.animator().isCollapsed = collapsed
-        }, completionHandler: release)
+        WorkspaceMotion.setCollapsed(sidebarItem, collapsed, animated: true, completion: release)
     }
 
 
@@ -575,16 +582,19 @@ final class MainSplitShellController: WorkspaceShellController {
             self.fitPanesToWindow()
         }
         guard inspectorItem.isCollapsed != collapsed else { settle(); return }
-        guard animated, view.window != nil, !HelmMotion.isReduced else {
-            inspectorItem.isCollapsed = collapsed
-            settle()
-            return
+        let duration = WorkspaceMotion.setCollapsed(inspectorItem, collapsed, animated: animated && view.window != nil,
+                                                    completion: settle)
+        #if FM_SELFTESTS
+        lastPaneMotionForTests = (pane: "inspector", collapsed: collapsed, duration: duration)
+        #endif
+        // The prototype's inspector slides in as it opens, whether the
+        // captain opened it or a selection did; it closes at once.
+        if collapsed {
+            inspectorEntranceSource = nil
+        } else {
+            inspector.playEntrance()
+            inspectorEntranceSource = inspector.hostedContentView == nil ? nil : inspectorSource.map(ObjectIdentifier.init)
         }
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = HelmMotion.moveDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            self.inspectorItem.animator().isCollapsed = collapsed
-        }, completionHandler: settle)
     }
 
     /// The column's floor for what the inspector shows now.
@@ -601,6 +611,8 @@ final class MainSplitShellController: WorkspaceShellController {
     /// where it fits.
     private func reconcileInspector() {
         guard inspectorItem != nil else { return }
+        let wasOpen = !inspectorItem.isCollapsed
+        let source = inspectorSource.map(ObjectIdentifier.init)
         let content = inspectorSource?.inspectorContent
         inspector.setContent(content, emptyText: inspectorSource?.inspectorEmptyText)
         var shown = inspectorPinnedOpen || (inspectorWanted && content != nil)
@@ -615,6 +627,16 @@ final class MainSplitShellController: WorkspaceShellController {
             }
         }
         setInspectorCollapsed(!shown, animated: false)
+        // Open already, and now another page's details: the panel arrives
+        // again, as the prototype's does when the module changes under it. A
+        // new selection on the same page swaps in place.
+        guard shown else { return }
+        if content != nil {
+            if wasOpen, source != inspectorEntranceSource { inspector.playEntrance() }
+            inspectorEntranceSource = source
+        } else {
+            inspectorEntranceSource = nil
+        }
     }
 
     // MARK: Pages in the sidebar layout
@@ -658,7 +680,7 @@ final class MainSplitShellController: WorkspaceShellController {
         if sidebarItem.isCollapsed {
             sidebarCollapsedForRoom = false
             makeRoom(sidebarShown: true, inspectorShown: !inspectorItem.isCollapsed)
-            setSidebarCollapsed(false, animated: false)
+            setSidebarCollapsed(false, animated: true)
         }
         sidebar.focusList()
         return true
@@ -690,19 +712,46 @@ final class MainSplitShellController: WorkspaceShellController {
     /// Show a tab: its page through the navigator, like every other route,
     /// then - for one of a page's own tabs - that tab, through the page.
     private func open(_ tab: ModuleTab) {
+        let from = currentTab
         if showingHostPage || currentRoute != tab.route { workspace.navigator.show(tab.route) }
         guard !showingHostPage, currentRoute == tab.route else { return }
         if tab.isPageTab, let host = pageController as? ModuleTabHosting {
+            // One of the page's own tabs is not a navigation, so nothing
+            // animated it: the page stays and its content changes under it.
+            // It takes a navigation's motion instead (`WorkspaceMotion`).
+            let switching = host.selectedModuleTabName != tab.name
+            if switching { workspace.content.crossfadeOutgoingPage(unless: false) }
             host.selectModuleTab(named: tab.name)
+            if switching { playTabEntrance(towardsLater: from.map { isLater(tab, than: $0) } ?? true) }
         }
         refreshModuleChrome()
+    }
+
+    /// Whether `tab` sits after `other` in its module's tab row.
+    private func isLater(_ tab: ModuleTab, than other: ModuleTab) -> Bool {
+        let tabs = currentModule.tabs
+        guard let a = tabs.firstIndex(of: tab), let b = tabs.firstIndex(of: other) else { return true }
+        return a > b
+    }
+
+    /// The showing page arrives the way a navigation's does - from the
+    /// trailing side for a later tab, the leading side for an earlier one.
+    private func playTabEntrance(towardsLater: Bool) {
+        guard let page = pageController?.view else { return }
+        workspace.content.animateDestinationEntrance(page, direction: towardsLater ? .drillIn : .back, skip: false)
     }
 
     private func tabClicked(_ index: Int) {
         if currentModule == .home {
             let spaces = DaylightSpace.allCases
             guard spaces.indices.contains(index) else { return }
+            let from = workspace.homeCanvas.selectedSpace
+            let switching = currentRoute == .homeCanvas && from != spaces[index]
+            if switching { workspace.content.crossfadeOutgoingPage(unless: false) }
             selectSpace(spaces[index])
+            if switching {
+                playTabEntrance(towardsLater: (spaces.firstIndex(of: from) ?? 0) < index)
+            }
             refreshModuleChrome()
             return
         }
@@ -821,6 +870,20 @@ final class MainSplitShellController: WorkspaceShellController {
         refreshModuleChrome()
     }
 
+    // MARK: Badges and the status line
+
+    private func signalsDidChange(_ signals: WorkspaceSignals) {
+        sidebar.setSignals(signals)
+        statusLine.render(signals: signals)
+    }
+
+    /// A status line readout: its page, and for the crew, the decisions
+    /// themselves - the bell's own way in.
+    private func openFromStatusLine(_ destination: RailDestination) {
+        workspace.navigator.show(destination)
+        if destination == .overview { workspace.overview.revealNeedsYou() }
+    }
+
     // MARK: Back and forward
 
     private func step(_ step: NavigationHistory.Step) {
@@ -895,7 +958,18 @@ final class MainSplitShellController: WorkspaceShellController {
         toolbar.setPageActions((pageController as? DaylightDrillActions)?.drillHeaderActions ?? [])
     }
 
+    override func workspaceCrewDidRead() {
+        signalsMonitor.crewDidRead()
+    }
+
+    override func workspaceQuotaDidRead(_ result: QuotaFetchResult) {
+        signalsMonitor.quotaDidRead(result)
+    }
+
     override func workspaceSessionsDidChange(_ registry: HostSessionRegistry) {
+        // The signals first, so the rows the reload below builds carry
+        // Console's new count.
+        signalsMonitor.sessionsDidChange(registry.sessions)
         sidebar.reload(pinned: AppSettings.shared.quickAccess.pinned, sessions: registry)
         statusLine.render(sessions: registry.sessions)
         contentPane.sessionStrip.render(registry)
@@ -904,7 +978,12 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     #if FM_SELFTESTS
+    /// The last time a pane collapsed or expanded: which, which way, and the
+    /// duration it eased over (nil when it landed at once).
+    private(set) var lastPaneMotionForTests: (pane: String, collapsed: Bool, duration: TimeInterval?)?
     var debugStatusLine: WorkspaceStatusLine { statusLine }
+    var debugSignalsMonitor: WorkspaceSignalsMonitor { signalsMonitor }
+    var debugInspector: WorkspaceInspectorController { inspector }
     var debugContentPane: NSView { contentPane.view }
     var debugSidebarIsCollapsed: Bool { sidebarItem.isCollapsed }
     var debugInspectorIsCollapsed: Bool { inspectorItem.isCollapsed }
