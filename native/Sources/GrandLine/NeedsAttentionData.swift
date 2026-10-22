@@ -438,8 +438,13 @@ enum NeedsAttentionComposer {
                 + "\(count == 1 ? "is" : "are") waiting."
         }
 
-        // The first clause is already capitalised; the rest are not, which is
-        // what makes ", and " read as prose rather than as a list of titles.
-        return clauses.joined(separator: ", and ") + "."
+        // The clauses after the first are not capitalised, which is what makes
+        // ", and " read as prose rather than as a list of titles. A signal's
+        // clause is written to follow another ("..., and nothing known needs
+        // you right now"), so a sentence it leads gets its capital here - Home
+        // read "nothing known needs you right now." when the fleet was the
+        // only thing to report.
+        let sentence = clauses.joined(separator: ", and ") + "."
+        return String(sentence.prefix(1)).uppercased() + String(sentence.dropFirst())
     }
 }

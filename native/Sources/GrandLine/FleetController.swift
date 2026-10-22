@@ -142,6 +142,9 @@ final class FleetController: NSViewController {
     }
 
     private var activeTab: OverviewTab = .overview
+    /// The sidebar layout's toolbar draws the two tabs as Crew's In flight and
+    /// Log (`ModuleTabHosting`, at the end of this file).
+    var onModuleTabChanged: (() -> Void)?
     private let tabs = HelmSegmentedTabs(items: OverviewTab.allCases.map { .init(id: $0.rawValue, title: $0.title) },
                                          selected: OverviewTab.overview.rawValue)
 
@@ -713,6 +716,7 @@ final class FleetController: NSViewController {
         logContainer.isHidden = tab != .log
         if tab == .log { renderLog() }
         applyTheme()
+        onModuleTabChanged?()
     }
 
     /// Re-reads the feed and re-renders it. Called when the Log tab is shown,
@@ -1345,6 +1349,7 @@ final class FleetController: NSViewController {
     var debugTabIDs: [String] { OverviewTab.allCases.map { $0.rawValue } }
 
     var debugActiveTabID: String { activeTab.rawValue }
+    var debugTabsAreHidden: Bool { tabs.isHidden }
     /// Review #3 §7's header action - the dashboard's one way to the crew,
     /// now that the composer that used to be here is gone.
     var debugCrewButton: HelmButton { crewButton }
@@ -1377,4 +1382,19 @@ final class FleetController: NSViewController {
     var debugInFlightRowViews: [NSView] { inFlightStack.arrangedSubviews }
     var debugNeedsRowViews: [NSView] { needsStack.arrangedSubviews }
     #endif
+}
+
+// MARK: - Crew's In flight and Log in the sidebar layout
+
+extension FleetController: ModuleTabHosting {
+    var moduleTabNames: [String] { ["In flight", "Log"] }
+
+    var selectedModuleTabName: String { activeTab == .log ? "Log" : "In flight" }
+
+    func selectModuleTab(named name: String) {
+        guard isViewLoaded else { return }
+        switchTab(name == "Log" ? .log : .overview)
+    }
+
+    func setModuleTabControlHidden(_ hidden: Bool) { tabs.isHidden = hidden }
 }

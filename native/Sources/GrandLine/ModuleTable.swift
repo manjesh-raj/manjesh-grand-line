@@ -21,12 +21,10 @@
 // `ModuleTableSelfTest` asserts that every row agrees with each of the six old
 // tables, so the two sources of truth cannot drift while both exist.
 //
-// **Who reads it.** Since step 3, the sidebar layout does
-// (`WorkspaceSidebarModel`): its four groups, and the order of the pages inside
-// them, come from the `module` and `child` columns.
-// The floating bar reads none of it, and nothing here mounts or draws anything.
-// Step 4 makes the modules themselves the sidebar's rows, with their children
-// as tabs.
+// **Who reads it.** The sidebar layout does, and the floating bar reads none
+// of it. Since step 4 the sidebar's rows are the modules themselves, and a
+// module's children are the tabs the window toolbar draws for it
+// (`WorkspaceModule.tabs`); nothing here mounts or draws anything.
 //
 // **The planned home of each destination** is the `module` and `child` columns.
 // They follow the captain's modular workspace prototype (Version 2): eighteen
@@ -123,11 +121,19 @@ enum WorkspaceModule: String, CaseIterable {
     /// the real page wins: Kubernetes keeps its Cluster and Log Tail tabs.
     /// Knowledge's fourth tab is Docs, the captain's rename of the prototype's
     /// Playbook: it is the Docs page, which shows the DevOps Playbook.
+    ///
+    /// The same rule took three of the prototype's tabs out in step 4, because
+    /// no real view is behind them. Crew's Needs you and Merge queue are parts
+    /// of pages it already has: the decisions waiting on the captain are the
+    /// Needs your call list on the Fleet dashboard (In flight), and a ready PR
+    /// carries its Merge button on Review. Connections' Sessions are Console's,
+    /// in the sidebar and in Console's session strip. A unified Needs you view
+    /// is a new capability the review lists separately, not a consolidation.
     var children: [String] {
         switch self {
         case .tasks: return ["Board", "List", "Calendar", "Weekly review"]
-        case .crew: return ["Needs you", "In flight", "Merge queue", "Review", "Ask the crew", "Log"]
-        case .connections: return ["Hosts", "Sessions", "Keys", "Snippets", "Commands"]
+        case .crew: return ["In flight", "Review", "Ask the crew", "Log"]
+        case .connections: return ["Hosts", "Keys", "Snippets", "Commands"]
         case .knowledge: return ["Notebook", "Runbooks", "Postmortems", "Docs", "Reading list"]
         case .secrets: return ["Poneglyph", "Automic Vault"]
         case .kubernetes: return ["Cluster", "Log Tail"]
@@ -137,6 +143,77 @@ enum WorkspaceModule: String, CaseIterable {
             return []
         }
     }
+}
+
+// MARK: - The module's chrome in the sidebar layout
+
+extension WorkspaceModule {
+
+    /// The sidebar row's symbol. A module that is one page uses that page's
+    /// own, so nothing a captain recognises changes; a module of several pages
+    /// has one of its own.
+    var symbol: String {
+        switch self {
+        case .crew: return "person.3.fill"
+        case .connections: return "server.rack"
+        case .knowledge: return "books.vertical"
+        case .secrets: return "key.fill"
+        case .setup: return "hammer"
+        default: return ModuleTable.routes(in: self).first.map(\.symbol) ?? "square.grid.2x2"
+        }
+    }
+
+    /// The page that draws those of this module's children that are its own
+    /// tabs rather than destinations: Shift's views are Tasks' tabs, the
+    /// Fleet page's Dashboard and Log are Crew's In flight and Log, the Hosts
+    /// page's Hosts, SSH Keys and Snippets are Connections' first three, and
+    /// Kubernetes' Cluster and Log Tail are its own.
+    var pageTabHost: RailDestination? {
+        switch self {
+        case .tasks: return .shift
+        case .crew: return .overview
+        case .connections: return .hosts
+        case .kubernetes: return .kubernetes
+        default: return nil
+        }
+    }
+
+    /// Whether the window toolbar draws this module's children as tabs.
+    /// Settings keeps its categories in its own page column, as the prototype
+    /// does, and a module that is one page has no children.
+    var drawsToolbarTabs: Bool { self != .settings && !children.isEmpty }
+
+    /// The tabs the window toolbar draws for this module, in `children` order.
+    /// A tab is a destination of its own when a row claims it, and otherwise
+    /// one of `pageTabHost`'s own tabs. Its `route` is the page either way, so
+    /// every one of the 29 routes still lands on its page.
+    var tabs: [ModuleTab] {
+        guard drawsToolbarTabs else { return [] }
+        return children.compactMap { name in
+            if let row = ModuleTable.rows.first(where: { $0.module == self && $0.child == name }) {
+                return ModuleTab(module: self, name: name, route: row.route, isPageTab: row.route == pageTabHost)
+            }
+            guard let host = pageTabHost else { return nil }
+            return ModuleTab(module: self, name: name, route: host, isPageTab: true)
+        }
+    }
+
+    /// Whether the content column opens with the module's large title and its
+    /// page's live subtitle. The captain dropped it on Connections and Console;
+    /// every other module keeps it.
+    var showsHeader: Bool { self != .connections && self != .console }
+}
+
+/// One tab of a module, as the window toolbar draws it.
+struct ModuleTab: Equatable {
+    let module: WorkspaceModule
+    /// The child's name, as `WorkspaceModule.children` declares it.
+    let name: String
+    /// The page that draws the tab.
+    let route: RailDestination
+    /// Whether the tab is one of that page's own tabs, which it selects through
+    /// `ModuleTabHosting`, rather than the page itself.
+    let isPageTab: Bool
 }
 
 /// One destination, with everything the six old tables say about it and the
@@ -305,5 +382,18 @@ enum ModuleTable {
     /// The destinations that move into `module`, in table order.
     static func routes(in module: WorkspaceModule) -> [RailDestination] {
         rows.filter { $0.module == module }.map(\.route)
+    }
+
+    /// The module `route` lives in.
+    static func module(for route: RailDestination) -> WorkspaceModule {
+        descriptor(for: route)?.module ?? .home
+    }
+
+    /// The tab `route` stands for. On a page that draws several of its
+    /// module's tabs, `pageTab` is which of its own tabs is showing; a page
+    /// that has not said yet stands for the first of them.
+    static func tab(for route: RailDestination, pageTab: String?) -> ModuleTab? {
+        let tabs = module(for: route).tabs.filter { $0.route == route }
+        return tabs.first { $0.name == pageTab } ?? tabs.first
     }
 }

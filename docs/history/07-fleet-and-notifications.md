@@ -1505,3 +1505,18 @@ What is specific to these surfaces:
 - The notification list keys rows, group headers, hairlines and expanded children by entry id.
   The headers, hairlines and children blocks became small view classes (`NotificationGroupHeaderView`, `NotificationListSeparatorView`, `NotificationChildrenView`) so a kept one can still be repainted on a theme change.
   PF3's signature short-circuit is unchanged and still runs first.
+
+## The Merge queue's order, and its untitled rows (modular-shell stage 4, `fm/grandline-modular-shell-migration-1792578041`)
+
+Found while comparing the floating bar's renders across runs, so both layouts had it.
+
+- **The Merge queue reshuffled on every launch.**
+  `FleetDataSource.mergedPRs` returned `Array(byURL.values)`, and Swift seeds a dictionary's order per process.
+  The open-PR scan underneath also appends each repo's PRs as its worker finishes, so its own order is not stable either.
+  The list is sorted now, by repo, then number, then URL, through `MergedPR.listOrder`, which Review's grouping uses too.
+  `FleetDataSelfTest` feeds six PRs in two orders and expects one sorted list, which a dictionary-ordered result matches by chance once in 720 runs.
+- **A task's PR that the scan never returned was a blank row.**
+  It has no title, and Review already named it "PR #N" in its own code.
+  `MergedPR.displayTitle` is that fallback, and both Review and Home's Merge queue read it.
+  `HomeDashboardViewSelfTest.checkAnUntitledPRIsNamed` reads the painted row, which said `["", "No checks"]` before.
+- Stage 4's own account is in [`03-navigation-and-chrome.md`](03-navigation-and-chrome.md).

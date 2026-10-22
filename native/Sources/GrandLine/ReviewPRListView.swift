@@ -162,7 +162,7 @@ private final class ReviewPRRowCellView: NSView {
         var kickerParts: [String] = []
         if !pr.repo.isEmpty { kickerParts.append(pr.repo) }
         kickerParts.append(pr.number != nil ? "PR #\(pr.number!)" : "PR")
-        let heading = pr.title.isEmpty ? (pr.number != nil ? "PR #\(pr.number!)" : "PR") : pr.title
+        let heading = pr.displayTitle
 
         reviewButton.identifier = NSUserInterfaceItemIdentifier(pr.url)
 

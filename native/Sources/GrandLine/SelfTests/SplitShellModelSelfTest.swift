@@ -1,12 +1,16 @@
 // Grand Line - native macOS app.
 //
-// Stage 3 of the modular-shell migration: the sidebar shell's pure halves.
+// Stages 3 and 4 of the modular-shell migration: the sidebar shell's pure
+// halves.
 //
-//   1. **The sidebar lists every page, once.** `WorkspaceSidebarModel` over
-//      the module table: Home first, the captain's pins in their own order,
-//      then the four groups, with Console's live sessions as its children.
-//      A destination added without a module, or dropped from the table,
-//      fails here by name rather than quietly having no row.
+//   1. **The sidebar lists every module, once, and every route still lands.**
+//      `WorkspaceSidebarModel` over the module table: Home first, the
+//      captain's pins in their own order, then the four groups, with
+//      Console's live sessions as its children. Every one of the 29 routes
+//      resolves to exactly one module, and to one of its tabs where the
+//      toolbar draws them - the deep-link sweep the review's step 4 asks for.
+//      A destination added without a module, or a tab with no real view
+//      behind it, fails here by name.
 //   2. **Back and Forward walk what was shown.** `NavigationHistory`.
 //   3. **The layout setting.** The floating bar is the default and the
 //      answer to any value this build does not know, and each layout builds
@@ -32,9 +36,10 @@ enum SplitShellModelSelfTest {
 
     static func run() -> Bool {
         var allOK = true
-        for check in [checkEveryPageIsListedOnce, checkGroupsFollowTheModuleTable, checkPinnedMirrorsQuickAccess,
-                      checkSessionsAreConsoleChildren, checkHistoryWalksBackAndForward,
-                      checkHistoryEdges, checkTheLayoutSetting, checkTheWiring] {
+        for check in [checkEveryModuleIsListedOnce, checkEveryRouteLandsOnAModuleAndATab, checkGroupsFollowTheModuleTable,
+                      checkTheTabsAreTheRealViews, checkPinnedMirrorsQuickAccess, checkSessionsAreConsoleChildren,
+                      checkHistoryWalksBackAndForward, checkHistoryEdges, checkTheLayoutSetting, checkHomeCardLayout,
+                      checkTheWiring] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -45,23 +50,46 @@ enum SplitShellModelSelfTest {
 
     // MARK: 1 - the sidebar
 
-    private static func checkEveryPageIsListedOnce(_ ok: inout Bool) {
-        let listed = WorkspaceSidebarModel.listedDestinations()
-        check(listed.count == RailDestination.allCases.count,
-              "the sidebar lists \(listed.count) pages for \(RailDestination.allCases.count) destinations", &ok)
-        let missing = Set(RailDestination.allCases).subtracting(listed)
-        check(missing.isEmpty, "no sidebar row for \(missing.map(\.rawValue).sorted())", &ok)
-        let duplicated = Dictionary(grouping: listed, by: { $0 }).filter { $0.value.count > 1 }.keys
-        check(duplicated.isEmpty, "listed twice outside Pinned: \(duplicated.map(\.rawValue).sorted())", &ok)
+    private static func checkEveryModuleIsListedOnce(_ ok: inout Bool) {
+        let listed = WorkspaceSidebarModel.listedModules()
+        check(listed.count == 18 && Set(listed) == Set(WorkspaceModule.allCases) && Set(listed).count == listed.count,
+              "the sidebar lists \(listed.map(\.rawValue)), want Home and the seventeen modules once each", &ok)
 
         // The same set as the rows the outline view gets, read off the tree.
         let roots = WorkspaceSidebarModel.roots(pinned: [], sessions: [])
-        let fromTree = roots.flatMap { [$0] + $0.children }.compactMap { node -> RailDestination? in
-            if case .destination(let destination, pinned: false) = node.entry { return destination }
+        let fromTree = roots.flatMap { [$0] + $0.children }.compactMap { node -> WorkspaceModule? in
+            if case .module(let module) = node.entry { return module }
             return nil
         }
-        check(fromTree == listed, "the tree's page rows \(fromTree.map(\.rawValue)) are not the listed pages", &ok)
-        check(roots.first?.entry == .destination(.homeCanvas, pinned: false), "Home is not the sidebar's first row", &ok)
+        check(fromTree == listed, "the tree's module rows \(fromTree.map(\.rawValue)) are not the listed modules", &ok)
+        check(roots.first?.entry == .module(.home), "Home is not the sidebar's first row", &ok)
+    }
+
+    /// The review's step 4 acceptance: every one of the 29 routes still
+    /// resolves, through the module the sidebar lists and - where the toolbar
+    /// draws the module's tabs - through one of them, so a deep link, a
+    /// notification's Show in app, ⌘K or Recents lights the right row and tab.
+    private static func checkEveryRouteLandsOnAModuleAndATab(_ ok: inout Bool) {
+        let listed = Set(WorkspaceSidebarModel.listedModules())
+        for route in RailDestination.allCases {
+            let module = ModuleTable.module(for: route)
+            check(ModuleTable.descriptor(for: route) != nil && listed.contains(module),
+                  "\(route.rawValue) has no module the sidebar lists", &ok)
+            if module.drawsToolbarTabs {
+                check(module.tabs.contains { $0.route == route },
+                      "\(route.rawValue) lives in \(module.title) but none of its tabs shows it", &ok)
+                check(ModuleTable.tab(for: route, pageTab: nil)?.route == route,
+                      "a deep link to \(route.rawValue) does not light one of \(module.title)'s tabs", &ok)
+            } else {
+                check(ModuleTable.routes(in: module).contains(route) && module.pages.contains(route),
+                      "\(route.rawValue) is not one of \(module.title)'s pages", &ok)
+            }
+        }
+        // Every module opens on one of its own pages.
+        for module in WorkspaceModule.allCases {
+            check(ModuleTable.module(for: module.primaryRoute) == module,
+                  "\(module.title) opens on \(module.primaryRoute.rawValue), which is not its own", &ok)
+        }
     }
 
     private static func checkGroupsFollowTheModuleTable(_ ok: inout Bool) {
@@ -72,58 +100,96 @@ enum SplitShellModelSelfTest {
         }
         check(sections == WorkspaceGroup.allCases.map(\.title),
               "the sections are \(sections), want the four groups in order", &ok)
+        let expected: [WorkspaceGroup: [WorkspaceModule]] = [
+            .work: [.tasks, .crew, .connections, .console, .knowledge, .secrets],
+            .observe: [.kubernetes, .logs, .health, .schedules],
+            .workbench: [.tools, .whiteboard, .stickyBoard, .code, .dictation],
+            .machine: [.setup, .settings],
+        ]
         for group in WorkspaceGroup.allCases {
-            for destination in WorkspaceSidebarModel.destinations(in: group) {
-                let module = ModuleTable.descriptor(for: destination)?.module
-                check(module?.group == group,
-                      "\(destination.rawValue) is listed under \(group.title) but the table puts it in \(module?.group?.title ?? "none")", &ok)
+            let modules = WorkspaceSidebarModel.modules(in: group)
+            check(modules == expected[group],
+                  "\(group.title) lists \(modules.map(\.rawValue)), want \(expected[group]?.map(\.rawValue) ?? [])", &ok)
+        }
+    }
+
+    /// Each module's tabs are real views: a destination of its own, or one of
+    /// the page's own tabs. Typed out, because the table is what is being
+    /// checked.
+    private static func checkTheTabsAreTheRealViews(_ ok: inout Bool) {
+        typealias Tab = (name: String, route: RailDestination, pageTab: Bool)
+        let expected: [WorkspaceModule: [Tab]] = [
+            .tasks: [("Board", .shift, true), ("List", .shift, true), ("Calendar", .shift, true),
+                     ("Weekly review", .shift, true)],
+            .crew: [("In flight", .overview, true), ("Review", .review, false), ("Ask the crew", .strawHat, false),
+                    ("Log", .overview, true)],
+            .connections: [("Hosts", .hosts, true), ("Keys", .hosts, true), ("Snippets", .hosts, true),
+                           ("Commands", .commandLibrary, false)],
+            .knowledge: [("Notebook", .notebook, false), ("Runbooks", .runbooks, false),
+                         ("Postmortems", .postmortems, false), ("Docs", .docs, false),
+                         ("Reading list", .readingList, false)],
+            .secrets: [("Poneglyph", .poneglyph, false), ("Automic Vault", .vault, false)],
+            .kubernetes: [("Cluster", .kubernetes, true), ("Log Tail", .kubernetes, true)],
+            .setup: [("Updates", .updates, false), ("Setup steps", .bootstrap, false),
+                     ("Automation", .automation, false), ("GitHub sync", .githubSync, false)],
+        ]
+        for module in WorkspaceModule.allCases {
+            let tabs = module.tabs.map { Tab($0.name, $0.route, $0.isPageTab) }
+            let want = expected[module] ?? []
+            check(tabs.count == want.count && zip(tabs, want).allSatisfy { $0.name == $1.name && $0.route == $1.route && $0.pageTab == $1.pageTab },
+                  "\(module.title)'s tabs are \(tabs.map { "\($0.name)/\($0.route.rawValue)/\($0.pageTab)" }), want \(want.map { "\($0.name)/\($0.route.rawValue)/\($0.pageTab)" })", &ok)
+            if module.drawsToolbarTabs {
+                check(tabs.count == module.children.count, "\(module.title) has a child with no view behind it", &ok)
             }
         }
-        // Inside a module, the order of its children - Knowledge in the
-        // prototype's tab order rather than declaration order.
-        let work = WorkspaceSidebarModel.destinations(in: .work)
-        let knowledge = work.filter { ModuleTable.descriptor(for: $0)?.module == .knowledge }
-        check(knowledge == [.notebook, .runbooks, .postmortems, .docs, .readingList],
-              "Knowledge's pages are \(knowledge.map(\.rawValue)), want Notebook, Runbooks, Postmortems, Docs, Reading List", &ok)
-        let setup = WorkspaceSidebarModel.destinations(in: .machine)
-        check(setup == [.updates, .bootstrap, .automation, .githubSync, .settings],
-              "Machine lists \(setup.map(\.rawValue)), want Updates, Bootstrap, Automation, GitHub Sync, Settings", &ok)
+        check(!WorkspaceModule.settings.drawsToolbarTabs && !WorkspaceModule.settings.children.isEmpty,
+              "Settings' categories moved into the toolbar; its page keeps its own column", &ok)
+        // The captain's call: no big title on Connections and Console, and
+        // every other module keeps its title and subtitle.
+        let headless = WorkspaceModule.allCases.filter { !$0.showsHeader }
+        check(headless == [.connections, .console], "the modules without a header are \(headless.map(\.rawValue))", &ok)
     }
 
     private static func checkPinnedMirrorsQuickAccess(_ ok: inout Bool) {
-        let pinned: [RailDestination] = [.console, .stickyBoard, .hosts]
+        // Pages nested inside a module of several, in the captain's order;
+        // a page that is its module's only page is that module's row already.
+        let pinned: [RailDestination] = [.hosts, .console, .strawHat, .stickyBoard]
         let roots = WorkspaceSidebarModel.roots(pinned: pinned, sessions: [])
         guard roots.count > 1, roots[1].entry == .section(WorkspaceSidebarModel.pinnedTitle) else {
             fail("the Pinned section is not right under Home", &ok)
             return
         }
-        check(roots[1].children.map(\.entry) == pinned.map { .destination($0, pinned: true) },
-              "the Pinned rows are not the pins in the captain's order", &ok)
-        let none = WorkspaceSidebarModel.roots(pinned: [], sessions: [])
-        check(!none.contains { $0.entry == .section(WorkspaceSidebarModel.pinnedTitle) },
-              "an empty pin list still draws a Pinned section", &ok)
-        // The default pins are the floating bar's own seven.
+        check(roots[1].children.map(\.entry) == [.pinned(.hosts), .pinned(.strawHat)],
+              "the Pinned rows are \(roots[1].children.map(\.entry)), want Hosts then Straw Hat Pirates", &ok)
+        check(RailDestination.hosts.isNestedInItsModule && !RailDestination.stickyBoard.isNestedInItsModule,
+              "the fixture's two kinds of pin are not what this check assumes - it would pass vacuously", &ok)
+        for none in [[RailDestination](), [.console, .stickyBoard]] {
+            check(!WorkspaceSidebarModel.roots(pinned: none, sessions: []).contains { $0.entry == .section(WorkspaceSidebarModel.pinnedTitle) },
+                  "pins \(none.map(\.rawValue)) still draw a Pinned section", &ok)
+        }
+        // The floating bar's own default pins: the nested ones are listed.
         let defaults = WorkspaceSidebarModel.roots(pinned: QuickAccessConfiguration().pinned, sessions: [])
-        check(defaults[1].children.count == QuickAccessConfiguration.defaultPinned.count,
-              "the default Pinned section does not carry the bar's default pins", &ok)
+        let nested = QuickAccessConfiguration.defaultPinned.filter(\.isNestedInItsModule)
+        check(!nested.isEmpty && defaults[1].children.map(\.entry) == nested.map { .pinned($0) },
+              "the default Pinned section does not carry the bar's nested default pins", &ok)
     }
 
     private static func checkSessionsAreConsoleChildren(_ ok: inout Bool) {
         let first = HostSession(hostID: UUID(), label: "DEV Bastion", accentHex: nil, startedAt: Date(), state: .connected)
         let second = HostSession(hostID: UUID(), label: "PROD Web", accentHex: nil, startedAt: Date(), state: .restored)
-        let roots = WorkspaceSidebarModel.roots(pinned: [.console], sessions: [first, second])
+        let roots = WorkspaceSidebarModel.roots(pinned: [.console, .hosts], sessions: [first, second])
         let nodes = roots.flatMap { [$0] + $0.children }
-        let consoles = nodes.filter { $0.entry == .destination(.console, pinned: false) }
+        let consoles = nodes.filter { $0.entry == .module(.console) }
         check(consoles.count == 1, "Console appears \(consoles.count) times in the groups", &ok)
         check(consoles.first?.children.map(\.entry) == [.session(hostID: first.hostID), .session(hostID: second.hostID)],
               "the sessions are not Console's children, in the registry's order", &ok)
-        let pinnedConsole = nodes.first { $0.entry == .destination(.console, pinned: true) }
-        check(pinnedConsole?.children.isEmpty == true, "the Pinned copy of Console carries the sessions too", &ok)
+        check(!nodes.contains { $0.entry == .pinned(.console) }, "a pinned Console repeats the Console row", &ok)
+        check(nodes.first { $0.entry == .pinned(.hosts) }?.children.isEmpty == true, "a pinned row carries children", &ok)
         let others = nodes.filter {
-            if case .destination(let destination, _) = $0.entry { return destination != .console }
+            if case .module(let module) = $0.entry { return module != .console }
             return false
         }
-        check(others.allSatisfy { $0.children.isEmpty }, "a page other than Console has children", &ok)
+        check(others.allSatisfy { $0.children.isEmpty }, "a module other than Console has children", &ok)
     }
 
     // MARK: 2 - back and forward
@@ -212,15 +278,104 @@ enum SplitShellModelSelfTest {
               "a layout builds the wrong shell", &ok)
     }
 
+    // MARK: 3b - Home's arranged cards
+
+    private static func checkHomeCardLayout(_ ok: inout Bool) {
+        // Before the captain arranges anything Home shows the hub's own cards.
+        let standard = HomeCardLayout.standard
+        check(Set(standard.shown) == Set(DaylightModule.canvasOrder.filter { $0.isVisible(in: .overview) })
+                && standard.shown.count == Set(standard.shown).count && !standard.shown.isEmpty,
+              "the standard layout is \(standard.shown.map(\.rawValue)), not the hub's own cards", &ok)
+        // Arranged to fill rows: at four columns, two full rows.
+        let rows = HelmResponsiveGrid.packRows(spans: standard.shown.map { standard.size(of: $0).span }, columns: 4)
+        check(rows.allSatisfy { $0.reduce(0) { $0 + $1.span } == 4 },
+              "at four columns Home's own cards leave a gap: \(rows.map { $0.map(\.span) })", &ok)
+        check(Set(standard.shown).union(standard.hidden) == Set(DaylightModule.allCases)
+                && Set(standard.shown).isDisjoint(with: standard.hidden),
+              "shown and hidden do not partition every card", &ok)
+        check(standard.size(of: .briefing) == .large && standard.size(of: .fleet) == .small,
+              "a card's own span is not its standard size", &ok)
+
+        var layout = standard
+        guard let first = layout.shown.first, let second = layout.shown.dropFirst().first,
+              let extra = layout.hidden.first else {
+            fail("the standard layout has too few cards to arrange - the case is vacuous", &ok)
+            return
+        }
+        layout.show(extra)
+        check(layout.shown.last == extra && !layout.hidden.contains(extra), "showing a card did not add it at the end", &ok)
+        layout.move(second, by: -1)
+        check(Array(layout.shown.prefix(2)) == [second, first], "moving a card earlier did not swap it with the one before", &ok)
+        check(!layout.canMove(second, by: -1), "the first card can still move earlier", &ok)
+        layout.setSize(.wide, for: first)
+        check(layout.size(of: first) == .wide && HomeCardLayout.Size.wide.span >= 12, "a card's size did not stick", &ok)
+        layout.hide(first)
+        check(!layout.shown.contains(first) && layout.hidden.contains(first), "hiding a card did not take it off Home", &ok)
+
+        // A newer build's card survives this build's edits and round trip.
+        guard let data = layout.storedData,
+              var json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              var ids = json["shown"] as? [String] else {
+            fail("the layout did not encode", &ok)
+            return
+        }
+        ids.insert("aCardFromANewerBuild", at: 1)
+        json["shown"] = ids
+        guard let newer = try? JSONSerialization.data(withJSONObject: json),
+              var read = HomeCardLayout(storedData: newer) else {
+            fail("a layout with an unknown card did not decode", &ok)
+            return
+        }
+        check(read.shown == layout.shown, "an unknown card changed the cards this build shows", &ok)
+        read.move(second, by: 1)
+        read.show(.settings)
+        guard let rewritten = read.storedData, let again = HomeCardLayout(storedData: rewritten) else {
+            fail("the edited layout did not round-trip", &ok)
+            return
+        }
+        check(again.shownIDs.contains("aCardFromANewerBuild"), "an edit dropped a newer build's card", &ok)
+        check(HomeCardLayout(storedData: Data("not json".utf8)) == nil, "junk decoded as a layout", &ok)
+
+        // The preference: the standard set until written, and what was written after.
+        let suite = "split-shell-home-layout-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            fail("could not open a scratch defaults domain", &ok)
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        check(settings.homeCardLayout == .standard, "Home's layout does not default to the standard set", &ok)
+        settings.homeCardLayout = layout
+        check(settings.homeCardLayout == layout, "Home's layout did not persist", &ok)
+        defaults.set(Data("junk".utf8), forKey: "fm.homeCardLayout")
+        check(settings.homeCardLayout == .standard, "an unreadable layout did not fall back to the standard set", &ok)
+    }
+
     // MARK: 4 - the wiring
 
     private static func code(_ file: String) -> String? { FeatureInventorySelfTest.source(file) }
 
     private static func checkTheWiring(_ ok: inout Bool) {
         guard let main = code("main.swift"), let lock = code("LockPresenter.swift"),
-              let shell = code("MainSplitShellController.swift"), let settings = code("SettingsController.swift") else {
+              let shell = code("MainSplitShellController.swift"), let settings = code("SettingsController.swift"),
+              let classic = code("AppShellController.swift"), let canvas = code("HomeCanvasController.swift") else {
             fail("could not read the sources this check reads - it would pass vacuously", &ok)
             return
+        }
+        // Home's arranged cards are the sidebar layout's: it hands the canvas
+        // the captain's layout, the floating bar never does, and without one
+        // the hub keeps its hand-placed dashboard.
+        check(shell.contains("workspace.homeCanvas.cardLayout = AppSettings.shared.homeCardLayout"),
+              "the sidebar layout no longer gives Home the captain's arranged cards", &ok)
+        check(!classic.contains("cardLayout"), "the floating bar hands Home a card layout, which would replace its hub", &ok)
+        check(canvas.contains("private var usesDashboardLayout: Bool { space == .overview && cardLayout == nil }"),
+              "Home's hub no longer keeps its dashboard when no layout is set", &ok)
+        // The four pages whose own tabs are a module's tabs.
+        for (file, type) in [("ShiftController.swift", "ShiftController"), ("FleetController.swift", "FleetController"),
+                             ("HostsController.swift", "HostsController"),
+                             ("KubernetesController+Behaviour.swift", "KubernetesController")] {
+            check(code(file)?.contains("extension \(type): ModuleTabHosting") == true,
+                  "\(type) no longer lets the toolbar draw its tabs", &ok)
         }
         check(main.contains("workspaceLayout.shellType.init("),
               "main.swift no longer builds the shell the layout setting names", &ok)

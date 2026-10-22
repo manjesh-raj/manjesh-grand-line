@@ -318,6 +318,33 @@ final class HomeCanvasController: NSViewController {
     /// The hub's own-height preferences (`dashboardColumn`), by module, so
     /// an in-place refresh can move them with the content.
     private var dashboardOwnHeights: [DaylightModule: NSLayoutConstraint] = [:]
+
+    // MARK: Home's arranged cards (the sidebar layout, modular-shell stage 4)
+
+    /// The cards Home's own space shows, which the sidebar layout sets
+    /// (`HomeCardLayout`). Nil - the floating bar - keeps the hub's
+    /// hand-placed dashboard exactly as it is.
+    var cardLayout: HomeCardLayout? {
+        didSet {
+            guard cardLayout != oldValue, isViewLoaded else { return }
+            render()
+        }
+    }
+    /// Every arrangement the captain makes in Customize, for the shell to keep.
+    var onCardLayoutChanged: ((HomeCardLayout) -> Void)?
+    /// Customize: the tray above the grid and the controls on every card.
+    private(set) var isCustomizing = false
+    private lazy var customizeTray: HomeCustomizeTray = {
+        let tray = HomeCustomizeTray()
+        tray.translatesAutoresizingMaskIntoConstraints = false
+        tray.onAdd = { [weak self] module in self?.arrange { $0.show(module) } }
+        tray.onReset = { [weak self] in self?.arrange { $0 = .standard } }
+        tray.onDone = { [weak self] in self?.endCustomizing() }
+        return tray
+    }()
+    /// Set by the shell, which owns Customize's toolbar button.
+    var onCustomizingChanged: ((Bool) -> Void)?
+    private var cardStrips: [DaylightModule: HomeCardCustomizeStrip] = [:]
     private var themeToken: ThemeObservation?
     private var signalCountsToken: BackgroundSignalsPoller.CountsObservation?
     private var windowResizeObserver: NSObjectProtocol?
@@ -710,6 +737,11 @@ final class HomeCanvasController: NSViewController {
     /// leave layout when hidden, and these live inside packed rows).
     func select(space newSpace: DaylightSpace) {
         guard newSpace != space else { return }
+        // Only Home's own space is arranged, so leaving it ends Customize.
+        if isCustomizing, newSpace != .overview {
+            isCustomizing = false
+            onCustomizingChanged?(false)
+        }
         space = newSpace
         render()
         view.layoutSubtreeIfNeeded()
@@ -1325,7 +1357,73 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func visibleModules() -> [DaylightModule] {
-        DaylightModule.canvasOrder.filter { $0.isVisible(in: space) }
+        if showsArrangedCards, let cardLayout { return cardLayout.shown }
+        return DaylightModule.canvasOrder.filter { $0.isVisible(in: space) }
+    }
+
+    /// Whether Home's own space is showing the captain's arranged cards.
+    private var showsArrangedCards: Bool { space == .overview && cardLayout != nil }
+
+    /// A card's grid span: its own, or the size the captain gave it on Home.
+    private func cardSpan(_ module: DaylightModule) -> Int {
+        guard showsArrangedCards, let cardLayout else { return module.gridSpan }
+        return cardLayout.size(of: module).span
+    }
+
+    // MARK: Customize
+
+    /// Enter or leave Customize. Only Home's own space, and only with a
+    /// layout to arrange - the floating bar has none.
+    func setCustomizing(_ customizing: Bool) {
+        let customizing = customizing && cardLayout != nil
+        guard customizing != isCustomizing else { return }
+        if customizing, space != .overview { space = .overview }
+        isCustomizing = customizing
+        guard isViewLoaded else { return }
+        render()
+        view.layoutSubtreeIfNeeded()
+        if customizing { scrollToTop() }
+    }
+
+    private func endCustomizing() {
+        setCustomizing(false)
+        onCustomizingChanged?(false)
+    }
+
+    /// The captain changed the arrangement: keep it, tell the shell, redraw.
+    private func arrange(_ change: (inout HomeCardLayout) -> Void) {
+        guard var layout = cardLayout else { return }
+        change(&layout)
+        guard layout != cardLayout else { return }
+        cardLayout = layout
+        onCardLayoutChanged?(layout)
+    }
+
+    /// The tray sits above the attention card while Customize is on.
+    private func placeCustomizeTray() {
+        let wanted = isCustomizing && showsArrangedCards
+        if wanted, customizeTray.superview !== stack {
+            stack.insertArrangedSubview(customizeTray, at: 1)
+            customizeTray.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        } else if !wanted, customizeTray.superview === stack {
+            stack.removeArrangedSubview(customizeTray)
+            customizeTray.removeFromSuperview()
+        }
+        customizeTray.hiddenCards = cardLayout?.hidden ?? []
+    }
+
+    /// A card's controls while Customize is on: its size, earlier, later and
+    /// hide, over the card's own header actions.
+    private func attachCustomizeStrip(to card: HelmModuleCard, module: DaylightModule) {
+        guard isCustomizing, showsArrangedCards, let layout = cardLayout else { return }
+        let strip = HomeCardCustomizeStrip(cardTitle: module.title, size: layout.size(of: module),
+                                           canMoveEarlier: layout.canMove(module, by: -1),
+                                           canMoveLater: layout.canMove(module, by: 1))
+        strip.onSize = { [weak self] size in self?.arrange { $0.setSize(size, for: module) } }
+        strip.onMove = { [weak self] offset in self?.arrange { $0.move(module, by: offset) } }
+        strip.onHide = { [weak self] in self?.arrange { $0.hide(module) } }
+        card.setHeaderAccessory(strip)
+        cardStrips[module] = strip
     }
 
     /// What a built grid depends on besides its cards' data. Two renders with
@@ -1334,6 +1432,10 @@ final class HomeCanvasController: NSViewController {
     private struct GridLayoutKey: Equatable {
         var space: DaylightSpace
         var modules: [DaylightModule]
+        /// Each card's span, which the captain can change on Home.
+        var spans: [Int]
+        /// Customize puts controls on every card, so toggling it rebuilds.
+        var customizing: Bool
         var dashboard: Bool
         var width: CGFloat
         /// The hub's columns are budgeted from the height; the shelf's are not.
@@ -1373,8 +1475,10 @@ final class HomeCanvasController: NSViewController {
         cardsByModule.removeAll()
         cardPlacements.removeAll()
         dashboardOwnHeights.removeAll()
+        cardStrips.removeAll()
         gridLayoutKey = nil
 
+        placeCustomizeTray()
         placeAttentionCard(inDashboard: dashboard)
         documentFillsViewport?.isActive = dashboard
         if dashboard,
@@ -1391,7 +1495,7 @@ final class HomeCanvasController: NSViewController {
                     Self.widthPin(of: column).map { ($0, Self.dashboardSpans[min(index, Self.dashboardSpans.count - 1)]) }
                 }
             }
-            gridLayoutKey = GridLayoutKey(space: space, modules: modules, dashboard: true,
+            gridLayoutKey = GridLayoutKey(space: space, modules: modules, spans: [], customizing: false, dashboard: true,
                                           width: available, height: lastGridHeight, exemptHeights: [])
             return
         }
@@ -1405,7 +1509,7 @@ final class HomeCanvasController: NSViewController {
         // captain's uniform-height decision (and the uniform-width rule that
         // came with it) rests on. Only how many of those columns the content
         // occupies changes.
-        let width = Self.composedContentWidth(available: available, modules: modules)
+        let width = Self.composedContentWidth(available: available, modules: modules, spans: cardSpan)
         contentWidthConstraint?.constant = width
 
         // `spanningRows(_:)`, not `rows(_:)`: the Morning briefing spans two
@@ -1419,7 +1523,7 @@ final class HomeCanvasController: NSViewController {
         // floor, so a row of one-line cards is now as short as its content.
         let rows = HelmResponsiveGrid.spanningRows(
             modules,
-            spans: { $0.gridSpan },
+            spans: cardSpan,
             containerWidth: width,
             minItemWidth: Self.minModuleWidth,
             spacing: Self.gridSpacing,
@@ -1431,7 +1535,9 @@ final class HomeCanvasController: NSViewController {
             exemptsHeightTie: { $0.sizesToOwnContent }
         ) { [weak self] module, cardWidth in
             guard let self else { return NSView() }
-            return self.makeCard(for: module, placement: .shelf(width: cardWidth))
+            let card = self.makeCard(for: module, placement: .shelf(width: cardWidth))
+            self.attachCustomizeStrip(to: card, module: module)
+            return card
         }
 
         let columns = HelmResponsiveGrid.columns(containerWidth: width, minItemWidth: Self.minModuleWidth,
@@ -1450,7 +1556,8 @@ final class HomeCanvasController: NSViewController {
             }
         }
         if Set(cardsByModule.keys) == Set(modules) {
-            gridLayoutKey = GridLayoutKey(space: space, modules: modules, dashboard: false,
+            gridLayoutKey = GridLayoutKey(space: space, modules: modules, spans: modules.map(cardSpan),
+                                          customizing: isCustomizing, dashboard: false,
                                           width: available, height: 0,
                                           exemptHeights: shelfExemptHeights(modules) { self.content(for: $0, placement: $1) })
         }
@@ -1465,6 +1572,8 @@ final class HomeCanvasController: NSViewController {
     /// observers - and the rows holding them survive.
     private func refreshGridInPlace(available: CGFloat, modules: [DaylightModule], dashboard: Bool) -> Bool {
         guard let previous = gridLayoutKey, previous.space == space, previous.modules == modules,
+              previous.spans == (dashboard ? [] : modules.map(cardSpan)),
+              previous.customizing == (dashboard ? false : isCustomizing),
               previous.dashboard == dashboard, abs(previous.width - available) <= 0.5,
               Set(cardsByModule.keys) == Set(modules) else { return false }
         if dashboard {
@@ -1585,7 +1694,7 @@ final class HomeCanvasController: NSViewController {
     static let mergeQueueMinimumRows = 2
 
     /// Is this space laid out by hand? Only the hub.
-    private var usesDashboardLayout: Bool { space == .overview }
+    private var usesDashboardLayout: Bool { space == .overview && cardLayout == nil }
 
     /// Whether the hub's own layout applies.
     ///
@@ -1872,8 +1981,16 @@ final class HomeCanvasController: NSViewController {
                           placement: CardPlacement) -> HelmModuleCard {
         let card = HelmModuleCard()
         card.configure(content)
-        card.onOpen = { [weak self] in self?.onOpenDestination?(module.opens) }
-        card.onFollowLink = { [weak self] target in self?.follow(target) }
+        // While the captain arranges Home a click on a card must not take
+        // them off it.
+        card.onOpen = { [weak self] in
+            guard let self, !self.isCustomizing else { return }
+            self.onOpenDestination?(module.opens)
+        }
+        card.onFollowLink = { [weak self] target in
+            guard let self, !self.isCustomizing else { return }
+            self.follow(target)
+        }
         cards.append(card)
         cardsByModule[module] = card
         cardPlacements[module] = placement
@@ -1918,12 +2035,13 @@ final class HomeCanvasController: NSViewController {
     /// mounting a page - the interesting cases are "fewer cards than columns"
     /// (Command: compose) and "more cards than columns" (Overview: unchanged,
     /// full width), and neither needs a window to check.
-    static func composedContentWidth(available: CGFloat, modules: [DaylightModule]) -> CGFloat {
+    static func composedContentWidth(available: CGFloat, modules: [DaylightModule],
+                                     spans: (DaylightModule) -> Int = { $0.gridSpan }) -> CGFloat {
         guard available > 0, !modules.isEmpty else { return max(available, 0) }
         let maxColumns = HelmResponsiveGrid.columns(containerWidth: available,
                                                     minItemWidth: minModuleWidth,
                                                     spacing: gridSpacing)
-        let spansNeeded = modules.reduce(0) { $0 + max(1, $1.gridSpan) }
+        let spansNeeded = modules.reduce(0) { $0 + max(1, min(spans($1), maxColumns)) }
         let used = min(maxColumns, spansNeeded)
         guard used < maxColumns else { return available }
         let unit = HelmResponsiveGrid.itemWidth(containerWidth: available,
@@ -1998,7 +2116,7 @@ final class HomeCanvasController: NSViewController {
                 dashboardOwnHeights[module]?.constant = ownHeight
             }
         } else {
-            let width = Self.composedContentWidth(available: available, modules: modules)
+            let width = Self.composedContentWidth(available: available, modules: modules, spans: cardSpan)
             let columns = HelmResponsiveGrid.columns(containerWidth: width, minItemWidth: Self.minModuleWidth,
                                                      spacing: Self.gridSpacing)
             guard columns == builtShelfColumns else { return false }
@@ -2806,7 +2924,7 @@ final class HomeCanvasController: NSViewController {
             // UI-10: a row is a link to its pull request rather than inert
             // text; the card itself still opens the whole queue.
             let url = URL(string: pr.url)
-            return HelmModulePeekRow(state: state, text: pr.title,
+            return HelmModulePeekRow(state: state, text: pr.displayTitle,
                                      value: pr.checks == "none" ? "No checks" : "Checks \(pr.checks)",
                                      onOpen: url.map { url in { NSWorkspace.shared.open(url) } },
                                      openHelp: pr.number.map { "Open pull request #\($0)" } ?? "Open the pull request")
@@ -3626,6 +3744,11 @@ final class HomeCanvasController: NSViewController {
     }
     var heroCardHiddenForTests: Bool { heroCard.isHidden }
     var visibleModulesForTests: [DaylightModule] { visibleModules() }
+    /// Customize's tray while it is in the page, or nil.
+    var customizeTrayForTests: HomeCustomizeTray? { customizeTray.superview == nil ? nil : customizeTray }
+    /// The controls each card wears while Customize is on.
+    var cardStripsForTests: [DaylightModule: HomeCardCustomizeStrip] { cardStrips }
+    func cardForTests(_ module: DaylightModule) -> HelmModuleCard? { cardsByModule[module] }
     /// The captain's Needs Attention card, so a suite can drive the real card
     /// on the real page rather than a card it built itself - which is what
     /// proves the wiring as well as the render.

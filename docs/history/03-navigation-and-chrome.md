@@ -608,3 +608,96 @@ Two traps in it:
 - The classic tour crashed once on the way, in a test seam's unsynchronised array.
   The crash led to a worse finding: every tour and window-backed suite that mounted Bootstrap or Automation ran a real `git fetch` of the captain's dotfiles clone.
   Both are fixed, and [`48-test-hermeticity.md`](48-test-hermeticity.md) has the account.
+
+## The modules, and Home's cards (modular-shell stage 4, `fm/grandline-modular-shell-migration-1792578041`)
+
+Step 4 of the full review's migration plan consolidates the sidebar layout's 29 page rows into Home and the seventeen modules, in the module table only.
+No controller was merged, and the floating bar is untouched and still the default.
+
+### The shape
+
+- The sidebar's rows are the modules (`WorkspaceSidebarModel.listedModules()`), and a module's row reopens the tab it showed last.
+- A module's children are its tabs in the middle of the window toolbar (`WorkspaceModule.tabs`).
+  A tab is a page of its own (Knowledge's five, Secrets' two, Setup's four) or one of a page's own tabs (`WorkspaceModule.pageTabHost`).
+  Every one of the 29 routes still lands on its page and lights its module and tab, which `SplitShellModelSelfTest` sweeps.
+- Four pages draw tabs that are their module's: Shift (Tasks), the Fleet page (Crew's In flight and Log), Hosts (Connections' Hosts, Keys and Snippets) and Kubernetes.
+  They adopt `ModuleTabHosting`: in the sidebar layout the page hides its own control, the toolbar drives the page through the page's own switch, and a switch the page makes by itself reports back.
+  The floating bar never calls any of it.
+- The toolbar names the module in a crumb ("Work › Crew"), and the content column opens with the module's large title and the page's live subtitle (`WorkspaceModuleHeader`), except on Connections and Console, where the captain dropped it.
+  Home's subtitle is the date, because Home has no live subtitle of its own.
+- Console's session strip (the floating bar's `SessionStripView`) sits at the top of the Console module, and Console's toolbar action is Quick Connect.
+  Connections' is Activity, the captain's log the Hosts page's column linked to before the toolbar's tabs replaced the column.
+- Home's own space shows the captain's arranged cards (`HomeCardLayout`, `fm.homeCardLayout`): Customize adds any card from the other spaces, hides, moves and resizes them, and Reset brings Home's own five back.
+  Only the sidebar layout hands the canvas a layout, so the floating bar's hub keeps its hand-placed dashboard.
+
+### Decisions
+
+- **A tab is a real view.** The prototype's Crew › Needs you and Crew › Merge queue, and Connections › Sessions, have no view of their own, so they are not tabs: the decisions waiting on the captain are the Fleet dashboard's Needs your call list, a ready PR carries Merge on Review, and the sessions are Console's.
+- **Settings keeps its own column**, as the prototype draws it, so its categories are not toolbar tabs.
+- **Home keeps its five spaces**, as its toolbar tabs, because ⌘1 to ⌘5 and the Go menu use them.
+  Whether they go is a stage 5 question, with the space pills.
+- **The shell, not the pages.** Mid-stage the captain asked whether this matched the prototype exactly, and chose to ship the prototype's structure and chrome on today's pages, with the page redesigns, motion, sidebar badges and the rest of the status line in later stages.
+
+### What was measured on the way
+
+- **A page's stale width floor outranks the sidebar.**
+  `HelmDaylightPriority.contentTie` is 499 and the sidebar holds at 489.
+  Widening a 1100pt window lays the content out at full width with the sidebar still collapsed, so Home's grid rebuilt for a 1464pt column.
+  Then the sidebar re-expanded, its pin was released in the same turn, and the grid's 499 pins squeezed it to its 200pt minimum.
+  Measured: 200pt after a 1100-to-1512 round trip on Home, where Settings and Tasks came back at 236.
+  The canvas rebuilds for the narrower column on the next main-queue turn, so the pin is released on that turn too.
+- **Five tabs and a crumb overflow the toolbar at 1100.**
+  With Knowledge showing, AppKit put Search, the bell, the light/dark toggle and the page's own actions in the overflow menu.
+  The toolbar now goes compact below the prototype's 1240pt breakpoint (Search is its glyph, the crumb names only the module), and its items carry visibility priorities, so the crumb, Recents and the inspector toggle overflow first and Search, the bell and the toggle never do.
+  A view item in the overflow menu does nothing without a `menuFormRepresentation`, so Recents and the module's action have one.
+  Recents' panel then opens under Back and Forward, which never overflow.
+- **Pinned repeated the sidebar.**
+  Four of the floating bar's seven default pins are a module of one page (Sticky Board, Code Preview, Tasks, Console), so they were listed twice and pushed Setup and Settings off the bottom at 950pt.
+  Pinned now lists only the pins nested inside a module of several pages.
+  The floating bar still draws every pin.
+- **Customize's strip covered a small card's title, and then let a Refresh show under it.**
+  A small card is 255pt, and a strip with a labelled "Small"/"Large" button truncated "Merge queue" and sat over Fleet's status.
+  The size is a menu behind one glyph now.
+  Laid over the card, the strip still let the bottom of the Claude card's Refresh show under it (Daylight, 1512pt).
+  So the card's header row holds the strip in place of the card's own status and action (`HelmModuleCard.setHeaderAccessory`), and the title truncates before it.
+  At 31pt the strip stays inside the 32pt header, so a card keeps its height while it is arranged.
+  In the header row the strip then stretched across a large card (406 to 460pt against its own 125.5pt).
+  It is a container with no intrinsic width, so a required hugging priority on it did nothing (gotcha (12)), and it tied with the title column for the spare width.
+  Its own stack hugs at `HelmDaylightPriority.columnHug` now, one step over the title column's 250.
+- **Home's own cards in canvas order left a gap.**
+  At four columns (1512) and three (1100) the second row had a column to spare.
+  The standard arrangement orders and sizes the five so the rows fill.
+- **The Hosts page's content kept the inset it uses beside its column** (15pt) once the column was put away.
+  It takes the page gutter (24pt) while the toolbar draws its tabs.
+- **A page's own column coming back grew the window.**
+  Tasks puts its column away for Weekly review and brings it back for the board.
+  At 1100pt, with the sidebar collapsed for room, that reopen grew the window by the column's 249pt, to 1349, and the sidebar came back out with it.
+  The floating bar shrank the content to 851pt instead, which is what a reopen should do.
+  AppKit's default collapse behaviour grows the window whenever the window's minimum width plus the column would not fit, and in the sidebar layout that minimum is the content column's 940pt floor.
+  Measured against the floor itself: 500pt kept the window at 1100 and 860pt grew it.
+  `HelmSplitPage` now collapses and reopens its column through constraints at the sidebar's own 489, which can never move the window, so the fix covers all seven pages with a column, in both layouts.
+  `MainSplitShellSelfTest.checkAPageColumnNeverGrowsTheWindow` drives Tasks' tabs and ⌥⌘S on Settings at 1100pt.
+
+### Found on Home on the way, in both layouts
+
+- **The attention card's headline could start with a lower-case letter.**
+  It read "nothing known needs you right now." whenever the fleet was the only thing to report.
+  A signal's clause is lower-cased so that it reads well after another clause, and nothing capitalised it when it led the sentence.
+  `NeedsAttentionComposer` capitalises the sentence's first letter now.
+- **The Merge queue reshuffled on every launch, and drew an untitled PR as a blank row.**
+  Both are in [`07-fleet-and-notifications.md`](07-fleet-and-notifications.md), with the fleet's data.
+
+### Verification
+
+- `FM_RUN_SPLIT_SHELL_MODEL_TESTS` (pure): the module list, every route landing on a module and one of its tabs, the groups, the tabs being real views, Home's card layout and how it is stored, and source guards on the wiring a behaviour check cannot see (the four `ModuleTabHosting` adopters, and Home's layout handed over by the sidebar layout only).
+- `FM_RUN_MAIN_SPLIT_SHELL_TESTS` (window-backed): every route through the one mounter with its module's row, tab, crumb and header, no page and no page column growing the window, the sidebar's map and pins, the toolbar's tabs driving the four pages, the compact toolbar and its priorities, Console as a module, Customize on Home, the lock, the status line and the account menu.
+- Confirmed by injection, in nine runs.
+  The model suite fails by name with a module dropped from the sidebar, Home not handed its layout, or Pinned repeating every pin.
+  The window suite fails by name with the four pages not adopted as tab hosts, the sidebar's pin released at once (the sidebar back at 200pt), no compact toolbar, a card click allowed in Customize, the toolbar's tab not driving the page, a page's column reopening through the default collapse behaviour (1349pt and 1362pt windows), Customize's controls laid over the card, and the strip with no hug of its own.
+  `NeedsAttentionSelfTest`, `FleetDataSelfTest` and `HomeDashboardViewSelfTest` each fail by name with the three Home fixes reverted.
+- The tour lab rendered every module and tab in both layouts, in Dusk and Daylight at 1512 and 1100.
+  In the sidebar layout no measurement moved the window, the sidebar measured 236pt at 1512, and it stepped aside at 1100.
+  The floating bar's 116 renders matched stage 3's except for the time of day and live fleet data.
+- 176 targeted suites passed on the final code: those for the files this stage changes, the new cases, and the source guards that scan those files.
+  A first pass was cut short by a machine sleep, and four timing and real-event suites failed across it (dotfiles auto-sync, herdr theme sync, the SRE Lead notification and the notification row's real click).
+  None of their code changed here, and all four passed on the clean pass.

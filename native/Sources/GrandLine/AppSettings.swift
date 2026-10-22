@@ -54,6 +54,7 @@ final class AppSettings {
         static let systemLightThemeID = "fm.systemLightThemeID"
         static let systemDarkThemeID = "fm.systemDarkThemeID"
         static let workspaceLayout = "fm.workspaceLayout"
+        static let homeCardLayout = "fm.homeCardLayout"
     }
 
     /// GL-P3 (audit §6.10): the defaults store is injectable.
@@ -523,5 +524,18 @@ final class AppSettings {
     var workspaceLayout: WorkspaceLayout {
         get { defaults.string(forKey: Keys.workspaceLayout).flatMap(WorkspaceLayout.init(rawValue:)) ?? .floatingBar }
         set { defaults.set(newValue.rawValue, forKey: Keys.workspaceLayout) }
+    }
+
+    /// Home's cards as the captain arranged them in the sidebar layout (stage
+    /// 4): which ones Home's own space shows, in what order and at what size.
+    /// Home's own set until the captain changes it, and again for a value that
+    /// does not read - a preference that cannot be read is not worth more
+    /// than the default it replaces.
+    var homeCardLayout: HomeCardLayout {
+        get { defaults.data(forKey: Keys.homeCardLayout).flatMap(HomeCardLayout.init(storedData:)) ?? .standard }
+        set {
+            guard let data = newValue.storedData else { return }
+            defaults.set(data, forKey: Keys.homeCardLayout)
+        }
     }
 }

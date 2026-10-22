@@ -153,6 +153,13 @@ enum ReviewTourLab {
         /// and `sidebar show|hide`, through the shell's own toggles.
         case inspector(Bool)
         case sidebar(Bool)
+        /// `tab <name>`: the sidebar shell's toolbar tab with this name - a
+        /// module's tab, or one of Home's spaces - through the toolbar's own
+        /// click path. In the floating bar, the showing page's own tab with
+        /// that module child name (`ModuleTabHosting`), through the page.
+        case moduleTab(String)
+        /// `customize on|off`: Home's Customize mode in the sidebar shell.
+        case customize(Bool)
         case comment
     }
 
@@ -284,6 +291,14 @@ enum ReviewTourLab {
         case "measurewindow":
             guard !argument.isEmpty else { return .failure(.missingArgument("measurewindow")) }
             return .success(.measureWindow(argument))
+        case "tab":
+            guard !argument.isEmpty else { return .failure(.missingArgument("tab")) }
+            return .success(.moduleTab(argument))
+        case "customize":
+            guard argument == "on" || argument == "off" else {
+                return .failure(argument.isEmpty ? .missingArgument(verb) : .badArgument(argument))
+            }
+            return .success(.customize(argument == "on"))
         default:
             return .failure(.unknownVerb(verb))
         }
@@ -441,6 +456,31 @@ enum ReviewTourLab {
                 } else if split.debugSidebarIsCollapsed == show {
                     split.toggleWorkspaceSidebar()
                 }
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("\(step)")
+            case .moduleTab(let name):
+                if let split = shell as? MainSplitShellController {
+                    guard let index = split.toolbar.debugTabNames.firstIndex(of: name) else {
+                        log.append("\(step) FAILED - no toolbar tab named \(name)")
+                        continue
+                    }
+                    split.debugClickTab(index)
+                } else {
+                    guard let page = shell.debugCurrentDestination.flatMap(shell.debugSlotController) as? ModuleTabHosting,
+                          page.moduleTabNames.contains(name) else {
+                        log.append("\(step) FAILED - the showing page has no tab named \(name)")
+                        continue
+                    }
+                    page.selectModuleTab(named: name)
+                }
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("\(step)")
+            case .customize(let on):
+                guard let split = shell as? MainSplitShellController else {
+                    log.append("\(step) FAILED - the floating bar's Home is not arranged")
+                    continue
+                }
+                split.setHomeCustomizing(on)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("\(step)")
             case .orderFront:

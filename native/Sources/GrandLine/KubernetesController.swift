@@ -122,6 +122,9 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
 
     var scopeHostID: UUID?
     var pageTab: PageTab = .cluster
+    /// The sidebar layout's toolbar draws Cluster and Log Tail as the module's
+    /// tabs (`ModuleTabHosting`, in `KubernetesController+Behaviour.swift`).
+    var onModuleTabChanged: (() -> Void)?
     var clusterTab: ClusterTab = .pods
 
     /// The bridge for the current scope's feed tab. Torn down and rebuilt
@@ -517,13 +520,7 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         ], selected: PageTab.cluster.rawValue)
         pageTabs.onSelect = { [weak self] id in
             guard let self, let tab = PageTab(rawValue: id) else { return }
-            self.pageTab = tab
-            self.restartTimers()
-            self.render()
-            // Whichever page just became visible gets the data it shows. The
-            // Log Tail's picker is built from the pod list, which the sweep
-            // now skips while a non-Pods cluster tab is up (`sweepCommands`).
-            if self.pods.isEmpty, self.clusterMessage == nil { self.refreshCluster() }
+            self.showPageTab(tab)
         }
 
         namespaceField = HelmTextField(placeholder: "namespace")
