@@ -243,8 +243,10 @@ enum PageRedesignsSelfTest {
         }
         clickTab("Snippets", shell)
         check(onScreen(hosts.debugSnippetsTable.card), "the snippet table is not on screen on Snippets", &ok)
-        check(onScreen(hosts.debugExpansionStrip) && hosts.debugExpansionStrip.style == .strip,
-              "the snippet expansion switch is not a strip over the Snippets table", &ok)
+        // Stage 6 made the strip a plain row (`.inline`), still over the
+        // table; `SidebarPageFixesSelfTest` checks its placement and wiring.
+        check(onScreen(hosts.debugExpansionStrip) && hosts.debugExpansionStrip.style == .inline,
+              "the snippet expansion switch is not the row over the Snippets table", &ok)
         check(hosts.debugSideStackIsHidden, "the floating bar's right column shows on Snippets in the sidebar layout", &ok)
         clickTab("Hosts", shell)
     }

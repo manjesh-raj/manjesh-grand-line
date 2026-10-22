@@ -14,10 +14,9 @@
 //      column's minimum and the sidebar's collapse exist to hold. A page's
 //      own column coming back (Tasks' board, ⌥⌘S on Settings) does too.
 //   3. **The sidebar is the map.** A module row opens the tab it showed last,
-//      a Pinned row stays lit, Pin and Unpin edit the quick-access list in
-//      place for every page of a module, sessions are Console's children,
-//      ⌘⇧D reveals it, and ⌥⌘S toggles the page's own column where there is
-//      one and the sidebar everywhere else.
+//      it draws no pins and offers no Pin or Unpin (stage 6), sessions are
+//      Console's children, ⌘⇧D reveals it, and ⌥⌘S toggles the page's own
+//      column where there is one and the sidebar everywhere else.
 //   4. **A module's tabs are its pages.** A tab shows its page; on the four
 //      pages whose own tabs are the module's, the toolbar drives the page,
 //      the page hides its own control, and a switch the page makes by itself
@@ -29,7 +28,10 @@
 //   7. **Home is the captain's to arrange**: Customize hides, adds, moves and
 //      resizes the real cards, keeps the result, and gets out of the way.
 //   8. **The lock hides what the overlay cannot cover** - the toolbar.
-//   9. **The status line** shows the live sessions and the focus timer chip.
+//   9. **The status line** shows the live sessions and the focus timer chip,
+//      on every module but Console, whose session strip already lists them.
+//  10. **The account menu** is Log Out only, under a rule that sets the
+//      header apart from Home.
 //
 // Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
 //
@@ -60,7 +62,7 @@ enum MainSplitShellSelfTest {
         settle(shell)
         for check in [checkEveryRouteShowsThroughTheMounter, checkNoPageGrowsTheWindow,
                       checkAPageColumnNeverGrowsTheWindow, checkTheSidebarIsTheMap,
-                      checkPinsEditInPlace, checkTheMapAndTheSidebarToggle, checkModuleTabsArePages,
+                      checkTheSidebarDrawsNoPins, checkTheMapAndTheSidebarToggle, checkModuleTabsArePages,
                       checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
                       checkHomeIsTheCaptainsToArrange, checkBackAndForward, checkTheInspector,
                       checkTheLockHidesTheToolbar, checkTheStatusLine, checkToastsLandInTheColumn,
@@ -267,14 +269,7 @@ enum MainSplitShellSelfTest {
         check(shell.debugCurrentDestination == .runbooks,
               "Knowledge's row reopened \(String(describing: shell.debugCurrentDestination)), not the Runbooks tab it showed last", &ok)
 
-        // A pinned row stays the lit one.
-        AppSettings.shared.quickAccess = QuickAccessConfiguration(pinned: [.console, .strawHat])
-        shell.quickAccessDidChange(AppSettings.shared.quickAccess)
-        check(shell.sidebar.debugClick(.pinned(.strawHat)), "the pinned Straw Hat Pirates row is missing", &ok)
-        settle(shell)
-        check(shell.debugCurrentDestination == .strawHat && shell.sidebar.debugSelectedEntry == .pinned(.strawHat),
-              "the pinned row did not stay lit (lit: \(String(describing: shell.sidebar.debugSelectedEntry)))", &ok)
-        // Reached any other way, its module's row lights.
+        // A page inside a module of several lights its module's row.
         shell.show(.review)
         shell.show(.strawHat)
         settle(shell)
@@ -288,34 +283,37 @@ enum MainSplitShellSelfTest {
         }
     }
 
-    private static func checkPinsEditInPlace(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
-        AppSettings.shared.quickAccess = QuickAccessConfiguration(pinned: [.console])
-        shell.quickAccessDidChange(AppSettings.shared.quickAccess)
+    /// Stage 6, the captain's call: the pins are the floating bar's. With
+    /// pages pinned that a Pinned section used to list (Straw Hat Pirates and
+    /// Hosts, each one of several pages in its module), the sidebar draws no
+    /// such section, no row's menu offers Pin or Unpin, and the saved list is
+    /// left exactly as it was.
+    private static func checkTheSidebarDrawsNoPins(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        let pins = QuickAccessConfiguration(pinned: [.console, .strawHat, .hosts, .poneglyph])
+        AppSettings.shared.quickAccess = pins
+        shell.quickAccessDidChange(pins)
+        shell.sessions.register(hostID: UUID(), label: "Fixture", accentHex: nil, state: .connected)
         settle(shell)
-        // Every page of a module can be pinned from its row - Straw Hat
-        // Pirates is Crew's third, which the floating bar's map could pin.
-        let crew = WorkspaceSidebarEntry.module(.crew)
-        let titles = shell.sidebar.debugContextMenuTitles(for: crew)
-        for page in WorkspaceModule.crew.pages {
-            check(titles.contains("Pin \(page.title) to Sidebar"), "Crew's menu does not offer to pin \(page.title): \(titles)", &ok)
+        let entries = shell.sidebar.debugVisibleEntries
+        let groups = Set(WorkspaceGroup.allCases.map(\.title))
+        let sections = entries.compactMap { entry -> String? in
+            if case .section(let title) = entry { return title }
+            return nil
         }
-        check(shell.sidebar.debugPerformContextMenuItem("Pin Straw Hat Pirates to Sidebar", on: crew),
-              "could not run Pin Straw Hat Pirates", &ok)
-        settle(shell)
-        check(AppSettings.shared.quickAccess.contains(.strawHat), "Pin did not write the quick-access list", &ok)
-        check(shell.sidebar.debugVisibleEntries.contains(.pinned(.strawHat)),
-              "Pin did not add Straw Hat Pirates to the Pinned section", &ok)
-        check(shell.sidebar.debugPerformContextMenuItem("Unpin Straw Hat Pirates from Sidebar", on: .pinned(.strawHat)),
-              "the pinned row does not offer Unpin", &ok)
-        settle(shell)
-        check(!AppSettings.shared.quickAccess.contains(.strawHat)
-                && !shell.sidebar.debugVisibleEntries.contains(.pinned(.strawHat)),
-              "Unpin did not take Straw Hat Pirates back out", &ok)
-        // Home, and a module that is one page, are already their own rows.
-        for module in [WorkspaceModule.home, .stickyBoard] {
-            check(!shell.sidebar.debugContextMenuTitles(for: .module(module)).contains { $0.hasPrefix("Pin ") },
-                  "\(module.title), one page, offers Pin", &ok)
+        check(Set(sections) == groups && sections.count == groups.count,
+              "with pins set the sidebar draws the sections \(sections), want the four groups only", &ok)
+        check(entries.first == .module(.home), "Home is not the first row under the header", &ok)
+        for module in WorkspaceModule.allCases {
+            let titles = shell.sidebar.debugContextMenuTitles(for: .module(module))
+            check(!titles.contains { $0.hasPrefix("Pin ") || $0.hasPrefix("Unpin ") },
+                  "\(module.title)'s menu still offers to pin: \(titles)", &ok)
+            check(titles.first == "Open \(module.title)", "\(module.title)'s menu lost Open: \(titles)", &ok)
         }
+        check(shell.sidebar.debugContextMenuTitles(for: .module(.console)).contains("Connect to a Host\u{2026}"),
+              "Console's menu lost Connect to a Host", &ok)
+        check(AppSettings.shared.quickAccess == pins, "the sidebar layout changed the floating bar's pins", &ok)
+        for id in shell.sessions.sessions.map(\.hostID) { shell.sessions.unregister(hostID: id) }
+        settle(shell)
     }
 
     private static func checkTheMapAndTheSidebarToggle(_ shell: MainSplitShellController, _ window: NSWindow,
@@ -444,21 +442,38 @@ enum MainSplitShellSelfTest {
         // The page's own actions are the page's views, moved into the toolbar.
         shell.show(.hosts)
         settle(shell)
+        // Stage 6: Hosts' one action is its primary one, the page's own
+        // button at the toolbar's far right rather than among the others.
         let hostsActions = (shell.debugSlotController(.hosts) as? DaylightDrillActions)?.drillHeaderActions ?? []
-        check(!hostsActions.isEmpty, "the Hosts page offers no actions - this check would pass vacuously", &ok)
-        check(shell.toolbar.debugPageActions.map(ObjectIdentifier.init) == hostsActions.map(ObjectIdentifier.init),
-              "the toolbar is not carrying Hosts' own actions", &ok)
+        check(hostsActions.count == 1, "the Hosts page offers \(hostsActions.count) actions - this check assumes its one add button", &ok)
+        check(shell.toolbar.debugPrimaryAction === hostsActions.first && shell.toolbar.debugPageActions.isEmpty,
+              "the toolbar is not carrying Hosts' own action as its primary one", &ok)
+        // A hidden primary button leaves no empty capsule, and comes back.
+        hostsActions.first?.isHidden = true
+        check(!shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.primaryAction),
+              "with Hosts' button hidden the toolbar still holds its primary item", &ok)
+        hostsActions.first?.isHidden = false
+        check(shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.primaryAction),
+              "showing Hosts' button again did not bring the primary item back", &ok)
+        // A page with other actions too (Health's Refresh): those are the
+        // page-actions item, which follows its buttons the same way.
+        shell.show(.health)
+        settle(shell)
+        let healthActions = (shell.debugSlotController(.health) as? DaylightDrillActions)?.drillHeaderActions ?? []
+        let others = healthActions.filter { $0 !== shell.toolbar.debugPrimaryAction }
+        check(!others.isEmpty && shell.toolbar.debugPageActions.map(ObjectIdentifier.init) == others.map(ObjectIdentifier.init),
+              "the toolbar is not carrying Health's own actions", &ok)
         check(shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.pageActions),
               "the page-actions item is not in the toolbar", &ok)
-        // A page that hides all its own buttons leaves no empty capsule, and
-        // gets the item back when it shows one again.
-        let wasHidden = hostsActions.map(\.isHidden)
-        hostsActions.forEach { $0.isHidden = true }
+        let wasHidden = others.map(\.isHidden)
+        others.forEach { $0.isHidden = true }
         check(!shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.pageActions),
-              "with every Hosts button hidden the toolbar still holds an actions item", &ok)
-        zip(hostsActions, wasHidden).forEach { $0.isHidden = $1 }
+              "with every Health button hidden the toolbar still holds an actions item", &ok)
+        zip(others, wasHidden).forEach { $0.isHidden = $1 }
         check(shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.pageActions),
-              "showing Hosts' buttons again did not bring the actions item back", &ok)
+              "showing Health's buttons again did not bring the actions item back", &ok)
+        shell.show(.hosts)
+        settle(shell)
         // Connections' Activity: the captain's log, which the Hosts page's
         // column linked to before the toolbar's tabs replaced it.
         check(shell.toolbar.debugModuleActionButton?.title == "Activity", "Connections offers no Activity button", &ok)
@@ -734,6 +749,22 @@ enum MainSplitShellSelfTest {
     // MARK: 9 - the status line
 
     private static func checkTheStatusLine(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        // Stage 6: not under Console, whose session strip lists the sessions
+        // at the top of the module already - and the terminal takes the room.
+        shell.show(.console)
+        settle(shell)
+        check(!shell.debugStatusLineIsShown, "the status line still shows under Console", &ok)
+        let pane = shell.debugContentPane
+        let body = shell.debugBodyContainer
+        let bodyBottom = body.convert(body.bounds, to: pane).minY
+        check(abs(bodyBottom - (pane.isFlipped ? pane.bounds.maxY : 0)) < 0.5,
+              "under Console the body stops \(bodyBottom)pt from the pane's foot, so the line's room is left empty", &ok)
+        // Every other module keeps it.
+        for route in [RailDestination.hosts, .homeCanvas, .logAnalyzer, .health] {
+            shell.show(route)
+            settle(shell)
+            check(shell.debugStatusLineIsShown, "the status line is gone under \(route.rawValue)", &ok)
+        }
         let status = shell.debugStatusLine
         check(status.debugSessionsText == "No live sessions", "with no sessions the line says \"\(status.debugSessionsText)\"", &ok)
         let live = UUID()
@@ -775,8 +806,31 @@ enum MainSplitShellSelfTest {
 
     private static func checkTheAccountMenu(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         check(shell.sidebar.debugHeader.debugTitle == AppPaths.displayName, "the sidebar header does not name the app", &ok)
-        shell.sidebar.onOpenSettings?()
-        check(shell.debugCurrentDestination == .settings, "the account menu's Settings did not open Settings", &ok)
+        // Stage 6: Log Out only. Settings is its own sidebar row.
+        check(shell.sidebar.debugAccountMenuTitles == ["Log Out\u{2026}"],
+              "the account menu offers \(shell.sidebar.debugAccountMenuTitles), want Log Out only", &ok)
+        check(shell.sidebar.debugVisibleEntries.contains(.module(.settings)), "Settings has no sidebar row to replace the menu's", &ok)
+        check(shell.sidebar.debugClick(.module(.settings)), "the Settings row cannot be clicked", &ok)
+        settle(shell)
+        check(shell.debugCurrentDestination == .settings, "the Settings row did not open Settings", &ok)
+        // A rule, with room either side, between the header and Home.
+        let root = shell.sidebar.view
+        root.layoutSubtreeIfNeeded()
+        let header = shell.sidebar.debugHeader.convert(shell.sidebar.debugHeader.bounds, to: root)
+        let rule = shell.sidebar.debugHeaderRule.convert(shell.sidebar.debugHeaderRule.bounds, to: root)
+        // The list's top, which is where Home sits until the list scrolls.
+        guard let list = shell.sidebar.outlineView.enclosingScrollView else {
+            fail("the sidebar list has no scroll view", &ok)
+            return
+        }
+        let listFrame = list.convert(list.bounds, to: root)
+        let gapAbove = root.isFlipped ? rule.minY - header.maxY : header.minY - rule.maxY
+        let gapBelow = root.isFlipped ? listFrame.minY - rule.maxY : rule.minY - listFrame.maxY
+        check(rule.height == 1 && rule.width > header.width * 0.8,
+              "the header rule is \(rule.size), want a 1pt line across the sidebar", &ok)
+        check(gapAbove >= WorkspaceSidebarController.headerRuleGap - 0.5 && gapBelow >= WorkspaceSidebarController.headerRuleGap - 0.5,
+              "the rule sits \(gapAbove)pt under the header and \(gapBelow)pt over Home, want at least \(WorkspaceSidebarController.headerRuleGap) each", &ok)
+        check(shell.sidebar.debugHeaderRule.layer?.backgroundColor != nil, "the header rule is not painted", &ok)
         // Log Out goes through the one confirmation, then the app delegate.
         var loggedOut = false
         let previous = shell.onLogoutRequested
@@ -788,7 +842,7 @@ enum MainSplitShellSelfTest {
             return .confirm
         }
         defer { HelmConfirm.responderForTests = nil }
-        shell.sidebar.onLogOut?()
+        check(shell.sidebar.debugPerformAccountMenuItem("Log Out\u{2026}"), "the account menu has no Log Out", &ok)
         check(asked == "Log out of Grand Line?" && loggedOut, "Log Out did not confirm and lock (asked: \(asked ?? "nothing"))", &ok)
     }
 }

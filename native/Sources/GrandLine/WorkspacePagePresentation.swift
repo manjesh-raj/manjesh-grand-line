@@ -51,3 +51,16 @@ protocol WorkspaceInspectorSource: AnyObject {
     /// request would - a row's Show in Inspector, or a double click.
     var onShowInspector: (() -> Void)? { get set }
 }
+
+/// A page with one primary action, which the sidebar layout draws at the
+/// toolbar's trailing edge after Search, as the prototype does (stage 6):
+/// Connections' Add Host, New Key and New Snippet, Logs' Analyze, Health's
+/// Copy diagnostics. The view is one of the page's own buttons, with the
+/// target and tooltip the page set on it, exactly like its
+/// `drillHeaderActions`. The shell leaves it out of the page's other actions,
+/// and the floating bar never asks.
+protocol WorkspacePrimaryActionProviding: AnyObject {
+    /// The page's primary action right now, or `nil`. Re-read whenever the
+    /// page says its actions may have changed.
+    var workspacePrimaryAction: NSView? { get }
+}

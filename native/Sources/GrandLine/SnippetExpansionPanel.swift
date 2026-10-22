@@ -25,6 +25,13 @@
 // (`.strip`): the same toggle, the same four status readings and the same
 // Grant access button, in one card row. The card style is built exactly as it
 // always was.
+//
+// Stage 6 replaced the strip with `.inline`: the captain read the strip's
+// sunken toggle box as clutter over the table. Inline is one plain row with no
+// card and no box - the switch, its name, the status reading and Grant access -
+// in the place Hosts' filter row takes on its tab. The strip's subtitle is the
+// name's tooltip, and the card's paragraph is still Grant access' tooltip, so
+// nothing either of them said is lost.
 
 import AppKit
 
@@ -33,8 +40,10 @@ final class SnippetExpansionPanel: NSView {
     enum Style {
         /// The floating bar's right-column card.
         case card
-        /// The sidebar layout's strip over the Snippets table.
+        /// The later page work's strip over the Snippets table.
         case strip
+        /// The sidebar layout's row over the Snippets table (stage 6).
+        case inline
     }
 
     let card = HelmCard()
@@ -58,6 +67,10 @@ final class SnippetExpansionPanel: NSView {
         + "permission Dictation uses. Grand Line watches only for a trigger it already knows.")
     private let grantButton = HelmButton(title: "Grant access\u{2026}", variant: .secondary, size: .small,
                                          symbol: "lock.open", target: nil, action: nil)
+    /// `.inline`'s switch and its name: the toggle with no sunken row
+    /// around it.
+    private let inlineToggle = HelmToggle()
+    private let inlineTitle = NSTextField(labelWithString: "Expand triggers while I type")
 
     private var statusOK = false
     private var theme: HelmTheme = ThemeManager.shared.theme
@@ -76,6 +89,7 @@ final class SnippetExpansionPanel: NSView {
         switch style {
         case .card: build()
         case .strip: buildStrip()
+        case .inline: buildInline()
         }
     }
 
@@ -190,6 +204,60 @@ final class SnippetExpansionPanel: NSView {
         ])
     }
 
+    /// The inline row: the switch and its name, then the status reading and
+    /// Grant access, left to right, with the slack after them.
+    private func buildInline() {
+        statusDot.wantsLayer = true
+        statusDot.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.font = HelmType.caption()
+        statusLabel.lineBreakMode = .byTruncatingTail
+        // Gotcha (5): only the status reading may give way.
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        inlineTitle.font = HelmType.body()
+        inlineTitle.toolTip = "Watches for a saved trigger only - nothing is recorded or written to disk."
+        NSLayoutConstraint.activate([
+            statusDot.widthAnchor.constraint(equalToConstant: 7),
+            statusDot.heightAnchor.constraint(equalToConstant: 7),
+        ])
+        grantButton.target = self
+        grantButton.action = #selector(requestPermission)
+        grantButton.toolTip = bodyLabel.stringValue
+        inlineToggle.setAccessibilityLabel(inlineTitle.stringValue)
+        inlineToggle.onToggle = { [weak self] in
+            guard let self else { return }
+            self.onToggle?(self.inlineToggle.isOn)
+        }
+        for fixed in [inlineToggle, inlineTitle, grantButton] as [NSView] {
+            fixed.translatesAutoresizingMaskIntoConstraints = false
+            fixed.setContentHuggingPriority(.required, for: .horizontal)
+            fixed.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        // A real low-priority `width == 0` for the trailing slack, never a
+        // hugging priority on a bare view (gotcha (12)).
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        let collapsed = spacer.widthAnchor.constraint(equalToConstant: 0)
+        collapsed.priority = .defaultLow
+        collapsed.isActive = true
+        let row = NSStackView(views: [inlineToggle, inlineTitle, statusDot, statusLabel, grantButton, spacer])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = HelmMetrics.s2
+        row.setCustomSpacing(HelmMetrics.s4, after: inlineTitle)
+        row.setCustomSpacing(HelmMetrics.s3, after: statusLabel)
+        // Gotcha (10).
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor),
+            row.topAnchor.constraint(equalTo: topAnchor),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: HelmButton.Size.small.minHeight),
+        ])
+    }
+
     @objc private func requestPermission() { onRequestPermission?() }
 
     /// Every argument is a real reading taken by the page, never a claim this
@@ -203,6 +271,7 @@ final class SnippetExpansionPanel: NSView {
     /// retroactively.
     func setState(enabled: Bool, trusted: Bool, armed: Bool, triggerCount: Int) {
         toggleRow.isOn = enabled
+        inlineToggle.isOn = enabled
         grantButton.isHidden = trusted
         // GL-14: the four states read differently, and "off" is not drawn as
         // "granted but idle". The armed case is the only one that claims the
@@ -229,6 +298,8 @@ final class SnippetExpansionPanel: NSView {
         self.theme = theme
         card.applyTheme(theme)
         toggleRow.applyTheme(theme)
+        inlineToggle.applyTheme(theme)
+        inlineTitle.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         // `HelmButton` observes the theme itself (`restyle()` owns its font,
         // title, tint and bezel - the component index says so), so it is
         // deliberately not re-themed here.
@@ -244,7 +315,14 @@ final class SnippetExpansionPanel: NSView {
 
     #if FM_SELFTESTS
     var debugStatusText: String { statusLabel.stringValue }
-    var debugToggleIsOn: Bool { toggleRow.isOn }
+    var debugToggleIsOn: Bool { style == .inline ? inlineToggle.isOn : toggleRow.isOn }
+    /// Flip the switch the way a click does: through the toggle's own click
+    /// handler, so the wiring from the switch to `onToggle` is what is tested.
+    func debugFlipToggle() {
+        let toggle = style == .inline ? inlineToggle : toggleRow.toggle
+        toggle.perform(NSSelectorFromString("pillClicked"))
+    }
+    var debugUsesACard: Bool { card.superview != nil }
     var debugGrantButtonIsHidden: Bool { grantButton.isHidden }
     var debugStatusDotColor: CGColor? { statusDot.layer?.backgroundColor }
     #endif

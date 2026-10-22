@@ -863,3 +863,68 @@ The floating bar does not build any of it.
 
 - An off-screen sidebar does not realise a row below the fold, so a badge change repaints only the rows that are on screen; a row scrolled in later is built from the current signals.
 - `HelmDataTable`'s rows are reused, so a reused row view is handed its new row's state at once, and only a change to a row already on screen eases.
+
+## The captain's fixes from using the sidebar layout (modular-shell stage 6, `fm/grandline-stage6-ui-fixes-1792645871`)
+
+The captain moved to the sidebar layout and sent nine items, each with a screenshot.
+This stage is those nine, for the sidebar layout only.
+The floating bar is still the default, and its pages draw exactly what they did, with one exception, a Log Analyzer bug found on the way (below).
+
+### The shape
+
+- **No Pinned section, and no Pin or Unpin.**
+  Every page is one click on its module's row and one on its tab, so a Pinned section listed pages that already had both.
+  The pins themselves are the floating bar's: the saved list, the bar's squares and the ⌘⇧D map's Pin and Unpin are untouched.
+- **The account menu is Log Out only.**
+  Settings is its own sidebar row, and ⌘, and the app menu still open it.
+- **A rule between the account header and Home**, with `WorkspaceSidebarController.headerRuleGap` above and below it, drawn in the status line's own edge recipe.
+- **No status line under Console.**
+  Console's session strip already lists the live sessions at the top of the module, so the line under the terminal said the same thing again.
+  It is still drawn under every other module, which is where the focus timer chip and (from PR #521) the crew, health, vault, Claude and sync readouts live.
+  The body and the column end at the line, or at the pane's foot while it is hidden: two alternative constraint pairs, one active.
+- **A page's primary action is the toolbar's far-right item, after Search** (`WorkspacePrimaryActionProviding`): Connections' Add Host, New Key or New Snippet for the showing tab, Logs' Analyze, Health's Copy diagnostics.
+  It is the page's own button, left out of the page's other actions.
+- **Connections** is the prototype's page.
+  The tabs count their records ("Hosts 7"), from `ModuleTabHosting.moduleTabCounts`.
+  Hosts opens on one filter row under the toolbar: the search (still live filtering, and Return still connects to a typed `ssh user@host`), All and Online with each count, then the floating bar's group and tag filters.
+  Each table is one card that ends under its last row (`HelmDataTable.hugsRows`) and scrolls once the rows outgrow the page.
+  There is no stat strip and no shortcut footer: the counts are on the tabs and the All / Online filter, Touch ID's reading is on the Keys card, and every chord the footer listed is a Hosts menu item or ⌘K.
+  The snippet expansion switch is a plain row over the Snippets table (`SnippetExpansionPanel.Style.inline`), with no sunken box.
+- **Logs** opens an analysis on the input (the redacted output, with Clear) beside three summary cards, the patterns as a table and the likely cause, with Investigate Further, Create Incident and ⋯ under it.
+  The header reads "Log Analyzer · N lines".
+  Analyze is in the toolbar and keeps ⌘↵, its own key equivalent, which the toolbar's button still answers.
+- **Health** is summary cards (Healthy, Warnings, Failing, Not run yet) over one service table with a status, the last run and the recent run streak.
+  Retry shows on a failing row only where the service has a real "run now": the background signals (`BackgroundSignalsPoller.checkNow()`) and the dotfiles sync (`DotfilesAutoSync.syncNowFromUI()`), the entry points their own pages' buttons use.
+  Refresh reads every service's latest report again; it runs nothing.
+- **One component for the summary cards**, `HelmMetricCard` and `HelmMetricRow`: a caption over a large number, tinted only when the number is the signal and corrected to clear the text floor, and a dash rather than a zero for a reading not taken yet.
+
+### Decisions
+
+- **Only what the data holds.**
+  No latency, last-connected or session-count columns and no Sessions tab on Connections (the live sessions are Console's), no per-pattern sparkline on Logs (the analyzer counts a pattern, it does not keep a series), and no duration sparkline or app uptime on Health (the registry records neither).
+- **Logs' cards use the analyzer's own severity words**, "Critical or high" and "Warning", not the prototype's Errors and Warnings.
+  The analyzer rates a line by what it says, so a `WARN ... refused` line is High, and cards captioned Warnings would have disagreed with the Level column beside them.
+- **The status line stays on the other modules.**
+  The captain named Console, so this stage did not decide anything about the line elsewhere.
+
+### What was measured on the way
+
+- **A finished analysis showed an empty Analysis tab, in both layouts.**
+  GL-20 made the Log Analyzer's tabs mount lazily, and `mountTab` hid every tab it built.
+  The Analysis tab is mounted at build time and is the selected one, and nothing ever showed it, so after an analysis the tab strip sat over an empty space until a tab was clicked.
+  A tab now mounts visible when it is the selected one.
+  `SidebarPageFixesSelfTest` checks it in both layouts.
+- **A data table row with nothing to offer still drew ⋯.**
+  `setRevealed` showed the overflow button on any revealed row, so under `actionsAlwaysVisible` every healthy Health row offered an empty menu.
+  The button now shows only when the row has a primary action or a menu.
+- **The status line's room under Console.**
+  A hidden view keeps its constraints (gotcha (11)), so hiding the line alone would have left a 30pt band under the terminal.
+
+### Verification
+
+- `FM_RUN_SIDEBAR_PAGE_FIXES_TESTS` is new and window-backed.
+  It mounts the real sidebar shell and the real floating bar off screen, in its own stores.
+  It never runs `claude -p`, `av`, a sync or a check: the Log Analyzer's fixture goes through `debugRender`, ⌘↵ is sent through the window with nothing to analyze, and Retry's actions are counters.
+- `FM_RUN_MAIN_SPLIT_SHELL_TESTS` and `FM_RUN_SPLIT_SHELL_MODEL_TESTS` changed where this stage changed what they pinned: the Pinned and Pin cases became "the sidebar draws no pins" with source guards, the account menu case checks Log Out only and the header rule, the status line case checks Console, and the toolbar's page-actions case moved to Health because Hosts' only action is now its primary one.
+- The tour lab has `demo logs` and `demo health`.
+  Every page was rendered in Dusk and Daylight at 1512 and 1100, in both layouts, before and after.

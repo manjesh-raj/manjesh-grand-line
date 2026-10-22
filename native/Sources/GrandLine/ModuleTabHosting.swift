@@ -38,4 +38,14 @@ protocol ModuleTabHosting: AnyObject {
     /// Hide the page's own tab control, which the toolbar replaces in the
     /// sidebar layout, or show it again.
     func setModuleTabControlHidden(_ hidden: Bool)
+    /// How many records each tab holds, by module child name, for the
+    /// toolbar to draw beside the tab's name (stage 6: Connections' "Hosts 3").
+    /// A tab with no entry draws its name alone. A page reports a change
+    /// through `onModuleTabChanged`.
+    var moduleTabCounts: [String: Int] { get }
+}
+
+extension ModuleTabHosting {
+    /// Most pages count nothing on their tabs.
+    var moduleTabCounts: [String: Int] { [:] }
 }

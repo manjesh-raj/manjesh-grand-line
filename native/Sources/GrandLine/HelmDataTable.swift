@@ -182,6 +182,27 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     static let fittedEmptyRowHeight: CGFloat = 96
     private lazy var fittingHeight = scroll.heightAnchor.constraint(equalToConstant: 0)
 
+    /// End the card at its last row rather than fill the space it is given,
+    /// and scroll once the rows outgrow it - the prototype's table, which
+    /// stops under its last row (stage 6, Connections' three tables). The page
+    /// pins the card's top and caps its bottom with a `<=`; the rows' height
+    /// is a preference below every content tie, so the cap always wins and
+    /// this can never be what sizes the window (gotcha (13)).
+    var hugsRows = false {
+        didSet {
+            huggingHeight.isActive = hugsRows
+            updateFittingHeight()
+        }
+    }
+    /// The priority the hugged height holds at: under the stacks' defaults,
+    /// so a page's own `<=` cap and any required tie beat it.
+    static let huggingPriority = NSLayoutConstraint.Priority(240)
+    private lazy var huggingHeight: NSLayoutConstraint = {
+        let constraint = scroll.heightAnchor.constraint(equalToConstant: 0)
+        constraint.priority = Self.huggingPriority
+        return constraint
+    }()
+
     private let columns: [Column]
     private let actionsWidth: CGFloat
     private let reorderType: NSPasteboard.PasteboardType?
@@ -358,8 +379,10 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     }
 
     private func updateFittingHeight() {
-        guard sizesToFitRows else { return }
-        fittingHeight.constant = (0..<rows.count).reduce(CGFloat(0)) { $0 + tableView(table, heightOfRow: $1) }
+        guard sizesToFitRows || hugsRows else { return }
+        let height = (0..<rows.count).reduce(CGFloat(0)) { $0 + tableView(table, heightOfRow: $1) }
+        if sizesToFitRows { fittingHeight.constant = height }
+        if hugsRows { huggingHeight.constant = height }
     }
 
     /// `reloadData`, with the selected record put back. Measured: a reload
@@ -537,7 +560,7 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
         switch rows[row].kind {
         case .record: return Self.recordRowHeight
         case .group: return Self.groupRowHeight
-        case .empty where sizesToFitRows:
+        case .empty where sizesToFitRows || hugsRows:
             return Self.fittedEmptyRowHeight
         case .empty:
             // The empty state fills what the other rows leave, so it is centred
@@ -1211,8 +1234,15 @@ final class HelmDataTableActionsCell: NSView {
         primaryButton.title = primary?.title ?? ""
         primaryButton.symbolName = primary?.symbol
         primaryButton.isHidden = primary == nil
-        overflowButton.isHidden = !hasMenu && primary == nil
+        offersActions = hasMenu || primary != nil
+        overflowButton.isHidden = !offersActions
     }
+
+    /// Whether the row has anything for ⋯ to list. A row with no actions
+    /// draws no ⋯ even when revealed - an empty menu behind a button is a
+    /// control that does nothing (stage 6: Health's rows with no Retry, under
+    /// `actionsAlwaysVisible`).
+    private var offersActions = false
 
     /// The primary action and ⋯ show on hover, on the selected row, or always.
     /// Hidden rather than faded: an off-screen render draws an `alphaValue = 0`
@@ -1222,7 +1252,7 @@ final class HelmDataTableActionsCell: NSView {
         overflowButton.alphaValue = 1
         let primaryHidden = primaryRun == nil
         primaryButton.isHidden = primaryHidden || !revealed
-        overflowButton.isHidden = !revealed
+        overflowButton.isHidden = !revealed || !offersActions
     }
 
     @objc private func primaryClicked() { primaryRun?() }

@@ -22,6 +22,11 @@
 // than something a captain checks in on daily, the same criterion that
 // already keeps Schedules/Vault/Docs/Tools out of the daily-use `navStack`
 // group.
+//
+// In the sidebar layout the page is the prototype's (stage 6): summary cards
+// over one table of services, Copy diagnostics at the toolbar's far right and
+// Refresh beside the toolbar's other actions - see `HealthCardView`'s header.
+// The floating bar's page is unchanged.
 
 import AppKit
 
@@ -62,7 +67,35 @@ final class HealthController: NSViewController, DaylightDrillActions {
     /// §7 hoists "Copy diagnostics" into the header - it is this page's one
     /// action, and it applies to the whole card rather than to any one row.
     /// Caller-owned: `HealthCardView` still owns the button and its handler.
-    var drillHeaderActions: [NSView] { [healthCard.diagnosticsButton] }
+    var drillHeaderActions: [NSView] {
+        drawsSidebarLayout ? [refreshButton, healthCard.diagnosticsButton] : [healthCard.diagnosticsButton]
+    }
+
+    /// The services Retry can run again, by service - see
+    /// `HealthCardView.retryActions`. Set by the workspace.
+    var retryActions: [HealthService: () -> Void] {
+        get { healthCard.retryActions }
+        set { healthCard.retryActions = newValue }
+    }
+
+    /// Set once, by `adoptSidebarLayout()`.
+    private(set) var drawsSidebarLayout = false
+    private var stack: NSStackView?
+
+    /// Read every service's latest report again and redraw - the rows'
+    /// relative times ("13 minutes ago") are written once per render. It runs
+    /// nothing: a service is re-run only by its own Retry.
+    private lazy var refreshButton: HelmButton = {
+        let button = HelmButton(symbol: "arrow.clockwise", variant: .quiet, size: .small,
+                                target: self, action: #selector(refreshTapped))
+        button.toolTip = "Read every service's latest report again"
+        button.setAccessibilityLabel("Refresh")
+        return button
+    }()
+
+    @objc private func refreshTapped() {
+        healthCard.refresh(theme: theme)
+    }
 
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 720))
@@ -84,6 +117,7 @@ final class HealthController: NSViewController, DaylightDrillActions {
         // bar and the card header already say ("Health", "last run and last
         // error"), three times on one screen. The card is the page.
         let stack = NSStackView(views: [healthCard.card])
+        self.stack = stack
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
@@ -171,6 +205,12 @@ final class HealthController: NSViewController, DaylightDrillActions {
     // MARK: Probe / self-test surface
 
     #if FM_SELFTESTS
+    var debugHealthCard: HealthCardView { healthCard }
+    func debugRefresh() { refreshTapped() }
+    var debugRefreshButton: HelmButton { refreshButton }
+    #endif
+
+    #if FM_SELFTESTS
     var debugHealthRowCount: Int { healthCard.debugRowCount }
     var debugCardWidth: CGFloat { healthCard.card.bounds.width }
     var debugSummaryValues: [String] { healthCard.debugSummaryValues }
@@ -182,4 +222,24 @@ final class HealthController: NSViewController, DaylightDrillActions {
     /// `.overlay` with no real pointing device present.
     func debugForceLegacyScrollerStyle() { scrollView.scrollerStyle = .legacy }
     #endif
+}
+
+// MARK: - The sidebar layout
+
+extension HealthController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding {
+
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+        let table = healthCard.adoptTableLayout()
+        stack?.addArrangedSubview(table)
+        if let stack { table.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+        // The shell reads the page's actions right after this, on the same
+        // first show, so the toolbar picks up Refresh and the primary action.
+        healthCard.refresh(theme: theme)
+    }
+
+    /// Copy diagnostics, at the toolbar's far right.
+    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? healthCard.diagnosticsButton : nil }
 }

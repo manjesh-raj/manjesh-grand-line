@@ -22,7 +22,10 @@
 //     where a real verb has no other home in this layout (Home's Customize,
 //     Console's Quick Connect, Connections' Activity),
 //   - the trailing cluster: the light/dark toggle and the notifications
-//     button (the captain kept both), the inspector toggle, then Search.
+//     button (the captain kept both), the inspector toggle, then Search,
+//   - and last, at the far right after Search, the page's one primary action
+//     where it has one (Add Host, Analyze, Copy diagnostics), as the
+//     prototype draws it (stage 6, `WorkspacePrimaryActionProviding`).
 //
 // The toolbar draws state and forwards clicks; the shell decides what they
 // mean. Nothing is customisable and nothing is autosaved: the configuration
@@ -46,6 +49,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         static let notifications = NSToolbarItem.Identifier("workspace.notifications")
         static let inspector = NSToolbarItem.Identifier("workspace.inspector")
         static let search = NSToolbarItem.Identifier("workspace.search")
+        static let primaryAction = NSToolbarItem.Identifier("workspace.primaryAction")
     }
 
     let toolbar = NSToolbar(identifier: "workspace.toolbar")
@@ -79,6 +83,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     private let crumb = NSTextField(labelWithString: "")
     private let tabs = NSSegmentedControl()
     private let pageActions = NSStackView()
+    /// The page's primary action, after Search. A stack holding at most one
+    /// view, so the toolbar item keeps one view while the page's button
+    /// changes (Connections' three tabs each have their own).
+    private let primaryActionHost = NSStackView()
+    private var shownPrimary: NSView?
+    private var primaryVisibilityObservation: NSKeyValueObservation?
+    /// The tab names as the module declares them, without their counts -
+    /// what `debugTabNames` reports and what a click is matched against.
+    private var tabNames: [String] = []
     private let moduleActionButton = NSButton()
     private let bellButton = NSButton()
     /// The unread count on the bell's corner. Drawn here rather than with
@@ -190,6 +203,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         pageActions.spacing = HelmMetrics.s2
         pageActions.distribution = .fill
         pageActions.setHuggingPriority(.required, for: .horizontal)
+        primaryActionHost.translatesAutoresizingMaskIntoConstraints = false
+        primaryActionHost.orientation = .horizontal
+        primaryActionHost.alignment = .centerY
+        primaryActionHost.distribution = .fill
+        primaryActionHost.setHuggingPriority(.required, for: .horizontal)
 
         bellButton.image = symbol("bell")
         bellButton.imagePosition = .imageOnly
@@ -262,7 +280,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar) + [ItemID.tabs, ItemID.pageActions, ItemID.moduleAction]
+        toolbarDefaultItemIdentifiers(toolbar) + [ItemID.tabs, ItemID.pageActions, ItemID.moduleAction, ItemID.primaryAction]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
@@ -271,11 +289,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         // When the toolbar runs out of room AppKit moves items into its
         // overflow menu, lowest priority first. The crumb (the module's
         // header names it too), Recents and the inspector toggle go first;
-        // Search, the bell, the light/dark toggle, the tabs and the sidebar
-        // button never do.
+        // Search, the bell, the light/dark toggle, the tabs, the page's
+        // primary action and the sidebar button never do.
         switch identifier {
         case ItemID.crumb, ItemID.recents, ItemID.inspector: item?.visibilityPriority = .low
-        case ItemID.search, ItemID.notifications, ItemID.theme, ItemID.tabs, ItemID.sidebar, ItemID.navigation:
+        case ItemID.search, ItemID.notifications, ItemID.theme, ItemID.tabs, ItemID.sidebar, ItemID.navigation,
+             ItemID.primaryAction:
             item?.visibilityPriority = .high
         default: break
         }
@@ -309,6 +328,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             return viewItem(identifier, view: tabs, label: "Tabs")
         case ItemID.pageActions:
             return viewItem(identifier, view: pageActions, label: "Page actions")
+        case ItemID.primaryAction:
+            return viewItem(identifier, view: primaryActionHost, label: "Primary action")
         case ItemID.moduleAction:
             let item = viewItem(identifier, view: moduleActionButton, label: moduleActionButton.title)
             let menuForm = NSMenuItem(title: moduleActionButton.title, action: #selector(moduleActionClicked), keyEquivalent: "")
@@ -397,12 +418,18 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     }
 
     /// The tabs in the toolbar's centre - a module's tabs, or Home's spaces -
-    /// or none. `tooltips` runs parallel to `names`.
-    func setTabs(_ names: [String], tooltips: [String?] = [], selected: Int?, accessibilityLabel: String = "Tabs") {
-        if tabs.segmentCount != names.count || (0..<names.count).contains(where: { tabs.label(forSegment: $0) != names[$0] }) {
-            tabs.segmentCount = names.count
-            for (index, name) in names.enumerated() {
-                tabs.setLabel(name, forSegment: index)
+    /// or none. `tooltips` and `counts` run parallel to `names`; a count is
+    /// drawn after its tab's name, as the prototype's "Hosts 7" (stage 6).
+    func setTabs(_ names: [String], counts: [Int?] = [], tooltips: [String?] = [], selected: Int?,
+                 accessibilityLabel: String = "Tabs") {
+        tabNames = names
+        let labels = names.enumerated().map { index, name in
+            Self.tabLabel(name, count: index < counts.count ? counts[index] : nil)
+        }
+        if tabs.segmentCount != labels.count || (0..<labels.count).contains(where: { tabs.label(forSegment: $0) != labels[$0] }) {
+            tabs.segmentCount = labels.count
+            for (index, label) in labels.enumerated() {
+                tabs.setLabel(label, forSegment: index)
                 tabs.setWidth(0, forSegment: index)
             }
         }
@@ -413,6 +440,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         tabs.setAccessibilityLabel(accessibilityLabel)
         wantsTabs = !names.isEmpty
         reconcileDynamicItems()
+    }
+
+    /// A tab's label: its name, then its count when it has one. A segment
+    /// label is one plain string, so the count is set off by a figure space
+    /// rather than drawn in a quieter ink.
+    static func tabLabel(_ name: String, count: Int?) -> String {
+        guard let count else { return name }
+        return "\(name)\u{2002}\(count)"
     }
 
     /// The module's one action, or none.
@@ -446,6 +481,20 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         reconcileDynamicItems()
     }
 
+    /// The page's primary action, after Search, or none. The view is the
+    /// page's own, like `setPageActions`'.
+    func setPrimaryAction(_ view: NSView?) {
+        guard view !== shownPrimary else { return }
+        shownPrimary = view
+        for old in primaryActionHost.arrangedSubviews {
+            primaryActionHost.removeArrangedSubview(old)
+            old.removeFromSuperview()
+        }
+        if let view { primaryActionHost.addArrangedSubview(view) }
+        primaryVisibilityObservation = view?.observe(\.isHidden) { [weak self] _, _ in self?.reconcileDynamicItems() }
+        reconcileDynamicItems()
+    }
+
     /// Put the spaces and the page actions in the toolbar, or take them out,
     /// to match what was last asked for. Does nothing until the toolbar has
     /// its default items, which it gets once it is in a window.
@@ -474,6 +523,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         } else if moduleActionIndex == nil {
             let at = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.theme } ?? toolbar.items.count
             toolbar.insertItem(withItemIdentifier: ItemID.moduleAction, at: at)
+        }
+        let primaryIndex = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.primaryAction }
+        if shownPrimary.map({ $0.isHidden }) ?? true {
+            if let primaryIndex { toolbar.removeItem(at: primaryIndex) }
+        } else if primaryIndex == nil {
+            // The far right: after Search, which is the last default item.
+            let at = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.search }.map { $0 + 1 } ?? toolbar.items.count
+            toolbar.insertItem(withItemIdentifier: ItemID.primaryAction, at: at)
         }
     }
 
@@ -521,6 +578,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     }
 
     @objc private func tabClicked(_ sender: NSSegmentedControl) {
+        // The index is what the shell matches, so a count in the label never
+        // reaches it.
         guard sender.selectedSegment >= 0, sender.selectedSegment < sender.segmentCount else { return }
         onSelectTab?(sender.selectedSegment)
     }
@@ -534,7 +593,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     var debugSidebarButton: NSButton { sidebarButton }
     var debugTabs: NSSegmentedControl { tabs }
     /// The tab labels, as the toolbar draws them.
-    var debugTabNames: [String] { wantsTabs ? (0..<tabs.segmentCount).compactMap { tabs.label(forSegment: $0) } : [] }
+    var debugTabNames: [String] { wantsTabs ? tabNames : [] }
+    /// The tab labels as drawn, counts included.
+    var debugTabLabels: [String] { wantsTabs ? (0..<tabs.segmentCount).compactMap { tabs.label(forSegment: $0) } : [] }
+    var debugPrimaryAction: NSView? { shownPrimary }
     var debugCrumb: String { crumb.stringValue }
     var debugIsCompact: Bool { isCompact }
     var debugModuleActionButton: NSButton? { wantsModuleAction ? moduleActionButton : nil }

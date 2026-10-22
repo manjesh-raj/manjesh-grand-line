@@ -177,6 +177,16 @@ enum ReviewTourLab {
         /// path - a tour never runs `av`. Put it after `goto vault`: every
         /// visit starts a read of its own, which the tour refuses.
         case demoAutomic
+        /// Render the Log Analyzer from a fixture investigation through the
+        /// page's real render path: dummy output analysed by the page's own
+        /// local builder, plus a hand-written AI layer. Nothing runs
+        /// `claude -p` and nothing is saved. Put it after `goto logAnalyzer`.
+        case demoLogs
+        /// Fill the tour process's own Health registry with every verdict -
+        /// healthy, a recent failure, failing, checking and not run yet -
+        /// with dummy failure text, then give Retry a no-op so the sidebar
+        /// layout draws it without anything being re-run.
+        case demoHealth
         /// `select <title>`: select the showing page's row with this title,
         /// through the page's own selection path - a host, a key, a snippet
         /// or a credential.
@@ -267,6 +277,8 @@ enum ReviewTourLab {
             if argument == "knowledge" { return .success(.demoKnowledge) }
             if argument == "automic" { return .success(.demoAutomic) }
             if argument == "signals" { return .success(.demoSignals) }
+            if argument == "logs" { return .success(.demoLogs) }
+            if argument == "health" { return .success(.demoHealth) }
             if argument.hasPrefix("loading ") {
                 let card = String(argument.dropFirst("loading ".count))
                 guard ["claude", "fleet", "merge"].contains(card) else { return .failure(.badArgument(argument)) }
@@ -548,6 +560,15 @@ enum ReviewTourLab {
                             VaultTool(name: "terraform", commands: ["terraform"], status: .needsAttention(issueCount: 2))])
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo automic")
+            case .demoLogs:
+                shell.workspace.logAnalyzer.debugRender(demoLogInvestigation())
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo logs")
+            case .demoHealth:
+                seedDemoHealth(shell.workspace.health)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo health")
             case .select(let title):
                 log.append(selectRow(titled: title, shell: shell))
                 shell.view.layoutSubtreeIfNeeded()
@@ -1345,6 +1366,76 @@ enum ReviewTourLab {
 
 private extension NSAppearance {
     var isDarkForTour: Bool { bestMatch(from: [.aqua, .darkAqua]) == .darkAqua }
+}
+
+
+// MARK: - Stage 6's fixtures (Logs and Health)
+
+extension ReviewTourLab {
+
+    /// Dummy output in the shape of the prototype's: a worker that cannot
+    /// start, a proxy refusing it, and a kubelet backing off.
+    static let demoLogText = """
+    2026-10-21T10:42:30Z ERROR checkout-worker missing env EXPORT_BUCKET
+    2026-10-21T10:42:30Z ERROR checkout-worker exit code 1
+    2026-10-21T10:42:30Z WARN  edge-proxy upstream checkout-worker refused
+    2026-10-21T10:42:31Z WARN  edge-proxy upstream checkout-worker refused
+    2026-10-21T10:42:44Z INFO  checkout-api request id=8f2c status=200 dur=41ms
+    2026-10-21T10:43:01Z WARN  kubelet back-off restarting failed container
+    2026-10-21T10:43:41Z ERROR checkout-worker missing env EXPORT_BUCKET
+    2026-10-21T10:43:42Z WARN  edge-proxy upstream checkout-worker refused
+    2026-10-21T10:44:02Z WARN  kubelet back-off restarting failed container
+    2026-10-21T10:44:12Z ERROR checkout-worker missing env EXPORT_BUCKET
+    """
+
+    /// A fully built investigation: the local layer from the page's own
+    /// builder, so it cannot drift from what the page would produce, and a
+    /// hand-written AI layer, so the likely cause has something to say.
+    static func demoLogInvestigation() -> LogInvestigation {
+        let redacted = LogRedactor.redact(demoLogText)
+        let local = LogAnalyzerController.buildLocalAnalysis(text: redacted.text, override: nil)
+        var investigation = LogInvestigation(title: "checkout-worker missing env")
+        investigation.evidence = [LogEvidenceItem(label: "Pasted output", origin: .pasted, sourceDetail: nil,
+                                                  text: redacted.text, detection: local.detection,
+                                                  redactionCount: redacted.count)]
+        let ai = LogAIAnalysis(
+            findings: [],
+            rootCause: LogRootCause(
+                summary: "The export worker crashes at start because EXPORT_BUCKET is not set.",
+                explanation: "The edge proxy warnings follow from the worker being down.",
+                confidence: .medium, evidence: ["missing env EXPORT_BUCKET, three times"],
+                missingEvidence: ["The deployment's environment"], contradictingEvidence: []),
+            nextSteps: ["Check the deployment's environment for EXPORT_BUCKET."],
+            suggestedCommands: [LogSuggestedCommand(order: 1, title: "Show the worker's environment",
+                                                    command: "kubectl describe deploy checkout-worker",
+                                                    rationale: "Lists the variables the pod starts with.")],
+            correlation: [], neededEvidence: [],
+            summary: "One missing variable explains the worker's crash loop and the proxy's warnings.")
+        investigation.analysis = LogAnalysis(local: local, ai: ai, aiFailure: nil, mode: .analyze, analyzedAt: Date())
+        return investigation
+    }
+
+    /// Every verdict, through the registry's own reporting API, and a no-op
+    /// Retry for the two services that have one.
+    static func seedDemoHealth(_ health: HealthController) {
+        let registry = ServiceHealthRegistry.shared
+        let now = Date()
+        registry.recordSuccess(.fleetTasks, at: now.addingTimeInterval(-8))
+        registry.recordSuccess(.shiftGitSync, at: now.addingTimeInterval(-240))
+        registry.recordSuccess(.shiftDueItems, at: now.addingTimeInterval(-23))
+        registry.recordSuccess(.persistence, at: now.addingTimeInterval(-3600))
+        registry.recordSuccess(.backgroundSignals, at: now.addingTimeInterval(-900))
+        registry.recordFailure(.backgroundSignals, "gh: could not reach api.github.com (dummy error)",
+                               at: now.addingTimeInterval(-60))
+        registry.recordSuccess(.dotfilesAutoSync, at: now.addingTimeInterval(-7200))
+        for minutes in [30.0, 20, 12] {
+            registry.recordFailure(.dotfilesAutoSync, "git push was rejected by the remote (dummy error)",
+                                   at: now.addingTimeInterval(-minutes * 60))
+        }
+        registry.register(.scheduledAutomations)
+        registry.markRunning(.docsSync)
+        health.retryActions = [.backgroundSignals: {}, .dotfilesAutoSync: {}]
+    }
 }
 
 #endif
