@@ -1450,6 +1450,7 @@ extension CredentialVaultController: SidebarLayoutAdopting, WorkspaceInspectorSo
             card.bottomAnchor.constraint(equalTo: list.card.bottomAnchor),
         ])
         credentialTable.actionsAlwaysVisible = true
+        credentialTable.accessibilityName = "Credentials"
         credentialTable.onSelect = { [weak self] key in
             guard let self else { return }
             if let key {

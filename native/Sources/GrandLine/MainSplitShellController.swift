@@ -627,10 +627,14 @@ final class MainSplitShellController: WorkspaceShellController {
         if adoptedPages.insert(ObjectIdentifier(controller)).inserted {
             (controller as? SidebarLayoutAdopting)?.adoptSidebarLayout()
             if let page = controller as? KnowledgeTreePage {
-                page.onKnowledgeChanged = { [weak self, weak page] in
+                page.onKnowledgeChanged = { [weak self, weak page] change in
                     guard let self, let page, self.showsKnowledgeTree,
                           (self.pageController as? KnowledgeTreePage) === page else { return }
-                    self.knowledgeTree.reload(selecting: self.knowledgeSelection(for: self.currentRoute, page: page))
+                    let selection = self.knowledgeSelection(for: self.currentRoute, page: page)
+                    switch change {
+                    case .list: self.knowledgeTree.reload(selecting: selection)
+                    case .showing: self.knowledgeTree.select(itemID: selection)
+                    }
                 }
             }
             if let source = controller as? WorkspaceInspectorSource {

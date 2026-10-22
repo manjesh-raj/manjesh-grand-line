@@ -165,6 +165,10 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     var onReorder: ((_ draggedKey: String, _ beforeKey: String?) -> Void)?
     /// Show every row's actions at rest rather than on hover and selection.
     var actionsAlwaysVisible = false
+    /// What VoiceOver calls the table ("Hosts", "Credentials").
+    var accessibilityName = "Table" {
+        didSet { table.setAccessibilityLabel(accessibilityName) }
+    }
     /// Grow to fit every row instead of scrolling, for a table that sits in a
     /// page that already scrolls (a card among cards). Its empty state then
     /// takes `fittedEmptyRowHeight` rather than filling the card.
@@ -240,7 +244,7 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
         table.allowsEmptySelection = true
         table.allowsColumnReordering = false
         table.allowsColumnResizing = false
-        table.setAccessibilityLabel("Table")
+        table.setAccessibilityLabel(accessibilityName)
         let menu = NSMenu()
         menu.delegate = self
         table.menu = menu

@@ -104,7 +104,7 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
     private var selectedPostmortemID: String?
     /// The sidebar layout's Knowledge tree (`KnowledgeTreePage`, at the end of
     /// this file): told when the postmortems or the open one change.
-    var onKnowledgeChanged: (() -> Void)?
+    var onKnowledgeChanged: ((KnowledgeChange) -> Void)?
     private var postmortemGridItems: [DocGridItem] = []
 
     private var theme: HelmTheme = ThemeManager.shared.theme
@@ -299,7 +299,7 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
         }
         applyTheme()
         onDrillSubtitleChanged?()
-        onKnowledgeChanged?()
+        onKnowledgeChanged?(.list)
     }
 
     /// Re-flows `postmortemGridItems` - see `RunbooksController.rebuildRunbookGrid`'s
@@ -322,7 +322,7 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
         selectedPostmortemID = id
         postmortemDetailTextView.string = postmortem.content
         postmortemDetailScroll.isHidden = false
-        onKnowledgeChanged?()
+        onKnowledgeChanged?(.showing)
     }
 
     /// Entry point for the unified `⌘K` search palette (`UnifiedSearchController`,

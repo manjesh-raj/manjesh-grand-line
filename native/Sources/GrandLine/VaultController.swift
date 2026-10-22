@@ -1526,6 +1526,8 @@ extension VaultController: SidebarLayoutAdopting {
             contentStack.insertArrangedSubview(table.card, at: index)
             table.card.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         }
+        secretsTable.accessibilityName = "Secrets"
+        toolsTable.accessibilityName = "Verified launchers"
         // The same headers, holding the same badges and button.
         secretsTable.card.setHeader(symbol: "lock.fill", tint: .good, title: "Secrets",
                                     subtitle: "Keychain-backed, this device only",

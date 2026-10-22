@@ -1877,6 +1877,9 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource {
             }
             table.onSelect = { [weak self] _ in self?.refreshDetailPanel() }
         }
+        hostsTable.accessibilityName = "Hosts"
+        keysTable.accessibilityName = "SSH keys"
+        snippetsTable.accessibilityName = "Snippets"
         expansionStrip.onToggle = { [weak self] isOn in
             self?.onSnippetExpansionToggled?(isOn)
             self?.refreshExpansionPanel()

@@ -39,7 +39,7 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
 
     /// The sidebar layout's Knowledge tree (`KnowledgeTreePage`, at the end of
     /// this file): told when the runbooks or the open one change.
-    var onKnowledgeChanged: (() -> Void)?
+    var onKnowledgeChanged: ((KnowledgeChange) -> Void)?
 
     /// Keeps `ClosureSleeve` targets alive for as long as the controls they
     /// are attached to exist - appended once, in `buildRunbookEditor`, for
@@ -376,7 +376,7 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         }
         rebuildRunbookGrid()
         onDrillSubtitleChanged?()
-        onKnowledgeChanged?()
+        onKnowledgeChanged?(.list)
     }
 
     /// Re-flows `runbookGridItems` into a wrapping multi-column grid, sized
@@ -458,7 +458,7 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         runbookListContainerStack.isHidden = true
         runbookEditorContainer.isHidden = false
         notifyDrillChanged()
-        onKnowledgeChanged?()
+        onKnowledgeChanged?(.showing)
     }
 
     private func cancelRunbookEditor() {
@@ -467,7 +467,7 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         notifyDrillChanged()
         editingRunbookID = nil
         editingIsNew = false
-        onKnowledgeChanged?()
+        onKnowledgeChanged?(.showing)
     }
 
     private func saveRunbookEditor() {

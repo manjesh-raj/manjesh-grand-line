@@ -24,14 +24,22 @@
 
 import AppKit
 
+/// What a Knowledge page changed.
+enum KnowledgeChange {
+    /// Its list: a create, a save, a delete, a reload. The tree reads again.
+    case list
+    /// Only which item it shows. The tree moves its selection, and reads
+    /// nothing.
+    case showing
+}
+
 /// A Knowledge page the tree can open items on and follow.
 protocol KnowledgeTreePage: AnyObject {
     /// The tree id of the item the page is showing (`KnowledgeTreeItem.id`),
     /// or `nil` when it shows its own list.
     var knowledgeShowingItemID: String? { get }
-    /// Called after the page changed its list (a create, a save, a delete) or
-    /// the item it shows.
-    var onKnowledgeChanged: (() -> Void)? { get set }
+    /// Called after the page changed its list or the item it shows.
+    var onKnowledgeChanged: ((KnowledgeChange) -> Void)? { get set }
     /// Open the item with this tree id, through the page's own open path.
     func openKnowledgeItem(id: String)
 }

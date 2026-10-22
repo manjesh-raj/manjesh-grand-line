@@ -172,7 +172,7 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
 
     /// The sidebar layout's Knowledge tree (`KnowledgeTreePage`, at the end of
     /// this file): told when the pages or the open page change.
-    var onKnowledgeChanged: (() -> Void)?
+    var onKnowledgeChanged: ((KnowledgeChange) -> Void)?
     static let railColumnWidth: CGFloat = 200
 
     // MARK: Init
@@ -644,7 +644,7 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         }
         refreshStatusLine()
         onDrillSubtitleChanged?()
-        onKnowledgeChanged?()
+        onKnowledgeChanged?(.list)
     }
 
     /// The clone can land after this page first mounted, exactly as it can
@@ -720,7 +720,7 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         refreshRail()
         refreshStatusLine()
         onDrillSubtitleChanged?()
-        onKnowledgeChanged?()
+        onKnowledgeChanged?(.showing)
     }
 
     // MARK: Editing

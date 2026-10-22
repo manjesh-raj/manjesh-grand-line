@@ -596,7 +596,7 @@ final class DocsWebView: WKWebView {
 extension DocsController: KnowledgeTreePage {
     var knowledgeShowingItemID: String? { DocsStore.isSynced ? KnowledgeTreeItem.playbookID : nil }
 
-    var onKnowledgeChanged: (() -> Void)? {
+    var onKnowledgeChanged: ((KnowledgeChange) -> Void)? {
         get { nil }
         set { _ = newValue }
     }
