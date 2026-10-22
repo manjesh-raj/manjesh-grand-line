@@ -273,6 +273,8 @@ NEEDS_SESSION=(
   "FM_RUN_MAIN_SPLIT_SHELL_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenSplitShell()
   # The later page work: the redesigned pages in a real sidebar shell.
   "FM_RUN_PAGE_REDESIGNS_TESTS"  # session-not-window: builds its windows via ReviewTourLab.makeOffScreenSplitShell() and makeOffScreenShell()
+  # The polish stage: the sidebar layout's motion, badges and status line.
+  "FM_RUN_SIDEBAR_POLISH_TESTS"
   "FM_RUN_HELM_KIT_VIEW_TESTS"
   # `fm/grandline-claude-widget-refresh-shift`: builds a real `HelmModuleCard`
   # and a real hub in real windows and reads resolved header frames back after

@@ -561,7 +561,7 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
         view.configure(selected: isRecord && tableView.selectedRowIndexes.contains(row),
                        hovered: isRecord && row == hoveredRow,
                        separator: isRecord && row + 1 < rows.count && rows[row + 1].isRecord,
-                       theme: theme)
+                       theme: theme, animated: false)
         return view
     }
 
@@ -860,43 +860,68 @@ private final class HelmDataTableHeader: NSView {
 
 /// Paints a record row's selection, hover and separator from the theme, in
 /// place of the system highlight the table has turned off.
+///
+/// The selection and hover fills ease (`HelmRowWash`, the motion table's
+/// state row) when the row's state changes, and land at once for a new row
+/// or a theme repaint. The separator is its own hairline over the fill, so a
+/// hovered row keeps it, as it did when both were drawn.
 final class HelmDataTableRowView: NSTableRowView {
     static let reuseID = NSUserInterfaceItemIdentifier("HelmDataTableRowView")
     private var rowSelected = false
     private var hovered = false
     private var separator = false
     private var theme: HelmTheme = ThemeManager.shared.theme
+    private let fill: HelmRowWash
+    private let hairline = NSView()
 
-    func configure(selected: Bool, hovered: Bool, separator: Bool, theme: HelmTheme) {
+    override init(frame frameRect: NSRect) {
+        fill = HelmRowWash(frame: frameRect)
+        super.init(frame: frameRect)
+        addSubview(fill, positioned: .below, relativeTo: nil)
+        hairline.wantsLayer = true
+        hairline.isHidden = true
+        addSubview(hairline, positioned: .above, relativeTo: fill)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// `animated: false` for a row view being handed a row, new or reused:
+    /// its state is the row's, not a change.
+    func configure(selected: Bool, hovered: Bool, separator: Bool, theme: HelmTheme, animated: Bool = true) {
+        let stateChanged = animated && (selected != rowSelected || hovered != self.hovered)
         self.rowSelected = selected
         self.hovered = hovered
         self.separator = separator
         self.theme = theme
         setAccessibilitySelected(selected)
-        needsDisplay = true
-    }
-
-    override func drawBackground(in dirtyRect: NSRect) {
         let base = HelmTheme.nsColor(theme.chromeBackgroundHex)
         let accent = HelmTheme.nsColor(theme.accentHex)
-        if rowSelected {
-            (base.blended(withFraction: HelmAccentRow.selectionWash, of: accent) ?? base).setFill()
-            bounds.fill()
+        let color: NSColor?
+        if selected {
+            color = base.blended(withFraction: HelmAccentRow.selectionWash, of: accent) ?? base
         } else if hovered {
-            HelmFlatList.rowHoverColor(theme, over: base).setFill()
-            bounds.fill()
+            color = HelmFlatList.rowHoverColor(theme, over: base)
+        } else {
+            color = nil
         }
-        if separator, !rowSelected {
-            HelmFlatList.hairRowColor(theme).setFill()
-            NSRect(x: HelmDataTable.edgeInset, y: isFlipped ? bounds.maxY - 1 : 0,
-                   width: max(0, bounds.width - 2 * HelmDataTable.edgeInset), height: 1).fill()
-        }
+        fill.paint(color, animated: stateChanged)
+        hairline.layer?.backgroundColor = HelmFlatList.hairRowColor(theme).cgColor
+        hairline.isHidden = !separator || selected
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        fill.frame = bounds
+        hairline.frame = NSRect(x: HelmDataTable.edgeInset, y: isFlipped ? bounds.maxY - 1 : 0,
+                                width: max(0, bounds.width - 2 * HelmDataTable.edgeInset), height: 1)
     }
 
     override func drawSelection(in dirtyRect: NSRect) {}
 
     #if FM_SELFTESTS
     var debugState: (selected: Bool, hovered: Bool, separator: Bool) { (rowSelected, hovered, separator) }
+    var debugFill: HelmRowWash { fill }
     #endif
 }
 

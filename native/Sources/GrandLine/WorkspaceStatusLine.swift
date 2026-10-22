@@ -4,20 +4,20 @@
 // one row under the content column, from the review's Direction B and the
 // prototype's footer.
 //
-// In this stage it carries what has a real, observable source today:
+// Left to right:
 //
 //   - **the focus timer chip** (F7) - the floating bar shows it beside the
 //     search pill while a timer runs; here it is the first thing on the line,
 //     with the same ring popover,
 //   - **the live sessions**, read off the session registry: how many are
-//     connected, and how many are restored pages that have not started.
+//     connected, and how many are restored pages that have not started,
+//   - the prototype's other readouts, from the polish stage: **the crew**
+//     ("2 need you", "Crew all clear"), **a failing service**, and
+//     **Poneglyph's lock**, then on the right **Claude usage** and **Tasks
+//     sync**. Each comes from `WorkspaceSignals`, which says where it reads
+//     and what each honest state looks like, and each opens its module.
 //
-// The prototype's other readouts (crew decisions, a failing service, the
-// vault's lock, Claude usage, sync) arrive with their modules in stage 4.
-// Each needs a source that can be observed by more than one surface - the
-// vault store's `onChange` is a single closure Poneglyph already owns
-// (ARCH-04) - and a readout that cannot be kept current would be the
-// "unknown rendered as zero" GL-14 forbids.
+// A readout with nothing known draws nothing at all, rather than a zero.
 
 import AppKit
 
@@ -37,6 +37,17 @@ final class WorkspaceStatusLine: NSView {
     private var focusPopover: NSPopover?
     private var themeToken: ThemeObservation?
     private var sessionsAreLive = false
+    /// The signals' readouts, leading and trailing, rebuilt from
+    /// `WorkspaceSignals.statusItems` on every change.
+    private let leadingReadouts = NSStackView()
+    private let trailingReadouts = NSStackView()
+    private var readouts: [WorkspaceStatusItem.ID: WorkspaceStatusReadout] = [:]
+    private var signals = WorkspaceSignals()
+    /// "Synced 2 min ago" ages, so the line repaints its words once a minute
+    /// while the window is up - a repaint of what it holds, never a read.
+    private var ageTimer: Timer?
+    /// A readout was clicked: open its page.
+    var onOpen: ((RailDestination) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -74,12 +85,21 @@ final class WorkspaceStatusLine: NSView {
         // there is no slack for it to hand out.
         stack.addArrangedSubview(focusChip)
         stack.addArrangedSubview(sessions)
+        stack.addArrangedSubview(leadingReadouts)
         stack.distribution = .fill
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = HelmMetrics.s4
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        for readouts in [leadingReadouts, trailingReadouts] {
+            readouts.orientation = .horizontal
+            readouts.alignment = .centerY
+            readouts.distribution = .fill
+            readouts.spacing = HelmMetrics.s4
+            readouts.translatesAutoresizingMaskIntoConstraints = false
+        }
+        addSubview(trailingReadouts)
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: Self.height),
@@ -88,8 +108,10 @@ final class WorkspaceStatusLine: NSView {
             topEdge.trailingAnchor.constraint(equalTo: trailingAnchor),
             topEdge.heightAnchor.constraint(equalToConstant: 1),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s4),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -HelmMetrics.s4),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingReadouts.leadingAnchor, constant: -HelmMetrics.s4),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 0.5),
+            trailingReadouts.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s4),
+            trailingReadouts.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 0.5),
         ])
 
         // GL-09 / §5.1(b): a popover left open when the app lock fires stays
@@ -105,6 +127,53 @@ final class WorkspaceStatusLine: NSView {
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
         if let focusTimerToken { focusTimer?.unobserve(focusTimerToken) }
+        ageTimer?.invalidate()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        ageTimer?.invalidate()
+        ageTimer = nil
+        guard window != nil else { return }
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            guard let self, self.window?.isVisible == true else { return }
+            self.render(signals: self.signals)
+        }
+        timer.tolerance = 10
+        RunLoop.main.add(timer, forMode: .common)
+        ageTimer = timer
+    }
+
+    // MARK: The signals' readouts
+
+    /// Draw what the signals say now. A readout appears, changes or goes in
+    /// place; the line keeps its order.
+    func render(signals: WorkspaceSignals, now: Date = Date()) {
+        self.signals = signals
+        let items = signals.statusItems(now: now)
+        let shown = Set(items.map(\.id))
+        for (id, readout) in readouts where !shown.contains(id) {
+            readout.removeFromSuperview()
+            readouts[id] = nil
+        }
+        let theme = ThemeManager.shared.theme
+        for item in items {
+            let readout = readouts[item.id] ?? {
+                let made = WorkspaceStatusReadout()
+                made.onClick = { [weak self] destination in self?.onOpen?(destination) }
+                readouts[item.id] = made
+                return made
+            }()
+            readout.configure(item, theme: theme)
+        }
+        // Re-seat in the model's order, leading and trailing.
+        for (stackView, trailing) in [(leadingReadouts, false), (trailingReadouts, true)] {
+            let ordered = items.filter { $0.trailing == trailing }.compactMap { readouts[$0.id] }
+            if stackView.arrangedSubviews != ordered {
+                stackView.arrangedSubviews.forEach { stackView.removeArrangedSubview($0); $0.removeFromSuperview() }
+                ordered.forEach { stackView.addArrangedSubview($0) }
+            }
+        }
     }
 
     // MARK: The sessions readout
@@ -191,6 +260,7 @@ final class WorkspaceStatusLine: NSView {
             ? HelmTheme.nsColor(HelmTint.good.hex(in: theme)).cgColor
             : HelmTheme.mutedInk(theme).withAlphaComponent(0.5).cgColor
         if !focusChip.isHidden { focusChip.applyTheme(theme) }
+        for readout in readouts.values { readout.applyTheme(theme) }
     }
 
     #if FM_SELFTESTS
@@ -199,5 +269,108 @@ final class WorkspaceStatusLine: NSView {
     var debugFocusChipIsVisible: Bool { !focusChip.isHidden }
     func debugClickFocusChip() { focusChipClicked() }
     var debugFocusPopoverIsShown: Bool { focusPopover?.isShown ?? false }
+    /// The readouts as drawn, in order: leading, then trailing.
+    var debugReadouts: [WorkspaceStatusReadout] {
+        (leadingReadouts.arrangedSubviews + trailingReadouts.arrangedSubviews).compactMap { $0 as? WorkspaceStatusReadout }
+    }
+    var debugReadoutTexts: [String] { debugReadouts.map(\.debugText) }
+    #endif
+}
+
+/// One readout on the status line: a dot or a symbol, then its words. A
+/// click (or Return, Space or VoiceOver's press, through `HoverHighlightView`)
+/// opens the page it is about.
+final class WorkspaceStatusReadout: HoverHighlightView {
+    private let dot = NSView()
+    private let symbol = NSImageView()
+    private let label = NSTextField(labelWithString: "")
+    private var item: WorkspaceStatusItem?
+    var onClick: ((RailDestination) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        cornerRadius = HelmMetrics.rChip
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = WorkspaceSidebarSessionCell.dotSide / 2
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        symbol.translatesAutoresizingMaskIntoConstraints = false
+        symbol.imageScaling = .scaleProportionallyDown
+        label.font = .systemFont(ofSize: HelmType.scaled(11.5))
+        label.lineBreakMode = .byTruncatingTail
+        // Gotcha (5): the words give way, the mark never does.
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let row = NSStackView(views: [dot, symbol, label])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = HelmMetrics.s1 + 2
+        row.detachesHiddenViews = true
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            dot.widthAnchor.constraint(equalToConstant: WorkspaceSidebarSessionCell.dotSide),
+            dot.heightAnchor.constraint(equalToConstant: WorkspaceSidebarSessionCell.dotSide),
+            symbol.widthAnchor.constraint(equalToConstant: HelmType.scaled(12)),
+            symbol.heightAnchor.constraint(equalToConstant: HelmType.scaled(12)),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s1),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s1),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+        ])
+        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clicked)))
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func configure(_ item: WorkspaceStatusItem, theme: HelmTheme) {
+        self.item = item
+        label.stringValue = item.text
+        toolTip = item.toolTip
+        accessibilityLabelOverride = item.text
+        setAccessibilityHelp(item.toolTip)
+        switch item.lead {
+        case .dot:
+            dot.isHidden = false
+            symbol.isHidden = true
+        case .symbol(let name, _):
+            dot.isHidden = true
+            symbol.isHidden = false
+            symbol.image = HelmSymbol.image(name, pointSize: HelmType.scaled(10.5), weight: .semibold)
+        case .none:
+            dot.isHidden = true
+            symbol.isHidden = true
+        }
+        applyTheme(theme)
+    }
+
+    /// Muted words, as the prototype's line has them; the mark carries the
+    /// state, in a tint corrected to clear the text floor on the line's
+    /// ground - it is the only thing that says "failing" before the words do.
+    func applyTheme(_ theme: HelmTheme) {
+        let ground = HelmTheme.nsColor(theme.backgroundHex)
+        let muted = HelmTheme.mutedInk(theme)
+        label.textColor = muted
+        hoverColor = HelmTheme.nsColor(theme.chromeInkHex).withAlphaComponent(WorkspaceSidebarHeader.hoverAlpha)
+        guard let item else { return }
+        switch item.lead {
+        case .dot(let tone, let quiet):
+            let color = WorkspaceSidebarBadgeView.ink(for: tone, over: ground, theme: theme)
+            dot.layer?.backgroundColor = (quiet ? color.withAlphaComponent(0.5) : color).cgColor
+        case .symbol(_, let tone):
+            symbol.contentTintColor = tone == .neutral ? muted : WorkspaceSidebarBadgeView.ink(for: tone, over: ground, theme: theme)
+        case .none:
+            break
+        }
+    }
+
+    @objc private func clicked() {
+        guard let item else { return }
+        onClick?(item.destination)
+    }
+
+    #if FM_SELFTESTS
+    var debugText: String { label.stringValue }
+    var debugItem: WorkspaceStatusItem? { item }
+    var debugDotColor: CGColor? { dot.isHidden ? nil : dot.layer?.backgroundColor }
+    var debugLabelColor: NSColor? { label.textColor }
     #endif
 }

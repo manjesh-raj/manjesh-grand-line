@@ -95,6 +95,69 @@ final class HelmScrollEdgeHairline {
     #endif
 }
 
+/// A table or outline row's hover and selection fill, eased.
+///
+/// The modular-shell polish: the sidebar's rows and `HelmDataTable`'s rows
+/// painted their hover and selection in `drawBackground`/`drawSelection`, so
+/// both landed in one frame, where the prototype eases them (the motion
+/// table's state row). A row view draws through `draw(_:)`, which cannot
+/// animate, so the fill moves onto this view's own layer, and
+/// `HelmMotion.animateLayers` eases it. Under Reduce Motion it lands at once.
+///
+/// It sits at the bottom of the row view's subviews, takes no clicks, and is
+/// sized by its autoresizing mask rather than by constraints - a row view is
+/// laid out by its table, and a constraint here would join every row to the
+/// window's constraint graph for nothing.
+///
+/// **A fresh row paints its first state instantly.** A table rebuilds its row
+/// views on every reload and every theme change, and a fill easing in from
+/// clear on each of those would make the whole list flash. Only a change to a
+/// row that has already painted, while it is in a window, eases.
+final class HelmRowWash: NSView {
+
+    static let duration: TimeInterval = HelmMotion.stateDuration
+
+    private var hasPainted = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        autoresizingMask = [.width, .height]
+        setAccessibilityElement(false)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// Pure paint: the row underneath it takes every click.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// Install a wash at the bottom of `row`. It fills the row unless the
+    /// row sets its frame itself in `layout()`.
+    static func install(in row: NSView) -> HelmRowWash {
+        let wash = HelmRowWash(frame: row.bounds)
+        row.addSubview(wash, positioned: .below, relativeTo: nil)
+        return wash
+    }
+
+    /// Show `color` (nil for none), with `cornerRadius`. `animated: false` is
+    /// the caller's own "this is a rebuild, not a change".
+    func paint(_ color: NSColor?, cornerRadius: CGFloat = 0, animated: Bool = true) {
+        let target = (color ?? .clear).cgColor
+        let animated = animated && hasPainted && window != nil
+        hasPainted = true
+        guard let layer else { return }
+        HelmMotion.withoutActions { layer.cornerRadius = cornerRadius }
+        HelmMotion.animateLayers(animated, duration: Self.duration, on: [layer]) {
+            layer.backgroundColor = target
+        }
+    }
+
+    #if FM_SELFTESTS
+    var debugFill: CGColor? { layer?.backgroundColor }
+    var debugIsEasing: Bool { layer?.animation(forKey: "backgroundColor") != nil }
+    #endif
+}
+
 /// D5(b): a subtle staggered entrance for a list's rows, on first load only.
 ///
 /// **First load only, and that is the whole design.** A table re-renders on

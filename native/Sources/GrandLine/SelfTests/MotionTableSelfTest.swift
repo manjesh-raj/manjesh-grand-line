@@ -79,6 +79,10 @@ enum MotionTableSelfTest {
             ("HelmRowEntrance.duration", HelmRowEntrance.duration),
             ("HelmInputSurface.focusTransitionDuration", HelmInputSurface.focusTransitionDuration),
             ("HelmToggle.animationDuration", HelmToggle.animationDuration),
+            ("HelmRowWash.duration", HelmRowWash.duration),
+            ("WorkspaceMotion.paneDuration", WorkspaceMotion.paneDuration),
+            ("WorkspaceMotion.inspectorEntranceDuration", WorkspaceMotion.inspectorEntranceDuration),
+            ("WorkspaceMotion.tabDuration", WorkspaceMotion.tabDuration),
         ]
         for (name, value) in named {
             check(rows.contains(value), "\(name) is \(value)s, which is not a row of the motion table", &ok)

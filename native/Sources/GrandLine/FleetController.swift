@@ -174,6 +174,8 @@ final class FleetController: NSViewController {
     /// Each task last read as waiting on the captain, and when. A task whose
     /// state the next read cannot get stays listed from here, with its age.
     private var needsYouKnown: [String: (task: FleetTask, readAt: Date)] = [:]
+    /// How many tasks the last read's Needs you list holds.
+    private var needsYouListedCount = 0
     private let tabs = HelmSegmentedTabs(items: OverviewTab.allCases.map { .init(id: $0.rawValue, title: $0.title) },
                                          selected: OverviewTab.overview.rawValue)
 
@@ -963,8 +965,13 @@ final class FleetController: NSViewController {
         renderBanner(needs: needs, working: working, ready: ready, homeOk: snapshot.homeOk)
         rebuildStats(working: working.count, ready: ready, snapshot: snapshot)
         // Needs you keeps a task it cannot read this time (see
-        // `noteNeedsYouRead`). The floating bar lists this read as it is.
-        currentNeedsTasks = drawsSidebarLayout ? noteNeedsYouRead(snapshot, needs: needs) : needs
+        // `noteNeedsYouRead`). The floating bar lists this read as it is. The
+        // bookkeeping runs in both layouts, because the sidebar layout's
+        // Crew badge and status line read it before Crew is ever opened; only
+        // the sidebar layout lists its result.
+        let carried = noteNeedsYouRead(snapshot, needs: needs)
+        needsYouListedCount = carried.count
+        currentNeedsTasks = drawsSidebarLayout ? carried : needs
         rebuildNeedsRows(currentNeedsTasks)
         if drawsSidebarLayout { renderNeedsYou(currentNeedsTasks) }
         rebuildTaskRows(into: inFlightStack, tasks: working, emptyTitle: "All hands idle", emptyBody: "No crew are working right now. Send your first mate a task from the console and this board lights up.")
@@ -1511,6 +1518,16 @@ extension FleetController: SidebarLayoutAdopting {
 
     @objc private func needsYouSetupTapped() { onNavigateToSetup?() }
 
+    /// Needs you's own reading of the crew, for the sidebar layout's Crew
+    /// badge and status line: the same count Needs you lists, and the same
+    /// honest states its summary states. Read after `onSnapshotChanged`,
+    /// which every read fires.
+    var needsYouReading: FleetNeedsYouReading {
+        FleetNeedsYouReading(hasRead: hasLoadedOnce && needsYouCheckedAt != nil, homeOk: needsYouHomeOk,
+                             waiting: needsYouListedCount, readAt: needsYouReadAt,
+                             checkedAt: needsYouCheckedAt, readFailed: needsYouReadFailed)
+    }
+
     /// Fold one read into Needs you and return what it lists: this read's
     /// tasks waiting on the captain, plus any task it could not read that
     /// was last read as waiting. When the task list itself could not be
@@ -1616,3 +1633,20 @@ extension FleetController: SidebarLayoutAdopting {
     #endif
 }
 
+/// What Crew › Needs you last read, without its rows - the sidebar layout's
+/// Crew badge and status line (`WorkspaceSignals`).
+struct FleetNeedsYouReading: Equatable {
+    /// A read has landed. Until then the launch refresh is still reading.
+    let hasRead: Bool
+    /// The last read found a firstmate home to read.
+    let homeOk: Bool
+    /// The tasks waiting on the captain, including any carried from an
+    /// earlier read because this one could not read them.
+    let waiting: Int
+    /// When the task list was last read successfully.
+    let readAt: Date?
+    /// When the crew's state was last checked, successfully or not.
+    let checkedAt: Date?
+    /// The last read could not read the task list at all.
+    let readFailed: Bool
+}

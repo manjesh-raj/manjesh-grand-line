@@ -50,11 +50,11 @@ enum PageRedesignsSelfTest {
         defer { try? FileManager.default.removeItem(at: scratch) }
 
         // Every store this suite seeds, and every one a page it mounts can
-        // write, in the suite's own folder (see `withScratchStores`). The
-        // caller's stores are fingerprinted either side, so a run that writes
-        // past the wrapper fails by name rather than in the next suite.
-        let callerStores = storeFingerprints()
-        let checksOK = withScratchStores(in: scratch.appendingPathComponent("stores", isDirectory: true)) {
+        // write, in the suite's own folder (`SelfTestScratchStores.within`).
+        // The caller's stores are fingerprinted either side, so a run that
+        // writes past the wrapper fails by name rather than in the next suite.
+        let callerStores = SelfTestScratchStores.fingerprints()
+        let checksOK = SelfTestScratchStores.within(scratch.appendingPathComponent("stores", isDirectory: true)) {
             var allOK = true
             do {
                 let (window, shell) = ReviewTourLab.makeOffScreenSplitShell()
@@ -79,59 +79,11 @@ enum PageRedesignsSelfTest {
             return allOK
         }
         var storesOK = true
-        let touched = storeFingerprints().filter { callerStores[$0.key] != $0.value }.keys.sorted()
+        let touched = SelfTestScratchStores.fingerprints().filter { callerStores[$0.key] != $0.value }.keys.sorted()
         check(touched.isEmpty, "the suite wrote to the caller's stores: \(touched)", &storesOK)
         let allOK = checksOK && storesOK
         print(allOK ? "PageRedesignsSelfTest: all checks passed" : "PageRedesignsSelfTest: FAILED")
         return allOK
-    }
-
-    /// Whether each store the caller points at exists, and when it last
-    /// changed, keyed by its variable.
-    private static func storeFingerprints() -> [String: String] {
-        var prints: [String: String] = [:]
-        for (variable, _) in scratchStores {
-            guard let path = ProcessInfo.processInfo.environment[variable], !path.isEmpty else { continue }
-            let attributes = try? FileManager.default.attributesOfItem(atPath: path)
-            let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970
-            prints[variable] = modified.map { "\($0)" } ?? "absent"
-        }
-        return prints
-    }
-
-    /// Every store `withScratchStores` moves: its variable, and the file or
-    /// folder it gets in the suite's own folder.
-    private static let scratchStores: [(variable: String, name: String)] = [
-        ("FM_HOSTS_FILE", "hosts.json"), ("FM_KEYS_FILE", "keys.json"), ("FM_SNIPPETS_FILE", "snippets.json"),
-        ("FM_SCHEDULES_FILE", "schedules.json"), ("FM_SHIFT_DIR", "tasks"), ("FM_DICTATION_DIR", "dictation"),
-        ("FM_DOCS_DIR", "docs"), ("FM_DOCS_RUNBOOKS_DIR", "runbooks"), ("FM_COMMAND_LIBRARY_DIR", "commands"),
-        ("FM_LOG_ANALYZER_DIR", "investigations"), ("FM_FLEET_LOG_DIR", "fleet-log"), ("FM_INCIDENTS_DIR", "incidents"),
-        ("FM_CREDENTIAL_VAULT_DIR", "grand-line-vault"), ("FM_NOTEBOOK_DIR", "notebook"),
-        ("FM_READING_LIST_DIR", "reading-list"),
-    ]
-
-    /// CI points the stores at one `ci-stores` folder that every suite in a
-    /// lane shares, so a vault, hosts or runbooks seeded here would still be
-    /// there for the next suite. Measured on CI: the demo vault left
-    /// `CredentialVaultViewSelfTest`'s own `createVault` nothing to create,
-    /// and its page read "Locked". So this suite points every store it seeds,
-    /// and every one a page it mounts can write, at its own folder for the
-    /// whole run, and puts the caller's values back after.
-    private static func withScratchStores<T>(in dir: URL, _ body: () -> T) -> T {
-        let overrides = Dictionary(uniqueKeysWithValues: scratchStores.map {
-            ($0.variable, dir.appendingPathComponent($0.name).path)
-        })
-        var previous: [String: String?] = [:]
-        for (key, value) in overrides {
-            previous[key] = ProcessInfo.processInfo.environment[key]
-            setenv(key, value, 1)
-        }
-        defer {
-            for (key, value) in previous {
-                if let value { setenv(key, value, 1) } else { unsetenv(key) }
-            }
-        }
-        return body()
     }
 
     private static func settle(_ shell: WorkspaceShellController) {

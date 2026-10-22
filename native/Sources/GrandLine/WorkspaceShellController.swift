@@ -161,6 +161,8 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     func workspaceSubtitleMayHaveChanged() {}
     func workspaceActionsMayHaveChanged() {}
     func workspaceSessionsDidChange(_ registry: HostSessionRegistry) {}
+    func workspaceCrewDidRead() {}
+    func workspaceQuotaDidRead(_ result: QuotaFetchResult) {}
     func workspaceKeyViewLoopMayHaveChanged() {}
     var workspaceWindow: NSWindow? { view.window }
 
