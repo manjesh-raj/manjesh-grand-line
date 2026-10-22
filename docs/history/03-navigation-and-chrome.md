@@ -701,3 +701,44 @@ No controller was merged, and the floating bar is untouched and still the defaul
 - 176 targeted suites passed on the final code: those for the files this stage changes, the new cases, and the source guards that scan those files.
   A first pass was cut short by a machine sleep, and four timing and real-event suites failed across it (dotfiles auto-sync, herdr theme sync, the SRE Lead notification and the notification row's real click).
   None of their code changed here, and all four passed on the clean pass.
+
+## The redesigned pages (modular-shell later page work, `fm/grandline-page-redesigns-1792627806`)
+
+The page work stage 4 deferred, for the sidebar layout only: Connections' tables and the shell's inspector, Secrets' credential tables, Knowledge's one tree, and Crew › Needs you.
+The floating bar is still the default and its pages are unchanged; each redesigned page switches to its sidebar presentation when the sidebar shell first shows it (`SidebarLayoutAdopting`), and the layout is chosen at launch, so nothing ever switches back.
+
+### The shape
+
+- **One table** (`HelmDataTable`): a header strip, a two-line leading cell, a selected row, a row's headline action and ⋯ on hover and on the selected row, a context menu with the same actions, group and empty rows, and drag to reorder within a group.
+  It lays its columns out itself: fixed columns keep their width, one flexible column takes the rest, and a column marked `hiddenBelow` steps out - then the most optional column keeps stepping out while the minimums still do not fit - so a table never scrolls sideways or holds a width that could grow the window.
+- **The inspector** shows a page's selection (`WorkspaceInspectorSource`): Hosts' host, key or snippet (`WorkspaceDetailView`), and Poneglyph's own `CredentialVaultInspectorView`, hosted in the shell's pane without its head.
+  It opens on a selection, closes when the selection clears, and the toolbar button and its own close button are the captain's choice, which a new selection respects.
+- **Connections**: Hosts, Keys and Snippets are tables under the same search, filters and stat strip.
+  Every row and inspector action runs the method the floating bar's row runs.
+  The snippet expansion switch is a strip over the Snippets table (`SnippetExpansionPanel.Style.strip`), because the page's right column is the floating bar's.
+- **Secrets**: Poneglyph is a table whose rows keep Reveal, Copy, the Touch ID mark and the live 2FA code, grouped by category and reorderable within one.
+  Automic Vault's secret names and verified launchers are tables under their own cards, with B1's three states.
+- **Knowledge**: one tree (`KnowledgeTreeController`) beside Notebook, Runbooks, Postmortems and Docs, read from the shared stores off the main thread, with its own search.
+  An item opens its tab and the item through the page's own open path (`KnowledgeTreePage`), and each page reports its edits and its showing item.
+  Notebook puts its page column away there; the Reading list keeps its cards, as the prototype draws it.
+- **Crew › Needs you**: Crew's first tab, a sidebar-only state of the Fleet page holding the Needs your call rows and their Reply composer, with a summary of the parked tasks and their open decisions and when they were read.
+  The bell's decision entry and Home's fleet row land on it.
+
+### Decisions
+
+- **Only what the real controllers do.** No latency, last-connected or Online/Problems split on Hosts (nothing records them), no SRE Lead or Copy ssh command on a host, no follow-ups on Needs you.
+- **The real feature wins where the prototype has none**: the snippet expansion switch, a credential row's own Reveal and Copy, the Touch ID mark, Automic Vault's recipe card.
+- **The tree reads the stores, not the pages.** The pages mount lazily (GL-37), so a tree fed by them would show empty groups it had never read; a group not read yet says "Reading", and the playbook says "Not synced yet" until a copy is on this Mac.
+
+### What was measured on the way
+
+- **The inspector would have grown the window.**
+  The content column's floor is 940pt, so a 320pt inspector at 1100 needs a 1260pt window.
+  While the inspector shows a page's details the floor is 940 less the inspector's width (`MainSplitShellController.inspectorColumnMinimum`), and every page that fills it is laid out for that.
+  The sidebar then comes and goes at exactly the same window width with or without the inspector, and a selection never moves the window.
+- **`NSTableView`'s `.fullWidth` style pads the table 6pt past each end of its columns.**
+  Measured: the table 12pt wider than its columns, so every row scrolled sideways. The table is `.plain`.
+- **A reload after a theme change dropped the table's selection without a notification**, leaving the inspector showing a credential the table had let go of. Every reload puts the selection back.
+- **`NSGridView.removeRow` leaves the row's views in the grid**, so a new selection drew its fields over the last one's. The detail view's fields are stacked rows that are removed for real.
+- **`NSOutlineView` widens its outline column for indented rows by default**, so a long title in a folder ran past the tree's edge instead of truncating. `autoresizesOutlineColumn` is off.
+- **A table's own reselection looped through Poneglyph's render.** `setRows` restoring the selection called the page's selection handler, which re-rendered and called `setRows`. The table does not report its own reselection.

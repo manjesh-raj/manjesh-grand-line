@@ -905,6 +905,12 @@ final class MainSplitShellController: WorkspaceShellController {
     var debugSidebarIsCollapsed: Bool { sidebarItem.isCollapsed }
     var debugInspectorIsCollapsed: Bool { inspectorItem.isCollapsed }
     var debugColumnMinimum: CGFloat { contentItem.minimumThickness }
+    /// The inspector back at its launch state: wanted, not held open.
+    func debugResetInspectorPreference() {
+        inspectorWanted = true
+        inspectorPinnedOpen = false
+        reconcileInspector()
+    }
     var debugLeadingColumn: NSView? { contentPane.leadingColumn }
     var debugInspectorSource: WorkspaceInspectorSource? { inspectorSource }
     var debugSidebarWidth: CGFloat { sidebar.view.frame.width }

@@ -3401,6 +3401,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_SPLIT_SHELL_MODEL_TESTS"] == "1" 
 if ProcessInfo.processInfo.environment["FM_RUN_MAIN_SPLIT_SHELL_TESTS"] == "1" {
     exit(MainSplitShellSelfTest.run() ? 0 : 1)
 }
+// The later page work: the host, key, snippet and credential tables with the
+// shell's inspector, Knowledge's tree and Crew › Needs you, in a real
+// off-screen sidebar shell - and the floating bar's same pages unchanged.
+if ProcessInfo.processInfo.environment["FM_RUN_PAGE_REDESIGNS_TESTS"] == "1" {
+    exit(PageRedesignsSelfTest.run() ? 0 : 1)
+}
 
 // `fm/grandline-engineering-cards-stale-counts`: a hub summary card must
 // reflect a change the captain made through its own detail page. Window-backed

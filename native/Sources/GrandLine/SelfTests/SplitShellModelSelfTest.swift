@@ -121,8 +121,10 @@ enum SplitShellModelSelfTest {
         let expected: [WorkspaceModule: [Tab]] = [
             .tasks: [("Board", .shift, true), ("List", .shift, true), ("Calendar", .shift, true),
                      ("Weekly review", .shift, true)],
-            .crew: [("In flight", .overview, true), ("Review", .review, false), ("Ask the crew", .strawHat, false),
-                    ("Log", .overview, true)],
+            // Needs you is the Fleet page's, in the sidebar layout only: the
+            // parked tasks and their open decisions (the later page work).
+            .crew: [("Needs you", .overview, true), ("In flight", .overview, true), ("Review", .review, false),
+                    ("Ask the crew", .strawHat, false), ("Log", .overview, true)],
             .connections: [("Hosts", .hosts, true), ("Keys", .hosts, true), ("Snippets", .hosts, true),
                            ("Commands", .commandLibrary, false)],
             .knowledge: [("Notebook", .notebook, false), ("Runbooks", .runbooks, false),

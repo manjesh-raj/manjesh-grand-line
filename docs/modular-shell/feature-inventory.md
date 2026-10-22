@@ -29,6 +29,9 @@ Stage 4 consolidates the sidebar shell's 29 page rows into Home and the seventee
 Where a module's tabs are one page's own tabs (Tasks' views, Crew's In flight and Log, Connections' Hosts, Keys and Snippets, Kubernetes' Cluster and Log Tail), the toolbar drives the page through `ModuleTabHosting`.
 A `Module › Child` cell for one of those names a real tab in the toolbar now, not only a plan.
 
+The later page work redesigns four pages for the sidebar layout, and only there: Connections' Hosts, Keys and Snippets as tables whose selected row's details are in the shell's inspector, Secrets' credential tables, Knowledge's one tree, and Crew › Needs you.
+A row whose feature moved says where it lives in the sidebar layout now; the floating bar's page is unchanged, so its Today cell still holds.
+
 ## Columns
 
 - **ID** is the stable key the suite matches on. The prefix is the family.
@@ -51,8 +54,9 @@ Dialog Return and Escape buttons are part of the dialog they belong to and are n
 - Honest state stays: a number that is not known yet is a dash with "scanning", never 0, and a failed read keeps the last good value and says when.
 - **The bell stays, as a toolbar button.** The prototype removed it together with the Inbox row, but the real Notification Center holds lasting reports that have no other home (backup and persistence failures, crew decisions, failing checks). A notifications button sits in the toolbar's trailing cluster, where the review's plan puts it, and there is no Inbox row in the sidebar. The captain kept this default.
 - **The light/dark toggle stays, in the toolbar.** The prototype follows the system appearance and has no toggle, but the toggle is a real feature with a real preference behind it, so it sits in the toolbar's trailing cluster. The captain kept this default.
-- **A module's tabs are real views.** The prototype's Crew › Needs you and Crew › Merge queue, and Connections › Sessions, have no view of their own in the app: the decisions waiting on the captain are the Fleet dashboard's Needs your call list (In flight), a ready PR carries its Merge button on Review, and the live sessions are Console's. They are not tabs, and the rows that named them say where the feature is.
+- **A module's tabs are real views.** The prototype's Crew › Merge queue and Connections › Sessions have no view of their own in the app: a ready PR carries its Merge button on Review, and the live sessions are Console's. They are not tabs, and the rows that named them say where the feature is. Crew › Needs you is a tab since the later page work: one list of the parked tasks and their open decisions, from the Fleet page's own data.
 - **Stage 4 is the shell, not the pages.** The captain's call during stage 4: the prototype's structure and chrome ship on today's pages, and the page redesigns (the host table and inspector, the credential table, Knowledge's one tree, a unified Needs you), motion, sidebar badges and the rest of the status line come in later stages. A New shell cell that names an inspector, a table or a page's own list as sidebar children is that later plan; until then the feature is where its page has it, inside the module named first.
+- **The later page work built the four page redesigns.** It built only what the real controllers do: no latency or last-connected column on Hosts (nothing records either), no SRE Lead button on a host, no follow-ups on Needs you. Where the prototype lacked a real feature, the feature kept a place - the snippet expansion switch is a strip over the Snippets table, and a credential row keeps Reveal, Copy and its live 2FA code. Motion, sidebar badges and the rest of the status line are still to come.
 
 ## Destinations
 
@@ -70,12 +74,12 @@ One row per `RailDestination`. The route id stays the deep-link id after the con
 | `dest.githubSync` | GitHub Sync page | Engineering space card; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Setup › GitHub sync |  |
 | `dest.health` | Health page | Home's Health card; Operations space card; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Health (Observe group; its state also shows in the status line) |  |
 | `dest.homeCanvas` | Home page | Launch landing; the Home space pill and Go > Home (⌘1); every drill page's back button; the bar's logo | Home (top of the sidebar, above the four groups; the launch landing) |  |
-| `dest.hosts` | Hosts page | Operations space card; quick-access square (default pin); Hosts menu (Show Hosts ⌃⌘S, Quick Connect, Manage SSH Keys ⇧⌘K, Manage Snippets ⌥⌘P); ⌘K hosts; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Connections › Hosts (SSH Keys and Snippets are the next two tabs; no page title, per the captain) |  |
+| `dest.hosts` | Hosts page | Operations space card; quick-access square (default pin); Hosts menu (Show Hosts ⌃⌘S, Quick Connect, Manage SSH Keys ⇧⌘K, Manage Snippets ⌥⌘P); ⌘K hosts; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Connections › Hosts (a table, with SSH Keys and Snippets as the next two tabs and the selected row's details in the inspector; no page title, per the captain) |  |
 | `dest.kubernetes` | Kubernetes page | Operations space card; Console's Tail Logs button; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Kubernetes (Observe group) |  |
 | `dest.logAnalyzer` | Log Analyzer page | Operations space card; Log Analyzer menu (Open ⇧⌘L, Analyze Clipboard); Console's Analyze Logs button; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Logs (Observe group) |  |
 | `dest.notebook` | Notebook page | Stores space card; ⌘K notebook pages; the New Note App Intent appends to today's daily note; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Knowledge › Notebook |  |
-| `dest.overview` | Fleet page | Home's Fleet and Morning briefing cards; the fleet-task notification's Show in app; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Crew › In flight (its Log tab is Crew › Log; its Needs your call list stays on the dashboard) |  |
-| `dest.poneglyph` | Poneglyph page | Stores space card; quick-access square (default pin); ⌘K Lock Poneglyph; the Poneglyph menu bar extra; the Copy Credential App Intent; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Secrets › Poneglyph (the lock state also shows on the sidebar item) |  |
+| `dest.overview` | Fleet page | Home's Fleet and Morning briefing cards; the fleet-task notification's Show in app; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Crew › In flight (its Needs your call list is Crew › Needs you in the sidebar layout, and its Log tab is Crew › Log) |  |
+| `dest.poneglyph` | Poneglyph page | Stores space card; quick-access square (default pin); ⌘K Lock Poneglyph; the Poneglyph menu bar extra; the Copy Credential App Intent; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Secrets › Poneglyph (a table, with the credential inspector in the shell's inspector; the lock state also shows on the sidebar item) |  |
 | `dest.postmortems` | Postmortems page | Stores space card; ⌘K postmortems; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Knowledge › Postmortems |  |
 | `dest.readingList` | Reading List page | Stores space card; ⌘K saved links; ⌥Space quick capture files links here; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Knowledge › Reading list |  |
 | `dest.review` | Review page | Home's Merge queue card; the pr-ready notification's Show in app; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Crew › Review (a ready PR carries its Merge button there) |  |
@@ -523,7 +527,7 @@ The rows and headers of every page's own column (`HelmPageSidebar`): literal one
 | `nav.HostsController.New snippet` | Hosts page, the shortcut hints panel: New snippet | Hosts page, the shortcut hints panel | Connections › Hosts (the shortcut hints panel, unchanged) |  |
 | `nav.HostsController.Tools` | Hosts page column: Tools | Hosts page column | Connections (its two rows become a tab and a link, see below) |  |
 | `nav.HostsController.Workspace` | Hosts page column: Workspace | Hosts page column | Connections (the Hosts, SSH Keys and Snippets rows become Connections' tabs) |  |
-| `nav.NotebookController.Pages` | Notebook column: Pages | Notebook column | Knowledge › Notebook (the page tree) |  |
+| `nav.NotebookController.Pages` | Notebook column: Pages | Notebook column | Knowledge › Notebook (the Knowledge tree's Notebook group in the sidebar layout) |  |
 | `nav.ReadingListController.Added today` | Reading List column: Added today | Reading List column | Knowledge › Reading list (the tab's own filter column, unchanged) |  |
 | `nav.ReadingListController.Everything` | Reading List column: Everything | Reading List column | Knowledge › Reading list (the tab's own filter column, unchanged) |  |
 | `nav.ReadingListController.Inbox` | Reading List column: Inbox | Reading List column | Knowledge › Reading list (the tab's own filter column, unchanged) |  |
@@ -655,22 +659,24 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.ConsoleController+Toolbar` | ConsoleController+Toolbar controls | `analyzeLogsTapped`, `herdrRestartButtonClicked`, `incidentButtonClicked`, `newShellTab`, `refreshBlockView`, `showFind`, `tailLogsTapped`, `toggleBlockView`, `toggleComposer`, `toggleDragForwarding`, `toggleKubeContextBadge`, `toggleQuotaUsage`, `toggleSRELead` | Console (the toolbar above the terminal, unchanged) |  |
 | `action.CredentialVaultController` | CredentialVaultController controls | `addTapped`, `clearClipboardNow`, `lockTapped`, `recoveryTapped`, `settingsTapped` | Secrets › Poneglyph |  |
 | `action.CredentialVaultEditorController` | CredentialVaultEditorController controls | `deleteTapped`, `pasteTOTPFromClipboard`, `toggleGenerator` | Secrets › Poneglyph |  |
-| `action.CredentialVaultInspector` | CredentialVaultInspector controls | `closeClicked`, `copyAccountClicked`, `copyClicked`, `deleteClicked`, `editClicked`, `revealClicked` | Secrets › Poneglyph |  |
-| `action.CredentialVaultListSection` | CredentialVaultListSection controls | `copyClicked`, `copyCodeClicked`, `overflowClicked`, `overflowItemPicked`, `revealClicked` | Secrets › Poneglyph |  |
+| `action.CredentialVaultInspector` | CredentialVaultInspector controls | `closeClicked`, `copyAccountClicked`, `copyClicked`, `deleteClicked`, `editClicked`, `revealClicked` | Inspector (the credential inspector, hosted in the shell's pane without its own head; the floating bar keeps its column) |  |
+| `action.CredentialVaultListSection` | CredentialVaultListSection controls | `copyClicked`, `copyCodeClicked`, `overflowClicked`, `overflowItemPicked`, `revealClicked` | Secrets › Poneglyph (the floating bar's list; the sidebar layout draws the table) |  |
 | `action.CredentialVaultRecoverySheet` | CredentialVaultRecoverySheet controls | `chooseFile`, `copyCode`, `printCard`, `printNewKey`, `removeKey`, `runImport`, `savePDF` | Secrets › Poneglyph |  |
 | `action.CredentialVaultSettingsController` | CredentialVaultSettingsController controls | `changePasswordClicked`, `syncNowClicked` | Secrets › Poneglyph |  |
+| `action.CredentialVaultTable` | CredentialVaultTable controls | `copyClicked`, `revealClicked` | Secrets › Poneglyph (a credential row's Reveal, Copy and 2FA code, in the sidebar layout's table) |  |
 | `action.CredentialVaultUnlockView` | CredentialVaultUnlockView controls | `primaryClicked`, `recoveryLinkClicked`, `touchIDClicked` | Secrets › Poneglyph |  |
 | `action.DaylightBarController` | DaylightBarController controls | `avatarClicked`, `clicked`, `destinationButtonClicked`, `focusChipClicked`, `logoutRowClicked`, `pillClicked`, `quickAccessMenuPicked`, `quickAccessOverflowClicked`, `settingsRowClicked`, `themeToggleClicked` | Toolbar (the bar's controls move to the window toolbar and the sidebar - see the chrome rows) |  |
 | `action.DictationController` | DictationController controls | `cleanupToggled`, `localWhisperToggled`, `modelActionTapped`, `modelDeleteTapped`, `modelMoreTapped`, `refreshTapped`, `resetShortcutTapped`, `statusActionTapped` | Dictation |  |
 | `action.DictationHistoryAndVocabularyViews` | DictationHistoryAndVocabularyViews controls | `deleteClicked`, `removeTapped` | Dictation |  |
 | `action.DiffResultView` | DiffResultView controls | `clicked` | Tools (Diff tool) |  |
 | `action.DocsController` | DocsController controls | `backTapped`, `forwardTapped`, `openLiveTapped`, `reloadTapped`, `syncNowTapped` | Knowledge › Docs |  |
-| `action.FleetController` | FleetController controls | `crewTapped`, `refreshTapped` | Crew › In flight |  |
-| `action.FleetController+Reply` | FleetController+Reply controls | `replyTapped` | Crew › In flight (the Needs your call list) |  |
-| `action.FleetMessageComposer` | FleetMessageComposer controls | `cancelTapped`, `sendTapped` | Crew › In flight (the Needs your call list) |  |
+| `action.FleetController` | FleetController controls | `crewTapped`, `needsYouSetupTapped`, `refreshTapped` | Crew › In flight (and Needs you's Open Setup, when no firstmate home is set) |  |
+| `action.FleetController+Reply` | FleetController+Reply controls | `replyTapped` | Crew › Needs you (the Needs your call list; the floating bar's dashboard keeps it) |  |
+| `action.FleetMessageComposer` | FleetMessageComposer controls | `cancelTapped`, `sendTapped` | Crew › Needs you (the Needs your call list's composer) |  |
 | `action.FocusTimerViews` | FocusTimerViews controls | `extendTapped`, `finishTapped`, `pauseTapped` | Status line (the focus timer chip and its ring popover) |  |
 | `action.GitHubSyncController` | GitHubSyncController controls | `refreshTapped`, `syncAllTapped`, `syncTapped` | Setup › GitHub sync |  |
 | `action.HealthCardView` | HealthCardView controls | `copyDiagnostics`, `openSchedulesTapped` | Health |  |
+| `action.HelmDataTable` | HelmDataTable controls | `actionClicked`, `menuItemPicked`, `overflowClicked`, `primaryClicked` | Every module (the sidebar layout's one table: a row's headline action, its ⋯ and context menu, and the empty state's action) |  |
 | `action.HelmConfirm` | HelmConfirm controls | `cancelClicked`, `confirmClicked`, `extraClicked` | Every module (a shared component; it travels with each page that uses it) |  |
 | `action.HelmDateField` | HelmDateField controls | `cardClicked`, `pickerChanged` | Every module (a shared component; it travels with each page that uses it) |  |
 | `action.HelmDesignSystem` | HelmDesignSystem controls | `pillClicked`, `rowClicked`, `tileClicked` | Every module (a shared component; it travels with each page that uses it) |  |
@@ -686,12 +692,13 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.HomeCardLayout` | HomeCardLayout controls | `WorkspaceSidebarMenuItem.fire`, `addClicked`, `doneClicked`, `earlierClicked`, `hideClicked`, `laterClicked`, `resetClicked`, `sizeClicked` | Home (Customize: the tray's Add a Card, Reset Layout and Done, and each card's size, earlier, later and hide) |  |
 | `action.HostEditorController` | HostEditorController controls | `deleteHost`, `editPortForwarding`, `pickColor`, `pickIcon`, `pillClicked` | Connections › Hosts (host editor) |  |
 | `action.HostsController` | HostsController controls | `groupPicked`, `newHost`, `newKey`, `newSnippet`, `onlineChipClicked`, `self.tagChipClicked` | Connections › Hosts |  |
-| `action.HostsListSection` | HostsListSection controls | `emptyActionPressed`, `overflowClicked`, `overflowItemPicked`, `primaryClicked` | Connections › Hosts |  |
+| `action.HostsListSection` | HostsListSection controls | `emptyActionPressed`, `overflowClicked`, `overflowItemPicked`, `primaryClicked` | Connections › Hosts (the floating bar's lists; the sidebar layout draws them as tables) |  |
 | `action.HostsSidebar` | HostsSidebar controls | `logoutPicked`, `rowClicked`, `settingsPicked` | Connections › Hosts (the column becomes the module's tabs) |  |
-| `action.HostsSidePanels` | HostsSidePanels controls | `actionClicked`, `buttonClicked` | Connections › Hosts (inspector) |  |
+| `action.HostsSidePanels` | HostsSidePanels controls | `actionClicked`, `buttonClicked` | Inspector (a selected host, key or snippet's details and actions; the floating bar keeps its own column) |  |
 | `action.IncidentCardView` | IncidentCardView controls | `addNoteClicked`, `endIncidentClicked`, `openEvidenceClicked` | Console (incident card) |  |
 | `action.KeyboardShortcutsSheetController` | KeyboardShortcutsSheetController controls | `closeSheet` | Main menu › Help (Keyboard Shortcuts sheet, unchanged) |  |
 | `action.KeyEditorController` | KeyEditorController controls | `chooseImportFile`, `copyFingerprint`, `copyPublicKey`, `deleteKey`, `generateKey`, `verifyImport` | Connections › Keys (key editor) |  |
+| `action.KnowledgeTree` | KnowledgeTree controls | `rowClicked` | Knowledge (the tree beside Notebook, Runbooks, Postmortems and Docs) |  |
 | `action.KubernetesController` | KubernetesController controls | `clearTailTapped`, `closeDescribeTapped`, `copyDescribeTapped`, `duplicateFeedTapped`, `feedTabPicked`, `namespaceCommitted`, `namespacePicked`, `openHostsTapped`, `refreshTapped`, `retryFeedTapped`, `retryStuckClusterRefreshTapped`, `revealHostTapped`, `toggleErrorsOnlyTapped`, `togglePauseTapped` | Kubernetes |  |
 | `action.KubernetesController+Render` | KubernetesController+Render controls | `togglePodSelection` | Kubernetes |  |
 | `action.LockScreenController` | LockScreenController controls | `copySetupCommandTapped`, `installTapped`, `localAuthTapped`, `submitTapped` | Window (the lock overlay) |  |
@@ -734,7 +741,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.ShiftSnoozeCustomController` | ShiftSnoozeCustomController controls | `cancel`, `confirm` | Tasks (snooze sheet) |  |
 | `action.ShiftTaskEditorController` | ShiftTaskEditorController controls | `chooseImageClicked`, `deleteTask`, `dismissDetected`, `dueDatePickerChanged`, `priorityItemSelected`, `projectItemSelected`, `weekdayChipClicked` | Tasks (task editor; also the inspector's fields) |  |
 | `action.SnippetEditorController` | SnippetEditorController controls | `deleteSnippet` | Connections › Snippets (snippet editor) |  |
-| `action.SnippetExpansionPanel` | SnippetExpansionPanel controls | `requestPermission` | System (snippet expansion panel, unchanged) |  |
+| `action.SnippetExpansionPanel` | SnippetExpansionPanel controls | `requestPermission` | Connections › Snippets (the expansion switch: a card in the floating bar's column, a strip over the table in the sidebar layout) |  |
 | `action.SRELeadChatView` | SRELeadChatView controls | `submit` | Console (SRE Lead pane) |  |
 | `action.StickyBoardController` | StickyBoardController controls | `archiveToggleTapped`, `newNoteTapped`, `seedExampleNoteTapped` | Sticky Board |  |
 | `action.StickyBoardViews` | StickyBoardViews controls | `addClicked`, `archiveClicked`, `boxClicked`, `colorClicked`, `deleteClicked`, `makeTaskClicked`, `overflowClicked`, `toggleChecklistClicked`, `unarchiveClicked` | Sticky Board |  |
@@ -755,6 +762,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.WhiteboardController` | WhiteboardController controls | `dslTapped`, `generateTapped` | Whiteboard |  |
 | `action.WhiteboardDSLPopover` | WhiteboardDSLPopover controls | `appendToggled`, `componentMenuPicked`, `componentsButtonClicked`, `insertClicked` | Whiteboard |  |
 | `action.WorkspaceInspector` | WorkspaceInspector controls | `closeClicked` | Inspector (its own close button; the toolbar's inspector button opens it) |  |
+| `action.WorkspaceDetailView` | WorkspaceDetailView controls | `actionClicked` | Inspector (a selected host's, key's or snippet's actions) |  |
 | `action.WorkspaceSidebar` | WorkspaceSidebar controls | `WorkspaceSidebarMenuItem.fire`, `clicked` | Sidebar (a row's context menu - Open, Pin and Unpin for each page of a module of several, End Session, Connect to a Host - and the account header's menu) |  |
 | `action.WorkspaceStatusLine` | WorkspaceStatusLine controls | `focusChipClicked` | Status line (the focus timer chip opens its ring popover) |  |
 | `action.WorkspaceToolbar` | WorkspaceToolbar controls | `inspectorClicked`, `moduleActionClicked`, `navigationClicked`, `notificationsClicked`, `recentsClicked`, `recentsFromOverflow`, `searchClicked`, `sidebarClicked`, `tabClicked`, `themeClicked` | Toolbar (the sidebar shell's window toolbar: the sidebar button, Back and Forward, Recents, the module's tabs or Home's spaces, the module's one action, the light/dark toggle, notifications, the inspector button and Search) |  |
@@ -801,7 +809,8 @@ Every view that registers for dragged types.
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
 | `drop.CodePreviewController` | Drop a file onto Code Preview to open it | CodePreviewController | Code |  |
-| `drop.CredentialVaultListSection` | Drag credentials to reorder them | CredentialVaultListSection | Secrets › Poneglyph |  |
+| `drop.CredentialVaultListSection` | Drag credentials to reorder them | CredentialVaultListSection | Secrets › Poneglyph (the floating bar's list; the sidebar layout's table reorders the same way) |  |
+| `drop.HelmDataTable` | Drag table rows to reorder them | HelmDataTable | Secrets › Poneglyph (the credential table, within a category) |  |
 | `drop.KeyEditorController` | Drop a private key file into the SSH key editor | KeyEditorController | Connections › Keys (key editor) |  |
 | `drop.LogAnalyzerController` | Drop a log file onto the Log Analyzer | LogAnalyzerController | Logs |  |
 | `drop.ReadingListController` | Drop a URL or text onto the Reading List to save it | ReadingListController | Knowledge › Reading list |  |
@@ -891,9 +900,10 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 | `chrome.manualChecks` | Manual checks list | Help menu | Main menu › Help (unchanged) | `main.swift` `func showManualChecks` |
 | `chrome.welcome` | First-run welcome sheet and tour | First launch | Window (unchanged first-run sheet) | `WelcomeSheetController.swift` `final class WelcomeSheetController` |
 | `chrome.lockScreen` | App lock screen | Covers the window | Window (the lock overlay covers sidebar, toolbar, content and inspector) | `LockScreenController.swift` `final class LockScreenController`; `LockPresenter.swift` `func install(in parent: NSViewController, over root: NSView)`; `MainSplitShellController.swift` `window.toolbar?.isVisible = !lockOverlayIsShown` |
+| `chrome.inspector` | The selected item's details beside the page | Each page's own detail column (Hosts' Selected panel, Poneglyph's inspector) | Inspector (the shell's pane shows the selected host, key, snippet or credential, opens on a selection without growing the window, and closes from its button or the toolbar's) | `WorkspacePagePresentation.swift` `protocol WorkspaceInspectorSource`; `MainSplitShellController.swift` `private func reconcileInspector()`; `WorkspaceInspector.swift` `func setContent(` |
 | `chrome.theme` | 26 palettes, the Daylight and Dusk pair, follow system appearance | Settings > Appearance and the bar toggle | Settings › Appearance (unchanged) | `ThemeManager.swift` `final class ThemeManager` |
-| `chrome.splitSidebars` | Seven pages with a real split-view sidebar and ⌥⌘S to toggle it | Pages' own columns | Every module (a page column stays inside its module and ⌥⌘S still toggles it; Connections' column is put away because the toolbar draws its tabs, and there, as on a page without one, ⌥⌘S toggles the workspace sidebar) | `HelmSplitPage.swift` `final class HelmSplitPage`; `MainSplitShellController.swift` `override func toggleSidebarFromMenu()` |
-| `chrome.moduleTabs` | A module's pages, and a page's own tabs, as one row of tabs | Separate destinations, and each page's own tab control (Shift, Fleet, Hosts, Kubernetes) | Toolbar (the module's tabs in the middle; the four pages whose own tabs are the module's hide their control in this layout and follow the toolbar) | `ModuleTable.swift` `var tabs: [ModuleTab]`; `ModuleTabHosting.swift` `protocol ModuleTabHosting`; `WorkspaceToolbar.swift` `func setTabs(` |
+| `chrome.splitSidebars` | Seven pages with a real split-view sidebar and ⌥⌘S to toggle it | Pages' own columns | Every module (a page column stays inside its module and ⌥⌘S still toggles it; Connections' column is put away because the toolbar draws its tabs, and Notebook's because the Knowledge tree lists its pages, and there, as on a page without one, ⌥⌘S toggles the workspace sidebar) | `HelmSplitPage.swift` `final class HelmSplitPage`; `MainSplitShellController.swift` `override func toggleSidebarFromMenu()` |
+| `chrome.moduleTabs` | A module's pages, and a page's own tabs, as one row of tabs | Separate destinations, and each page's own tab control (Shift, Fleet, Hosts, Kubernetes) | Toolbar (the module's tabs in the middle; the four pages whose own tabs are the module's hide their control in this layout and follow the toolbar, and the Fleet page also draws Crew's Needs you) | `ModuleTable.swift` `var tabs: [ModuleTab]`; `ModuleTabHosting.swift` `protocol ModuleTabHosting`; `WorkspaceToolbar.swift` `func setTabs(` |
 | `chrome.homeCustomize` | Arrange Home: show, hide, add, move and resize its cards | Not in the app; each Home space shows a fixed set | Home (Customize in the toolbar; the floating bar's hub keeps its hand-placed layout) | `HomeCardLayout.swift` `struct HomeCardLayout`; `HomeCanvasController.swift` `func setCustomizing(_ customizing: Bool)`; `MainSplitShellController.swift` `func setHomeCustomizing(_ customizing: Bool)` |
 | `chrome.singleInstance` | One running copy of the app | Launch | System (unchanged) | `SingleInstanceGuard.swift` `SingleInstanceGuard` |
 | `chrome.quitGuard` | Quit is guarded while work is in flight | Quit | System (unchanged) | `QuitGuard.swift` `final class QuitGuard` |
@@ -914,9 +924,10 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
-| `surface.fleet.dashboard` | Fleet dashboard: KPI tiles, in-flight crewmates, setup banner | Fleet page, Dashboard tab | Crew › In flight | `FleetController.swift` `case overview, log` |
+| `surface.fleet.dashboard` | Fleet dashboard: KPI tiles, in-flight crewmates, setup banner | Fleet page, Dashboard tab | Crew › In flight (its Needs your call list is on Crew › Needs you in the sidebar layout) | `FleetController.swift` `case overview, log` |
 | `surface.fleet.log` | The fleet log with its filters | Fleet page, Log tab | Crew › Log | `FleetLogListView.swift` `final class FleetLogListView` |
-| `surface.fleet.reply` | Reply to a crewmate's decision | Fleet rows and Home's Needs you | Crew › In flight (the Needs your call list) | `FleetController+Reply.swift` `extension FleetController` |
+| `surface.fleet.reply` | Reply to a crewmate's decision | Fleet rows and Home's Needs you | Crew › Needs you (the Needs your call list and its Reply; the floating bar keeps them on the dashboard) | `FleetController+Reply.swift` `extension FleetController`; `FleetController.swift` `func revealNeedsYou()` |
+| `surface.crew.needsYou` | Needs you: every task waiting on the captain, with its open decisions and Reply | Not in the app; the decisions are the Fleet dashboard's Needs your call list | Crew › Needs you (the sidebar layout's first Crew tab; the bell's decision entry and Home's fleet row land on it) | `FleetController.swift` `extension FleetController: SidebarLayoutAdopting`; `ModuleTable.swift` `case .crew: return ["Needs you"`; `HomeCanvasController.swift` `var onOpenCrewDecisions` |
 | `surface.fleet.notifier` | Notifications when the crew needs a decision or finishes | Notification Center | System (unchanged) | `FleetNotifier.swift` `final class FleetNotifier` |
 | `surface.review.prList` | Open PRs with checks, Merge and Open | Review page | Crew › Review (a ready one carries Merge) | `ReviewPRListView.swift` `final class ReviewPRListView` |
 | `surface.strawHat.chat` | Straw Hat crew chat with confirm-before-write proposals | Straw Hat Pirates page | Crew › Ask the crew | `StrawHatChatView.swift` `final class StrawHatChatView` |
@@ -927,12 +938,12 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
-| `surface.hosts.list` | Saved hosts with search, online filter and Connect | Hosts page | Connections › Hosts (a table with an inspector) | `HostsListSection.swift` `HostsListSection` |
-| `surface.hosts.workspace` | Workspace panel: at-a-glance inventory and live sessions | Hosts side panel | Connections › Hosts (an inspector in a later stage; the live sessions are Console's) | `HostsSidePanels.swift` `final class HostsWorkspacePanel` |
-| `surface.hosts.editor` | Host editor with jump hosts and port forwarding | Hosts sheet | Connections › Hosts (editor sheet; quick edits in the inspector) | `HostEditorController.swift` `final class HostEditorController` |
+| `surface.hosts.list` | Saved hosts with search, online filter and Connect | Hosts page | Connections › Hosts (a table with the same search and filters; the selected host's details and every action are in the inspector) | `HostsListSection.swift` `HostsListSection`; `HostsController.swift` `private func renderHostsTable`; `HelmDataTable.swift` `final class HelmDataTable` |
+| `surface.hosts.workspace` | Workspace panel: at-a-glance inventory and live sessions | Hosts side panel | Connections › Hosts (the stat strip over the table, unchanged; a selection's details are in the inspector, and the live sessions are Console's) | `HostsSidePanels.swift` `final class HostsWorkspacePanel` |
+| `surface.hosts.editor` | Host editor with jump hosts and port forwarding | Hosts sheet | Connections › Hosts (editor sheet, from a row's menu and the inspector's Edit) | `HostEditorController.swift` `final class HostEditorController` |
 | `surface.hosts.quickConnect` | Quick connect to user@host | Hosts menu and ⌘K | Connections › Hosts (and ⌘K `ssh user@host`) | `Navigator.swift` `func revealHostsQuickConnect` |
 | `surface.hosts.multiSend` | Send one command to many hosts | Hosts page | Connections › Hosts (send to many hosts) | `MultiHostSend.swift` `enum MultiHostSend` |
-| `surface.hosts.keyGen` | Generate or import an SSH key into the Keychain | SSH Keys column | Connections › Keys | `SSHKeyGenerator.swift` `SSHKeyGenerator` |
+| `surface.hosts.keyGen` | Generate or import an SSH key into the Keychain | SSH Keys column | Connections › Keys (a table; a key's fingerprint, hosts and actions are in the inspector) | `SSHKeyGenerator.swift` `SSHKeyGenerator` |
 | `surface.console.firstmate` | The shared Firstmate shell, opened at launch | Console page | Console (the Firstmate session, which cannot be ended) | `ConsoleController+Sessions.swift` `func openFirstmateHost` |
 | `surface.console.ssh` | Dedicated host pages that connect over ssh | Console, one page per host | Console (one sidebar child per live session) | `ConsoleController+Sessions.swift` `func connectSSH` |
 | `surface.console.tabs` | Terminal tabs with rename, duplicate, reconnect and close | Console tab strip | Console (tab strip, unchanged) | `TabChipView.swift` `final class TabChipView` |
@@ -972,25 +983,26 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
-| `surface.notebook.tree` | Notebook page tree, daily notes and Today | Notebook page | Knowledge › Notebook | `NotebookController.swift` `todayButton` |
-| `surface.notebook.links` | Wiki-links and backlinks | Notebook | Knowledge › Notebook (backlinks in the inspector) | `NotebookLinks.swift` `struct NotebookBacklinkIndex` |
+| `surface.notebook.tree` | Notebook page tree, daily notes and Today | Notebook page | Knowledge › Notebook (the Knowledge tree's Notebook group in the sidebar layout, where the page puts its own column away) | `NotebookController.swift` `todayButton`; `KnowledgeTree.swift` `final class KnowledgeTreeController` |
+| `surface.notebook.links` | Wiki-links and backlinks | Notebook | Knowledge › Notebook (the page's own Backlinks and page rail, beside the Knowledge tree) | `NotebookLinks.swift` `struct NotebookBacklinkIndex` |
 | `surface.notebook.modes` | Source, Split and Preview modes | Notebook | Knowledge › Notebook (unchanged) | `NotebookController.swift` `case edit, split, preview` |
-| `surface.runbooks.grid` | Runbooks with an editor and a run in the terminal | Runbooks page | Knowledge › Runbooks | `RunbooksController.swift` `newRunbookButton` |
-| `surface.postmortems.list` | Postmortems, including SRE Lead's generated ones | Postmortems page | Knowledge › Postmortems | `SRELeadPostmortem.swift` `enum SRELeadPostmortem` |
-| `surface.docs.playbook` | The DevOps Playbook viewer with back, forward and reload | Docs page | Knowledge › Docs | `DocsController.swift` `openLiveButton` |
+| `surface.runbooks.grid` | Runbooks with an editor and a run in the terminal | Runbooks page | Knowledge › Runbooks (also listed in the Knowledge tree, which opens a runbook in the page's editor) | `RunbooksController.swift` `newRunbookButton` |
+| `surface.postmortems.list` | Postmortems, including SRE Lead's generated ones | Postmortems page | Knowledge › Postmortems (also listed in the Knowledge tree) | `SRELeadPostmortem.swift` `enum SRELeadPostmortem` |
+| `surface.docs.playbook` | The DevOps Playbook viewer with back, forward and reload | Docs page | Knowledge › Docs (the Knowledge tree's Docs group says whether a copy is synced) | `DocsController.swift` `openLiveButton` |
 | `surface.readingList.cards` | Saved links with titles, tags, read state and an opt-in summary | Reading List page | Knowledge › Reading list | `ReadingListAI.swift` `enum ReadingListAI` |
+| `surface.knowledge.tree` | One tree over Notebook, Runbooks, Postmortems and the playbook | Not in the app; each page lists its own | Knowledge (a column beside Notebook, Runbooks, Postmortems and Docs in the sidebar layout, with its own search) | `KnowledgeTree.swift` `final class KnowledgeTreeController`; `KnowledgeTree.swift` `protocol KnowledgeTreePage`; `MainSplitShellController.swift` `private var showsKnowledgeTree` |
 
 ## Secrets
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
 | `surface.poneglyph.unlock` | Unlock the vault with the password or Touch ID | Poneglyph page | Secrets › Poneglyph (lock state also on the sidebar item) | `CredentialVaultStore.swift` `func unlockWithTouchID` |
-| `surface.poneglyph.list` | Credential list, inspector, copy, reveal and TOTP ring | Poneglyph page | Secrets › Poneglyph (table and inspector) | `PoneglyphTOTPViews.swift` `final class TOTPRingView` |
+| `surface.poneglyph.list` | Credential list, inspector, copy, reveal and TOTP ring | Poneglyph page | Secrets › Poneglyph (a table whose rows keep Reveal, Copy and the live 2FA code; the credential inspector is the shell's inspector) | `PoneglyphTOTPViews.swift` `final class TOTPRingView`; `CredentialVaultController.swift` `private func renderTable()`; `CredentialVaultTable.swift` `final class CredentialTOTPCell` |
 | `surface.poneglyph.kinds` | Filter credentials by kind: logins, 2FA codes, secure notes | Poneglyph column | Secrets › Poneglyph (the vault's own filter column, unchanged) | `CredentialVaultSidebar.swift` `title: "2FA codes"` |
 | `surface.poneglyph.import` | Import credentials from a CSV export | Poneglyph page | Secrets › Poneglyph (unchanged) | `CredentialVaultImport.swift` `enum CredentialVaultImport` |
 | `surface.poneglyph.recovery` | Recovery key enrolment and a printable recovery kit | Poneglyph page | Secrets › Poneglyph (unchanged) | `CredentialVaultRecovery.swift` `enum CredentialVaultRecovery` |
 | `surface.poneglyph.generator` | Password generator | Poneglyph editor | Secrets › Poneglyph (unchanged) | `PasswordGeneratorPanel.swift` `PasswordGeneratorPanel` |
-| `surface.vault.panel` | Automic Vault secret names, hardeners and recipes | Vault page | Secrets › Automic Vault | `VaultRecipe.swift` `struct VaultRecipe` |
+| `surface.vault.panel` | Automic Vault secret names, hardeners and recipes | Vault page | Secrets › Automic Vault (secret names and verified launchers as tables under their cards; the recipe card is unchanged) | `VaultRecipe.swift` `struct VaultRecipe`; `VaultController.swift` `extension VaultController: SidebarLayoutAdopting` |
 
 ## Observe and Workbench
 

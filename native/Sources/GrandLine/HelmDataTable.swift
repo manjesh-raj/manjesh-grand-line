@@ -698,7 +698,7 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     }
     /// The record row with `key`, through the same selection path a click
     /// takes.
-    func debugSelect(key: String) { select(key: key) }
+    func debugSelect(key: String?) { select(key: key) }
     func debugSelect(titled title: String) -> Bool {
         for (index, row) in rows.enumerated() where row.isRecord {
             if case .title(let text, _, _, _, _, _)? = row.cells.values.first(where: {
