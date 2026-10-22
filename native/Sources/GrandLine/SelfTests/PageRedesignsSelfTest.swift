@@ -22,6 +22,9 @@
 //      decisions, with Reply, an honest summary, and the bell's and Home's
 //      ways in.
 //   5. **The floating bar is unchanged**: none of the above happens there.
+//      And one floating-bar defect found on the way stays fixed: the Hosts
+//      column's footer stays at the column's bottom after a tab round trip
+//      (`HelmPageSidebar.setFooter`).
 //
 // Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
 //
@@ -64,6 +67,7 @@ enum PageRedesignsSelfTest {
         do {
             var ok = true
             checkTheFloatingBarIsUnchanged(&ok)
+            checkTheHostsFooterStaysDown(scratch, &ok)
             allOK = allOK && ok
         }
         print(allOK ? "PageRedesignsSelfTest: all checks passed" : "PageRedesignsSelfTest: FAILED")
@@ -74,6 +78,27 @@ enum PageRedesignsSelfTest {
         shell.view.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         shell.view.layoutSubtreeIfNeeded()
+    }
+
+    /// A real Return on a table, through its own `keyDown(with:)`.
+    private static func pressReturn(in tableView: NSTableView) {
+        _ = NSApplication.shared
+        guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                           timestamp: ProcessInfo.processInfo.systemUptime,
+                                           windowNumber: tableView.window?.windowNumber ?? 0, context: nil,
+                                           characters: "\r", charactersIgnoringModifiers: "\r",
+                                           isARepeat: false, keyCode: 36) else { return }
+        tableView.keyDown(with: event)
+    }
+
+    /// Pumps the main run loop until `condition()` is true or `timeout`
+    /// elapses (`HerdrRestartButtonSelfTest.waitUntil`'s convention).
+    private static func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() && Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        return condition()
     }
 
     private static func resize(_ window: NSWindow, width: CGFloat, _ shell: WorkspaceShellController) {
@@ -173,6 +198,7 @@ enum PageRedesignsSelfTest {
 
         // The row's actions show on hover and on the selected row.
         let other = shell.workspace.hostStore.hosts.first { $0.label == "grafana" }
+        check(table.debugTracksThePointer, "the host table does not track the pointer, so no row ever shows hovered", &ok)
         if let other {
             check(table.debugActionsCell(key: other.id.uuidString)?.debugRevealed == false,
                   "an unselected, unhovered host row shows its actions at rest", &ok)
@@ -349,6 +375,68 @@ enum PageRedesignsSelfTest {
             settle(shell)
         }
 
+        // Return on a selected row opens it in the inspector the captain
+        // closed: a real key event through the table's own `keyDown(with:)`,
+        // to the `doubleAction` handler a double click reaches too. A real
+        // mouse click cannot be driven here. Measured: in this off-screen
+        // window `NSTableView.mouseDown(with:)` never ran its tracking loop
+        // (the queued mouse-up stayed queued) whether it was called directly,
+        // sent through the window, sent after `makeKey`, or with the mouse-up
+        // queued last. So the selection goes through the table's selection
+        // path, which is where a click's selection change lands.
+        let tableView = table.debugTable
+        check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector), "the inspector button has no action", &ok)
+        settle(shell)
+        table.debugSelect(key: work.id)
+        settle(shell)
+        check(page.debugSelectedID == work.id && shell.debugInspectorIsCollapsed,
+              "selecting a credential row reopened the inspector the captain closed", &ok)
+        pressReturn(in: tableView)
+        settle(shell)
+        check(!shell.debugInspectorIsCollapsed && shell.inspector.hostedContentView === page.debugInspector
+                && shell.inspector.debugTitle == work.title,
+              "Return on the selected credential did not open it in the inspector", &ok)
+        // Return is the captain's own request, so it holds the inspector open
+        // (its empty state stays when the selection clears). Back to the
+        // launch state, so the lock below measures an inspector its
+        // selection opened.
+        shell.debugResetInspectorPreference()
+        settle(shell)
+
+        // Drag to reorder, through the table's own drag source and drop
+        // target: the dragged row's pasteboard item, then a drop on a
+        // boundary. A drop within the category moves the credential, and one
+        // into another category or onto a row is refused.
+        check(tableView.registeredDraggedTypes.contains(CredentialVaultDragPasteboard.credentialType),
+              "the credential table does not accept a credential drag", &ok)
+        let emailRows = table.debugRows.indices.filter { table.debugRows[$0].reorderGroup == work.category.rawValue }
+        if emailRows.count == 2, let first = table.debugRows[emailRows[0]].key,
+           let second = table.debugRows[emailRows[1]].key,
+           let awsRow = table.debugRows.firstIndex(where: { $0.key == aws.id }),
+           let source = tableView.dataSource, let item = source.tableView?(tableView, pasteboardWriterForRow: emailRows[1]) {
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name("fm.selftest.page-redesigns.\(UUID().uuidString)"))
+            defer { pasteboard.releaseGlobally() }
+            pasteboard.clearContents()
+            pasteboard.writeObjects([item])
+            let drop = CredentialVaultStubDraggingInfo(pasteboard: pasteboard, window: window)
+            let across = source.tableView?(tableView, validateDrop: drop, proposedRow: awsRow, proposedDropOperation: .above)
+            check(across == [], "a credential dragged into another category was accepted (\(String(describing: across)))", &ok)
+            let onto = source.tableView?(tableView, validateDrop: drop, proposedRow: emailRows[0], proposedDropOperation: .on)
+            check(onto == [], "a credential dropped onto a row was accepted (\(String(describing: onto)))", &ok)
+            let within = source.tableView?(tableView, validateDrop: drop, proposedRow: emailRows[0], proposedDropOperation: .above)
+            check(within == .move, "a credential dragged within its category was refused (\(String(describing: within)))", &ok)
+            let accepted = source.tableView?(tableView, acceptDrop: drop, row: emailRows[0], dropOperation: .above)
+            settle(shell)
+            let shown = table.debugRows.filter { $0.reorderGroup == work.category.rawValue }.compactMap(\.key)
+            let stored = store.credentials.filter { $0.category == work.category }
+                .sorted(by: VaultCredential.displayOrder).map(\.id)
+            check(accepted == true && shown == [second, first] && stored == [second, first],
+                  "dragging the second email credential above the first left the table at \(shown) and the store at "
+                    + "\(stored), want \([second, first])", &ok)
+        } else {
+            fail("the credential table has no two email rows to reorder, or its rows cannot be dragged", &ok)
+        }
+
         // Locking lets go of the decrypted credential and closes the pane.
         page.debugLockTapped()
         settle(shell)
@@ -364,6 +452,9 @@ enum PageRedesignsSelfTest {
         vault.debugPrepareUnreadForTests()
         shell.show(.vault)
         settle(shell)
+        // The visit starts the page's own read, which this process refuses.
+        // It has to land before the fixture does, or it lands on top of it.
+        check(waitUntil(timeout: 10) { !vault.debugIsReading }, "Automic Vault's own read never finished", &ok)
         check(vault.drawsSidebarLayout, "Automic Vault did not switch to the sidebar layout's presentation", &ok)
         let secrets = vault.debugSecretsTable
         check(onScreen(secrets.card) && onScreen(vault.debugToolsTable.card), "Automic Vault's tables are not on screen", &ok)
@@ -502,6 +593,50 @@ enum PageRedesignsSelfTest {
               "with nothing parked Needs you says \"\(fleet.debugNeedsYouSummary)\" and the empty state is "
                 + (fleet.debugNeedsYouEmptyShowing ? "shown" : "hidden"), &ok)
 
+        // A read that fails keeps the last good list and says when it was
+        // read (GL-14). Needs you never says nothing is waiting over a failed
+        // read, and a task it cannot read this time stays listed with its age.
+        var parked = FleetTask(id: "needs-you-probe", repo: "grand-line", kind: "ship", pr: nil)
+        parked.state = "parked"
+        parked.source = "crew"
+        parked.status = "needs_decision"
+        func reading(_ tasks: [FleetTask], listRead: Bool = true) -> FleetSnapshot {
+            FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: tasks, queuedCount: 0, doneCount: 0,
+                          projectsCount: 0, watcher: WatcherHealth(status: "healthy"), tasksRead: listRead)
+        }
+        fleet.debugRender(snapshot: reading([parked]), mergedPRs: [])
+        settle(shell)
+        check(fleet.debugNeedsRowCount == 1 && fleet.debugNeedsYouSummary.hasPrefix("1 task is waiting on you"),
+              "a parked task reads \(fleet.debugNeedsRowCount) rows and \"\(fleet.debugNeedsYouSummary)\"", &ok)
+        fleet.debugRender(snapshot: reading([], listRead: false), mergedPRs: [])
+        settle(shell)
+        let failed = fleet.debugNeedsYouSummary
+        check(fleet.debugNeedsRowCount == 1 && !fleet.debugNeedsYouEmptyShowing
+                && failed.hasPrefix("Couldn\u{2019}t read the crew\u{2019}s state at") && failed.contains("Showing what was read at"),
+              "after a failed read Needs you lists \(fleet.debugNeedsRowCount) rows and says \"\(failed)\"", &ok)
+        var unread = parked
+        unread.state = "unknown"
+        unread.source = "none"
+        unread.status = "unknown"
+        fleet.debugRender(snapshot: reading([unread]), mergedPRs: [])
+        settle(shell)
+        check(fleet.debugNeedsRowCount == 1 && fleet.debugNeedsYouSummary.contains("could not be read just now"),
+              "a parked task whose state could not be read reads \(fleet.debugNeedsRowCount) rows and "
+                + "\"\(fleet.debugNeedsYouSummary)\"", &ok)
+        var working = parked
+        working.state = "working"
+        working.status = "working"
+        fleet.debugRender(snapshot: reading([working]), mergedPRs: [])
+        settle(shell)
+        check(fleet.debugNeedsRowCount == 0 && fleet.debugNeedsYouEmptyShowing,
+              "a task that went back to work is still on Needs you", &ok)
+        fleet.debugRender(snapshot: reading([], listRead: false), mergedPRs: [])
+        settle(shell)
+        check(!fleet.debugNeedsYouEmptyShowing
+                && fleet.debugNeedsYouSummary.contains("Nothing was waiting on you when it was last read"),
+              "a failed read after an empty one says \"\(fleet.debugNeedsYouSummary)\" with the empty state "
+                + (fleet.debugNeedsYouEmptyShowing ? "shown" : "hidden"), &ok)
+
         // Home's fleet row and the bell's entry land on Needs you.
         clickTab("In flight", shell)
         shell.show(.homeCanvas)
@@ -540,6 +675,71 @@ enum PageRedesignsSelfTest {
               "the floating bar's Fleet page grew a Needs you", &ok)
         fleet.revealNeedsYou()
         check(!fleet.debugNeedsYouShowing, "revealNeedsYou switched the floating bar's Fleet page", &ok)
+    }
+
+    /// Found on the way, on the floating bar's Hosts page: after a tab round
+    /// trip the column's footer stack took the column's spare height, so its
+    /// keychain card rode up under the nav rows (measured 501pt above where it
+    /// belongs). See `HelmPageSidebar.setFooter`.
+    private static func checkTheHostsFooterStaysDown(_ scratchDirectory: URL, _ ok: inout Bool) {
+        let (window, shell) = ReviewTourLab.makeOffScreenShell()
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        ReviewTourLab.seedDemoHosts(shell.workspace)
+        settle(shell)
+        let hosts = shell.workspace.hostsPanel
+        // Driven through the tour lab's own steps - page tabs, selections and
+        // real waits - because the move needed the round trip's animations
+        // to run to the end; short settles never produced it.
+        HelmMotion.reducedOverrideForTests = false
+        defer { HelmMotion.reducedOverrideForTests = true }
+        let roundTrip = """
+        theme dusk
+        resize 1512x950
+        goto hosts
+        tab Hosts
+        wait 500
+        select edge-proxy-01
+        wait 300
+        goto hosts
+        tab Keys
+        wait 500
+        select ops-ed25519
+        wait 300
+        goto hosts
+        tab Snippets
+        wait 500
+        select Tail nginx errors
+        wait 300
+        goto hosts
+        tab Hosts
+        wait 300
+        """
+        let parsed = ReviewTourLab.parse(tour: roundTrip)
+        check(parsed.errors.isEmpty, "the round trip's steps do not parse: \(parsed.errors)", &ok)
+        let log = ReviewTourLab.run(steps: parsed.steps, shell: shell, window: window, outputDirectory: scratchDirectory)
+        check(!log.contains { $0.contains("FAILED") }, "a round-trip step failed: \(log.filter { $0.contains("FAILED") })", &ok)
+        shell.view.layoutSubtreeIfNeeded()
+        // The deterministic half. Before the footer kept its own height, the
+        // spare height had two equally cheap homes (the rows' stack and the
+        // footer stack), and which one took it depended on the solver's
+        // history. With the fix reverted, the frame check below passed three
+        // runs in a row on one build of this suite and failed four in a row
+        // on the next, whose only change was timing in an earlier case. The
+        // ambiguity does not depend on history: both views were flagged on
+        // every run without the fix, and neither with it.
+        // (`CredentialVaultViewSelfTest` records a `HelmCard` tie this API did
+        // not flag, so the frame check stays as well.)
+        let footer = hosts.debugKeychainCard.superview
+        check(footer?.hasAmbiguousLayout == false && !hosts.debugKeychainCard.hasAmbiguousLayout,
+              "the Hosts column's footer has an ambiguous height, so the solver is free to give it the column's "
+                + "spare height", &ok)
+        let column = hosts.debugSidebar.convert(hosts.debugSidebar.bounds, to: nil)
+        let user = hosts.debugUserRow.convert(hosts.debugUserRow.bounds, to: nil)
+        let card = hosts.debugKeychainCard.convert(hosts.debugKeychainCard.bounds, to: nil)
+        check(abs(user.minY - column.minY) <= 1 && abs(card.minY - (user.maxY + HelmMetrics.s2)) <= 1,
+              "after a Hosts tab round trip the column's footer is not at its bottom: the keychain card sits "
+                + "\(card.minY - column.minY)pt above the column's foot, its user row \(user.minY - column.minY)pt", &ok)
     }
 }
 

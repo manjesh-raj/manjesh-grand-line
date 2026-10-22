@@ -174,7 +174,8 @@ enum ReviewTourLab {
         case demoKnowledge
         /// Render Automic Vault's page from a fixture snapshot (three secret
         /// names, two launchers, one with an issue) through its real render
-        /// path - a tour never runs `av`.
+        /// path - a tour never runs `av`. Put it after `goto vault`: every
+        /// visit starts a read of its own, which the tour refuses.
         case demoAutomic
         /// `select <title>`: select the showing page's row with this title,
         /// through the page's own selection path - a host, a key, a snippet
@@ -523,7 +524,14 @@ enum ReviewTourLab {
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo knowledge")
             case .demoAutomic:
-                shell.workspace.vault.debugRender(
+                // A visit starts the page's own read, which a tour refuses, so
+                // that read must land before the fixture or it replaces it.
+                let vault = shell.workspace.vault
+                let deadline = Date().addingTimeInterval(10)
+                while vault.debugIsReading && Date() < deadline {
+                    RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+                }
+                vault.debugRender(
                     secrets: [VaultSecret(name: "GITHUB_TOKEN"), VaultSecret(name: "PAGERDUTY_API_KEY"),
                               VaultSecret(name: "STAGING_DB_PASSWORD")],
                     tools: [VaultTool(name: "gh", commands: ["gh"], status: .hardened),

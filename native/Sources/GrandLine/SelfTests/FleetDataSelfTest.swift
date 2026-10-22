@@ -20,6 +20,9 @@
 //   - `classify`: which crew states read as "needs your call".
 //   - `FetchResult.isDegraded`: GL-14's rule that a failed scan must never
 //     render as an all-clear.
+//   - `FleetSnapshot.tasksRead`: the same rule for the crew's task list,
+//     against a scratch firstmate home this suite pins before anything reads
+//     the real one.
 //
 // Run: `FM_RUN_FLEET_DATA_TESTS=1 .build/debug/GrandLine`
 //
@@ -44,7 +47,12 @@ import Foundation
 enum FleetDataSelfTest {
 
     static func run() -> Bool {
+        // First, before anything reads `FirstmateHome.root` (a `static let`
+        // resolved once per process): `DestinationMountingSelfTest`'s pin.
+        let home = pinAScratchFirstmateHome()
+        defer { try? FileManager.default.removeItem(at: home) }
         var ok = true
+        checkAnUnreadTaskListIsNotAnEmptyFleet(home: home, &ok)
         checkMergedPRs(&ok)
         checkMergeGate(&ok)
         checkParseRemote(&ok)
@@ -130,6 +138,57 @@ enum FleetDataSelfTest {
         let two = FleetGreeting.answer(tasks: waiting(2), readyCount: 0, prFetchFailure: nil, homeOk: true)
         check(two.title == "2 tasks need your call", "two waiting tasks read \"\(two.title)\"", &ok)
         if ok { print("  OK   \"1 task needs\", \"2 tasks need\"") }
+    }
+
+    // MARK: The crew's task list
+
+    private static func pinAScratchFirstmateHome() -> URL {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grandline-fleet-data-home-\(ProcessInfo.processInfo.processIdentifier)",
+                                    isDirectory: true)
+        try? FileManager.default.createDirectory(at: home.appendingPathComponent("bin", isDirectory: true),
+                                                 withIntermediateDirectories: true)
+        // `homeOk`'s sentinel. An empty file is enough, and nothing here runs it.
+        FileManager.default.createFile(atPath: home.appendingPathComponent("bin/fm-crew-state.sh").path,
+                                       contents: Data())
+        setenv("FM_HOME", home.path, 1)
+        return home
+    }
+
+    /// GL-14 and GL-21: a task list that could not be read is not an empty
+    /// fleet. `parseTasks` answers `[]` for a state folder it could not list,
+    /// so the snapshot says whether its list is a real reading - and Crew ›
+    /// Needs you keeps its last good list over one that is not.
+    private static func checkAnUnreadTaskListIsNotAnEmptyFleet(home: URL, _ ok: inout Bool) {
+        print("\n-- a task list that could not be read is not an empty fleet --")
+        // Never create or delete anything unless the home really is the
+        // scratch one: otherwise this would be the captain's state folder.
+        guard FirstmateHome.root.standardizedFileURL.path == home.standardizedFileURL.path else {
+            fail("the firstmate home resolved to \(FirstmateHome.root.path) before this suite could pin a scratch one", &ok)
+            return
+        }
+        let state = FirstmateHome.state
+        try? FileManager.default.removeItem(at: state)
+        let unlisted = FleetDataSource.snapshot(forceRefresh: true)
+        check(unlisted.tasks.isEmpty && !unlisted.tasksRead,
+              "a state folder that cannot be listed reads as an empty fleet", &ok)
+        try? FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        let empty = FleetDataSource.snapshot(forceRefresh: true)
+        check(empty.tasks.isEmpty && empty.tasksRead, "an empty state folder does not read as an empty fleet", &ok)
+        // The task cache can still serve a failed listing's `[]` for a few
+        // seconds after the folder is readable again. A folder holding a task
+        // file is not an empty fleet, whatever the cache says.
+        try? FileManager.default.removeItem(at: state)
+        _ = FleetDataSource.snapshot(forceRefresh: true)
+        try? FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: state.appendingPathComponent("task-1.meta").path,
+                                       contents: Data("repo=grand-line\n".utf8))
+        let cached = FleetDataSource.snapshot()
+        check(cached.tasks.isEmpty && !cached.tasksRead,
+              "a cached empty list beside a task file reads as an empty fleet", &ok)
+        // The later cases see no task file.
+        try? FileManager.default.removeItem(at: state)
+        if ok { print("  OK   unlisted, empty, and a stale empty list each read as they are") }
     }
 
     // MARK: mergedPRs

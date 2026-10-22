@@ -189,6 +189,7 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     private let scroll = NSScrollView()
     private let header = HelmDataTableHeader()
     private let headerRule = NSView()
+    private let tracking = HelmDataTableTracking()
     private var rows: [Row] = []
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var hoveredRow = -1
@@ -265,7 +266,6 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
                                                name: NSView.frameDidChangeNotification,
                                                object: scroll.contentView)
 
-        let tracking = HelmDataTableTracking()
         tracking.onHover = { [weak self] point in self?.pointerMoved(to: point) }
         tracking.translatesAutoresizingMaskIntoConstraints = false
 
@@ -739,17 +739,33 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
             return true
         }()
     }
-    /// Return on the selected row, the way the keyboard sends it.
-    func debugActivateSelected() {
-        guard table.selectedRow >= 0 else { return }
-        rows[table.selectedRow].activate?()
-    }
+    /// The pointer over the row with `key`, or off the table for `nil`: a
+    /// real mouse event at the row's centre, through the tracking view's own
+    /// handlers. So a check covers the wiring and the hit test as well as
+    /// what a hovered row shows.
     func debugHover(key: String?) {
-        let row = key.flatMap { k in rows.firstIndex { $0.key == k } } ?? -1
-        let previous = hoveredRow
-        hoveredRow = row
-        refreshRowState(previous)
-        refreshRowState(row)
+        guard let window = tracking.window else { return }
+        guard let key, let row = rows.firstIndex(where: { $0.key == key }) else {
+            if let exit = NSEvent.enterExitEvent(with: .mouseExited, location: .zero, modifierFlags: [],
+                                                 timestamp: ProcessInfo.processInfo.systemUptime,
+                                                 windowNumber: window.windowNumber, context: nil,
+                                                 eventNumber: 0, trackingNumber: 0, userData: nil) {
+                tracking.mouseExited(with: exit)
+            }
+            return
+        }
+        let rect = table.rect(ofRow: row)
+        let point = table.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+        if let move = NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [],
+                                         timestamp: ProcessInfo.processInfo.systemUptime,
+                                         windowNumber: window.windowNumber, context: nil,
+                                         eventNumber: 0, clickCount: 0, pressure: 0) {
+            tracking.mouseMoved(with: move)
+        }
+    }
+    /// Whether the tracking view has asked AppKit for the pointer's moves.
+    var debugTracksThePointer: Bool {
+        tracking.trackingAreas.contains { $0.options.contains(.mouseMoved) && $0.owner === tracking }
     }
     #endif
 }

@@ -165,6 +165,15 @@ final class FleetController: NSViewController {
     /// When the crew's state was last read, which the summary says - never a
     /// count without its age.
     private var needsYouCheckedAt: Date?
+    /// When the crew's task list was last read successfully.
+    private var needsYouReadAt: Date?
+    /// The last read could not read the crew's task list at all.
+    private var needsYouReadFailed = false
+    /// Whether the last read found a firstmate home to read.
+    private var needsYouHomeOk = true
+    /// Each task last read as waiting on the captain, and when. A task whose
+    /// state the next read cannot get stays listed from here, with its age.
+    private var needsYouKnown: [String: (task: FleetTask, readAt: Date)] = [:]
     private let tabs = HelmSegmentedTabs(items: OverviewTab.allCases.map { .init(id: $0.rawValue, title: $0.title) },
                                          selected: OverviewTab.overview.rawValue)
 
@@ -953,9 +962,11 @@ final class FleetController: NSViewController {
         let ready = FleetDataSource.PRReadyReading(mergedPRs: mergedPRs, failure: prFetchFailure)
         renderBanner(needs: needs, working: working, ready: ready, homeOk: snapshot.homeOk)
         rebuildStats(working: working.count, ready: ready, snapshot: snapshot)
-        currentNeedsTasks = needs
-        rebuildNeedsRows(needs)
-        if drawsSidebarLayout { renderNeedsYou(needs, homeOk: snapshot.homeOk) }
+        // Needs you keeps a task it cannot read this time (see
+        // `noteNeedsYouRead`). The floating bar lists this read as it is.
+        currentNeedsTasks = drawsSidebarLayout ? noteNeedsYouRead(snapshot, needs: needs) : needs
+        rebuildNeedsRows(currentNeedsTasks)
+        if drawsSidebarLayout { renderNeedsYou(currentNeedsTasks) }
         rebuildTaskRows(into: inFlightStack, tasks: working, emptyTitle: "All hands idle", emptyBody: "No crew are working right now. Send your first mate a task from the console and this board lights up.")
         inFlightHeader.stringValue = "In flight"
         inFlightCountLabel.stringValue = "\(working.count)"
@@ -1475,7 +1486,7 @@ extension FleetController: SidebarLayoutAdopting {
         contentStack.addArrangedSubview(needsYouContainer)
         needsYouContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         needsYouContainer.isHidden = true
-        renderNeedsYou(currentNeedsTasks, homeOk: true)
+        renderNeedsYou(currentNeedsTasks)
         applyNeedsYouTheme()
     }
 
@@ -1500,37 +1511,87 @@ extension FleetController: SidebarLayoutAdopting {
 
     @objc private func needsYouSetupTapped() { onNavigateToSetup?() }
 
-    /// The summary line and the empty state, from the same parked set the
-    /// rows were just built from. Before the first read lands it says it is
-    /// reading - never "nothing needs you" for a state it has not seen.
-    fileprivate func renderNeedsYou(_ needs: [FleetTask], homeOk: Bool) {
+    /// Fold one read into Needs you and return what it lists: this read's
+    /// tasks waiting on the captain, plus any task it could not read that
+    /// was last read as waiting. When the task list itself could not be
+    /// read, everything known stays. A failed read keeps the last good value
+    /// and says when it was read (GL-14) - it never empties the list.
+    private func noteNeedsYouRead(_ snapshot: FleetSnapshot, needs: [FleetTask]) -> [FleetTask] {
+        let now = Date()
+        needsYouCheckedAt = now
+        needsYouHomeOk = snapshot.homeOk
+        guard snapshot.homeOk else {
+            needsYouReadFailed = false
+            needsYouKnown = [:]
+            return []
+        }
+        guard snapshot.tasksRead else {
+            needsYouReadFailed = true
+            return needsYouKnown.values.map(\.task).sorted { $0.id < $1.id }
+        }
+        needsYouReadFailed = false
+        needsYouReadAt = now
+        let unread = Set(snapshot.tasks.filter { $0.status == "unknown" }.map(\.id))
+        needsYouKnown = needsYouKnown.filter { unread.contains($0.key) }
+        for task in needs { needsYouKnown[task.id] = (task, now) }
+        return snapshot.tasks.compactMap { needsYouKnown[$0.id]?.task }
+    }
+
+    /// The summary line and the empty state, from the same list the rows
+    /// were just built from. Before the first read lands it says it is
+    /// reading - never "nothing needs you" for a state it has not seen, and
+    /// never after a read that failed.
+    fileprivate func renderNeedsYou(_ shown: [FleetTask]) {
         guard drawsSidebarLayout else { return }
         needsYouSetupButton.isHidden = true
-        guard hasLoadedOnce else {
+        needsYouEmpty.isHidden = true
+        guard hasLoadedOnce, let checkedAt = needsYouCheckedAt else {
             needsYouSummary.stringValue = "\u{2014} Reading the crew\u{2019}s state\u{2026}"
-            needsYouEmpty.isHidden = true
             return
         }
-        needsYouCheckedAt = Date()
-        let checked = "Checked at \(Self.needsYouTimeFormatter.string(from: needsYouCheckedAt ?? Date()))."
-        guard homeOk else {
+        let time = Self.needsYouTimeFormatter
+        let checked = "Checked at \(time.string(from: checkedAt))."
+        guard needsYouHomeOk else {
             needsYouSummary.stringValue = "Grand Line is not pointed at a firstmate home yet, so the crew\u{2019}s state cannot be read. \(checked)"
             needsYouSetupButton.isHidden = false
-            needsYouEmpty.isHidden = true
             return
         }
-        guard !needs.isEmpty else {
+        let count = shown.isEmpty ? "" : " " + Self.needsYouCount(shown)
+        if needsYouReadFailed {
+            let failed = "Couldn\u{2019}t read the crew\u{2019}s state at \(time.string(from: checkedAt))."
+            guard let readAt = needsYouReadAt else {
+                needsYouSummary.stringValue = "\u{2014} \(failed)"
+                return
+            }
+            needsYouSummary.stringValue = shown.isEmpty
+                ? "\(failed) Nothing was waiting on you when it was last read, at \(time.string(from: readAt))."
+                : "\(failed) Showing what was read at \(time.string(from: readAt)):\(count)"
+            return
+        }
+        guard !shown.isEmpty else {
             needsYouSummary.stringValue = checked
             needsYouEmpty.setText(title: "Nothing needs you",
                                   body: "No crewmate is waiting on a decision, and none is blocked.")
             needsYouEmpty.isHidden = false
             return
         }
-        let decisions = needs.reduce(0) { $0 + FleetActions.openDecisions(taskID: $1.id).count }
-        let tasks = needs.count == 1 ? "1 task is waiting on you" : "\(needs.count) tasks are waiting on you"
+        let readAt = needsYouReadAt ?? checkedAt
+        let carried = shown.compactMap { needsYouKnown[$0.id]?.readAt }.filter { $0 < readAt }
+        var summary = "\(Self.needsYouCount(shown)) \(checked)"
+        if let oldest = carried.min() {
+            summary += carried.count == 1
+                ? " One of them could not be read just now, so it shows as read at \(time.string(from: oldest))."
+                : " \(carried.count) of them could not be read just now, so they show as read at \(time.string(from: oldest))."
+        }
+        needsYouSummary.stringValue = summary
+    }
+
+    /// "2 tasks are waiting on you, with 3 open decisions."
+    private static func needsYouCount(_ shown: [FleetTask]) -> String {
+        let decisions = shown.reduce(0) { $0 + FleetActions.openDecisions(taskID: $1.id).count }
+        let tasks = shown.count == 1 ? "1 task is waiting on you" : "\(shown.count) tasks are waiting on you"
         let open = decisions == 1 ? "1 open decision" : "\(decisions) open decisions"
-        needsYouSummary.stringValue = "\(tasks), with \(open). \(checked)"
-        needsYouEmpty.isHidden = true
+        return "\(tasks), with \(open)."
     }
 
     private static let needsYouTimeFormatter: DateFormatter = {

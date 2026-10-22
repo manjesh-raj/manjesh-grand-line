@@ -1054,6 +1054,12 @@ final class VaultController: NSViewController, DaylightDrillActions {
         tools = nil
     }
 
+    /// Whether the page's own read (the install check, then the snapshot) is
+    /// still in flight. Every visit starts one, and in a self-test or tour
+    /// process `av` is refused, so it lands as a failed read - over any
+    /// fixture `debugRender` drew before it landed.
+    var debugIsReading: Bool { isInstallBusy || isLoadingSnapshot }
+
     /// B1: what the two count badges are showing right now.
     var debugSecretsBadge: String { secretsCountBadge.text }
     var debugToolsBadge: String { toolsCountBadge.text }
