@@ -253,3 +253,42 @@ So asking it alone protects the probe and nothing else, and the rule now says so
 
 Other `git -C` reads of a repository the captain owns, from a page a tour mounts, were not audited.
 The ones measured here were the dotfiles clone's.
+
+## A reused pid handed a test process another run's stores (modular-shell later page work)
+
+`main.swift`'s redirect block keeps every scratch store of a self-test or tour process under one folder, `selftest-process-<pid>`.
+Nothing removed that folder when its process ended, and macOS reuses pids.
+
+### How it was found
+
+Two renders of the same floating-bar tour, taken half an hour apart from the same code, differed on the Fleet page's Log tab.
+The second listed ten task-activity entries ("Created project Infra hardening" and nine more) that the tour never seeded.
+Those are the tour lab's `demo tasks` fixture, and the tour did not use that verb.
+The temporary folder held 3,169 `selftest-process-*` folders, about 80 MB, and several of them held that fixture.
+The second run had drawn the pid of a process that had seeded it, and inherited its task store.
+
+### Who read it
+
+Every store the block redirects: hosts, keys, snippets, the vault, the Notebook, the Reading list, runbooks, docs, Shift's tasks and more, about 25 in all.
+So a suite could pass or fail on data it never wrote, depending only on which pid it drew.
+CI is not exposed, because a runner starts with an empty temporary folder.
+Every local run is.
+
+### The fix
+
+`SelfTestScratchRoot.startEmpty` empties the folder before the block points any store into it.
+A live pid belongs to exactly one process, so whatever is already in that folder is stale, and emptying it is always safe.
+The folders other processes left behind are not swept.
+They are small, and a sweep by dead pid could race a new process that has just drawn that pid.
+
+### Verified
+
+- `FM_RUN_PROBE_SCRATCH_ROOT_TESTS` gained `checkASelfTestProcessStartsOnAnEmptyScratchRoot`, with two halves.
+  The helper must empty a folder holding a stale store, and `main.swift` must call it before its first `scratchRoot.appendingPathComponent(`, with comments stripped.
+- Confirmed by injection: with the call removed the source half fails by name, and with the helper made a no-op the behavioural half does.
+
+### Not covered
+
+The per-process `UserDefaults` domain has the same shape: `fm-selftest-defaults.<pid>`, and `AppDefaultsSweep.arm()` sweeps every stale domain except its own name.
+It was left alone, because the sweep runs at every start, so at most one stale domain exists at a time (one was found, 42 bytes).
+A run would have to draw that exact pid.

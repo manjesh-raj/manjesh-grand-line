@@ -2472,6 +2472,9 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     let scratchRoot = FileManager.default.temporaryDirectory
         .appendingPathComponent("selftest-process-\(ProcessInfo.processInfo.processIdentifier)",
                                 isDirectory: true)
+    // Pids are reused, so a folder by this name can be an earlier process's.
+    // See `SelfTestScratchRoot`.
+    SelfTestScratchRoot.startEmpty(scratchRoot)
     // P4 (full review #3): the sibling of every redirect below, for the one
     // piece of shared state that is NOT a file path.
     //
