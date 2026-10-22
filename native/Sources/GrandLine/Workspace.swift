@@ -929,7 +929,12 @@ final class Workspace {
         // modules' own chips, which read the snapshot pushed below. No new
         // signal was invented for either.
         overview.onNeedsDecisionCountChanged = { [weak self] count in
-            NotificationSources.setFleetDecisions(count: count) { self?.navigator.show(.overview) }
+            NotificationSources.setFleetDecisions(count: count) {
+                self?.navigator.show(.overview)
+                // The sidebar layout's Crew › Needs you is where the decisions
+                // are; the floating bar's are on the dashboard it just opened.
+                self?.overview.revealNeedsYou()
+            }
         }
         // The canvas's Fleet and Merge queue modules, fed from Overview's own
         // refresh rather than a fetch of their own - see
@@ -985,6 +990,10 @@ final class Workspace {
         // so the hub adds no behaviour of its own, only a faster way to reach
         // it.
         homeCanvas.onOpenDestination = { [weak self] dest in self?.navigator.show(dest) }
+        homeCanvas.onOpenCrewDecisions = { [weak self] in
+            self?.navigator.show(.overview)
+            self?.overview.revealNeedsYou()
+        }
         homeCanvas.onOpenShiftTask = { [weak self] id in self?.navigator.openShiftTask(id: id) }
         homeCanvas.onRefresh = { [weak self] in
             self?.overview.refreshIfNeeded()

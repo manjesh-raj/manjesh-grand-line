@@ -143,8 +143,28 @@ final class FleetController: NSViewController {
 
     private var activeTab: OverviewTab = .overview
     /// The sidebar layout's toolbar draws the two tabs as Crew's In flight and
-    /// Log (`ModuleTabHosting`, at the end of this file).
+    /// Log, and this page's Needs you as Crew's first (`ModuleTabHosting`, at
+    /// the end of this file).
     var onModuleTabChanged: (() -> Void)?
+
+    // MARK: Crew › Needs you (the sidebar layout's, at the end of this file)
+
+    /// Set once, by `adoptSidebarLayout()`: Crew's first tab, Needs you, is
+    /// this page's. Never set in the floating bar, whose Dashboard still
+    /// carries the Needs your call list.
+    private(set) var drawsSidebarLayout = false
+    /// Needs you is showing. Not an `OverviewTab`, whose cases are the
+    /// floating bar's own two segments.
+    private var needsYouShowing = false
+    private let needsYouContainer = NSStackView()
+    private let needsYouSummary = NSTextField(wrappingLabelWithString: "")
+    private let needsYouEmpty = HelmEmptyState(symbol: "checkmark.circle", title: "Nothing needs you",
+                                               body: "", size: .standard, boxed: true)
+    private let needsYouSetupButton = HelmButton(title: "Open Setup", variant: .secondary, size: .small,
+                                                 symbol: "hammer")
+    /// When the crew's state was last read, which the summary says - never a
+    /// count without its age.
+    private var needsYouCheckedAt: Date?
     private let tabs = HelmSegmentedTabs(items: OverviewTab.allCases.map { .init(id: $0.rawValue, title: $0.title) },
                                          selected: OverviewTab.overview.rawValue)
 
@@ -712,6 +732,8 @@ final class FleetController: NSViewController {
         // Keeps the pill right when the tab was changed from somewhere other
         // than a click; a no-op on a real click, which already moved it.
         tabs.select(tab.rawValue)
+        needsYouShowing = false
+        needsYouContainer.isHidden = true
         overviewContainer.isHidden = tab != .overview
         logContainer.isHidden = tab != .log
         if tab == .log { renderLog() }
@@ -933,6 +955,7 @@ final class FleetController: NSViewController {
         rebuildStats(working: working.count, ready: ready, snapshot: snapshot)
         currentNeedsTasks = needs
         rebuildNeedsRows(needs)
+        if drawsSidebarLayout { renderNeedsYou(needs, homeOk: snapshot.homeOk) }
         rebuildTaskRows(into: inFlightStack, tasks: working, emptyTitle: "All hands idle", emptyBody: "No crew are working right now. Send your first mate a task from the console and this board lights up.")
         inFlightHeader.stringValue = "In flight"
         inFlightCountLabel.stringValue = "\(working.count)"
@@ -1286,6 +1309,7 @@ final class FleetController: NSViewController {
     // MARK: Theme
 
     private func applyTheme() {
+        applyNeedsYouTheme()
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         // Fix 8 (fixes4): every "muted" text style below now routes through
@@ -1387,14 +1411,147 @@ final class FleetController: NSViewController {
 // MARK: - Crew's In flight and Log in the sidebar layout
 
 extension FleetController: ModuleTabHosting {
-    var moduleTabNames: [String] { ["In flight", "Log"] }
+    /// Needs you is Crew's first tab in the sidebar layout only.
+    var moduleTabNames: [String] { drawsSidebarLayout ? ["Needs you", "In flight", "Log"] : ["In flight", "Log"] }
 
-    var selectedModuleTabName: String { activeTab == .log ? "Log" : "In flight" }
+    var selectedModuleTabName: String {
+        if needsYouShowing { return "Needs you" }
+        return activeTab == .log ? "Log" : "In flight"
+    }
 
     func selectModuleTab(named name: String) {
         guard isViewLoaded else { return }
+        if name == "Needs you", drawsSidebarLayout {
+            showNeedsYou()
+            return
+        }
         switchTab(name == "Log" ? .log : .overview)
     }
 
     func setModuleTabControlHidden(_ hidden: Bool) { tabs.isHidden = hidden }
 }
+
+// MARK: - Crew › Needs you
+
+// The prototype's Crew › Needs you: one list of everything waiting on the
+// captain. It is built only from what this page already holds - the parked
+// tasks its own refresh found (`needs_decision` and `blocked`), each with the
+// still-open decisions its status file records (`FleetActions.openDecisions`)
+// - and it answers them with the same rows and the same Reply composer the
+// floating bar's dashboard uses. Nothing is fetched for it and nothing is
+// made up: a task with no decision note shows the crew's own detail line.
+//
+// In the sidebar layout the list moves here from In flight, so it is in one
+// place; the dashboard's banner still counts it. The floating bar keeps the
+// list on its dashboard, unchanged.
+
+extension FleetController: SidebarLayoutAdopting {
+
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+
+        needsYouSummary.font = HelmType.body()
+        needsYouSummary.maximumNumberOfLines = 0
+        needsYouSetupButton.target = self
+        needsYouSetupButton.action = #selector(needsYouSetupTapped)
+        needsYouSetupButton.isHidden = true
+        needsYouEmpty.translatesAutoresizingMaskIntoConstraints = false
+
+        needsYouContainer.orientation = .vertical
+        needsYouContainer.alignment = .leading
+        needsYouContainer.spacing = HelmMetrics.s4
+        needsYouContainer.translatesAutoresizingMaskIntoConstraints = false
+        // The Needs your call section leaves the dashboard for this tab.
+        overviewContainer.removeArrangedSubview(needsSectionView)
+        needsSectionView.removeFromSuperview()
+        for view in [needsYouSummary, needsYouSetupButton, needsSectionView!, needsYouEmpty] as [NSView] {
+            needsYouContainer.addArrangedSubview(view)
+        }
+        for view in [needsYouSummary, needsSectionView!, needsYouEmpty] as [NSView] {
+            view.widthAnchor.constraint(equalTo: needsYouContainer.widthAnchor).isActive = true
+        }
+        contentStack.addArrangedSubview(needsYouContainer)
+        needsYouContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        needsYouContainer.isHidden = true
+        renderNeedsYou(currentNeedsTasks, homeOk: true)
+        applyNeedsYouTheme()
+    }
+
+    /// Show Needs you, by any route: the toolbar tab, the bell's decision
+    /// entry, or Home's attention row.
+    private func showNeedsYou() {
+        needsYouShowing = true
+        overviewContainer.isHidden = true
+        logContainer.isHidden = true
+        needsYouContainer.isHidden = false
+        applyTheme()
+        onModuleTabChanged?()
+    }
+
+    /// Land on Needs you when the sidebar layout draws it. The floating bar
+    /// has no such tab, so there this does nothing and the dashboard - where
+    /// its list is - stays.
+    func revealNeedsYou() {
+        guard isViewLoaded, drawsSidebarLayout else { return }
+        showNeedsYou()
+    }
+
+    @objc private func needsYouSetupTapped() { onNavigateToSetup?() }
+
+    /// The summary line and the empty state, from the same parked set the
+    /// rows were just built from. Before the first read lands it says it is
+    /// reading - never "nothing needs you" for a state it has not seen.
+    fileprivate func renderNeedsYou(_ needs: [FleetTask], homeOk: Bool) {
+        guard drawsSidebarLayout else { return }
+        needsYouSetupButton.isHidden = true
+        guard hasLoadedOnce else {
+            needsYouSummary.stringValue = "\u{2014} Reading the crew\u{2019}s state\u{2026}"
+            needsYouEmpty.isHidden = true
+            return
+        }
+        needsYouCheckedAt = Date()
+        let checked = "Checked at \(Self.needsYouTimeFormatter.string(from: needsYouCheckedAt ?? Date()))."
+        guard homeOk else {
+            needsYouSummary.stringValue = "Grand Line is not pointed at a firstmate home yet, so the crew\u{2019}s state cannot be read. \(checked)"
+            needsYouSetupButton.isHidden = false
+            needsYouEmpty.isHidden = true
+            return
+        }
+        guard !needs.isEmpty else {
+            needsYouSummary.stringValue = checked
+            needsYouEmpty.setText(title: "Nothing needs you",
+                                  body: "No crewmate is waiting on a decision, and none is blocked.")
+            needsYouEmpty.isHidden = false
+            return
+        }
+        let decisions = needs.reduce(0) { $0 + FleetActions.openDecisions(taskID: $1.id).count }
+        let tasks = needs.count == 1 ? "1 task is waiting on you" : "\(needs.count) tasks are waiting on you"
+        let open = decisions == 1 ? "1 open decision" : "\(decisions) open decisions"
+        needsYouSummary.stringValue = "\(tasks), with \(open). \(checked)"
+        needsYouEmpty.isHidden = true
+    }
+
+    private static let needsYouTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter
+    }()
+
+    fileprivate func applyNeedsYouTheme() {
+        guard drawsSidebarLayout else { return }
+        needsYouSummary.textColor = HelmTheme.mutedInk(theme)
+        needsYouEmpty.applyTheme(theme)
+    }
+
+    #if FM_SELFTESTS
+    var debugNeedsYouShowing: Bool { needsYouShowing && !needsYouContainer.isHidden }
+    var debugNeedsYouSummary: String { needsYouSummary.stringValue }
+    var debugNeedsYouEmptyShowing: Bool { !needsYouEmpty.isHidden && !needsYouContainer.isHidden }
+    var debugNeedsSectionIsOnNeedsYou: Bool { needsSectionView.superview === needsYouContainer }
+    var debugNeedsYouSetupShowing: Bool { !needsYouSetupButton.isHidden }
+    #endif
+}
+

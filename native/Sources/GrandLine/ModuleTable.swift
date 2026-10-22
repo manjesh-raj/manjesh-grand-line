@@ -122,17 +122,18 @@ enum WorkspaceModule: String, CaseIterable {
     /// Knowledge's fourth tab is Docs, the captain's rename of the prototype's
     /// Playbook: it is the Docs page, which shows the DevOps Playbook.
     ///
-    /// The same rule took three of the prototype's tabs out in step 4, because
-    /// no real view is behind them. Crew's Needs you and Merge queue are parts
-    /// of pages it already has: the decisions waiting on the captain are the
-    /// Needs your call list on the Fleet dashboard (In flight), and a ready PR
-    /// carries its Merge button on Review. Connections' Sessions are Console's,
-    /// in the sidebar and in Console's session strip. A unified Needs you view
-    /// is a new capability the review lists separately, not a consolidation.
+    /// The same rule took two of the prototype's tabs out in step 4, because no
+    /// real view is behind them: a ready PR carries its Merge button on Review
+    /// (Crew's Merge queue), and the live sessions are Console's, in the
+    /// sidebar and in Console's session strip (Connections' Sessions).
+    ///
+    /// Crew's Needs you came back with the later page work as a real view:
+    /// the Fleet page's own Needs your call list and each task's open
+    /// decisions, in one place (`FleetController`'s "Crew › Needs you").
     var children: [String] {
         switch self {
         case .tasks: return ["Board", "List", "Calendar", "Weekly review"]
-        case .crew: return ["In flight", "Review", "Ask the crew", "Log"]
+        case .crew: return ["Needs you", "In flight", "Review", "Ask the crew", "Log"]
         case .connections: return ["Hosts", "Keys", "Snippets", "Commands"]
         case .knowledge: return ["Notebook", "Runbooks", "Postmortems", "Docs", "Reading list"]
         case .secrets: return ["Poneglyph", "Automic Vault"]
@@ -165,7 +166,8 @@ extension WorkspaceModule {
 
     /// The page that draws those of this module's children that are its own
     /// tabs rather than destinations: Shift's views are Tasks' tabs, the
-    /// Fleet page's Dashboard and Log are Crew's In flight and Log, the Hosts
+    /// Fleet page's Needs you, Dashboard and Log are Crew's Needs you, In
+    /// flight and Log, the Hosts
     /// page's Hosts, SSH Keys and Snippets are Connections' first three, and
     /// Kubernetes' Cluster and Log Tail are its own.
     var pageTabHost: RailDestination? {

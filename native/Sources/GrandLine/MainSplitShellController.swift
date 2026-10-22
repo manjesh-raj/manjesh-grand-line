@@ -130,6 +130,14 @@ final class MainSplitShellController: WorkspaceShellController {
     private var adoptedPages: Set<ObjectIdentifier> = []
     /// The showing page, when it fills the inspector with its selection.
     private weak var inspectorSource: WorkspaceInspectorSource?
+    /// Knowledge's one tree, at the module's leading edge while Notebook,
+    /// Runbooks, Postmortems or Docs shows (`KnowledgeTree.swift`).
+    private(set) lazy var knowledgeTree: KnowledgeTreeController = {
+        let tree = KnowledgeTreeController(notebookStore: workspace.notebookStore,
+                                           runbookStore: workspace.docsRunbookStore)
+        tree.onOpen = { [weak self] route, itemID in self?.openKnowledge(route, itemID: itemID) }
+        return tree
+    }()
     /// The captain's standing choice to see the selected item's details. The
     /// inspector button and the pane's close button turn it off and back on;
     /// it starts on, so selecting a host or a credential shows its details,
@@ -618,6 +626,13 @@ final class MainSplitShellController: WorkspaceShellController {
         guard let controller else { return }
         if adoptedPages.insert(ObjectIdentifier(controller)).inserted {
             (controller as? SidebarLayoutAdopting)?.adoptSidebarLayout()
+            if let page = controller as? KnowledgeTreePage {
+                page.onKnowledgeChanged = { [weak self, weak page] in
+                    guard let self, let page, self.showsKnowledgeTree,
+                          (self.pageController as? KnowledgeTreePage) === page else { return }
+                    self.knowledgeTree.reload(selecting: self.knowledgeSelection(for: self.currentRoute, page: page))
+                }
+            }
             if let source = controller as? WorkspaceInspectorSource {
                 source.onInspectorContentChanged = { [weak self, weak source] in
                     guard let self, let source, self.inspectorSource === source else { return }
@@ -762,7 +777,36 @@ final class MainSplitShellController: WorkspaceShellController {
         }
         contentPane.setHeader(title: module.showsHeader ? module.title : nil, subtitle: pageSubtitle)
         contentPane.setSessionStripVisible(module == .console && !workspace.hosts.sessions.isEmpty)
+        contentPane.setLeadingColumn(showsKnowledgeTree ? knowledgeTree.view : nil)
         applyTitleBar()
+    }
+
+    // MARK: Knowledge's tree
+
+    /// The tree goes beside the four Knowledge tabs it lists; the Reading list
+    /// keeps its cards, as the prototype draws it.
+    private var showsKnowledgeTree: Bool {
+        !showingHostPage && [.notebook, .runbooks, .postmortems, .docs].contains(currentRoute)
+    }
+
+    /// A tree row: its tab, then - for an item - the item, through the page's
+    /// own open path.
+    private func openKnowledge(_ route: RailDestination, itemID: String?) {
+        if currentRoute != route || showingHostPage { workspace.navigator.show(route) }
+        guard let itemID, let page = workspace.content.mounter.slot(for: route.slot)?.controller as? KnowledgeTreePage
+        else { return }
+        page.openKnowledgeItem(id: itemID)
+    }
+
+    /// The showing Knowledge page's item, or its group.
+    private func knowledgeSelection(for route: RailDestination, page: KnowledgeTreePage?) -> String {
+        if let item = page?.knowledgeShowingItemID { return item }
+        switch route {
+        case .notebook: return "section:notebook"
+        case .runbooks: return "section:runbooks"
+        case .postmortems: return "section:postmortems"
+        default: return "section:docs"
+        }
     }
 
     /// Home's Customize mode, on Home's own space - the one whose cards are
@@ -813,6 +857,9 @@ final class MainSplitShellController: WorkspaceShellController {
         toolbar.setPageActions(dest == .homeCanvas ? [] : page?.drillHeaderActions ?? [])
         refreshModuleChrome()
         reconcileInspector()
+        if showsKnowledgeTree {
+            knowledgeTree.reload(selecting: knowledgeSelection(for: dest, page: slot.controller as? KnowledgeTreePage))
+        }
     }
 
     override func workspaceDidRevealHostPage(_ controller: ConsoleController, label: String) {
@@ -858,6 +905,7 @@ final class MainSplitShellController: WorkspaceShellController {
     var debugSidebarIsCollapsed: Bool { sidebarItem.isCollapsed }
     var debugInspectorIsCollapsed: Bool { inspectorItem.isCollapsed }
     var debugColumnMinimum: CGFloat { contentItem.minimumThickness }
+    var debugLeadingColumn: NSView? { contentPane.leadingColumn }
     var debugInspectorSource: WorkspaceInspectorSource? { inspectorSource }
     var debugSidebarWidth: CGFloat { sidebar.view.frame.width }
     /// The split view's first pane, which holds the sidebar panel - what the
@@ -892,6 +940,14 @@ final class WorkspaceContentPaneController: NSViewController {
     /// stack that detaches its hidden views, so neither needs a height
     /// constraint fighting its own content to collapse.
     private let topStack = NSStackView()
+    /// A module's own column at the body's leading edge - Knowledge's tree.
+    /// The body starts after it while it shows and at the pane's edge
+    /// otherwise: two alternative constraints, exactly one active (gotcha
+    /// (17)'s footnote).
+    private let columnHost = NSView()
+    private var bodyAfterColumn: NSLayoutConstraint!
+    private var bodyAtEdge: NSLayoutConstraint!
+    private weak var columnView: NSView?
     private var themeToken: ThemeObservation?
 
     init(body: NSView, statusLine: WorkspaceStatusLine) {
@@ -926,17 +982,26 @@ final class WorkspaceContentPaneController: NSViewController {
         collapsed.priority = .defaultLow
         collapsed.isActive = true
         body.translatesAutoresizingMaskIntoConstraints = false
+        columnHost.translatesAutoresizingMaskIntoConstraints = false
+        columnHost.isHidden = true
         root.addSubview(topStack)
+        root.addSubview(columnHost)
         root.addSubview(body)
         root.addSubview(statusLine)
+        bodyAfterColumn = body.leadingAnchor.constraint(equalTo: columnHost.trailingAnchor)
+        bodyAtEdge = body.leadingAnchor.constraint(equalTo: root.leadingAnchor)
         NSLayoutConstraint.activate([
             // The toolbar is drawn over the top of this pane (the window has
             // a full-size content view), so everything starts under it.
             topStack.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
             topStack.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             topStack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            columnHost.topAnchor.constraint(equalTo: topStack.bottomAnchor),
+            columnHost.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            columnHost.bottomAnchor.constraint(equalTo: statusLine.topAnchor),
+            columnHost.widthAnchor.constraint(equalToConstant: KnowledgeTreeController.width),
             body.topAnchor.constraint(equalTo: topStack.bottomAnchor),
-            body.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            bodyAtEdge,
             body.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             body.bottomAnchor.constraint(equalTo: statusLine.topAnchor),
             statusLine.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -965,6 +1030,37 @@ final class WorkspaceContentPaneController: NSViewController {
         _ = view
         sessionStrip.isHidden = !visible
     }
+
+    /// Show `column` at the body's leading edge, or no column at all.
+    func setLeadingColumn(_ column: NSView?) {
+        _ = view
+        if columnView !== column {
+            columnView?.removeFromSuperview()
+            if let column {
+                column.translatesAutoresizingMaskIntoConstraints = false
+                columnHost.addSubview(column)
+                NSLayoutConstraint.activate([
+                    column.topAnchor.constraint(equalTo: columnHost.topAnchor),
+                    column.leadingAnchor.constraint(equalTo: columnHost.leadingAnchor),
+                    column.trailingAnchor.constraint(equalTo: columnHost.trailingAnchor),
+                    column.bottomAnchor.constraint(equalTo: columnHost.bottomAnchor),
+                ])
+            }
+            columnView = column
+        }
+        let shown = column != nil
+        // Deactivate before activating, so the two are never both live.
+        if shown {
+            bodyAtEdge.isActive = false
+            bodyAfterColumn.isActive = true
+        } else {
+            bodyAfterColumn.isActive = false
+            bodyAtEdge.isActive = true
+        }
+        columnHost.isHidden = !shown
+    }
+
+    var leadingColumn: NSView? { columnView }
 }
 
 /// A root view that says when it reaches a window, which is when a shell can
