@@ -12,9 +12,12 @@
 //      A destination added without a module, or a tab with no real view
 //      behind it, fails here by name.
 //   2. **Back and Forward walk what was shown.** `NavigationHistory`.
-//   3. **The layout setting.** The floating bar is the default and the
-//      answer to any value this build does not know, and each layout builds
-//      its own shell.
+//   3. **The layout setting.** The sidebar is the default - for a fresh
+//      store, and as the answer to any value this build does not know - while
+//      a stored choice of either layout is kept, so a captain who picked the
+//      floating bar still gets it. Each layout builds its own shell, and the
+//      default is spelled once (`WorkspaceLayout.standard`), with no second
+//      literal in the app or the tour lab.
 //   4. **The wiring a behaviour check cannot see.** The app delegate builds
 //      the shell the setting names and skips the floating bar's chrome fusion
 //      for the sidebar; ⌘⇧D asks the shell first; the lock overlay tells the
@@ -38,7 +41,8 @@ enum SplitShellModelSelfTest {
         var allOK = true
         for check in [checkEveryModuleIsListedOnce, checkEveryRouteLandsOnAModuleAndATab, checkGroupsFollowTheModuleTable,
                       checkTheTabsAreTheRealViews, checkTheSidebarDrawsNoPins, checkSessionsAreConsoleChildren,
-                      checkHistoryWalksBackAndForward, checkHistoryEdges, checkTheLayoutSetting, checkHomeCardLayout,
+                      checkHistoryWalksBackAndForward, checkHistoryEdges, checkTheLayoutSetting,
+                      checkTheDefaultIsTheSidebar, checkTheDefaultIsSpelledOnce, checkHomeCardLayout,
                       checkTheWiring] {
             var ok = true
             check(&ok)
@@ -277,14 +281,73 @@ enum SplitShellModelSelfTest {
         }
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = AppSettings(defaults: defaults)
-        check(settings.workspaceLayout == .floatingBar, "the default layout is not the floating bar", &ok)
+        settings.workspaceLayout = .floatingBar
+        check(settings.workspaceLayout == .floatingBar, "the floating bar layout did not persist", &ok)
         settings.workspaceLayout = .sidebar
         check(settings.workspaceLayout == .sidebar, "the sidebar layout did not persist", &ok)
         defaults.set("a-layout-from-the-future", forKey: "fm.workspaceLayout")
-        check(settings.workspaceLayout == .floatingBar, "an unknown layout did not fall back to the floating bar", &ok)
+        check(settings.workspaceLayout == .sidebar, "an unknown layout did not fall back to the sidebar", &ok)
         check(WorkspaceLayout.floatingBar.shellType == AppShellController.self
                 && WorkspaceLayout.sidebar.shellType == MainSplitShellController.self,
               "a layout builds the wrong shell", &ok)
+        check(WorkspaceLayout.allCases == [.floatingBar, .sidebar],
+              "Settings no longer offers both layouts: \(WorkspaceLayout.allCases.map(\.rawValue))", &ok)
+    }
+
+    /// The captain's call: the sidebar is the default, and the floating bar
+    /// stays a real choice. Three stores, each its own scratch domain, so a
+    /// case cannot see what the one before it wrote: one that never chose,
+    /// one that chose the sidebar, and one that chose the floating bar - the
+    /// last is the captain who must not be moved by this change.
+    private static func checkTheDefaultIsTheSidebar(_ ok: inout Bool) {
+        check(WorkspaceLayout.standard == .sidebar, "the default layout is \(WorkspaceLayout.standard.rawValue), not the sidebar", &ok)
+        check(WorkspaceLayout.standard.shellType == MainSplitShellController.self,
+              "a first launch would not build the sidebar shell", &ok)
+        for (stored, want) in [(nil, WorkspaceLayout.sidebar), ("sidebar", .sidebar), ("floatingBar", .floatingBar)] {
+            let suite = "split-shell-default-\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suite) else {
+                fail("could not open a scratch defaults domain", &ok)
+                return
+            }
+            defer { defaults.removePersistentDomain(forName: suite) }
+            if let stored { defaults.set(stored, forKey: "fm.workspaceLayout") }
+            // The domain really holds what the case says it does, so a fresh
+            // case cannot pass on a value something else left behind.
+            check(defaults.string(forKey: "fm.workspaceLayout") == stored,
+                  "the scratch store for \(stored ?? "a fresh store") holds \(defaults.string(forKey: "fm.workspaceLayout") ?? "nothing")", &ok)
+            let read = AppSettings(defaults: defaults).workspaceLayout
+            check(read == want, "\(stored.map { "a stored \($0) choice" } ?? "a fresh store") opens \(read.rawValue), want \(want.rawValue)", &ok)
+            // Reading never writes, so a captain who never chose keeps
+            // following the default rather than being pinned to today's.
+            check(defaults.string(forKey: "fm.workspaceLayout") == stored,
+                  "reading the layout wrote \(defaults.string(forKey: "fm.workspaceLayout") ?? "nothing") into \(stored ?? "a fresh store")", &ok)
+        }
+    }
+
+    /// The default has one spelling. `AppSettings` falls back to
+    /// `WorkspaceLayout.standard`, the tour lab falls back to the setting,
+    /// and nothing else in the app names a fallback layout of its own - a
+    /// second literal is how a launch, a tour and Settings would disagree
+    /// about what a first launch looks like.
+    private static func checkTheDefaultIsSpelledOnce(_ ok: inout Bool) {
+        guard let settings = code("AppSettings.swift"), let dir = SelfTestSources.appSourceDirectory(),
+              let tourText = try? String(contentsOf: dir.appendingPathComponent("SelfTests/ReviewTourLab.swift"), encoding: .utf8) else {
+            fail("could not read the sources this check reads - it would pass vacuously", &ok)
+            return
+        }
+        let tour = FeatureInventorySelfTest.stripComments(tourText)
+        check(settings.contains("flatMap(WorkspaceLayout.init(rawValue:)) ?? .standard"),
+              "AppSettings.workspaceLayout no longer falls back to WorkspaceLayout.standard", &ok)
+        check(tour.contains("let layout = AppSettings.shared.workspaceLayout"),
+              "the tour lab no longer mounts the layout setting, so a tour's first launch can differ from the app's", &ok)
+        let sources = FeatureInventorySelfTest.appSources() + [("ReviewTourLab", tour)]
+        check(sources.count > 100, "only \(sources.count) sources were read - the scan would pass vacuously", &ok)
+        for (file, text) in sources {
+            for literal in ["?? .floatingBar", "?? .sidebar", "?? WorkspaceLayout.floatingBar", "?? WorkspaceLayout.sidebar"]
+            where text.contains(literal) {
+                fail("\(file).swift falls back to a layout of its own (`\(literal)`) rather than WorkspaceLayout.standard", &ok)
+            }
+        }
     }
 
     // MARK: 3b - Home's arranged cards

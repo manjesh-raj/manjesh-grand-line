@@ -1317,8 +1317,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         scaleRow.orientation = .horizontal
         scaleRow.spacing = HelmMetrics.s1 + 2
 
-        // Stage 3 of the modular-shell migration: the sidebar shell, behind a
-        // setting while the floating bar stays the default. Read once at
+        // The modular-shell migration's two window layouts: the sidebar (the
+        // default) and the floating bar, which stays selectable. Read once at
         // launch (`AppSettings.workspaceLayout`), so the row says when it
         // takes effect rather than appearing to do nothing.
         windowLayoutTabs = HelmSegmentedTabs(
@@ -1331,7 +1331,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         let layoutRow = SettingsRow(
             title: "Window layout",
-            description: "The floating bar, or a sidebar with a window toolbar and an inspector - the new workspace, in preview. Takes effect the next time Grand Line opens.",
+            description: "A sidebar with a window toolbar and an inspector, or the floating bar. Takes effect the next time Grand Line opens.",
             control: windowLayoutTabs)
 
         return [

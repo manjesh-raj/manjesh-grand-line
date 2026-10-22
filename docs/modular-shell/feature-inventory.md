@@ -23,6 +23,8 @@ When a later stage moves a feature, update its New shell cell and, for an eviden
 Deleting the old bar in step 5 is meant to fail every chrome row until each one names the new shell's code.
 
 Stage 3 builds the sidebar shell (`MainSplitShellController`) beside the floating bar, behind Settings › Appearance › Window layout.
+The sidebar is the default window layout now, for a fresh install and for anyone who never chose one.
+The floating bar stays selectable in the same setting, and a stored choice of it is kept.
 Where it already carries a piece of chrome, that row's Evidence names the sidebar shell's code as well as the floating bar's, so the feature stays checked in both layouts while both exist.
 
 Stage 4 consolidates the sidebar shell's 29 page rows into Home and the seventeen modules, in the module table only: a module's children are its tabs in the window toolbar, and every route still lands on its own page.
@@ -457,7 +459,7 @@ The eight categories and every row whose title is a literal. Rows built in a loo
 | `settings.row.Terminal scrollback & session state` | Settings row: Terminal scrollback & session state | Settings > Backup & Restore | Settings › Backup & Restore (unchanged row) |  |
 | `settings.row.Touch ID for sudo` | Settings row: Touch ID for sudo | Settings > Security | Settings › Security (unchanged row) |  |
 | `settings.row.Vault settings live in the vault` | Settings row: Vault settings live in the vault | Settings > Security | Settings › Security (unchanged row) |  |
-| `settings.row.Window layout` | Settings row: Window layout | Settings > Appearance - new in stage 3: the floating bar or the sidebar shell, applied the next time the app opens | Settings › Appearance (the switch between the two layouts until stage 5 makes the sidebar the default) |  |
+| `settings.row.Window layout` | Settings row: Window layout | Settings > Appearance - the sidebar shell (the default) or the floating bar, applied the next time the app opens | Settings › Appearance (the switch between the two layouts: the sidebar is the default, the floating bar stays selectable, and a stored choice is kept) |  |
 | `settings.row.Working directory` | Settings row: Working directory | Settings > Terminal | Settings › Terminal (unchanged row) |  |
 
 ## In-page tabs
@@ -868,7 +870,7 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.themeMode` | Saved preference `fm.themeMode` | declared in ThemeManager | Settings › Appearance (legacy key, migrated) |  |
 | `state.fm.todayCalendarRetired` | Saved preference `fm.todayCalendarRetired` | declared in TodayCalendarRetirement | System (one-time cleanup of the retired Today page's keys, unchanged) |  |
 | `state.fm.uiTextScale` | Saved preference `fm.uiTextScale` | declared in AppSettings | Settings › Appearance |  |
-| `state.fm.workspaceLayout` | Saved preference `fm.workspaceLayout` | declared in AppSettings | Settings › Appearance (Window layout; read once at launch) |  |
+| `state.fm.workspaceLayout` | Saved preference `fm.workspaceLayout` | declared in AppSettings | Settings › Appearance (Window layout; read once at launch, and a missing or unknown value is `WorkspaceLayout.standard`, the sidebar) |  |
 
 ## Shell chrome
 

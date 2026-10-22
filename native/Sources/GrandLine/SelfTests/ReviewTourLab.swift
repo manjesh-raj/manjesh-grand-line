@@ -68,10 +68,13 @@ enum ReviewTourLab {
     /// run as a suite and fail with `=1` for a filename.
     static let variable = "FM_REVIEW_TOUR"
 
-    /// `sidebar` tours the sidebar shell (`MainSplitShellController`) instead
-    /// of the floating bar - stage 3 of the modular-shell migration. Any other
-    /// value, or none, is the floating bar. Not `FM_RUN_*`, for the reason
-    /// `variable` gives.
+    /// `sidebar` tours the sidebar shell (`MainSplitShellController`) and
+    /// `floatingBar` the floating bar, the raw values `fm.workspaceLayout`
+    /// stores, and a named one is written to the tour's own defaults domain
+    /// as if the captain had picked it. Any other value, or none, is what a
+    /// first launch gets: that domain starts empty, so it is
+    /// `WorkspaceLayout.standard` (the sidebar). Not `FM_RUN_*`, for the
+    /// reason `variable` gives.
     static let layoutVariable = "FM_REVIEW_TOUR_LAYOUT"
 
     /// One line of a tour. Parsing is separated from running so the grammar
@@ -1099,7 +1102,14 @@ enum ReviewTourLab {
         }
 
         let outputDirectory = tourURL.deletingLastPathComponent()
-        let layout = WorkspaceLayout(rawValue: ProcessInfo.processInfo.environment[layoutVariable] ?? "") ?? .floatingBar
+        // A named layout is stored as the captain's choice, the way Settings
+        // stores it, so the Window layout row a tour renders agrees with the
+        // shell it mounted. This process's defaults domain is its own scratch
+        // one (`AppDefaults.store`), so nothing reaches the real preference.
+        if let chosen = WorkspaceLayout(rawValue: ProcessInfo.processInfo.environment[layoutVariable] ?? "") {
+            AppSettings.shared.workspaceLayout = chosen
+        }
+        let layout = AppSettings.shared.workspaceLayout
         let (window, shell) = makeOffScreenShell(layout: layout)
         var log = ["layout \(layout.rawValue)"]
         log += run(steps: steps, shell: shell, window: window, outputDirectory: outputDirectory)

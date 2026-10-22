@@ -518,11 +518,13 @@ final class AppSettings {
     /// and swapping that under a running window is not something either
     /// shell is built to survive.
     ///
-    /// The floating bar until the captain picks otherwise, and for any value
-    /// this build does not recognise - an unknown layout must never leave the
-    /// app without a shell.
+    /// `WorkspaceLayout.standard` (the sidebar) until the captain picks
+    /// otherwise, and for any value this build does not recognise - an
+    /// unknown layout must never leave the app without a shell. A stored
+    /// choice is kept as it is, so a captain who picked the floating bar
+    /// still gets it.
     var workspaceLayout: WorkspaceLayout {
-        get { defaults.string(forKey: Keys.workspaceLayout).flatMap(WorkspaceLayout.init(rawValue:)) ?? .floatingBar }
+        get { defaults.string(forKey: Keys.workspaceLayout).flatMap(WorkspaceLayout.init(rawValue:)) ?? .standard }
         set { defaults.set(newValue.rawValue, forKey: Keys.workspaceLayout) }
     }
 
