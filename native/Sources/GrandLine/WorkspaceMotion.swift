@@ -52,13 +52,27 @@ enum WorkspaceMotion {
             completion()
             return nil
         }
+        #if FM_SELFTESTS
+        debugPaneMotionsInFlight += 1
+        #endif
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = paneDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             item.animator().isCollapsed = collapsed
-        }, completionHandler: completion)
+        }, completionHandler: {
+            #if FM_SELFTESTS
+            debugPaneMotionsInFlight -= 1
+            #endif
+            completion()
+        })
         return paneDuration
     }
+
+    #if FM_SELFTESTS
+    /// Eased pane changes still running. `isCollapsed` flips the moment the
+    /// animator is asked, so a suite waits on this rather than on it.
+    static var debugPaneMotionsInFlight = 0
+    #endif
 
     /// Slide `view` in from the trailing edge with a fade. Layer properties
     /// only, so it never moves a frame Auto Layout owns; nothing at all under

@@ -97,6 +97,14 @@ enum SidebarPolishSelfTest {
         }
     }
 
+    /// Until every eased pane change has landed (its completion has run),
+    /// bounded. Measured on CI: a toggle issued while the last eased expand
+    /// was still running was undone when that animation completed.
+    private static func waitForPanes(_ shell: MainSplitShellController) {
+        pump(timeout: 5) { WorkspaceMotion.debugPaneMotionsInFlight == 0 }
+        settle(shell)
+    }
+
     private static func resize(_ window: NSWindow, width: CGFloat, _ shell: MainSplitShellController) {
         var frame = window.frame
         frame.size.width = width
@@ -151,17 +159,18 @@ enum SidebarPolishSelfTest {
         let collapse = shell.lastPaneMotionForTests
         check(collapse?.pane == "sidebar" && collapse?.collapsed == true && collapse?.duration == WorkspaceMotion.paneDuration,
               "the sidebar button's collapse was \(String(describing: collapse)), want it eased over \(WorkspaceMotion.paneDuration)s", &ok)
-        pump { shell.debugSidebarIsCollapsed }
+        waitForPanes(shell)
         check(shell.debugSidebarIsCollapsed, "the eased collapse never landed", &ok)
         click(toggle)
         let expand = shell.lastPaneMotionForTests
         check(expand?.collapsed == false && expand?.duration == WorkspaceMotion.paneDuration,
               "the sidebar button's expand was \(String(describing: expand))", &ok)
-        pump { !shell.debugSidebarIsCollapsed && shell.debugSidebarWidth > 0 }
+        waitForPanes(shell)
         check(!shell.debugSidebarIsCollapsed, "the eased expand never landed", &ok)
-        settle(shell)
 
         // ⌘⇧D opens it the same way.
+        check(!shell.debugSidebarIsCollapsed,
+              "before the Reduce Motion collapse the sidebar is already collapsed (last pane change \(String(describing: shell.lastPaneMotionForTests)), window \(window.frame.width)pt)", &ok)
         HelmMotion.reducedOverrideForTests = true
         click(toggle)
         check(shell.debugSidebarIsCollapsed, "Reduce Motion: the collapse did not land at once", &ok)
@@ -170,10 +179,11 @@ enum SidebarPolishSelfTest {
         shell.revealDestinationMap()
         check(shell.lastPaneMotionForTests?.collapsed == false && shell.lastPaneMotionForTests?.duration == WorkspaceMotion.paneDuration,
               "⌘⇧D's reveal was \(String(describing: shell.lastPaneMotionForTests)), want it eased", &ok)
-        pump { !shell.debugSidebarIsCollapsed && shell.debugSidebarWidth > 0 }
-        settle(shell)
+        waitForPanes(shell)
 
         // Reduce Motion: both ways at once.
+        check(!shell.debugSidebarIsCollapsed,
+              "after ⌘⇧D the sidebar is collapsed (last pane change \(String(describing: shell.lastPaneMotionForTests)))", &ok)
         HelmMotion.reducedOverrideForTests = true
         click(toggle)
         check(shell.debugSidebarIsCollapsed && shell.lastPaneMotionForTests?.duration == nil,
@@ -211,7 +221,7 @@ enum SidebarPolishSelfTest {
         check(translationX(slide?.fromValue) == WorkspaceMotion.inspectorEntranceOffset,
               "the panel slides from \(String(describing: translationX(slide?.fromValue))), not the prototype's 16pt", &ok)
         check(CATransform3DIsIdentity(panel.transform) && panel.opacity == 1, "the panel's end state is not in place and opaque", &ok)
-        pump { !shell.debugInspectorIsCollapsed }
+        waitForPanes(shell)
 
         // Open, and another page's details arrive: the panel comes in again.
         // A second selection on the same page swaps in place.
