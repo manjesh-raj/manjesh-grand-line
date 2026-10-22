@@ -797,6 +797,11 @@ The layout is chosen at launch, so nothing ever switches back.
   `FleetTaskCache` can then serve that `[]` for up to five seconds after the folder is readable again.
   `FleetSnapshot.tasksRead` now says whether the list is a real reading: an empty list counts only when the folder can be listed and holds no task files.
   `FleetDataSelfTest` checks it against a scratch firstmate home it pins before anything reads the real one.
+- **CI shares its stores across every suite in a lane, so a suite that seeds data has to own its stores.**
+  CI points hosts, keys, snippets, the vault, runbooks, tasks and more at one `ci-stores` folder.
+  The first CI run of this branch failed `FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS`: this suite's demo vault was still there, so that suite's own `createVault` had nothing to create, and its page read "Locked".
+  Locally each process has its own scratch folder, so it passed here until the run was repeated with CI's environment, which reproduced the two failures exactly.
+  `FM_RUN_PAGE_REDESIGNS_TESTS` now runs inside its own stores (`withScratchStores`) and fingerprints the caller's stores either side, so a run that writes past it fails by name.
 - **A real mouse click on a table row cannot be driven in the off-screen probe window.**
   `NSTableView.mouseDown(with:)` never ran its tracking loop there, and the queued mouse-up stayed queued.
   That held when it was called directly, sent through the window, sent after `makeKey`, and with the mouse-up queued last.
@@ -815,6 +820,7 @@ The layout is chosen at launch, so nothing ever switches back.
   - The footer's `height == 0` deactivated, which failed both the ambiguity check and the frame check on four runs out of four.
   - The hover wiring removed, the tracking area removed, `doubleAction` removed, the drag type unregistered, the drop not reporting the move, and Poneglyph not wiring `onReorder`.
   - `tasksRead` always true, an empty list trusted beside a task file, Needs you treating a failed read as a normal one, and Needs you dropping a task it could not read.
+  - The suite's own stores bypassed, which failed the fingerprint check and named the eight stores it would have written.
 - `debugHover` sends a real mouse event at the row's centre through the tracking view's own handlers, so it fails when the wiring or the hit test goes, not only when the reveal does.
   Drag to reorder goes through the table's own data source: the dragged row's pasteboard item, then `validateDrop` and `acceptDrop` with `CredentialVaultViewSelfTest`'s dragging-info stub.
 - Every affected page was rendered with the tour lab in Dusk and Daylight, at 1512 and 1100, in both layouts, before and after.
