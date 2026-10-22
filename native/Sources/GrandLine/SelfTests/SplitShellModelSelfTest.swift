@@ -547,6 +547,10 @@ enum SplitShellModelSelfTest {
                 + "before the crumb or after the page's actions (priority \(priority))", &ok)
         check(shell.contains("toolbar.setFocusChip(") && shell.contains("toolbar.onFocusChip ="),
               "the sidebar shell no longer puts the running timer in the toolbar", &ok)
+        // Not this check's subject, but the same file and the same review:
+        // the machine's mouse button is not a divider drag in this window.
+        check(!shell.contains("pressedMouseButtons") && shell.contains("Self.isDividerDrag(NSApp?.currentEvent, in: window)"),
+              "the sidebar's remembered width follows the machine's mouse button again, not a drag in its window", &ok)
     }
 }
 

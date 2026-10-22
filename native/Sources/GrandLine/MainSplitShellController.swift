@@ -336,14 +336,29 @@ final class MainSplitShellController: WorkspaceShellController {
         // every other resize of the panes is the window's (or the split
         // view's own) doing. The notification's divider index cannot tell
         // them apart - measured: it is set for every resize of the panes -
-        // so a width is taken as chosen only while the mouse is down on it.
+        // so a width is taken as chosen only while this window is handling
+        // a mouse drag that is not a live resize of the window itself.
         dividerDragObserver = NotificationCenter.default.addObserver(
             forName: NSSplitView.didResizeSubviewsNotification, object: splitController.splitView, queue: .main
         ) { [weak self] _ in
-            guard let self, NSEvent.pressedMouseButtons & 1 != 0,
+            guard let self, let window = self.view.window, Self.isDividerDrag(NSApp?.currentEvent, in: window),
                   !self.sidebarItem.isCollapsed, self.sidebar.view.frame.width > 0 else { return }
             self.sidebarThickness = self.sidebar.view.frame.width
         }
+    }
+
+    /// Whether `event` is the captain dragging a divider in `window`.
+    ///
+    /// Not `NSEvent.pressedMouseButtons`, which is the whole machine's mouse:
+    /// a button held anywhere - another app, or dragging this window's own
+    /// edge narrower - made a resize of the panes read as a choice, and the
+    /// sidebar's squeezed width then became the width it came back at.
+    /// Measured in `MainSplitShellSelfTest`, about one run in ten on main: the
+    /// sidebar came back at 200pt, 203.5pt and 212.5pt because its remembered
+    /// width already was that.
+    static func isDividerDrag(_ event: NSEvent?, in window: NSWindow) -> Bool {
+        guard let event, event.type == .leftMouseDragged, event.window === window else { return false }
+        return !window.inLiveResize
     }
 
     private func buildToolbar() {

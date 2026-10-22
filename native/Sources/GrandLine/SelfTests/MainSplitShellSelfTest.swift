@@ -69,7 +69,7 @@ enum MainSplitShellSelfTest {
                       checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
                       checkHomeIsTheCaptainsToArrange, checkBackAndForward, checkTheInspector,
                       checkTheLockHidesTheToolbar, checkTheContentReachesTheFoot, checkTheFocusChipIsInTheToolbar,
-                      checkTheFocusChipFitsTheNarrowToolbar,
+                      checkTheFocusChipFitsTheNarrowToolbar, checkOnlyADividerDragIsAChosenWidth,
                       checkToastsLandInTheColumn,
                       checkTheAccountMenu] {
             var ok = true
@@ -848,6 +848,30 @@ enum MainSplitShellSelfTest {
         settle(shell)
         check(!toolbar.debugFocusChipIsShown, "the chip stayed in the toolbar after the timer stopped", &ok)
         check(!shell.debugFocusPopoverIsShown, "the ring popover stayed open after the timer stopped", &ok)
+    }
+
+    /// The sidebar's remembered width changes only on a drag in this window.
+    /// The predicate used to be the machine's mouse button, so a button held
+    /// anywhere while the panes resized recorded a squeezed sidebar as the
+    /// captain's choice - the "came back at 200pt" flake in
+    /// `checkNoPageGrowsTheWindow`, about one run in ten.
+    private static func checkOnlyADividerDragIsAChosenWidth(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                           _ ok: inout Bool) {
+        func event(_ type: NSEvent.EventType, in target: NSWindow?) -> NSEvent? {
+            NSEvent.mouseEvent(with: type, location: NSPoint(x: 240, y: 300), modifierFlags: [], timestamp: 0,
+                               windowNumber: target?.windowNumber ?? 0, context: nil, eventNumber: 0,
+                               clickCount: 1, pressure: 1)
+        }
+        let other = OffScreenProbe.window(width: 400, height: 300)
+        defer { other.close() }
+        check(MainSplitShellController.isDividerDrag(event(.leftMouseDragged, in: window), in: window),
+              "a drag in the shell's window is not taken as a divider drag", &ok)
+        check(!MainSplitShellController.isDividerDrag(nil, in: window),
+              "a resize with no event (a mouse held anywhere else) counts as a divider drag", &ok)
+        check(!MainSplitShellController.isDividerDrag(event(.leftMouseDragged, in: other), in: window),
+              "a drag in another window counts as a divider drag", &ok)
+        check(!MainSplitShellController.isDividerDrag(event(.leftMouseDown, in: window), in: window),
+              "a mouse-down counts as a divider drag", &ok)
     }
 
     /// At 1100 the narrow toolbar drops the chip's task name, and a running
