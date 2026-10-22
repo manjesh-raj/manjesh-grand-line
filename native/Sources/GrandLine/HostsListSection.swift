@@ -268,6 +268,15 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
         table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
     }
 
+    /// Select the record row titled `title`, the way a click does. False when
+    /// no record row carries that title.
+    @discardableResult
+    func debugSelect(titled title: String) -> Bool {
+        guard let row = items.firstIndex(where: { $0.isRecord && $0.content.title == title }) else { return false }
+        debugSelect(row)
+        return true
+    }
+
     @objc private func clipViewResized() {
         // GL-20: gate on visibility. Hosts is a permanently mounted,
         // `isHidden`-toggled destination, so an ungated handler here recomputes

@@ -158,6 +158,10 @@ final class HomeCanvasController: NSViewController {
     // MARK: Forwarded actions (never owned)
 
     var onOpenDestination: ((RailDestination) -> Void)?
+    /// The fleet's attention row: the decisions waiting on the captain. Wired
+    /// to Crew › Needs you, which the sidebar layout draws; with nothing wired
+    /// it opens the Fleet page, as it always has.
+    var onOpenCrewDecisions: (() -> Void)?
     var onOpenShiftTask: ((String) -> Void)?
     /// The greeting row's Refresh - wired to the *existing* refresh triggers
     /// (`FleetController.refreshIfNeeded()` and `ReviewController`'s own), so
@@ -1263,7 +1267,8 @@ final class HomeCanvasController: NSViewController {
         case .followUp: onOpenDestination?(.shift)
         case .signal(let signal):
             switch signal {
-            case .fleet: onOpenDestination?(.overview)
+            case .fleet:
+                if let open = onOpenCrewDecisions { open() } else { onOpenDestination?(.overview) }
             // The same destination `follow(.quota)` already resolves to, and
             // the same one `DaylightModule.claudeStatus.opens` names: the
             // Claude-usage control lives on Console. Two callers, one answer.

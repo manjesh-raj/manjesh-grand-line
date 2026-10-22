@@ -62,6 +62,7 @@ enum ProbeScratchRootSelfTest {
         ok = checkEveryStoreDefaultFollowsTheRoot() && ok
         ok = checkTheWidgetContractSpellsTheVariableIdentically() && ok
         ok = checkTheProbeScriptSetsTheScratchRoot() && ok
+        ok = checkASelfTestProcessStartsOnAnEmptyScratchRoot() && ok
         print(ok ? "ProbeScratchRootSelfTest: OK" : "ProbeScratchRootSelfTest: FAILED")
         return ok
     }
@@ -240,6 +241,44 @@ enum ProbeScratchRootSelfTest {
               "build-probe-app.sh must launch with \(AppPaths.scratchRootVariable) set", &ok)
         check(text.contains("--env \"\(AppPaths.scratchRootVariable)="),
               "\(AppPaths.scratchRootVariable) must be in the launch env, not only a shell variable", &ok)
+        return ok
+    }
+
+    /// The probe root's sibling: a self-test or tour process keeps its stores
+    /// under `selftest-process-<pid>`, and pids are reused, so a folder by
+    /// that name can be an earlier process's (`SelfTestScratchRoot`). Two
+    /// halves, because either alone passes with the other gone: the helper
+    /// empties a folder holding a stale store, and `main.swift` calls it
+    /// before it points any store into the folder.
+    private static func checkASelfTestProcessStartsOnAnEmptyScratchRoot() -> Bool {
+        var ok = true
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grandline-scratch-root-probe-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stale = root.appendingPathComponent("tasks/activity/2026-10.yaml")
+        try? FileManager.default.createDirectory(at: stale.deletingLastPathComponent(),
+                                                 withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: stale.path, contents: Data("an earlier process's task\n".utf8))
+        check(FileManager.default.fileExists(atPath: stale.path), "the stale store fixture was not written", &ok)
+        SelfTestScratchRoot.startEmpty(root)
+        check(!FileManager.default.fileExists(atPath: root.path),
+              "a scratch root holding an earlier process's store was not emptied", &ok)
+
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8) else {
+            print("  SKIP: main.swift not next to this binary")
+            return ok
+        }
+        let code = FeatureInventorySelfTest.stripComments(main)
+        let emptied = code.range(of: "SelfTestScratchRoot.startEmpty(scratchRoot)")
+        let firstStore = code.range(of: "scratchRoot.appendingPathComponent(")
+        check(firstStore != nil, "main.swift no longer points a store into the per-process scratch root", &ok)
+        if let emptied, let firstStore {
+            check(emptied.lowerBound < firstStore.lowerBound,
+                  "main.swift empties the per-process scratch root only after pointing a store into it", &ok)
+        } else {
+            fail("main.swift does not empty the per-process scratch root before using it", &ok)
+        }
         return ok
     }
 }

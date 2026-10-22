@@ -11,6 +11,10 @@
 // Until a page has something to show, the pane says so plainly rather than
 // pretending a selection would fill it.
 //
+// A page that fills it (`WorkspaceInspectorSource`) hands over a view it owns
+// and keeps filled; the pane hosts that view in a scroll view under its title
+// line, which names the selected item.
+//
 // It is an ordinary split pane under the toolbar, a card-coloured column with
 // a hairline on its leading edge - the prototype's shape - rather than
 // macOS 14's full-height inspector item: that one is drawn as glass the
@@ -35,10 +39,17 @@ final class WorkspaceInspectorController: NSViewController {
     private let divider = NSView()
     private let empty = HelmEmptyState(
         symbol: "sidebar.right",
-        title: "No details for this page",
-        body: "This page does not use the inspector yet. Pages show the selected item's details here as they move into modules.",
+        title: WorkspaceInspectorController.noDetailsTitle,
+        body: WorkspaceInspectorController.noDetailsBody,
         size: .standard)
+    /// The page's details, under the title line.
+    private let contentScroll = NSScrollView()
+    private let contentDocument = FlippedView()
+    private weak var hostedView: NSView?
     private var themeToken: ThemeObservation?
+
+    static let noDetailsTitle = "No details for this page"
+    static let noDetailsBody = "This page has nothing to show here. Hosts and Poneglyph show the selected item's details."
 
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 600))
@@ -64,7 +75,14 @@ final class WorkspaceInspectorController: NSViewController {
         closeButton.setAccessibilityLabel("Close inspector")
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         empty.translatesAutoresizingMaskIntoConstraints = false
-        for sub in [titleLabel, closeButton, divider, empty] as [NSView] { panel.addSubview(sub) }
+        contentScroll.documentView = contentDocument
+        contentScroll.hasVerticalScroller = true
+        contentScroll.drawsBackground = false
+        contentScroll.automaticallyAdjustsContentInsets = false
+        contentScroll.translatesAutoresizingMaskIntoConstraints = false
+        contentScroll.isHidden = true
+        contentDocument.translatesAutoresizingMaskIntoConstraints = false
+        for sub in [titleLabel, closeButton, divider, empty, contentScroll] as [NSView] { panel.addSubview(sub) }
 
         NSLayoutConstraint.activate([
             // Under the toolbar, like the content column beside it.
@@ -92,6 +110,15 @@ final class WorkspaceInspectorController: NSViewController {
             empty.centerYAnchor.constraint(equalTo: panel.centerYAnchor),
             empty.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: HelmMetrics.s5),
             empty.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -HelmMetrics.s5),
+
+            contentScroll.topAnchor.constraint(equalTo: divider.bottomAnchor),
+            contentScroll.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 1),
+            contentScroll.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
+            contentScroll.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
+            // Pinned to the clip view, never the scroll view (gotcha (4)).
+            contentDocument.leadingAnchor.constraint(equalTo: contentScroll.contentView.leadingAnchor),
+            contentDocument.trailingAnchor.constraint(equalTo: contentScroll.contentView.trailingAnchor),
+            contentDocument.topAnchor.constraint(equalTo: contentScroll.contentView.topAnchor),
         ])
 
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
@@ -102,6 +129,55 @@ final class WorkspaceInspectorController: NSViewController {
     }
 
     @objc private func closeClicked() { onClose?() }
+
+    /// Show `content`, or - with none - the page's own words for having
+    /// nothing selected (`emptyText`), or the plain "no details" state for a
+    /// page that never fills the pane.
+    func setContent(_ content: WorkspaceInspectorContent?, emptyText: (title: String, body: String)? = nil) {
+        _ = view
+        if let content {
+            titleLabel.stringValue = content.title
+            if hostedView !== content.view {
+                hostedView?.removeFromSuperview()
+                let hosted = content.view
+                hosted.removeFromSuperview()
+                hosted.translatesAutoresizingMaskIntoConstraints = false
+                if content.fillsPane {
+                    // It scrolls itself, so it takes the whole area under the
+                    // title line.
+                    panel.addSubview(hosted)
+                    NSLayoutConstraint.activate([
+                        hosted.topAnchor.constraint(equalTo: divider.bottomAnchor),
+                        hosted.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 1),
+                        hosted.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
+                        hosted.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
+                    ])
+                } else {
+                    contentDocument.addSubview(hosted)
+                    NSLayoutConstraint.activate([
+                        hosted.topAnchor.constraint(equalTo: contentDocument.topAnchor),
+                        hosted.leadingAnchor.constraint(equalTo: contentDocument.leadingAnchor),
+                        hosted.trailingAnchor.constraint(equalTo: contentDocument.trailingAnchor),
+                        hosted.bottomAnchor.constraint(equalTo: contentDocument.bottomAnchor),
+                    ])
+                    contentScroll.contentView.scroll(to: .zero)
+                }
+                hostedView = hosted
+            }
+            contentScroll.isHidden = content.fillsPane
+            empty.isHidden = true
+        } else {
+            hostedView?.removeFromSuperview()
+            hostedView = nil
+            titleLabel.stringValue = "Inspector"
+            empty.setText(title: emptyText?.title ?? Self.noDetailsTitle, body: emptyText?.body ?? Self.noDetailsBody)
+            contentScroll.isHidden = true
+            empty.isHidden = false
+        }
+    }
+
+    /// The view the pane is hosting, if any.
+    var hostedContentView: NSView? { hostedView }
 
     private func applyTheme(_ theme: HelmTheme) {
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
@@ -118,5 +194,6 @@ final class WorkspaceInspectorController: NSViewController {
     var debugTitle: String { titleLabel.stringValue }
     var debugCloseButton: NSButton { closeButton }
     var debugEmptyState: HelmEmptyState { empty }
+    var debugIsShowingContent: Bool { hostedView != nil }
     #endif
 }

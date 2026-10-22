@@ -42,6 +42,10 @@ struct FleetSnapshot {
     let doneCount: Int
     let projectsCount: Int
     let watcher: WatcherHealth
+    /// Whether `tasks` is a real reading of the crew's task list. False when
+    /// the list could not be read at all, which `parseTasks` reports as no
+    /// tasks (GL-21: a folder that could not be listed is not an empty one).
+    var tasksRead = true
 }
 
 // MARK: - Open PRs (openprs.py)
@@ -307,8 +311,21 @@ enum FleetDataSource {
             queuedCount: queued,
             doneCount: done,
             projectsCount: projectsCount(),
-            watcher: watcherHealth()
+            watcher: watcherHealth(),
+            tasksRead: !tasks.isEmpty || taskFolderIsEmpty()
         )
+    }
+
+    /// An empty task list is only an empty fleet when the state folder can be
+    /// listed and holds no task files. `parseTasks` answers `[]` for a folder
+    /// it could not list, and its cache can serve that answer for a few
+    /// seconds after the folder is readable again, so this looks for itself.
+    private static func taskFolderIsEmpty() -> Bool {
+        guard let files = try? FileManager.default.contentsOfDirectory(at: FirstmateHome.state,
+                                                                       includingPropertiesForKeys: nil) else {
+            return false
+        }
+        return !files.contains { $0.pathExtension == "meta" }
     }
 
     // MARK: Merge open-PR + task-PR views into one list (mirrors `mergedPRs()` in index.html)

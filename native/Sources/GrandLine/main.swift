@@ -2472,6 +2472,9 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     let scratchRoot = FileManager.default.temporaryDirectory
         .appendingPathComponent("selftest-process-\(ProcessInfo.processInfo.processIdentifier)",
                                 isDirectory: true)
+    // Pids are reused, so a folder by this name can be an earlier process's.
+    // See `SelfTestScratchRoot`.
+    SelfTestScratchRoot.startEmpty(scratchRoot)
     // P4 (full review #3): the sibling of every redirect below, for the one
     // piece of shared state that is NOT a file path.
     //
@@ -3400,6 +3403,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_SPLIT_SHELL_MODEL_TESTS"] == "1" 
 }
 if ProcessInfo.processInfo.environment["FM_RUN_MAIN_SPLIT_SHELL_TESTS"] == "1" {
     exit(MainSplitShellSelfTest.run() ? 0 : 1)
+}
+// The later page work: the host, key, snippet and credential tables with the
+// shell's inspector, Knowledge's tree and Crew › Needs you, in a real
+// off-screen sidebar shell - and the floating bar's same pages unchanged.
+if ProcessInfo.processInfo.environment["FM_RUN_PAGE_REDESIGNS_TESTS"] == "1" {
+    exit(PageRedesignsSelfTest.run() ? 0 : 1)
 }
 
 // `fm/grandline-engineering-cards-stale-counts`: a hub summary card must

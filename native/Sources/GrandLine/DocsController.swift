@@ -588,3 +588,18 @@ final class DocsWebView: WKWebView {
     var debugIsOnScreen: Bool { isOnScreen }
     #endif
 }
+
+// MARK: - Knowledge's tree in the sidebar layout
+
+// The playbook is one synced site, so the tree's Docs group is one row: this
+// page, once a copy is on this Mac.
+extension DocsController: KnowledgeTreePage {
+    var knowledgeShowingItemID: String? { DocsStore.isSynced ? KnowledgeTreeItem.playbookID : nil }
+
+    var onKnowledgeChanged: ((KnowledgeChange) -> Void)? {
+        get { nil }
+        set { _ = newValue }
+    }
+
+    func openKnowledgeItem(id: String) {}
+}

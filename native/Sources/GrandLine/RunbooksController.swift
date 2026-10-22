@@ -37,6 +37,10 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
     /// (§6.4) rather than a page-local toolbar - see `drillHeaderActions`.
     private let newRunbookButton = HelmButton(title: "New Runbook", variant: .primary, symbol: "plus")
 
+    /// The sidebar layout's Knowledge tree (`KnowledgeTreePage`, at the end of
+    /// this file): told when the runbooks or the open one change.
+    var onKnowledgeChanged: ((KnowledgeChange) -> Void)?
+
     /// Keeps `ClosureSleeve` targets alive for as long as the controls they
     /// are attached to exist - appended once, in `buildRunbookEditor`, for
     /// that editor's three buttons.
@@ -372,6 +376,7 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         }
         rebuildRunbookGrid()
         onDrillSubtitleChanged?()
+        onKnowledgeChanged?(.list)
     }
 
     /// Re-flows `runbookGridItems` into a wrapping multi-column grid, sized
@@ -453,6 +458,7 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         runbookListContainerStack.isHidden = true
         runbookEditorContainer.isHidden = false
         notifyDrillChanged()
+        onKnowledgeChanged?(.showing)
     }
 
     private func cancelRunbookEditor() {
@@ -461,6 +467,7 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         notifyDrillChanged()
         editingRunbookID = nil
         editingIsNew = false
+        onKnowledgeChanged?(.showing)
     }
 
     private func saveRunbookEditor() {
@@ -591,4 +598,12 @@ final class ClosureSleeve: NSObject {
     private let closure: () -> Void
     init(_ closure: @escaping () -> Void) { self.closure = closure }
     @objc func invoke() { closure() }
+}
+
+// MARK: - Knowledge's tree in the sidebar layout
+
+extension RunbooksController: KnowledgeTreePage {
+    var knowledgeShowingItemID: String? { editingRunbookID.map(KnowledgeTreeItem.runbookID) }
+
+    func openKnowledgeItem(id: String) { openRunbook(id: KnowledgeTreeItem.storeID(id)) }
 }

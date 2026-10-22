@@ -1,0 +1,53 @@
+// Grand Line - native macOS app.
+//
+// How a page draws itself in the sidebar layout - the later page work of the
+// modular-shell migration (the host table and its inspector, the credential
+// table, the Knowledge tree and Crew's Needs you).
+//
+// The floating bar and the sidebar layout host the same 29 page controllers
+// (`Workspace`). A redesigned page keeps its floating-bar presentation exactly
+// as it was, and switches to its sidebar one when the sidebar shell first
+// shows it. The layout is chosen at launch (`AppSettings.workspaceLayout`), so
+// a page lives its whole life in one presentation: nothing here ever switches
+// back.
+//
+// Two small protocols rather than one, because they are separate decisions:
+// Crew's Needs you is a new view with nothing to inspect, and a page could
+// fill the inspector without drawing anything differently.
+
+import AppKit
+
+/// A page that draws itself differently in the sidebar layout.
+protocol SidebarLayoutAdopting: AnyObject {
+    /// Switch to the sidebar layout's presentation. Called once, the first
+    /// time the sidebar shell shows the page, and never in the floating bar.
+    func adoptSidebarLayout()
+}
+
+/// What the sidebar shell's inspector shows for the page's selection.
+struct WorkspaceInspectorContent {
+    /// The inspector's own title line, which names the selected item.
+    let title: String
+    /// The details. The page owns the view and keeps it filled; the inspector
+    /// only hosts it.
+    let view: NSView
+    /// The view fills the pane under the title line and scrolls itself (it
+    /// has a footer of its own, say), rather than being scrolled by the pane.
+    var fillsPane = false
+}
+
+/// A page whose selected item's details go in the sidebar shell's inspector,
+/// where the page's own detail column was in the floating bar.
+protocol WorkspaceInspectorSource: AnyObject {
+    /// The selected item's details, or `nil` when nothing is selected.
+    var inspectorContent: WorkspaceInspectorContent? { get }
+    /// What the inspector says when the captain opens it with nothing
+    /// selected.
+    var inspectorEmptyText: (title: String, body: String) { get }
+    /// Called whenever `inspectorContent` may have changed: a new selection,
+    /// a tab switch, or a store change under the selected item.
+    var onInspectorContentChanged: (() -> Void)? { get set }
+    /// The page asking the shell to open the inspector, as the captain's own
+    /// request would - a row's Show in Inspector, or a double click.
+    var onShowInspector: (() -> Void)? { get set }
+}

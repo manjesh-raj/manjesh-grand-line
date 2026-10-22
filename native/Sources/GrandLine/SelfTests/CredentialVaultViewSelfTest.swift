@@ -1667,7 +1667,9 @@ enum CredentialVaultViewSelfTest {
     }
 }
 
-private final class CredentialVaultStubDraggingInfo: NSObject, NSDraggingInfo {
+/// Not private: `PageRedesignsSelfTest` drops on the sidebar layout's
+/// credential table with it too.
+final class CredentialVaultStubDraggingInfo: NSObject, NSDraggingInfo {
     let draggingPasteboard: NSPasteboard
     private let window: NSWindow
 

@@ -7,7 +7,8 @@
 // the module's children (`WorkspaceModule.pageTabHost`):
 //
 //   - Shift's Board, List, Calendar and Review are Tasks' four tabs,
-//   - the Fleet page's Dashboard and Log are Crew's In flight and Log,
+//   - the Fleet page's Dashboard and Log are Crew's In flight and Log, and
+//     its sidebar-only Needs you is Crew's first tab,
 //   - the Hosts page's Hosts, SSH Keys and Snippets are Connections' Hosts,
 //     Keys and Snippets,
 //   - Kubernetes' Cluster and Log Tail are its own two.

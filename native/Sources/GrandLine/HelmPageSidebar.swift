@@ -744,6 +744,22 @@ final class HelmPageSidebar: NSView {
         footer?.removeFromSuperview()
         footer = view
         view.translatesAutoresizingMaskIntoConstraints = false
+        // The footer keeps its own height. When a page pins the column taller
+        // than its rows (Hosts, Tasks), the spare height belongs to the rows'
+        // scroll view, never to the footer. The rows' stack hugs at a stack's
+        // 250 default, and so did Hosts' footer stack, so the solver was free
+        // to give the slack to either, and which one it picked depended on its
+        // own history. Measured on the floating bar's Hosts page: after a tab
+        // round trip the footer took 453pt of it, and its keychain card rode
+        // up to just under the nav rows. A real low-priority `height == 0`
+        // holds any kind of footer at its content's height. A hugging
+        // priority would not, because Tasks' footer is a plain view with no
+        // intrinsic size (gotcha (12)). It only ever pulls the footer shorter,
+        // and it sits in the 251-499 band, so it cannot reach the window
+        // (gotcha (13)).
+        let keepsItsHeight = view.heightAnchor.constraint(equalToConstant: 0)
+        keepsItsHeight.priority = HelmDaylightPriority.columnHug
+        keepsItsHeight.isActive = true
         addSubview(view)
         let inset = surface == .panel ? Metrics.panelInset : 0
         scrollBottom.isActive = false
