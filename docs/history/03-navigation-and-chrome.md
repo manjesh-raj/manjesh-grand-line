@@ -957,3 +957,68 @@ The earlier decision still holds, so the floating bar stays a real choice in Set
 - Tours rendered Home and Settings › Appearance in Dusk and Daylight at 1512 and 1100.
   On a fresh scratch store the window is the sidebar layout, with Sidebar selected.
   With the floating bar named, every Home render is byte-identical to the same tour on `main`, and Settings differs only in the caption.
+
+## No status strip on any module (after stage 6, `fm/grandline-remove-status-strip-1792652628`)
+
+Stage 6 took the status strip out from under Console only.
+The captain then asked for it gone from every module: "Yes have this removed everywhere".
+The floating bar never drew one and is unchanged.
+
+### The shape
+
+- **The content pane is the header, Console's session strip and the body, and nothing under it.**
+  The body and Knowledge's tree end at the pane's foot, which is the window's.
+  `WorkspaceStatusLine` and `WorkspaceStatusReadout` are deleted, with `WorkspaceSignals.statusItems` and the two readings only the strip drew: Claude usage (and the `workspaceQuotaDidRead` hook that fed it) and Tasks sync.
+  `WorkspaceSignals` and its monitor stay, because the sidebar's badges read them.
+- **Every readout already had a home, except the focus timer chip.**
+  - The crew, Tasks due, Poneglyph's lock and a failing service are their rows' badges, and each badge's tooltip and accessibility label say what the strip said in words.
+  - The live sessions are Console's badge, its sidebar children and its session strip, which lists restored sessions too.
+  - Claude usage is Home's Claude card (in the standard card layout) and Console's usage popover.
+  - Tasks sync is the Tasks page's own sync pill, in the toolbar while Tasks shows.
+- **The focus timer chip is a toolbar item**, just before the trailing cluster, while a timer runs - the floating bar shows it beside its search pill.
+  It is the same `FocusTimerChip`, and the shell owns its ring popover (closed by the app lock, like the bar's).
+  It now shows under Console too, which the strip never did.
+
+### Decisions
+
+- **The chip yields to the page's own actions when the toolbar runs out of room.**
+  Measured on Knowledge at 1100: its five tabs leave room for the page's actions (222pt) or the chip, not both.
+  The page's actions are one view item with no menu form, so in the overflow menu they would do nothing.
+  The chip's menu form ("Focus Timer") opens the same popover, so the chip takes a priority between the low items (the crumb, Recents, the inspector) and the page's actions (`WorkspaceToolbar.focusChipPriority`).
+- **Below the toolbar's compact width the chip shows its ring and countdown without the task's name**, the same breakpoint that makes Search a glyph.
+  The name stays in its tooltip and accessibility label.
+  With that, the chip fits beside the page's actions on every module with fewer tabs than Knowledge.
+- **A page's and a module's actions go in before the chip**, so the chip stays beside the cluster whichever came into the toolbar first.
+  Inserted at the theme item's index like them, it landed left of Home's Customize after a module switch put Customize back.
+- **"Crew all clear" and "Poneglyph unlocked" have no badge**, because a badge draws nothing for a real zero.
+  Crew › Needs you and Poneglyph's own page say both.
+  The strip's crew readout opened Needs you directly; the Crew row opens the tab Crew showed last, and the bell's decision entry still opens Needs you.
+
+### What was measured on the way
+
+- **The chip came in left of Home's Customize after a module switch.**
+  The module's action is put back at the theme item's index on every switch, so whichever came in last sat nearer the cluster.
+  The page's and the module's actions now go in before the chip (`beforeTheFocusChipAndTheCluster`).
+- **The full chip pushed Knowledge's actions into the overflow menu at 1100**, which is what made the chip compact there and lower in priority (above).
+- **`MainSplitShellSelfTest` failed about one run in ten on main**, with the sidebar coming back at 200pt, 203.5pt or 212.5pt after a 1100-to-1512 round trip.
+  It was not the expand's pin: on a failing run the remembered width was already 203.5pt when the pin went on.
+  The divider-drag observer took a width as the captain's choice whenever `NSEvent.pressedMouseButtons` said the left button was down, and that is the whole machine's mouse.
+  Instrumented, it fired in 4 of 29 runs with the button down and no event in this app at all.
+  It now takes a width only for a left-mouse drag in this window that is not a live resize of the window (`MainSplitShellController.isDividerDrag`).
+  The same hole was open in the real app: dragging the window's own edge narrower recorded the squeezed sidebar.
+- **A second flake in the same suite: the floating bar's pins read back as the default.**
+  `AppDefaultsSweep` removed every other suite's defaults domain at start-up, including a domain whose process was still running, and several worktrees run suites on this machine at once.
+  It now skips a domain whose pid is alive (`AppDefaultsSweep.isRunning`).
+  See [`48-test-hermeticity.md`](48-test-hermeticity.md).
+
+### Verification
+
+- `FM_RUN_SPLIT_SHELL_MODEL_TESTS` (pure logic, CI's blocking lane) fails if any app source declares the strip again, if the content pane stops tying the body and Knowledge's column to its foot, if the inventory offers "Status line" as a place again, or if the chip leaves the toolbar or changes priority band.
+- `FM_RUN_MAIN_SPLIT_SHELL_TESTS` measures, under every module, that the body reaches the window's foot.
+  It checks that Console's session strip and the sidebar list the live and restored sessions.
+  It starts a real timer and checks the chip under four modules and its place beside the cluster, opens and closes the ring popover through the chip's own click, and checks that stopping the timer removes both.
+  At 1100 it checks that the chip drops the task's name and never pushes Knowledge's actions into the overflow menu.
+- `FM_RUN_SIDEBAR_POLISH_TESTS` checks that Claude usage still reaches Home's Claude card through the Fleet page's closure and is kept through a failed reading.
+- The tour lab has `demo focus`.
+  Every module's page was rendered in Dusk and Daylight at 1512 and 1100, in both layouts, before and after.
+  The floating bar's renders matched pixel for pixel except clock times and the async PR read.

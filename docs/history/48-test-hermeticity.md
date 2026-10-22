@@ -292,3 +292,17 @@ They are small, and a sweep by dead pid could race a new process that has just d
 The per-process `UserDefaults` domain has the same shape: `fm-selftest-defaults.<pid>`, and `AppDefaultsSweep.arm()` sweeps every stale domain except its own name.
 It was left alone, because the sweep runs at every start, so at most one stale domain exists at a time (one was found, 42 bytes).
 A run would have to draw that exact pid.
+
+## The sweep removed a live run's domain (`fm/grandline-remove-status-strip-1792652628`)
+
+`AppDefaultsSweep.arm()` took "every domain but my own" as stale.
+That is only true while one suite runs at a time, and several worktrees run suites on this machine at once.
+A suite process starting in one lane removed the defaults domain of a suite still running in another, which then read every preference back as its default mid-case.
+It showed up as `MainSplitShellSelfTest` failing "the sidebar layout changed the floating bar's pins", once in 29 runs, on code that never writes the pins.
+
+`staleSuiteNames` now leaves out a domain whose pid is alive (`AppDefaultsSweep.isRunning`, a `kill(pid, 0)` that also counts `EPERM` as alive).
+A name with no readable pid is swept as before.
+A dead run's domain is still swept by the next run, so the "at most one stale domain" note above holds per lane rather than per machine.
+
+`Phase3PolishSelfTest.checkTheSweepSparesLiveRuns` writes a fixture folder with this process's domain, its parent's (alive), a dead pid's and a pid-less name, and fails unless only the last two would be swept.
+Confirmed by injection: with the pid check removed it names the parent's domain.
