@@ -531,15 +531,20 @@ enum SplitShellModelSelfTest {
         check(!FeatureInventorySelfTest.shellPlaces.contains("Status line"),
               "the inventory still offers the status line as a place a feature can live", &ok)
 
-        // The focus timer's chip is the toolbar's, and a running timer never
-        // overflows out of sight.
+        // The focus timer's chip is the toolbar's. When the toolbar runs out
+        // of room it yields to the page's own actions, whose overflow form
+        // does nothing, and keeps a menu form that opens its popover.
         let toolbar = WorkspaceToolbar(splitView: NSSplitView())
         check(toolbar.toolbarAllowedItemIdentifiers(toolbar.toolbar).contains(WorkspaceToolbar.ItemID.focusTimer),
               "the toolbar can no longer show the focus timer's chip", &ok)
         let item = toolbar.toolbar(toolbar.toolbar, itemForItemIdentifier: WorkspaceToolbar.ItemID.focusTimer,
                                    willBeInsertedIntoToolbar: true)
-        check(item?.view is FocusTimerChip && item?.visibilityPriority == .high && item?.menuFormRepresentation != nil,
-              "the toolbar's focus item is not the chip, can overflow first, or does nothing from the overflow menu", &ok)
+        let priority = item?.visibilityPriority.rawValue ?? 0
+        check(item?.view is FocusTimerChip && item?.menuFormRepresentation != nil
+                && priority > NSToolbarItem.VisibilityPriority.low.rawValue
+                && priority < NSToolbarItem.VisibilityPriority.standard.rawValue,
+              "the toolbar's focus item is not the chip, does nothing from the overflow menu, or overflows "
+                + "before the crumb or after the page's actions (priority \(priority))", &ok)
         check(shell.contains("toolbar.setFocusChip(") && shell.contains("toolbar.onFocusChip ="),
               "the sidebar shell no longer puts the running timer in the toolbar", &ok)
     }

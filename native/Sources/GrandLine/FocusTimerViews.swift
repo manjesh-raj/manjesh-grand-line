@@ -71,6 +71,15 @@ final class FocusTimerChip: HoverHighlightView {
     private static let titleMaxWidth: CGFloat = 190
     static let height: CGFloat = 26
 
+    /// Whether the chip names its task beside the countdown. The sidebar
+    /// layout's narrow toolbar keeps only the ring and the countdown, so a
+    /// running timer does not push the page's own actions into the overflow
+    /// menu; the task's name stays in the tooltip and the accessibility
+    /// label. An arranged subview, so hiding it gives its width back.
+    var showsTitle = true {
+        didSet { titleLabel.isHidden = !showsTitle }
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
@@ -172,6 +181,7 @@ final class FocusTimerChip: HoverHighlightView {
     #if FM_SELFTESTS
     var debugCountdownText: String { timeLabel.stringValue }
     var debugTitleText: String { titleLabel.stringValue }
+    var debugTitleIsShown: Bool { !titleLabel.isHidden }
     var debugRingFraction: Double { ring.fraction }
     #endif
 }

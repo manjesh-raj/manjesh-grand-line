@@ -69,6 +69,7 @@ enum MainSplitShellSelfTest {
                       checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
                       checkHomeIsTheCaptainsToArrange, checkBackAndForward, checkTheInspector,
                       checkTheLockHidesTheToolbar, checkTheContentReachesTheFoot, checkTheFocusChipIsInTheToolbar,
+                      checkTheFocusChipFitsTheNarrowToolbar,
                       checkToastsLandInTheColumn,
                       checkTheAccountMenu] {
             var ok = true
@@ -847,6 +848,48 @@ enum MainSplitShellSelfTest {
         settle(shell)
         check(!toolbar.debugFocusChipIsShown, "the chip stayed in the toolbar after the timer stopped", &ok)
         check(!shell.debugFocusPopoverIsShown, "the ring popover stayed open after the timer stopped", &ok)
+    }
+
+    /// At 1100 the narrow toolbar drops the chip's task name, and a running
+    /// timer never pushes the page's own actions into the overflow menu -
+    /// measured on Knowledge, whose five tabs leave the least room.
+    private static func checkTheFocusChipFitsTheNarrowToolbar(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                               _ ok: inout Bool) {
+        let toolbar = shell.toolbar!
+        let width = window.frame.width
+        defer { resize(window, width: width, shell) }
+        resize(window, width: 1100, shell)
+        shell.show(.notebook)
+        settle(shell)
+        let actionsAlone = toolbar.debugPageActions.first?.window != nil
+        var task = ShiftTask.fresh()
+        task.title = "Rotate the staging certificate"
+        shell.focusTimer.start(task: task)
+        settle(shell)
+        defer { _ = shell.focusTimer.stop() }
+        let chip = toolbar.debugFocusChip
+        check(toolbar.debugIsCompact && !chip.debugTitleIsShown && chip.toolTip?.contains(task.title) == true,
+              "at 1100 the chip still names its task, or its tooltip does not", &ok)
+        // The fixture can fail: the page's actions fit at 1100 without a
+        // timer, or there is nothing to push out.
+        check(actionsAlone, "Knowledge's actions are already in the overflow at 1100 with no timer", &ok)
+        check(toolbar.debugPageActions.first?.window != nil,
+              "at 1100 a running timer pushed Knowledge's actions into the toolbar's overflow menu", &ok)
+        // Where even the compact chip leaves no room, it is the chip that
+        // yields, and its overflow item still opens the ring popover.
+        if chip.window == nil {
+            check(toolbar.debugPerformFocusChipMenuForm() && shell.debugFocusPopoverIsShown,
+                  "with the chip in the overflow menu its item opened no ring popover", &ok)
+            _ = toolbar.debugPerformFocusChipMenuForm()
+        }
+        // On a module with room, the compact chip is in the toolbar beside
+        // the page's actions.
+        shell.show(.health)
+        settle(shell)
+        check(chip.window != nil && toolbar.debugPageActions.first?.window != nil,
+              "at 1100 on Health the compact chip or the page's actions went to the overflow menu", &ok)
+        resize(window, width: 1512, shell)
+        check(chip.debugTitleIsShown, "at 1512 the chip does not name its task", &ok)
     }
 
     private static func checkToastsLandInTheColumn(_ shell: MainSplitShellController, _ window: NSWindow,

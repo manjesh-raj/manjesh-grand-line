@@ -123,7 +123,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     private var wantsModuleAction = false
     private var crumbParts: (group: String?, module: String) = (nil, "")
     /// The prototype's narrow toolbar, below `compactWidth`: Search is its
-    /// glyph and the crumb names only the module.
+    /// glyph, the crumb names only the module, and the focus chip shows its
+    /// ring and countdown without the task's name.
     private var isCompact = false
 
     /// The prototype's own breakpoint. At 1100 a module with five tabs left no
@@ -307,12 +308,16 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         // overflow menu, lowest priority first. The crumb (the module's
         // header names it too), Recents and the inspector toggle go first;
         // Search, the bell, the light/dark toggle, the tabs, the page's
-        // primary action, a running focus timer and the sidebar button never
-        // do.
+        // primary action and the sidebar button never do. A running focus
+        // timer's chip goes after the first three and before the page's own
+        // actions, because its menu form opens the same popover and theirs
+        // would do nothing - measured on Knowledge at 1100, whose five tabs
+        // leave room for one or the other.
         switch identifier {
         case ItemID.crumb, ItemID.recents, ItemID.inspector: item?.visibilityPriority = .low
+        case ItemID.focusTimer: item?.visibilityPriority = Self.focusChipPriority
         case ItemID.search, ItemID.notifications, ItemID.theme, ItemID.tabs, ItemID.sidebar, ItemID.navigation,
-             ItemID.primaryAction, ItemID.focusTimer:
+             ItemID.primaryAction:
             item?.visibilityPriority = .high
         default: break
         }
@@ -424,6 +429,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         guard compact != isCompact else { return }
         isCompact = compact
         searchButton.imagePosition = compact ? .imageOnly : .imageLeading
+        focusChip.showsTitle = !compact
         setSearchHint(ThemeManager.shared.theme)
         applyCrumb(ThemeManager.shared.theme)
     }
@@ -576,6 +582,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             ?? toolbar.items.count
     }
 
+    /// Between `.low` (-1000) and `.standard` (0), which the page's actions
+    /// take.
+    static let focusChipPriority = NSToolbarItem.VisibilityPriority(rawValue: -500)
+
     static let badgeHeight: CGFloat = 15
 
     /// The notifications button carries the bell's own count - the number
@@ -668,6 +678,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     var debugFocusChip: FocusTimerChip { focusChip }
     /// The chip is in the toolbar, not only asked for.
     var debugFocusChipIsShown: Bool { toolbar.items.contains { $0.itemIdentifier == ItemID.focusTimer } }
+    /// Choose the chip's item from the overflow menu, the way a click on it
+    /// does.
+    func debugPerformFocusChipMenuForm() -> Bool {
+        guard let menu = toolbar.items.first(where: { $0.itemIdentifier == ItemID.focusTimer })?.menuFormRepresentation,
+              let action = menu.action, let target = menu.target as? NSObject else { return false }
+        target.perform(action, with: menu)
+        return true
+    }
     /// Fire an image item's action the way a click does.
     func debugPerform(_ identifier: NSToolbarItem.Identifier) -> Bool {
         guard let item = toolbar.items.first(where: { $0.itemIdentifier == identifier }),
