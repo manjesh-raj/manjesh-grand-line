@@ -31,10 +31,18 @@ import AppKit
 /// Settings applies the next time the app opens - see
 /// `AppSettings.workspaceLayout`.
 enum WorkspaceLayout: String, CaseIterable {
-    /// The floating bar with its space pills and drill header - the default.
+    /// The floating bar with its space pills and drill header. Still a
+    /// first-class choice in Settings, never removed.
     case floatingBar
-    /// The sidebar, window toolbar, status line and inspector.
+    /// The sidebar, window toolbar, status line and inspector - the default.
     case sidebar
+
+    /// The layout a fresh install gets, and anyone who never chose one. The
+    /// one place the default is spelled: `AppSettings.workspaceLayout` falls
+    /// back to it, and so does the tour lab through that setting, so a
+    /// second literal cannot drift from it. `SplitShellModelSelfTest`'s
+    /// `checkTheDefaultIsTheSidebar` fails if it reverts.
+    static let standard: WorkspaceLayout = .sidebar
 
     var title: String {
         switch self {

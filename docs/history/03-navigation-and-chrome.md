@@ -928,3 +928,32 @@ The floating bar is still the default, and its pages draw exactly what they did,
 - `FM_RUN_MAIN_SPLIT_SHELL_TESTS` and `FM_RUN_SPLIT_SHELL_MODEL_TESTS` changed where this stage changed what they pinned: the Pinned and Pin cases became "the sidebar draws no pins" with source guards, the account menu case checks Log Out only and the header rule, the status line case checks Console, and the toolbar's page-actions case moved to Health because Hosts' only action is now its primary one.
 - The tour lab has `demo logs` and `demo health`.
   Every page was rendered in Dusk and Daylight at 1512 and 1100, in both layouts, before and after.
+
+## The sidebar becomes the default window layout (`fm/grandline-sidebar-default-1792652573`)
+
+The captain's call: "Make the sidebar the default now".
+The earlier decision still holds, so the floating bar stays a real choice in Settings › Appearance › Window layout and nothing of it was removed.
+
+### What changed
+
+- `WorkspaceLayout.standard` is the one spelling of the default, and it is `.sidebar`.
+  `AppSettings.workspaceLayout` falls back to it for a missing or unknown value.
+  A stored choice is read as it is, so a captain who picked the floating bar keeps it.
+  Reading the setting never writes it, so a captain who never chose keeps following the default.
+- The tour lab mounts whatever the setting says.
+  Its process has its own empty defaults domain, so an unset `FM_REVIEW_TOUR_LAYOUT` gets the sidebar, as a first launch does.
+  A named layout is written to that domain as the captain's choice, so the Window layout row in a tour's render agrees with the shell it mounted.
+  Before this, the env var mounted the floating bar while Settings could show a different selection.
+- The Window layout caption no longer calls the sidebar "the new workspace, in preview".
+  It still says the change takes effect the next time Grand Line opens, because the layout is read once at launch.
+
+### Verification
+
+- `FM_RUN_SPLIT_SHELL_MODEL_TESTS` has two new cases.
+  `checkTheDefaultIsTheSidebar` reads a fresh store, a stored sidebar choice and a stored floating bar choice, each in its own scratch domain.
+  `checkTheDefaultIsSpelledOnce` is a source guard: `AppSettings` falls back to `WorkspaceLayout.standard`, the tour lab reads the setting, and no app source or the tour lab has a `?? .floatingBar`/`?? .sidebar` fallback of its own.
+  Three injections each failed it by name: the `AppSettings` fallback back to `.floatingBar`, `WorkspaceLayout.standard` back to `.floatingBar`, and the tour lab back to a `?? .floatingBar` literal.
+- `checkTheLayoutSetting` changed where it pinned the old default: an unknown value now falls back to the sidebar.
+- Tours rendered Home and Settings › Appearance in Dusk and Daylight at 1512 and 1100.
+  On a fresh scratch store the window is the sidebar layout, with Sidebar selected.
+  With the floating bar named, every Home render is byte-identical to the same tour on `main`, and Settings differs only in the caption.
