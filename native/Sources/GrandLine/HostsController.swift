@@ -1301,6 +1301,17 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     var debugHostsList: HostsListSection { hostsList }
     var debugHostItems: [HostsListSection.Item] { lastHostItems }
     var debugUserRow: HostsUserRow { userRow }
+
+    /// Select the showing tab's row titled `title`, through its list's own
+    /// selection path - what the tour lab's `select` verb drives.
+    @discardableResult
+    func debugSelectRecord(titled title: String) -> Bool {
+        switch activeTab {
+        case .hosts: return hostsList.debugSelect(titled: title)
+        case .keys: return keysList.debugSelect(titled: title)
+        case .snippets: return snippetsList.debugSelect(titled: title)
+        }
+    }
     #endif
 
     private func normalizedGroup(_ host: Host) -> String? {

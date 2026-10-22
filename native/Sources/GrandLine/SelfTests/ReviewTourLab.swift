@@ -160,6 +160,22 @@ enum ReviewTourLab {
         case moduleTab(String)
         /// `customize on|off`: Home's Customize mode in the sidebar shell.
         case customize(Bool)
+        /// Seed the Hosts page's (scratch) stores with a small fleet of
+        /// hosts across groups and tags, two keys and three snippets, through
+        /// each store's own API. Every address, key and command is dummy text.
+        case demoHosts
+        /// Create a scratch Poneglyph vault with a dummy master password and
+        /// fill it with credentials across the four categories, one with a
+        /// 2FA code. Every value is dummy text, and the vault lives under the
+        /// tour's scratch root.
+        case demoVault
+        /// Seed Notebook pages, runbooks and postmortems in the tour's
+        /// scratch stores, through each store's own API.
+        case demoKnowledge
+        /// `select <title>`: select the showing page's row with this title,
+        /// through the page's own selection path - a host, a key, a snippet
+        /// or a credential.
+        case select(String)
         case comment
     }
 
@@ -179,7 +195,8 @@ enum ReviewTourLab {
             switch self {
             case .unknownVerb(let v):
                 return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, renderbar, menu, wait, "
-                    + "demo, measure, measurewindow, orderfront, probe, tasks, bar, fleet, inspector, sidebar)"
+                    + "demo, measure, measurewindow, orderfront, probe, tasks, bar, fleet, inspector, sidebar, "
+                    + "tab, customize, select)"
             case .badArgument(let a): return "bad argument \"\(a)\""
             case .unknownDestination(let d): return "unknown destination \"\(d)\""
             case .unknownTheme(let t): return "unknown theme \"\(t)\""
@@ -234,6 +251,9 @@ enum ReviewTourLab {
             if argument == "tasks" { return .success(.demoTasks) }
             if argument == "decision" { return .success(.demoDecision) }
             if argument == "refresh" { return .success(.demoRefresh) }
+            if argument == "hosts" { return .success(.demoHosts) }
+            if argument == "vault" { return .success(.demoVault) }
+            if argument == "knowledge" { return .success(.demoKnowledge) }
             if argument.hasPrefix("loading ") {
                 let card = String(argument.dropFirst("loading ".count))
                 guard ["claude", "fleet", "merge"].contains(card) else { return .failure(.badArgument(argument)) }
@@ -299,6 +319,9 @@ enum ReviewTourLab {
                 return .failure(argument.isEmpty ? .missingArgument(verb) : .badArgument(argument))
             }
             return .success(.customize(argument == "on"))
+        case "select":
+            guard !argument.isEmpty else { return .failure(.missingArgument("select")) }
+            return .success(.select(argument))
         default:
             return .failure(.unknownVerb(verb))
         }
@@ -483,6 +506,20 @@ enum ReviewTourLab {
                 split.setHomeCustomizing(on)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("\(step)")
+            case .demoHosts:
+                seedDemoHosts(shell.workspace)
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo hosts")
+            case .demoVault:
+                log.append(seedDemoVault(shell.debugPoneglyphStore))
+                shell.view.layoutSubtreeIfNeeded()
+            case .demoKnowledge:
+                seedDemoKnowledge(shell.workspace)
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo knowledge")
+            case .select(let title):
+                log.append(selectRow(titled: title, shell: shell))
+                shell.view.layoutSubtreeIfNeeded()
             case .orderFront:
                 window.orderFront(nil)
                 shell.view.layoutSubtreeIfNeeded()
@@ -688,6 +725,132 @@ enum ReviewTourLab {
         }
         walk(shell.view)
         return past
+    }
+
+    /// `demo hosts`: the shapes a real captain's Hosts page holds - hosts in
+    /// three groups, tags on some, a jump host, a port forward, a startup
+    /// snippet and a saved key - through each store's own API. Every address
+    /// is a reserved documentation name or range, the keys carry only dummy
+    /// public-key text (no private material is written anywhere), and the
+    /// tour's stores live under its scratch root.
+    static func seedDemoHosts(_ workspace: Workspace) {
+        let ops = SSHKey(label: "ops-ed25519", type: .ed25519,
+                         publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemoOnlyNotARealKey ops@example.test",
+                         fingerprint: "SHA256:demo0nly0ps0000000000000000000000000000000", hasPassphrase: true)
+        let ci = SSHKey(label: "ci-deploy", type: .ed25519,
+                        publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemoOnlyNotARealKeyCI ci@example.test",
+                        fingerprint: "SHA256:demo0nlyc1000000000000000000000000000000000")
+        workspace.keyStore.add(ops)
+        workspace.keyStore.add(ci)
+        let warmup = Snippet(label: "Warm up sudo", command: "cd /srv && sudo -v")
+        workspace.snippetStore.add(warmup)
+        workspace.snippetStore.add(Snippet(label: "Tail nginx errors", command: "sudo tail -f /var/log/nginx/error.log",
+                                           trigger: "nginxerr"))
+        workspace.snippetStore.add(Snippet(label: "Disk usage by folder", command: "du -h --max-depth=1 | sort -h",
+                                           trigger: "duh", scope: .systemWide))
+        var grafanaForward = PortForwardRule()
+        grafanaForward.listenPort = 3000
+        grafanaForward.destHost = "127.0.0.1"
+        grafanaForward.destPort = 3000
+        let hosts: [Host] = [
+            Host(label: "edge-proxy-01", address: "edge-01.example.test", username: "ops", keyID: ops.id,
+                 accentHex: "3C67DC", group: "Production", tags: ["prod", "edge"], startupSnippetID: warmup.id),
+            Host(label: "edge-proxy-02", address: "edge-02.example.test", username: "ops", keyID: ops.id,
+                 accentHex: "3C67DC", group: "Production", tags: ["prod", "edge"]),
+            Host(label: "bastion-stg", address: "bastion.stg.example.test", port: 2222, username: "ops",
+                 keyID: ops.id, accentHex: "C77E13", group: "Staging", tags: ["staging"]),
+            Host(label: "db-replica-eu", address: "192.0.2.41", username: "postgres", keyID: ops.id,
+                 accentHex: "C77E13", group: "Staging", tags: ["staging", "db"], jumpVia: "bastion-stg"),
+            Host(label: "grafana", address: "grafana.example.test", username: "ops", keyID: ops.id,
+                 accentHex: "189A6E", group: "Observability",
+                 portForwards: [grafanaForward]),
+            Host(label: "ci-runner-03", address: "198.51.100.7", username: "runner", keyID: ci.id,
+                 accentHex: "8B8677", group: "Observability", tags: ["ci"]),
+            Host(label: "lab-box", address: "lab.example.test"),
+        ]
+        for host in hosts { workspace.hostStore.add(host) }
+    }
+
+    /// `demo vault`: a scratch vault under the tour's scratch root, created
+    /// with a dummy master password and filled with dummy credentials.
+    static func seedDemoVault(_ store: CredentialVaultStore) -> String {
+        if !store.isUnlocked {
+            if case .failure(let error) = store.createVault(masterPassword: "tour-demo-only-password") {
+                return "demo vault FAILED - \(error)"
+            }
+        }
+        let day: TimeInterval = 86_400
+        let now = Date()
+        let credentials: [VaultCredential] = [
+            VaultCredential(title: "Work email", category: .email, account: "captain@example.test",
+                            secret: "demo-only-email-value", location: "mail.example.test",
+                            tags: ["work"], lastUsedAt: now.addingTimeInterval(-2 * 3600)),
+            VaultCredential(title: "Personal email", category: .email, account: "me@example.test",
+                            secret: "demo-only-personal-value", tags: ["personal"],
+                            lastUsedAt: now.addingTimeInterval(-3 * day)),
+            VaultCredential(title: "AWS console (staging)", category: .cloud, account: "ops-admin",
+                            secret: "demo-only-aws-value", location: "console.aws.example.test",
+                            tags: ["staging"], requiresTouchIDToReveal: true,
+                            totp: VaultTOTP(secret: "JBSWY3DPEHPK3PXP", issuer: "AWS"),
+                            lastUsedAt: now.addingTimeInterval(-26 * 3600)),
+            VaultCredential(title: "Cloudflare", category: .cloud, account: "ops@example.test",
+                            secret: "demo-only-cloudflare-value", tags: ["dns"]),
+            VaultCredential(title: "GitHub deploy token", category: .apiKey, account: "fm-bot",
+                            secret: "demo-only-token-value", tags: ["ci"],
+                            lastUsedAt: now.addingTimeInterval(-5 * day)),
+            VaultCredential(title: "PagerDuty API", category: .apiKey, secret: "demo-only-pagerduty-value",
+                            tags: ["oncall"]),
+            VaultCredential(title: "Break-glass procedure", category: .other,
+                            secret: "1. Page the on-call lead.\n2. Open the sealed runbook.\n3. Rotate after use.",
+                            kind: .secureNote),
+        ]
+        var added = 0
+        for credential in credentials {
+            if case .success = store.add(credential) { added += 1 }
+        }
+        return "demo vault (\(added) of \(credentials.count) dummy credentials)"
+    }
+
+    /// `demo knowledge`: Notebook pages in two folders, two runbooks and two
+    /// postmortems, through each store's own API in the tour's scratch root.
+    static func seedDemoKnowledge(_ workspace: Workspace) {
+        let notebook = workspace.notebookStore
+        _ = notebook.createPage(title: "On-call handbook", folder: "Team",
+                                content: "# On-call handbook\n\nWho to page, and when. See [[Edge architecture]].\n")
+        _ = notebook.createPage(title: "Edge architecture", folder: "Team",
+                                content: "# Edge architecture\n\nTwo proxies behind one load balancer.\n")
+        _ = notebook.createPage(title: "Ideas", content: "# Ideas\n\n- A runbook for certificate rotation\n")
+        let runbooks = workspace.docsRunbookStore
+        _ = runbooks.createRunbook(title: "Rotate a TLS certificate",
+                                   content: "# Rotate a TLS certificate\n\n1. Check what is expiring.\n"
+                                       + "\n```bash\nopenssl x509 -enddate -noout -in /etc/ssl/edge/wildcard.pem\n```\n")
+        _ = runbooks.createRunbook(title: "Fail over the database",
+                                   content: "# Fail over the database\n\n1. Confirm the replica is caught up.\n")
+        _ = runbooks.createPostmortem(title: "Cache outage, 9 October",
+                                      content: "# Cache outage, 9 October\n\n## Summary\n\nThe edge cache dropped for 23 minutes.\n")
+        _ = runbooks.createPostmortem(title: "Certificate expiry, 2 September",
+                                      content: "# Certificate expiry, 2 September\n\n## Summary\n\nA staging certificate lapsed.\n")
+    }
+
+    /// `select <title>`: the showing page's row with that title, through the
+    /// page's own selection path.
+    static func selectRow(titled title: String, shell: WorkspaceShellController) -> String {
+        let page = shell.debugCurrentDestination.flatMap(shell.debugSlotController)
+        let selected: Bool
+        switch page {
+        case let hosts as HostsController:
+            selected = hosts.debugSelectRecord(titled: title)
+        case let vault as CredentialVaultController:
+            if let credential = shell.debugPoneglyphStore.credentials.first(where: { $0.title == title }) {
+                vault.debugSelectCredential(id: credential.id)
+                selected = true
+            } else {
+                selected = false
+            }
+        default:
+            selected = false
+        }
+        return selected ? "select \(title)" : "select FAILED \(title) - the showing page has no row with that title"
     }
 
     /// `demo briefing`'s record: three clauses, the shape the captain's
