@@ -815,8 +815,13 @@ enum MainSplitShellSelfTest {
         shell.focusTimer.start(task: task)
         settle(shell)
         let chip = toolbar.debugFocusChip
-        check(toolbar.debugFocusChipIsShown && chip.debugTitleText == task.title && chip.debugCountdownText == "25:00",
-              "a running timer put \(toolbar.debugFocusChipIsShown ? "\"\(chip.debugCountdownText) \(chip.debugTitleText)\"" : "no chip") in the toolbar", &ok)
+        guard toolbar.debugFocusChipIsShown else {
+            fail("a running timer put no chip in the toolbar", &ok)
+            _ = shell.focusTimer.stop()
+            return
+        }
+        check(chip.debugTitleText == task.title && chip.debugCountdownText == "25:00",
+              "a running timer put \"\(chip.debugCountdownText) \(chip.debugTitleText)\" in the toolbar", &ok)
         let ids = toolbar.debugItemIdentifiers
         let focus = ids.firstIndex(of: WorkspaceToolbar.ItemID.focusTimer)
         check(focus.map { $0 + 1 } == ids.firstIndex(of: WorkspaceToolbar.ItemID.theme),

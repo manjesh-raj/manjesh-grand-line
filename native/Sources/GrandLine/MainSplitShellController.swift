@@ -936,7 +936,9 @@ final class MainSplitShellController: WorkspaceShellController {
 
     private func toggleFocusPopover(under anchor: NSView) {
         let timer = workspace.focusTimer
-        guard timer.isRunning else { return }
+        // An anchor out of any window (a chip the toolbar has not placed)
+        // is no place to hang a popover - AppKit raises on it.
+        guard timer.isRunning, anchor.window != nil else { return }
         if let focusPopover, focusPopover.isShown {
             focusPopover.performClose(nil)
             self.focusPopover = nil
