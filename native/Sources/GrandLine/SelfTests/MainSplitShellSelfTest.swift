@@ -826,11 +826,16 @@ enum MainSplitShellSelfTest {
         let focus = ids.firstIndex(of: WorkspaceToolbar.ItemID.focusTimer)
         check(focus.map { $0 + 1 } == ids.firstIndex(of: WorkspaceToolbar.ItemID.theme),
               "the chip is not just before the trailing cluster: \(ids.map(\.rawValue))", &ok)
-        // On every module, Console included - the strip never showed it there.
-        for route in [RailDestination.console, .health, .notebook] {
+        // On every module, Console included - the strip never showed it
+        // there - and still beside the trailing cluster after a module's own
+        // action has come and gone around it.
+        for route in [RailDestination.console, .health, .notebook, .homeCanvas] {
             shell.show(route)
             settle(shell)
             check(toolbar.debugFocusChipIsShown, "the focus chip is not in the toolbar under \(route.rawValue)", &ok)
+            let ids = toolbar.debugItemIdentifiers
+            check(ids.firstIndex(of: WorkspaceToolbar.ItemID.focusTimer).map { $0 + 1 } == ids.firstIndex(of: WorkspaceToolbar.ItemID.theme),
+                  "under \(route.rawValue) the chip is not just before the trailing cluster: \(ids.map(\.rawValue))", &ok)
         }
         // Through its own click recognizer, which is what Return, Space and
         // VoiceOver's press reach too (`HoverHighlightView`).

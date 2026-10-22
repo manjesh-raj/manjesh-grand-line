@@ -541,15 +541,13 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             // capsule on macOS 26, and AppKit warns it measures as zero.
             if let actionsIndex { toolbar.removeItem(at: actionsIndex) }
         } else if actionsIndex == nil {
-            let at = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.theme } ?? toolbar.items.count
-            toolbar.insertItem(withItemIdentifier: ItemID.pageActions, at: at)
+            toolbar.insertItem(withItemIdentifier: ItemID.pageActions, at: beforeTheFocusChipAndTheCluster)
         }
         let moduleActionIndex = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.moduleAction }
         if !wantsModuleAction {
             if let moduleActionIndex { toolbar.removeItem(at: moduleActionIndex) }
         } else if moduleActionIndex == nil {
-            let at = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.theme } ?? toolbar.items.count
-            toolbar.insertItem(withItemIdentifier: ItemID.moduleAction, at: at)
+            toolbar.insertItem(withItemIdentifier: ItemID.moduleAction, at: beforeTheFocusChipAndTheCluster)
         }
         let focusIndex = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.focusTimer }
         if !wantsFocusChip {
@@ -568,6 +566,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             let at = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.search }.map { $0 + 1 } ?? toolbar.items.count
             toolbar.insertItem(withItemIdentifier: ItemID.primaryAction, at: at)
         }
+    }
+
+    /// Where a page's or a module's action goes in: before the focus chip
+    /// when it shows, and before the trailing cluster otherwise - so the
+    /// chip stays beside the cluster whichever came into the toolbar first.
+    private var beforeTheFocusChipAndTheCluster: Int {
+        toolbar.items.firstIndex { $0.itemIdentifier == ItemID.focusTimer || $0.itemIdentifier == ItemID.theme }
+            ?? toolbar.items.count
     }
 
     static let badgeHeight: CGFloat = 15
