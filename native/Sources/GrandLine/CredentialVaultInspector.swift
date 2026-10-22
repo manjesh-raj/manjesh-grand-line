@@ -144,6 +144,14 @@ final class CredentialVaultInspectorView: NSView {
     // MARK: State
 
     private(set) var credential: VaultCredential?
+    /// The sidebar layout hosts this panel in the shell's own inspector
+    /// (`hostInWorkspaceInspector()`), which draws its own surface, title line
+    /// and close button - so the panel drops its card and its head there.
+    private(set) var isHostedInWorkspaceInspector = false
+    private var scrollUnderHead: NSLayoutConstraint!
+    private var scrollAtTop: NSLayoutConstraint!
+    private var emptyUnderHead: NSLayoutConstraint!
+    private var emptyAtTop: NSLayoutConstraint!
     private var auditEvents: [VaultAuditEvent] = []
     private var isRevealed = false
     private var theme: HelmTheme = ThemeManager.shared.theme
@@ -263,6 +271,13 @@ final class CredentialVaultInspectorView: NSView {
         }
 
         let gutter = HelmMetrics.s4
+        // Two alternative tops for the body, exactly one active (gotcha
+        // (17)'s footnote): under the panel's own head, or at the very top
+        // when the shell's inspector supplies the head instead.
+        scrollUnderHead = scroll.topAnchor.constraint(equalTo: headDivider.bottomAnchor)
+        scrollAtTop = scroll.topAnchor.constraint(equalTo: body.topAnchor)
+        emptyUnderHead = emptyState.topAnchor.constraint(equalTo: headDivider.bottomAnchor)
+        emptyAtTop = emptyState.topAnchor.constraint(equalTo: body.topAnchor)
         NSLayoutConstraint.activate([
             headTitle.leadingAnchor.constraint(equalTo: body.leadingAnchor, constant: gutter),
             headTitle.topAnchor.constraint(equalTo: body.topAnchor, constant: HelmMetrics.s3),
@@ -277,12 +292,12 @@ final class CredentialVaultInspectorView: NSView {
 
             scroll.leadingAnchor.constraint(equalTo: body.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: body.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: headDivider.bottomAnchor),
+            scrollUnderHead,
             scroll.bottomAnchor.constraint(equalTo: footerDivider.topAnchor),
 
             emptyState.leadingAnchor.constraint(equalTo: body.leadingAnchor, constant: gutter),
             emptyState.trailingAnchor.constraint(equalTo: body.trailingAnchor, constant: -gutter),
-            emptyState.topAnchor.constraint(equalTo: headDivider.bottomAnchor),
+            emptyUnderHead,
             emptyState.bottomAnchor.constraint(equalTo: footerDivider.topAnchor),
 
             column.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
@@ -314,6 +329,20 @@ final class CredentialVaultInspectorView: NSView {
             card.topAnchor.constraint(equalTo: topAnchor),
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+    }
+
+    /// Hand the panel to the shell's inspector (the sidebar layout): no card,
+    /// no head of its own. The body, the footer's Edit and Delete, and every
+    /// gate behind them are unchanged.
+    func hostInWorkspaceInspector() {
+        guard !isHostedInWorkspaceInspector else { return }
+        isHostedInWorkspaceInspector = true
+        for view in [headTitle, closeButton, headDivider] as [NSView] { view.isHidden = true }
+        scrollUnderHead.isActive = false
+        emptyUnderHead.isActive = false
+        scrollAtTop.isActive = true
+        emptyAtTop.isActive = true
+        applyTheme(theme)
     }
 
     // MARK: Content
@@ -365,7 +394,8 @@ final class CredentialVaultInspectorView: NSView {
         scroll.isHidden = false
         footer.isHidden = false
         footerDivider.isHidden = false
-        closeButton.isHidden = false
+        // The shell's own pane has the close button in the sidebar layout.
+        closeButton.isHidden = isHostedInWorkspaceInspector
 
         buildHero(credential)
         buildTags(credential)
@@ -798,6 +828,13 @@ final class CredentialVaultInspectorView: NSView {
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
         card.applyTheme(theme)
+        if isHostedInWorkspaceInspector {
+            // The shell's inspector is the surface; a card inside it would be
+            // a second border around the same thing.
+            card.layer?.backgroundColor = NSColor.clear.cgColor
+            card.layer?.borderWidth = 0
+            card.layer?.shadowOpacity = 0
+        }
         emptyState.applyTheme(theme)
 
         let ink = HelmTheme.nsColor(theme.chromeInkHex)

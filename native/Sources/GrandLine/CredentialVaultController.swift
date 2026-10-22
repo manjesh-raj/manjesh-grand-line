@@ -79,6 +79,28 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     private let recoveryButton = HelmButton(title: "", variant: .quiet, symbol: "shield.lefthalf.filled")
 
     private var listContainer: NSView!
+    /// The search row over the list, and the inspector's fixed width - kept so
+    /// the sidebar layout can move the inspector out into the shell's pane.
+    private var filterRowView: NSStackView?
+    private var inspectorWidthConstraint: NSLayoutConstraint?
+
+    // MARK: The sidebar layout (`SidebarLayoutAdopting`, at the end of this file)
+
+    /// Set once, by `adoptSidebarLayout()`: the credentials are a table and
+    /// the inspector is the shell's pane. Never set in the floating bar.
+    private(set) var drawsSidebarLayout = false
+    private lazy var credentialTable = HelmDataTable(columns: [
+        .init(id: "name", title: "Name", width: 240, minWidth: 200, flexible: true),
+        .init(id: "kind", title: "Kind", width: 100, hiddenBelow: 900),
+        .init(id: "tags", title: "Tags", width: 150, hiddenBelow: 820),
+        .init(id: "twofa", title: "2FA", width: 150),
+        .init(id: "used", title: "Last used", width: 110, hiddenBelow: 700),
+    ], actionsWidth: 136, reorderType: CredentialVaultDragPasteboard.credentialType)
+    /// The live 2FA cells on the table, by credential id, which the ticker
+    /// updates in place rather than reloading the table every second.
+    private var totpCells: [String: CredentialTOTPCell] = [:]
+    var onInspectorContentChanged: (() -> Void)?
+    var onShowInspector: (() -> Void)?
     /// The credential the inspector is showing, if any. Survives a re-render
     /// (a store change, a theme change, a search) so the panel does not empty
     /// itself under the captain while they are reading it.
@@ -314,6 +336,8 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         let listMinimum = list.card.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.listMinimumWidth)
         listMinimum.priority = HelmDaylightPriority.contentTie
         let inspectorWidth = inspector.widthAnchor.constraint(equalToConstant: CredentialVaultInspectorView.Metrics.width)
+        inspectorWidthConstraint = inspectorWidth
+        filterRowView = filterRow
 
         NSLayoutConstraint.activate([
             split.view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -414,6 +438,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         totpObservation = TOTPTicker.shared.observe { [weak self] in
             guard let self, self.store.isUnlocked else { return }
             self.list.tickTOTP(now: TOTPTicker.shared.now)
+            if self.drawsSidebarLayout { self.tickTableTOTP() }
         }
     }
 
@@ -433,6 +458,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         if unlocked {
             renderSidebar()
             renderList()
+            if drawsSidebarLayout { renderTable() }
             renderInspector()
         } else {
             // Nothing selected survives the gate - the panel holds a decrypted
@@ -451,6 +477,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
             }
         }
         onDrillSubtitleChanged?()
+        onInspectorContentChanged?()
     }
 
     /// The sidebar's counts are scoped by the *search*, not by the category -
@@ -1227,6 +1254,9 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     private func clearInspector() {
         selectedID = nil
         inspector.clear()
+        // The sidebar layout's pane is the shell's: tell it there is nothing
+        // to show, so it closes rather than holding an emptied panel open.
+        onInspectorContentChanged?()
     }
 
     /// The gate registration for the sheets, and why it is `observe` rather
@@ -1264,6 +1294,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         // (`DestinationMountingSelfTest.everyDestinationForcesItsOwnAppearance`).
         view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         list.applyTheme(theme)
+        if drawsSidebarLayout { credentialTable.applyTheme(theme) }
         sidebar.applyTheme(theme)
         inspector.applyTheme(theme)
         unlockView.applyTheme(theme)
@@ -1315,6 +1346,9 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     /// Reveal button and check what it does once the vault is locked.
     func debugSelectCredential(id: String) { selectCredential(id: id) }
     func debugLockTapped() { lockTapped() }
+    var debugCredentialTable: HelmDataTable { credentialTable }
+    var debugTOTPCellIDs: Set<String> { Set(totpCells.keys) }
+    func debugTOTPCell(_ id: String) -> CredentialTOTPCell? { totpCells[id] }
     #endif
 }
 
@@ -1373,5 +1407,159 @@ enum LAContextFactory {
         }
         semaphore.wait()
         return allowed
+    }
+}
+
+// MARK: - The sidebar layout
+
+// In the sidebar layout Secrets › Poneglyph is the prototype's credential
+// table, and the credential inspector is the shell's own pane rather than a
+// column of this page. The vault's own filter column stays, and so does the
+// search row over the table.
+//
+// **Nothing about the vault's gates changes.** Every row control and every
+// menu item runs the method the floating bar's row runs - `toggleReveal`
+// (Touch ID where the credential asks for it), `copyValue`, `copyTOTPCode`,
+// `copyAccount`, `openEditor`, `confirmDelete` - and the inspector is the same
+// `CredentialVaultInspectorView`, so its reveal still re-checks that the vault
+// is unlocked and a lock still empties it (`clearInspector`). The shell's pane
+// sits under the app's lock overlay with the rest of the window.
+
+extension CredentialVaultController: SidebarLayoutAdopting, WorkspaceInspectorSource {
+
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout, let pane = splitPage?.contentPane, let filterRow = filterRowView else { return }
+        _ = view
+        drawsSidebarLayout = true
+        // The inspector leaves the page for the shell's pane: its fixed
+        // width there is the pane's, and the search row and the table take
+        // the page's full width instead.
+        inspectorWidthConstraint?.isActive = false
+        inspector.removeFromSuperview()
+        inspector.hostInWorkspaceInspector()
+        filterRow.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -HelmMetrics.pageGutter).isActive = true
+
+        list.card.isHidden = true
+        let card = credentialTable.card
+        card.translatesAutoresizingMaskIntoConstraints = false
+        pane.addSubview(card)
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: list.card.leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: list.card.trailingAnchor),
+            card.topAnchor.constraint(equalTo: list.card.topAnchor),
+            card.bottomAnchor.constraint(equalTo: list.card.bottomAnchor),
+        ])
+        credentialTable.actionsAlwaysVisible = true
+        credentialTable.onSelect = { [weak self] key in
+            guard let self else { return }
+            if let key {
+                if key != self.selectedID { self.selectCredential(id: key) }
+            } else if self.selectedID != nil {
+                self.selectedID = nil
+                self.render()
+            }
+        }
+        credentialTable.onReorder = { [weak self] dragged, before in
+            self?.reorderCredential(id: dragged, before: before)
+        }
+        applyTheme(ThemeManager.shared.theme)
+        render()
+    }
+
+    var inspectorContent: WorkspaceInspectorContent? {
+        guard drawsSidebarLayout, store.isUnlocked, selectedID != nil, let credential = inspector.credential else {
+            return nil
+        }
+        var content = WorkspaceInspectorContent(title: credential.title, view: inspector)
+        content.fillsPane = true
+        return content
+    }
+
+    var inspectorEmptyText: (title: String, body: String) {
+        ("No credential selected", "Select a credential to read its account, history and notes here.")
+    }
+
+    // MARK: The table
+
+    /// The same credentials, groups and order the floating bar's list draws,
+    /// and each row's line read from the list's own row (`row(for:)`), so the
+    /// two cannot say different things about a credential.
+    private func renderTable() {
+        let matching = filteredCredentials()
+        guard !matching.isEmpty else {
+            let hasAny = !store.credentials.isEmpty
+            totpCells = [:]
+            credentialTable.setRows([.empty(
+                symbol: hasAny ? "magnifyingglass" : "lock.shield",
+                title: hasAny ? "No matches" : "Your vault is empty",
+                body: hasAny
+                    ? "Nothing here matches that search or category. Try a different one."
+                    : "Add your first credential and it will be encrypted, backed up to your private config repo, and one click from your clipboard.",
+                action: hasAny ? nil : .init(title: "Add credential", symbol: "plus") { [weak self] in self?.addTapped() })],
+                selecting: nil)
+            return
+        }
+        var rows: [HelmDataTable.Row] = []
+        var cells: [String: CredentialTOTPCell] = [:]
+        let theme = ThemeManager.shared.theme
+        let now = TOTPTicker.shared.now
+        for category in CredentialCategory.allCases {
+            let inCategory = matching.filter { $0.category == category }.sorted(by: VaultCredential.displayOrder)
+            guard !inCategory.isEmpty else { continue }
+            rows.append(.group("\(category.title) \u{00B7} \(inCategory.count)"))
+            for credential in inCategory {
+                let item = row(for: credential)
+                let id = credential.id
+                var tableRow = HelmDataTable.Row.record(id)
+                var twoFactor = HelmDataTable.Cell.none
+                if let config = credential.totp {
+                    let cell = totpCells[id] ?? CredentialTOTPCell()
+                    cell.onCopy = { [weak self] in self?.copyTOTPCode(id: id) }
+                    cell.update(config, now: now, theme: theme)
+                    cells[id] = cell
+                    twoFactor = .view(cell)
+                }
+                tableRow.cells = [
+                    "name": .title(item.content.title, subtitle: item.content.meta,
+                                   subtitleIsCode: item.content.metaIsCode,
+                                   symbol: item.content.badgeSymbol, tint: credential.category.tint, tintHex: nil),
+                    "kind": .text(credential.kind.title),
+                    "tags": .tags(credential.tags),
+                    "twofa": twoFactor,
+                    "used": .muted(credential.lastUsedAt.map { CredentialVaultFormat.relative($0) } ?? "Never"),
+                ]
+                tableRow.accessory = CredentialRowControls(requiresTouchID: item.requiresTouchIDIndicator,
+                                                           isRevealed: item.isRevealed,
+                                                           reveal: item.reveal, copy: item.copy, theme: theme)
+                tableRow.menu = item.overflow.map { action in
+                    if action.title == "Show in inspector" {
+                        // In the sidebar layout the inspector is the shell's,
+                        // so this also opens it if the captain had closed it.
+                        return HelmDataTable.Action(title: "Show in Inspector", symbol: action.symbol) { [weak self] in
+                            self?.selectCredential(id: id)
+                            self?.onShowInspector?()
+                        }
+                    }
+                    return HelmDataTable.Action(title: action.title, symbol: action.symbol, run: action.run)
+                }
+                tableRow.activate = { [weak self] in
+                    self?.selectCredential(id: id)
+                    self?.onShowInspector?()
+                }
+                tableRow.reorderGroup = category.rawValue
+                rows.append(tableRow)
+            }
+        }
+        totpCells = cells
+        credentialTable.setRows(rows, selecting: selectedID)
+    }
+
+    private func tickTableTOTP() {
+        let theme = ThemeManager.shared.theme
+        let now = TOTPTicker.shared.now
+        for (id, cell) in totpCells {
+            guard let config = store.credential(id: id)?.totp else { continue }
+            cell.update(config, now: now, theme: theme)
+        }
     }
 }

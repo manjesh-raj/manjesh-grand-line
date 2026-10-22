@@ -325,6 +325,26 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     var onDrillSubtitleChanged: (() -> Void)?
     var onDrillActionsChanged: (() -> Void)?
 
+    // MARK: The sidebar layout (`SidebarLayoutAdopting`, at the end of this file)
+
+    /// Set once, by `adoptSidebarLayout()`: the three lists are tables and a
+    /// selection's details go in the shell's inspector. Never set in the
+    /// floating bar, so that layout's page is exactly what it was.
+    private(set) var drawsSidebarLayout = false
+    private lazy var hostsTable = Self.makeHostsTable()
+    private lazy var keysTable = Self.makeKeysTable()
+    private lazy var snippetsTable = Self.makeSnippetsTable()
+    /// The inspector's body for whichever table is showing.
+    private lazy var inspectorDetail = WorkspaceDetailView()
+    /// F12's switch, as a strip over the Snippets table - the page's own
+    /// right column is the floating bar's.
+    private lazy var expansionStrip = SnippetExpansionPanel(style: .strip)
+    /// The selected record's name, or `nil` with nothing selected - what
+    /// `inspectorContent` hands the shell.
+    private var inspectorTitle: String?
+    var onInspectorContentChanged: (() -> Void)?
+    var onShowInspector: (() -> Void)?
+
     private var hostsTitleLabel = NSTextField(labelWithString: HostsTab.hosts.title)
     private var keysTitleLabel = NSTextField(labelWithString: HostsTab.keys.title)
     private var snippetsTitleLabel = NSTextField(labelWithString: HostsTab.snippets.title)
@@ -675,6 +695,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
                                      trusted: state.trusted,
                                      armed: state.armed,
                                      triggerCount: state.triggerCount)
+        if drawsSidebarLayout {
+            expansionStrip.setState(enabled: state.enabled, trusted: state.trusted,
+                                    armed: state.armed, triggerCount: state.triggerCount)
+        }
     }
 
     /// The Workspace card's four numbers, read from the same three stores the
@@ -692,7 +716,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// UI-50: the inspector column shows only when it has something to say.
     /// Without a selection the list takes the page's full width.
     private func updateInspectorVisibility() {
-        let show = sideStack.hasContent
+        // The sidebar layout keeps no right column of its own: details are
+        // the shell's inspector, and the expansion switch is a strip.
+        let show = !drawsSidebarLayout && sideStack.hasContent
         // Deactivate before activating, so the two are never both live.
         if show {
             contentToGutter?.isActive = false
@@ -706,6 +732,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     /// Fill (or empty) the detail panel from the showing tab's own selection.
     private func refreshDetailPanel() {
+        if drawsSidebarLayout {
+            refreshSidebarInspector()
+            return
+        }
         guard let detail = currentDetail() else {
             sideStack.detail.clear()
             updateInspectorVisibility()
@@ -1067,6 +1097,12 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         hostsList.applyTheme(theme)
         keysList.applyTheme(theme)
         snippetsList.applyTheme(theme)
+        if drawsSidebarLayout {
+            hostsTable.applyTheme(theme)
+            keysTable.applyTheme(theme)
+            snippetsTable.applyTheme(theme)
+            expansionStrip.applyTheme(theme)
+        }
         sideStack.applyTheme(theme)
         workspacePanel.applyTheme(theme)
         quickActionsPanel.applyTheme(theme)
@@ -1245,6 +1281,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         lastHostItems = items
         #endif
         hostsList.setItems(items)
+        if drawsSidebarLayout { renderHostsTable(hosts, query: query) }
         refreshWorkspacePanel()
         refreshDetailPanel()
         onDrillSubtitleChanged?()
@@ -1306,12 +1343,21 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// selection path - what the tour lab's `select` verb drives.
     @discardableResult
     func debugSelectRecord(titled title: String) -> Bool {
+        if drawsSidebarLayout { return table(for: activeTab).debugSelect(titled: title) }
         switch activeTab {
         case .hosts: return hostsList.debugSelect(titled: title)
         case .keys: return keysList.debugSelect(titled: title)
         case .snippets: return snippetsList.debugSelect(titled: title)
         }
     }
+    var debugHostsTable: HelmDataTable { hostsTable }
+    var debugKeysTable: HelmDataTable { keysTable }
+    var debugSnippetsTable: HelmDataTable { snippetsTable }
+    var debugInspectorDetail: WorkspaceDetailView { inspectorDetail }
+    var debugExpansionStrip: SnippetExpansionPanel { expansionStrip }
+    var debugSideStackIsHidden: Bool { sideStack.isHidden }
+    /// Whether the page's own detail column is showing a record.
+    var debugSideDetailShowsRecord: Bool { !sideStack.isHidden && sideStack.detail.isShowingRecord }
     #endif
 
     private func normalizedGroup(_ host: Host) -> String? {
@@ -1427,6 +1473,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         }
         keysTitleLabel.stringValue = HostsTab.keys.title
         keysList.setItems(items)
+        if drawsSidebarLayout { renderKeysTable() }
         refreshWorkspacePanel()
         refreshDetailPanel()
         onDrillSubtitleChanged?()
@@ -1463,6 +1510,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         }
         snippetsTitleLabel.stringValue = HostsTab.snippets.title
         snippetsList.setItems(items)
+        if drawsSidebarLayout { renderSnippetsTable() }
         refreshWorkspacePanel()
         refreshExpansionPanel()
         refreshDetailPanel()
@@ -1782,5 +1830,396 @@ extension HostsController: ModuleTabHosting {
         // With no column beside it the content starts at the page gutter,
         // like every other page's.
         contentLeading?.constant = hidden ? HelmMetrics.pageGutter : HelmMetrics.s4 - HelmSplitPage.dividerThickness
+    }
+}
+
+// MARK: - The sidebar layout
+
+// In the sidebar layout Connections' Hosts, Keys and Snippets are the
+// prototype's tables, and the selected row's details are in the shell's
+// inspector (`WorkspaceInspectorSource`) rather than this page's own detail
+// column. Everything else on the page stays: the stat strip, the search and
+// filters over the hosts, the shortcut line under them, and the snippet
+// expansion card beside Snippets.
+//
+// **One set of actions.** Every table row and inspector button runs the same
+// method the floating bar's row runs - `connect`, `duplicate`,
+// `confirmDeleteHost`, `presentKeyEditor` and the rest - so the two layouts
+// cannot drift apart in what a host, a key or a snippet can do.
+
+extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource {
+
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+        for (table, list, container) in [(hostsTable, hostsList, hostsTabView),
+                                         (keysTable, keysList, keysTabView),
+                                         (snippetsTable, snippetsList, snippetsTabView)] {
+            list.card.isHidden = true
+            table.card.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(table.card)
+            NSLayoutConstraint.activate([
+                table.card.leadingAnchor.constraint(equalTo: list.card.leadingAnchor),
+                table.card.trailingAnchor.constraint(equalTo: list.card.trailingAnchor),
+                table.card.bottomAnchor.constraint(equalTo: list.card.bottomAnchor),
+            ])
+            if table === snippetsTable {
+                container.addSubview(expansionStrip)
+                NSLayoutConstraint.activate([
+                    expansionStrip.leadingAnchor.constraint(equalTo: list.card.leadingAnchor),
+                    expansionStrip.trailingAnchor.constraint(equalTo: list.card.trailingAnchor),
+                    expansionStrip.topAnchor.constraint(equalTo: list.card.topAnchor),
+                    table.card.topAnchor.constraint(equalTo: expansionStrip.bottomAnchor, constant: HelmMetrics.s3),
+                ])
+            } else {
+                table.card.topAnchor.constraint(equalTo: list.card.topAnchor).isActive = true
+            }
+            table.onSelect = { [weak self] _ in self?.refreshDetailPanel() }
+        }
+        expansionStrip.onToggle = { [weak self] isOn in
+            self?.onSnippetExpansionToggled?(isOn)
+            self?.refreshExpansionPanel()
+        }
+        expansionStrip.onRequestPermission = { [weak self] in
+            self?.onRequestAccessibilityTrust?()
+            self?.refreshExpansionPanel()
+        }
+        // The page's own detail column is the floating bar's; here the
+        // details are the shell's inspector, so only the snippet expansion
+        // card can still show beside the list.
+        sideStack.detail.clear()
+        applyTheme(ThemeManager.shared.theme)
+        applyHostFilter(searchField.stringValue)
+        renderKeysTable()
+        renderSnippetsTable()
+        refreshExpansionPanel()
+        refreshDetailPanel()
+    }
+
+    var inspectorContent: WorkspaceInspectorContent? {
+        guard drawsSidebarLayout, let inspectorTitle else { return nil }
+        return WorkspaceInspectorContent(title: inspectorTitle, view: inspectorDetail)
+    }
+
+    var inspectorEmptyText: (title: String, body: String) {
+        switch activeTab {
+        case .hosts: return ("No host selected", "Select a host to see how it connects, and everything you can do with it.")
+        case .keys: return ("No key selected", "Select a key to see its fingerprint and which hosts use it.")
+        case .snippets: return ("No snippet selected", "Select a snippet to see its command, its trigger and where it expands.")
+        }
+    }
+
+    // MARK: Tables
+
+    private func table(for tab: HostsTab) -> HelmDataTable {
+        switch tab {
+        case .hosts: return hostsTable
+        case .keys: return keysTable
+        case .snippets: return snippetsTable
+        }
+    }
+
+    static let firstmateRowKey = "firstmate"
+
+    private static func makeHostsTable() -> HelmDataTable {
+        HelmDataTable(columns: [
+            .init(id: "host", title: "Host", width: 200),
+            .init(id: "address", title: "Address", width: 180, minWidth: 150, flexible: true),
+            .init(id: "group", title: "Group", width: 120, hiddenBelow: 720),
+            .init(id: "tags", title: "Tags", width: 170, hiddenBelow: 960),
+            .init(id: "session", title: "Session", width: 150, hiddenBelow: 640),
+        ], actionsWidth: 140)
+    }
+
+    private static func makeKeysTable() -> HelmDataTable {
+        HelmDataTable(columns: [
+            .init(id: "key", title: "Key", width: 200),
+            .init(id: "type", title: "Type", width: 100, hiddenBelow: 640),
+            .init(id: "fingerprint", title: "Fingerprint", width: 260, minWidth: 150, flexible: true),
+            .init(id: "usedBy", title: "Used by", width: 100, hiddenBelow: 720),
+            .init(id: "passphrase", title: "Passphrase", width: 120, hiddenBelow: 840),
+        ], actionsWidth: 120)
+    }
+
+    private static func makeSnippetsTable() -> HelmDataTable {
+        HelmDataTable(columns: [
+            .init(id: "snippet", title: "Snippet", width: 200),
+            .init(id: "command", title: "Command", width: 260, minWidth: 150, flexible: true),
+            .init(id: "trigger", title: "Trigger", width: 120, hiddenBelow: 660),
+            .init(id: "where", title: "Expands in", width: 130, hiddenBelow: 780),
+        ], actionsWidth: 120)
+    }
+
+    /// The hosts the filters leave, grouped the way the floating bar's list
+    /// groups them, under the built-in Firstmate row.
+    private func renderHostsTable(_ hosts: [Host], query: String) {
+        var rows: [HelmDataTable.Row] = [firstmateRow()]
+        let groupKeys = Set(hosts.map { normalizedGroup($0) })
+        if groupKeys.count <= 1 {
+            rows += hosts.map(hostRow)
+        } else {
+            for name in groupKeys.compactMap({ $0 }).sorted() {
+                rows.append(.group(name))
+                rows += hosts.filter { normalizedGroup($0) == name }.map(hostRow)
+            }
+            let ungrouped = hosts.filter { normalizedGroup($0) == nil }
+            if !ungrouped.isEmpty {
+                rows.append(.group("Ungrouped"))
+                rows += ungrouped.map(hostRow)
+            }
+        }
+        if hosts.isEmpty {
+            let filtering = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !selectedTags.isEmpty || onlineOnly || selectedGroup != nil
+            rows.append(.empty(
+                symbol: filtering ? "line.3.horizontal.decrease.circle" : "server.rack",
+                title: filtering ? "No matching hosts" : "No saved hosts yet",
+                body: filtering
+                    ? "Nothing matches the current search or filters. Clear them to see every saved host."
+                    : "Save a host's connection details, or type ssh user@host in the field above to connect right now.",
+                action: filtering ? nil : .init(title: "Add Host", symbol: "plus") { [weak self] in self?.newHost() }))
+        }
+        hostsTable.setRows(rows)
+    }
+
+    private func firstmateRow() -> HelmDataTable.Row {
+        var row = HelmDataTable.Row.record(Self.firstmateRowKey)
+        row.cells = [
+            "host": .title("Firstmate", subtitle: nil, subtitleIsCode: false, symbol: "sailboat", tint: .accent, tintHex: nil),
+            "address": .muted("Built-in shell"),
+            "group": .none,
+            "tags": .tags([]),
+            "session": .none,
+        ]
+        row.primary = .init(title: "Connect", symbol: "bolt.fill") { [weak self] in self?.onConnectPinned?() }
+        row.activate = { [weak self] in self?.onConnectPinned?() }
+        return row
+    }
+
+    private func hostRow(_ host: Host) -> HelmDataTable.Row {
+        var row = HelmDataTable.Row.record(host.id.uuidString)
+        let session = liveSession?(host.id)
+        row.cells = [
+            "host": .title(host.label, subtitle: nil, subtitleIsCode: false, symbol: host.iconSymbol,
+                           tint: .accent, tintHex: host.accentHex),
+            "address": .code(host.subtitle),
+            "group": normalizedGroup(host).map { .text($0) } ?? .none,
+            "tags": .tags(host.tags),
+            "session": session.map { .status($0.stateText, tint: $0.isConnected ? .good : .warn) } ?? .none,
+        ]
+        if session != nil {
+            row.primary = .init(title: "Switch", symbol: "arrow.right.circle.fill") { [weak self] in
+                self?.onSwitchToSession?(host.id)
+            }
+            row.activate = { [weak self] in self?.onSwitchToSession?(host.id) }
+        } else {
+            row.primary = .init(title: "Connect", symbol: "bolt.fill") { [weak self] in self?.connect(host) }
+            row.activate = { [weak self] in self?.connect(host) }
+        }
+        row.menu = hostMenuActions(host, live: session != nil).map { action in
+            HelmDataTable.Action(title: action.title, symbol: action.symbol, run: action.run)
+        }
+        return row
+    }
+
+    /// The host's actions after its headline one - the same list the row's
+    /// menu, its ⋯ button and the inspector show.
+    private func hostMenuActions(_ host: Host, live: Bool) -> [WorkspaceDetail.Action] {
+        var actions: [WorkspaceDetail.Action] = []
+        if live {
+            actions.append(.init("End Session", symbol: "xmark.circle") { [weak self] in self?.onEndSession?(host.id) })
+        }
+        actions += [
+            .init("Edit\u{2026}", symbol: "pencil") { [weak self] in self?.onAddOrEdit?(host) },
+            .init("Duplicate\u{2026}", symbol: "plus.square.on.square") { [weak self] in self?.duplicate(host) },
+            .init("Delete\u{2026}", symbol: "trash", role: .destructive) { [weak self] in self?.confirmDeleteHost(host) },
+        ]
+        return actions
+    }
+
+    private func renderKeysTable() {
+        var rows = keyStore.keys.map { key -> HelmDataTable.Row in
+            var row = HelmDataTable.Row.record(key.id.uuidString)
+            let usedBy = hostStore.hosts.filter { $0.keyID == key.id }.count
+            row.cells = [
+                "key": .title(key.label, subtitle: nil, subtitleIsCode: false, symbol: "key.fill",
+                              tint: key.type.tint, tintHex: nil),
+                "type": .text(key.type.displayName),
+                "fingerprint": .code(key.fingerprint),
+                "usedBy": .muted(usedBy == 1 ? "1 host" : "\(usedBy) hosts"),
+                "passphrase": key.hasPassphrase ? .status("In Keychain", tint: .good) : .muted("None"),
+            ]
+            row.primary = .init(title: "Edit", symbol: "pencil") { [weak self] in self?.presentKeyEditor(for: key) }
+            row.activate = { [weak self] in self?.presentKeyEditor(for: key) }
+            row.menu = [
+                .init(title: "Copy Public Key", symbol: "doc.on.doc") { copyToPasteboard(key.publicKey) },
+                .init(title: "Delete\u{2026}", symbol: "trash") { [weak self] in self?.confirmDeleteKey(key) },
+            ]
+            return row
+        }
+        if rows.isEmpty {
+            rows = [.empty(symbol: "key.fill", title: "No saved keys yet",
+                           body: "Generate a key, or import an existing PEM or OpenSSH one. Private key material stays in the macOS Keychain.",
+                           action: .init(title: "New Key", symbol: "plus") { [weak self] in self?.newKey() })]
+        }
+        keysTable.setRows(rows)
+    }
+
+    private func renderSnippetsTable() {
+        var rows = snippetStore.snippets.map { snippet -> HelmDataTable.Row in
+            var row = HelmDataTable.Row.record(snippet.id.uuidString)
+            row.cells = [
+                "snippet": .title(snippet.label, subtitle: nil, subtitleIsCode: false,
+                                  symbol: "chevron.left.forwardslash.chevron.right", tint: .info, tintHex: nil),
+                "command": .code(snippet.subtitle),
+                "trigger": snippet.triggerDisplay.map { .code($0) } ?? .none,
+                // GL-14: a Console-only snippet must not read like an armed one.
+                "where": snippet.triggerDisplay == nil
+                    ? .none
+                    : (snippet.expandsSystemWide ? .status(snippet.scope.title, tint: .good) : .muted(snippet.scope.title)),
+            ]
+            row.primary = .init(title: "Run", symbol: "play.fill") { [weak self] in self?.onRunSnippet?(snippet) }
+            row.activate = { [weak self] in self?.onRunSnippet?(snippet) }
+            row.menu = [
+                .init(title: "Edit\u{2026}", symbol: "pencil") { [weak self] in self?.presentSnippetEditor(for: snippet) },
+                .init(title: "Copy Command", symbol: "doc.on.doc") { copyToPasteboard(snippet.command) },
+                .init(title: "Delete\u{2026}", symbol: "trash") { [weak self] in self?.confirmDeleteSnippet(snippet) },
+            ]
+            return row
+        }
+        if rows.isEmpty {
+            rows = [.empty(symbol: "chevron.left.forwardslash.chevron.right", title: "No snippets yet",
+                           body: "Save a command you run often, then send it to any terminal tab in one click.",
+                           action: .init(title: "New Snippet", symbol: "plus") { [weak self] in self?.newSnippet() })]
+        }
+        snippetsTable.setRows(rows)
+    }
+
+    // MARK: The inspector
+
+    /// Fill the inspector from the showing table's selection, and tell the
+    /// shell.
+    private func refreshSidebarInspector() {
+        let detail = currentWorkspaceDetail()
+        if let detail { inspectorDetail.show(detail) }
+        inspectorTitle = detail?.title
+        sideStack.detail.clear()
+        updateInspectorVisibility()
+        onInspectorContentChanged?()
+    }
+
+    private func currentWorkspaceDetail() -> WorkspaceDetail? {
+        guard let key = table(for: activeTab).selectedKey else { return nil }
+        switch activeTab {
+        case .hosts:
+            if key == Self.firstmateRowKey { return firstmateDetail() }
+            guard let id = UUID(uuidString: key), let host = hostStore.host(id: id) else { return nil }
+            return workspaceDetail(for: host)
+        case .keys:
+            guard let id = UUID(uuidString: key), let sshKey = keyStore.key(id: id) else { return nil }
+            return workspaceDetail(for: sshKey)
+        case .snippets:
+            guard let id = UUID(uuidString: key), let snippet = snippetStore.snippet(id: id) else { return nil }
+            return workspaceDetail(for: snippet)
+        }
+    }
+
+    private func firstmateDetail() -> WorkspaceDetail {
+        WorkspaceDetail(symbol: "sailboat", tint: .accent, kicker: "Built-in", title: "Firstmate",
+                        subtitle: "The shared Firstmate shell. It is always here, and it cannot be edited or deleted.",
+                        fields: [.init("Kind", "Local shell")],
+                        actions: [.init("Connect", symbol: "bolt.fill", role: .primary) { [weak self] in
+                            self?.onConnectPinned?()
+                        }])
+    }
+
+    /// Everything the saved `Host` holds, read straight off it - nothing here
+    /// is derived or invented. A field with nothing in it is left out.
+    private func workspaceDetail(for host: Host) -> WorkspaceDetail {
+        var fields: [WorkspaceDetail.Field] = [
+            .init("Environment", Self.roleKicker(for: host)),
+            .init("Endpoint", host.port == 22 ? host.address : "\(host.address):\(host.port)", isCode: true),
+            .init("User", host.username.isEmpty ? "Your local user" : host.username),
+            .init("Credential", credentialName(for: host)),
+        ]
+        if host.agentForward { fields.append(.init("Agent", "Forwarded")) }
+        if let jump = host.jumpVia?.trimmingCharacters(in: .whitespacesAndNewlines), !jump.isEmpty {
+            fields.append(.init("Jump via", jump))
+        }
+        if let group = normalizedGroup(host) { fields.append(.init("Group", group)) }
+        if !host.tags.isEmpty { fields.append(.init("Tags", host.tags.joined(separator: ", "))) }
+        if let snippetID = host.startupSnippetID {
+            fields.append(.init("On connect", snippetStore.snippet(id: snippetID)?.label ?? "Missing snippet"))
+        }
+        let session = liveSession?(host.id)
+        if let session { fields.append(.init("Session", session.stateText)) }
+
+        var actions: [WorkspaceDetail.Action] = []
+        if session != nil {
+            actions.append(.init("Switch to Session", symbol: "arrow.right.circle.fill", role: .primary) { [weak self] in
+                self?.onSwitchToSession?(host.id)
+            })
+        } else {
+            actions.append(.init("Connect", symbol: "bolt.fill", role: .primary) { [weak self] in self?.connect(host) })
+        }
+        actions += hostMenuActions(host, live: session != nil)
+
+        return WorkspaceDetail(symbol: host.iconSymbol, tint: .accent, tintHex: host.accentHex,
+                               kicker: Self.roleKicker(for: host), title: host.label, subtitle: host.subtitle,
+                               fields: fields,
+                               sections: [.init("Port forwarding", host.portForwards.map(\.summary), isCode: true)],
+                               actions: actions)
+    }
+
+    private func workspaceDetail(for key: SSHKey) -> WorkspaceDetail {
+        let users = hostStore.hosts.filter { $0.keyID == key.id }.map(\.label)
+        var fields: [WorkspaceDetail.Field] = [
+            .init("Type", key.type.displayName),
+            .init("Fingerprint", key.fingerprint, isCode: true),
+            .init("Passphrase", key.hasPassphrase ? "In Keychain" : "None"),
+            .init("Used by", users.count == 1 ? "1 host" : "\(users.count) hosts"),
+        ]
+        if key.certificate?.isEmpty == false { fields.append(.init("Certificate", "Present")) }
+        return WorkspaceDetail(
+            symbol: "key.fill", tint: key.type.tint, kicker: key.type.displayName, title: key.label,
+            subtitle: "Private key material stays in the macOS Keychain.",
+            fields: fields,
+            sections: [.init("Hosts using it", users)],
+            actions: [
+                .init("Edit", symbol: "pencil", role: .primary) { [weak self] in self?.presentKeyEditor(for: key) },
+                .init("Copy Public Key", symbol: "doc.on.doc") { copyToPasteboard(key.publicKey) },
+                .init("Delete\u{2026}", symbol: "trash", role: .destructive) { [weak self] in self?.confirmDeleteKey(key) },
+            ])
+    }
+
+    private func workspaceDetail(for snippet: Snippet) -> WorkspaceDetail {
+        var fields: [WorkspaceDetail.Field] = [
+            .init("Trigger", snippet.triggerDisplay ?? "None", isCode: snippet.triggerDisplay != nil),
+        ]
+        // F12: stated as separate readings, because they fail independently.
+        if snippet.triggerDisplay != nil {
+            fields.append(.init("Expands in", snippet.scope.title))
+            if !snippet.excludedApps.isEmpty {
+                fields.append(.init("Never in", snippet.excludedApps.joined(separator: ", ")))
+            }
+        }
+        let lines = snippet.command.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        return WorkspaceDetail(
+            symbol: "chevron.left.forwardslash.chevron.right", tint: .info,
+            kicker: snippet.triggerDisplay ?? "Snippet", title: snippet.label,
+            subtitle: snippet.expandsSystemWide
+                ? "Expands wherever you type it, and runs in a terminal tab."
+                : "Sent to the active terminal tab, then Enter.",
+            fields: fields,
+            sections: [.init("Command", lines, isCode: true)],
+            actions: [
+                .init("Run", symbol: "play.fill", role: .primary) { [weak self] in self?.onRunSnippet?(snippet) },
+                .init("Edit\u{2026}", symbol: "pencil") { [weak self] in self?.presentSnippetEditor(for: snippet) },
+                .init("Copy Command", symbol: "doc.on.doc") { copyToPasteboard(snippet.command) },
+                .init("Delete\u{2026}", symbol: "trash", role: .destructive) { [weak self] in
+                    self?.confirmDeleteSnippet(snippet)
+                },
+            ])
     }
 }

@@ -172,6 +172,10 @@ enum ReviewTourLab {
         /// Seed Notebook pages, runbooks and postmortems in the tour's
         /// scratch stores, through each store's own API.
         case demoKnowledge
+        /// Render Automic Vault's page from a fixture snapshot (three secret
+        /// names, two launchers, one with an issue) through its real render
+        /// path - a tour never runs `av`.
+        case demoAutomic
         /// `select <title>`: select the showing page's row with this title,
         /// through the page's own selection path - a host, a key, a snippet
         /// or a credential.
@@ -254,6 +258,7 @@ enum ReviewTourLab {
             if argument == "hosts" { return .success(.demoHosts) }
             if argument == "vault" { return .success(.demoVault) }
             if argument == "knowledge" { return .success(.demoKnowledge) }
+            if argument == "automic" { return .success(.demoAutomic) }
             if argument.hasPrefix("loading ") {
                 let card = String(argument.dropFirst("loading ".count))
                 guard ["claude", "fleet", "merge"].contains(card) else { return .failure(.badArgument(argument)) }
@@ -517,6 +522,14 @@ enum ReviewTourLab {
                 seedDemoKnowledge(shell.workspace)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo knowledge")
+            case .demoAutomic:
+                shell.workspace.vault.debugRender(
+                    secrets: [VaultSecret(name: "GITHUB_TOKEN"), VaultSecret(name: "PAGERDUTY_API_KEY"),
+                              VaultSecret(name: "STAGING_DB_PASSWORD")],
+                    tools: [VaultTool(name: "gh", commands: ["gh"], status: .hardened),
+                            VaultTool(name: "terraform", commands: ["terraform"], status: .needsAttention(issueCount: 2))])
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo automic")
             case .select(let title):
                 log.append(selectRow(titled: title, shell: shell))
                 shell.view.layoutSubtreeIfNeeded()

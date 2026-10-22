@@ -84,6 +84,14 @@ final class MainSplitShellController: WorkspaceShellController {
         return contentMinimumWithOverlayScrollers + NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
     }
 
+    /// The column's floor while the inspector shows a page's details: the
+    /// inspector takes its width out of the column rather than out of the
+    /// sidebar or the window. A page that fills the inspector (Hosts,
+    /// Poneglyph) is laid out to fit this, so a selection can open the
+    /// inspector at any window width without growing the window, and the
+    /// sidebar comes and goes at exactly the same width with or without it.
+    static var inspectorColumnMinimum: CGFloat { contentMinimum - WorkspaceInspectorController.width }
+
     private let splitController = NSSplitViewController()
     let sidebar = WorkspaceSidebarController()
     let inspector = WorkspaceInspectorController()
@@ -117,6 +125,19 @@ final class MainSplitShellController: WorkspaceShellController {
     private var lastTab: [WorkspaceModule: ModuleTab] = [:]
     /// The pages whose own tab control the toolbar has taken over.
     private var adoptedTabHosts: Set<ObjectIdentifier> = []
+    /// The pages that switched to their sidebar-layout presentation
+    /// (`SidebarLayoutAdopting`).
+    private var adoptedPages: Set<ObjectIdentifier> = []
+    /// The showing page, when it fills the inspector with its selection.
+    private weak var inspectorSource: WorkspaceInspectorSource?
+    /// The captain's standing choice to see the selected item's details. The
+    /// inspector button and the pane's close button turn it off and back on;
+    /// it starts on, so selecting a host or a credential shows its details,
+    /// as the prototype does.
+    private var inspectorWanted = true
+    /// The captain opened the inspector themselves, so it stays open with its
+    /// empty state while nothing is selected.
+    private var inspectorPinnedOpen = false
     /// The showing page, for re-reading its live subtitle and actions.
     private weak var pageController: NSViewController?
     private var lockOverlayIsShown = false
@@ -251,7 +272,7 @@ final class MainSplitShellController: WorkspaceShellController {
             forName: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             guard let self else { return }
-            let floor = Self.contentMinimum
+            let floor = self.columnFloor
             if floor < self.contentItem.minimumThickness { self.contentItem.minimumThickness = floor }
             self.fitPanesToWindow()
             self.contentItem.minimumThickness = floor
@@ -265,6 +286,7 @@ final class MainSplitShellController: WorkspaceShellController {
         inspectorItem.isCollapsed = true
         inspectorItem.holdingPriority = NSLayoutConstraint.Priority(rawValue: 270)
         inspector.onClose = { [weak self] in self?.setInspectorShown(false) }
+        inspector.setContent(nil)
 
         for item in [sidebarItem, contentItem, inspectorItem] { splitController.addSplitViewItem(item!) }
         addChild(splitController)
@@ -390,12 +412,13 @@ final class MainSplitShellController: WorkspaceShellController {
         let width = window.contentRect(forFrameRect: window.frame).width
         guard width > 0 else { return }
         toolbar.setCompact(width < WorkspaceToolbar.compactWidth)
+        let floor = columnFloor
         if !sidebarItem.isCollapsed {
-            if columnWidthWithSidebar(windowWidth: width) < Self.contentMinimum {
+            if columnWidthWithSidebar(windowWidth: width) < floor {
                 setSidebarCollapsed(true, animated: false)
                 sidebarCollapsedForRoom = true
             }
-        } else if sidebarCollapsedForRoom, columnWidthWithSidebar(windowWidth: width) >= Self.contentMinimum {
+        } else if sidebarCollapsedForRoom, columnWidthWithSidebar(windowWidth: width) >= floor {
             // Lay the panes out at the window's new width first, with the
             // sidebar still collapsed - which is safe, the column only gets
             // wider - so the expand below is measured against the size the
@@ -455,7 +478,9 @@ final class MainSplitShellController: WorkspaceShellController {
     /// never on navigation.
     private func makeRoom(sidebarShown: Bool, inspectorShown: Bool) {
         guard let window = view.window else { return }
-        let needed = Self.contentMinimum + (sidebarShown ? sidebarPaneWidth : 0)
+        let floor = inspectorShown && inspectorSource?.inspectorContent != nil
+            ? Self.inspectorColumnMinimum : Self.contentMinimum
+        let needed = floor + (sidebarShown ? sidebarPaneWidth : 0)
             + (inspectorShown ? WorkspaceInspectorController.width : 0)
         let current = window.contentRect(forFrameRect: window.frame).width
         guard current < needed else { return }
@@ -504,24 +529,107 @@ final class MainSplitShellController: WorkspaceShellController {
         setSidebarCollapsed(collapse, animated: true)
     }
 
+    /// The captain's own request, from the inspector button, the pane's close
+    /// button or ⌥⌘I: the only route that may widen the window for it.
     func setInspectorShown(_ shown: Bool) {
+        inspectorWanted = shown
+        inspectorPinnedOpen = shown
+        let details = shown && inspectorSource?.inspectorContent != nil
         if shown {
+            if details { contentItem.minimumThickness = Self.inspectorColumnMinimum }
             // The inspector takes its room from the window, then from the
             // sidebar if the window cannot grow enough - never from the
             // column, which a page may need every point of.
             makeRoom(sidebarShown: !sidebarItem.isCollapsed, inspectorShown: true)
+            let floor = details ? Self.inspectorColumnMinimum : Self.contentMinimum
             if let window = view.window, !sidebarItem.isCollapsed,
                window.contentRect(forFrameRect: window.frame).width - sidebarPaneWidth
-                - WorkspaceInspectorController.width < Self.contentMinimum {
+                - WorkspaceInspectorController.width < floor {
                 setSidebarCollapsed(true, animated: false)
                 sidebarCollapsedForRoom = true
             }
         }
-        HelmMotion.animate(view.window != nil, duration: HelmMotion.moveDuration) {
-            self.inspectorItem.animator().isCollapsed = !shown
+        setInspectorCollapsed(!shown, animated: true)
+    }
+
+    /// Collapse or expand the inspector pane, then settle the column's floor
+    /// for what it now shows. A lower floor goes on before the pane opens and
+    /// a higher one after it has closed, so the column never asks for more
+    /// than the window has (gotcha (13)).
+    private func setInspectorCollapsed(_ collapsed: Bool, animated: Bool) {
+        if !collapsed, columnFloor(inspectorShown: true) < contentItem.minimumThickness {
+            contentItem.minimumThickness = columnFloor(inspectorShown: true)
         }
-        toolbar.setInspectorShown(shown)
-        if !shown { fitPanesToWindow() }
+        toolbar.setInspectorShown(!collapsed)
+        let settle: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.contentItem.minimumThickness = self.columnFloor
+            self.fitPanesToWindow()
+        }
+        guard inspectorItem.isCollapsed != collapsed else { settle(); return }
+        guard animated, view.window != nil, !HelmMotion.isReduced else {
+            inspectorItem.isCollapsed = collapsed
+            settle()
+            return
+        }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = HelmMotion.moveDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            self.inspectorItem.animator().isCollapsed = collapsed
+        }, completionHandler: settle)
+    }
+
+    /// The column's floor for what the inspector shows now.
+    private var columnFloor: CGFloat { columnFloor(inspectorShown: !inspectorItem.isCollapsed) }
+
+    private func columnFloor(inspectorShown: Bool) -> CGFloat {
+        inspectorShown && inspector.hostedContentView != nil ? Self.inspectorColumnMinimum : Self.contentMinimum
+    }
+
+    /// Match the inspector to the showing page and the captain's choice: the
+    /// selected item's details while there is a selection, nothing when there
+    /// is none. Runs on every page change and every selection change, and
+    /// never grows the window - an automatic change only ever opens the pane
+    /// where it fits.
+    private func reconcileInspector() {
+        guard inspectorItem != nil else { return }
+        let content = inspectorSource?.inspectorContent
+        inspector.setContent(content, emptyText: inspectorSource?.inspectorEmptyText)
+        var shown = inspectorPinnedOpen || (inspectorWanted && content != nil)
+        if shown, let window = view.window {
+            let floor = columnFloor(inspectorShown: true)
+            let width = window.contentRect(forFrameRect: window.frame).width
+            if width - WorkspaceInspectorController.width < floor {
+                // Not even the column alone has room beside it: the captain's
+                // earlier request does not carry over to this page.
+                shown = false
+                inspectorPinnedOpen = false
+            }
+        }
+        setInspectorCollapsed(!shown, animated: false)
+    }
+
+    // MARK: Pages in the sidebar layout
+
+    /// The first time a page shows here, it switches to its sidebar-layout
+    /// presentation, and a page that fills the inspector starts reporting its
+    /// selection to it.
+    private func adoptPage(_ controller: NSViewController?) {
+        guard let controller else { return }
+        if adoptedPages.insert(ObjectIdentifier(controller)).inserted {
+            (controller as? SidebarLayoutAdopting)?.adoptSidebarLayout()
+            if let source = controller as? WorkspaceInspectorSource {
+                source.onInspectorContentChanged = { [weak self, weak source] in
+                    guard let self, let source, self.inspectorSource === source else { return }
+                    self.reconcileInspector()
+                }
+                source.onShowInspector = { [weak self, weak source] in
+                    guard let self, let source, self.inspectorSource === source else { return }
+                    self.setInspectorShown(true)
+                }
+            }
+        }
+        inspectorSource = controller as? WorkspaceInspectorSource
     }
 
     /// ⌘⇧D: the sidebar is the whole map, so this opens it if it was
@@ -698,11 +806,13 @@ final class MainSplitShellController: WorkspaceShellController {
         currentModule = ModuleTable.module(for: dest)
         pageSubtitle = page?.drillHeaderSubtitle ?? dest.drillSubtitle
         if dest == .homeCanvas, pageSubtitle.isEmpty { pageSubtitle = Self.homeSubtitle() }
+        adoptPage(slot.controller)
         if dest == currentModule.pageTabHost, let host = slot.controller as? ModuleTabHosting { adoptTabHost(host) }
         // Home has no actions of its own; its spaces sit in the middle
         // instead, where the floating bar showed its pills.
         toolbar.setPageActions(dest == .homeCanvas ? [] : page?.drillHeaderActions ?? [])
         refreshModuleChrome()
+        reconcileInspector()
     }
 
     override func workspaceDidRevealHostPage(_ controller: ConsoleController, label: String) {
@@ -711,8 +821,10 @@ final class MainSplitShellController: WorkspaceShellController {
         hostPageLabel = label
         currentModule = .console
         pageSubtitle = "Dedicated host page"
+        inspectorSource = nil
         toolbar.setPageActions(controller.drillHeaderActions)
         refreshModuleChrome()
+        reconcileInspector()
     }
 
     override func workspaceCurrentDestinationDidChange(_ kind: RecentDestinationKind) {
@@ -745,6 +857,8 @@ final class MainSplitShellController: WorkspaceShellController {
     var debugContentPane: NSView { contentPane.view }
     var debugSidebarIsCollapsed: Bool { sidebarItem.isCollapsed }
     var debugInspectorIsCollapsed: Bool { inspectorItem.isCollapsed }
+    var debugColumnMinimum: CGFloat { contentItem.minimumThickness }
+    var debugInspectorSource: WorkspaceInspectorSource? { inspectorSource }
     var debugSidebarWidth: CGFloat { sidebar.view.frame.width }
     /// The split view's first pane, which holds the sidebar panel - what the
     /// tour lab paints under its render of the sidebar.

@@ -18,12 +18,27 @@
 //
 // Built from `HelmCard` / `HelmToggleRow` / `HelmButton` / `HelmType` like
 // every other panel on this page; it paints no colour of its own.
+//
+// **Two styles.** The floating bar draws it as a card in the page's right
+// column. The sidebar layout puts a selection's details in the shell's
+// inspector instead, so the switch moves to a strip over the Snippets table
+// (`.strip`): the same toggle, the same four status readings and the same
+// Grant access button, in one card row. The card style is built exactly as it
+// always was.
 
 import AppKit
 
 final class SnippetExpansionPanel: NSView {
 
+    enum Style {
+        /// The floating bar's right-column card.
+        case card
+        /// The sidebar layout's strip over the Snippets table.
+        case strip
+    }
+
     let card = HelmCard()
+    let style: Style
 
     /// Fired when the captain flips the master switch. The page persists and
     /// tells the live expander, the same shape `SettingsController` uses for
@@ -48,9 +63,20 @@ final class SnippetExpansionPanel: NSView {
     private var theme: HelmTheme = ThemeManager.shared.theme
 
     override init(frame frameRect: NSRect) {
+        style = .card
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
         build()
+    }
+
+    init(style: Style) {
+        self.style = style
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        switch style {
+        case .card: build()
+        case .strip: buildStrip()
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -101,6 +127,59 @@ final class SnippetExpansionPanel: NSView {
                            subtitle: "What lets a trigger expand anywhere")
         card.setBody(body, insets: HelmCard.contentInsets)
 
+        card.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(card)
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: trailingAnchor),
+            card.topAnchor.constraint(equalTo: topAnchor),
+            card.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    /// The strip: the toggle row across the top, then the status reading
+    /// with Grant access beside it. The card's explanatory paragraph is the
+    /// Grant access button's tooltip here, so nothing it says is lost.
+    private func buildStrip() {
+        statusDot.wantsLayer = true
+        statusDot.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.font = HelmType.caption()
+        statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        NSLayoutConstraint.activate([
+            statusDot.widthAnchor.constraint(equalToConstant: 7),
+            statusDot.heightAnchor.constraint(equalToConstant: 7),
+        ])
+        grantButton.target = self
+        grantButton.action = #selector(requestPermission)
+        grantButton.toolTip = bodyLabel.stringValue
+        grantButton.setContentHuggingPriority(.required, for: .horizontal)
+        grantButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        toggleRow.onToggle = { [weak self] in
+            guard let self else { return }
+            self.onToggle?(self.toggleRow.isOn)
+        }
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        let collapsed = spacer.widthAnchor.constraint(equalToConstant: 0)
+        collapsed.priority = .defaultLow
+        collapsed.isActive = true
+        let statusRow = NSStackView(views: [statusDot, statusLabel, spacer, grantButton])
+        statusRow.orientation = .horizontal
+        statusRow.alignment = .centerY
+        statusRow.spacing = HelmMetrics.s2
+        // Gotcha (10): only the label and the spacer may take the slack.
+        statusRow.distribution = .fill
+        let body = NSStackView(views: [toggleRow, statusRow])
+        body.orientation = .vertical
+        body.alignment = .leading
+        body.spacing = HelmMetrics.s2
+        body.translatesAutoresizingMaskIntoConstraints = false
+        for row in [toggleRow, statusRow] as [NSView] {
+            row.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
+        }
+        card.setBody(body, insets: NSEdgeInsets(top: HelmMetrics.s3, left: HelmMetrics.s4,
+                                                bottom: HelmMetrics.s3, right: HelmMetrics.s4))
         card.translatesAutoresizingMaskIntoConstraints = false
         addSubview(card)
         NSLayoutConstraint.activate([

@@ -132,6 +132,21 @@ final class VaultController: NSViewController, DaylightDrillActions {
     /// captain would.
     private var readWasRefusedHere = false
     private var tools: [VaultTool]?
+
+    // MARK: The sidebar layout (`SidebarLayoutAdopting`, at the end of this file)
+
+    /// Set once, by `adoptSidebarLayout()`: Secrets and Verified Launchers are
+    /// the shared table, under the same card headers. Never set in the
+    /// floating bar.
+    private(set) var drawsSidebarLayout = false
+    private lazy var secretsTable = HelmDataTable(columns: [
+        .init(id: "secret", title: "Secret", width: 260, minWidth: 180, flexible: true),
+        .init(id: "status", title: "Status", width: 140, hiddenBelow: 560),
+    ], actionsWidth: 172)
+    private lazy var toolsTable = HelmDataTable(columns: [
+        .init(id: "launcher", title: "Launcher", width: 260, minWidth: 180, flexible: true),
+        .init(id: "status", title: "Status", width: 170),
+    ], actionsWidth: HelmMetrics.s4)
     private var isLoadingSnapshot = false
     private var hasLoadedOnce = false
     private var theme: HelmTheme = ThemeManager.shared.theme
@@ -481,6 +496,10 @@ final class VaultController: NSViewController, DaylightDrillActions {
         let notInstalled = installStatus == .notInstalled
         secretsPanel.isHidden = notInstalled
         toolsPanel.isHidden = notInstalled
+        if drawsSidebarLayout {
+            secretsTable.card.isHidden = notInstalled
+            toolsTable.card.isHidden = notInstalled
+        }
 
         // B1: a read that failed says nothing about whether anything needs
         // attention, so the banner stays down rather than claiming all-clear.
@@ -499,6 +518,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
         toolsCountBadge.text = tools.map { "\($0.count)" } ?? "?"
         rebuildToolsStack()
+        if drawsSidebarLayout { renderTables() }
 
         applyTheme()
         onDrillSubtitleChanged?()
@@ -807,11 +827,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
     @objc private func copyNameTapped(_ sender: NSButton) {
         guard let raw = sender.identifier?.rawValue, raw.hasPrefix("secret-copy:") else { return }
-        let name = String(raw.dropFirst("secret-copy:".count))
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(name, forType: .string)
-        Toast.show(in: view, message: "Copied \u{201c}\(name)\u{201d} to clipboard")
+        copySecretName(String(raw.dropFirst("secret-copy:".count)))
     }
 
     // MARK: Recipe backup (fm/grandline-vault-recipe-backup)
@@ -1001,6 +1017,10 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
         secretsPanel.applyTheme(theme)
         toolsPanel.applyTheme(theme)
+        if drawsSidebarLayout {
+            secretsTable.applyTheme(theme)
+            toolsTable.applyTheme(theme)
+        }
         recipePanel.applyTheme(theme)
         // Re-derive from the *current* theme, not whatever theme was active
         // when this label's color was last set - see `recipeLabelKind`'s own
@@ -1070,6 +1090,8 @@ final class VaultController: NSViewController, DaylightDrillActions {
     var debugToolRows: [HelmAccentRow] { toolsStack.arrangedSubviews.compactMap { $0 as? HelmAccentRow } }
     var debugSecretRows: [HelmAccentRow] { secretsStack.arrangedSubviews.compactMap { $0 as? HelmAccentRow } }
     var debugAttentionBannerVisible: Bool { !attentionBanner.isHidden }
+    var debugSecretsTable: HelmDataTable { secretsTable }
+    var debugToolsTable: HelmDataTable { toolsTable }
     #endif
 }
 
@@ -1475,4 +1497,112 @@ final class VaultInjectSheetController: NSViewController {
         if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
     }
 
+}
+
+// MARK: - The sidebar layout
+
+// In the sidebar layout Secrets › Automic Vault draws its two lists as the
+// shared table, the same one Poneglyph and Connections use, under the same
+// card headers (the count badges and Add Secret stay where they are). The
+// recipe card and the attention banner do not change.
+//
+// Every row runs the floating bar's own action - Run Injected opens the same
+// sheet, Copy Name copies the name and never a value (this app never holds an
+// Automic Vault value) - and the three states the cards honour stay three:
+// still reading, could not read, and genuinely empty (B1).
+
+extension VaultController: SidebarLayoutAdopting {
+
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+        for (panel, table, index) in [(secretsPanel, secretsTable, 1), (toolsPanel, toolsTable, 2)] {
+            panel.isHidden = true
+            contentStack.removeArrangedSubview(panel)
+            panel.removeFromSuperview()
+            table.sizesToFitRows = true
+            table.card.translatesAutoresizingMaskIntoConstraints = false
+            contentStack.insertArrangedSubview(table.card, at: index)
+            table.card.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        }
+        // The same headers, holding the same badges and button.
+        secretsTable.card.setHeader(symbol: "lock.fill", tint: .good, title: "Secrets",
+                                    subtitle: "Keychain-backed, this device only",
+                                    actions: [secretsCountBadge, addSecretButton])
+        toolsTable.card.setHeader(symbol: "checkmark.shield.fill", tint: .violet, title: "Verified Launchers",
+                                  subtitle: "From av doctor --json", actions: [toolsCountBadge])
+        applyTheme()
+        renderTables()
+    }
+
+    private func renderTables() {
+        secretsTable.setRows(secretTableRows())
+        toolsTable.setRows(toolTableRows())
+    }
+
+    /// B1's three states, as the table's own empty row: still reading, could
+    /// not read, and genuinely none - never a confident empty list for a read
+    /// that did not happen.
+    private func unreadRow(noun: String) -> HelmDataTable.Row {
+        guard hasLoadedOnce else {
+            return .empty(symbol: "hourglass", title: "Checking Automic Vault",
+                          body: "The \(noun) appear here once av answers.")
+        }
+        return .empty(symbol: "exclamationmark.triangle", title: "",
+                      body: readWasRefusedHere
+                          ? "\(VaultSource.isolationNote)."
+                          : "Couldn\u{2019}t read \(noun) from Automic Vault. Its approval helper may not be running - check the \u{201c}Automic Vault\u{201d} menu bar app, then Refresh.")
+    }
+
+    private func secretTableRows() -> [HelmDataTable.Row] {
+        guard let secrets else { return [unreadRow(noun: "secrets")] }
+        guard !secrets.isEmpty else {
+            return [.empty(symbol: "key", title: "",
+                           body: "No saved secrets yet. Use \u{201c}Add Secret\u{201d} above - the value is entered directly in a real terminal, never through this app.")]
+        }
+        return secrets.map { secret in
+            var row = HelmDataTable.Row.record(secret.name)
+            row.cells = [
+                "secret": .title(secret.name, subtitle: "Stored in Automic Vault\u{2019}s Keychain", subtitleIsCode: false,
+                                 symbol: "key.fill", tint: .good, tintHex: nil),
+                "status": .status("Hardened", tint: .good),
+            ]
+            row.primary = .init(title: "Run Injected\u{2026}", symbol: "play.fill") { [weak self] in
+                self?.presentInjectSheet(preselected: secret.name)
+            }
+            row.activate = { [weak self] in self?.presentInjectSheet(preselected: secret.name) }
+            row.menu = [.init(title: "Copy Name", symbol: "doc.on.doc") { [weak self] in self?.copySecretName(secret.name) }]
+            return row
+        }
+    }
+
+    private func toolTableRows() -> [HelmDataTable.Row] {
+        guard let tools else { return [unreadRow(noun: "verified launchers")] }
+        guard !tools.isEmpty else {
+            return [.empty(symbol: "checkmark.shield", title: "",
+                           body: "No verified launchers registered with Automic Vault yet.")]
+        }
+        return tools.map { tool in
+            var row = HelmDataTable.Row.record(tool.name)
+            let content = toolRowContent(tool)
+            let hardened: Bool
+            if case .hardened = tool.status { hardened = true } else { hardened = false }
+            row.cells = [
+                "launcher": .title(tool.name, subtitle: content.meta, subtitleIsCode: false,
+                                   symbol: "checkmark.shield.fill", tint: hardened ? .good : .warn, tintHex: nil),
+                "status": .status(hardened ? "Hardened" : tool.status.label, tint: hardened ? .good : .warn),
+            ]
+            return row
+        }
+    }
+
+    /// Copy Name, from either layout's row: the name already on screen,
+    /// never a value.
+    fileprivate func copySecretName(_ name: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(name, forType: .string)
+        Toast.show(in: view, message: "Copied \u{201c}\(name)\u{201d} to clipboard")
+    }
 }
