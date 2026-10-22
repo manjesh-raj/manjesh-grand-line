@@ -642,7 +642,11 @@ enum StickyBoardViewSelfTest {
         check(storeBeforeCommit.map { abs($0.x - Double(afterShiftDown.x)) > 0.5 } ?? false,
               "a nudge should not have been written yet - this file's own rule is that only the "
               + "END of a move is persisted, and a held arrow key repeats at ~25Hz")
-        drainMainQueue(for: StickyNoteHandleView.commitDelay + 0.3)
+        drainUntilCommitted {
+            controller.debugStore.notes.first { $0.id == note.noteID }.map {
+                abs($0.x - Double(afterShiftDown.x)) < 0.5 && abs($0.y - Double(afterShiftDown.y)) < 0.5
+            } ?? false
+        }
         let storeAfterCommit = controller.debugStore.notes.first { $0.id == note.noteID }
         check(storeAfterCommit != nil, "the nudged note should still exist in the store")
         if let storeAfterCommit {
@@ -686,7 +690,10 @@ enum StickyBoardViewSelfTest {
         let resizeNames = (grip.accessibilityCustomActions() ?? []).map(\.name)
         check(Set(resizeNames) == Set(["Increase Width", "Decrease Width", "Increase Height", "Decrease Height"]),
               "the resize grip should offer all four size actions to VoiceOver, offered \(resizeNames)")
-        drainMainQueue(for: StickyNoteHandleView.commitDelay + 0.3)
+        drainUntilCommitted {
+            controller.debugStore.notes.first { $0.id == note.noteID }
+                .map { abs($0.width - Double(note.frame.size.width)) < 0.5 } ?? false
+        }
         let sizedNote = controller.debugStore.notes.first { $0.id == note.noteID }
         check(sizedNote.map { abs($0.width - Double(note.frame.size.width)) < 0.5 } ?? false,
               "a keyboard resize should persist once the run settles")
@@ -725,6 +732,18 @@ enum StickyBoardViewSelfTest {
     /// it at all.
     private static func drainMainQueue(for seconds: TimeInterval) {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    }
+
+    /// Waits out a keyboard run's coalescing delay until `committed` holds,
+    /// rather than for a fixed slice past it: a loaded CI runner fired the
+    /// debounce late, and the store still held the note's starting point
+    /// after `commitDelay + 0.3`. The deadline is generous because a commit
+    /// that never lands must still fail the check that follows - measured by
+    /// disabling the commit, which fails it with the message CI printed.
+    private static func drainUntilCommitted(_ committed: () -> Bool) {
+        drainMainQueue(for: StickyNoteHandleView.commitDelay)
+        let deadline = Date().addingTimeInterval(5)
+        while !committed() && Date() < deadline { drainMainQueue(for: 0.05) }
     }
 
     // MARK: 2c. The board's own case-file header
