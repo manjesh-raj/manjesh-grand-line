@@ -37,7 +37,7 @@ enum SplitShellModelSelfTest {
     static func run() -> Bool {
         var allOK = true
         for check in [checkEveryModuleIsListedOnce, checkEveryRouteLandsOnAModuleAndATab, checkGroupsFollowTheModuleTable,
-                      checkTheTabsAreTheRealViews, checkPinnedMirrorsQuickAccess, checkSessionsAreConsoleChildren,
+                      checkTheTabsAreTheRealViews, checkTheSidebarDrawsNoPins, checkSessionsAreConsoleChildren,
                       checkHistoryWalksBackAndForward, checkHistoryEdges, checkTheLayoutSetting, checkHomeCardLayout,
                       checkTheWiring] {
             var ok = true
@@ -56,7 +56,7 @@ enum SplitShellModelSelfTest {
               "the sidebar lists \(listed.map(\.rawValue)), want Home and the seventeen modules once each", &ok)
 
         // The same set as the rows the outline view gets, read off the tree.
-        let roots = WorkspaceSidebarModel.roots(pinned: [], sessions: [])
+        let roots = WorkspaceSidebarModel.roots(sessions: [])
         let fromTree = roots.flatMap { [$0] + $0.children }.compactMap { node -> WorkspaceModule? in
             if case .module(let module) = node.entry { return module }
             return nil
@@ -93,7 +93,7 @@ enum SplitShellModelSelfTest {
     }
 
     private static func checkGroupsFollowTheModuleTable(_ ok: inout Bool) {
-        let roots = WorkspaceSidebarModel.roots(pinned: [], sessions: [])
+        let roots = WorkspaceSidebarModel.roots(sessions: [])
         let sections = roots.compactMap { node -> String? in
             if case .section(let title) = node.entry { return title }
             return nil
@@ -152,41 +152,48 @@ enum SplitShellModelSelfTest {
         check(headless == [.connections, .console], "the modules without a header are \(headless.map(\.rawValue))", &ok)
     }
 
-    private static func checkPinnedMirrorsQuickAccess(_ ok: inout Bool) {
-        // Pages nested inside a module of several, in the captain's order;
-        // a page that is its module's only page is that module's row already.
-        let pinned: [RailDestination] = [.hosts, .console, .strawHat, .stickyBoard]
-        let roots = WorkspaceSidebarModel.roots(pinned: pinned, sessions: [])
-        guard roots.count > 1, roots[1].entry == .section(WorkspaceSidebarModel.pinnedTitle) else {
-            fail("the Pinned section is not right under Home", &ok)
+    /// Stage 6, the captain's call: the sidebar lists no pins. A Pinned
+    /// section repeated pages that already had a module row and a tab. The
+    /// pins themselves are the floating bar's, untouched.
+    private static func checkTheSidebarDrawsNoPins(_ ok: inout Bool) {
+        // Every top-level row is Home or one of the four groups - there is
+        // nowhere for a pin to go.
+        let roots = WorkspaceSidebarModel.roots(sessions: [])
+        let groups = Set(WorkspaceGroup.allCases.map(\.title))
+        let strays = roots.dropFirst().filter { node in
+            if case .section(let title) = node.entry { return !groups.contains(title) }
+            return true
+        }
+        check(roots.first?.entry == .module(.home) && strays.isEmpty && roots.count == 1 + groups.count,
+              "the sidebar's top level is \(roots.map(\.entry)), want Home and the four groups only", &ok)
+        // Source guards, because a model check cannot see the context menu
+        // or the wiring: no Pinned section, no Pin or Unpin verb, and the
+        // sidebar shell no longer edits the quick-access list.
+        guard let sidebar = code("WorkspaceSidebar.swift"), let shell = code("MainSplitShellController.swift"),
+              let base = code("WorkspaceShellController.swift") else {
+            fail("could not read the sidebar's sources - the guard would pass vacuously", &ok)
             return
         }
-        check(roots[1].children.map(\.entry) == [.pinned(.hosts), .pinned(.strawHat)],
-              "the Pinned rows are \(roots[1].children.map(\.entry)), want Hosts then Straw Hat Pirates", &ok)
-        check(RailDestination.hosts.isNestedInItsModule && !RailDestination.stickyBoard.isNestedInItsModule,
-              "the fixture's two kinds of pin are not what this check assumes - it would pass vacuously", &ok)
-        for none in [[RailDestination](), [.console, .stickyBoard]] {
-            check(!WorkspaceSidebarModel.roots(pinned: none, sessions: []).contains { $0.entry == .section(WorkspaceSidebarModel.pinnedTitle) },
-                  "pins \(none.map(\.rawValue)) still draw a Pinned section", &ok)
+        for token in ["\"Pinned\"", "case pinned", "Pin \\(", "Unpin \\(", "onTogglePin", "quickAccess"] {
+            check(!sidebar.contains(token), "WorkspaceSidebar.swift draws or edits pins again (`\(token)`)", &ok)
         }
-        // The floating bar's own default pins: the nested ones are listed.
-        let defaults = WorkspaceSidebarModel.roots(pinned: QuickAccessConfiguration().pinned, sessions: [])
-        let nested = QuickAccessConfiguration.defaultPinned.filter(\.isNestedInItsModule)
-        check(!nested.isEmpty && defaults[1].children.map(\.entry) == nested.map { .pinned($0) },
-              "the default Pinned section does not carry the bar's nested default pins", &ok)
+        for token in ["toggleQuickAccessPin", "isQuickAccessPinned", "quickAccessDidChange"] {
+            check(!shell.contains(token), "the sidebar shell edits or follows the quick-access pins again (`\(token)`)", &ok)
+        }
+        // The pins are still the floating bar's to edit.
+        check(base.contains("func toggleQuickAccessPin(") && code("main.swift")?.contains("appShell.toggleQuickAccessPin(") == true,
+              "the floating bar's ⌘⇧D map can no longer pin a page - the pins were the floating bar's to keep", &ok)
     }
 
     private static func checkSessionsAreConsoleChildren(_ ok: inout Bool) {
         let first = HostSession(hostID: UUID(), label: "DEV Bastion", accentHex: nil, startedAt: Date(), state: .connected)
         let second = HostSession(hostID: UUID(), label: "PROD Web", accentHex: nil, startedAt: Date(), state: .restored)
-        let roots = WorkspaceSidebarModel.roots(pinned: [.console, .hosts], sessions: [first, second])
+        let roots = WorkspaceSidebarModel.roots(sessions: [first, second])
         let nodes = roots.flatMap { [$0] + $0.children }
         let consoles = nodes.filter { $0.entry == .module(.console) }
         check(consoles.count == 1, "Console appears \(consoles.count) times in the groups", &ok)
         check(consoles.first?.children.map(\.entry) == [.session(hostID: first.hostID), .session(hostID: second.hostID)],
               "the sessions are not Console's children, in the registry's order", &ok)
-        check(!nodes.contains { $0.entry == .pinned(.console) }, "a pinned Console repeats the Console row", &ok)
-        check(nodes.first { $0.entry == .pinned(.hosts) }?.children.isEmpty == true, "a pinned row carries children", &ok)
         let others = nodes.filter {
             if case .module(let module) = $0.entry { return module != .console }
             return false

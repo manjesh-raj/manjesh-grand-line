@@ -472,6 +472,13 @@ final class Workspace {
         health.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
         // UI12: both pages' empty states now offer a way out of themselves.
         health.onNavigateToDestination = { [weak self] dest in self?.navigator.show(dest) }
+        // Stage 6: the two services with a real "run now" of their own, for
+        // the sidebar layout's Retry. Both are the same entry points their
+        // own pages' buttons use.
+        health.retryActions = [
+            .backgroundSignals: { BackgroundSignalsPoller.shared.checkNow() },
+            .dotfilesAutoSync: { DotfilesAutoSync.shared.syncNowFromUI() },
+        ]
         return built(.health, health)
     }()
 

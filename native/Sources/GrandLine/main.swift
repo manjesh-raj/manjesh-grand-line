@@ -3421,6 +3421,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_SIDEBAR_POLISH_TESTS"] == "1" {
     exit(SidebarPolishSelfTest.run() ? 0 : 1)
 }
 
+// Stage 6 of the modular-shell migration: Connections, Logs and Health laid
+// out as the prototype draws them in the sidebar layout, in a real off-screen
+// sidebar shell - and the floating bar's same pages unchanged.
+if ProcessInfo.processInfo.environment["FM_RUN_SIDEBAR_PAGE_FIXES_TESTS"] == "1" {
+    exit(SidebarPageFixesSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-engineering-cards-stale-counts`: a hub summary card must
 // reflect a change the captain made through its own detail page. Window-backed
 // (it mounts a real shell and drives the real pages), so it sits in

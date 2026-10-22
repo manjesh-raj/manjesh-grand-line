@@ -5,17 +5,21 @@
 // split view's sidebar item.
 //
 // It lists Home and the seventeen modules under the four groups the module
-// table assigns (Work, Observe, Workbench, Machine), the captain's quick-access
-// pins in a Pinned section, and the live host sessions as children of Console.
-// A module's pages are its tabs in the window toolbar, so every one of the 29
-// destinations is one click on its module and one on its tab; a pin keeps a
-// page itself one click away.
+// table assigns (Work, Observe, Workbench, Machine), and the live host
+// sessions as children of Console. A module's pages are its tabs in the window
+// toolbar, so every one of the 29 destinations is one click on its module and
+// one on its tab.
+//
+// **There are no pins here** (stage 6, the captain's call): a Pinned section
+// listed pages that already had a row and a tab, so it was the same map twice.
+// The quick-access pins themselves are untouched - the floating bar still
+// draws them and still edits them from its ⌘⇧D map.
 //
 // Two halves, the same split the rest of this app uses:
 //
 //   - `WorkspaceSidebarModel` - which rows exist, in what order. Pure logic,
-//     read straight off `ModuleTable`, `QuickAccessConfiguration` and the
-//     session registry, and asserted headless by `SplitShellModelSelfTest`.
+//     read straight off `ModuleTable` and the session registry, and asserted
+//     headless by `SplitShellModelSelfTest`.
 //   - `WorkspaceSidebarController` - the `NSOutlineView` that draws them, the
 //     account header above it, and the context menus.
 //
@@ -27,12 +31,10 @@ import AppKit
 
 /// One row of the sidebar.
 enum WorkspaceSidebarEntry: Equatable {
-    /// A section header: "Pinned", or one of the four groups.
+    /// A section header: one of the four groups.
     case section(String)
     /// Home, or one of the seventeen modules.
     case module(WorkspaceModule)
-    /// A pinned page, in the Pinned section.
-    case pinned(RailDestination)
     /// A live host session, a child of Console.
     case session(hostID: UUID)
 }
@@ -45,23 +47,9 @@ enum WorkspaceSidebarModel {
         var children: [Node] = []
     }
 
-    static let pinnedTitle = "Pinned"
-
-    /// The sidebar's top level: Home, the Pinned section (when a pin needs
-    /// one), then the four groups.
-    ///
-    /// The Pinned section lists only the pins that are one of several pages
-    /// in their module - Straw Hat Pirates inside Crew, Hosts inside
-    /// Connections - because a page that is its module's only page already
-    /// has a row of its own here, and listing it twice was most of the
-    /// section (four of the floating bar's seven default pins). The pins
-    /// themselves are unchanged: the floating bar still draws every one.
-    static func roots(pinned: [RailDestination], sessions: [HostSession]) -> [Node] {
+    /// The sidebar's top level: Home, then the four groups.
+    static func roots(sessions: [HostSession]) -> [Node] {
         var roots = [Node(entry: .module(.home))]
-        let nested = pinned.filter(\.isNestedInItsModule)
-        if !nested.isEmpty {
-            roots.append(Node(entry: .section(pinnedTitle), children: nested.map { Node(entry: .pinned($0)) }))
-        }
         for group in WorkspaceGroup.allCases {
             let rows = modules(in: group).map { module -> Node in
                 guard module == .console else { return Node(entry: .module(module)) }
@@ -77,8 +65,8 @@ enum WorkspaceSidebarModel {
         WorkspaceModule.allCases.filter { $0.group == group }
     }
 
-    /// Every module the sidebar lists once, outside the Pinned section - the
-    /// completeness `SplitShellModelSelfTest` asserts against the module table.
+    /// Every module the sidebar lists, once - the completeness
+    /// `SplitShellModelSelfTest` asserts against the module table.
     static func listedModules() -> [WorkspaceModule] {
         [.home] + WorkspaceGroup.allCases.flatMap(modules(in:))
     }
@@ -91,19 +79,12 @@ extension WorkspaceModule {
         tabs.first?.route ?? ModuleTable.routes(in: self).first ?? .homeCanvas
     }
 
-    /// The module's pages, each once, in tab order: what its row offers to pin
-    /// when it has more than one.
+    /// The module's pages, each once, in tab order.
     var pages: [RailDestination] {
         let fromTabs = tabs.map(\.route)
         let ordered = fromTabs + ModuleTable.routes(in: self).filter { !fromTabs.contains($0) }
         return ordered.enumerated().filter { index, route in ordered.firstIndex(of: route) == index }.map(\.element)
     }
-}
-
-extension RailDestination {
-    /// Whether this page is one of several in its module, so a pin is the
-    /// only way to reach it in one click from the sidebar.
-    var isNestedInItsModule: Bool { ModuleTable.module(for: self).pages.count > 1 }
 }
 
 /// The outline view's item: a node with object identity, which is what
@@ -127,18 +108,17 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 
     // Forwarded, never owned - the sidebar has no idea what navigating is.
     var onSelectModule: ((WorkspaceModule) -> Void)?
-    var onSelectDestination: ((RailDestination) -> Void)?
     var onSelectSession: ((UUID) -> Void)?
     var onEndSession: ((UUID) -> Void)?
     var onConnectHost: (() -> Void)?
-    var onTogglePin: ((RailDestination) -> Void)?
-    var isPinned: ((RailDestination) -> Bool)?
-    var onOpenSettings: (() -> Void)?
     var onLogOut: (() -> Void)?
 
     let outlineView = WorkspaceSidebarOutlineView()
     private let scrollView = NSScrollView()
     private let header = WorkspaceSidebarHeader()
+    /// The rule between the account header and Home (stage 6): without it
+    /// the header's tile and Home's glyph read as one cramped block.
+    private let headerRule = NSView()
     private let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("workspace.sidebar.column"))
 
     private var roots: [WorkspaceSidebarItem] = []
@@ -151,13 +131,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// What the workspace last said is showing, so a rebuild can light the
     /// same row again.
     private var current: RecentDestinationKind?
-    /// Whether the lit row is a page's Pinned copy: true when the captain
-    /// picked it from the Pinned section, so that row stays lit rather than
-    /// the highlight jumping to the page's module a moment after the click.
-    private var currentIsFromPinned = false
-    /// The pinned page the captain just picked, until the navigation it
-    /// causes comes back through `select(_:)`.
-    private var pendingPinnedPick: RailDestination?
     /// Guards the programmatic selection that lights a row, so it is never
     /// mistaken for the captain picking one.
     private var isApplyingSelection = false
@@ -172,6 +145,9 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         header.translatesAutoresizingMaskIntoConstraints = false
         header.onClick = { [weak self] in self?.showAccountMenu() }
         root.addSubview(header)
+        headerRule.wantsLayer = true
+        headerRule.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(headerRule)
 
         column.resizingMask = .autoresizingMask
         outlineView.addTableColumn(column)
@@ -208,7 +184,13 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             header.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.s2),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.s2),
 
-            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: HelmMetrics.s1),
+            // The rule sits between two equal gaps, inset like the rows'
+            // own wash so it lines up with the list rather than the panel.
+            headerRule.topAnchor.constraint(equalTo: header.bottomAnchor, constant: Self.headerRuleGap),
+            headerRule.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.s3),
+            headerRule.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.s3),
+            headerRule.heightAnchor.constraint(equalToConstant: 1),
+            scrollView.topAnchor.constraint(equalTo: headerRule.bottomAnchor, constant: Self.headerRuleGap),
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
@@ -218,20 +200,22 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         rebuild()
     }
 
+    /// The space above and below the header rule.
+    static let headerRuleGap: CGFloat = HelmMetrics.s2
+
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
     }
 
     // MARK: What the shell tells it
 
-    /// The pins or the sessions changed: rebuild the rows, keeping what the
-    /// captain collapsed and the row that is lit.
-    func reload(pinned: [RailDestination], sessions registry: HostSessionRegistry) {
+    /// The sessions changed: rebuild the rows, keeping what the captain
+    /// collapsed and the row that is lit.
+    func reload(sessions registry: HostSessionRegistry) {
         sessions = registry.sessions
         shortcutIndexByHost = Dictionary(sessions.compactMap { session in
             registry.shortcutIndex(for: session.hostID).map { (session.hostID, $0) }
         }, uniquingKeysWith: { first, _ in first })
-        pinnedCache = pinned
         guard isViewLoaded else { return }
         rebuild()
     }
@@ -239,12 +223,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// What is showing changed. Lights its row, opening the section (and, for
     /// a session, Console) it sits in.
     func select(_ kind: RecentDestinationKind?) {
-        if let pendingPinnedPick, kind == .rail(pendingPinnedPick) {
-            currentIsFromPinned = true
-        } else if kind?.identityKey != current?.identityKey {
-            currentIsFromPinned = false
-        }
-        pendingPinnedPick = nil
         current = kind
         guard isViewLoaded else { return }
         applySelection()
@@ -254,8 +232,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     func focusList() {
         view.window?.makeFirstResponder(outlineView)
     }
-
-    private var pinnedCache: [RailDestination] = AppSettings.shared.quickAccess.pinned
 
     /// What the badges draw from (`WorkspaceSignals`).
     private var signals = WorkspaceSignals()
@@ -274,7 +250,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     }
 
     private func rebuild() {
-        roots = WorkspaceSidebarModel.roots(pinned: pinnedCache, sessions: sessions).map(WorkspaceSidebarItem.init)
+        roots = WorkspaceSidebarModel.roots(sessions: sessions).map(WorkspaceSidebarItem.init)
         isApplyingSelection = true
         outlineView.reloadData()
         for item in roots where item.isSection {
@@ -307,9 +283,8 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         outlineView.scrollRowToVisible(row)
     }
 
-    /// The row that stands for `kind`: a session row for a host page, the
-    /// Pinned copy when the captain picked it from there, otherwise the row of
-    /// the module the page lives in.
+    /// The row that stands for `kind`: a session row for a host page,
+    /// otherwise the row of the module the page lives in.
     private func item(for kind: RecentDestinationKind?) -> WorkspaceSidebarItem? {
         guard let kind else { return nil }
         let all = roots.flatMap { [$0] + $0.children + $0.children.flatMap(\.children) }
@@ -317,9 +292,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         case .host(let id, _):
             return all.first { $0.entry == .session(hostID: id) } ?? all.first { $0.entry == .module(.console) }
         case .rail(let destination):
-            if currentIsFromPinned, let pinned = all.first(where: { $0.entry == .pinned(destination) }) {
-                return pinned
-            }
             return all.first { $0.entry == .module(ModuleTable.module(for: destination)) }
         }
     }
@@ -355,7 +327,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         guard let item = item as? WorkspaceSidebarItem else { return HelmType.scaledRowHeight(28) }
         switch item.entry {
         case .section: return HelmType.scaledRowHeight(30)
-        case .module, .pinned: return HelmType.scaledRowHeight(28)
+        case .module: return HelmType.scaledRowHeight(28)
         case .session: return HelmType.scaledRowHeight(26)
         }
     }
@@ -378,11 +350,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         case .module(let module):
             let cell = WorkspaceSidebarPageCell()
             cell.configure(symbol: module.symbol, title: module.title, badge: signals.badge(for: module), theme: theme)
-            cell.setLit(lit, theme: theme)
-            return cell
-        case .pinned(let destination):
-            let cell = WorkspaceSidebarPageCell()
-            cell.configure(symbol: destination.symbol, title: destination.title, badge: nil, theme: theme)
             cell.setLit(lit, theme: theme)
             return cell
         case .session(let hostID):
@@ -434,13 +401,8 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         case .section:
             return
         case .module(let module):
-            pendingPinnedPick = nil
             onSelectModule?(module)
-        case .pinned(let destination):
-            pendingPinnedPick = destination
-            onSelectDestination?(destination)
         case .session(let hostID):
-            pendingPinnedPick = nil
             onSelectSession?(hostID)
         }
     }
@@ -463,21 +425,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
                     self?.onConnectHost?()
                 })
             }
-            // The quick-access pins, edited where they are drawn - the
-            // floating bar's ⌘⇧D map offered the same two verbs - for each
-            // page a module holds several of. A module that is one page is
-            // already its own row.
-            guard module.pages.count > 1 else { return }
-            menu.addItem(.separator())
-            for destination in module.pages {
-                addPinItem(for: destination, to: menu)
-            }
-        case .pinned(let destination):
-            menu.addItem(menuItem("Open \(destination.title)", symbol: destination.symbol) { [weak self] in
-                self?.onSelectDestination?(destination)
-            })
-            menu.addItem(.separator())
-            addPinItem(for: destination, to: menu)
         case .session(let hostID):
             let label = sessions.first { $0.hostID == hostID }?.label ?? "Session"
             menu.addItem(menuItem("Open \(label)", symbol: "terminal") { [weak self] in
@@ -490,14 +437,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         }
     }
 
-    private func addPinItem(for destination: RailDestination, to menu: NSMenu) {
-        let pinned = isPinned?(destination) ?? false
-        let title = pinned ? "Unpin \(destination.title) from Sidebar" : "Pin \(destination.title) to Sidebar"
-        menu.addItem(menuItem(title, symbol: pinned ? "pin.slash" : "pin") { [weak self] in
-            self?.onTogglePin?(destination)
-        })
-    }
-
     private func menuItem(_ title: String, symbol: String, _ action: @escaping () -> Void) -> NSMenuItem {
         let item = WorkspaceSidebarMenuItem(title: title, action: #selector(WorkspaceSidebarMenuItem.fire), keyEquivalent: "")
         item.target = item
@@ -508,11 +447,18 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 
     // MARK: The account header
 
-    private func showAccountMenu() {
+    /// The header's menu: Log Out, and only Log Out (stage 6, the captain's
+    /// call). Settings is a sidebar module of its own, and ⌘, and the app
+    /// menu still open it, so a second Settings here was the same place
+    /// three ways.
+    private func accountMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(menuItem("Settings\u{2026}", symbol: "gearshape") { [weak self] in self?.onOpenSettings?() })
-        menu.addItem(.separator())
         menu.addItem(menuItem("Log Out\u{2026}", symbol: "lock") { [weak self] in self?.onLogOut?() })
+        return menu
+    }
+
+    private func showAccountMenu() {
+        let menu = accountMenu()
         // Just below the header, whichever way its coordinates run.
         let below = header.isFlipped ? header.bounds.maxY + HelmMetrics.s1 : -HelmMetrics.s1
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: below), in: header)
@@ -522,6 +468,10 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 
     private func applyTheme(_ theme: HelmTheme) {
         header.applyTheme(theme)
+        // The status line's own edge recipe, so the two rules in this layout
+        // are one weight.
+        headerRule.layer?.backgroundColor = HelmDisplayAccessibility.strengthenedEdge(
+            HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.dividerAlpha), theme: theme).cgColor
         guard isViewLoaded else { return }
         // GL-32: the row heights follow the chrome text scale.
         outlineView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<outlineView.numberOfRows))
@@ -598,6 +548,16 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             (outlineView.item(atRow: $0) as? WorkspaceSidebarItem)?.entry == entry
         }) else { return nil }
         return outlineView.rowView(atRow: row, makeIfNecessary: false) as? WorkspaceSidebarRowView
+    }
+    var debugHeaderRule: NSView { headerRule }
+    /// The account menu's items, as the header's click would show them.
+    var debugAccountMenuTitles: [String] { accountMenu().items.filter { !$0.isSeparatorItem }.map(\.title) }
+    /// Run an account-menu item by title, through its real target/action.
+    func debugPerformAccountMenuItem(_ title: String) -> Bool {
+        let menu = accountMenu()
+        guard let index = menu.items.firstIndex(where: { $0.title == title }) else { return false }
+        menu.performActionForItem(at: index)
+        return true
     }
     #endif
 }
@@ -721,7 +681,7 @@ final class WorkspaceSidebarRowView: NSTableRowView {
     }
 }
 
-/// A section header: "Pinned", "Work", ...
+/// A section header: "Work", "Observe", ...
 final class WorkspaceSidebarSectionCell: NSTableCellView {
     private let label = NSTextField(labelWithString: "")
 
@@ -750,8 +710,8 @@ final class WorkspaceSidebarSectionCell: NSTableCellView {
     }
 }
 
-/// A module or a pinned page: its symbol in the theme's accent, its name, and
-/// the module's badge on the trailing edge (`WorkspaceSignals.badge`).
+/// A module: its symbol in the theme's accent, its name, and the module's
+/// badge on the trailing edge (`WorkspaceSignals.badge`).
 final class WorkspaceSidebarPageCell: NSTableCellView {
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
@@ -1016,8 +976,7 @@ final class WorkspaceSidebarSessionCell: NSTableCellView {
 // MARK: - The account header
 
 /// The top of the sidebar: the app's tile and name over this Mac, and the
-/// account menu (Settings, Log Out) that the floating bar keeps behind its
-/// avatar.
+/// account menu (Log Out) that the floating bar keeps behind its avatar.
 final class WorkspaceSidebarHeader: HoverHighlightView {
     private let tile = HelmGradientTile(size: .module)
     private let title = NSTextField(labelWithString: AppPaths.displayName)
@@ -1030,7 +989,7 @@ final class WorkspaceSidebarHeader: HoverHighlightView {
         cornerRadius = HelmMetrics.rChip + 3
         accessibilityRoleOverride = .menuButton
         accessibilityLabelOverride = "\(AppPaths.displayName) account menu"
-        toolTip = "Settings and Log Out"
+        toolTip = "Log Out"
 
         tile.configure(symbol: "sailboat.fill", hue: .blue)
         tile.translatesAutoresizingMaskIntoConstraints = false

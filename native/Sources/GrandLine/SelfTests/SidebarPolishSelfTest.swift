@@ -365,7 +365,7 @@ enum SidebarPolishSelfTest {
         check(same(row.debugFill.debugFill, WorkspaceSidebarRowView.wash(theme)), "the lit row is not the accent wash", &ok)
 
         // A rebuild (a session coming or going) paints at once.
-        shell.sidebar.reload(pinned: AppSettings.shared.quickAccess.pinned, sessions: shell.sessions)
+        shell.sidebar.reload(sessions: shell.sessions)
         settle(shell)
         if let rebuilt = shell.sidebar.debugRowView(for: .module(.tasks)) {
             check(!rebuilt.debugFill.debugIsEasing, "a rebuild faded the lit row in rather than painting it", &ok)

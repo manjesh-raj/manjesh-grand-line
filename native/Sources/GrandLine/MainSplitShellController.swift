@@ -9,11 +9,11 @@
 //   root                                  (the window's content view)
 //   ├── NSSplitViewController.view
 //   │   ├── sidebar   WorkspaceSidebarController - Home and the seventeen
-//   │   │             modules, the pins, the live sessions, the account menu
+//   │   │             modules, the live sessions, the account menu
 //   │   ├── content   the module's large title, Console's session strip, the
 //   │   │             workspace's body container (the same
 //   │   │             `DestinationMounter`, the same 29 pages), and the
-//   │   │             status line
+//   │   │             status line (on every module but Console)
 //   │   └── inspector WorkspaceInspectorController - collapsed, empty until
 //   │                 a page has something to show in it
 //   └── the lock overlay (LockPresenter), over all three
@@ -363,16 +363,14 @@ final class MainSplitShellController: WorkspaceShellController {
 
     private func wireSidebar() {
         sidebar.onSelectModule = { [weak self] module in self?.openModule(module) }
-        sidebar.onSelectDestination = { [weak self] destination in self?.workspace.navigator.show(destination) }
         sidebar.onSelectSession = { [weak self] id in self?.workspace.hosts.switchToSession(hostID: id) }
         sidebar.onEndSession = { [weak self] id in self?.workspace.hosts.confirmEndSession(hostID: id) }
         // The session strip's "+" opened Hosts; so does Console's own menu.
         sidebar.onConnectHost = { [weak self] in self?.workspace.navigator.show(.hosts) }
-        sidebar.onTogglePin = { [weak self] destination in self?.toggleQuickAccessPin(destination) }
-        sidebar.isPinned = { [weak self] destination in self?.isQuickAccessPinned(destination) ?? false }
-        sidebar.onOpenSettings = { [weak self] in self?.workspace.navigator.show(.settings) }
+        // The account menu is Log Out only (stage 6). Settings is its own
+        // sidebar module, and ⌘, and the app menu still reach it.
         sidebar.onLogOut = { [weak self] in self?.requestLogout() }
-        sidebar.reload(pinned: AppSettings.shared.quickAccess.pinned, sessions: workspace.hosts.sessions)
+        sidebar.reload(sessions: workspace.hosts.sessions)
     }
 
     // MARK: The window
@@ -810,7 +808,12 @@ final class MainSplitShellController: WorkspaceShellController {
             let tabs = module.tabs
             let current = currentTab
             if let current { lastTab[module] = current }
-            toolbar.setTabs(tabs.map(\.name), selected: current.flatMap { tabs.firstIndex(of: $0) },
+            // The page that draws the module's tabs may count what each
+            // holds (Connections' hosts, keys and snippets), even while one
+            // of the module's other pages is showing.
+            let counts = moduleTabHost(for: module)?.moduleTabCounts ?? [:]
+            toolbar.setTabs(tabs.map(\.name), counts: tabs.map { counts[$0.name] },
+                            selected: current.flatMap { tabs.firstIndex(of: $0) },
                             accessibilityLabel: "\(module.title) tabs")
         }
         switch module {
@@ -830,8 +833,37 @@ final class MainSplitShellController: WorkspaceShellController {
         }
         contentPane.setHeader(title: module.showsHeader ? module.title : nil, subtitle: pageSubtitle)
         contentPane.setSessionStripVisible(module == .console && !workspace.hosts.sessions.isEmpty)
+        // Console's own session strip already lists the live sessions at the
+        // top of the module, so the status line under the terminal said the
+        // same thing again (stage 6, the captain's call).
+        contentPane.setStatusLineVisible(Self.showsStatusLine(in: module))
         contentPane.setLeadingColumn(showsKnowledgeTree ? knowledgeTree.view : nil)
         applyTitleBar()
+    }
+
+    /// Whether the status line shows under `module`'s pages: everywhere but
+    /// Console.
+    static func showsStatusLine(in module: WorkspaceModule) -> Bool { module != .console }
+
+    /// The mounted page that draws `module`'s tabs, if it has one and it has
+    /// mounted.
+    private func moduleTabHost(for module: WorkspaceModule) -> ModuleTabHosting? {
+        guard let route = module.pageTabHost else { return nil }
+        return workspace.content.mounter.slot(for: route.slot)?.controller as? ModuleTabHosting
+    }
+
+    /// The showing page's actions in the toolbar: its primary one at the
+    /// trailing edge after Search, the rest before the trailing cluster.
+    private func applyPageActions(_ controller: NSViewController?, isHome: Bool = false) {
+        guard !isHome else {
+            toolbar.setPageActions([])
+            toolbar.setPrimaryAction(nil)
+            return
+        }
+        let primary = (controller as? WorkspacePrimaryActionProviding)?.workspacePrimaryAction
+        let actions = (controller as? DaylightDrillActions)?.drillHeaderActions ?? []
+        toolbar.setPageActions(actions.filter { $0 !== primary })
+        toolbar.setPrimaryAction(primary)
     }
 
     // MARK: Knowledge's tree
@@ -903,10 +935,6 @@ final class MainSplitShellController: WorkspaceShellController {
         Toast.show(in: contentPane.view, message: message)
     }
 
-    override func quickAccessDidChange(_ configuration: QuickAccessConfiguration) {
-        sidebar.reload(pinned: configuration.pinned, sessions: workspace.hosts.sessions)
-    }
-
     // MARK: WorkspaceChrome
 
     override func workspaceDidShow(_ dest: RailDestination, slot: DestinationSlot) {
@@ -921,7 +949,7 @@ final class MainSplitShellController: WorkspaceShellController {
         if dest == currentModule.pageTabHost, let host = slot.controller as? ModuleTabHosting { adoptTabHost(host) }
         // Home has no actions of its own; its spaces sit in the middle
         // instead, where the floating bar showed its pills.
-        toolbar.setPageActions(dest == .homeCanvas ? [] : page?.drillHeaderActions ?? [])
+        applyPageActions(slot.controller, isHome: dest == .homeCanvas)
         refreshModuleChrome()
         reconcileInspector()
         if showsKnowledgeTree {
@@ -936,7 +964,7 @@ final class MainSplitShellController: WorkspaceShellController {
         currentModule = .console
         pageSubtitle = "Dedicated host page"
         inspectorSource = nil
-        toolbar.setPageActions(controller.drillHeaderActions)
+        applyPageActions(controller)
         refreshModuleChrome()
         reconcileInspector()
     }
@@ -955,7 +983,7 @@ final class MainSplitShellController: WorkspaceShellController {
 
     override func workspaceActionsMayHaveChanged() {
         guard currentModule != .home else { return }
-        toolbar.setPageActions((pageController as? DaylightDrillActions)?.drillHeaderActions ?? [])
+        applyPageActions(pageController)
     }
 
     override func workspaceCrewDidRead() {
@@ -970,7 +998,7 @@ final class MainSplitShellController: WorkspaceShellController {
         // The signals first, so the rows the reload below builds carry
         // Console's new count.
         signalsMonitor.sessionsDidChange(registry.sessions)
-        sidebar.reload(pinned: AppSettings.shared.quickAccess.pinned, sessions: registry)
+        sidebar.reload(sessions: registry)
         statusLine.render(sessions: registry.sessions)
         contentPane.sessionStrip.render(registry)
         contentPane.setSessionStripVisible(currentModule == .console && !registry.sessions.isEmpty)
@@ -985,6 +1013,7 @@ final class MainSplitShellController: WorkspaceShellController {
     var debugSignalsMonitor: WorkspaceSignalsMonitor { signalsMonitor }
     var debugInspector: WorkspaceInspectorController { inspector }
     var debugContentPane: NSView { contentPane.view }
+    var debugBodyContainer: NSView { workspace.content.bodyContainer }
     var debugSidebarIsCollapsed: Bool { sidebarItem.isCollapsed }
     var debugInspectorIsCollapsed: Bool { inspectorItem.isCollapsed }
     var debugColumnMinimum: CGFloat { contentItem.minimumThickness }
@@ -1006,6 +1035,7 @@ final class MainSplitShellController: WorkspaceShellController {
         contentPane.header.isHidden ? nil : (contentPane.header.debugTitle, contentPane.header.debugSubtitle)
     }
     var debugSessionStripIsShown: Bool { !contentPane.sessionStrip.isHidden }
+    var debugStatusLineIsShown: Bool { contentPane.debugStatusLineIsShown }
     var debugCurrentTab: ModuleTab? { currentTab }
     var debugLastTab: [WorkspaceModule: ModuleTab] { lastTab }
     func debugOpenModule(_ module: WorkspaceModule) { openModule(module) }
@@ -1036,6 +1066,13 @@ final class WorkspaceContentPaneController: NSViewController {
     private let columnHost = NSView()
     private var bodyAfterColumn: NSLayoutConstraint!
     private var bodyAtEdge: NSLayoutConstraint!
+    /// The body and the column end at the status line, or at the pane's
+    /// bottom while it is hidden: alternative constraints, exactly one of
+    /// each pair active (gotcha (17)'s footnote). A hidden view still sits in
+    /// the constraint graph (gotcha (11)), so hiding the line alone would
+    /// leave its 30pt gap under Console's terminal.
+    private var aboveStatusLine: [NSLayoutConstraint] = []
+    private var atPaneBottom: [NSLayoutConstraint] = []
     private weak var columnView: NSView?
     private var themeToken: ThemeObservation?
 
@@ -1079,6 +1116,14 @@ final class WorkspaceContentPaneController: NSViewController {
         root.addSubview(statusLine)
         bodyAfterColumn = body.leadingAnchor.constraint(equalTo: columnHost.trailingAnchor)
         bodyAtEdge = body.leadingAnchor.constraint(equalTo: root.leadingAnchor)
+        aboveStatusLine = [
+            columnHost.bottomAnchor.constraint(equalTo: statusLine.topAnchor),
+            body.bottomAnchor.constraint(equalTo: statusLine.topAnchor),
+        ]
+        atPaneBottom = [
+            columnHost.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            body.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+        ]
         NSLayoutConstraint.activate([
             // The toolbar is drawn over the top of this pane (the window has
             // a full-size content view), so everything starts under it.
@@ -1087,16 +1132,14 @@ final class WorkspaceContentPaneController: NSViewController {
             topStack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             columnHost.topAnchor.constraint(equalTo: topStack.bottomAnchor),
             columnHost.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            columnHost.bottomAnchor.constraint(equalTo: statusLine.topAnchor),
             columnHost.widthAnchor.constraint(equalToConstant: KnowledgeTreeController.width),
             body.topAnchor.constraint(equalTo: topStack.bottomAnchor),
             bodyAtEdge,
             body.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            body.bottomAnchor.constraint(equalTo: statusLine.topAnchor),
             statusLine.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             statusLine.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             statusLine.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-        ])
+        ] + aboveStatusLine)
         // The pane paints the page ground under the toolbar too, which is
         // what the toolbar's glass samples.
         themeToken = ThemeManager.shared.observe { [weak self] theme in
@@ -1119,6 +1162,25 @@ final class WorkspaceContentPaneController: NSViewController {
         _ = view
         sessionStrip.isHidden = !visible
     }
+
+    /// Show the status line under the body, or give its height to the body.
+    func setStatusLineVisible(_ visible: Bool) {
+        _ = view
+        guard statusLine.isHidden == visible else { return }
+        // Deactivate before activating, so the two are never both live.
+        if visible {
+            NSLayoutConstraint.deactivate(atPaneBottom)
+            NSLayoutConstraint.activate(aboveStatusLine)
+        } else {
+            NSLayoutConstraint.deactivate(aboveStatusLine)
+            NSLayoutConstraint.activate(atPaneBottom)
+        }
+        statusLine.isHidden = !visible
+    }
+
+    #if FM_SELFTESTS
+    var debugStatusLineIsShown: Bool { !statusLine.isHidden && aboveStatusLine.allSatisfy(\.isActive) }
+    #endif
 
     /// Show `column` at the body's leading edge, or no column at all.
     func setLeadingColumn(_ column: NSView?) {

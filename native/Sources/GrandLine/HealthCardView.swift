@@ -25,6 +25,16 @@
 // `ServiceHealthRegistry`, `PersistenceFailureReporter`, and every reporter's
 // call site are completely unchanged by this move - this file only reads
 // them, exactly as `SettingsController`'s old `buildHealthSection()` did.
+//
+// **The sidebar layout draws the same readings as the prototype's page**
+// (stage 6, `adoptTableLayout`): a row of summary cards (Healthy, Warnings,
+// Failing, Not run yet) over one table of services, with each one's status,
+// when it last ran, its recent runs and - only where the service has a real
+// "run now" of its own - a Retry. It is a second rendering of this view's own
+// state, driven by the same coalesced, hidden-gated rebuild, so the two
+// layouts cannot disagree. The prototype's duration sparkline and app uptime
+// are not drawn: the registry records neither, and a chart of numbers nobody
+// measured would be the GL-14 lie this page exists to avoid.
 
 import AppKit
 
@@ -49,6 +59,131 @@ final class HealthCardView: NSObject {
     var onOpenDestination: ((RailDestination) -> Void)?
 
     @objc private func openSchedulesTapped() { onOpenDestination?(.schedules) }
+
+    /// The services that can be run again on demand, and how - handed in by
+    /// the workspace, which owns the services. Only these rows offer Retry,
+    /// and only while they are failing or have just failed. Today that is the
+    /// background signals' `checkNow()` (also its manual entry point) and the
+    /// dotfiles sync's `syncNowFromUI()` (Setup steps' Sync now). No other
+    /// service has a "run now" of its own, so none is invented here.
+    var retryActions: [HealthService: () -> Void] = [:]
+
+    // MARK: The sidebar layout's table (stage 6)
+
+    /// Set once, by `adoptTableLayout()`. Never set in the floating bar.
+    private(set) var drawsTable = false
+    private lazy var tableRoot = NSStackView()
+    private lazy var healthyCard = HelmMetricCard(caption: "Healthy", tint: .good)
+    private lazy var warningsCard = HelmMetricCard(caption: "Warnings", tint: .warn)
+    private lazy var failingCard = HelmMetricCard(caption: "Failing", tint: .critical)
+    private lazy var pendingCard = HelmMetricCard(caption: "Not run yet")
+    private lazy var crashHost = NSStackView()
+    private lazy var servicesTable: HelmDataTable = {
+        let table = HelmDataTable(columns: [
+            .init(id: "service", title: "Service", width: 320, minWidth: 220, flexible: true),
+            .init(id: "status", title: "Status", width: 150),
+            .init(id: "lastRun", title: "Last run", width: 150, hiddenBelow: 600),
+            .init(id: "runs", title: "Recent runs", width: 110, hiddenBelow: 780),
+        ], actionsWidth: 110)
+        table.sizesToFitRows = true
+        // The prototype shows Retry on the failing row at rest.
+        table.actionsAlwaysVisible = true
+        table.accessibilityName = "Background services"
+        return table
+    }()
+
+    /// Build the sidebar layout's rendering and hand it to the page, which
+    /// puts it where the card was. The card is not drawn in that layout.
+    func adoptTableLayout() -> NSView {
+        guard !drawsTable else { return tableRoot }
+        drawsTable = true
+        tableRoot.orientation = .vertical
+        tableRoot.alignment = .leading
+        tableRoot.spacing = HelmMetrics.s4
+        tableRoot.translatesAutoresizingMaskIntoConstraints = false
+        crashHost.orientation = .vertical
+        crashHost.translatesAutoresizingMaskIntoConstraints = false
+        let metrics = HelmMetricRow([healthyCard, warningsCard, failingCard, pendingCard])
+        for view in [metrics, crashHost, servicesTable.card] as [NSView] {
+            tableRoot.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: tableRoot.widthAnchor).isActive = true
+        }
+        card.isHidden = true
+        rebuild()
+        return tableRoot
+    }
+
+    /// The summary cards and the table, from the registry's current state.
+    private func rebuildTable() {
+        let counts = Self.verdictCounts()
+        let known = counts.total > 0
+        // Before anything has reported, every figure is unknown, not zero.
+        let reason = "No background service has reported yet."
+        healthyCard.configure(text: known ? "\(counts.healthy) / \(counts.total)" : nil, signals: false,
+                              unknownReason: reason)
+        warningsCard.configure(count: known ? counts.degraded : nil, unknownReason: reason)
+        failingCard.configure(count: known ? counts.failing : nil, unknownReason: reason)
+        pendingCard.configure(text: known ? "\(counts.pending)" : nil, signals: false, unknownReason: reason)
+        for card in [healthyCard, warningsCard, failingCard, pendingCard] { card.applyTheme(theme) }
+
+        for view in crashHost.arrangedSubviews {
+            crashHost.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        if let crashRow = crashReportRow() {
+            crashHost.addArrangedSubview(crashRow)
+            crashRow.widthAnchor.constraint(equalTo: crashHost.widthAnchor).isActive = true
+        }
+        crashHost.isHidden = crashHost.arrangedSubviews.isEmpty
+
+        let services = ServiceHealthRegistry.shared.knownServices()
+        var rows = services.map(tableRow)
+        if rows.isEmpty {
+            rows = [.empty(
+                symbol: "waveform.path.ecg", title: "Nothing has reported yet",
+                body: "Background services report here as they run. A schedule is the usual way one runs without you.",
+                action: .init(title: "Open Schedules", symbol: "calendar") { [weak self] in self?.openSchedulesTapped() })]
+        }
+        servicesTable.applyTheme(theme)
+        servicesTable.setRows(rows)
+    }
+
+    /// One service: what it does (or its last error), its verdict, when it
+    /// last ran, its run streak, and Retry where the service can be re-run.
+    private func tableRow(_ service: HealthService) -> HelmDataTable.Row {
+        let state = ServiceHealthRegistry.shared.state(service)
+        let (tint, chip) = Self.healthVisuals(state)
+        var row = HelmDataTable.Row.record(service.rawValue)
+        let detail: String
+        if let failure = state.lastFailureDetail, let when = state.lastFailure {
+            detail = "Last error (\(Self.relative(when))): \(failure)"
+        } else {
+            detail = service.detail
+        }
+        let lastRun: HelmDataTable.Cell
+        if state.verdict == .running {
+            lastRun = .muted("Checking\u{2026}")
+        } else if let last = state.lastSuccess {
+            lastRun = .text(Self.relative(last))
+        } else if state.hasReported {
+            lastRun = .muted("Never succeeded")
+        } else {
+            lastRun = .muted("Not run yet")
+        }
+        let ticks = Self.runTicks(state)
+        row.cells = [
+            "service": .title(service.title, subtitle: detail, subtitleIsCode: false, symbol: service.symbol,
+                              tint: tint, tintHex: nil),
+            "status": .status(chip, tint: tint),
+            "lastRun": lastRun,
+            "runs": ticks.isEmpty ? .none : .code(ticks),
+        ]
+        let needsAttention = state.verdict == .degraded || state.verdict == .failing
+        if needsAttention, let retry = retryActions[service] {
+            row.primary = .init(title: "Retry", symbol: "arrow.clockwise", run: retry)
+        }
+        return row
+    }
 
     private let healthStack = NSStackView()
     /// §7's "KPI chips in the header band region" - one per non-zero verdict
@@ -150,9 +285,11 @@ final class HealthCardView: NSObject {
     /// waste, since it rebuilds again on appearance anyway.
     private var pendingWhileHidden = false
 
-    /// Whether a rebuild would be visible to anyone.
+    /// Whether a rebuild would be visible to anyone - the card, or in the
+    /// sidebar layout the table that replaces it.
     private var isOnScreen: Bool {
-        card.window != nil && !card.isHiddenOrHasHiddenAncestor
+        let shown: NSView = drawsTable ? tableRoot : card
+        return shown.window != nil && !shown.isHiddenOrHasHiddenAncestor
     }
 
     /// One rebuild per main-queue turn, the same latch shape
@@ -272,6 +409,10 @@ final class HealthCardView: NSObject {
         #if FM_SELFTESTS
         debugRebuildCount += 1
         #endif
+        if drawsTable {
+            rebuildTable()
+            return
+        }
         refreshSummary()
         descriptionLabels.removeAll()
         for v in healthStack.arrangedSubviews {
@@ -648,5 +789,9 @@ final class HealthCardView: NSObject {
     /// UI-56: the KPI line's figures, as rendered - empty while it is not
     /// in the card.
     var debugSummaryValues: [String] { summaryStrip.superview == nil ? [] : summaryStrip.debugValues }
+    var debugMetricCards: [HelmMetricCard] { [healthyCard, warningsCard, failingCard, pendingCard] }
+    var debugServicesTable: HelmDataTable { servicesTable }
+    /// Rebuild now, whether or not the card is on screen.
+    func debugRebuild() { rebuild() }
     #endif
 }

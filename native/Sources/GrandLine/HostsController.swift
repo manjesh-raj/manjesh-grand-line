@@ -184,6 +184,16 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// beside the page's own column, or the page gutter while the column is
     /// put away (`setModuleTabControlHidden`).
     private var contentLeading: NSLayoutConstraint?
+    /// The three tab views sit between the stat strip and the shortcut line.
+    /// The sidebar layout draws neither, so it swaps these for ties to the
+    /// content column's own edges (stage 6) - a hidden view still sits in the
+    /// constraint graph (gotcha (11)), so hiding the two alone would leave
+    /// their gaps.
+    private var tabViewsBetweenPanels: [NSLayoutConstraint] = []
+    /// The Hosts tab's search over its filter row, and the filter row - the
+    /// sidebar layout puts the search into the row.
+    private var hostsTopStack: NSStackView?
+    private var hostsFilterRow: NSStackView?
 
     /// The reference mockup's **left** navigation column.
     ///
@@ -336,9 +346,26 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     private lazy var snippetsTable = Self.makeSnippetsTable()
     /// The inspector's body for whichever table is showing.
     private lazy var inspectorDetail = WorkspaceDetailView()
-    /// F12's switch, as a strip over the Snippets table - the page's own
-    /// right column is the floating bar's.
-    private lazy var expansionStrip = SnippetExpansionPanel(style: .strip)
+    /// F12's switch, as a plain row over the Snippets table - the page's own
+    /// right column is the floating bar's (stage 6: `.inline`, no card).
+    private lazy var expansionStrip = SnippetExpansionPanel(style: .inline)
+    /// The prototype's All / Online filter over the hosts, with each count.
+    /// The same filter as the floating bar's Online toggle, which it replaces
+    /// in this layout. There is no Problems segment: nothing records a host's
+    /// reachability (the later page work's decision).
+    private lazy var onlineFilter: HelmSegmentedTabs = {
+        let tabs = HelmSegmentedTabs(items: [.init(id: Self.allFilterID, title: "All"),
+                                            .init(id: Self.onlineFilterID, title: "Online")],
+                                     selected: Self.allFilterID, size: .compact)
+        tabs.onSelect = { [weak self] id in self?.setOnlineOnly(id == Self.onlineFilterID) }
+        tabs.setAccessibilityLabel("Show all hosts, or only hosts with a live session")
+        return tabs
+    }()
+    static let allFilterID = "all"
+    static let onlineFilterID = "online"
+    /// Touch ID's state on the Keys card, where the floating bar's stat
+    /// strip stated it page-wide: it is a fact about where keys are kept.
+    private lazy var keysTouchID = HelmStatusPill(style: .dotWord)
     /// The selected record's name, or `nil` with nothing selected - what
     /// `inspectorContent` hands the shell.
     private var inspectorTitle: String?
@@ -373,6 +400,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         // launch - the same "read the real permission fresh" rule
         // `DictationController` follows.
         refreshExpansionPanel()
+        // The same probe, re-read on every visit, like the stat strip's.
+        if drawsSidebarLayout { refreshKeysTouchID() }
     }
 
     override func loadView() {
@@ -530,13 +559,17 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         for tabView in [hostsTabView, keysTabView, snippetsTabView] {
             tabView.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(tabView)
-            NSLayoutConstraint.activate([
-                tabView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-                tabView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            let between = [
                 tabView.topAnchor.constraint(equalTo: workspacePanel.bottomAnchor, constant: HelmMetrics.s4),
                 tabView.bottomAnchor.constraint(equalTo: quickActionsPanel.topAnchor, constant: -HelmMetrics.s3),
+            ]
+            tabViewsBetweenPanels += between
+            NSLayoutConstraint.activate(between + [
+                tabView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+                tabView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             ])
         }
+        contentGuide = content
 
         NSLayoutConstraint.activate([
             sideStack.trailingAnchor.constraint(equalTo: column.trailingAnchor),
@@ -551,8 +584,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
 
         hostStore.observe { [weak self] in self?.reloadHosts() }
-        keyStore.onChange = { [weak self] in self?.reloadKeys() }
-        snippetStore.onChange = { [weak self] in self?.reloadSnippets() }
+        keyStore.onChange = { [weak self] in self?.reloadKeysAndCounts() }
+        snippetStore.onChange = { [weak self] in self?.reloadSnippetsAndCounts() }
 
         select(tab: .hosts, moveTabControl: true)
         reloadHosts()
@@ -564,6 +597,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         // trap this codebase has now hit four times).
         applyTheme(ThemeManager.shared.theme)
     }
+
+    /// The content column, for the sidebar layout's re-tie of the tab views.
+    private var contentGuide: NSLayoutGuide?
 
     /// The narrowest the tab's own content column is allowed to get before the
     /// window itself has to give. Held *below* `NSLayoutPriorityWindowSizeStayPut`
@@ -706,6 +742,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// panel and the list can never disagree within a frame.
     private func refreshWorkspacePanel() {
         let live = hostStore.hosts.reduce(0) { $0 + (liveSession?($1.id) != nil ? 1 : 0) }
+        refreshSidebarFilterCounts(all: hostStore.hosts.count, online: live)
         workspacePanel.setCounts(hosts: hostStore.hosts.count,
                                       keys: keyStore.keys.count,
                                       snippets: snippetStore.snippets.count,
@@ -958,6 +995,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         top.alignment = .leading
         top.spacing = HelmMetrics.s2
         top.translatesAutoresizingMaskIntoConstraints = false
+        hostsTopStack = top
+        hostsFilterRow = filterRow
 
         // UXP-10: no card header. The drill header and the selected sidebar
         // row already name this list "Hosts"; a third copy inside the card
@@ -1102,6 +1141,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
             keysTable.applyTheme(theme)
             snippetsTable.applyTheme(theme)
             expansionStrip.applyTheme(theme)
+            onlineFilter.applyTheme(theme)
+            keysTouchID.applyTheme(theme)
         }
         sideStack.applyTheme(theme)
         workspacePanel.applyTheme(theme)
@@ -1118,6 +1159,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         rebuildTagChips()
         rebuildGroupPicker()
         applyHostFilter(searchField.stringValue)
+        moduleTabCountsMayHaveChanged()
     }
 
     /// One toggle button per distinct tag across all hosts, sorted for a
@@ -1222,8 +1264,17 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     }
 
     @objc private func onlineChipClicked(_ sender: NSButton) {
-        onlineOnly = sender.state == .on
-        (sender as? HelmButton)?.tint = onlineOnly ? .good : nil
+        setOnlineOnly(sender.state == .on)
+    }
+
+    /// The Online filter, from the floating bar's chip or the sidebar
+    /// layout's segments. Both controls follow, so neither can disagree with
+    /// the list.
+    private func setOnlineOnly(_ on: Bool) {
+        onlineOnly = on
+        onlineChip.state = on ? .on : .off
+        onlineChip.tint = on ? .good : nil
+        if drawsSidebarLayout { onlineFilter.select(on ? Self.onlineFilterID : Self.allFilterID) }
         applyHostFilter(searchField.stringValue)
     }
 
@@ -1355,6 +1406,17 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     var debugSnippetsTable: HelmDataTable { snippetsTable }
     var debugInspectorDetail: WorkspaceDetailView { inspectorDetail }
     var debugExpansionStrip: SnippetExpansionPanel { expansionStrip }
+    var debugOnlineFilter: HelmSegmentedTabs { onlineFilter }
+    var debugKeysTouchID: HelmStatusPill { keysTouchID }
+    var debugSearchField: NSView { searchField }
+    var debugFilterRow: NSStackView? { hostsFilterRow }
+    var debugTabView: NSView {
+        switch activeTab {
+        case .hosts: return hostsTabView
+        case .keys: return keysTabView
+        case .snippets: return snippetsTabView
+        }
+    }
     var debugSideStackIsHidden: Bool { sideStack.isHidden }
     /// Whether the page's own detail column is showing a record.
     var debugSideDetailShowsRecord: Bool { !sideStack.isHidden && sideStack.detail.isShowingRecord }
@@ -1462,6 +1524,16 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     }
 
     // MARK: Keys data
+
+    private func reloadKeysAndCounts() {
+        reloadKeys()
+        moduleTabCountsMayHaveChanged()
+    }
+
+    private func reloadSnippetsAndCounts() {
+        reloadSnippets()
+        moduleTabCountsMayHaveChanged()
+    }
 
     private func reloadKeys() {
         refreshSidebar()
@@ -1821,6 +1893,20 @@ extension HostsController: ModuleTabHosting {
         }
     }
 
+    /// The prototype's "Hosts 7": the saved records each tab lists, read
+    /// from the stores the tables render. The built-in Firstmate row is not a
+    /// saved host, so it is not counted.
+    var moduleTabCounts: [String: Int] {
+        ["Hosts": hostStore.hosts.count, "Keys": keyStore.keys.count, "Snippets": snippetStore.snippets.count]
+    }
+
+    /// A store changed under one of the three counts; the toolbar re-reads
+    /// them. Only the sidebar layout's toolbar draws them.
+    fileprivate func moduleTabCountsMayHaveChanged() {
+        guard drawsSidebarLayout else { return }
+        onModuleTabChanged?()
+    }
+
     /// The page's column is its tab control, so the split puts it away. Its
     /// other rows have homes in the sidebar layout: Commands is Connections'
     /// fourth tab, Activity is a Connections toolbar button, and the keychain
@@ -1838,31 +1924,53 @@ extension HostsController: ModuleTabHosting {
 // In the sidebar layout Connections' Hosts, Keys and Snippets are the
 // prototype's tables, and the selected row's details are in the shell's
 // inspector (`WorkspaceInspectorSource`) rather than this page's own detail
-// column. Everything else on the page stays: the stat strip, the search and
-// filters over the hosts, the shortcut line under them, and the snippet
-// expansion card beside Snippets.
+// column.
+//
+// Stage 6 then laid the page out as the prototype draws it, at the captain's
+// request ("the button to add host is not in proper position and the UI is
+// messed up"):
+//
+//   - the tab's primary action is one button at the toolbar's far right,
+//     after Search (`WorkspacePrimaryActionProviding`),
+//   - the toolbar's tabs carry the counts the stat strip used to
+//     (`moduleTabCounts`), and the Hosts tab's All / Online segments carry
+//     its live-session count,
+//   - Hosts opens on one filter row - the search, All / Online, the group
+//     and tag filters - directly under the toolbar, and Snippets on the
+//     expansion switch's plain row,
+//   - each table is one card that ends under its last row,
+//   - there is no stat strip and no shortcut footer. Touch ID's state is on
+//     the Keys card, and every shortcut the footer listed is a menu item
+//     (Hosts menu, ⌘K) with its chord beside it.
+//
+// The floating bar's page is exactly what it was.
 //
 // **One set of actions.** Every table row and inspector button runs the same
 // method the floating bar's row runs - `connect`, `duplicate`,
 // `confirmDeleteHost`, `presentKeyEditor` and the rest - so the two layouts
 // cannot drift apart in what a host, a key or a snippet can do.
 
-extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource {
+extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, WorkspacePrimaryActionProviding {
 
     func adoptSidebarLayout() {
         guard !drawsSidebarLayout else { return }
         _ = view
         drawsSidebarLayout = true
+        adoptSidebarFrame()
+        adoptSidebarFilterRow()
         for (table, list, container) in [(hostsTable, hostsList, hostsTabView),
                                          (keysTable, keysList, keysTabView),
                                          (snippetsTable, snippetsList, snippetsTabView)] {
             list.card.isHidden = true
             table.card.translatesAutoresizingMaskIntoConstraints = false
+            table.hugsRows = true
             container.addSubview(table.card)
             NSLayoutConstraint.activate([
                 table.card.leadingAnchor.constraint(equalTo: list.card.leadingAnchor),
                 table.card.trailingAnchor.constraint(equalTo: list.card.trailingAnchor),
-                table.card.bottomAnchor.constraint(equalTo: list.card.bottomAnchor),
+                // The card ends under its last row; this caps it at the
+                // page's foot, where its rows scroll instead.
+                table.card.bottomAnchor.constraint(lessThanOrEqualTo: list.card.bottomAnchor),
             ])
             if table === snippetsTable {
                 container.addSubview(expansionStrip)
@@ -1880,6 +1988,19 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource {
         hostsTable.accessibilityName = "Hosts"
         keysTable.accessibilityName = "SSH keys"
         snippetsTable.accessibilityName = "Snippets"
+        // The prototype's Keys card names what it holds and where it is kept.
+        let keysSubtitle = NSTextField(labelWithString: "Private keys and passphrases stay in the macOS Keychain, gated by Touch ID")
+        keysSubtitle.lineBreakMode = .byTruncatingTail
+        keysSubtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        keysTable.card.setHeader(symbol: "key.fill", tint: .violet,
+                                 titleLabel: NSTextField(labelWithString: "SSH keys"),
+                                 subtitleLabel: keysSubtitle, actions: [keysTouchID])
+        let snippetsSubtitle = NSTextField(labelWithString: "Run sends a snippet's command, then Enter, to the active terminal tab")
+        snippetsSubtitle.lineBreakMode = .byTruncatingTail
+        snippetsSubtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        snippetsTable.card.setHeader(symbol: "chevron.left.forwardslash.chevron.right", tint: .info,
+                                     titleLabel: NSTextField(labelWithString: "Snippets"),
+                                     subtitleLabel: snippetsSubtitle)
         expansionStrip.onToggle = { [weak self] isOn in
             self?.onSnippetExpansionToggled?(isOn)
             self?.refreshExpansionPanel()
@@ -1898,6 +2019,72 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource {
         renderSnippetsTable()
         refreshExpansionPanel()
         refreshDetailPanel()
+        refreshKeysTouchID()
+        // The primary action moves to the toolbar's far right.
+        onDrillActionsChanged?()
+    }
+
+    /// The tab views take the content column's whole height: no stat strip
+    /// over them and no shortcut line under them.
+    private func adoptSidebarFrame() {
+        guard let content = contentGuide else { return }
+        workspacePanel.isHidden = true
+        quickActionsPanel.isHidden = true
+        NSLayoutConstraint.deactivate(tabViewsBetweenPanels)
+        NSLayoutConstraint.activate([hostsTabView, keysTabView, snippetsTabView].flatMap { tabView in
+            [tabView.topAnchor.constraint(equalTo: content.topAnchor),
+             tabView.bottomAnchor.constraint(equalTo: content.bottomAnchor)]
+        })
+    }
+
+    /// One row under the toolbar: the search, then All / Online and the
+    /// floating bar's own group and tag filters. The search keeps every
+    /// behaviour it had - live filtering, and Return connecting to a typed
+    /// `ssh user@host`.
+    private func adoptSidebarFilterRow() {
+        guard let top = hostsTopStack, let row = hostsFilterRow else { return }
+        top.removeArrangedSubview(searchField)
+        searchField.removeFromSuperview()
+        row.insertArrangedSubview(searchField, at: 0)
+        // Wide enough for its placeholder, and the first thing to give way.
+        let width = searchField.widthAnchor.constraint(equalToConstant: Self.sidebarSearchWidth)
+        width.priority = HelmDaylightPriority.columnHug
+        width.isActive = true
+        searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.sidebarSearchMinimumWidth).isActive = true
+        searchField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        onlineChip.isHidden = true
+        if let index = row.arrangedSubviews.firstIndex(of: onlineChip) {
+            row.insertArrangedSubview(onlineFilter, at: index)
+        }
+        onlineFilter.setContentHuggingPriority(.required, for: .horizontal)
+        onlineFilter.setContentCompressionResistancePriority(.required, for: .horizontal)
+        row.setCustomSpacing(HelmMetrics.s3, after: searchField)
+    }
+
+    /// The prototype's search field width, and the least it is squeezed to.
+    static let sidebarSearchWidth: CGFloat = 400
+    static let sidebarSearchMinimumWidth: CGFloat = 200
+
+    /// "All 7" and "Online 5", from the same reading the stat strip used.
+    fileprivate func refreshSidebarFilterCounts(all: Int, online: Int) {
+        guard drawsSidebarLayout else { return }
+        onlineFilter.setTitle("All\u{2002}\(all)", forID: Self.allFilterID)
+        onlineFilter.setTitle("Online\u{2002}\(online)", forID: Self.onlineFilterID)
+    }
+
+    /// The Keys card's Touch ID reading: the stat strip's own words, from the
+    /// same `LAContext` probe. A dot and a word while it is ready, which is
+    /// the default; a capsule when it is not.
+    fileprivate func refreshKeysTouchID() {
+        let available = CredentialVaultKeyStore.biometryAvailable
+        keysTouchID.style = available ? .dotWord : .pill
+        keysTouchID.configure(text: HostsKeychainCard.biometryPhrase(available, capitalized: true),
+                              tint: available ? .good : .warn)
+    }
+
+    /// The showing tab's add action, at the toolbar's far right.
+    var workspacePrimaryAction: NSView? {
+        drawsSidebarLayout ? drillHeaderActions.first : nil
     }
 
     var inspectorContent: WorkspaceInspectorContent? {

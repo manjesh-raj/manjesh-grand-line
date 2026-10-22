@@ -24,6 +24,10 @@
 //      option other than the default.** `LogStorageChoice.doNotSave` is the
 //      initial value and `persistIfNeeded` is the only writer. Spec §15.
 //
+// In the sidebar layout (stage 6) the page is laid out as the prototype draws
+// it - see "The sidebar layout" at the end of this file. The floating bar's
+// page is unchanged.
+//
 // The page never talks to Kubernetes, AWS, a database, or any other
 // infrastructure (spec §26). Its only external calls are `claude -p` (via
 // `LogAnalyzerAI`, always on already-redacted text) and reads of this app's
@@ -129,6 +133,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     /// empty page says what to do, and loaded-but-unanalysed says exactly
     /// that rather than implying a result.
     var drillHeaderSubtitle: String? {
+        if drawsSidebarLayout { return sidebarSubtitle }
         let sources = investigation.evidence.count
         guard sources > 0 else {
             return "Paste raw logs or terminal output to get a structured read"
@@ -195,6 +200,49 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     ], tooltip: "More - runbook, ticket, compare or copy")
     private var clipboardButton: HelmButton!
     private let inputHintLabel = NSTextField(labelWithString: "")
+    /// The input card's control row: the pickers, Analyze Clipboard, ⋯ and
+    /// Analyze. The sidebar layout moves Analyze to the toolbar.
+    private var inputControls: NSStackView!
+
+    // MARK: The sidebar layout (stage 6)
+
+    /// Set once, by `adoptSidebarLayout()`. Never set in the floating bar.
+    private(set) var drawsSidebarLayout = false
+    /// The analysis tab's right-hand column, which the sidebar layout opens
+    /// with the summary cards, the patterns and the likely cause.
+    private var analysisRightColumn: NSStackView!
+    /// The probable root cause card's body, which takes the follow-up
+    /// actions in the sidebar layout.
+    private var rootCauseBody: NSStackView!
+    private var rootCauseCopyButton: HelmButton!
+    /// Captioned in the analyzer's own severity words, which the patterns'
+    /// Level column uses too: its ladder rates a refused connection High
+    /// whatever level the line printed, so "Errors" and "Warnings" would
+    /// disagree with the table beside them.
+    private lazy var errorsCard = HelmMetricCard(caption: "Critical or high", tint: .critical)
+    private lazy var warningsCard = HelmMetricCard(caption: "Warning", tint: .warn)
+    private lazy var patternsCountCard = HelmMetricCard(caption: "Patterns")
+    private lazy var patternsTable: HelmDataTable = {
+        let table = HelmDataTable(columns: [
+            .init(id: "pattern", title: "Pattern", width: 300, minWidth: 180, flexible: true),
+            .init(id: "level", title: "Level", width: 130),
+            .init(id: "count", title: "Count", width: 80),
+        ], actionsWidth: 110)
+        table.sizesToFitRows = true
+        table.accessibilityName = "Patterns"
+        return table
+    }()
+    /// The input card's line, once the input is evidence: how many lines,
+    /// when it was added, and that it was redacted on the way in.
+    private let inputSummaryLabel = NSTextField(labelWithString: "")
+    private lazy var inputClearButton: HelmButton = {
+        let button = HelmButton(title: "Clear", variant: .secondary, size: .small,
+                                target: self, action: #selector(clearTapped))
+        button.toolTip = "Clear the input and discard this analysis (Esc)"
+        return button
+    }()
+    /// The severity counts, computed once per analysis rather than per render.
+    private var severityCounts: (key: Date, errors: Int, warnings: Int)?
 
     private let analyzingRow = NSStackView()
     private let analyzingSpinner = HelmProgressBar.inlineActivity(hue: RailDestination.logAnalyzer.domainHue)
@@ -539,6 +587,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
 
         let controls = NSStackView(views: [sourcePopup, modePopup, spacer,
                                            clipboardButton, inputMoreMenu.button, analyzeButton])
+        inputControls = controls
         controls.orientation = .horizontal
         controls.alignment = .centerY
         controls.distribution = .fill
@@ -735,7 +784,12 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         // layout entirely, so ordering carries no visual meaning here.
         tabContainer.addArrangedSubview(tabView)
         tabView.widthAnchor.constraint(equalTo: tabContainer.widthAnchor).isActive = true
-        tabView.isHidden = true
+        // Hidden unless it is the selected tab. The Analysis tab is mounted at
+        // build time and is the selected one, and nothing else shows it: with
+        // every tab mounted hidden, a finished analysis drew the tab strip
+        // over an empty space until a tab was clicked (found in stage 6, in
+        // both layouts). A tab mounted by `selectTab` is shown by it anyway.
+        tabView.isHidden = tabs.selected != id
         // A tab built after the page's theme observer has already fired needs
         // one explicit pass, the same reason `HelmFormSheet` ends `loadView`
         // with `refreshTheme()` - and one content pass, since every render since
@@ -817,6 +871,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
 
         let rightColumn = NSStackView(views: [summaryCard, aiNoticeCard, findingsCard,
                                               rootCauseCard, nextStepsCard, commandsCard])
+        analysisRightColumn = rightColumn
         rightColumn.orientation = .vertical
         rightColumn.alignment = .leading
         rightColumn.spacing = 14
@@ -864,6 +919,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
                                     target: self, action: #selector(copyRootCause))
         copyButton.toolTip = "Copy Root Cause"
         copyButton.setContentHuggingPriority(.required, for: .horizontal)
+        rootCauseCopyButton = copyButton
 
         _ = card.setHeader(symbol: "target", tint: .accent, title: "Probable root cause",
                            actions: [rootCauseConfidencePill, copyButton])
@@ -883,6 +939,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
 
         let body = NSStackView(views: [rootCauseSummaryLabel, rootCauseExplanationLabel,
                                        evidenceStack, missingEvidenceStack])
+        rootCauseBody = body
         body.orientation = .vertical
         body.alignment = .leading
         body.spacing = 10
@@ -1319,6 +1376,8 @@ extension LogAnalyzerController: NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
         guard (notification.object as? NSTextView) === inputTextView.textView else { return }
         refreshDetectionStripFromInput()
+        // The sidebar layout's header counts the lines being typed or pasted.
+        if drawsSidebarLayout { onDrillSubtitleChanged?() }
     }
 
     private func refreshDetectionStripFromInput() {
@@ -2118,6 +2177,7 @@ extension LogAnalyzerController {
         renderStorageSelection()
         renderComparePickers()
         renderAINotice()
+        if drawsSidebarLayout { renderSidebarSummary() }
         applyTheme()
         onDrillSubtitleChanged?()
     }
@@ -2635,6 +2695,10 @@ extension LogAnalyzerController {
         mutedLabels.apply(theme)
 
         for card in cards { card.applyTheme(theme) }
+        if drawsSidebarLayout {
+            patternsTable.applyTheme(theme)
+            for card in [errorsCard, warningsCard, patternsCountCard] { card.applyTheme(theme) }
+        }
         tabs.applyTheme(theme)
 
         detectionStrip.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
@@ -2851,3 +2915,188 @@ private extension Array {
         indices.contains(index) ? self[index] : nil
     }
 }
+
+// MARK: - The sidebar layout (stage 6)
+
+// The prototype's Logs page, built from what the analyzer already produces:
+//
+//   - the module header says "Log Analyzer" and how many lines are in,
+//   - Analyze is the toolbar's primary action, at its far right,
+//   - once there is an analysis, the analysis tab opens with the input on the
+//     left (the redacted output, with Clear) and, on the right, three summary
+//     cards (errors and warnings, counted line by line with the analyzer's own
+//     severity ladder, and the patterns it grouped), the patterns as a table,
+//     and the likely cause with the follow-up actions under it.
+//
+// Every control the page had is still here: the Source and Mode pickers,
+// Analyze Clipboard and the input's ⋯ on the input card, New and History in
+// the toolbar, the dropped-file support, Investigate Further, Create Incident
+// and the results' ⋯ under the likely cause, the other five tabs, the
+// redaction review and the storage choice. The summary cards are captioned
+// in the analyzer's own severity words (Critical or high, Warning) rather
+// than the prototype's Errors and Warnings, because its ladder rates a line
+// by what it says, not by the level it printed. The shortcut line under the input
+// is not drawn: every chord on it is a Log Analyzer menu item, ⌘↵ is
+// Analyze's own key equivalent (named in its tooltip), and Esc is the page's
+// `cancelOperation`. The prototype's per-pattern "Last 30 min" sparkline is
+// not drawn - the analyzer counts a pattern's occurrences and its first and
+// last timestamp, not a series.
+
+extension LogAnalyzerController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding {
+
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+
+        // Analyze leaves the input row for the toolbar.
+        inputControls.removeArrangedSubview(analyzeButton)
+        analyzeButton.removeFromSuperview()
+        analyzeButton.toolTip = "Analyze (\u{2318}\u{21A9})"
+        inputHintLabel.isHidden = true
+
+        // The input, once it is evidence: the redacted output, with Clear.
+        inputSummaryLabel.lineBreakMode = .byTruncatingTail
+        inputSummaryLabel.toolTip = "Secrets are redacted on the way in, before anything is analyzed, sent to Claude or saved."
+
+        inputSummaryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        rawPaneCard.setHeader(symbol: "doc.plaintext", tint: .neutral,
+                              titleLabel: NSTextField(labelWithString: "Input"),
+                              subtitleLabel: inputSummaryLabel, actions: [inputClearButton])
+
+        // The right column opens with the summary, the patterns and the
+        // likely cause.
+        let metrics = HelmMetricRow([errorsCard, warningsCard, patternsCountCard])
+        // The table's own card, under a header - one surface, as Keys' is.
+        _ = patternsTable.card.setHeader(symbol: "square.stack.3d.up", tint: .neutral, title: "Patterns",
+                                         subtitle: "Repeated lines, collapsed into one pattern each")
+        for (index, view) in [metrics, patternsTable.card as NSView].enumerated() {
+            analysisRightColumn.insertArrangedSubview(view, at: index)
+            view.widthAnchor.constraint(equalTo: analysisRightColumn.widthAnchor).isActive = true
+        }
+        analysisRightColumn.removeArrangedSubview(rootCauseCard)
+        analysisRightColumn.insertArrangedSubview(rootCauseCard, at: 2)
+        _ = rootCauseCard.setHeader(symbol: "sparkles", tint: .accent, title: "Likely cause",
+                                    actions: [rootCauseConfidencePill, rootCauseCopyButton])
+
+        // The follow-up actions go under the likely cause they act on.
+        contentStack.removeArrangedSubview(actionBar)
+        actionBar.removeFromSuperview()
+        rootCauseBody.addArrangedSubview(actionBar)
+        actionBar.widthAnchor.constraint(equalTo: rootCauseBody.widthAnchor).isActive = true
+
+        renderInvestigation()
+    }
+
+    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? analyzeButton : nil }
+
+    /// "Log Analyzer · 1,284 lines", as the prototype's header reads, with
+    /// the state of the analysis after it.
+    fileprivate var sidebarSubtitle: String {
+        let lines: Int
+        if investigation.evidence.isEmpty {
+            let pending = inputTextView.string
+            guard !pending.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return "Log Analyzer \u{00B7} paste logs or terminal output, or drop a file"
+            }
+            lines = pending.components(separatedBy: "\n").count
+        } else {
+            lines = investigation.evidence.reduce(0) { $0 + $1.lineCount }
+        }
+        var parts = ["Log Analyzer", lines == 1 ? "1 line" : "\(lines.formatted()) lines"]
+        if investigation.evidence.isEmpty || investigation.analysis == nil { parts.append("not analyzed yet") }
+        return parts.joined(separator: " \u{00B7} ")
+    }
+
+    /// The summary cards, the patterns table and the input's line.
+    fileprivate func renderSidebarSummary() {
+        // The evidence's own lines, as the header counts them - the pane
+        // also numbers each piece's "=====" heading.
+        let lines = investigation.evidence.reduce(0) { $0 + $1.lineCount }
+        if let added = investigation.evidence.last?.addedAt {
+            inputSummaryLabel.stringValue = [
+                lines == 1 ? "1 line" : "\(lines.formatted()) lines",
+                "added \(added.formatted(date: .omitted, time: .shortened))",
+                "secrets redacted",
+            ].joined(separator: " \u{00B7} ")
+        } else {
+            inputSummaryLabel.stringValue = ""
+        }
+        guard let analysis = investigation.analysis else {
+            patternsTable.setRows([])
+            return
+        }
+        let counts = severityCountsForCurrentAnalysis(analysis)
+        errorsCard.configure(count: counts.errors)
+        warningsCard.configure(count: counts.warnings)
+        patternsCountCard.configure(text: "\(analysis.local.groups.count)", signals: false)
+        var rows = analysis.local.groups.map { group -> HelmDataTable.Row in
+            var row = HelmDataTable.Row.record(group.pattern)
+            row.cells = [
+                "pattern": .code(group.label),
+                "level": .status(group.severity.displayName, tint: group.severity.tint),
+                "count": .text(group.occurrences.formatted()),
+            ]
+            // Spec §6's "clicking a pattern shows the matching lines", which
+            // the Error Groups tab does.
+            let show: () -> Void = { [weak self] in self?.showErrorGroups() }
+            row.primary = .init(title: "Lines", symbol: "list.bullet.rectangle", run: show)
+            row.activate = show
+            return row
+        }
+        if rows.isEmpty {
+            rows = [.empty(symbol: "checkmark.seal", title: "No repeated patterns",
+                           body: "Nothing in this output repeats as an error or warning.")]
+        }
+        patternsTable.setRows(rows)
+    }
+
+    /// Errors (critical and high) and warnings, line by line, with the same
+    /// severity ladder the raw pane colours its lines with.
+    private func severityCountsForCurrentAnalysis(_ analysis: LogAnalysis) -> (errors: Int, warnings: Int) {
+        if let cached = severityCounts, cached.key == analysis.analyzedAt {
+            return (cached.errors, cached.warnings)
+        }
+        var errors = 0
+        var warnings = 0
+        for item in investigation.evidence {
+            for line in item.text.split(separator: "\n", omittingEmptySubsequences: true).prefix(LogErrorExtractor.maxLinesScanned) {
+                switch LogErrorExtractor.severity(forLine: String(line)) {
+                case .critical, .high: errors += 1
+                case .warning: warnings += 1
+                default: break
+                }
+            }
+        }
+        severityCounts = (analysis.analyzedAt, errors, warnings)
+        return (errors, warnings)
+    }
+
+    private func showErrorGroups() {
+        tabs.select("groups")
+        selectTab("groups")
+    }
+}
+
+#if FM_SELFTESTS
+extension LogAnalyzerController {
+    var debugMetricCards: [HelmMetricCard] { [errorsCard, warningsCard, patternsCountCard] }
+    var debugPatternsTable: HelmDataTable { patternsTable }
+    var debugAnalyzeButton: HelmButton { analyzeButton }
+    var debugActionBarIsUnderTheLikelyCause: Bool { actionBar.superview === rootCauseBody }
+    var debugInputSummary: String { inputSummaryLabel.stringValue }
+    var debugInputControls: [NSView] { inputControls.arrangedSubviews }
+    var debugHintIsShown: Bool { !inputHintLabel.isHidden }
+    /// Whether a tab's view is mounted and showing - not merely selected in
+    /// the strip.
+    func debugTabIsShown(_ id: String) -> Bool {
+        guard let tab = tabViews[id] else { return false }
+        return !tab.isHidden && !tab.isHiddenOrHasHiddenAncestor
+    }
+    func debugSetInput(_ text: String) {
+        _ = view
+        inputTextView.string = text
+        textDidChange(Notification(name: NSText.didChangeNotification, object: inputTextView.textView))
+    }
+}
+#endif
