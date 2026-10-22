@@ -705,40 +705,118 @@ No controller was merged, and the floating bar is untouched and still the defaul
 ## The redesigned pages (modular-shell later page work, `fm/grandline-page-redesigns-1792627806`)
 
 The page work stage 4 deferred, for the sidebar layout only: Connections' tables and the shell's inspector, Secrets' credential tables, Knowledge's one tree, and Crew › Needs you.
-The floating bar is still the default and its pages are unchanged; each redesigned page switches to its sidebar presentation when the sidebar shell first shows it (`SidebarLayoutAdopting`), and the layout is chosen at launch, so nothing ever switches back.
+The floating bar is still the default, and its pages are unchanged.
+Each redesigned page switches to its sidebar presentation when the sidebar shell first shows it (`SidebarLayoutAdopting`).
+The layout is chosen at launch, so nothing ever switches back.
 
 ### The shape
 
 - **One table** (`HelmDataTable`): a header strip, a two-line leading cell, a selected row, a row's headline action and ⋯ on hover and on the selected row, a context menu with the same actions, group and empty rows, and drag to reorder within a group.
-  It lays its columns out itself: fixed columns keep their width, one flexible column takes the rest, and a column marked `hiddenBelow` steps out - then the most optional column keeps stepping out while the minimums still do not fit - so a table never scrolls sideways or holds a width that could grow the window.
-- **The inspector** shows a page's selection (`WorkspaceInspectorSource`): Hosts' host, key or snippet (`WorkspaceDetailView`), and Poneglyph's own `CredentialVaultInspectorView`, hosted in the shell's pane without its head.
-  It opens on a selection, closes when the selection clears, and the toolbar button and its own close button are the captain's choice, which a new selection respects.
+  It lays its columns out itself.
+  Fixed columns keep their width, one flexible column takes the rest, and a column marked `hiddenBelow` steps out.
+  Then the most optional column keeps stepping out while the minimums still do not fit, so a table never scrolls sideways or holds a width that could grow the window.
+- **The inspector** shows a page's selection (`WorkspaceInspectorSource`).
+  That is Hosts' host, key or snippet (`WorkspaceDetailView`), and Poneglyph's own `CredentialVaultInspectorView`, hosted in the shell's pane without its head.
+  It opens on a selection and closes when the selection clears.
+  The toolbar button and the inspector's own close button are the captain's choice, and a new selection respects it.
 - **Connections**: Hosts, Keys and Snippets are tables under the same search, filters and stat strip.
   Every row and inspector action runs the method the floating bar's row runs.
-  The snippet expansion switch is a strip over the Snippets table (`SnippetExpansionPanel.Style.strip`), because the page's right column is the floating bar's.
+  The snippet expansion switch is a strip over the Snippets table (`SnippetExpansionPanel.Style.strip`), because the page's right column belongs to the floating bar's layout.
 - **Secrets**: Poneglyph is a table whose rows keep Reveal, Copy, the Touch ID mark and the live 2FA code, grouped by category and reorderable within one.
   Automic Vault's secret names and verified launchers are tables under their own cards, with B1's three states.
 - **Knowledge**: one tree (`KnowledgeTreeController`) beside Notebook, Runbooks, Postmortems and Docs, read from the shared stores off the main thread, with its own search.
-  An item opens its tab and the item through the page's own open path (`KnowledgeTreePage`), and each page reports its edits and its showing item.
-  Notebook puts its page column away there; the Reading list keeps its cards, as the prototype draws it.
-- **Crew › Needs you**: Crew's first tab, a sidebar-only state of the Fleet page holding the Needs your call rows and their Reply composer, with a summary of the parked tasks and their open decisions and when they were read.
+  An item opens its tab and the item through the page's own open path (`KnowledgeTreePage`).
+  Each page reports its edits and the item it is showing.
+  Notebook puts its page column away there.
+  The Reading list keeps its cards, as the prototype draws it.
+- **Crew › Needs you**: Crew's first tab, a sidebar-only state of the Fleet page.
+  It holds the Needs your call rows and their Reply composer, with a summary of the parked tasks, their open decisions and when they were read.
   The bell's decision entry and Home's fleet row land on it.
 
 ### Decisions
 
-- **Only what the real controllers do.** No latency, last-connected or Online/Problems split on Hosts (nothing records them), no SRE Lead or Copy ssh command on a host, no follow-ups on Needs you.
-- **The real feature wins where the prototype has none**: the snippet expansion switch, a credential row's own Reveal and Copy, the Touch ID mark, Automic Vault's recipe card.
-- **The tree reads the stores, not the pages.** The pages mount lazily (GL-37), so a tree fed by them would show empty groups it had never read; a group not read yet says "Reading", and the playbook says "Not synced yet" until a copy is on this Mac.
+- **Only what the real controllers do.**
+  No latency, last-connected or Online/Problems split on Hosts, because nothing records them.
+  No SRE Lead or Copy ssh command on a host, and no follow-ups on Needs you.
+- **The real feature wins where the prototype has none**: the snippet expansion switch, a credential row's own Reveal and Copy, the Touch ID mark, and Automic Vault's recipe card.
+- **The tree reads the stores, not the pages.**
+  The pages mount lazily (GL-37), so a tree fed by them would show empty groups it had never read.
+  A group not read yet says "Reading", and the playbook says "Not synced yet" until a copy is on this Mac.
+- **Needs you is a tab now, because it has a view of its own.**
+  Stage 4's "A tab is a real view" above left it out, when the decisions waiting on the captain were only the Fleet dashboard's Needs your call list.
+  This corrects that entry for Needs you only, and Merge queue and Sessions are still not tabs.
+- **Needs you keeps its last good list over a read that failed, and says when it was read** (GL-14).
+  The brief's honest-state rules ask for it, and the Fleet data could not tell a failed read from an empty fleet (below).
+  Before the first read it says it is reading.
+  When the crew's task list cannot be read, the rows stay and the summary says when they were read.
+  A task whose own state cannot be read stays listed with its age.
+  "Nothing needs you" only follows a read that worked.
+  The floating bar's dashboard lists each read as it is, unchanged.
+- **A page tells the tree which kind of change it made** (`KnowledgeChange`).
+  Opening an item only moves the tree's selection.
+  Only a change to a page's list makes the tree read the stores again, where the first version re-read all four on every open.
 
 ### What was measured on the way
 
 - **The inspector would have grown the window.**
   The content column's floor is 940pt, so a 320pt inspector at 1100 needs a 1260pt window.
-  While the inspector shows a page's details the floor is 940 less the inspector's width (`MainSplitShellController.inspectorColumnMinimum`), and every page that fills it is laid out for that.
+  While the inspector shows a page's details, the floor is 940 less the inspector's width (`MainSplitShellController.inspectorColumnMinimum`), and every page that fills it is laid out for that.
   The sidebar then comes and goes at exactly the same window width with or without the inspector, and a selection never moves the window.
 - **`NSTableView`'s `.fullWidth` style pads the table 6pt past each end of its columns.**
-  Measured: the table 12pt wider than its columns, so every row scrolled sideways. The table is `.plain`.
-- **A reload after a theme change dropped the table's selection without a notification**, leaving the inspector showing a credential the table had let go of. Every reload puts the selection back.
-- **`NSGridView.removeRow` leaves the row's views in the grid**, so a new selection drew its fields over the last one's. The detail view's fields are stacked rows that are removed for real.
-- **`NSOutlineView` widens its outline column for indented rows by default**, so a long title in a folder ran past the tree's edge instead of truncating. `autoresizesOutlineColumn` is off.
-- **A table's own reselection looped through Poneglyph's render.** `setRows` restoring the selection called the page's selection handler, which re-rendered and called `setRows`. The table does not report its own reselection.
+  Measured: the table was 12pt wider than its columns, so every row scrolled sideways.
+  The table is `.plain`.
+- **A reload after a theme change dropped the table's selection without a notification.**
+  The inspector was left showing a credential the table had let go of.
+  Every reload puts the selection back.
+- **`NSGridView.removeRow` leaves the row's views in the grid**, so a new selection drew its fields over the last one's.
+  The detail view's fields are stacked rows that are removed for real.
+- **`NSOutlineView` widens its outline column for indented rows by default**, so a long title in a folder ran past the tree's edge instead of truncating.
+  `autoresizesOutlineColumn` is off.
+- **A table's own reselection looped through Poneglyph's render.**
+  `setRows` restoring the selection called the page's selection handler, which re-rendered and called `setRows` again.
+  The table does not report its own reselection.
+- **The floating bar's Hosts column could hand its spare height to the footer.**
+  This one is older than this branch, and it was found by the before/after comparison of the floating bar's renders.
+  After a tab round trip, the column's footer stack (the keychain card and the user row) was 570pt tall against a 117pt fitting height, and its keychain card sat 501pt above the column's foot, just under the nav rows.
+  The rows' stack and the footer stack both hugged at a stack's 250 default, so the column's spare height had two equally cheap homes, and the solver's history decided which one took it.
+  That is why it came and went between runs of the same tour.
+  `HelmPageSidebar.setFooter` now holds any footer at its content's height with a `height == 0` at `columnHug` (251).
+  A hugging priority would have done nothing for Tasks' footer, which is a plain view with no intrinsic size (gotcha (12)).
+  `NSView.hasAmbiguousLayout` flags this tie: the footer stack and the keychain card on every run without the fix, and neither with it.
+  The frame check alone was not enough, because with the fix reverted it passed three runs in a row on one build of the suite and failed four in a row on the next.
+  So `FM_RUN_PAGE_REDESIGNS_TESTS` asserts both.
+- **Settings' nav column reports an ambiguous height too, before and after this branch.**
+  It is a different mechanism: the list's own height inside Settings' wrapper column, not its footer.
+  It was not visible in any render here, and it is left for a Settings change to settle.
+- **Automic Vault's own read can land on top of a fixture.**
+  Every visit to the page starts an install check and a snapshot read, and a self-test or tour process refuses `av`, so that read lands as a failed read.
+  A fixture drawn before it lands is replaced, and that failed the suite's table check on one run.
+  The suite and the tour's `demo automic` now wait for the page's read first (`VaultController.debugIsReading`).
+- **The Fleet data could not tell a failed read from an empty fleet.**
+  `FleetDataSource.parseTasks` answers `[]` for a state folder it could not list (GL-21).
+  `FleetTaskCache` can then serve that `[]` for up to five seconds after the folder is readable again.
+  `FleetSnapshot.tasksRead` now says whether the list is a real reading: an empty list counts only when the folder can be listed and holds no task files.
+  `FleetDataSelfTest` checks it against a scratch firstmate home it pins before anything reads the real one.
+- **A real mouse click on a table row cannot be driven in the off-screen probe window.**
+  `NSTableView.mouseDown(with:)` never ran its tracking loop there, and the queued mouse-up stayed queued.
+  That held when it was called directly, sent through the window, sent after `makeKey`, and with the mouse-up queued last.
+  So the suite selects through the table's selection path, which is where a click's selection change lands, and activates with a real Return through `HelmTableView.keyDown(with:)`.
+  Return reaches the same `doubleAction` handler a double click does.
+
+### Verification
+
+- `FM_RUN_PAGE_REDESIGNS_TESTS` is new and window-backed.
+  It mounts the real sidebar shell and the real floating bar off screen, with the tour lab's scratch data.
+- Every case was shown to catch a revert, by copying the file aside, reverting one thing, and watching the case fail by name:
+  - Hosts not adopting its sidebar presentation, Poneglyph not adopting it, Automic Vault not adopting it, the Knowledge tree not shown, and Crew without Needs you.
+  - The inspector floor back at 940pt, which grew the window to 1261pt.
+  - The table back at `.fullWidth`, which made each table 12pt wider than its card.
+  - A plain `reloadData` after a theme change, which dropped the selection.
+  - The footer's `height == 0` deactivated, which failed both the ambiguity check and the frame check on four runs out of four.
+  - The hover wiring removed, the tracking area removed, `doubleAction` removed, the drag type unregistered, the drop not reporting the move, and Poneglyph not wiring `onReorder`.
+  - `tasksRead` always true, an empty list trusted beside a task file, Needs you treating a failed read as a normal one, and Needs you dropping a task it could not read.
+- `debugHover` sends a real mouse event at the row's centre through the tracking view's own handlers, so it fails when the wiring or the hit test goes, not only when the reveal does.
+  Drag to reorder goes through the table's own data source: the dragged row's pasteboard item, then `validateDrop` and `acceptDrop` with `CredentialVaultViewSelfTest`'s dragging-info stub.
+- Every affected page was rendered with the tour lab in Dusk and Daylight, at 1512 and 1100, in both layouts, before and after.
+  The floating bar's renders differ only by time (TOTP codes, relative times, a Refresh pill caught mid-load, Monaco still loading) and by the Hosts footer.
+- Not verified: the real app was not launched, VoiceOver was not run, a real pointer never moved over a table, and a real drag never ran.
