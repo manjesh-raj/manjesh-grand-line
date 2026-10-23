@@ -34,6 +34,7 @@
 // asserts that every file in this directory carries it.
 #if FM_SELFTESTS
 
+import AppKit
 import Foundation
 
 enum LogAnalyzerSelfTest {
@@ -747,7 +748,63 @@ enum LogAnalyzerSelfTest {
                   "the real path should return the fake reply's suggested command")
         }
 
+        checkTheInputPaneShowsWholeLines(check)
+
         return finish(failures)
+    }
+
+    // MARK: R2-BUG-16 - the Input pane shows every line in full
+
+    /// The pane cut every line with an ellipsis at about 45 characters and
+    /// could not scroll sideways. Driven headless against a real pane at a
+    /// real width, through the cell it draws.
+    private static func checkTheInputPaneShowsWholeLines(_ check: (Bool, String) -> Void) {
+        let theme = ThemeManager.shared.theme
+        let long = "2026-10-21T10:42:30Z ERROR checkout-worker missing env EXPORT_BUCKET, "
+            + "refusing to start the export pipeline until the deployment sets it (attempt 3 of 5)"
+        let short = "2026-10-21T10:42:44Z INFO checkout-api request ok"
+        autoreleasepool {
+            let pane = LogRawPaneView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
+            pane.setText([long, short].joined(separator: "\n"), theme: theme)
+            pane.layoutSubtreeIfNeeded()
+            let font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
+            check((long as NSString).size(withAttributes: [.font: font]).width > pane.debugVisibleWidth,
+                  "fixture: the long line really is wider than the pane, or nothing here can fail")
+
+            // Default: full length, and the table scrolls sideways.
+            check(pane.debugHasHorizontalScroller, "R2-BUG-16: the input pane has no horizontal scroller")
+            check(pane.debugColumnWidth > pane.debugVisibleWidth,
+                  "R2-BUG-16: the column is \(pane.debugColumnWidth)pt, no wider than the \(pane.debugVisibleWidth)pt pane")
+            let line = pane.debugLine(0)
+            check(line?.text == long, "the long line's cell draws \(line?.text ?? "nothing")")
+            check(line?.lineBreak != .byTruncatingTail, "R2-BUG-16: a line is cut with an ellipsis again")
+            check(line?.fits == true, "R2-BUG-16: the long line does not fit the label it is drawn in")
+
+            // Wrapped: the pane's width, and the long line's row grows.
+            pane.wrapsLines = true
+            pane.layoutSubtreeIfNeeded()
+            check(!pane.debugHasHorizontalScroller, "a wrapped pane still scrolls sideways")
+            check(abs(pane.debugColumnWidth - pane.debugVisibleWidth) < 1,
+                  "a wrapped pane's column is \(pane.debugColumnWidth)pt in a \(pane.debugVisibleWidth)pt pane")
+            let wrapped = pane.debugLine(0)
+            check((wrapped?.rowHeight ?? 0) > LogRawPaneView.rowHeight * 1.5,
+                  "R2-BUG-16: a wrapped long line kept a one-line row (\(wrapped?.rowHeight ?? 0)pt)")
+            check(wrapped?.fits == true, "R2-BUG-16: the wrapped line does not fit its row")
+            check(pane.debugLine(1)?.rowHeight == LogRawPaneView.rowHeight, "a short line's row grew when wrapping")
+        }
+
+        // The toggle is on the Input card in both layouts.
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let page = try? String(contentsOf: dir.appendingPathComponent("LogAnalyzerController.swift"), encoding: .utf8) else {
+            check(false, "R2-BUG-16: could not read LogAnalyzerController.swift - the toggle guard would silently pass")
+            return
+        }
+        check(page.contains("actions: [wrapLinesButton, rawPaneCountLabel]"),
+              "R2-BUG-16: the floating bar's input card has no Wrap toggle")
+        check(page.contains("actions: [wrapLinesButton, inputClearButton]"),
+              "R2-BUG-16: the sidebar layout's Input card has no Wrap toggle")
+        check(page.contains("rawPane.wrapsLines.toggle()"), "R2-BUG-16: the Wrap toggle does not wrap the pane")
+        check(!page.contains("multiplier: 0.38"), "R2-BUG-16: the input pane is back to a fixed 38% of the split")
     }
 
     private static func finish(_ failures: [String]) -> Bool {

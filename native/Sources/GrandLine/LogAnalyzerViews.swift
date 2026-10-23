@@ -33,6 +33,14 @@ import AppKit
 /// Severity per line comes from `LogErrorExtractor.severity(forLine:)` - the
 /// same classifier the grouped rows and the detection strip use, so a line
 /// tinted red here is a line that genuinely counted as an error there.
+///
+/// **Every line is readable in full (R2-BUG-16).** The pane used to cut each
+/// line with an ellipsis at the column's width and had no horizontal
+/// scroller, so on the page whose job is reading logs the captain could not
+/// read the log they pasted. A line now draws at its full length, and the
+/// table is as wide as the longest line, with a horizontal scroller. With
+/// `wrapsLines` on, each line wraps at the pane's width instead, and its row
+/// grows to hold it.
 final class LogRawPaneView: NSView {
 
     /// Measured at chrome text scale 1.0 - see `HelmType.scaledRowHeight`.
@@ -66,6 +74,27 @@ final class LogRawPaneView: NSView {
     private var lines: [String] = []
     private var severities: [LogSeverity] = []
     private var theme: HelmTheme = ThemeManager.shared.theme
+    /// The width the longest line needs, measured once per `setText` and
+    /// theme (the text scale arrives as a theme re-fire).
+    private var longestLineWidth: CGFloat = 0
+    /// Wrapped row heights for one text width, dropped when either changes.
+    private var wrappedHeights: (width: CGFloat, heights: [CGFloat])?
+
+    /// Wrap each line at the pane's width rather than scrolling sideways.
+    var wrapsLines = false {
+        didSet {
+            guard wrapsLines != oldValue else { return }
+            scroll.hasHorizontalScroller = !wrapsLines
+            wrappedHeights = nil
+            tableView.reloadData()
+            needsLayout = true
+        }
+    }
+
+    /// The cell's fixed geometry either side of the text: the gutter's
+    /// leading inset, its width and the gap after it, then the trailing inset.
+    static let textLeading: CGFloat = 6 + 34 + 8
+    static let textTrailing: CGFloat = 8
 
     private static let columnID = NSUserInterfaceItemIdentifier("logRawColumn")
     private static let cellID = NSUserInterfaceItemIdentifier("logRawCell")
@@ -80,8 +109,11 @@ final class LogRawPaneView: NSView {
 
     private func build() {
         let column = NSTableColumn(identifier: Self.columnID)
-        column.resizingMask = .autoresizingMask
+        // The column's width is set in `layout()`: the longest line's when
+        // the pane scrolls sideways, the visible width when it wraps.
+        column.resizingMask = []
         tableView.addTableColumn(column)
+        tableView.columnAutoresizingStyle = .noColumnAutoresizing
         tableView.headerView = nil
         tableView.backgroundColor = .clear
         tableView.selectionHighlightStyle = .none
@@ -93,7 +125,8 @@ final class LogRawPaneView: NSView {
 
         scroll.documentView = tableView
         scroll.hasVerticalScroller = true
-        scroll.hasHorizontalScroller = false
+        scroll.hasHorizontalScroller = true
+        scroll.autohidesScrollers = true
         scroll.drawsBackground = true
         scroll.borderType = .noBorder
         scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -115,6 +148,62 @@ final class LogRawPaneView: NSView {
         tableView.scrollRowToVisible(0)
     }
 
+    /// The font a line draws in, read from a real cell so a text-scale
+    /// change and the cell can never disagree.
+    private static func lineFont() -> NSFont {
+        LogRawLineCell().textFont
+    }
+
+    /// Re-measure the longest line. The font is monospaced, so the line with
+    /// the most characters is the widest one, and only it is measured.
+    private func measureLongestLine() {
+        let font = Self.lineFont()
+        guard let longest = lines.max(by: { $0.count < $1.count }) else {
+            longestLineWidth = 0
+            return
+        }
+        longestLineWidth = ceil((longest as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    override func layout() {
+        super.layout()
+        guard let column = tableView.tableColumns.first else { return }
+        let visible = scroll.contentView.bounds.width
+        let width = wrapsLines
+            ? visible
+            : max(visible, Self.textLeading + longestLineWidth + Self.textTrailing)
+        if abs(column.width - width) > 0.5 {
+            column.width = width
+            if wrapsLines {
+                wrappedHeights = nil
+                tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<lines.count))
+            }
+        }
+    }
+
+    /// Each row's height when lines wrap at `width`, cached for that width.
+    private func wrappedRowHeights(forColumnWidth width: CGFloat) -> [CGFloat] {
+        let textWidth = max(40, width - Self.textLeading - Self.textTrailing)
+        if let cached = wrappedHeights, cached.width == textWidth, cached.heights.count == lines.count {
+            return cached.heights
+        }
+        let font = Self.lineFont()
+        let single = Self.rowHeight
+        func measured(_ text: String) -> CGFloat {
+            ceil((text as NSString).boundingRect(
+                with: NSSize(width: textWidth, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin], attributes: [.font: font]).height)
+        }
+        // One line, measured the same way, so a line that does not wrap keeps
+        // the single-line row's height exactly; each further line adds a box.
+        let oneLine = measured(" ")
+        let heights = lines.map { line -> CGFloat in
+            single + max(0, measured(line.isEmpty ? " " : line) - oneLine)
+        }
+        wrappedHeights = (textWidth, heights)
+        return heights
+    }
+
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
         scroll.backgroundColor = Self.surfaceColor(for: theme)
@@ -133,7 +222,10 @@ final class LogRawPaneView: NSView {
         // re-fire, so re-deriving the row height here is what makes a
         // fixed-height list follow the setting instead of clipping.
         tableView.rowHeight = Self.rowHeight
+        measureLongestLine()
+        wrappedHeights = nil
         tableView.reloadData()
+        needsLayout = true
     }
 
     /// What a line is drawn *on*, and therefore what every colour in
@@ -166,6 +258,12 @@ final class LogRawPaneView: NSView {
 extension LogRawPaneView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { lines.count }
 
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        guard wrapsLines, row < lines.count, let column = tableView.tableColumns.first else { return Self.rowHeight }
+        let heights = wrappedRowHeights(forColumnWidth: column.width)
+        return row < heights.count ? heights[row] : Self.rowHeight
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let cell = (tableView.makeView(withIdentifier: Self.cellID, owner: nil) as? LogRawLineCell)
             ?? {
@@ -174,6 +272,7 @@ extension LogRawPaneView: NSTableViewDataSource, NSTableViewDelegate {
                 return v
             }()
         cell.configure(number: row + 1, text: lines[row], severity: severities[row], theme: theme)
+        cell.wraps = wrapsLines
         return cell
     }
 }
@@ -183,6 +282,24 @@ private final class LogRawLineCell: NSTableCellView {
     private let numberLabel = NSTextField(labelWithString: "")
     private let textLabel = NSTextField(labelWithString: "")
     private let wash = NSView()
+    /// Centred for a one-line row; pinned to the top when the line wraps.
+    private var centred: [NSLayoutConstraint] = []
+    private var topPinned: [NSLayoutConstraint] = []
+
+    var textFont: NSFont { textLabel.font ?? .monospacedSystemFont(ofSize: 10.5, weight: .regular) }
+
+    /// R2-BUG-16: the line at full length, or wrapped at the cell's width.
+    /// Never cut with an ellipsis.
+    var wraps = false {
+        didSet {
+            guard wraps != oldValue else { return }
+            textLabel.lineBreakMode = wraps ? .byCharWrapping : .byClipping
+            textLabel.maximumNumberOfLines = wraps ? 0 : 1
+            NSLayoutConstraint.deactivate(wraps ? centred : topPinned)
+            NSLayoutConstraint.activate(wraps ? topPinned : centred)
+            needsLayout = true
+        }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -198,7 +315,14 @@ private final class LogRawLineCell: NSTableCellView {
         addSubview(numberLabel)
 
         textLabel.setScaledFont(ofSize: 10.5, weight: .regular, voice: .monospaced)
-        textLabel.lineBreakMode = .byTruncatingTail
+        // Gotcha (22)'s trap underneath: a `labelWithString` cell does not
+        // wrap at all until it is told to. Set first, because setting it
+        // resets the line break mode.
+        textLabel.cell?.wraps = true
+        // R2-BUG-16: never `.byTruncatingTail`. The column is as wide as the
+        // longest line, so a clipped line has room; a wrapped one wraps.
+        textLabel.lineBreakMode = .byClipping
+        textLabel.maximumNumberOfLines = 1
         textLabel.translatesAutoresizingMaskIntoConstraints = false
         textLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(textLabel)
@@ -211,12 +335,30 @@ private final class LogRawLineCell: NSTableCellView {
 
             numberLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             numberLabel.widthAnchor.constraint(equalToConstant: 34),
-            numberLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             textLabel.leadingAnchor.constraint(equalTo: numberLabel.trailingAnchor, constant: 8),
-            textLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            textLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            textLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -LogRawPaneView.textTrailing),
         ])
+        centred = [
+            numberLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            textLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ]
+        topPinned = [
+            numberLabel.firstBaselineAnchor.constraint(equalTo: textLabel.firstBaselineAnchor),
+            textLabel.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+        ]
+        NSLayoutConstraint.activate(centred)
+    }
+
+    /// Gotcha (22): the wrap width comes from the cell's own width less the
+    /// gutter, a width this label does not decide.
+    override func layout() {
+        super.layout()
+        let width = wraps ? max(40, bounds.width - LogRawPaneView.textLeading - LogRawPaneView.textTrailing) : 0
+        if abs(textLabel.preferredMaxLayoutWidth - width) > 0.5 {
+            textLabel.preferredMaxLayoutWidth = width
+            textLabel.invalidateIntrinsicContentSize()
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -284,6 +426,37 @@ extension LogRawPaneView {
 
 extension LogRawLineCell {
     var debugTextColor: NSColor? { debugTextLabel.textColor }
+}
+
+extension LogRawPaneView {
+    var debugHasHorizontalScroller: Bool { scroll.hasHorizontalScroller }
+    var debugColumnWidth: CGFloat { tableView.tableColumns.first?.width ?? 0 }
+    var debugVisibleWidth: CGFloat { scroll.contentView.bounds.width }
+
+    /// What row `row`'s cell draws: its text, whether all of it is shown,
+    /// the label's line break mode and the row's height. Unwrapped, all of it
+    /// is shown when the line's one-line width fits the label; wrapped, when
+    /// its wrapped height fits the row.
+    func debugLine(_ row: Int) -> (text: String, fits: Bool, lineBreak: NSLineBreakMode, rowHeight: CGFloat)? {
+        layoutSubtreeIfNeeded()
+        guard let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: true) as? LogRawLineCell else { return nil }
+        let rowHeight = tableView.rect(ofRow: row).height
+        cell.frame.size = NSSize(width: debugColumnWidth, height: rowHeight)
+        cell.layoutSubtreeIfNeeded()
+        let label = cell.debugTextLabel
+        let font = label.font ?? cell.textFont
+        let oneLine = (label.stringValue as NSString).size(withAttributes: [.font: font]).width
+        let fits: Bool
+        if wrapsLines {
+            let wrapped = (label.stringValue as NSString).boundingRect(
+                with: NSSize(width: label.bounds.width, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin], attributes: [.font: font]).height
+            fits = wrapped <= rowHeight + 0.5 && label.maximumNumberOfLines == 0
+        } else {
+            fits = oneLine <= label.bounds.width + 0.5
+        }
+        return (label.stringValue, fits, label.lineBreakMode, rowHeight)
+    }
 }
 #endif
 

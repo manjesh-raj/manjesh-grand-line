@@ -241,6 +241,23 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         button.toolTip = "Clear the input and discard this analysis (Esc)"
         return button
     }()
+    /// R2-BUG-16: lines are full length with a horizontal scroller by
+    /// default; this wraps them at the pane's width instead.
+    private lazy var wrapLinesButton: HelmButton = {
+        let button = HelmButton(title: "Wrap lines", variant: .secondary, size: .small,
+                                target: self, action: #selector(wrapLinesTapped))
+        button.toolTip = "Wrap long lines at the pane's width instead of scrolling sideways"
+        return button
+    }()
+
+    @objc private func wrapLinesTapped() {
+        rawPane.wrapsLines.toggle()
+        wrapLinesButton.title = rawPane.wrapsLines ? "Don\u{2019}t wrap" : "Wrap lines"
+        wrapLinesButton.toolTip = rawPane.wrapsLines
+            ? "Show each line at full length, scrolling sideways"
+            : "Wrap long lines at the pane's width instead of scrolling sideways"
+    }
+
     /// The severity counts, computed once per analysis rather than per render.
     private var severityCounts: (key: Date, errors: Int, warnings: Int)?
 
@@ -819,7 +836,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         _ = mutedLabels.add(rawPaneCountLabel)
         _ = rawPaneCard.setHeader(symbol: "doc.plaintext", tint: .neutral, title: "Provided output",
                                   subtitle: "Read-only · secrets already redacted",
-                                  actions: [rawPaneCountLabel])
+                                  actions: [wrapLinesButton, rawPaneCountLabel])
         // §6.13's "padded 14/16" around the dark card. Off Daylight the pane
         // is flush with its card exactly as before - the inset constants are
         // theme-driven rather than the layout being rebuilt, so the twelve
@@ -886,12 +903,15 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         split.alignment = .top
         split.spacing = 14
         split.translatesAutoresizingMaskIntoConstraints = false
-        // The raw pane takes a fixed proportion; the analysis column absorbs
-        // the rest. `.defaultHigh` (not required) so a very narrow window
+        // The raw pane and the analysis column split the width evenly.
+        // R2-BUG-16: the pane took a fixed 38% and cut every line at that
+        // width; it is half now, and a line longer than that scrolls or
+        // wraps rather than truncating. Not required, so a very narrow window
         // can still resolve without breaking - and well under
         // `NSLayoutPriorityWindowSizeStayPut` (500), per AGENTS.md gotcha (13):
         // no content constraint on this page may drive the window's own size.
-        let proportion = rawPaneCard.widthAnchor.constraint(equalTo: split.widthAnchor, multiplier: 0.38)
+        let proportion = rawPaneCard.widthAnchor.constraint(equalTo: split.widthAnchor, multiplier: 0.5,
+                                                            constant: -split.spacing / 2)
         proportion.priority = NSLayoutConstraint.Priority(499)
         proportion.isActive = true
         rawPaneCard.setContentHuggingPriority(.defaultHigh, for: .horizontal)
@@ -2820,6 +2840,9 @@ extension LogAnalyzerController {
         let insets: [CGFloat]
     }
 
+    var debugRawPane: LogRawPaneView { rawPane }
+    var debugWrapLinesButton: HelmButton { wrapLinesButton }
+
     func debugRawPanePaint() -> RawPanePaint {
         view.layoutSubtreeIfNeeded()
         return RawPanePaint(fill: rawPane.layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear },
@@ -2962,7 +2985,7 @@ extension LogAnalyzerController: SidebarLayoutAdopting, WorkspacePrimaryActionPr
         inputSummaryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         rawPaneCard.setHeader(symbol: "doc.plaintext", tint: .neutral,
                               titleLabel: NSTextField(labelWithString: "Input"),
-                              subtitleLabel: inputSummaryLabel, actions: [inputClearButton])
+                              subtitleLabel: inputSummaryLabel, actions: [wrapLinesButton, inputClearButton])
 
         // The right column opens with the summary, the patterns and the
         // likely cause.
