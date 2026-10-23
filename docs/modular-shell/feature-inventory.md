@@ -626,6 +626,7 @@ The buttons a page hands the floating bar's drill header (`drillHeaderActions`, 
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
+| `toolbar.FleetController.refreshButton` | Crew's Refresh (re-read the fleet) | Crew › In flight, beside the greeting | Crew › In flight (a page action in the window toolbar in the sidebar layout, R2-UX-04; the floating bar keeps it in the page) |  |
 | `toolbar.AutomationController.refreshButton` | AutomationController header action `refreshButton` | the floating bar's drill header, right side | Setup › Automation (moves into the window toolbar as a module action) |  |
 | `toolbar.CodePreviewController.formatTapped()` | Format | CodePreviewController page toolbar (`formatTapped()`) | Code |  |
 | `toolbar.CodePreviewController.newSnippetTapped()` | New snippet | CodePreviewController page toolbar (`newSnippetTapped()`) | Code |  |

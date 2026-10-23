@@ -592,3 +592,9 @@ final class ClosureSleeve: NSObject {
     init(_ closure: @escaping () -> Void) { self.closure = closure }
     @objc func invoke() { closure() }
 }
+
+// R2-UX-04: New Runbook is the page's primary verb, at the toolbar's far
+// right in the sidebar layout. The editor showing takes it away, as before.
+extension RunbooksController: WorkspacePrimaryActionProviding {
+    var workspacePrimaryAction: NSView? { runbookEditorContainer.isHidden ? newRunbookButton : nil }
+}

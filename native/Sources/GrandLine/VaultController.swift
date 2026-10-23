@@ -1535,9 +1535,13 @@ extension VaultController: SidebarLayoutAdopting {
         secretsTable.accessibilityName = "Secrets"
         toolsTable.accessibilityName = "Verified launchers"
         // The same headers, holding the same badges and button.
+        // R2-UX-04: the same header with its count, and Add Secret moves to the
+        // toolbar's far right (`workspacePrimaryAction`) - nothing lives in a
+        // card header.
         secretsTable.card.setHeader(symbol: "lock.fill", tint: .good, title: "Secrets",
                                     subtitle: "Keychain-backed, this device only",
-                                    actions: [secretsCountBadge, addSecretButton])
+                                    actions: [secretsCountBadge])
+        addSecretButton.controlSize = .regular
         toolsTable.card.setHeader(symbol: "checkmark.shield.fill", tint: .violet, title: "Verified Launchers",
                                   subtitle: "From av doctor --json", actions: [toolsCountBadge])
         applyTheme()
@@ -1613,4 +1617,11 @@ extension VaultController: SidebarLayoutAdopting {
         pasteboard.setString(name, forType: .string)
         Toast.show(in: view, message: "Copied \u{201c}\(name)\u{201d} to clipboard")
     }
+}
+
+// R2-UX-04: Add Secret is the page's primary verb, the far-right filled
+// button in the sidebar layout rather than a button in the Secrets card's
+// header. The floating bar keeps it in the card.
+extension VaultController: WorkspacePrimaryActionProviding {
+    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? addSecretButton : nil }
 }

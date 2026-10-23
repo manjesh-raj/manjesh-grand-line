@@ -1482,6 +1482,9 @@ extension FleetController: SidebarLayoutAdopting {
         // crumb, the sidebar row and the module header. Its live half is the
         // header's subtitle now (`drillHeaderSubtitle`).
         headerRow.isHidden = true
+        // R2-UX-04: its two buttons are the toolbar's now, and its tabs were
+        // already the toolbar's (`ModuleTabHosting`), so the row is empty.
+        toolbarRow.isHidden = true
 
         needsYouSummary.font = HelmType.body()
         needsYouSummary.maximumNumberOfLines = 0
@@ -1675,6 +1678,14 @@ extension FleetController {
 // In flight tab. The floating bar keeps its greeting, so it gets no actions
 // and the static subtitle from here.
 extension FleetController: DaylightDrillActions {
-    var drillHeaderActions: [NSView] { [] }
+    /// R2-UX-04: Refresh is an outlined page action in the toolbar, where
+    /// every other module's is, rather than a button floating in the page.
+    var drillHeaderActions: [NSView] { drawsSidebarLayout ? [refreshButton] : [] }
     var drillHeaderSubtitle: String? { drawsSidebarLayout ? liveSubtitle : nil }
+}
+
+// R2-UX-04: Ask your crew is the page's verb, the far-right filled button in
+// the sidebar layout.
+extension FleetController: WorkspacePrimaryActionProviding {
+    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? crewButton : nil }
 }

@@ -568,6 +568,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// the same ones the floating bar's drill header held - so a page needs
     /// no change to put its buttons here.
     func setPageActions(_ views: [NSView]) {
+        // R2-UX-04: one filled button per page, at the far right. A page
+        // action is outlined however its page drew it in the floating bar.
+        for case let button as HelmButton in views where button.variant == .primary { button.variant = .secondary }
         guard views.map(ObjectIdentifier.init) != shownActions.map(ObjectIdentifier.init) else { return }
         shownActions = views
         for view in pageActions.arrangedSubviews {
@@ -584,6 +587,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// The page's primary action, after Search, or none. The view is the
     /// page's own, like `setPageActions`'.
     func setPrimaryAction(_ view: NSView?) {
+        // R2-UX-04: the page's primary verb is the far-right filled button,
+        // whatever variant the page gave it for the floating bar.
+        if let button = view as? HelmButton, button.variant != .primary { button.variant = .primary }
         guard view !== shownPrimary else { return }
         shownPrimary = view
         for old in primaryActionHost.arrangedSubviews {

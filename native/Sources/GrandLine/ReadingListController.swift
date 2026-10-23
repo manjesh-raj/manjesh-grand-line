@@ -1197,3 +1197,9 @@ final class ReadingListDropHintView: NSView {
     var debugLabelColor: NSColor? { label.textColor }
     #endif
 }
+
+// R2-UX-04: Paste link is the page's primary verb - the far-right filled
+// button in the sidebar layout, not a filled button before the cluster.
+extension ReadingListController: WorkspacePrimaryActionProviding {
+    var workspacePrimaryAction: NSView? { pasteButton }
+}

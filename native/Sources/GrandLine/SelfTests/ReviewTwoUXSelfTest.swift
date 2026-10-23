@@ -37,7 +37,7 @@ enum ReviewTwoUXSelfTest {
                       checkTheLockSwitchNeedsAPassword, checkHomeSpeaksForTheVisibleModules,
                       checkAChordReachesAModule, checkTheTabChords, checkTheSidebarShowsKeyboardFocus,
                       checkTheSidebarIsWiderAndRemembered, checkQuickConnectIsOnEveryModule,
-                      checkTheToolbarTakesThePalette, checkOneNamePerLevel] {
+                      checkTheToolbarTakesThePalette, checkOneNamePerLevel, checkOnePrimaryActionRule] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -534,6 +534,66 @@ enum ReviewTwoUXSelfTest {
                   "Settings' module line is \(shell.debugHeader?.subtitle ?? "nothing"), not its category's description", &ok)
         } else {
             fail("Settings did not mount", &ok)
+        }
+        shell.show(.homeCanvas)
+        settle(shell)
+    }
+
+    // MARK: R2-UX-04 and R2-UI-02 - one primary-action rule, one Refresh
+
+    private static func checkOnePrimaryActionRule(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        for destination in RailDestination.allCases {
+            shell.show(destination)
+            settle(shell)
+            let actions = shell.toolbar.debugPageActions.compactMap { $0 as? HelmButton }
+            let filled = actions.filter { $0.variant == .primary }
+            check(filled.isEmpty, "\(destination.rawValue) draws a filled page action before the cluster: \(filled.map(\.title))", &ok)
+            if let primary = shell.toolbar.debugPrimaryAction as? HelmButton {
+                check(primary.variant == .primary, "\(destination.rawValue)'s far-right primary \(primary.title) is not filled", &ok)
+            }
+            // One Refresh: the shared component, labelled, in the page's
+            // actions - never a bare glyph.
+            for button in actions where button.accessibilityLabel() == "Refresh" || button.title == "Refresh" {
+                check(button.title == "Refresh" && button.variant == .secondary,
+                      "\(destination.rawValue)'s Refresh is \"\(button.title)\" (\(button.variant)), not the labelled outlined one", &ok)
+            }
+            // The far-right primary is after Search.
+            let ids = shell.toolbar.debugItemIdentifiers
+            if let primaryIndex = ids.firstIndex(of: WorkspaceToolbar.ItemID.primaryAction) {
+                check(ids.firstIndex(of: WorkspaceToolbar.ItemID.search).map { $0 < primaryIndex } == true,
+                      "\(destination.rawValue)'s primary is not at the far right: \(ids.map(\.rawValue))", &ok)
+            }
+        }
+        // The pages whose verb was a filled button before the cluster, an
+        // outlined one, or a button inside the page.
+        let wanted: [RailDestination: String] = [
+            .notebook: "New page", .readingList: "Paste link", .runbooks: "New Runbook", .stickyBoard: "New Note",
+            .schedules: "+ New Schedule", .overview: "Ask your crew", .vault: "+ Add Secret",
+            .health: "Copy diagnostics", .updates: "Check for updates",
+        ]
+        for (destination, title) in wanted {
+            shell.show(destination)
+            settle(shell)
+            let primary = shell.toolbar.debugPrimaryAction as? HelmButton
+            // Notebook's draws as its icon below 1600pt (R2-BUG-07, U-02), so
+            // it is matched by the page's own button rather than its title.
+            let isThePagesOwn = destination == .notebook && primary != nil
+                && primary === shell.workspace.notebook.workspacePrimaryAction
+            check(primary?.title == title || isThePagesOwn,
+                  "\(destination.rawValue)'s primary is \(primary?.title ?? "nothing"), want \(title)", &ok)
+        }
+        // Crew's two buttons left the page: Refresh is a page action.
+        shell.show(.overview)
+        settle(shell)
+        check(shell.toolbar.debugPageActions.contains { ($0 as? HelmButton)?.title == "Refresh" },
+              "Crew's Refresh is not in the toolbar", &ok)
+        // Nothing lives in a card header: Add Secret is not in the Secrets card.
+        shell.show(.vault)
+        settle(shell)
+        if let add = shell.toolbar.debugPrimaryAction {
+            check(add.isDescendant(of: shell.debugContentPane) == false,
+                  "Add Secret is still inside the page", &ok)
         }
         shell.show(.homeCanvas)
         settle(shell)

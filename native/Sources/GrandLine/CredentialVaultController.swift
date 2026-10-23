@@ -1564,3 +1564,10 @@ extension CredentialVaultController: SidebarLayoutAdopting, WorkspaceInspectorSo
         }
     }
 }
+
+// R2-UX-04: Add credential is the page's primary verb, the far-right filled
+// button in the sidebar layout. It hides with the others while the vault is
+// locked, and the toolbar follows its `isHidden`.
+extension CredentialVaultController: WorkspacePrimaryActionProviding {
+    var workspacePrimaryAction: NSView? { addButton }
+}

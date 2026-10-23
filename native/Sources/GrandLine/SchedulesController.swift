@@ -778,3 +778,9 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
         refreshSchedules()
     }
 }
+
+// R2-UX-04: New Schedule is the page's primary verb, the far-right filled
+// button in the sidebar layout; Refresh stays an outlined page action.
+extension SchedulesController: WorkspacePrimaryActionProviding {
+    var workspacePrimaryAction: NSView? { schedulesCard.addButton }
+}

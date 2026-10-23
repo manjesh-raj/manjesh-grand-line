@@ -27,6 +27,7 @@ enum ReviewTwoUXModelSelfTest {
         checkThePlainLanguageCopy(&ok)
         checkTheModuleChords(&ok)
         checkTheSidebarChordIsOneThing(&ok)
+        checkTheToolbarEnforcesOneFilledButton(&ok)
         print(ok ? "ReviewTwoUXModelSelfTest: PASS" : "ReviewTwoUXModelSelfTest: FAIL")
         return ok
     }
@@ -360,6 +361,18 @@ enum ReviewTwoUXModelSelfTest {
         } else {
             fail("the sidebar shell no longer overrides \u{2325}\u{2318}S", &ok)
         }
+    }
+
+    // MARK: R2-UX-04 - the toolbar enforces one filled button
+
+    private static func checkTheToolbarEnforcesOneFilledButton(_ ok: inout Bool) {
+        let toolbar = WorkspaceToolbar(splitView: NSSplitView())
+        let action = HelmButton(title: "Filled in the floating bar", variant: .primary)
+        let primary = HelmButton(title: "Outlined in the floating bar", variant: .secondary)
+        toolbar.setPageActions([action])
+        toolbar.setPrimaryAction(primary)
+        check(action.variant == .secondary, "a page action stays filled in the toolbar", &ok)
+        check(primary.variant == .primary, "the far-right primary is drawn outlined", &ok)
     }
 }
 

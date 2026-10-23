@@ -1381,3 +1381,9 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     }
     #endif
 }
+
+// R2-UX-04: New page is the page's primary verb, so the sidebar layout draws
+// it at the toolbar's far right; Today's note stays an outlined page action.
+extension NotebookController: WorkspacePrimaryActionProviding {
+    var workspacePrimaryAction: NSView? { newPageButton }
+}
