@@ -284,16 +284,17 @@ enum MainSplitShellSelfTest {
         } else {
             fail("Notebook has no column of its own", &ok)
         }
-        // The same reopen from ⌥⌘S, on a page whose column is the captain's.
+        // The same reopen from Toggle Page Column (⌥⇧⌘S since R2-UX-09), on a
+        // page whose column is the captain's.
         shell.show(.settings)
         settle(shell)
         if let split = (shell.debugSlotController(.settings) as? HelmSplitPageHosting)?.splitPage {
-            shell.toggleSidebarFromMenu()
+            shell.togglePageColumnFromMenu()
             settle(shell)
-            check(split.isSidebarCollapsed, "⌥⌘S did not put Settings' column away", &ok)
-            shell.toggleSidebarFromMenu()
+            check(split.isSidebarCollapsed, "Toggle Page Column did not put Settings' column away", &ok)
+            shell.togglePageColumnFromMenu()
             settle(shell)
-            check(!split.isSidebarCollapsed, "⌥⌘S did not bring Settings' column back", &ok)
+            check(!split.isSidebarCollapsed, "Toggle Page Column did not bring Settings' column back", &ok)
             check(abs(window.frame.width - 1100) < 0.5,
                   "Settings' column coming back grew a 1100pt window to \(Int(window.frame.width))pt", &ok)
         } else {
@@ -385,7 +386,8 @@ enum MainSplitShellSelfTest {
         check(!shell.debugSidebarIsCollapsed && window.firstResponder === shell.sidebar.outlineView,
               "⌘⇧D did not reveal the sidebar and focus it", &ok)
 
-        // ⌥⌘S on a page with its own column: that column, as before.
+        // R2-UX-09: ⌥⌘S on a page with its own column is still the app's
+        // sidebar, and the column is Toggle Page Column's.
         shell.show(.settings)
         settle(shell)
         guard let split = (shell.debugSlotController(.settings) as? HelmSplitPageHosting)?.splitPage else {
@@ -395,9 +397,15 @@ enum MainSplitShellSelfTest {
         let columnWasCollapsed = split.isSidebarCollapsed
         shell.toggleSidebarFromMenu()
         settle(shell)
-        check(split.isSidebarCollapsed != columnWasCollapsed && !shell.debugSidebarIsCollapsed,
-              "⌥⌘S on Settings did not toggle Settings' own column (or hid the sidebar instead)", &ok)
+        check(split.isSidebarCollapsed == columnWasCollapsed && shell.debugSidebarIsCollapsed,
+              "⌥⌘S on Settings toggled Settings' own column, or left the sidebar showing (R2-UX-09)", &ok)
         shell.toggleSidebarFromMenu()
+        settle(shell)
+        shell.togglePageColumnFromMenu()
+        settle(shell)
+        check(split.isSidebarCollapsed != columnWasCollapsed && !shell.debugSidebarIsCollapsed,
+              "Toggle Page Column on Settings did not toggle Settings' own column (or hid the sidebar instead)", &ok)
+        shell.togglePageColumnFromMenu()
         settle(shell)
 
         // On Connections the page's column is put away for the toolbar's

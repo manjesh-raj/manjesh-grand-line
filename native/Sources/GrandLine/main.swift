@@ -2294,6 +2294,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggleSidebarItem.keyEquivalentModifierMask = [.command, .option]
         toggleSidebarItem.target = menuTarget
         goMenu.addItem(toggleSidebarItem)
+        // R2-UX-09: in the sidebar layout ⌥⌘S is always the app's sidebar,
+        // so a page's own column (Notebook, Settings, Schedules) has its own
+        // item, a Shift away.
+        if workspaceLayout == .sidebar {
+            let pageColumnItem = NSMenuItem(title: "Toggle Page Column",
+                                            action: #selector(WorkspaceShellController.togglePageColumnFromMenu),
+                                            keyEquivalent: "s").withSymbol("sidebar.squares.left")
+            pageColumnItem.keyEquivalentModifierMask = [.command, .option, .shift]
+            pageColumnItem.target = menuTarget
+            goMenu.addItem(pageColumnItem)
+        }
         goMenu.addItem(NSMenuItem.separator())
         let allDestinationsItem = NSMenuItem(title: "All Destinations\u{2026}",
                                              action: #selector(AppDelegate.showAllDestinations),

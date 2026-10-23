@@ -26,6 +26,7 @@ enum ReviewTwoUXModelSelfTest {
         checkTheWelcomeOffersTheProfiles(&ok)
         checkThePlainLanguageCopy(&ok)
         checkTheModuleChords(&ok)
+        checkTheSidebarChordIsOneThing(&ok)
         print(ok ? "ReviewTwoUXModelSelfTest: PASS" : "ReviewTwoUXModelSelfTest: FAIL")
         return ok
     }
@@ -335,6 +336,29 @@ enum ReviewTwoUXModelSelfTest {
         if let navigator = source("Navigator.swift") {
             check(navigator.contains("case .console: return workspace.console") && navigator.contains("case .tools: return workspace.tools"),
                   "Console or Tools no longer keep their own number chords (option A)", &ok)
+        }
+    }
+
+    // MARK: R2-UX-09 - ⌥⌘S is the sidebar everywhere
+
+    private static func checkTheSidebarChordIsOneThing(_ ok: inout Bool) {
+        guard let sidebar = goMenu(for: .sidebar), let floating = goMenu(for: .floatingBar) else {
+            fail("there is no Go menu to read ⌥⌘S from", &ok)
+            return
+        }
+        let column = sidebar.items.first { $0.action == #selector(WorkspaceShellController.togglePageColumnFromMenu) }
+        check(column?.keyEquivalent == "s" && column?.keyEquivalentModifierMask == [.command, .option, .shift],
+              "the sidebar layout's page columns have no \u{2325}\u{21E7}\u{2318}S item", &ok)
+        check(!floating.items.contains { $0.action == #selector(WorkspaceShellController.togglePageColumnFromMenu) },
+              "the floating bar grew a second page-column chord", &ok)
+        if let shell = source("MainSplitShellController.swift"),
+           let start = shell.range(of: "override func toggleSidebarFromMenu() {"),
+           let end = shell.range(of: "}", range: start.upperBound..<shell.endIndex) {
+            let body = shell[start.upperBound..<end.lowerBound]
+            check(body.trimmingCharacters(in: .whitespacesAndNewlines) == "toggleWorkspaceSidebar()",
+                  "\u{2325}\u{2318}S in the sidebar layout does something other than toggle its sidebar: \(body)", &ok)
+        } else {
+            fail("the sidebar shell no longer overrides \u{2325}\u{2318}S", &ok)
         }
     }
 }

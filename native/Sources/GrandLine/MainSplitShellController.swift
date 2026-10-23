@@ -717,16 +717,15 @@ final class MainSplitShellController: WorkspaceShellController {
         return true
     }
 
-    /// ⌥⌘S, Go > Toggle Sidebar. On a page with a column of its own it still
-    /// toggles that column, exactly as in the floating bar; everywhere else -
-    /// including a page whose column is put away, as Connections' is while the
-    /// toolbar draws its tabs - it shows or hides this shell's sidebar.
+    /// ⌥⌘S, Go > Toggle Sidebar: this shell's sidebar, on every page.
+    ///
+    /// R2-UX-09: it used to toggle a page's own column where the page had
+    /// one (Notebook, Settings, Schedules) and the app sidebar everywhere
+    /// else - two behaviours on one chord, so the same keys did different
+    /// things a page apart. The page columns are Toggle Page Column, ⌥⇧⌘S
+    /// (`togglePageColumnFromMenu`).
     override func toggleSidebarFromMenu() {
-        if let page = workspace.navigator.showingSplitPage, !page.pageForcesCollapse {
-            super.toggleSidebarFromMenu()
-        } else {
-            toggleWorkspaceSidebar()
-        }
+        toggleWorkspaceSidebar()
     }
 
     // MARK: Modules and their tabs

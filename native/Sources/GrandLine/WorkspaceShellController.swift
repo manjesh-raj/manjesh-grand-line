@@ -472,6 +472,9 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     @objc func newCodeSnippetFromMenu() { workspace.navigator.newCodeSnippetFromMenu() }
     @objc func runCodeSnippetFromMenu() { workspace.navigator.runCodeSnippetFromMenu() }
     @objc func toggleSidebarFromMenu() { workspace.navigator.toggleSidebarFromMenu() }
+    /// R2-UX-09: the showing page's own column, where it has one - the
+    /// sidebar layout's ⌥⇧⌘S, now that ⌥⌘S is always its sidebar.
+    @objc func togglePageColumnFromMenu() { workspace.navigator.toggleSidebarFromMenu() }
     @objc func toggleCodePreviewSidebarFromMenu() { workspace.navigator.toggleCodePreviewSidebarFromMenu() }
     @objc func captureScreenRegionFromMenu() { workspace.navigator.captureScreenRegionFromMenu() }
     @objc func copyWhiteboardImageFromMenu() { workspace.navigator.copyWhiteboardImageFromMenu() }
