@@ -1487,7 +1487,13 @@ enum ReviewTourLab {
             edge.lineWidth = scale
             edge.stroke()
         }
-        for item in descendants(frameView, named: "NSToolbarItemViewer")
+        // The overflow chevron is its own viewer class. Left out, the
+        // platter painted above covered it and a dark render showed an empty
+        // circle where the chevron is - R2-BUG-07's "chevron does not draw in
+        // Dusk", which was this lab and not the app.
+        let viewers = descendants(frameView, named: "NSToolbarItemViewer")
+            + descendants(frameView, named: "NSToolbarClippedItemsIndicatorViewer")
+        for item in viewers
         where !item.isHiddenOrHasHiddenAncestor && item.bounds.width > 0 {
             guard let rep = item.bitmapImageRepForCachingDisplay(in: item.bounds) else { continue }
             item.cacheDisplay(in: item.bounds, to: rep)
