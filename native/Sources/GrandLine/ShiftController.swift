@@ -2964,8 +2964,14 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         }
         tasksTable.card.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         adoptWorkspaceWeeklyReview()
-        dashboardContainer.insertArrangedSubview(startHereState, at: 0)
-        startHereState.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        // Centred in the content pane like every page-level empty state
+        // (UXP-13), not resting at the top of the scroll document.
+        if let pane = splitPage?.contentPane {
+            startHereState.placeAsPageEmptyState(in: pane)
+        } else {
+            dashboardContainer.insertArrangedSubview(startHereState, at: 0)
+            startHereState.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        }
         startHereState.isHidden = true
         render()
     }

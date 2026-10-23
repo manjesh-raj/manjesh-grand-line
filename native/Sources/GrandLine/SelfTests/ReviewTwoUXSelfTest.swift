@@ -470,6 +470,7 @@ enum ReviewTwoUXSelfTest {
         settle(shell)
         check(window.titlebarAppearsTransparent, "the title bar is opaque, so macOS draws its own material under the toolbar", &ok)
         var worst: (theme: String, delta: CGFloat) = ("", 0)
+        var worstInk: (theme: String, ink: Int) = ("", Int.max)
         for theme in HelmTheme.allThemes {
             ThemeManager.shared.setTheme(theme)
             settle(shell)
@@ -499,12 +500,43 @@ enum ReviewTwoUXSelfTest {
             if delta > worst.delta { worst = (theme.id, delta) }
             check(delta < 0.012,
                   "in \(theme.id) the toolbar band is \(sample) against the palette's ground \(expected) (delta \(delta))", &ok)
-            let window3 = HelmContrast.components(window.backgroundColor)
-            let ground3 = HelmContrast.components(HelmTheme.nsColor(theme.backgroundHex))
-            check(abs(window3.0 - ground3.0) < 0.01 && abs(window3.1 - ground3.1) < 0.01 && abs(window3.2 - ground3.2) < 0.01,
-                  "in \(theme.id) the window's own background is not the palette's ground", &ok)
+            // ...and the band is not just ground: the toolbar's items are
+            // drawn over it. A light palette's window background once made
+            // the frame drop every item while the band still matched, which
+            // the sample above cannot see.
+            let drawn = drawnPixels(in: rep, frameView: frameView, window: window, ground: expected)
+            if drawn.searched == 0 {
+                fail("in \(theme.id) the toolbar has no Search item to sample, so the drawn-items check measures nothing", &ok)
+            } else {
+                check(drawn.ink > drawn.searched / 50,
+                      "in \(theme.id) the toolbar's Search item draws \(drawn.ink) of \(drawn.searched) pixels off the ground - its items are not drawn", &ok)
+                if drawn.ink < worstInk.ink { worstInk = (theme.id, drawn.ink) }
+            }
         }
-        print("  ok   the toolbar band matched the palette's ground in \(HelmTheme.allThemes.count) palettes, worst \(worst.theme) at \(worst.delta)")
+        print("  ok   the toolbar band matched the palette's ground in \(HelmTheme.allThemes.count) palettes, worst \(worst.theme) at \(worst.delta); "
+              + "its items drew in every one, fewest ink pixels \(worstInk.ink) in \(worstInk.theme)")
+    }
+
+    /// The pixels inside the toolbar's Search item that differ from the
+    /// palette's ground by more than 0.15 in some channel - its glyph and its
+    /// label - and how many pixels were looked at.
+    static func drawnPixels(in rep: NSBitmapImageRep, frameView: NSView, window: NSWindow,
+                            ground: NSColor) -> (ink: Int, searched: Int) {
+        guard let item = window.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "workspace.search" }),
+              let view = item.view, view.window === window else { return (0, 0) }
+        let rect = view.convert(view.bounds, to: nil)
+        let scale = CGFloat(rep.pixelsWide) / frameView.bounds.width
+        var ink = 0, searched = 0
+        for py in stride(from: Int(rect.minY * scale), to: Int(rect.maxY * scale), by: 2) {
+            for px in stride(from: Int(rect.minX * scale), to: Int(rect.maxX * scale), by: 2) {
+                let y = rep.pixelsHigh - 1 - py
+                guard px >= 0, px < rep.pixelsWide, y >= 0, y < rep.pixelsHigh, let c = rep.colorAt(x: px, y: y) else { continue }
+                searched += 1
+                if max(abs(c.redComponent - ground.redComponent), abs(c.greenComponent - ground.greenComponent),
+                       abs(c.blueComponent - ground.blueComponent)) > 0.15 { ink += 1 }
+            }
+        }
+        return (ink, searched)
     }
 
     // MARK: R2-UX-05 - one name per level
@@ -657,6 +689,21 @@ enum ReviewTwoUXSelfTest {
     // MARK: R2-UX-07 - empty states that invite
 
     /// Every visible, page-level empty state under `view`.
+    /// One placement (UXP-13's rule, measured in the sidebar layout): a
+    /// page-level empty state is centred in the content pane, within 8% of
+    /// its height, not resting at the top of a scroll document.
+    static func checkSitsInTheMiddle(_ state: HelmEmptyState, of pane: NSView, _ name: String, _ ok: inout Bool) {
+        pane.layoutSubtreeIfNeeded()
+        let frame = state.convert(state.bounds, to: pane)
+        let height = pane.bounds.height
+        guard height > 300, frame.height > 0 else {
+            fail("\(name)'s empty state measured in a \(height)pt pane at \(frame) - the placement check measures nothing", &ok)
+            return
+        }
+        check(abs(frame.midY - height / 2) <= height * 0.08,
+              "\(name)'s empty state is centred at y \(Int(frame.midY)) in a 0-\(Int(height)) pane, not at its middle", &ok)
+    }
+
     static func pageEmptyStates(in view: NSView) -> [HelmEmptyState] {
         var found: [HelmEmptyState] = []
         func walk(_ v: NSView) {
@@ -670,6 +717,17 @@ enum ReviewTwoUXSelfTest {
 
     private static func checkEmptyStatesInvite(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         resize(window, width: 1512, shell)
+        // The renders' height: at a short window a state resting at the top
+        // of its document is close enough to the middle to pass for centred.
+        let savedFrame = window.frame
+        var tall = window.frame
+        tall.size.height = 950
+        window.setFrame(tall, display: true)
+        settle(shell)
+        defer {
+            window.setFrame(savedFrame, display: true)
+            settle(shell)
+        }
         // Tasks with nothing in it: one invitation, not three empty states.
         shell.show(.shift)
         settle(shell)
@@ -686,6 +744,7 @@ enum ReviewTwoUXSelfTest {
             check(pageEmptyStates(in: shell.debugContentPane).count == 1,
                   "an empty Tasks page draws \(pageEmptyStates(in: shell.debugContentPane).count) empty states, want one", &ok)
             check(shift.debugStartHereState.debugHasWatermark, "Tasks' start-here state is not the shared look", &ok)
+            checkSitsInTheMiddle(shift.debugStartHereState, of: shell.debugContentPane, "Tasks", &ok)
         } else {
             fail("the suite's Tasks store is not empty, so the start-here check measures nothing", &ok)
         }
@@ -697,6 +756,7 @@ enum ReviewTwoUXSelfTest {
                   "an empty Schedules page shows its invitation \(schedules.debugPageEmptyState.isHidden ? "hidden" : "shown") over sections hidden \(schedules.debugEmptyReplacesHidden)", &ok)
             check(pageEmptyStates(in: shell.debugContentPane).count == 1,
                   "an empty Schedules page draws \(pageEmptyStates(in: shell.debugContentPane).count) empty states, want one", &ok)
+            checkSitsInTheMiddle(schedules.debugPageEmptyState, of: shell.debugContentPane, "Schedules", &ok)
         }
         // Knowledge's tabs: the same look - a watermark, not a tile or an
         // outline of their own - and Docs' state is not inside a card.

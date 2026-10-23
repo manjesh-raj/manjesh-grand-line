@@ -254,8 +254,6 @@ final class MainSplitShellController: WorkspaceShellController {
 
         themeToken = ThemeManager.shared.observe { [weak self] theme in
             self?.toolbar?.applyThemeSymbol(theme)
-            // U-01: the window's own ground follows the palette, live.
-            self?.view.window?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex)
         }
         // Home's subtitle is the date, so it turns over at midnight.
         dayChangeObserver = NotificationCenter.default.addObserver(
@@ -626,14 +624,19 @@ final class MainSplitShellController: WorkspaceShellController {
     /// window, and the same in every palette, measured in the view tree.
     /// Transparent, AppKit hides that background and the content pane's
     /// ground (`WorkspaceContentPaneController`, painted under the toolbar)
-    /// is what the band and the glass capsules over it show. The window's
-    /// own background takes the palette's ground too, for the frame's edges.
+    /// is what the band and the glass capsules over it show.
+    ///
+    /// The window's own `backgroundColor` is left alone, deliberately.
+    /// Setting it to a light palette's ground (Daylight, measured) made the
+    /// frame stop drawing every toolbar item over the content pane - the
+    /// crumb, the buttons and the bell were gone, while a dark palette's ground
+    /// drew them. The title bar alone still drew its items, so it was the
+    /// frame's composition, and the band matches the palette without it.
     private func applyTitleBar() {
         guard let window = view.window else { return }
         window.toolbar?.isVisible = !lockOverlayIsShown
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.backgroundColor = HelmTheme.nsColor(ThemeManager.shared.theme.backgroundHex)
         window.title = lockOverlayIsShown ? AppPaths.displayName : windowTitle
         window.subtitle = ""
     }
