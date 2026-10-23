@@ -4,22 +4,27 @@
 # the layout gotchas, the list-volume budgets, the store-durability proofs -
 # only ran when somebody remembered to run it.
 #
-# Two jobs, deliberately separate:
+# The jobs, deliberately separate:
 #
 #   build - `swift build` with warnings treated as failures, plus the release
 #           compile. Cheap, the thing most likely to catch a bad merge, and
-#           since P2 the one place the debug binary is compiled: the two test
+#           since P2 the one place the debug binary is compiled: the test
 #           jobs take it from here as an artifact instead of building their
-#           own.
+#           own. Since the CI speed-up it is three jobs: `build-debug` (the
+#           binary the tests wait for), `build-release` beside the tests, and
+#           the `swift build` check, which passes only when both do.
 #   test  - the headless-safe suite subset, via the same
 #           `Scripts/run-all-tests.sh` a developer runs locally. `--ci` skips
 #           the suites that need a real login session or the machine's own
 #           Keychain; that list lives in the script, with a reason per entry,
 #           so CI and local runs can never disagree about what "the tests" are.
 #   test-windowed - the exact complement of the above (`--session-only`): the
-#           ~50 suites that mount real `NSWindow`s and drive real AppKit
+#           suites that mount real `NSWindow`s and drive real AppKit
 #           layout, accessibility presses, contrast measurement, terminal
-#           rendering and WebKit visibility gating.
+#           rendering and WebKit visibility gating. It runs as three shards
+#           side by side (`test-windowed-shard`), and the `self-test suites
+#           (window-backed)` check passes only when every shard did and the
+#           shards between them ran each suite exactly once.
 #   widget - P11 of the 2026-09-25 review: `build-widget-extension.sh --check`.
 #           The WidgetKit extension is not a SwiftPM target, so `swift build`
 #           never compiles it - and `WidgetSharedContract.swift` is compiled
@@ -85,16 +90,16 @@ on:
 # *major* version, which is the part that has to match local - the exact Xcode
 # inside an image is GitHub's to bump and not worth pinning.
 #
-# It is repeated literally in all four jobs rather than factored into an `env`
+# It is repeated literally in every job rather than factored into an `env`
 # value, because `runs-on` does not accept the `env` context (only
 # github/needs/strategy/matrix/vars/inputs) and an unresolvable expression
-# there fails the job before a single step runs. Change all four together.
+# there fails the job before a single step runs. Change them all together.
 env:
   # Local development is on Swift 6.x (`swift --version` on the captain's
   # machine reports 6.3.3), and `Show toolchain` in every Swift job asserts
   # this major so a silent image regression to 5.x fails loudly instead of
   # producing a diagnostics set nobody can reproduce locally. Bump this, the
-  # four `runs-on` labels and native/README.md's Requirements section together,
+  # `runs-on` labels and native/README.md's Requirements section together,
   # and only after a real run has proved the new toolchain builds this app
   # warning-clean.
   EXPECTED_SWIFT_MAJOR: "6"
@@ -119,9 +124,16 @@ defaults:
     working-directory: native
 
 jobs:
-  build:
-    name: swift build
-    runs-on: macos-15   # keep all four in sync - see the runner-image note above
+  # The debug build is the one the test jobs wait for, so it is a job of its
+  # own: measured over 20 runs (2026-10-21 to 22), the old single `build` job
+  # took a median 10.2 minutes, 6.5 of them the release compile below, and
+  # both test jobs sat behind all of it for a binary that was ready at
+  # minute 4. The release compile is `build-release`, side by side with the
+  # tests, and `swift build` (the aggregate at the end of the build jobs)
+  # still passes only when both builds do.
+  build-debug:
+    name: swift build (debug)
+    runs-on: macos-15   # keep all the macOS labels in sync - see the runner-image note above
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -180,6 +192,24 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  build-release:
+    name: swift build (release)
+    runs-on: macos-15   # keep all the macOS labels in sync - see the runner-image note above
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          if ! swift --version 2>&1 | grep -qE "Apple Swift version ${EXPECTED_SWIFT_MAJOR}\."; then
+            echo "::error::expected a Swift ${EXPECTED_SWIFT_MAJOR}.x toolchain; this runner has something else."
+            echo "::error::see this workflow's runner-image note and native/README.md's Requirements."
+            exit 1
+          fi
+
       # GL-27: the self-test suites are compiled into debug builds only, which
       # means the release configuration is a genuinely different compilation
       # and can break on its own - a reference to a suite or a `debug*` shim
@@ -199,14 +229,29 @@ jobs:
           fi
           echo "release binary: no FM_RUN_* flags, $(stat -f%z "$BIN") bytes"
 
+  # `swift build`, the check this workflow has always reported: green only
+  # when the debug build (warning-clean) and the release build both are. Same
+  # name and same meaning as the single job it replaces, so nothing that
+  # watches for it changes.
+  build:
+    name: swift build
+    needs: [build-debug, build-release]
+    if: ${{ !cancelled() }}
+    runs-on: macos-15   # keep all the macOS labels in sync - see the runner-image note above
+    timeout-minutes: 5
+    steps:
+      - name: Both builds passed
+        working-directory: .
+        run: |
+          echo "debug: ${{ needs.build-debug.result }}, release: ${{ needs.build-release.result }}"
+          [ "${{ needs.build-debug.result }}" = success ] && [ "${{ needs.build-release.result }}" = success ]
+
   test:
     name: self-test suites
-    runs-on: macos-15   # keep all four in sync - see the runner-image note above
-    # P2: this job consumes the `build` job's debug binary rather than
-    # compiling its own, so it waits for it. Total runner minutes fall by two
-    # full builds per run; wall clock is roughly unchanged, because the build
-    # this job used to do was on its own critical path anyway.
-    needs: build
+    runs-on: macos-15   # keep all the macOS labels in sync - see the runner-image note above
+    # P2: this job consumes the debug build's binary rather than compiling its
+    # own, so it waits for it - and only for it, not for the release compile.
+    needs: build-debug
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -257,16 +302,29 @@ jobs:
           FM_INSTANCE_LOCK_FILE: ${{ runner.temp }}/ci-stores/instance.lock
         run: ./Scripts/run-all-tests.sh --ci --no-build
 
-  test-windowed:
-    name: self-test suites (window-backed)
-    runs-on: macos-15   # keep all four in sync - see the runner-image note above
-    # P2: same as `test` above - the `build` job's binary, not a third compile.
-    needs: build
+  # The window-backed suites, in three shards that run side by side. As one
+  # job they took a median 21.8 minutes over 20 runs, the longest stretch of
+  # every CI run. `--shard=K/N` in the runner script splits the same selection
+  # longest suite first onto the least-loaded shard, about 7 minutes each.
+  # `test-windowed` below reports the old check, and checks that the shards
+  # between them ran every suite in the selection exactly once.
+  test-windowed-shard:
+    name: self-test suites (window-backed, shard ${{ matrix.shard }} of ${{ matrix.of }})
+    runs-on: macos-15   # keep all the macOS labels in sync - see the runner-image note above
+    # P2: same as `test` above - the debug build's binary, not another compile.
+    needs: build-debug
     # A bound, because this job has already needed one: its first run hung and
     # was killed by GitHub's own 6-hour cap, producing no usable log. The
     # runner script now bounds each suite individually (`FM_SUITE_TIMEOUT`), so
     # this is only the backstop for the whole job.
     timeout-minutes: 60
+    strategy:
+      # Every shard runs to the end, so one red suite does not hide another
+      # shard's results.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+        of: [3]
     # BLOCKING as of P8 (full review #3). This job shipped
     # `continue-on-error: true` with its own instruction to "flip this once the
     # job has a track record of being green", and it has one - measured over the
@@ -344,11 +402,69 @@ jobs:
         # and skips the handful that need the captain's own machine (see
         # CI_UNSUPPORTED in the script, where each entry carries its measured
         # reason).
-        run: ./Scripts/run-all-tests.sh --session-only --ci --no-build
+        run: ./Scripts/run-all-tests.sh --session-only --ci --no-build --shard=${{ matrix.shard }}/${{ matrix.of }}
+
+      # What this shard was given, for the aggregate job to check the shards
+      # against the whole selection. Written even when a suite failed.
+      - name: Record this shard's suites
+        if: ${{ !cancelled() }}
+        run: |
+          ./Scripts/run-all-tests.sh --session-only --ci --list --shard=${{ matrix.shard }}/${{ matrix.of }} \
+            | grep '^FM_RUN_' > "$RUNNER_TEMP/windowed-shard-${{ matrix.shard }}.txt"
+      - name: Share this shard's suites
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windowed-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/windowed-shard-${{ matrix.shard }}.txt
+          retention-days: 1
+          if-no-files-found: error
+
+  # `self-test suites (window-backed)`, the check this workflow has always
+  # reported: green only when every shard passed and the shards between them
+  # ran every window-backed suite exactly once. The second half is what stops
+  # a matrix edit or a change to the script's split from quietly dropping a
+  # suite out of CI.
+  test-windowed:
+    name: self-test suites (window-backed)
+    needs: test-windowed-shard
+    if: ${{ !cancelled() }}
+    runs-on: macos-15   # keep all the macOS labels in sync - see the runner-image note above
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Take every shard's list
+        uses: actions/download-artifact@v4
+        with:
+          pattern: windowed-shard-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/shards
+
+      - name: Every window-backed suite ran in exactly one shard
+        run: |
+          ./Scripts/run-all-tests.sh --session-only --ci --list | grep '^FM_RUN_' | sort > "$RUNNER_TEMP/expected.txt"
+          cat "$RUNNER_TEMP"/shards/windowed-shard-*.txt | sort > "$RUNNER_TEMP/ran.txt"
+          twice="$(uniq -d "$RUNNER_TEMP/ran.txt")"
+          if [ -n "$twice" ]; then
+            echo "::error::these suites ran in more than one shard:"
+            echo "$twice"
+            exit 1
+          fi
+          if ! diff "$RUNNER_TEMP/expected.txt" "$RUNNER_TEMP/ran.txt"; then
+            echo "::error::the shards did not run exactly the window-backed selection (< missing, > not in it)"
+            exit 1
+          fi
+          echo "$(wc -l < "$RUNNER_TEMP/ran.txt" | tr -d ' ') window-backed suites, each in exactly one shard"
+
+      - name: Every shard passed
+        run: |
+          echo "shards: ${{ needs.test-windowed-shard.result }}"
+          [ "${{ needs.test-windowed-shard.result }}" = success ]
 
   generated:
     name: generated files match their inputs
-    runs-on: macos-15   # keep all four in sync - see the runner-image note above
+    runs-on: macos-15   # keep all the macOS labels in sync - see the runner-image note above
     # Minutes, not tens of minutes: no Swift build, no app, three scripts.
     timeout-minutes: 10
     steps:
@@ -446,7 +562,7 @@ jobs:
 
   widget:
     name: widget extension compiles
-    runs-on: macos-15   # keep in sync - see the runner-image note above
+    runs-on: macos-15   # keep all the macOS labels in sync - see the runner-image note above
     # P11 (2026-09-25 review): "`build-widget-extension.sh --check` is not in
     # CI even though `WidgetSharedContract.swift` compiles into both
     # binaries". SwiftPM has no bundle product, so the WidgetKit extension is
@@ -476,7 +592,7 @@ jobs:
 
   python:
     name: python lint and tests
-    runs-on: macos-15   # keep in sync - see the runner-image note above
+    runs-on: macos-15   # keep all the macOS labels in sync - see the runner-image note above
     # P11: "the 4.4K lines of security-relevant Python have tests but no
     # `ruff`". The tests were already run by `run-all-tests.sh` (and so by the
     # `test` job); the lint is new. `Scripts/ruff.toml` carries the rule set

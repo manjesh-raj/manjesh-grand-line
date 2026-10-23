@@ -42,6 +42,10 @@
 #   ./Scripts/run-all-tests.sh --session-only --ci
 #                                           # what CI's windowed job runs: that
 #                                           # selection, minus CI_UNSUPPORTED.
+#   ./Scripts/run-all-tests.sh --session-only --ci --shard=2/3
+#                                           # one of CI's windowed shards: the
+#                                           # second of three parts of that
+#                                           # selection (see SHARD_WEIGHTS).
 #
 # The two flags are orthogonal - `--session-only` selects, `--ci` skips.
 #   ./Scripts/run-all-tests.sh FM_RUN_SHIFT_STORE_TESTS FM_RUN_BACKUP_TESTS
@@ -86,6 +90,7 @@ LIST_ONLY=0
 DESCRIBE=0
 CI_MODE=0
 SESSION_ONLY=0
+SHARD=""
 REQUESTED=()
 
 for arg in "$@"; do
@@ -95,11 +100,27 @@ for arg in "$@"; do
     --describe) LIST_ONLY=1; DESCRIBE=1 ;;
     --ci) CI_MODE=1 ;;
     --session-only) SESSION_ONLY=1 ;;
+    --shard=*) SHARD="${arg#--shard=}" ;;
     -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     FM_RUN_*) REQUESTED+=("$arg") ;;
     *) echo "unknown argument: $arg (see --help)" >&2; exit 2 ;;
   esac
 done
+
+SHARD_INDEX=0
+SHARD_COUNT=0
+if [ -n "$SHARD" ]; then
+  if ! [[ "$SHARD" =~ ^[0-9]+/[0-9]+$ ]]; then
+    echo "bad --shard=$SHARD: want K/N, for example --shard=2/3" >&2
+    exit 2
+  fi
+  SHARD_INDEX="${SHARD%/*}"
+  SHARD_COUNT="${SHARD#*/}"
+  if [ "$SHARD_COUNT" -lt 1 ] || [ "$SHARD_INDEX" -lt 1 ] || [ "$SHARD_INDEX" -gt "$SHARD_COUNT" ]; then
+    echo "bad --shard=$SHARD: K has to be between 1 and N" >&2
+    exit 2
+  fi
+fi
 
 BIN=".build/debug/GrandLine"
 MAIN="Sources/GrandLine/main.swift"
@@ -145,6 +166,52 @@ suite_timeout_for() {
     *) echo "$SUITE_TIMEOUT" ;;
   esac
 }
+
+# How long a suite takes on CI's macOS runner, for `--shard` to balance by.
+#
+# The windowed job ran every window-backed suite in one job, about 21 minutes,
+# and it was the longest stretch of every CI run. CI now splits that selection
+# into shards that run side by side. A shard is chosen longest suite first,
+# onto whichever shard has the least so far (LPT), so the four suites that
+# take two to four minutes each do not land together.
+#
+# The numbers are medians over 20 CI runs (2026-10-21 to 22), for the suites
+# over ten seconds. Every other suite counts as DEFAULT_SHARD_WEIGHT, the
+# mean of the rest. They only decide which shard a suite runs in, never
+# whether it runs: every selected suite lands in exactly one shard whatever
+# this table says, and CI's aggregate job checks the shards' lists against the
+# whole selection. A suite missing from here, or a number that has drifted,
+# costs balance and nothing else. Refresh from a CI run's "slowest:" tail.
+SHARD_WEIGHTS="
+FM_RUN_APP_SHELL_BODY_WIDTH_TESTS 245
+FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS 135
+FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TESTS 102
+FM_RUN_DESTINATION_MOUNTING_TESTS 84
+FM_RUN_MAIN_SPLIT_SHELL_TESTS 48
+FM_RUN_SCHEDULE_RUN_HISTORY_STATUS_LOG_TESTS 43
+FM_RUN_PAGE_POLISH_UXP_TESTS 35
+FM_RUN_SHIFT_TASKS_PAGE_TESTS 32
+FM_RUN_SPLIT_SIDEBAR_TESTS 32
+FM_RUN_STRAW_HAT_HANDOFF_TESTS 26
+FM_RUN_PAGE_REDESIGNS_TESTS 24
+FM_RUN_CODE_PREVIEW_SIDEBAR_VIEW_TESTS 22
+FM_RUN_WINDOW_CHROME_FUSION_TESTS 22
+FM_RUN_CODE_PREVIEW_VIEW_TESTS 22
+FM_RUN_DAYLIGHT_MODULE_TESTS 16
+FM_RUN_BAR_ACTIVE_STATE_TESTS 15
+FM_RUN_CODE_RUNNER_VIEW_TESTS 14
+FM_RUN_SIDEBAR_POLISH_TESTS 14
+FM_RUN_DRILL_HEADER_TITLE_TESTS 14
+FM_RUN_CANVAS_LISTS_CONTROLS_TESTS 13
+FM_RUN_SETTINGS_SIDEBAR_TESTS 13
+FM_RUN_LAYOUT_STABILITY_TESTS 13
+FM_RUN_RECENT_DESTINATIONS_TESTS 12
+FM_RUN_HOME_FIT_TESTS 12
+FM_RUN_CONTRAST_TESTS 11
+FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS 11
+FM_RUN_SIDEBAR_PAGE_FIXES_TESTS 10
+"
+DEFAULT_SHARD_WEIGHT=3
 
 # Per-suite wall clock (P6 of full review #3).
 #
@@ -736,6 +803,42 @@ else
   FLAGS=("${ALL_FLAGS[@]}")
 fi
 
+# `--shard=K/N`: this run's part of the selection above. Longest first onto
+# the least-loaded shard, ties to the lowest-numbered one, then back into
+# main.swift's order - a pure function of the selection and SHARD_WEIGHTS,
+# so the N shards of one checkout always split it the same way, once.
+if [ "$SHARD_COUNT" -gt 0 ]; then
+  SHARDED=()
+  while IFS= read -r flag; do
+    [ -n "$flag" ] && SHARDED+=("$flag")
+  done < <(
+    {
+      printf '%s\n' "$SHARD_WEIGHTS" | awk 'NF == 2 { print "W", $1, $2 }'
+      i=0
+      for flag in "${FLAGS[@]}"; do
+        echo "F $i $flag"
+        i=$((i + 1))
+      done
+    } | awk -v d="$DEFAULT_SHARD_WEIGHT" '
+          $1 == "W" { w[$2] = $3; next }
+          $1 == "F" { print (($3 in w) ? w[$3] : d), $2, $3 }' \
+      | sort -k1,1nr -k2,2n \
+      | awk -v k="$SHARD_INDEX" -v n="$SHARD_COUNT" '
+          {
+            best = 1
+            for (s = 2; s <= n; s++) if (load[s] + 0 < load[best] + 0) best = s
+            load[best] += $1
+            if (best == k) print $2, $3
+          }' \
+      | sort -k1,1n | cut -d" " -f2
+  )
+  if [ ${#SHARDED[@]} -eq 0 ]; then
+    echo "shard $SHARD has no suites in this selection."
+    exit 0
+  fi
+  FLAGS=("${SHARDED[@]}")
+fi
+
 # The first paragraph of a suite's own header comment - which is where the
 # author already wrote down what it is about. The enum name comes from the
 # `XSelfTest.run()` main.swift dispatches to for this flag, so this cannot
@@ -763,7 +866,11 @@ if [ "$LIST_ONLY" -eq 1 ]; then
     if [ "$DESCRIBE" -eq 1 ]; then describe_suite "$flag"; echo ""; fi
   done
   echo ""
-  echo "${#FLAGS[@]} suite(s) discovered in $MAIN."
+  if [ "$SHARD_COUNT" -gt 0 ]; then
+    echo "${#FLAGS[@]} suite(s) in shard $SHARD of the selection discovered in $MAIN."
+  else
+    echo "${#FLAGS[@]} suite(s) discovered in $MAIN."
+  fi
   exit 0
 fi
 
@@ -885,11 +992,12 @@ done
 #
 # Only in a selection that is meant to be exhaustive: an explicit
 # `FM_RUN_...` argument means "just that suite", and `--session-only` is the
-# windowed complement, which these are not part of.
+# windowed complement, which these are not part of. A sharded run gives them
+# to its first shard, so they run once rather than once per shard.
 PY_PASSED=()
 PY_FAILED=()
 PY_SKIPPED=()
-if [ ${#REQUESTED[@]} -eq 0 ] && [ "$SESSION_ONLY" -eq 0 ]; then
+if [ ${#REQUESTED[@]} -eq 0 ] && [ "$SESSION_ONLY" -eq 0 ] && [ "$SHARD_INDEX" -le 1 ]; then
   PY_SUITES=()
   while IFS= read -r f; do
     [ -n "$f" ] && PY_SUITES+=("$(basename "$f" .py)")
@@ -930,6 +1038,9 @@ fi
 
 echo ""
 echo "======================================================"
+if [ "$SHARD_COUNT" -gt 0 ]; then
+  echo "shard $SHARD of the selection"
+fi
 # Slowest first, so a runtime regression is one line to read rather than a
 # diff of two hundred. `sort -rn` on "<ms> <name>" is enough - no need for anything
 # the runner would have to install.

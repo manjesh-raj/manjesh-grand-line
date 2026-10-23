@@ -683,11 +683,12 @@ enum E2ETestingPolicySelfTest {
         print("  \(confirmed)/\(family.count) GrandLineDocs store(s) confirmed to honour FM_SHIFT_DIR")
     }
 
-    /// The two modes the CI workflow depends on still exist.
+    /// The modes the CI workflow depends on still exist.
     ///
-    /// `.github/workflows/ci.yml` invokes `--ci` and `--session-only` by name.
-    /// Renaming either in the script is a green local run and a broken CI job,
-    /// which is the kind of breakage worth catching before the push.
+    /// `.github/workflows/ci.yml` invokes `--ci`, `--session-only` and
+    /// `--shard=K/N` by name. Renaming any of them in the script is a green
+    /// local run and a broken CI job, which is the kind of breakage worth
+    /// catching before the push.
     // MARK: L8 - the README's env-var table against the code
 
     /// Every `FM_*` variable the app reads is in the repo-root README's
@@ -878,7 +879,7 @@ enum E2ETestingPolicySelfTest {
             fail("could not read \(runnerScript.path)", &ok)
             return
         }
-        for mode in ["--ci)", "--session-only)"] {
+        for mode in ["--ci)", "--session-only)", "--shard=*)"] {
             if !script.contains(mode) {
                 fail("the runner script no longer parses \(mode.dropLast()) - CI invokes it by name", &ok)
             }

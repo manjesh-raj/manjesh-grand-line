@@ -87,6 +87,7 @@ does.
 ./Scripts/run-all-tests.sh --list         # what would run
 ./Scripts/run-all-tests.sh --ci           # the headless-safe half
 ./Scripts/run-all-tests.sh --session-only # the exact complement (window-backed)
+./Scripts/run-all-tests.sh --session-only --ci --shard=2/3   # one of CI's three windowed shards
 ./Scripts/run-all-tests.sh --no-build FM_RUN_SHIFT_STORE_TESTS
 ```
 
