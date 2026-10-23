@@ -60,6 +60,8 @@ enum FleetDataSelfTest {
         checkDegradedFetch(&ok)
         checkNeedsYouCopyAgrees(&ok)
         checkThePRScanIsShared(&ok)
+        checkAJoinerDoesNotWaitOnAHungScan(&ok)
+        checkBitbucketGetChecksItsTimeout(&ok)
         print(ok ? "FleetDataSelfTest: all checks passed" : "FleetDataSelfTest: FAILED")
         return ok
     }
@@ -117,6 +119,72 @@ enum FleetDataSelfTest {
         _ = OpenPRsSource.fetchShared()
         check(scans == 5, "a degraded scan was cached and the next caller did not retry (\(scans) scans)", &ok)
         if ok { print("  OK   joined, cached, forced, expired and degraded all behave") }
+    }
+
+    /// R2-BUG-12: a caller that joins a running scan waits a bounded time
+    /// and then runs its own, as `FleetTaskCache.tasks` has since REL-27.
+    /// The first scan hangs on a semaphore here, standing in for a scan over
+    /// many clones with bad Bitbucket credentials.
+    private static func checkAJoinerDoesNotWaitOnAHungScan(_ ok: inout Bool) {
+        print("\n-- R2-BUG-12: a joiner gives up on a hung scan --")
+        let savedTimeout = FleetTaskCache.waitTimeout
+        FleetTaskCache.debugSetWaitTimeout(0.3)
+        let hang = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var scans = 0
+        OpenPRsSource.debugResetSharedScan()
+        OpenPRsSource.debugFetcher = {
+            lock.lock(); scans += 1; let first = scans == 1; lock.unlock()
+            if first { _ = hang.wait(timeout: .now() + 8) }
+            return OpenPRsSource.FetchResult()
+        }
+        defer {
+            hang.signal()
+            OpenPRsSource.debugFetcher = nil
+            OpenPRsSource.debugResetSharedScan()
+            FleetTaskCache.debugSetWaitTimeout(savedTimeout)
+        }
+
+        let producerDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async { _ = OpenPRsSource.fetchShared(); producerDone.signal() }
+        Thread.sleep(forTimeInterval: 0.1)
+        lock.lock(); let started = scans; lock.unlock()
+        check(started == 1, "fixture: the first scan is running and hung (\(started) scans)", &ok)
+
+        let joinerDone = DispatchSemaphore(value: 0)
+        let joinedAt = Date()
+        DispatchQueue.global().async { _ = OpenPRsSource.fetchShared(); joinerDone.signal() }
+        let joinerReturned = joinerDone.wait(timeout: .now() + 3) == .success
+        let waited = Date().timeIntervalSince(joinedAt)
+        check(joinerReturned,
+              "R2-BUG-12: a caller that joined a hung scan was still waiting after 3s - the join is unbounded", &ok)
+        lock.lock(); let total = scans; lock.unlock()
+        check(total == 2, "R2-BUG-12: and it ran a scan of its own after the bound, got \(total) scans", &ok)
+
+        hang.signal()
+        check(producerDone.wait(timeout: .now() + 3) == .success, "fixture: the hung scan finishes once released", &ok)
+        if joinerReturned { print("  OK   the joiner returned after \(String(format: "%.2f", waited))s") }
+    }
+
+    /// R2-BUG-13: `bbGet` ignored its semaphore's timeout and read `result`
+    /// while the data task's callback could still be writing it. A source
+    /// guard, because the defect is an unsynchronised read that no
+    /// deterministic test can observe, and the request needs the network.
+    private static func checkBitbucketGetChecksItsTimeout(_ ok: inout Bool) {
+        print("\n-- R2-BUG-13: bbGet returns nil on a timed-out wait --")
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let text = try? String(contentsOf: dir.appendingPathComponent("FleetData.swift"), encoding: .utf8),
+              let start = text.range(of: "private static func bbGet(") else {
+            check(false, "R2-BUG-13: could not read bbGet in FleetData.swift - the guard would silently pass", &ok)
+            return
+        }
+        let rest = text[start.upperBound...]
+        let body = rest.range(of: "\n    }\n").map { String(rest[..<$0.lowerBound]) } ?? String(rest)
+        check(!body.contains("_ = semaphore.wait"),
+              "R2-BUG-13: bbGet discards its semaphore's result again", &ok)
+        check(body.contains("semaphore.wait(timeout: .now() + 12) == .success"),
+              "R2-BUG-13: bbGet reads its result only after the callback signalled", &ok)
+        check(body.contains("task.cancel()"), "R2-BUG-13: a timed-out request is cancelled", &ok)
     }
 
     // MARK: The "needs you" headline

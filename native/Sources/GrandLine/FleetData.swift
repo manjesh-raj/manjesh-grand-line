@@ -590,17 +590,37 @@ enum OpenPRsSource {
         }
         if let running = shared.inFlight {
             shared.lock.unlock()
-            running.wait()
-            shared.lock.lock()
-            let result = shared.lastResult ?? FetchResult()
-            shared.lock.unlock()
-            return result
+            // R2-BUG-12: a bounded join, as `FleetTaskCache.tasks` has had
+            // since REL-27. A scan over many clones with bad Bitbucket
+            // credentials can run for minutes (12s per candidate per clone),
+            // and an unbounded `wait()` parked a global-queue thread for every
+            // Fleet, Review or Home refresh in that time.
+            if running.wait(timeout: .now() + FleetTaskCache.waitTimeout) == .success {
+                shared.lock.lock()
+                let result = shared.lastResult ?? FetchResult()
+                shared.lock.unlock()
+                return result
+            }
+            AppLog.store.error("open PRs: waited \(FleetTaskCache.waitTimeout, privacy: .public)s on another scan - running this one")
+            return scanAndStore(now: now)
         }
         let running = DispatchGroup()
         running.enter()
         shared.inFlight = running
         shared.lock.unlock()
 
+        let result = scanAndStore(now: now)
+        shared.lock.lock()
+        shared.inFlight = nil
+        shared.lock.unlock()
+        running.leave()
+        return result
+    }
+
+    /// One real scan, stored as the latest result. A caller that gave up on
+    /// a slow scan runs this without registering, so it neither clears nor
+    /// replaces the slow scan's registration.
+    private static func scanAndStore(now: () -> Date) -> FetchResult {
         #if FM_SELFTESTS
         let result = debugFetcher?() ?? fetchDetailed()
         #else
@@ -610,9 +630,7 @@ enum OpenPRsSource {
         shared.lock.lock()
         shared.lastResult = result
         shared.cached = result.isDegraded ? nil : (now(), result)
-        shared.inFlight = nil
         shared.lock.unlock()
-        running.leave()
         return result
     }
 
@@ -889,13 +907,20 @@ enum OpenPRsSource {
         req.timeoutInterval = 10
         let semaphore = DispatchSemaphore(value: 0)
         var result: [String: Any]?
-        URLSession.shared.dataTask(with: req) { data, _, error in
+        let task = URLSession.shared.dataTask(with: req) { data, _, error in
             if let data, error == nil {
                 result = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             }
             semaphore.signal()
-        }.resume()
-        _ = semaphore.wait(timeout: .now() + 12)
+        }
+        task.resume()
+        // R2-BUG-13: `result` is only read once the callback has signalled.
+        // On a timeout the callback may still be about to write it, so the
+        // answer is "unknown" (`nil`, GL-14) and the task is cancelled.
+        guard semaphore.wait(timeout: .now() + 12) == .success else {
+            task.cancel()
+            return nil
+        }
         return result
     }
 
