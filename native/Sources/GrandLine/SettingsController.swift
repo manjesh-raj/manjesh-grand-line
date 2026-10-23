@@ -433,6 +433,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// Keyed by index into `ChromeTextScale.steps` (GL-32).
     private var uiScaleButtons: [Int: HelmButton] = [:]
     private let autoReconnectSwitch = HelmToggle()
+    /// R2-UX-01: the app lock, an opt-in now.
+    private let appLockSwitch = HelmToggle()
+    private var appLockCheckInFlight = false
     private let notifySwitch = HelmToggle()
 
     private var shortcutRecorders: [TerminalShortcutAction: KeyChordRecorderView] = [:]
@@ -1882,7 +1885,13 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         securityStackHost.translatesAutoresizingMaskIntoConstraints = false
 
         let (idle, session) = AppLockController.configuredThresholds()
+        appLockSwitch.onToggle = { [weak self] in self?.appLockToggled() }
+        appLockSwitch.isOn = AppSettings.shared.appLockEnabled != false
+        appLockSwitch.setAccessibilityLabel("Require a password to open Grand Line")
         let lockRows = [
+            SettingsRow(title: "Require a password to open Grand Line",
+                        description: "Off by default. When it is on, Grand Line asks for the password saved in Automic Vault as \(VaultSource.appPasswordSecretName) when it opens, after the idle time below, and after a full session.",
+                        control: appLockSwitch),
             SettingsRow(title: "Lock when idle",
                         description: "The lock screen appears after this long with no keyboard or mouse anywhere on the Mac. Set with FM_APP_LOCK_IDLE_SECONDS.",
                         control: rowLabel(Self.durationText(idle))),
@@ -2344,6 +2353,61 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         refreshFromSettings()
     }
 
+    /// R2-UX-01: the lock is turned on only once the password it would ask
+    /// for is confirmed to exist - a lock with no password is a window
+    /// nobody can open on the next launch. The check is `av list`, which may
+    /// raise Automic Vault's approval prompt, and that is right here: the
+    /// captain just asked for it. Turning it off asks first, because it
+    /// removes a protection.
+    private func appLockToggled() {
+        if appLockSwitch.isOn {
+            guard !appLockCheckInFlight else { return }
+            appLockCheckInFlight = true
+            let check = Self.appPasswordCheck
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let availability = check()
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.appLockCheckInFlight = false
+                    self.applyAppLockCheck(availability)
+                }
+            }
+        } else {
+            let confirmed = HelmConfirm.confirm(
+                title: "Turn off the app lock?",
+                body: "Grand Line will open without asking for its password, and it will no longer lock when you are idle.",
+                confirmTitle: "Turn Off", destructive: true, symbol: "lock.open", hue: .violet)
+            if confirmed {
+                AppSettings.shared.appLockEnabled = false
+            } else {
+                appLockSwitch.isOn = true
+            }
+        }
+    }
+
+    private func applyAppLockCheck(_ availability: VaultSource.AppPasswordAvailability) {
+        guard availability == .configured else {
+            appLockSwitch.isOn = false
+            let reason: String
+            switch availability {
+            case .notConfigured:
+                reason = "Save a password first: run \u{201c}\(VaultSource.appPasswordSetupCommand)\u{201d} in a terminal, then turn the lock on."
+            case .avUnavailable:
+                reason = "The app lock keeps its password in Automic Vault, which is not installed on this Mac."
+            default:
+                reason = "Automic Vault did not answer, so the password could not be checked. Try again in a moment."
+            }
+            Feedback.report(reason, kind: .warning, persistence: .transient, in: view)
+            return
+        }
+        AppSettings.shared.appLockEnabled = true
+        Feedback.report("The app lock is on.", kind: .done, persistence: .transient, in: view)
+    }
+
+    /// The check behind turning the lock on. A seam for the suites, which
+    /// must never run `av`.
+    static var appPasswordCheck: () -> VaultSource.AppPasswordAvailability = { VaultSource.checkAppPasswordConfigured() }
+
     @objc private func autoReconnectToggled() {
         AppSettings.shared.autoReconnect = autoReconnectSwitch.isOn
     }
@@ -2389,6 +2453,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                 Int(AppSettings.shared.fontSize) == size ? .primary : .secondary
         }
         autoReconnectSwitch.isOn = AppSettings.shared.autoReconnect
+        if !appLockCheckInFlight { appLockSwitch.isOn = AppSettings.shared.appLockEnabled != false }
         notifySwitch.isOn = AppSettings.shared.notifyOnNeedsDecision
         morningBriefingSwitch.isOn = AppSettings.shared.morningBriefingEnabled
         compactModeSwitch.isOn = AppSettings.shared.compactModeEnabled
@@ -2456,7 +2521,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         for recorder in shortcutRecorders.values + [captureShortcutRecorder].compactMap({ $0 }) {
             recorder.applyTheme(theme)
         }
-        for toggle in [autoReconnectSwitch, notifySwitch, morningBriefingSwitch,
+        for toggle in [autoReconnectSwitch, appLockSwitch, notifySwitch, morningBriefingSwitch,
                        followSystemSwitch, compactModeSwitch, compactDockSwitch,
                        compactBadgeSwitch] {
             toggle.applyTheme(theme)
@@ -2603,6 +2668,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     }
 
     var debugAutoReconnectSwitch: HelmToggle { autoReconnectSwitch }
+    var debugAppLockSwitch: HelmToggle { appLockSwitch }
     var debugNotifySwitch: HelmToggle { notifySwitch }
     var debugMorningBriefingSwitch: HelmToggle { morningBriefingSwitch }
     var debugCompactModeSwitch: HelmToggle { compactModeSwitch }
@@ -2611,7 +2677,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// Every toggle on the page, in page order. A suite asserts the count, so
     /// a toggle added without coming here fails by name.
     var debugToggles: [HelmToggle] {
-        [followSystemSwitch, autoReconnectSwitch, notifySwitch,
+        [followSystemSwitch, autoReconnectSwitch, appLockSwitch, notifySwitch,
          morningBriefingSwitch, compactModeSwitch, compactDockSwitch, compactBadgeSwitch]
     }
     #endif

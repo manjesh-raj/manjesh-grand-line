@@ -69,9 +69,11 @@ final class WelcomeSheetController: NSViewController {
                     + "Engineering is setup and this machine's settings.\n\n"
                     + "Press \u{2318}\u{21E7}D at any time to see every page at once, or \u{2318}K to search."
             case .lock:
-                return "Grand Line can lock itself when you step away. The password lives in "
-                    + "Automic Vault's keychain rather than in this app, so it is set from a "
-                    + "terminal - this is that command.\n\n"
+                // R2-UX-01: the lock is an opt-in, so this step says how to
+                // turn it on rather than implying it is already waiting.
+                return "Grand Line opens without a password. To have it lock when you step away, "
+                    + "save a password in Automic Vault's keychain with this command, then turn on "
+                    + "\u{201c}Require a password to open Grand Line\u{201d} in \(PlaceName.of(.settings)) \u{203A} Security.\n\n"
                     + "Skipping is fine. The app works exactly the same; it just will not lock."
             }
         }

@@ -55,6 +55,7 @@ final class AppSettings {
         static let systemDarkThemeID = "fm.systemDarkThemeID"
         static let workspaceLayout = "fm.workspaceLayout"
         static let homeCardLayout = "fm.homeCardLayout"
+        static let appLockEnabled = "fm.appLockEnabled"
     }
 
     /// GL-P3 (audit §6.10): the defaults store is injectable.
@@ -539,5 +540,51 @@ final class AppSettings {
             guard let data = newValue.storedData else { return }
             defaults.set(data, forKey: Keys.homeCardLayout)
         }
+    }
+
+    /// R2-UX-01: whether Grand Line asks for its password when it opens, and
+    /// again after the idle and session thresholds. `nil` means nothing has
+    /// decided yet.
+    ///
+    /// The lock is an opt-in from Settings > Security now. A fresh install
+    /// opens straight to Home (`settleFirstLaunch` writes `false` for it),
+    /// so a general user's first launch is never gated on Automic Vault, a
+    /// terminal command and a relaunch. An install from before this setting
+    /// existed keeps exactly the lock it had: it reads `nil` here, its launch
+    /// is locked as before, and the lock screen's own check settles it -
+    /// `true` when the password is configured, `false` only when it is
+    /// confirmed not to be (`AppLockMigration`). An unanswered check never
+    /// settles anything, so it can never turn a protection off.
+    var appLockEnabled: Bool? {
+        get { defaults.object(forKey: Keys.appLockEnabled) == nil ? nil : defaults.bool(forKey: Keys.appLockEnabled) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Keys.appLockEnabled) } else {
+                defaults.removeObject(forKey: Keys.appLockEnabled)
+            }
+            NotificationCenter.default.post(name: AppSettings.appLockPreferenceDidChange, object: self)
+        }
+    }
+
+    static let appLockPreferenceDidChange = Notification.Name("fm.appLockPreferenceDidChange")
+
+    /// R2-UX-01: whether this launch is the first one on this Mac. Read once,
+    /// by `settleFirstLaunch`, before anything this launch writes: an install
+    /// that has ever stored a preference (every key this app owns starts
+    /// `fm.`), or that has a data folder with anything in it, is an existing
+    /// install and keeps what it had.
+    func isExistingInstall(dataRoot: URL = AppPaths.dataRoot()) -> Bool {
+        if defaults.dictionaryRepresentation().keys.contains(where: { $0.hasPrefix("fm.") }) { return true }
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: dataRoot.path)) ?? []
+        return contents.contains { !$0.hasPrefix(".") }
+    }
+
+    /// R2-UX-01: the decisions a first launch makes, written once so a later
+    /// launch reads them rather than guessing again. Runs before anything
+    /// else in `applicationDidFinishLaunching`.
+    ///
+    /// - A fresh install opens unlocked; an existing one is left undecided so
+    ///   its lock screen settles it (see `appLockEnabled`).
+    func settleFirstLaunch(isExistingInstall existing: Bool) {
+        if appLockEnabled == nil, !existing { appLockEnabled = false }
     }
 }

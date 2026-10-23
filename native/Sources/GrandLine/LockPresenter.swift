@@ -51,6 +51,19 @@ final class LockPresenter {
     /// The way out, run after `AppLockGate` is clear - see `hideLock`.
     var resumeAfterUnlock: () -> Void = {}
 
+    /// R2-UX-01: the Automic Vault check behind every lock screen. A seam so
+    /// a suite can drive each answer without an `av` on PATH (a self-test
+    /// process refuses it anyway).
+    var checkAvailability: () -> VaultSource.AppPasswordAvailability = { VaultSource.checkAppPasswordConfigured() }
+
+    /// R2-UX-01: the app lock preference, read and written here only to
+    /// settle an install that has never decided (`AppLockMigration`).
+    var readPreference: () -> Bool? = { AppSettings.shared.appLockEnabled }
+    var writePreference: (Bool) -> Void = { AppSettings.shared.appLockEnabled = $0 }
+
+    /// The reason the showing lock screen went up, for "Check again".
+    private var shownReason: AppLockReason = .launch
+
     /// Adds the overlay over `root`, as `parent`'s child. Added last (and
     /// therefore topmost in z-order) by the shell, so it covers the chrome as
     /// well as the body area.
@@ -106,12 +119,21 @@ final class LockPresenter {
         // (`VaultSource.updateInstall()`, the same mechanism the
         // Updates/Vault pages already use for this catalog entry), so it
         // needs no prior unlock and is safe to trigger straight from here.
+        // R2-UX-01: the two setup states used to end in "then relaunch".
+        // Check again runs the same check a new lock screen runs, so a
+        // password saved (or Automic Vault installed) while this screen is up
+        // is picked up without quitting.
+        lockScreen.onCheckAgain = { [weak self] in
+            guard let self else { return }
+            self.appPasswordRetryAttempt = 0
+            self.checkAppPasswordAvailability(reason: self.shownReason)
+        }
         lockScreen.onInstallAutomicVault = { completion in
             DispatchQueue.global(qos: .userInitiated).async {
                 let outcome = VaultSource.updateInstall()
                 DispatchQueue.main.async {
                     let message = outcome.ok
-                        ? "Installed. Set a password with \u{201c}av save GRANDLINE_APP_PASSWORD\u{201d}, then relaunch Grand Line."
+                        ? "Installed. Set a password with \u{201c}av save GRANDLINE_APP_PASSWORD\u{201d}, then choose Check again."
                         : "Install failed: \(outcome.detail)"
                     completion(outcome.ok, message)
                 }
@@ -139,6 +161,7 @@ final class LockPresenter {
         // Both steps run through `prepareForLock`, which `Workspace` supplies:
         // they reach the consoles and the credential vault, which this type
         // does not own.
+        shownReason = reason
         prepareForLock()
         // `fm/implement-grand-line-secrets-vault-poneg-ad`: the credential
         // vault's own gate is independent of this one (the captain's decision:
@@ -205,7 +228,7 @@ final class LockPresenter {
     /// the fallback for a slower start (e.g. right after a reboot).
     private func checkAppPasswordAvailability(reason: AppLockReason) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let availability = VaultSource.checkAppPasswordConfigured()
+            let availability = self?.checkAvailability() ?? .transientFailure
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.applyPasswordAvailability(availability, reason: reason)
@@ -214,6 +237,18 @@ final class LockPresenter {
     }
 
     private func applyPasswordAvailability(_ availability: VaultSource.AppPasswordAvailability, reason: AppLockReason) {
+        // R2-UX-01: an install from before the opt-in is settled by its first
+        // answered check - kept locked when the password is configured, and
+        // opened only when it is confirmed not to be (unconfigured means
+        // unlocked). Anything else leaves it undecided and locked.
+        if readPreference() == nil, let settled = AppLockMigration.settledPreference(for: availability) {
+            writePreference(settled)
+            if !settled {
+                appPasswordRetryAttempt = 0
+                openWithoutLock()
+                return
+            }
+        }
         switch availability {
         case .configured:
             // A settled outcome ends the retry sequence, so the next lock that
@@ -305,6 +340,15 @@ final class LockPresenter {
         return min(scaled, appPasswordRetryCeiling)
     }
 
+    /// R2-UX-01: the app opens with the lock off - the same way out a
+    /// correct password takes, without the lock screen's flourish. The gate
+    /// and the overlay start locked in every process, so a launch with the
+    /// lock off still has to come through here.
+    func openWithoutLock() {
+        hideLock()
+        onUnlocked?()
+    }
+
     func hideLock() {
         lockScreen.view.isHidden = true
         // E4: the scene's three infinite animations used to stay attached to
@@ -346,6 +390,29 @@ final class LockPresenter {
                 }
                 completion(ok)
             }
+        }
+    }
+
+    #if FM_SELFTESTS
+    var debugLockScreen: LockScreenController { lockScreen }
+    var debugOverlayIsShown: Bool { !lockScreen.view.isHidden }
+    #endif
+}
+
+
+/// R2-UX-01: how a launch check settles an install that has never decided
+/// whether its lock is on. Pure, so the table is asserted headless.
+enum AppLockMigration {
+    /// `true` (keep the lock) when the password is configured, `false` (open
+    /// the app) when Automic Vault answered that it is not, and `nil` for
+    /// every answer that says nothing about the password - Automic Vault
+    /// missing, its service not running, a timeout. Those stay locked and
+    /// undecided, so no unanswered check can turn a protection off.
+    static func settledPreference(for availability: VaultSource.AppPasswordAvailability) -> Bool? {
+        switch availability {
+        case .configured: return true
+        case .notConfigured: return false
+        case .avUnavailable, .serviceNotRunning, .transientFailure: return nil
         }
     }
 }

@@ -367,6 +367,7 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
 
     // The lock.
     func showLock(reason: AppLockReason) { workspace.lock.showLock(reason: reason) }
+    func openWithoutLock() { workspace.lock.openWithoutLock() }
     func attemptUnlockFromCompactMode(password: String, completion: @escaping (Bool) -> Void) {
         workspace.lock.attemptUnlockFromCompactMode(password: password, completion: completion)
     }

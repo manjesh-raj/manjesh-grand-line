@@ -123,10 +123,21 @@ final class AppLockController {
     /// backgrounded are no longer promised foreground scheduling - which is the
     /// right trade for a 30-second/15-minute cadence.
     private var appNapActivity: NSObjectProtocol?
+    private var preferenceObserver: NSObjectProtocol?
 
     /// Set by the app delegate to actually show/hide the lock screen -
     /// this class only decides *when*, never *how*.
     var onLock: ((AppLockReason) -> Void)?
+
+    /// R2-UX-01: whether the lock is on. Off only when the captain turned it
+    /// off, or the launch check confirmed no password was ever configured
+    /// (`AppSettings.appLockEnabled`); an undecided install counts as on, so
+    /// its launch is locked exactly as before until that check settles it.
+    var isEnabled: () -> Bool = { AppSettings.shared.appLockEnabled != false }
+
+    /// R2-UX-01: the launch with the lock off. The app delegate opens the
+    /// window's content instead of showing the lock screen.
+    var onOpenWithoutLock: (() -> Void)?
 
     init(
         idleThreshold: TimeInterval = AppLockController.envThreshold("FM_APP_LOCK_IDLE_SECONDS", default: 3600),
@@ -175,6 +186,16 @@ final class AppLockController {
     #endif
 
     func start() {
+        // R2-UX-01: the lock turned on from Settings starts its session now,
+        // not at launch, so the 12-hour ceiling counts from that choice.
+        if preferenceObserver == nil {
+            preferenceObserver = NotificationCenter.default.addObserver(
+                forName: AppSettings.appLockPreferenceDidChange, object: nil, queue: .main
+            ) { [weak self] _ in
+                guard let self, self.isEnabled(), !self.isLocked else { return }
+                self.lastUnlockAt = self.now()
+            }
+        }
         // See `appNapActivity`'s doc comment - without this, the poll timer
         // below is subject to macOS App Nap throttling the moment this app
         // is backgrounded/occluded, which is exactly when these timers most
@@ -234,7 +255,7 @@ final class AppLockController {
     /// Not `private`: exercised directly by the self-test with a fake clock/
     /// idle-time provider rather than waiting on a real `Timer`.
     func tick() {
-        guard !isLocked else { return }
+        guard !isLocked, isEnabled() else { return }
         if let lastUnlockAt, now().timeIntervalSince(lastUnlockAt) >= sessionThreshold {
             lock(reason: .sessionExpired)
             return
@@ -258,6 +279,13 @@ final class AppLockController {
     }
 
     func lock(reason: AppLockReason) {
+        // R2-UX-01: with the lock off nothing locks. The launch still has to
+        // open the app - the gate and the overlay start locked - and the idle,
+        // session and Log Out triggers simply do nothing.
+        guard isEnabled() else {
+            if reason == .launch, isLocked { onOpenWithoutLock?() }
+            return
+        }
         isLocked = true
         onLock?(reason)
     }

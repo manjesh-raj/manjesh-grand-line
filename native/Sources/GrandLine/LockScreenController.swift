@@ -167,6 +167,11 @@ final class LockScreenController: NSViewController {
     /// `UpdatesSource`/`DependencyCatalog`.
     var onInstallAutomicVault: ((@escaping (Bool, String) -> Void) -> Void)?
 
+    /// R2-UX-01: "Check again" on the two setup states, which used to end in
+    /// "then relaunch". The caller runs the same availability check a new
+    /// lock screen runs.
+    var onCheckAgain: (() -> Void)?
+
     /// Fired once the success animation (below) has actually finished
     /// playing - `AppShellController` hides the overlay and records the
     /// unlock from here, not from `onAttempt`'s own completion, so the
@@ -278,6 +283,9 @@ final class LockScreenController: NSViewController {
     private let installButton = HelmButton(title: "Install Automic Vault", variant: .primary)
     private let installStatusLabel = NSTextField(wrappingLabelWithString: "")
     private let avUnavailableStack = NSStackView()
+
+    /// R2-UX-01: the way forward from both setup states, without quitting.
+    private let checkAgainButton = HelmButton(title: "Check again", variant: .secondary)
 
     /// The two "retrying, nothing to type yet" states show a spinner instead
     /// of a form, because there is nothing useful the captain can do yet.
@@ -556,6 +564,11 @@ final class LockScreenController: NSViewController {
         avUnavailableStack.addArrangedSubview(installStatusLabel)
         avUnavailableStack.isHidden = true
 
+        checkAgainButton.target = self
+        checkAgainButton.action = #selector(checkAgainTapped)
+        checkAgainButton.translatesAutoresizingMaskIntoConstraints = false
+        checkAgainButton.isHidden = true
+
         waitingLabel.font = HelmType.caption()
         waitingLabel.translatesAutoresizingMaskIntoConstraints = false
         waitingStack.orientation = .horizontal
@@ -605,7 +618,8 @@ final class LockScreenController: NSViewController {
 
         let body = NSStackView(views: [
             markTile, titleLabel, subtitleLabel, formStack, errorLabel,
-            messageLabel, setupCommandStack, avUnavailableStack, waitingStack, localAuthStack, footerStack,
+            messageLabel, setupCommandStack, avUnavailableStack, checkAgainButton, waitingStack, localAuthStack,
+            footerStack,
         ])
         body.orientation = .vertical
         body.alignment = .centerX
@@ -646,6 +660,7 @@ final class LockScreenController: NSViewController {
             setupCommandStack.widthAnchor.constraint(equalTo: body.widthAnchor),
             avUnavailableStack.widthAnchor.constraint(equalTo: body.widthAnchor),
             installButton.widthAnchor.constraint(equalTo: avUnavailableStack.widthAnchor),
+            checkAgainButton.widthAnchor.constraint(equalTo: body.widthAnchor),
             footerStack.widthAnchor.constraint(equalTo: body.widthAnchor),
             footerDivider.widthAnchor.constraint(equalTo: footerStack.widthAnchor),
         ])
@@ -1084,6 +1099,7 @@ final class LockScreenController: NSViewController {
         messageLabel.isHidden = true
         setupCommandStack.isHidden = true
         avUnavailableStack.isHidden = true
+        checkAgainButton.isHidden = true
         waitingStack.isHidden = true
         waitingSpinner.stopAnimation()
         localAuthStack.isHidden = true
@@ -1117,15 +1133,17 @@ final class LockScreenController: NSViewController {
             // password, never to set the first one. See `setup-guide.md`.
             // GL-31: the command itself lives in the copyable well below, so
             // the prose can just say what to do with it.
-            subtitleLabel.stringValue = "No app password is saved yet. Run this in a terminal (or set it from Automic Vault's own app), then relaunch."
+            subtitleLabel.stringValue = "The app lock is on, and no app password is saved yet. Run this in a terminal (or set it from Automic Vault's own app), then choose Check again."
             setupCommandStack.isHidden = false
+            checkAgainButton.isHidden = onCheckAgain == nil
             footerLeftLabel.stringValue = "The one screen where nothing else is reachable"
 
         case .avUnavailable:
             titleLabel.stringValue = "Automic Vault isn't installed"
             subtitleLabel.stringValue = "Grand Line keeps your app password in Automic Vault's keychain. Install it to continue."
             avUnavailableStack.isHidden = false
-            avMessageLabel.stringValue = "Once it's installed, set a password with \u{201c}\(VaultSource.appPasswordSetupCommand)\u{201d} (or Automic Vault's own app) and relaunch Grand Line."
+            avMessageLabel.stringValue = "Once it's installed, set a password with \u{201c}\(VaultSource.appPasswordSetupCommand)\u{201d} (or Automic Vault's own app), then choose Check again."
+            checkAgainButton.isHidden = onCheckAgain == nil
             installButton.isEnabled = true
             installStatusLabel.stringValue = ""
             footerLeftLabel.stringValue = "Installs via Homebrew"
@@ -1238,6 +1256,10 @@ final class LockScreenController: NSViewController {
         }
     }
 
+    @objc private func checkAgainTapped() {
+        onCheckAgain?()
+    }
+
     @objc private func copySetupCommandTapped() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(VaultSource.appPasswordSetupCommand, forType: .string)
@@ -1325,6 +1347,8 @@ extension LockScreenController {
     /// suite drives the real `apply(_:)`/`applyTheme(_:)` paths and only reads
     /// resolved geometry and colour back out.
     var debugCard: NSView { card }
+    /// R2-UX-01's way forward from the two setup states, or nil while hidden.
+    var debugCheckAgainButton: HelmButton? { checkAgainButton.isHidden ? nil : checkAgainButton }
     var debugCardShadowHost: NSView { cardShadowHost }
     var debugRibbonLayer: CAGradientLayer { ribbonLayer }
     var debugRibbonViewFrame: NSRect { ribbonView.frame }

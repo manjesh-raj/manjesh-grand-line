@@ -190,7 +190,16 @@ enum HelmConfirm {
     /// alerts to one after live captain feedback; that decision stands.
     /// G3: themed; Return still logs out.
     static func confirmLogout() -> Bool {
-        confirm(
+        // R2-UX-01: with the app lock off there is nothing to log out to - a
+        // lock screen with no password would be a window nobody can open. So
+        // every Log Out says how to turn the lock on instead.
+        guard AppSettings.shared.appLockEnabled != false else {
+            notice(title: "The app lock is off",
+                   body: "Grand Line opens without a password, so there is nothing to log out of. Turn on \u{201c}Require a password to open Grand Line\u{201d} in Settings \u{203A} Security to use Log Out.",
+                   symbol: "lock.open", hue: .violet)
+            return false
+        }
+        return confirm(
             title: "Log out of Grand Line?",
             body: "This locks the app immediately. You'll need your Grand Line password to get back in. Your terminal sessions keep running in the background.",
             confirmTitle: "Log Out",

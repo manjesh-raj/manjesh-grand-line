@@ -777,6 +777,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // and correctly disabled the menu). Locking after the window/
         // contentViewController assignment below closes that race.
         appLock.onLock = { [weak self] reason in self?.appShell.showLock(reason: reason) }
+        // R2-UX-01: the lock is off, so the launch opens the app instead.
+        appLock.onOpenWithoutLock = { [weak self] in self?.appShell.openWithoutLock() }
         appShell.onUnlocked = { [weak self] in self?.appLock.recordUnlock() }
         appShell.onLogoutRequested = { [weak self] in self?.appLock.lock(reason: .manualLogout) }
         appShell.onLockStateChanged = { [weak self] locked in self?.setContentMenusEnabled(!locked) }
@@ -3629,6 +3631,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_APP_LOCK_TESTS"] == "1" {
     exit(AppLockControllerSelfTest.run() ? 0 : 1)
 }
 
+// R2-UX-01 (a): the app lock as an opt-in - the first launch's settlement, the
+// lock screen settling an undecided install, and Check again. Pure logic.
+if ProcessInfo.processInfo.environment["FM_RUN_APP_LOCK_OPT_IN_TESTS"] == "1" {
+    exit(AppLockOptInSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-log-analyzer-build`: same convention, for the Log Analyzer's
 // whole pure-logic layer - redaction (including byte-level greps of a built
 // AI prompt and a saved investigation for planted secrets), source detection,
@@ -4717,6 +4725,13 @@ if !unknownSuiteFlags.isEmpty {
 if !AppPaths.isScratchRedirected() {
     LegacyNameMigration.runAtLaunch()
 }
+
+// R2-UX-01: settle what a first launch decides (the app lock, and the
+// sidebar's profile), before anything below writes a preference or creates
+// the data folder - `SingleInstanceGuard.acquire()` is the first thing that
+// does. After `LegacyNameMigration`, so a pre-rename install counts as the
+// existing install it is.
+AppSettings.shared.settleFirstLaunch(isExistingInstall: AppSettings.shared.isExistingInstall())
 
 // GL-05: refuse to be a second instance. This sits *after* every
 // `FM_RUN_*_TESTS` block above (each of which `exit()`s, so a headless

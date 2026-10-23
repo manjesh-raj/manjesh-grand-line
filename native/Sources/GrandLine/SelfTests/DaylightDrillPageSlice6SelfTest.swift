@@ -799,15 +799,16 @@ enum DaylightDrillPageSlice6SelfTest {
         // bare `NSSwitch`, which is exactly what the last check in this case
         // is about. Seven since `fm/grandline-remove-today-calendar-1792553365`
         // removed three: the daily review's own switch, its Mac-calendar
-        // sub-row and Google Accounts' calendar switch.
+        // sub-row and Google Accounts' calendar switch. Eight since R2-UX-01
+        // made the app lock an opt-in with its own switch in Security.
         let restore = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(restore) }
         ThemeManager.shared.setTheme(daylight)
         let settings = makeSettings()
         let window = mount(settings)
         defer { _ = settings.view.window.map { _ in () }; _ = window }
-        if settings.debugToggles.count != 7 {
-            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 7")
+        if settings.debugToggles.count != 8 {
+            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 8")
             ok = false
         }
         // Reached by **name**, never by an index into `debugToggles`: that
