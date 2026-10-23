@@ -24,6 +24,7 @@ enum ReviewTwoUXModelSelfTest {
         checkTheFirstLaunchProfile(&ok)
         checkTheHiddenModulesReachEveryReader(&ok)
         checkTheWelcomeOffersTheProfiles(&ok)
+        checkThePlainLanguageCopy(&ok)
         print(ok ? "ReviewTwoUXModelSelfTest: PASS" : "ReviewTwoUXModelSelfTest: FAIL")
         return ok
     }
@@ -249,6 +250,33 @@ enum ReviewTwoUXModelSelfTest {
         check(AppSettings.shared.hiddenModules.isEmpty, "picking Operator on the welcome sheet left modules hidden", &ok)
         PlaceName.layout = .floatingBar
         check(WelcomeSheetController.debugStepCount == 3, "the floating bar's welcome sheet offers a profile it cannot use", &ok)
+    }
+
+    // MARK: R2-UX-01 (c) - plain language outside the operator modules
+
+    private static func checkThePlainLanguageCopy(_ ok: inout Bool) {
+        check(LockScreenController.greeting(fullName: "Ada Lovelace") == "Welcome back, Ada",
+              "the lock screen greets Ada Lovelace as \(LockScreenController.greeting(fullName: "Ada Lovelace"))", &ok)
+        check(LockScreenController.greeting(fullName: "") == "Welcome back", "a Mac with no full name gets a broken greeting", &ok)
+        // The phrases the review read off the general-user surfaces, which
+        // must not come back in their copy. Comments are stripped, so a note
+        // naming the old wording does not count.
+        let banned: [(file: String, phrase: String)] = [
+            ("LockScreenController.swift", "Welcome back, Manjesh\""),
+            ("ShiftQuickCapture.swift", "Ask the crew to file it\""),
+            ("ShiftQuickCapture.swift", "The crew couldn"),
+            ("HomeCanvasController.swift", "let SRE Lead generate one"),
+            ("HomeCanvasController.swift", "Generate one from an SRE Lead investigation"),
+        ]
+        for (file, phrase) in banned {
+            guard let text = source(file) else { fail("\(file) was not found", &ok); continue }
+            let code = text.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            check(!code.contains { $0.contains(phrase) }, "\(file) still says \"\(phrase)\" to every user", &ok)
+        }
+        if let home = source("HomeCanvasController.swift") {
+            check(home.contains("crew ? fleetAttentionItem() : nil") && home.contains("setup ? sessionChecksAttentionItem() : nil"),
+                  "Home's attention card no longer leaves out the fleet and Setup rows for a profile that hides them", &ok)
+        }
     }
 }
 

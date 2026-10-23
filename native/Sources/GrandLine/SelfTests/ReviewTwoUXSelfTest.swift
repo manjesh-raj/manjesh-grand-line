@@ -34,7 +34,7 @@ enum ReviewTwoUXSelfTest {
         defer { window.orderOut(nil) }
         settle(shell)
         for check in [checkTheSidebarFollowsTheHiddenModules, checkSettingsShowsAndHidesModules,
-                      checkTheLockSwitchNeedsAPassword] {
+                      checkTheLockSwitchNeedsAPassword, checkHomeSpeaksForTheVisibleModules] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -183,6 +183,47 @@ enum ReviewTwoUXSelfTest {
         _ = toggle.accessibilityPerformPress()
         check(asked == ["Turn off the app lock?"] && toggle.isOn && AppSettings.shared.appLockEnabled == true,
               "turning the lock off did not ask, or a cancel still turned it off (asked \(asked))", &ok)
+    }
+
+    // MARK: R2-UX-01 (c) - Home speaks only for the modules in the sidebar
+
+    private static func checkHomeSpeaksForTheVisibleModules(_ shell: MainSplitShellController,
+                                                           _ window: NSWindow, _ ok: inout Bool) {
+        AppSettings.shared.hiddenModules = []
+        shell.show(.homeCanvas)
+        settle(shell)
+        let canvas = shell.debugHomeCanvas
+        // The review's own first screen: no firstmate home, so the fleet's
+        // reading is the "point Grand Line at your firstmate home" row - plus
+        // the healthy services and comfortable Claude limits the seeded Home
+        // closes on.
+        ReviewTourLab.seedDemoHome(canvas)
+        canvas.debugInputsPinned = false
+        canvas.applyFleet(snapshot: FleetSnapshot(homeOk: false, captain: "", tasks: [], queuedCount: 0, doneCount: 0,
+                                                  projectsCount: 0, watcher: WatcherHealth(status: "healthy")),
+                          mergedPRs: [], prFetchFailure: nil)
+        canvas.debugInputsPinned = true
+        settle(shell)
+        let operatorRows = canvas.debugSignalAttentionIDs
+        // The fixture's own discriminating power: the operator's Home has a
+        // fleet row or a fleet note to lose.
+        guard operatorRows.contains("signal.fleet"), canvas.debugClearNotes.contains("Fleet idle") else {
+            fail("the seeded Home reports nothing about the fleet, so the Personal check below is vacuous "
+                 + "(rows \(operatorRows), notes \(canvas.debugClearNotes))", &ok)
+            return
+        }
+        AppSettings.shared.setProfile(.personal)
+        settle(shell)
+        let personalRows = canvas.debugSignalAttentionIDs
+        check(!personalRows.contains("signal.fleet") && !personalRows.contains("signal.claude")
+                && !personalRows.contains("signal.checks"),
+              "a Personal Home still reports \(personalRows)", &ok)
+        check(!canvas.debugClearNotes.contains("Fleet idle") && !canvas.debugClearNotes.contains { $0.contains("services healthy") },
+              "a Personal Home's closing notes still name the fleet or the services: \(canvas.debugClearNotes)", &ok)
+        AppSettings.shared.setProfile(.operator)
+        settle(shell)
+        check(canvas.debugSignalAttentionIDs == operatorRows,
+              "back on Operator, Home reports \(canvas.debugSignalAttentionIDs), want \(operatorRows)", &ok)
     }
 }
 

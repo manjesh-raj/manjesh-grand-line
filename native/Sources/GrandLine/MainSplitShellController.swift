@@ -249,6 +249,7 @@ final class MainSplitShellController: WorkspaceShellController {
     private func applyProfileToHome() {
         let canvas = workspace.homeCanvas
         canvas.standardCardLayout = .standard(for: AppSettings.shared.workspaceProfile ?? .operator)
+        canvas.hiddenModules = AppSettings.shared.hiddenModules
         workspace.homeCanvas.cardLayout = AppSettings.shared.homeCardLayout
     }
 

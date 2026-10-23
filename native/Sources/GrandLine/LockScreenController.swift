@@ -248,7 +248,7 @@ final class LockScreenController: NSViewController {
 
     // MARK: Content
 
-    private let titleLabel = NSTextField(labelWithString: "Welcome back, Manjesh")
+    private let titleLabel = NSTextField(labelWithString: LockScreenController.greeting())
     private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
     /// **Review defect U17.** The placeholder used to be a run of nine
     /// bullets, on the theory that masked dots are what a password field
@@ -1089,6 +1089,15 @@ final class LockScreenController: NSViewController {
 
     // MARK: - Content
 
+    /// R2-UX-01 (c): "Welcome back, Manjesh" was the captain's own words,
+    /// and on anyone else's Mac it named the wrong person. The name is the
+    /// first word of this Mac account's full name - Manjesh, on the captain's
+    /// - and a Mac with no full name gets the greeting without one.
+    static func greeting(fullName: String = NSFullUserName()) -> String {
+        let first = fullName.split(separator: " ").first.map(String.init) ?? ""
+        return first.isEmpty ? "Welcome back" : "Welcome back, \(first)"
+    }
+
     func apply(_ state: ContentState) {
         currentHue = state.hue
         currentSymbol = state.symbol
@@ -1109,7 +1118,7 @@ final class LockScreenController: NSViewController {
 
         switch state {
         case .locked(let subtitle):
-            titleLabel.stringValue = "Welcome back, Manjesh"
+            titleLabel.stringValue = Self.greeting()
             subtitleLabel.stringValue = subtitle
             formStack.isHidden = false
             passwordField.stringValue = ""
