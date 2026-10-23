@@ -390,8 +390,45 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         /// state as a dot and a word.
         let chip: HelmStatusPill
         let detailLabel: NSTextField
+        /// The step's own controls, and the rows above them - what the
+        /// sidebar layout folds behind its Details link (stage 7).
+        let contentBox: NSView
+        let bodyStack: NSStackView
+        let titleRow: NSStackView
     }
     private var stepRowViews: [SetupStepKind: StepRowViews] = [:]
+
+    // MARK: The sidebar layout's state (stage 7)
+
+    private var drawsSidebarLayout = false
+    private var pageStack: NSStackView?
+    private var fullSetupCardView: NSView?
+    private lazy var setupSummary = SetupSummaryRow()
+    /// Each step's Details link, which shows and hides its own controls.
+    private var detailsButtons: [SetupStepKind: HelmButton] = [:]
+    /// The current step's own next action, at the trailing end of its title
+    /// row - one button per step, shown only on the step that is current.
+    private var stepActionButtons: [SetupStepKind: HelmButton] = [:]
+    /// The steps whose controls the captain has opened.
+    private var expandedSteps: Set<SetupStepKind> = []
+
+    /// Gotcha (22): in the sidebar layout's list a step's line wraps at its
+    /// column's own width. The fixed 500pt it is built with left an empty
+    /// second line under a sentence that fit on one (Global agent
+    /// instructions, at 1512).
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        guard drawsSidebarLayout else { return }
+        var changed = false
+        for views in stepRowViews.values {
+            let width = floor(views.bodyStack.bounds.width)
+            guard width > 0, abs(views.detailLabel.preferredMaxLayoutWidth - width) > 0.5 else { continue }
+            views.detailLabel.preferredMaxLayoutWidth = width
+            views.detailLabel.invalidateIntrinsicContentSize()
+            changed = true
+        }
+        if changed { view.needsLayout = true }
+    }
     private var stepContentBackgrounds: [NSView] = []
     private var homeSectionContent: NSView!
 
@@ -504,6 +541,8 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
+        pageStack = stack
+        fullSetupCardView = fullSetupCard
 
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -1299,7 +1338,8 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         row.distribution = .fill
         leftColumn.heightAnchor.constraint(equalTo: bodyStack.heightAnchor).isActive = true
 
-        stepRowViews[kind] = StepRowViews(dot: dot, line: line, titleLabel: titleLabel, chip: chip, detailLabel: detailLabel)
+        stepRowViews[kind] = StepRowViews(dot: dot, line: line, titleLabel: titleLabel, chip: chip, detailLabel: detailLabel,
+                                          contentBox: contentBox, bodyStack: bodyStack, titleRow: titleRow)
         return row
     }
 
@@ -1352,6 +1392,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     /// `rebuildSoftwareSection`/theme changes) or the active theme changes.
     private func refreshStepperVisuals() {
         publishSetupDriftSignal()
+        defer { refreshSidebarSteps() }
         for (index, kind) in SetupStepKind.allCases.enumerated() {
             guard let rowViews = stepRowViews[kind] else { continue }
             let state = stepperDotState(for: kind)
@@ -2966,3 +3007,123 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         }
     }
 }
+
+// MARK: - The sidebar layout (stage 7)
+
+// The prototype's Setup steps: Setup's summary cards, then the steps as a
+// list - a mark for each (a check when done, its number otherwise, the
+// current one in the accent), a line about it, and the current step's own
+// next action at its trailing edge. Each step's controls - the path field,
+// the clone, the symlinks, the checklist, the import - are behind its
+// Details link rather than gone. Run full setup is the toolbar's primary
+// action; its progress is the header's line while it runs.
+
+extension BootstrapController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding {
+
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+        guard let stack = pageStack else { return }
+        fullSetupCardView?.isHidden = true
+        stack.insertArrangedSubview(setupSummary, at: 0)
+        setupSummary.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        for kind in SetupStepKind.allCases {
+            guard let views = stepRowViews[kind] else { continue }
+            // A list, as the prototype draws it: no connector between marks.
+            views.line.isHidden = true
+            let details = HelmButton(title: "Details", variant: .quiet, size: .small, target: self,
+                                     action: #selector(toggleStepDetails(_:)))
+            details.tint = .accent
+            details.identifier = NSUserInterfaceItemIdentifier("step.details.\(kind)")
+            detailsButtons[kind] = details
+            views.bodyStack.insertArrangedSubview(details, at: 2)
+            let action = HelmButton(title: "", variant: .primary, size: .small, target: self,
+                                    action: #selector(stepActionClicked(_:)))
+            action.identifier = NSUserInterfaceItemIdentifier("step.action.\(kind)")
+            action.isHidden = true
+            stepActionButtons[kind] = action
+            views.titleRow.addView(action, in: .trailing)
+        }
+        refreshStepperVisuals()
+        applyTheme()
+    }
+
+    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? runFullSetupButton : nil }
+
+    /// Each step's Details link and folded controls, and the current step's
+    /// action, from the live state `refreshStepperVisuals` just read.
+    fileprivate func refreshSidebarSteps() {
+        guard drawsSidebarLayout else { return }
+        for kind in SetupStepKind.allCases {
+            guard let views = stepRowViews[kind] else { continue }
+            let open = expandedSteps.contains(kind)
+            views.contentBox.isHidden = !open
+            detailsButtons[kind]?.title = open ? "Hide details" : "Details"
+            detailsButtons[kind]?.setAccessibilityLabel("\(open ? "Hide" : "Show") \(kind.title) details")
+            guard let button = stepActionButtons[kind] else { continue }
+            let current = stepperDotState(for: kind) == .current
+            let action = current ? stepAction(for: kind) : nil
+            button.isHidden = action == nil
+            if let action { button.title = action.title }
+        }
+    }
+
+    /// What the step's next action is while it is current, from the step's
+    /// own controls: the one a captain would press first.
+    fileprivate func stepAction(for kind: SetupStepKind) -> (title: String, run: () -> Void)? {
+        switch kind {
+        case .firstmateHome:
+            return ("Choose Folder\u{2026}", { [weak self] in
+                self?.expandedSteps.insert(.firstmateHome)
+                self?.refreshSidebarSteps()
+                self?.browseClicked()
+            })
+        case .dotfiles:
+            guard !isLoadingDotfiles else { return nil }
+            guard dotfilesRepoPath != nil else {
+                return ("Clone & Bootstrap", { [weak self] in self?.cloneAndBootstrapClicked() })
+            }
+            if let state = repoState, !state.dirtyFiles.isEmpty {
+                return ("Sync Now", { [weak self] in self?.syncDotfilesNowClicked() })
+            }
+            return ("Run rebuild.sh", { [weak self] in self?.runRebuildClicked() })
+        case .agentInstructions:
+            guard !isLoadingDotfiles, dotfilesRepoPath != nil else { return nil }
+            return ("Create Links", { [weak self] in self?.createLinkClicked() })
+        case .software:
+            guard !isLoadingSoftware, softwareRows.contains(where: { $0.status == .notInstalled }) else { return nil }
+            return ("Install Everything Missing", { [weak self] in self?.installAllMissingClicked() })
+        case .restoreConfig:
+            return ("Import\u{2026}", { [weak self] in self?.importRestoreConfigClicked() })
+        }
+    }
+
+    @objc fileprivate func toggleStepDetails(_ sender: HelmButton) {
+        guard let kind = SetupStepKind.allCases.first(where: { detailsButtons[$0] === sender }) else { return }
+        if expandedSteps.contains(kind) { expandedSteps.remove(kind) } else { expandedSteps.insert(kind) }
+        refreshSidebarSteps()
+    }
+
+    @objc fileprivate func stepActionClicked(_ sender: HelmButton) {
+        guard let kind = SetupStepKind.allCases.first(where: { stepActionButtons[$0] === sender }),
+              let action = stepAction(for: kind) else { return }
+        action.run()
+    }
+}
+
+#if FM_SELFTESTS
+extension BootstrapController {
+    var debugDrawsSidebarLayout: Bool { drawsSidebarLayout }
+    var debugFullSetupCardShown: Bool { !(fullSetupCardView?.isHidden ?? true) }
+    var debugSetupSummary: SetupSummaryRow { setupSummary }
+    var debugRunFullSetupButton: HelmButton { runFullSetupButton }
+    func debugDetailsButton(_ kind: SetupStepKind) -> HelmButton? { detailsButtons[kind] }
+    func debugStepActionButton(_ kind: SetupStepKind) -> HelmButton? { stepActionButtons[kind] }
+    func debugStepContentIsShown(_ kind: SetupStepKind) -> Bool {
+        guard let box = stepRowViews[kind]?.contentBox else { return false }
+        return !box.isHidden
+    }
+    func debugStepIsCurrent(_ kind: SetupStepKind) -> Bool { stepperDotState(for: kind) == .current }
+}
+#endif

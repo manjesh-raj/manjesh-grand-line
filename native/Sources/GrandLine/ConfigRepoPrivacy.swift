@@ -70,6 +70,12 @@ enum ConfigRepoPrivacy {
     /// serial sync queue, `VaultRecipeGit.export`'s caller, `BackupUI`'s
     /// export flow).
     static func check() -> Visibility {
+        let visibility = performCheck()
+        record(visibility)
+        return visibility
+    }
+
+    private static func performCheck() -> Visibility {
         cacheLock.lock()
         let cached = confirmedPrivate
         cacheLock.unlock()
@@ -111,6 +117,72 @@ enum ConfigRepoPrivacy {
     }
 
     private static let timeout: TimeInterval = 10
+
+    // MARK: The last answer, for the captain to see (stage 7)
+
+    /// What the last `check()` found, and when. Setup's GitHub sync tab draws
+    /// a "Pushing is paused" banner from this while it is `.publicRepo`, so a
+    /// refused push has a place on screen rather than only in the log. `nil`
+    /// until a check has run in this process; an `.unknown` answer is kept
+    /// too, so the banner never claims a pause that was not confirmed.
+    struct Reading: Equatable {
+        let visibility: Visibility
+        let at: Date
+    }
+
+    private static var _lastReading: Reading?
+    private static var observers: [UUID: (Reading?) -> Void] = [:]
+
+    static var lastReading: Reading? {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        return _lastReading
+    }
+
+    /// Called on main with the current reading, then after every check.
+    @discardableResult
+    static func observe(_ handler: @escaping (Reading?) -> Void) -> UUID {
+        let token = UUID()
+        cacheLock.lock()
+        observers[token] = handler
+        let current = _lastReading
+        cacheLock.unlock()
+        DispatchQueue.main.async { handler(current) }
+        return token
+    }
+
+    static func unobserve(_ token: UUID) {
+        cacheLock.lock()
+        observers[token] = nil
+        cacheLock.unlock()
+    }
+
+    /// The repo's own settings page, where its visibility is changed - what
+    /// the banner's Open on GitHub opens.
+    static var settingsURL: URL? {
+        repoFullName.flatMap { URL(string: "https://github.com/\($0)/settings") }
+    }
+
+    private static func record(_ visibility: Visibility) {
+        let reading = Reading(visibility: visibility, at: Date())
+        cacheLock.lock()
+        _lastReading = reading
+        let handlers = Array(observers.values)
+        cacheLock.unlock()
+        DispatchQueue.main.async { for handler in handlers { handler(reading) } }
+    }
+
+    #if FM_SELFTESTS
+    /// Lands a reading as a finished check would, for a suite or a tour
+    /// (`demo signals`) - nothing here runs `gh`.
+    static func debugRecord(_ visibility: Visibility) { record(visibility) }
+    /// Back to "no check has run", for a suite that recorded one.
+    static func debugReset() {
+        cacheLock.lock()
+        _lastReading = nil
+        confirmedPrivate = false
+        cacheLock.unlock()
+    }
+    #endif
 
     /// One short line for a status pill / log when a push is refused.
     static var publicRepoRefusalMessage: String {

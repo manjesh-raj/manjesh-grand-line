@@ -38,6 +38,10 @@ private final class GitHubSyncRow {
     var upstreamFullName: String?
     var detail: String = "Not checked yet"
     var log: String = ""
+    /// When this session last heard back from a check of this fork - the
+    /// sidebar layout's Last checked column (stage 7). Nothing records when
+    /// a fork was last synced, so the table says when it was last read.
+    var checkedAt: Date?
     var isLogExpanded = false
     /// True while either a check or a sync is running for this row - guards
     /// against double-firing the same row from two places (a row's own
@@ -80,6 +84,56 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     private var separators: [NSView] = []
     private var hasCheckedOnce = false
     private var isSyncingAll = false
+
+    // MARK: The sidebar layout's state (stage 7)
+
+    private var drawsSidebarLayout = false
+    private var pageStack: NSStackView?
+    private var reposCardView: NSView?
+    private lazy var setupSummary = SetupSummaryRow()
+    /// The forks, one row each: the fork, its upstream, how far behind it
+    /// is, and when it was last read.
+    private lazy var forksTable: HelmDataTable = {
+        let table = HelmDataTable(columns: [
+            .init(id: "fork", title: "Fork", width: 280, minWidth: 200, flexible: true),
+            .init(id: "upstream", title: "Upstream", width: 270, hiddenBelow: 760),
+            .init(id: "behind", title: "Behind", width: 150),
+            .init(id: "checked", title: "Last checked", width: 120, hiddenBelow: 640),
+        ], actionsWidth: 120)
+        table.sizesToFitRows = true
+        table.accessibilityName = "Forks"
+        table.onSelect = { [weak self] key in
+            self?.selectedForkName = key
+            self?.onInspectorContentChanged?()
+        }
+        return table
+    }()
+    private let forksSubtitle = NSTextField(labelWithString: "")
+    /// The toolbar's Refresh: the pill's re-check, as a toolbar button.
+    private lazy var refreshButton: HelmButton = {
+        let button = HelmButton.refresh(size: .small)
+        button.target = self
+        button.action = #selector(refreshTapped)
+        button.toolTip = "Re-check every fork's sync status"
+        return button
+    }()
+    /// "Pushing is paused": shown while the config repo is confirmed public.
+    private lazy var pausedCard = SetupPausedPushNotice(actionButtons: [openOnGitHubButton, checkAgainButton])
+    private lazy var openOnGitHubButton = HelmButton(title: "Open on GitHub", variant: .primary, size: .small,
+                                                     target: self, action: #selector(openConfigRepoSettings))
+    private lazy var checkAgainButton = HelmButton(title: "Check again", variant: .secondary, size: .small,
+                                                   target: self, action: #selector(checkConfigRepoAgain))
+    private var configRepo: ConfigRepoPrivacy.Reading?
+    private var configRepoToken: UUID?
+    private var isCheckingConfigRepo = false
+    private var selectedForkName: String?
+    private lazy var forkDetail = WorkspaceDetailView()
+    var onInspectorContentChanged: (() -> Void)?
+    var onShowInspector: (() -> Void)?
+
+    deinit {
+        if let configRepoToken { ConfigRepoPrivacy.unobserve(configRepoToken) }
+    }
 
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 700, height: 720))
@@ -149,6 +203,8 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
+        pageStack = stack
+        reposCardView = reposCard
 
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -420,9 +476,11 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         isCheckingAll = true
         refreshPill.isHidden = true
         refreshProgressLabel.isHidden = false
+        refreshButton.isEnabled = false
 
         let total = rows.count
         refreshProgressLabel.stringValue = "Checking\u{2026} (0/\(total))"
+        forksSubtitle.stringValue = refreshProgressLabel.stringValue
         guard total > 0 else {
             finishCheckAll()
             return
@@ -434,6 +492,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
                 guard let self else { return }
                 completed += 1
                 self.refreshProgressLabel.stringValue = "Checking\u{2026} (\(completed)/\(total))"
+                self.forksSubtitle.stringValue = self.refreshProgressLabel.stringValue
                 if completed == total { self.finishCheckAll() }
             }
         }
@@ -448,8 +507,11 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     /// actions visibly distinct.
     private func finishCheckAll() {
         isCheckingAll = false
-        refreshPill.isHidden = false
+        // The sidebar layout's toolbar carries Refresh instead of the pill.
+        refreshPill.isHidden = drawsSidebarLayout
         refreshProgressLabel.isHidden = true
+        refreshButton.isEnabled = true
+        renderForksSubtitle()
         // Anything the notification popover asked for while this sweep was
         // running now has a real, current status to act on.
         runPendingNotificationSyncs()
@@ -476,6 +538,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
                 row.upstreamFullName = outcome.upstreamFullName
                 row.detail = outcome.detail
                 row.log = outcome.log
+                row.checkedAt = Date()
                 self?.render(row)
                 completion?()
             }
@@ -551,10 +614,18 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         if rows.allSatisfy({ $0.status == .unknown }) { return "\(total) forks \u{00B7} not checked yet" }
         let behind = rows.filter { $0.status.showsSyncButton }.count
         let diverged = rows.filter { $0.status.isDiverged }.count
+        // Stage 7, GL-14: a check that failed is not "in sync". This said
+        // "all in sync" whenever nothing was behind or diverged, including
+        // a sweep where every check failed - measured on a tour, where `gh`
+        // is refused and all eight rows read Check Failed under it.
+        let failed = rows.filter { $0.status == .checkFailed }.count
+        let notForks = rows.filter { $0.status == .notAFork }.count
         var parts: [String] = ["\(total) forks"]
         if behind > 0 { parts.append("\(behind) behind upstream") }
         if diverged > 0 { parts.append("\(diverged) diverged") }
-        if behind == 0 && diverged == 0 { parts.append("all in sync") }
+        if failed > 0 { parts.append(failed == total ? "could not be checked" : "\(failed) could not be checked") }
+        if notForks > 0 { parts.append("\(notForks) not a fork") }
+        if rows.allSatisfy({ $0.status == .inSync }) { parts.append("all in sync") }
         return parts.joined(separator: " \u{00B7} ")
     }
 
@@ -573,7 +644,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     /// empty) cluster, which made this same call for all four Engineering
     /// setup pages at once before `fm/grandline-separate-setup-destinations`
     /// gave each of them its own destination.
-    var drillHeaderActions: [NSView] { [] }
+    var drillHeaderActions: [NSView] { drawsSidebarLayout ? [refreshButton] : [] }
 
     #if FM_SELFTESTS
     /// Set every row's status to `statuses` (by catalog order) and run the
@@ -692,6 +763,8 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         // U11: and the one place the page-level action's enablement is
         // re-derived from, for the same reason.
         defer { updateSyncAllEnablement() }
+        // Stage 7: and the sidebar layout's one table, which lists every row.
+        defer { renderForksTable() }
         row.detailLabel.stringValue = row.detail
         row.logField.stringValue = row.log.isEmpty ? "No output yet." : row.log
 
@@ -803,6 +876,13 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         refreshPill.applyTheme(theme)
         refreshProgressLabel.textColor = HelmTheme.mutedInk(theme)
         for row in rows { applyThemeToRow(row) }
+        if drawsSidebarLayout {
+            setupSummary.applyTheme(theme)
+            forksTable.applyTheme(theme)
+            forksSubtitle.textColor = HelmTheme.mutedInk(theme)
+            applyPausedCard()
+            renderForksTable()
+        }
     }
 
     #if FM_SELFTESTS
@@ -837,3 +917,226 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     #endif
 
 }
+
+// MARK: - The sidebar layout (stage 7)
+
+// The prototype's GitHub sync: Setup's summary cards, a stated pause when the
+// config repo is public (every push to it is refused until it is private
+// again, GL-22), and the forks as one table. Every row and toolbar action is
+// the method the floating bar's own buttons reach; a fork's detail and its
+// last `gh` output are the inspector's.
+
+extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding, WorkspaceInspectorSource {
+
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+        guard let stack = pageStack else { return }
+        reposCardView?.isHidden = true
+        refreshPill.isHidden = true
+        stack.insertArrangedSubview(setupSummary, at: 0)
+        pausedCard.isHidden = true
+        stack.insertArrangedSubview(pausedCard, at: 1)
+        forksSubtitle.font = HelmType.caption()
+        _ = forksTable.card.setHeader(symbol: "point.3.connected.trianglepath.dotted",
+                                      titleLabel: NSTextField(labelWithString: "Forks"), subtitleLabel: forksSubtitle)
+        stack.addArrangedSubview(forksTable.card)
+        for view in [setupSummary, pausedCard, forksTable.card] as [NSView] {
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        configRepo = ConfigRepoPrivacy.lastReading
+        configRepoToken = ConfigRepoPrivacy.observe { [weak self] reading in
+            self?.configRepo = reading
+            self?.applyPausedCard()
+        }
+        renderForksSubtitle()
+        applyTheme()
+    }
+
+    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? syncAllButton : nil }
+
+    var inspectorContent: WorkspaceInspectorContent? {
+        guard drawsSidebarLayout, let name = selectedForkName,
+              let row = rows.first(where: { $0.repo.fullName == name }) else { return nil }
+        forkDetail.show(forkDetail(for: row))
+        return WorkspaceInspectorContent(title: row.repo.name, view: forkDetail)
+    }
+
+    var inspectorEmptyText: (title: String, body: String) {
+        ("No fork selected", "Select a fork to see its upstream and the output of its last check or sync.")
+    }
+
+    /// Shown only for a confirmed public repo: an unknown answer (no `gh`,
+    /// offline) never blocks a push, so it never claims a pause either.
+    fileprivate func applyPausedCard() {
+        guard drawsSidebarLayout else { return }
+        let paused = configRepo?.visibility == .publicRepo
+        pausedCard.isHidden = !paused
+        guard paused else { return }
+        let repo = ConfigRepoPrivacy.repoFullName ?? "The config repository"
+        var subline = "\(repo) is public on GitHub. Grand Line will not push dotfiles, tasks, notes, runbooks "
+            + "or backups to a public repository. Make it private to resume."
+        if let at = configRepo?.at { subline += " Checked \(Self.relative(at))." }
+        pausedCard.setBody(subline)
+        openOnGitHubButton.isHidden = ConfigRepoPrivacy.settingsURL == nil
+        checkAgainButton.title = isCheckingConfigRepo ? "Checking\u{2026}" : "Check again"
+        checkAgainButton.isEnabled = !isCheckingConfigRepo
+        pausedCard.applyTheme(theme)
+    }
+
+    @objc fileprivate func openConfigRepoSettings() {
+        guard let url = ConfigRepoPrivacy.settingsURL else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// The same check every push runs first, run now. Off the main thread:
+    /// it asks GitHub through `gh`.
+    @objc fileprivate func checkConfigRepoAgain() {
+        guard !isCheckingConfigRepo else { return }
+        isCheckingConfigRepo = true
+        applyPausedCard()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            _ = ConfigRepoPrivacy.check()
+            DispatchQueue.main.async {
+                self?.isCheckingConfigRepo = false
+                self?.applyPausedCard()
+            }
+        }
+    }
+
+    fileprivate func renderForksSubtitle() {
+        guard drawsSidebarLayout, !isCheckingAll else { return }
+        let checked = rows.compactMap(\.checkedAt).max()
+        forksSubtitle.stringValue = checked.map { "checked \(Self.relative($0))" } ?? "not checked yet"
+    }
+
+    fileprivate func renderForksTable() {
+        guard drawsSidebarLayout else { return }
+        forksTable.setRows(rows.map(forkRow))
+        renderForksSubtitle()
+        onInspectorContentChanged?()
+    }
+
+    private func forkRow(_ row: GitHubSyncRow) -> HelmDataTable.Row {
+        var tableRow = HelmDataTable.Row.record(row.repo.fullName)
+        let failed = row.status == .checkFailed || row.status == .syncFailed || row.status.isDiverged
+        tableRow.cells["fork"] = .title(row.repo.fullName, subtitle: failed ? row.detail : nil, subtitleIsCode: false,
+                                        symbol: "point.3.connected.trianglepath.dotted", tint: .neutral, tintHex: nil)
+        if let upstream = row.upstreamFullName ?? row.repo.manualUpstreamFullName {
+            tableRow.cells["upstream"] = .code(upstream)
+        } else {
+            tableRow.cells["upstream"] = HelmDataTable.Cell.none
+        }
+        tableRow.cells["behind"] = behindCell(row.status)
+        tableRow.cells["checked"] = row.checkedAt.map { .muted(Self.relative($0)) } ?? HelmDataTable.Cell.none
+        let busy = row.status == .checking || row.status == .syncing
+        if !busy {
+            if row.status.showsSyncButton {
+                tableRow.primary = .init(title: "Sync", symbol: "arrow.triangle.2.circlepath") { [weak self] in
+                    self?.sync(row)
+                }
+                tableRow.pinsPrimary = true
+            }
+            tableRow.menu = [
+                .init(title: "Check Now", symbol: "arrow.clockwise") { [weak self] in self?.check(row) },
+                .init(title: "Show Details", symbol: "sidebar.right") { [weak self] in self?.showForkDetails(row) },
+                .init(title: "Open on GitHub", symbol: "safari") { Self.openOnGitHub(row.repo.fullName) },
+            ]
+        }
+        tableRow.activate = { [weak self] in self?.showForkDetails(row) }
+        return tableRow
+    }
+
+    private func behindCell(_ status: GitHubSyncStatus) -> HelmDataTable.Cell {
+        switch status {
+        case .behind(let n): return .status("\(n) commit\(n == 1 ? "" : "s")", tint: .warn)
+        case .inSync: return .muted("Up to date")
+        case .diverged: return .status("Diverged", tint: .critical)
+        case .notAFork: return .muted("Not a fork")
+        case .checkFailed: return .status("Check failed", tint: .critical)
+        case .syncFailed: return .status("Sync failed", tint: .critical)
+        case .checking: return .muted("Checking\u{2026}")
+        case .syncing: return .muted("Syncing\u{2026}")
+        case .unknown: return .muted("Not checked")
+        }
+    }
+
+    private func showForkDetails(_ row: GitHubSyncRow) {
+        forksTable.select(key: row.repo.fullName)
+        selectedForkName = row.repo.fullName
+        onInspectorContentChanged?()
+        onShowInspector?()
+    }
+
+    private func forkDetail(for row: GitHubSyncRow) -> WorkspaceDetail {
+        var detail = WorkspaceDetail(symbol: "point.3.connected.trianglepath.dotted", kicker: "Fork",
+                                     title: row.repo.fullName, subtitle: row.detail)
+        detail.tint = .neutral
+        if let upstream = row.upstreamFullName ?? row.repo.manualUpstreamFullName {
+            detail.fields.append(.init("Upstream", upstream, isCode: true))
+        }
+        let (word, _, _) = pillVisuals(row.status)
+        if !word.isEmpty { detail.fields.append(.init("Status", word)) }
+        if let at = row.checkedAt { detail.fields.append(.init("Last checked", Self.relative(at))) }
+        let lines = row.log.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        detail.sections.append(.init("Output", row.log.isEmpty ? ["No output yet."] : lines, isCode: !row.log.isEmpty))
+        if !(row.status == .checking || row.status == .syncing) {
+            if row.status.showsSyncButton {
+                detail.actions.append(.init("Sync", symbol: "arrow.triangle.2.circlepath", role: .primary) {
+                    [weak self] in self?.sync(row)
+                })
+            }
+            detail.actions.append(.init("Check Now", symbol: "arrow.clockwise") { [weak self] in self?.check(row) })
+            detail.actions.append(.init("Open on GitHub", symbol: "safari") { Self.openOnGitHub(row.repo.fullName) })
+        }
+        return detail
+    }
+
+    private static func openOnGitHub(_ fullName: String) {
+        guard let url = URL(string: "https://github.com/\(fullName)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// "just now", "5m ago", "2h ago", the way Updates says when it checked.
+    static func relative(_ date: Date, now: Date = Date()) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
+        if seconds < 60 { return "just now" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h ago" }
+        return "\(hours / 24)d ago"
+    }
+}
+
+#if FM_SELFTESTS
+extension GitHubSyncController {
+    var debugDrawsSidebarLayout: Bool { drawsSidebarLayout }
+    var debugReposCardShown: Bool { !(reposCardView?.isHidden ?? true) }
+    var debugIsCheckingAll: Bool { isCheckingAll }
+    var debugForksTable: HelmDataTable { forksTable }
+    var debugSetupSummary: SetupSummaryRow { setupSummary }
+    /// Mounted and not hidden: the floating bar never mounts the card at all.
+    var debugPausedCardIsShown: Bool { pausedCard.superview != nil && !pausedCard.isHidden }
+    var debugPausedTitle: String { pausedCard.titleLabel.stringValue }
+    var debugPausedBody: String { pausedCard.bodyLabel.stringValue }
+    var debugPausedNotice: SetupPausedPushNotice { pausedCard }
+    var debugPausedActions: [HelmButton] { [openOnGitHubButton, checkAgainButton] }
+    var debugRefreshButton: HelmButton { refreshButton }
+    var debugSyncAllButton: HelmButton { syncAllButton }
+    /// Land a fixture check on a row through the same fields a real check
+    /// writes, then the page's own render.
+    func debugApplyCheck(index: Int, status: GitHubSyncStatus, upstream: String?, detail: String = "fixture",
+                         log: String = "", at: Date = Date()) {
+        guard rows.indices.contains(index) else { return }
+        let row = rows[index]
+        row.status = status
+        row.upstreamFullName = upstream
+        row.detail = detail
+        row.log = log
+        row.checkedAt = at
+        render(row)
+    }
+}
+#endif

@@ -584,6 +584,10 @@ final class Workspace {
             self?.navigator.runInConsole(label: label, command: command, completion: completion)
         }
         automation.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
+        // Stage 7: the sidebar layout's Automation card lists the schedules,
+        // from the app's one store, and links to the page that edits them.
+        automation.scheduleStore = scheduleStore
+        automation.onOpenSchedules = { [weak self] in self?.navigator.show(.schedules) }
         return built(.automation, automation)
     }()
 

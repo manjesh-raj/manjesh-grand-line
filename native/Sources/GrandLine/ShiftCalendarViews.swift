@@ -173,6 +173,14 @@ final class ShiftCalendarView: NSView {
     private let weekdayHeader = ShiftCalendarWeekdayHeader()
     private let grid = ShiftCalendarGridView()
     private var gridHeight: NSLayoutConstraint?
+    private var toolbarStack: NSStackView?
+    private var titleStackView: NSStackView?
+    private var navStackView: NSStackView?
+    private var outerStack: NSStackView?
+    /// The sidebar layout's month (stage 7) - see `adoptWorkspaceStyle`.
+    private(set) var usesWorkspaceStyle = false
+    /// The weekday row and the grid in one bordered card.
+    private let workspaceCard = NSView()
 
     private var tasks: [ShiftTask] = []
     private var projects: [ShiftProject] = []
@@ -223,7 +231,10 @@ final class ShiftCalendarView: NSView {
         navStack.distribution = .fill
         navStack.setHuggingPriority(.required, for: .horizontal)
 
+        titleStackView = titleStack
+        navStackView = navStack
         let toolbar = NSStackView(views: [titleStack, navStack, scaleTabs])
+        toolbarStack = toolbar
         toolbar.orientation = .horizontal
         toolbar.alignment = .centerY
         toolbar.spacing = HelmMetrics.s3
@@ -241,6 +252,7 @@ final class ShiftCalendarView: NSView {
         stack.alignment = .leading
         stack.spacing = HelmMetrics.s2
         stack.translatesAutoresizingMaskIntoConstraints = false
+        outerStack = stack
         addSubview(stack)
 
         let height = grid.heightAnchor.constraint(equalToConstant: Self.monthHeight)
@@ -256,6 +268,60 @@ final class ShiftCalendarView: NSView {
             height,
         ])
         applyTheme(ThemeManager.shared.theme)
+    }
+
+    /// The prototype's month: the period's name on the left with its Month
+    /// and Week switch and the arrows on the right, then one bordered card
+    /// holding the weekday row (in the grid's own tint) and the days, a day's
+    /// number at its top-left with today's in the accent, and each task a
+    /// quiet chip with its project's bar. Once, the first time the sidebar
+    /// layout shows the page; never undone.
+    func adoptWorkspaceStyle() {
+        guard !usesWorkspaceStyle, let toolbar = toolbarStack, let stack = outerStack,
+              let titleStack = titleStackView, let navStack = navStackView else { return }
+        usesWorkspaceStyle = true
+        titleLabel.font = .systemFont(ofSize: HelmType.scaled(17), weight: .bold)
+        for view in toolbar.arrangedSubviews {
+            toolbar.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        let spacerWidth = spacer.widthAnchor.constraint(equalToConstant: 0)
+        spacerWidth.priority = .defaultLow
+        spacerWidth.isActive = true
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        for view in [titleStack, spacer, scaleTabs, navStack] as [NSView] { toolbar.addArrangedSubview(view) }
+        // Gotcha (12): neither the switch nor a stack has an intrinsic width,
+        // so content hugging on them is a no-op and the switch took the
+        // slack (measured: its pills drawn beside the title). Their own
+        // widths, so the spacer takes it.
+        scaleTabs.widthAnchor.constraint(equalToConstant: ceil(scaleTabs.fittingSize.width)).isActive = true
+        titleStack.setHuggingPriority(.required, for: .horizontal)
+
+        stack.removeArrangedSubview(weekdayHeader)
+        weekdayHeader.removeFromSuperview()
+        stack.removeArrangedSubview(grid)
+        grid.removeFromSuperview()
+        workspaceCard.wantsLayer = true
+        workspaceCard.translatesAutoresizingMaskIntoConstraints = false
+        workspaceCard.addSubview(weekdayHeader)
+        workspaceCard.addSubview(grid)
+        weekdayHeader.usesWorkspaceStyle = true
+        grid.usesWorkspaceStyle = true
+        NSLayoutConstraint.activate([
+            weekdayHeader.topAnchor.constraint(equalTo: workspaceCard.topAnchor),
+            weekdayHeader.leadingAnchor.constraint(equalTo: workspaceCard.leadingAnchor),
+            weekdayHeader.trailingAnchor.constraint(equalTo: workspaceCard.trailingAnchor),
+            grid.topAnchor.constraint(equalTo: weekdayHeader.bottomAnchor),
+            grid.leadingAnchor.constraint(equalTo: workspaceCard.leadingAnchor),
+            grid.trailingAnchor.constraint(equalTo: workspaceCard.trailingAnchor),
+            grid.bottomAnchor.constraint(equalTo: workspaceCard.bottomAnchor),
+        ])
+        stack.addArrangedSubview(workspaceCard)
+        stack.setCustomSpacing(HelmMetrics.s3, after: toolbar)
+        workspaceCard.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        rebuild()
     }
 
     // MARK: Data
@@ -364,6 +430,10 @@ final class ShiftCalendarView: NSView {
         scaleTabs.applyTheme(theme)
         weekdayHeader.applyTheme(theme)
         grid.applyTheme(theme)
+        if usesWorkspaceStyle {
+            HelmCard.applyCardSurface(to: workspaceCard, theme: theme, cornerRadius: 12, daylightRadius: 12)
+            workspaceCard.layer?.masksToBounds = true
+        }
     }
 
     // MARK: Debug hooks (GL-27)
@@ -384,6 +454,19 @@ final class ShiftCalendarView: NSView {
 /// The seven column headings, in the captain's own locale's week order.
 final class ShiftCalendarWeekdayHeader: NSView {
     private var labels: [NSTextField] = []
+    private var height: NSLayoutConstraint?
+    /// The sidebar layout's row: "Mon" at each column's leading edge, in the
+    /// card's tinted header band.
+    var usesWorkspaceStyle = false {
+        didSet {
+            for label in labels {
+                label.alignment = usesWorkspaceStyle ? .left : .center
+                label.font = usesWorkspaceStyle ? HelmType.caption() : HelmType.kicker()
+            }
+            height?.constant = usesWorkspaceStyle ? 30 : 22
+            needsLayout = true
+        }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -396,7 +479,9 @@ final class ShiftCalendarWeekdayHeader: NSView {
             addSubview(label)
             labels.append(label)
         }
-        heightAnchor.constraint(equalToConstant: 22).isActive = true
+        let height = heightAnchor.constraint(equalToConstant: 22)
+        height.isActive = true
+        self.height = height
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -405,7 +490,8 @@ final class ShiftCalendarWeekdayHeader: NSView {
         let calendar = Calendar.current
         for (index, label) in labels.enumerated() {
             guard let date = calendar.date(byAdding: .day, value: index, to: start) else { continue }
-            label.stringValue = Self.headingFormatter.string(from: date).uppercased()
+            let heading = Self.headingFormatter.string(from: date)
+            label.stringValue = usesWorkspaceStyle ? heading : heading.uppercased()
         }
         needsLayout = true
     }
@@ -416,12 +502,19 @@ final class ShiftCalendarWeekdayHeader: NSView {
         super.layout()
         let width = bounds.width / 7
         for (index, label) in labels.enumerated() {
-            label.frame = NSRect(x: CGFloat(index) * width, y: 4, width: width, height: 14)
+            if usesWorkspaceStyle {
+                label.frame = NSRect(x: CGFloat(index) * width + 9, y: 8, width: width - 12, height: 16)
+            } else {
+                label.frame = NSRect(x: CGFloat(index) * width, y: 4, width: width, height: 14)
+            }
         }
     }
 
     func applyTheme(_ theme: HelmTheme) {
         for label in labels { label.textColor = HelmTheme.mutedInk(theme) }
+        if usesWorkspaceStyle {
+            layer?.backgroundColor = HelmField.fill(theme).cgColor
+        }
     }
 
     private static let headingFormatter: DateFormatter = {
@@ -442,6 +535,9 @@ final class ShiftCalendarGridView: NSView {
 
     private var cells: [ShiftCalendarDayCell] = []
     private var rows = 6
+    /// Inside the sidebar layout's card: square corners (the card rounds
+    /// them), and the cells and chips in the prototype's style.
+    var usesWorkspaceStyle = false
 
     /// The gap between two cells, which is where the grid's own background
     /// is seen. One point, not `HelmMetrics.s1`: this is a rule between two
@@ -467,6 +563,7 @@ final class ShiftCalendarGridView: NSView {
         // what keeps paging through a year from churning the view tree.
         while cells.count < days {
             let cell = ShiftCalendarDayCell()
+            cell.usesWorkspaceStyle = usesWorkspaceStyle
             cell.onOpenTask = { [weak self] id in self?.onOpenTask?(id) }
             cell.onAddTask = { [weak self] day in self?.onAddTask?(day) }
             addSubview(cell)
@@ -524,9 +621,12 @@ final class ShiftCalendarGridView: NSView {
         // so the 1pt gaps between them read as the rules of the calendar.
         layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
             .withAlphaComponent(theme.isDaylight ? 1 : 0.5).cgColor
-        layer?.cornerRadius = HelmMetrics.rCard
+        layer?.cornerRadius = usesWorkspaceStyle ? 0 : HelmMetrics.rCard
         layer?.masksToBounds = true
-        for cell in cells { cell.applyTheme(theme) }
+        for cell in cells {
+            cell.usesWorkspaceStyle = usesWorkspaceStyle
+            cell.applyTheme(theme)
+        }
     }
 
     #if FM_SELFTESTS
@@ -553,6 +653,9 @@ final class ShiftCalendarDayCell: HoverHighlightView {
     private var isToday = false
     private var maxChips = 3
     private var projects: [ShiftProject] = []
+    /// The sidebar layout's day: the number at the top-left, today's in an
+    /// accent circle, and quiet chips.
+    var usesWorkspaceStyle = false
 
     /// The cell's own inner inset, and the chip height. Constants rather than
     /// `HelmMetrics` spacings because the grid's rhythm is a cell size, not
@@ -599,6 +702,7 @@ final class ShiftCalendarDayCell: HoverHighlightView {
         let shown = Array(entries.prefix(maxChips))
         while chips.count < shown.count {
             let chip = ShiftCalendarChipView()
+            chip.usesWorkspaceStyle = usesWorkspaceStyle
             chip.onClick = { [weak self] id in self?.onOpenTask?(id) }
             addSubview(chip)
             chips.append(chip)
@@ -639,9 +743,16 @@ final class ShiftCalendarDayCell: HoverHighlightView {
     override func layout() {
         super.layout()
         let width = bounds.width - Self.inset * 2
-        todayPill.frame = NSRect(x: bounds.width - Self.inset - 22, y: Self.inset - 1, width: 22, height: 16)
+        if usesWorkspaceStyle {
+            todayPill.frame = NSRect(x: Self.inset + 1, y: Self.inset - 1, width: 24, height: 17)
+            numberLabel.frame = NSRect(x: Self.inset + 1, y: Self.inset, width: 24, height: 14)
+            numberLabel.alignment = isToday ? .center : .left
+            if !isToday { numberLabel.frame.origin.x = Self.inset + 3 }
+        } else {
+            todayPill.frame = NSRect(x: bounds.width - Self.inset - 22, y: Self.inset - 1, width: 22, height: 16)
+            numberLabel.frame = NSRect(x: bounds.width - Self.inset - 22, y: Self.inset, width: 22, height: 14)
+        }
         todayPill.layer?.cornerRadius = 8
-        numberLabel.frame = NSRect(x: bounds.width - Self.inset - 22, y: Self.inset, width: 22, height: 14)
 
         var y = Self.headerHeight
         for chip in chips where !chip.isHidden {
@@ -674,7 +785,10 @@ final class ShiftCalendarDayCell: HoverHighlightView {
             numberLabel.textColor = inFocusMonth ? ink : muted
         }
         overflowLabel.textColor = muted
-        for chip in chips { chip.applyTheme(theme, projects: projects) }
+        for chip in chips {
+            chip.usesWorkspaceStyle = usesWorkspaceStyle
+            chip.applyTheme(theme, projects: projects)
+        }
     }
 
     #if FM_SELFTESTS
@@ -703,6 +817,9 @@ final class ShiftCalendarChipView: HoverHighlightView {
     private let repeatIcon = NSImageView()
     private var tint: HelmTint = .neutral
     private var isCompleted = false
+    /// The prototype's chip: the app's quiet well with the project's bar,
+    /// ink text - one surface for every project, the bar says which.
+    var usesWorkspaceStyle = false
 
     /// How faint a projected occurrence is drawn. Low enough to read as
     /// "not yet real" beside a solid chip, high enough to stay legible -
@@ -772,7 +889,7 @@ final class ShiftCalendarChipView: HoverHighlightView {
         // same "no identity signal" treatment the board's cards already use.
         let fill: NSColor
         let foreground: NSColor
-        if tint == .neutral {
+        if usesWorkspaceStyle || tint == .neutral {
             fill = HelmField.fill(theme)
             foreground = HelmTheme.nsColor(theme.chromeInkHex)
         } else {

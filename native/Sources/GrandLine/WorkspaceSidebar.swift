@@ -87,6 +87,37 @@ extension WorkspaceModule {
     }
 }
 
+/// The sidebar's sizes, in one place.
+///
+/// The system's Large source-list size (Apple's Human Interface Guidelines,
+/// Sidebars: 32pt rows, 24pt icons, 15pt text). The column drew the Medium
+/// size (28pt rows, 13pt text) until stage 7, when the captain asked for
+/// bigger text and icons because the column had room to spare below
+/// Settings. Every row still fits the column's 236pt width beside its badge,
+/// and the list scrolls in a window too short to show it all, as it always
+/// did. Each size goes through `HelmType.scaled`, so the chrome text scale
+/// still moves all of them together.
+enum WorkspaceSidebarMetrics {
+    /// Home and the seventeen modules.
+    static let moduleRowHeight: CGFloat = 32
+    /// A live session under Console: one step down from a module.
+    static let sessionRowHeight: CGFloat = 30
+    /// A group heading, with the room above it that separates the groups.
+    static let sectionRowHeight: CGFloat = 34
+    static let moduleTextSize: CGFloat = 15
+    static let sessionTextSize: CGFloat = 14
+    static let sectionTextSize: CGFloat = 13
+    /// The icon's box, and the symbol drawn in it at the Medium symbol scale.
+    static let iconSide: CGFloat = 24
+    static let symbolPointSize: CGFloat = 16
+    /// A badge's digits, and the pill they sit in.
+    static let badgeTextSize: CGFloat = 12
+    static let badgeHeight: CGFloat = 19
+    static let badgeSymbolSide: CGFloat = 14
+    /// The ⌃⌘ shortcut beside a session.
+    static let shortcutTextSize: CGFloat = 12
+}
+
 /// The outline view's item: a node with object identity, which is what
 /// `NSOutlineView` keys its expansion state on.
 final class WorkspaceSidebarItem: NSObject {
@@ -324,11 +355,12 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     }
 
     func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
-        guard let item = item as? WorkspaceSidebarItem else { return HelmType.scaledRowHeight(28) }
+        typealias M = WorkspaceSidebarMetrics
+        guard let item = item as? WorkspaceSidebarItem else { return HelmType.scaledRowHeight(M.moduleRowHeight) }
         switch item.entry {
-        case .section: return HelmType.scaledRowHeight(30)
-        case .module: return HelmType.scaledRowHeight(28)
-        case .session: return HelmType.scaledRowHeight(26)
+        case .section: return HelmType.scaledRowHeight(M.sectionRowHeight)
+        case .module: return HelmType.scaledRowHeight(M.moduleRowHeight)
+        case .session: return HelmType.scaledRowHeight(M.sessionRowHeight)
         }
     }
 
@@ -688,7 +720,7 @@ final class WorkspaceSidebarSectionCell: NSTableCellView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: HelmType.scaled(11), weight: .semibold)
+        label.font = .systemFont(ofSize: HelmType.scaled(WorkspaceSidebarMetrics.sectionTextSize), weight: .semibold)
         textField = label
         addSubview(label)
         NSLayoutConstraint.activate([
@@ -723,7 +755,7 @@ final class WorkspaceSidebarPageCell: NSTableCellView {
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.imageScaling = .scaleProportionallyDown
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: HelmType.scaled(13))
+        label.font = .systemFont(ofSize: HelmType.scaled(WorkspaceSidebarMetrics.moduleTextSize))
         label.lineBreakMode = .byTruncatingTail
         // Gotcha (5): only the title may give way.
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -734,8 +766,8 @@ final class WorkspaceSidebarPageCell: NSTableCellView {
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s1),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: HelmType.scaled(18)),
-            icon.heightAnchor.constraint(equalToConstant: HelmType.scaled(18)),
+            icon.widthAnchor.constraint(equalToConstant: HelmType.scaled(WorkspaceSidebarMetrics.iconSide)),
+            icon.heightAnchor.constraint(equalToConstant: HelmType.scaled(WorkspaceSidebarMetrics.iconSide)),
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: HelmMetrics.s2),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             badgeView.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: HelmMetrics.s1),
@@ -747,7 +779,8 @@ final class WorkspaceSidebarPageCell: NSTableCellView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     func configure(symbol: String, title: String, badge: WorkspaceBadge?, theme: HelmTheme) {
-        icon.image = HelmSymbol.image(symbol, pointSize: HelmType.scaled(13), weight: .medium)
+        icon.image = HelmSymbol.image(symbol, pointSize: HelmType.scaled(WorkspaceSidebarMetrics.symbolPointSize),
+                                      weight: .medium)
         icon.contentTintColor = HelmTheme.nsColor(theme.accentHex)
         self.title = title
         setLit(false, theme: theme)
@@ -772,6 +805,8 @@ final class WorkspaceSidebarPageCell: NSTableCellView {
     var debugBadge: WorkspaceBadge? { badgeView.badge }
     var debugIconTint: NSColor? { icon.contentTintColor }
     var debugLabelColor: NSColor? { label.textColor }
+    var debugLabel: NSTextField { label }
+    var debugIcon: NSImageView { icon }
     #endif
 }
 
@@ -783,7 +818,7 @@ final class WorkspaceSidebarPageCell: NSTableCellView {
 /// safe text). Hidden, not empty, when there is nothing to say - an empty
 /// pill reads as a zero (GL-14).
 final class WorkspaceSidebarBadgeView: NSView {
-    static let height: CGFloat = 17
+    static let height: CGFloat = WorkspaceSidebarMetrics.badgeHeight
     /// How much of the attention hue the pill's fill takes.
     static let pillWash: CGFloat = 0.22
 
@@ -797,7 +832,8 @@ final class WorkspaceSidebarBadgeView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.cornerRadius = Self.height / 2
-        label.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(11), weight: .regular)
+        label.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(WorkspaceSidebarMetrics.badgeTextSize),
+                                                weight: .regular)
         label.alignment = .center
         symbol.imageScaling = .scaleProportionallyDown
         dot.wantsLayer = true
@@ -816,8 +852,8 @@ final class WorkspaceSidebarBadgeView: NSView {
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             symbol.centerXAnchor.constraint(equalTo: centerXAnchor),
             symbol.centerYAnchor.constraint(equalTo: centerYAnchor),
-            symbol.widthAnchor.constraint(equalToConstant: HelmType.scaled(12)),
-            symbol.heightAnchor.constraint(equalToConstant: HelmType.scaled(12)),
+            symbol.widthAnchor.constraint(equalToConstant: HelmType.scaled(WorkspaceSidebarMetrics.badgeSymbolSide)),
+            symbol.heightAnchor.constraint(equalToConstant: HelmType.scaled(WorkspaceSidebarMetrics.badgeSymbolSide)),
             symbol.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor),
             dot.centerXAnchor.constraint(equalTo: centerXAnchor),
             dot.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -853,21 +889,23 @@ final class WorkspaceSidebarBadgeView: NSView {
             let inset = pill ? HelmMetrics.s2 - 2 : 0
             labelInset[0].constant = inset
             labelInset[1].constant = -inset
+            let size = HelmType.scaled(WorkspaceSidebarMetrics.badgeTextSize)
             if pill {
                 let fill = Self.pillFill(for: badge.tone, theme: theme)
                 layer?.backgroundColor = fill.cgColor
                 label.textColor = HelmContrast.legibleOn(fill: fill, preferring: Self.hue(badge.tone, theme))
-                label.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(11), weight: .semibold)
+                label.font = .monospacedDigitSystemFont(ofSize: size, weight: .semibold)
             } else {
                 label.textColor = HelmTheme.mutedInk(theme)
-                label.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(11), weight: .regular)
+                label.font = .monospacedDigitSystemFont(ofSize: size, weight: .regular)
             }
         case .dot:
             dot.isHidden = false
             dot.layer?.backgroundColor = Self.ink(for: badge.tone, over: panel, theme: theme).cgColor
         case .symbol(let name):
             symbol.isHidden = false
-            symbol.image = HelmSymbol.image(name, pointSize: HelmType.scaled(11), weight: .semibold)
+            symbol.image = HelmSymbol.image(name, pointSize: HelmType.scaled(WorkspaceSidebarMetrics.badgeTextSize),
+                                            weight: .semibold)
             symbol.contentTintColor = badge.tone == .neutral
                 ? HelmTheme.mutedInk(theme) : Self.ink(for: badge.tone, over: panel, theme: theme)
         }
@@ -923,11 +961,11 @@ final class WorkspaceSidebarSessionCell: NSTableCellView {
         dot.wantsLayer = true
         dot.layer?.cornerRadius = Self.dotSide / 2
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: HelmType.scaled(12.5))
+        label.font = .systemFont(ofSize: HelmType.scaled(WorkspaceSidebarMetrics.sessionTextSize))
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         shortcut.translatesAutoresizingMaskIntoConstraints = false
-        shortcut.font = .systemFont(ofSize: HelmType.scaled(11))
+        shortcut.font = .systemFont(ofSize: HelmType.scaled(WorkspaceSidebarMetrics.shortcutTextSize))
         shortcut.setContentHuggingPriority(.required, for: .horizontal)
         shortcut.setContentCompressionResistancePriority(.required, for: .horizontal)
         textField = label
@@ -993,10 +1031,10 @@ final class WorkspaceSidebarHeader: HoverHighlightView {
 
         tile.configure(symbol: "sailboat.fill", hue: .blue)
         tile.translatesAutoresizingMaskIntoConstraints = false
-        title.font = .systemFont(ofSize: HelmType.scaled(13.5), weight: .semibold)
+        title.font = .systemFont(ofSize: HelmType.scaled(15), weight: .semibold)
         title.lineBreakMode = .byTruncatingTail
         subtitle.stringValue = "This Mac \u{00B7} \(NSUserName())"
-        subtitle.font = .systemFont(ofSize: HelmType.scaled(11))
+        subtitle.font = .systemFont(ofSize: HelmType.scaled(12))
         subtitle.lineBreakMode = .byTruncatingTail
         for label in [title, subtitle] {
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1028,7 +1066,7 @@ final class WorkspaceSidebarHeader: HoverHighlightView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    static let height: CGFloat = 42
+    static let height: CGFloat = 46
 
     @objc private func clicked() { onClick?() }
 

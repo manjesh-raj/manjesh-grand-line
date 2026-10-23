@@ -522,10 +522,9 @@ enum SplitShellModelSelfTest {
                 fail("\(file.lastPathComponent) draws the sidebar layout's status strip again (`\(token)`)", &ok)
             }
         }
-        // The pane's body and Knowledge's column end at the pane's foot, and
-        // nothing else is laid out under them.
-        for tie in ["body.bottomAnchor.constraint(equalTo: root.bottomAnchor)",
-                    "columnHost.bottomAnchor.constraint(equalTo: root.bottomAnchor)"] {
+        // The pane's body ends at the pane's foot, and nothing else is laid
+        // out under it.
+        for tie in ["body.bottomAnchor.constraint(equalTo: root.bottomAnchor)"] {
             check(shell.contains(tie), "the content pane no longer runs its content to its foot (`\(tie)`)", &ok)
         }
         check(!FeatureInventorySelfTest.shellPlaces.contains("Status line"),

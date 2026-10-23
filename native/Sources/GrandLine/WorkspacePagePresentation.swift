@@ -2,7 +2,8 @@
 //
 // How a page draws itself in the sidebar layout - the later page work of the
 // modular-shell migration (the host table and its inspector, the credential
-// table, the Knowledge tree and Crew's Needs you).
+// table and Crew's Needs you), and the pages stage 7 redesigned (Tasks and
+// Setup's four tabs). Knowledge's tree was here too until stage 7 removed it.
 //
 // The floating bar and the sidebar layout host the same 29 page controllers
 // (`Workspace`). A redesigned page keeps its floating-bar presentation exactly

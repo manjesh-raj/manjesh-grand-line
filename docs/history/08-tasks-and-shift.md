@@ -186,3 +186,10 @@ The Done lane's empty-state sentence ("Completed tasks from the last 7 days land
 It was gotcha (22)'s circular derivation: `HelmEmptyState` already wrapped its body to its own bounds, and its own bounds were decided by its body.
 `HelmEmptyState.letBodyWrapToContainer()` lets the body give way instead; the board's lanes opt in.
 `FM_RUN_SHIFT_BOARD_VIEW_TESTS` mounts the page at the 960pt minimum with a Done lane holding a card and with every lane empty, and fails at maxX 1180.5 without the fix.
+
+## Tasks in the sidebar layout (modular-shell stage 7)
+
+In the sidebar layout, Tasks draws no page column.
+Its scopes, Follow-ups and projects are the filter row under the toolbar, New task is the toolbar's far-right item, the List tab is one table, and Weekly review is five cards over Time on tasks and Pushed back repeatedly.
+The floating bar's Tasks is unchanged.
+The account, the decisions and the measurements are in [`03-navigation-and-chrome.md`](03-navigation-and-chrome.md), under "The captain's second list from the sidebar layout".

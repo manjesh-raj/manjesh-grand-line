@@ -139,6 +139,18 @@ extension ConsoleController {
         focusTerminal(of: tab)
     }
 
+    /// Quick Connect's Console icon in the sidebar layout (stage 7, the
+    /// captain's Option B): the session already in front, selected and
+    /// focused the way a click on its chip does it, and a fresh shell - the
+    /// + button's - only when this console has no session at all.
+    func focusOrOpenSession() {
+        guard let tab = currentTab ?? tabs.first else {
+            newShellTab()
+            return
+        }
+        select(tabID: tab.id)
+    }
+
     /// Start an ssh tab's process. If `keyID` names a saved key, it is resolved
     /// through the Keychain into a fresh temp `-i <path>` (`SSHKeyMaterializer`)
     /// - the Touch ID / passcode prompt happens inside that call. Any temp file

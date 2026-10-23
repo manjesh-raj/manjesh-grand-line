@@ -205,6 +205,22 @@ enum ReviewTourLab {
         /// sidebar layout's in the window toolbar. Through
         /// `FocusTimerController.start`, the timer's own API.
         case demoFocus
+        /// `demo setup`: Setup's summary readings with something to say -
+        /// the config repo recorded as public (so GitHub sync draws its
+        /// paused-push card), the dotfiles sync reported synced, and the step
+        /// and fork totals - each through its real source's own seam. No
+        /// `gh` runs.
+        case demoSetup
+        /// `demo focuslog`: focus sessions logged on the last five days against
+        /// the store's own tasks, through `ShiftStore.logFocusSession` - so
+        /// Weekly review's Time on tasks chart and Focus time card have a
+        /// week to draw. Put it after `demo tasks`.
+        case demoFocusLog
+        /// `demo forks`: GitHub sync's forks from a fixture - three behind,
+        /// one diverged, the rest in sync - landed through the page's own
+        /// render after its own first sweep (which a tour refuses) settles.
+        /// Put it after `goto githubSync`.
+        case demoForks
         case comment
     }
 
@@ -286,6 +302,9 @@ enum ReviewTourLab {
             if argument == "automic" { return .success(.demoAutomic) }
             if argument == "signals" { return .success(.demoSignals) }
             if argument == "focus" { return .success(.demoFocus) }
+            if argument == "setup" { return .success(.demoSetup) }
+            if argument == "forks" { return .success(.demoForks) }
+            if argument == "focuslog" { return .success(.demoFocusLog) }
             if argument == "logs" { return .success(.demoLogs) }
             if argument == "health" { return .success(.demoHealth) }
             if argument.hasPrefix("loading ") {
@@ -576,6 +595,35 @@ enum ReviewTourLab {
                             VaultTool(name: "terraform", commands: ["terraform"], status: .needsAttention(issueCount: 2))])
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo automic")
+            case .demoSetup:
+                log.append(seedDemoSetup(shell.workspace))
+                RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+                shell.view.layoutSubtreeIfNeeded()
+            case .demoFocusLog:
+                let store = shell.shiftStore
+                let tasks = Array(store.activeTasks.prefix(4))
+                let calendar = Calendar.current
+                let minutes = [[95, 40], [180, 65], [120], [150, 90, 30], [70]]
+                for (offset, sessions) in minutes.enumerated() {
+                    guard let day = calendar.date(byAdding: .day, value: -(minutes.count - 1 - offset), to: Date()),
+                          let noon = calendar.date(bySettingHour: 11, minute: 0, second: 0, of: day) else { continue }
+                    for (index, length) in sessions.enumerated() where !tasks.isEmpty {
+                        let task = tasks[(offset + index) % tasks.count]
+                        store.logFocusSession(taskID: task.id, taskTitle: task.title, seconds: length * 60,
+                                              now: noon.addingTimeInterval(Double(index) * 3600))
+                    }
+                }
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo focuslog (\(minutes.flatMap { $0 }.count) sessions over 5 days)")
+            case .demoForks:
+                let page = shell.workspace.githubSync
+                let deadline = Date().addingTimeInterval(15)
+                while page.debugIsCheckingAll && Date() < deadline {
+                    RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+                }
+                seedDemoForks(page)
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo forks")
             case .demoLogs:
                 shell.workspace.logAnalyzer.debugRender(demoLogInvestigation())
                 shell.view.layoutSubtreeIfNeeded()
@@ -862,6 +910,49 @@ enum ReviewTourLab {
         }
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         return "demo signals (a failing service, 3 setup items, Claude 62%, 1 live session\(locked))"
+    }
+
+    /// `demo setup`'s readings - see `Step.demoSetup`.
+    static func seedDemoSetup(_ workspace: Workspace) -> String {
+        ConfigRepoPrivacy.debugRecord(.publicRepo)
+        DotfilesAutoSync.shared.debugSetStatus(.synced)
+        // Two of the kinds a captain schedules, in the tour's scratch store,
+        // so Automation lists real schedule rows.
+        let store = workspace.scheduleStore
+        if store.schedules.isEmpty {
+            store.add(AutomationSchedule(action: .forkSync, cadence: .daily(hour: 11, minute: 10),
+                                         notifyOn: .changeOnly))
+            var check = AutomationSchedule(action: .driftCheck, cadence: .daily(hour: 2, minute: 0),
+                                           notifyOn: .changeOnly)
+            check.isEnabled = false
+            store.add(check)
+        }
+        return "demo setup (config repo public, dotfiles synced, \(store.schedules.count) schedules)"
+    }
+
+    /// `demo forks`' rows: three behind, one diverged, the rest in sync, each
+    /// with its real upstream's shape.
+    static func seedDemoForks(_ page: GitHubSyncController) {
+        let repos = GitHubSyncCatalog.repos
+        for (index, repo) in repos.enumerated() {
+            let upstream = repo.manualUpstreamFullName ?? "kunchenguid/\(repo.name)"
+            let status: GitHubSyncStatus
+            switch index {
+            case 0: status = .behind(3)
+            case 2: status = .behind(12)
+            case 4: status = .behind(1)
+            case 6: status = .diverged(localOnly: 2, upstreamAhead: 5)
+            default: status = .inSync
+            }
+            let detail: String
+            switch status {
+            case .behind(let n): detail = "\(n) commit\(n == 1 ? "" : "s") behind \(upstream)"
+            case .diverged: detail = "Diverged from \(upstream): 2 local commits, 5 upstream"
+            default: detail = "In sync with \(upstream)"
+            }
+            page.debugApplyCheck(index: index, status: status, upstream: upstream, detail: detail,
+                                 log: "demo: no gh ran", at: Date().addingTimeInterval(-Double(index) * 420))
+        }
     }
 
     /// `demo vault`: a scratch vault under the tour's scratch root, created

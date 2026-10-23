@@ -131,14 +131,6 @@ final class MainSplitShellController: WorkspaceShellController {
     private var adoptedPages: Set<ObjectIdentifier> = []
     /// The showing page, when it fills the inspector with its selection.
     private weak var inspectorSource: WorkspaceInspectorSource?
-    /// Knowledge's one tree, at the module's leading edge while Notebook,
-    /// Runbooks, Postmortems or Docs shows (`KnowledgeTree.swift`).
-    private(set) lazy var knowledgeTree: KnowledgeTreeController = {
-        let tree = KnowledgeTreeController(notebookStore: workspace.notebookStore,
-                                           runbookStore: workspace.docsRunbookStore)
-        tree.onOpen = { [weak self] route, itemID in self?.openKnowledge(route, itemID: itemID) }
-        return tree
-    }()
     /// The captain's standing choice to see the selected item's details. The
     /// inspector button and the pane's close button turn it off and back on;
     /// it starts on, so selecting a host or a credential shows its details,
@@ -369,6 +361,8 @@ final class MainSplitShellController: WorkspaceShellController {
         toolbar.onRecents = { [weak self] anchor in self?.recents.togglePanel(under: anchor) }
         toolbar.onSelectTab = { [weak self] index in self?.tabClicked(index) }
         toolbar.onModuleAction = { [weak self] in self?.moduleActionClicked() }
+        toolbar.onQuickConnectConsole = { [weak self] in self?.quickConnectConsole() }
+        toolbar.onQuickConnectHosts = { [weak self] in self?.revealHostsQuickConnect() }
         toolbar.onToggleTheme = { ThemeManager.shared.toggle() }
         toolbar.onNotifications = { [weak self] anchor in self?.notificationCenter.togglePanel(under: anchor) }
         toolbar.onToggleInspector = { [weak self] in
@@ -664,17 +658,6 @@ final class MainSplitShellController: WorkspaceShellController {
         guard let controller else { return }
         if adoptedPages.insert(ObjectIdentifier(controller)).inserted {
             (controller as? SidebarLayoutAdopting)?.adoptSidebarLayout()
-            if let page = controller as? KnowledgeTreePage {
-                page.onKnowledgeChanged = { [weak self, weak page] change in
-                    guard let self, let page, self.showsKnowledgeTree,
-                          (self.pageController as? KnowledgeTreePage) === page else { return }
-                    let selection = self.knowledgeSelection(for: self.currentRoute, page: page)
-                    switch change {
-                    case .list: self.knowledgeTree.reload(selecting: selection)
-                    case .showing: self.knowledgeTree.select(itemID: selection)
-                    }
-                }
-            }
             if let source = controller as? WorkspaceInspectorSource {
                 source.onInspectorContentChanged = { [weak self, weak source] in
                     guard let self, let source, self.inspectorSource === source else { return }
@@ -796,14 +779,25 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     /// The module's one action: a real verb with no other home in this
-    /// layout.
+    /// layout. Console's is Quick Connect, which has two icons of its own
+    /// (`quickConnectConsole` and the Hosts icon's `revealHostsQuickConnect`).
     private func moduleActionClicked() {
         switch currentModule {
         case .home: setHomeCustomizing(!workspace.homeCanvas.isCustomizing)
-        case .console: revealHostsQuickConnect()
         case .connections: openFleetLog()
         default: break
         }
+    }
+
+    /// Quick Connect's Console icon: Console's current session with the
+    /// keyboard in it, and a new one only when there is none (the captain's
+    /// Option B - `ConsoleController.focusOrOpenSession`). The Hosts icon
+    /// beside it is what Quick Connect always did: Connections' Hosts tab
+    /// with its quick-connect field focused, where typing filters the saved
+    /// hosts and Return connects to one or to a typed `ssh user@host`.
+    private func quickConnectConsole() {
+        workspace.navigator.show(.console)
+        workspace.console.focusOrOpenSession()
     }
 
     /// Everything that names or belongs to the showing module: the crumb, the
@@ -841,17 +835,16 @@ final class MainSplitShellController: WorkspaceShellController {
                                     symbol: customizing ? "checkmark" : "square.grid.2x2",
                                     tooltip: customizing ? "Finish arranging Home" : "Choose Home's cards, their size and order")
         case .console:
-            toolbar.setModuleAction(title: "Quick Connect", symbol: "bolt.horizontal.circle",
-                                    tooltip: "Connect to a host by typing ssh user@host")
+            toolbar.setModuleAction(title: nil)
         case .connections:
             toolbar.setModuleAction(title: "Activity", symbol: "clock.arrow.circlepath",
                                     tooltip: "The captain's log, where every connection is recorded")
         default:
             toolbar.setModuleAction(title: nil)
         }
+        toolbar.setQuickConnect(module == .console)
         contentPane.setHeader(title: module.showsHeader ? module.title : nil, subtitle: pageSubtitle)
         contentPane.setSessionStripVisible(module == .console && !workspace.hosts.sessions.isEmpty)
-        contentPane.setLeadingColumn(showsKnowledgeTree ? knowledgeTree.view : nil)
         applyTitleBar()
     }
 
@@ -874,34 +867,6 @@ final class MainSplitShellController: WorkspaceShellController {
         let actions = (controller as? DaylightDrillActions)?.drillHeaderActions ?? []
         toolbar.setPageActions(actions.filter { $0 !== primary })
         toolbar.setPrimaryAction(primary)
-    }
-
-    // MARK: Knowledge's tree
-
-    /// The tree goes beside the four Knowledge tabs it lists; the Reading list
-    /// keeps its cards, as the prototype draws it.
-    private var showsKnowledgeTree: Bool {
-        !showingHostPage && [.notebook, .runbooks, .postmortems, .docs].contains(currentRoute)
-    }
-
-    /// A tree row: its tab, then - for an item - the item, through the page's
-    /// own open path.
-    private func openKnowledge(_ route: RailDestination, itemID: String?) {
-        if currentRoute != route || showingHostPage { workspace.navigator.show(route) }
-        guard let itemID, let page = workspace.content.mounter.slot(for: route.slot)?.controller as? KnowledgeTreePage
-        else { return }
-        page.openKnowledgeItem(id: itemID)
-    }
-
-    /// The showing Knowledge page's item, or its group.
-    private func knowledgeSelection(for route: RailDestination, page: KnowledgeTreePage?) -> String {
-        if let item = page?.knowledgeShowingItemID { return item }
-        switch route {
-        case .notebook: return "section:notebook"
-        case .runbooks: return "section:runbooks"
-        case .postmortems: return "section:postmortems"
-        default: return "section:docs"
-        }
     }
 
     /// Home's Customize mode, on Home's own space - the one whose cards are
@@ -1012,9 +977,6 @@ final class MainSplitShellController: WorkspaceShellController {
         applyPageActions(slot.controller, isHome: dest == .homeCanvas)
         refreshModuleChrome()
         reconcileInspector()
-        if showsKnowledgeTree {
-            knowledgeTree.reload(selecting: knowledgeSelection(for: dest, page: slot.controller as? KnowledgeTreePage))
-        }
     }
 
     override func workspaceDidRevealHostPage(_ controller: ConsoleController, label: String) {
@@ -1078,7 +1040,6 @@ final class MainSplitShellController: WorkspaceShellController {
         inspectorPinnedOpen = false
         reconcileInspector()
     }
-    var debugLeadingColumn: NSView? { contentPane.leadingColumn }
     var debugInspectorSource: WorkspaceInspectorSource? { inspectorSource }
     var debugSidebarWidth: CGFloat { sidebar.view.frame.width }
     /// The split view's first pane, which holds the sidebar panel - what the
@@ -1094,7 +1055,6 @@ final class MainSplitShellController: WorkspaceShellController {
     /// The content pane's own views, front to back - what the guard against
     /// a strip under the body counts.
     var debugContentPaneSubviews: [NSView] { contentPane.view.subviews }
-    var debugLeadingColumnHost: NSView { contentPane.debugColumnHost }
     var debugCurrentTab: ModuleTab? { currentTab }
     var debugLastTab: [WorkspaceModule: ModuleTab] { lastTab }
     func debugOpenModule(_ module: WorkspaceModule) { openModule(module) }
@@ -1121,14 +1081,6 @@ final class WorkspaceContentPaneController: NSViewController {
     /// stack that detaches its hidden views, so neither needs a height
     /// constraint fighting its own content to collapse.
     private let topStack = NSStackView()
-    /// A module's own column at the body's leading edge - Knowledge's tree.
-    /// The body starts after it while it shows and at the pane's edge
-    /// otherwise: two alternative constraints, exactly one active (gotcha
-    /// (17)'s footnote).
-    private let columnHost = NSView()
-    private var bodyAfterColumn: NSLayoutConstraint!
-    private var bodyAtEdge: NSLayoutConstraint!
-    private weak var columnView: NSView?
     private var themeToken: ThemeObservation?
 
     init(body: NSView) {
@@ -1162,25 +1114,18 @@ final class WorkspaceContentPaneController: NSViewController {
         collapsed.priority = .defaultLow
         collapsed.isActive = true
         body.translatesAutoresizingMaskIntoConstraints = false
-        columnHost.translatesAutoresizingMaskIntoConstraints = false
-        columnHost.isHidden = true
         root.addSubview(topStack)
-        root.addSubview(columnHost)
         root.addSubview(body)
-        bodyAfterColumn = body.leadingAnchor.constraint(equalTo: columnHost.trailingAnchor)
-        bodyAtEdge = body.leadingAnchor.constraint(equalTo: root.leadingAnchor)
         NSLayoutConstraint.activate([
             // The toolbar is drawn over the top of this pane (the window has
             // a full-size content view), so everything starts under it.
             topStack.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
             topStack.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             topStack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            columnHost.topAnchor.constraint(equalTo: topStack.bottomAnchor),
-            columnHost.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            columnHost.widthAnchor.constraint(equalToConstant: KnowledgeTreeController.width),
-            columnHost.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             body.topAnchor.constraint(equalTo: topStack.bottomAnchor),
-            bodyAtEdge,
+            // No module draws a column of its own beside the body: Knowledge's
+            // tree was the one, and the captain had it removed in stage 7.
+            body.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             body.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             body.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
@@ -1207,40 +1152,6 @@ final class WorkspaceContentPaneController: NSViewController {
         sessionStrip.isHidden = !visible
     }
 
-    #if FM_SELFTESTS
-    var debugColumnHost: NSView { columnHost }
-    #endif
-
-    /// Show `column` at the body's leading edge, or no column at all.
-    func setLeadingColumn(_ column: NSView?) {
-        _ = view
-        if columnView !== column {
-            columnView?.removeFromSuperview()
-            if let column {
-                column.translatesAutoresizingMaskIntoConstraints = false
-                columnHost.addSubview(column)
-                NSLayoutConstraint.activate([
-                    column.topAnchor.constraint(equalTo: columnHost.topAnchor),
-                    column.leadingAnchor.constraint(equalTo: columnHost.leadingAnchor),
-                    column.trailingAnchor.constraint(equalTo: columnHost.trailingAnchor),
-                    column.bottomAnchor.constraint(equalTo: columnHost.bottomAnchor),
-                ])
-            }
-            columnView = column
-        }
-        let shown = column != nil
-        // Deactivate before activating, so the two are never both live.
-        if shown {
-            bodyAtEdge.isActive = false
-            bodyAfterColumn.isActive = true
-        } else {
-            bodyAfterColumn.isActive = false
-            bodyAtEdge.isActive = true
-        }
-        columnHost.isHidden = !shown
-    }
-
-    var leadingColumn: NSView? { columnView }
 }
 
 /// A root view that says when it reaches a window, which is when a shell can

@@ -210,6 +210,11 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
     /// the 3pt project bar, radius 10, 10/12 padding - with the chip on the
     /// meta line beside the due caption, so a card is three lines at most.
     private let row = HelmAccentRow(chipPlacement: .metaLine, style: .cardFlat)
+    /// The sidebar layout's card (stage 7), in place of `row` once
+    /// `adoptWorkspaceStyle` has run. The press, drag, menu and keyboard
+    /// handling below is the same for both.
+    private lazy var workspaceCard = ShiftWorkspaceTaskCard()
+    private(set) var usesWorkspaceStyle = false
 
     private(set) var taskID: String = ""
     private var currentColumn: ShiftBoardColumn = .backlog
@@ -240,9 +245,36 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    /// Draw the prototype's card rather than the floating bar's. Once, the
+    /// first time the sidebar layout shows the board; never undone.
+    func adoptWorkspaceStyle() {
+        guard !usesWorkspaceStyle else { return }
+        usesWorkspaceStyle = true
+        row.isHidden = true
+        workspaceCard.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(workspaceCard)
+        NSLayoutConstraint.activate([
+            workspaceCard.leadingAnchor.constraint(equalTo: leadingAnchor),
+            workspaceCard.trailingAnchor.constraint(equalTo: trailingAnchor),
+            workspaceCard.topAnchor.constraint(equalTo: topAnchor),
+            workspaceCard.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        // The row is still a subview, so its own height would hold the card
+        // open around the shorter workspace card.
+        row.removeFromSuperview()
+    }
+
     func configure(task: ShiftTask, project: ShiftProject?, column: ShiftBoardColumn, theme: HelmTheme) {
         taskID = task.id
         currentColumn = column
+        if usesWorkspaceStyle {
+            workspaceCard.configure(task: task, project: project, column: column, theme: theme)
+            let priorityText = task.priority.rawValue.capitalized
+            setAccessibilityLabel("\(task.title), \(column.title), \(priorityText) priority")
+            menu = buildMenu()
+            setAccessibilityCustomActions(accessibilityMoves())
+            return
+        }
 
         // UI-23 / UI-24 through `ShiftTaskSignals`, the page's one rule: a
         // priority chip only for High and Low (Q3), and the due date as a
@@ -288,7 +320,9 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
         setAccessibilityCustomActions(accessibilityMoves())
     }
 
-    func applyTheme(_ theme: HelmTheme) { row.applyTheme(theme) }
+    func applyTheme(_ theme: HelmTheme) {
+        if usesWorkspaceStyle { workspaceCard.applyTheme(theme) } else { row.applyTheme(theme) }
+    }
 
     static let doneDateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -306,12 +340,14 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
 
     override func becomeFirstResponder() -> Bool {
         row.isRowSelected = true
+        workspaceCard.isSelected = usesWorkspaceStyle
         noteFocusRingMaskChanged()
         return super.becomeFirstResponder()
     }
 
     override func resignFirstResponder() -> Bool {
         row.isRowSelected = false
+        if usesWorkspaceStyle { workspaceCard.isSelected = false }
         noteFocusRingMaskChanged()
         return super.resignFirstResponder()
     }
@@ -534,6 +570,195 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
     #endif
 }
 
+// MARK: - The sidebar layout's card (stage 7)
+
+/// The prototype's task card: the title first, then one line saying which
+/// project (its dot and name), when it is due (a calendar glyph, amber today
+/// and red once late, through `ShiftTaskSignals` - the page's one rule), and
+/// a chip for High or Low. A card surface on the lane's tint, the accent
+/// stroke while selected, and a darker edge under the pointer.
+///
+/// What the floating bar's card says beyond that stays on this one too:
+/// subtasks as "2/5", an attachment as a paperclip, and a Done card's
+/// completion date in place of its due date.
+final class ShiftWorkspaceTaskCard: NSView {
+    static let radius: CGFloat = 10
+    static let padding = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+
+    private let titleLabel = NSTextField(wrappingLabelWithString: "")
+    private let projectDot = NSView()
+    private let projectLabel = NSTextField(labelWithString: "")
+    private let dueIcon = NSImageView()
+    private let dueLabel = NSTextField(labelWithString: "")
+    private let subtasksLabel = NSTextField(labelWithString: "")
+    private let attachmentIcon = NSImageView()
+    private let pill = HelmStatusPill(style: .pill)
+    private let meta = NSStackView()
+    private var tracking: NSTrackingArea?
+    private var theme: HelmTheme = ThemeManager.shared.theme
+    private var projectTint: HelmTint = .neutral
+    private var dueTint: HelmTint?
+    private var struck = false
+
+    var isSelected = false { didSet { if isSelected != oldValue { applyTheme(theme) } } }
+    private var isHovered = false { didSet { if isHovered != oldValue { applyTheme(theme) } } }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        titleLabel.font = .systemFont(ofSize: HelmType.scaled(13), weight: .semibold)
+        titleLabel.maximumNumberOfLines = 3
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        projectDot.wantsLayer = true
+        projectDot.layer?.cornerRadius = ShiftProjectTag.dotSide / 2
+        projectDot.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            projectDot.widthAnchor.constraint(equalToConstant: ShiftProjectTag.dotSide),
+            projectDot.heightAnchor.constraint(equalToConstant: ShiftProjectTag.dotSide),
+        ])
+        for label in [projectLabel, dueLabel, subtasksLabel] {
+            label.font = HelmType.caption()
+            label.lineBreakMode = .byTruncatingTail
+        }
+        projectLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        dueIcon.image = HelmSymbol.image("calendar", pointSize: HelmType.scaled(11), weight: .regular)
+        attachmentIcon.image = HelmSymbol.image("paperclip", pointSize: HelmType.scaled(11), weight: .regular)
+        let project = NSStackView(views: [projectDot, projectLabel])
+        project.orientation = .horizontal
+        project.spacing = HelmMetrics.s1
+        project.alignment = .centerY
+        let due = NSStackView(views: [dueIcon, dueLabel])
+        due.orientation = .horizontal
+        due.spacing = HelmMetrics.s1
+        due.alignment = .centerY
+        due.identifier = NSUserInterfaceItemIdentifier("due")
+        meta.setViews([project, due, subtasksLabel, attachmentIcon, pill], in: .leading)
+        meta.orientation = .horizontal
+        meta.spacing = HelmMetrics.s2
+        meta.alignment = .centerY
+        meta.detachesHiddenViews = true
+        meta.translatesAutoresizingMaskIntoConstraints = false
+        meta.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        addSubview(titleLabel)
+        addSubview(meta)
+        let p = Self.padding
+        NSLayoutConstraint.activate([
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: p.top),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: p.left),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -p.right),
+            meta.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 7),
+            meta.leadingAnchor.constraint(equalTo: leadingAnchor, constant: p.left),
+            meta.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -p.right),
+            meta.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -p.bottom),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// Gotcha (22): the title wraps at the card's own width less its
+    /// padding, which the lane decides - never at its own resolved width.
+    override func layout() {
+        super.layout()
+        let width = max(80, floor(bounds.width - Self.padding.left - Self.padding.right))
+        if abs(titleLabel.preferredMaxLayoutWidth - width) > 0.5 {
+            titleLabel.preferredMaxLayoutWidth = width
+            titleLabel.invalidateIntrinsicContentSize()
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false }
+
+    func configure(task: ShiftTask, project: ShiftProject?, column: ShiftBoardColumn, theme: HelmTheme) {
+        titleLabel.stringValue = task.title
+        struck = column == .done
+        projectTint = ShiftProjectPalette.tint(forProjectID: task.projectID)
+        projectLabel.stringValue = project?.name ?? "No project"
+        var caption: ShiftTaskSignals.DueCaption?
+        if column == .done {
+            if let done = task.completedAt.flatMap(ShiftStore.date(fromISO8601:)) {
+                caption = .init(text: "Done \(ShiftBoardCardView.doneDateFormatter.string(from: done))", tint: nil)
+            }
+        } else {
+            caption = ShiftTaskSignals.dueCaption(date: task.dueDate, time: task.dueTime)
+        }
+        dueTint = caption?.tint
+        dueLabel.stringValue = caption?.text ?? ""
+        dueLabel.superview?.isHidden = caption == nil
+        let done = task.subtasks.filter(\.done).count
+        subtasksLabel.stringValue = task.subtasks.isEmpty ? "" : "\(done)/\(task.subtasks.count)"
+        subtasksLabel.isHidden = task.subtasks.isEmpty
+        subtasksLabel.toolTip = task.subtasks.isEmpty ? nil : "\(done) of \(task.subtasks.count) subtasks done"
+        attachmentIcon.isHidden = !task.hasAttachment
+        if let chip = ShiftTaskSignals.priorityPill(task.priority) {
+            pill.isHidden = false
+            pill.configure(text: chip.text, tint: chip.tint, theme: theme)
+        } else {
+            pill.isHidden = true
+        }
+        toolTip = "Drag to another lane, or right-click to move."
+        applyTheme(theme)
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        HelmCard.applyCardSurface(to: self, theme: theme, cornerRadius: Self.radius, daylightRadius: Self.radius)
+        let accent = HelmTheme.nsColor(theme.accentHex)
+        if isSelected {
+            layer?.borderColor = accent.cgColor
+            layer?.borderWidth = 1.5
+        } else if isHovered {
+            layer?.borderColor = HelmTheme.nsColor(theme.chromeInkHex).withAlphaComponent(0.28).cgColor
+        }
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let muted = HelmTheme.mutedInk(theme)
+        let title = NSMutableAttributedString(string: titleLabel.stringValue, attributes: [
+            .font: NSFont.systemFont(ofSize: HelmType.scaled(13), weight: .semibold),
+            .foregroundColor: struck ? muted : ink,
+        ])
+        if struck {
+            title.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue,
+                               range: NSRange(location: 0, length: title.length))
+        }
+        titleLabel.attributedStringValue = title
+        projectLabel.textColor = muted
+        subtasksLabel.textColor = muted
+        dueIcon.contentTintColor = muted
+        attachmentIcon.contentTintColor = muted
+        projectDot.layer?.backgroundColor = HelmTheme.nsColor(projectTint.hex(in: theme)).cgColor
+        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        if let dueTint {
+            let tinted = HelmContrast.legibleTintedText(tintHex: dueTint.hex(in: theme), overAnyOf: [surface], theme: theme)
+            dueLabel.textColor = tinted
+            dueIcon.contentTintColor = tinted
+            dueLabel.font = .systemFont(ofSize: HelmType.scaled(12), weight: .semibold)
+        } else {
+            dueLabel.textColor = muted
+            dueLabel.font = HelmType.caption()
+        }
+        if !pill.isHidden { pill.applyTheme(theme) }
+    }
+
+    #if FM_SELFTESTS
+    var debugTitle: String { titleLabel.stringValue }
+    var debugProject: String { projectLabel.stringValue }
+    var debugDue: String? { dueLabel.superview?.isHidden == true ? nil : dueLabel.stringValue }
+    var debugChip: String? { pill.isHidden ? nil : pill.text }
+    var debugIsStruck: Bool { struck }
+    #endif
+}
+
 // MARK: - Drop target
 
 /// A column's body: the drop half of the drag, following the three existing
@@ -705,12 +930,32 @@ final class ShiftBoardColumnView: NSView {
     var onOverflowHintChanged: (() -> Void)?
     var overflowHintCount: Int { overflowHint.countBelow }
     func setOverflowHintRowShown(_ shown: Bool) {
+        // A workspace lane never scrolls, so it never has cards below.
+        guard !usesWorkspaceStyle else { return }
         guard overflowHint.isHidden == shown else { return }
         overflowHint.isHidden = !shown
     }
     private lazy var cardRows = HelmKeyedRows(stack: cardsStack)
     private var bodyHeight: NSLayoutConstraint?
     private var theme: HelmTheme = ThemeManager.shared.theme
+
+    // The sidebar layout's lane (stage 7) - see `adoptWorkspaceStyle`.
+    private(set) var usesWorkspaceStyle = false
+    private var headerLeading: NSLayoutConstraint?
+    private var headerTop: NSLayoutConstraint?
+    private var dropEdges: [NSLayoutConstraint] = []
+    private var bodyBottom: NSLayoutConstraint?
+    /// The lane's "Add task" in a dashed outline, which the button cannot
+    /// carry itself (`HelmButton` repaints its own layer).
+    private let addHost = NSView()
+    private let addOutline = CAShapeLayer()
+    /// The lane wraps its cards rather than scrolling them: the page scrolls.
+    private var fitsCards: NSLayoutConstraint?
+    /// The lane's tint, ending under its last control rather than at this
+    /// view's foot: the board's row stretches every column to the tallest
+    /// one, and only what the captain sees has to stay the lane's height.
+    private let laneBackground = NSView()
+    private var cardsStackBottom: NSLayoutConstraint?
 
     var onOpenTask: ((String) -> Void)?
     var onMoveTask: ((String, ShiftBoardColumn) -> Void)?
@@ -775,11 +1020,13 @@ final class ShiftBoardColumnView: NSView {
         let document = FlippedView()
         document.translatesAutoresizingMaskIntoConstraints = false
         document.addSubview(cardsStack)
+        let stackBottom = cardsStack.bottomAnchor.constraint(equalTo: document.bottomAnchor)
+        cardsStackBottom = stackBottom
         NSLayoutConstraint.activate([
             cardsStack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
             cardsStack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
             cardsStack.topAnchor.constraint(equalTo: document.topAnchor),
-            cardsStack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+            stackBottom,
         ])
 
         scroll.documentView = document
@@ -821,6 +1068,7 @@ final class ShiftBoardColumnView: NSView {
         body.alignment = .leading
         body.spacing = HelmMetrics.s2
         body.translatesAutoresizingMaskIntoConstraints = false
+        bodyStack = body
         dropView.addSubview(body)
         dropView.addSubview(emptyState)
         dropView.addSubview(filteredEmptyState)
@@ -840,7 +1088,7 @@ final class ShiftBoardColumnView: NSView {
             body.leadingAnchor.constraint(equalTo: dropView.leadingAnchor),
             body.trailingAnchor.constraint(equalTo: dropView.trailingAnchor),
             body.topAnchor.constraint(equalTo: dropView.topAnchor),
-            body.bottomAnchor.constraint(equalTo: dropView.bottomAnchor, constant: -HelmMetrics.s1),
+            bodyBottomConstraint(body),
             scroll.widthAnchor.constraint(equalTo: body.widthAnchor),
             overflowLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
             overflowHint.widthAnchor.constraint(equalTo: body.widthAnchor),
@@ -860,20 +1108,115 @@ final class ShiftBoardColumnView: NSView {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
+        let headerLeading = header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s1)
+        let headerTop = header.topAnchor.constraint(equalTo: topAnchor)
+        self.headerLeading = headerLeading
+        self.headerTop = headerTop
+        dropEdges = [
+            dropView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            dropView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            dropView.topAnchor.constraint(equalTo: headerRule.bottomAnchor, constant: HelmMetrics.s3),
+            dropView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ]
         NSLayoutConstraint.activate([
-            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s1),
+            headerLeading,
             header.trailingAnchor.constraint(equalTo: trailingAnchor),
-            header.topAnchor.constraint(equalTo: topAnchor),
+            headerTop,
             header.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
             headerRule.leadingAnchor.constraint(equalTo: leadingAnchor),
             headerRule.trailingAnchor.constraint(equalTo: trailingAnchor),
             headerRule.topAnchor.constraint(equalTo: header.bottomAnchor, constant: HelmMetrics.s2),
             headerRule.heightAnchor.constraint(equalToConstant: 1),
-            dropView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            dropView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            dropView.topAnchor.constraint(equalTo: headerRule.bottomAnchor, constant: HelmMetrics.s3),
-            dropView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ] + dropEdges)
+    }
+
+    private var bodyStack: NSStackView?
+
+    private func bodyBottomConstraint(_ body: NSView) -> NSLayoutConstraint {
+        let bottom = body.bottomAnchor.constraint(equalTo: dropView.bottomAnchor, constant: -HelmMetrics.s1)
+        bodyBottom = bottom
+        return bottom
+    }
+
+    /// The prototype's lane: a rounded tint holding the lane's name and
+    /// count, its cards at their own height, and a dashed "Add task" - no
+    /// dot, no rule, no scrolling inside the lane (the page scrolls). Once,
+    /// the first time the sidebar layout shows the board; never undone.
+    func adoptWorkspaceStyle() {
+        guard !usesWorkspaceStyle else { return }
+        usesWorkspaceStyle = true
+        laneBackground.wantsLayer = true
+        laneBackground.layer?.cornerRadius = HelmMetrics.rPanel
+        laneBackground.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(laneBackground, positioned: .below, relativeTo: nil)
+        header.configure(leading: .none, title: column.title, count: header.countLabel.stringValue)
+        header.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        headerRule.isHidden = true
+        headerLeading?.constant = HelmMetrics.s3
+        headerTop?.constant = HelmMetrics.s2
+        // Inside the tint: the cards and the add button sit 8pt in from it.
+        dropEdges[0].constant = HelmMetrics.s2
+        dropEdges[1].constant = -HelmMetrics.s2
+        dropEdges[2].constant = HelmMetrics.s1
+        // The stretch lands below the lane, never inside it.
+        dropEdges[3].isActive = false
+        NSLayoutConstraint.activate([
+            dropView.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -HelmMetrics.s2),
+            laneBackground.topAnchor.constraint(equalTo: topAnchor),
+            laneBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+            laneBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
+            laneBackground.bottomAnchor.constraint(equalTo: dropView.bottomAnchor, constant: HelmMetrics.s2),
         ])
+        bodyBottom?.constant = 0
+        // The lane is as tall as what it holds: its stack hugs its contents,
+        // a stack-level hug since a stack has no intrinsic size (gotcha (12)).
+        bodyStack?.setHuggingPriority(.required, for: .vertical)
+        overflowHint.isHidden = true
+        bodyHeight?.isActive = false
+        // The clip view stretches its document to fill it, and the stack was
+        // pinned to both of the document's ends - so a tie to the stack's
+        // height was a tie to the scroll view's own, and every lane came out
+        // as tall as the fullest (measured on the first render). Released at
+        // the bottom, the stack is its cards' height, which the lane follows.
+        if let cardsStackBottom, let document = cardsStack.superview {
+            cardsStackBottom.isActive = false
+            cardsStack.bottomAnchor.constraint(lessThanOrEqualTo: document.bottomAnchor).isActive = true
+        }
+        let fit = scroll.heightAnchor.constraint(equalTo: cardsStack.heightAnchor)
+        // Below the stack's own defaults, above nothing that sizes the window:
+        // the board sits in the page's scroll view, so a lane's height can
+        // never reach the window (gotcha (13)).
+        fit.priority = .defaultHigh
+        fit.isActive = true
+        fitsCards = fit
+        // An empty lane keeps room for its empty state, and is still a drop
+        // target.
+        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
+        scroll.hasVerticalScroller = false
+        if let body = bodyStack, column != .done {
+            body.removeArrangedSubview(addButton)
+            addButton.removeFromSuperview()
+            addHost.wantsLayer = true
+            addHost.translatesAutoresizingMaskIntoConstraints = false
+            addHost.layer?.addSublayer(addOutline)
+            addOutline.fillColor = NSColor.clear.cgColor
+            addOutline.lineWidth = 1
+            addOutline.lineDashPattern = [4, 3]
+            addButton.translatesAutoresizingMaskIntoConstraints = false
+            addHost.addSubview(addButton)
+            NSLayoutConstraint.activate([
+                addButton.centerXAnchor.constraint(equalTo: addHost.centerXAnchor),
+                addButton.centerYAnchor.constraint(equalTo: addHost.centerYAnchor),
+                addHost.heightAnchor.constraint(equalToConstant: 32),
+            ])
+            body.addArrangedSubview(addHost)
+            addHost.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
+            // The whole dashed box is the button, as the prototype draws it.
+            addHost.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(addTapped)))
+        }
+        for cardView in cardViews { cardView.adoptWorkspaceStyle() }
+        applyTheme(theme)
+        needsLayout = true
     }
 
     @objc private func addTapped() { onAddTask?(column) }
@@ -906,8 +1249,16 @@ final class ShiftBoardColumnView: NSView {
 
     override func layout() {
         super.layout()
-        applyBodyHeight()
-        overflowHint.recount()
+        if usesWorkspaceStyle {
+            HelmMotion.withoutImplicitAnimation {
+                addOutline.frame = addHost.bounds
+                addOutline.path = CGPath(roundedRect: addHost.bounds.insetBy(dx: 0.5, dy: 0.5),
+                                         cornerWidth: 10, cornerHeight: 10, transform: nil)
+            }
+        } else {
+            applyBodyHeight()
+            overflowHint.recount()
+        }
         HelmMotion.withoutImplicitAnimation {
             dropOutline.frame = dropView.bounds
             dropOutline.path = CGPath(roundedRect: dropView.bounds.insetBy(dx: 0.5, dy: 0.5),
@@ -926,6 +1277,7 @@ final class ShiftBoardColumnView: NSView {
         self.theme = theme
         cardRows.reconcile(Array(tasks.prefix(Self.maxCards)), key: \.id, make: { task in
             let cardView = ShiftBoardCardView()
+            if self.usesWorkspaceStyle { cardView.adoptWorkspaceStyle() }
             // The handlers name the task by id, which is the card's key, so
             // they stay right for as long as the card is kept.
             let id = task.id
@@ -961,6 +1313,14 @@ final class ShiftBoardColumnView: NSView {
         header.applyTheme(theme)
         headerRule.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
             .withAlphaComponent(theme.isDaylight ? 1 : HelmCard.borderAlpha).cgColor
+        if usesWorkspaceStyle {
+            // The prototype's lane: the page ink at a few percent over the
+            // ground, so the lane reads in every palette without a border.
+            laneBackground.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeInkHex)
+                .withAlphaComponent(theme.mode == .dark ? 0.05 : 0.035).cgColor
+            addOutline.strokeColor = HelmTheme.nsColor(theme.chromeLineHex)
+                .withAlphaComponent(theme.isDaylight ? 1 : 0.8).cgColor
+        }
         overflowLabel.textColor = HelmTheme.mutedInk(theme)
         overflowHint.applyTheme(theme)
         emptyState.applyTheme(theme)
@@ -1060,6 +1420,9 @@ final class ShiftBoardColumnView: NSView {
 
     #if FM_SELFTESTS
     var debugCardViews: [ShiftBoardCardView] { cardViews }
+    /// The sidebar layout's lane tint, which ends under the lane's last
+    /// control rather than at this view's foot.
+    var debugLaneBackground: NSView { laneBackground }
     var debugCountText: String { header.countLabel.stringValue }
     var debugHeader: HelmSectionHeader { header }
     var debugAddButton: HelmButton { addButton }
@@ -1215,6 +1578,17 @@ final class ShiftBoardView: NSView {
         for columnView in columnViews { columnView.setOverflowHintRowShown(anyBelow) }
     }
 
+    /// The sidebar layout's board (stage 7): each lane a tint that wraps its
+    /// own cards, 12pt apart, as the prototype draws it.
+    private(set) var usesWorkspaceStyle = false
+
+    func adoptWorkspaceStyle() {
+        guard !usesWorkspaceStyle else { return }
+        usesWorkspaceStyle = true
+        row.spacing = HelmMetrics.s3
+        for columnView in columnViews { columnView.adoptWorkspaceStyle() }
+    }
+
     func setTasks(_ byColumn: [ShiftBoardColumn: [ShiftTask]],
                   projects: [ShiftProject],
                   theme: HelmTheme) {
@@ -1222,6 +1596,9 @@ final class ShiftBoardView: NSView {
         for columnView in columnViews {
             columnView.setTasks(byColumn[columnView.column] ?? [], projects: byID, theme: theme)
         }
+        // A workspace lane is as tall as its own cards; none of the plan
+        // below applies to it.
+        guard !usesWorkspaceStyle else { return }
 
         // One height for all three columns, sized to whichever holds the most
         // cards - so a sparse board is short and a busy one scrolls, and the

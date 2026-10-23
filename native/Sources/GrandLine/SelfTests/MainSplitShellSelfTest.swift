@@ -12,7 +12,7 @@
 //      kept for, and at 1100 (where it steps aside), visiting every page
 //      leaves the window the size it was - gotcha (13), which the content
 //      column's minimum and the sidebar's collapse exist to hold. A page's
-//      own column coming back (Tasks' board, ⌥⌘S on Settings) does too.
+//      own column coming back (Notebook's Pages, ⌥⌘S on Settings) does too.
 //   3. **The sidebar is the map.** A module row opens the tab it showed last,
 //      it draws no pins and offers no Pin or Unpin (stage 6), sessions are
 //      Console's children, ⌘⇧D reveals it, and ⌥⌘S toggles the page's own
@@ -213,27 +213,47 @@ enum MainSplitShellSelfTest {
     /// A page's own column coming back takes its room from the page, never
     /// from the window - measured before `HelmSplitPage` reopened it through
     /// constraints: Tasks' column back for the board at 1100pt grew the
-    /// window to 1349 and brought the sidebar out with it.
+    /// window to 1349 and brought the sidebar out with it. Since stage 7
+    /// Tasks draws no column in this layout, so Notebook's is the one that
+    /// comes back.
     private static func checkAPageColumnNeverGrowsTheWindow(_ shell: MainSplitShellController, _ window: NSWindow,
                                                             _ ok: inout Bool) {
         resize(window, width: 1100, shell)
         check(shell.debugSidebarIsCollapsed, "at 1100pt the sidebar did not step aside", &ok)
+        // Stage 7: Tasks' column is its filter row in this layout, so no tab
+        // brings a column out at all.
         shell.show(.shift)
         settle(shell)
-        clickTab("Board", shell)
         if let split = (shell.debugSlotController(.shift) as? HelmSplitPageHosting)?.splitPage {
-            let column = split.debugSidebarWidth
-            check(!split.isSidebarCollapsed && column > 0, "Tasks' board opened without its column", &ok)
-            clickTab("Weekly review", shell)
-            check(split.isSidebarCollapsed, "Weekly review left the board's column out", &ok)
-            clickTab("Board", shell)
-            check(!split.isSidebarCollapsed && abs(split.debugSidebarWidth - column) < 0.5,
-                  "back on the board, Tasks' column is \(split.debugSidebarWidth)pt, it was \(column)pt", &ok)
+            for tab in ["Board", "Weekly review", "List", "Calendar", "Board"] {
+                clickTab(tab, shell)
+                check(split.isSidebarCollapsed, "Tasks' \(tab) tab brought its page column out", &ok)
+            }
             check(abs(window.frame.width - 1100) < 0.5,
-                  "Tasks' column coming back grew a 1100pt window to \(Int(window.frame.width))pt", &ok)
-            check(shell.debugSidebarIsCollapsed, "Tasks' column coming back brought the sidebar out too", &ok)
+                  "Tasks' tabs grew a 1100pt window to \(Int(window.frame.width))pt", &ok)
         } else {
-            fail("Tasks has no column of its own", &ok)
+            fail("Tasks has no split page to keep its column in", &ok)
+        }
+        // A column that does come back - Notebook's Pages, put away and
+        // brought back through `pageForcesCollapse`, the switch Tasks' own
+        // Weekly review used before stage 7 - takes its room from the page.
+        shell.show(.notebook)
+        settle(shell)
+        if let split = (shell.debugSlotController(.notebook) as? HelmSplitPageHosting)?.splitPage {
+            let column = split.debugSidebarWidth
+            check(!split.isSidebarCollapsed && column > 0, "Notebook opened without its Pages column", &ok)
+            split.pageForcesCollapse = true
+            settle(shell)
+            check(split.isSidebarCollapsed, "Notebook's column did not step aside", &ok)
+            split.pageForcesCollapse = false
+            settle(shell)
+            check(!split.isSidebarCollapsed && abs(split.debugSidebarWidth - column) < 0.5,
+                  "back again, Notebook's column is \(split.debugSidebarWidth)pt, it was \(column)pt", &ok)
+            check(abs(window.frame.width - 1100) < 0.5,
+                  "Notebook's column coming back grew a 1100pt window to \(Int(window.frame.width))pt", &ok)
+            check(shell.debugSidebarIsCollapsed, "Notebook's column coming back brought the sidebar out too", &ok)
+        } else {
+            fail("Notebook has no column of its own", &ok)
         }
         // The same reopen from ⌥⌘S, on a page whose column is the captain's.
         shell.show(.settings)
@@ -557,11 +577,14 @@ enum MainSplitShellSelfTest {
         shell.show(.review)
         settle(shell)
         check(!shell.debugSessionStripIsShown, "the session strip followed the captain out of Console", &ok)
-        // Quick Connect: Hosts' own quick-connect field.
+        // Quick Connect: its Hosts icon is Hosts' own quick-connect field. Stage
+        // 7 made the one button a caption and two icons;
+        // `SidebarRedesignsSelfTest` drives the Console icon and the caption's
+        // menu form.
         shell.show(.console)
         settle(shell)
-        check(shell.toolbar.debugModuleActionButton?.title == "Quick Connect", "Console offers no Quick Connect", &ok)
-        shell.debugModuleAction()
+        check(shell.toolbar.debugQuickConnectCaption?.stringValue == "Quick Connect", "Console offers no Quick Connect", &ok)
+        check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.quickConnectHosts), "Quick Connect has no Hosts icon", &ok)
         settle(shell)
         check(shell.debugCurrentDestination == .hosts && shell.currentModule == .connections,
               "Quick Connect opened \(String(describing: shell.debugCurrentDestination))", &ok)
@@ -772,14 +795,12 @@ enum MainSplitShellSelfTest {
             check(abs(bodyFoot - foot) < 0.5,
                   "under \(module.title) the body stops \(abs(bodyFoot - foot))pt from the window's foot", &ok)
         }
-        // Knowledge's tree is the one column beside the body; it runs down
-        // as far.
+        // Nothing sits beside the body either: Knowledge's tree was the one
+        // column, and stage 7 removed it.
         shell.show(.notebook)
         settle(shell)
-        let column = shell.debugLeadingColumnHost
-        let columnFrame = column.convert(column.bounds, to: pane)
-        check(!column.isHidden && abs((pane.isFlipped ? columnFrame.maxY : columnFrame.minY) - foot) < 0.5,
-              "Knowledge's tree stops short of the window's foot (\(columnFrame))", &ok)
+        let knowledgeBody = body.convert(body.bounds, to: pane)
+        check(knowledgeBody.minX.magnitude < 0.5, "under Knowledge the body starts \(knowledgeBody.minX)pt in", &ok)
 
         // The live sessions the strip counted are Console's: its session
         // strip lists each one, connected or restored, and so does the

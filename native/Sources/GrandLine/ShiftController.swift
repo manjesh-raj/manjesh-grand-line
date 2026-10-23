@@ -436,6 +436,62 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     var debugTaskFollowUpBodyHeight: CGFloat { taskListHeightConstraint?.constant ?? -1 }
     #endif
 
+    // MARK: The sidebar layout's state (stage 7)
+
+    /// Set once, the first time the sidebar shell shows this page
+    /// (`adoptSidebarLayout`). The floating bar never sets it.
+    private(set) var drawsSidebarLayout = false
+    /// The page column's filters, as one row under the header.
+    private let workspaceFilterRow = NSStackView()
+    private lazy var scopeFilter: HelmSegmentedTabs = {
+        let tabs = HelmSegmentedTabs(items: ShiftTaskScope.allCases.map { .init(id: $0.rawValue, title: $0.title) },
+                                     selected: ShiftTaskScope.all.rawValue, size: .compact)
+        tabs.setAccessibilityLabel("Which tasks to show")
+        tabs.onSelect = { [weak self] id in
+            guard let self, let scope = ShiftTaskScope(rawValue: id) else { return }
+            self.taskScope = scope
+            self.render()
+        }
+        return tabs
+    }()
+    private lazy var followUpsJump: HelmButton = {
+        let button = HelmButton(title: "Follow-ups", variant: .quiet, size: .small, symbol: "bell",
+                                target: self, action: #selector(followUpsJumpClicked))
+        button.toolTip = "Go to the Follow-ups card"
+        return button
+    }()
+    private let projectPopup = HelmPopUpButton()
+    private var projectPopupSignature: String?
+    /// The List tab: every task the filters keep, as one table.
+    private lazy var tasksTable: HelmDataTable = {
+        let table = HelmDataTable(columns: [
+            .init(id: "done", title: "", width: 40),
+            .init(id: "task", title: "Task", width: 320, minWidth: 220, flexible: true),
+            .init(id: "project", title: "Project", width: 180),
+            .init(id: "status", title: "Status", width: 120, hiddenBelow: 760),
+            .init(id: "priority", title: "Priority", width: 100, hiddenBelow: 680),
+            .init(id: "due", title: "Due", width: 130),
+        ], actionsWidth: 120)
+        table.sizesToFitRows = true
+        table.accessibilityName = "Tasks"
+        return table
+    }()
+    /// Weekly review's five figures, as the prototype's summary cards.
+    private lazy var reviewCards: [HelmMetricCard] = [
+        HelmMetricCard(caption: "Completed this week", tint: nil, showsDetail: true),
+        HelmMetricCard(caption: "Focus time", tint: nil, showsDetail: true),
+        HelmMetricCard(caption: "Overdue", tint: .critical, showsDetail: true),
+        HelmMetricCard(caption: "Follow-ups open", tint: nil, showsDetail: true),
+        HelmMetricCard(caption: "Coming up next week", tint: nil, showsDetail: true),
+    ]
+    private lazy var reviewCardsRow = HelmMetricRow(reviewCards)
+    /// Time on tasks beside Pushed back repeatedly.
+    private let reviewLowerRow = NSStackView()
+    /// The strip's "pushed back 2+ times" figure, which the five cards do not
+    /// carry: the Pushed back panel's own count.
+    private let reviewPushedBackCount = HelmCountBadge()
+    private var reviewPushedBackHeaderRow: HelmSectionHeader?
+
     /// F7's timer. Optional so every existing construction site (and every
     /// self-test that mounts this page to ask about something else) keeps
     /// working unchanged - a page with no timer simply renders no focus
@@ -1641,8 +1697,9 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         // behind, since an ordinary hidden `NSView` keeps its constraints.
         // P9: the split collapses the column, which takes its gap and its
         // hairline with it, and restores the captain's own choice on return.
-        splitPage?.pageForcesCollapse = view != .dashboard
+        splitPage?.pageForcesCollapse = drawsSidebarLayout || view != .dashboard
         applyContentLeadingInset()
+        if drawsSidebarLayout { workspaceFilterRow.isHidden = view != .dashboard || isProjectDetailFullPage }
         if view == .weeklyReview { renderWeeklyReview() }
         applyTheme()
         onModuleTabChanged?()
@@ -1669,6 +1726,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         reviewStatsCard.translatesAutoresizingMaskIntoConstraints = false
 
         let headerRow = sectionHeaderRow(iconSymbol: "arrow.uturn.backward", tint: .warn, label: reviewPushedBackHeader)
+        reviewPushedBackHeaderRow = headerRow
 
         reviewPushedBackStack.orientation = .vertical
         reviewPushedBackStack.alignment = .leading
@@ -1791,6 +1849,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             }
             reviewPushedBackListWidth?.isActive = true
         }
+        if drawsSidebarLayout { renderWorkspaceReview(summary) }
         applyTheme()
     }
 
@@ -1916,6 +1975,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
 
         renderProjectsSection()
         if topLevelView == .weeklyReview { renderWeeklyReview() }
+        if drawsSidebarLayout { renderWorkspaceChrome() }
 
         applyTheme()
     }
@@ -1965,6 +2025,14 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         // against a blank left half in board mode (caught in a real render,
         // not by reading the constraints).
         tasksLeftColumn?.isHidden = hideTasks
+        if drawsSidebarLayout {
+            // The table is the List tab; the floating bar's My Tasks card
+            // and its column are not drawn, so Follow-ups spans the row.
+            taskPanel.isHidden = true
+            tasksLeftColumn?.isHidden = true
+            tasksTable.card.isHidden = isProjectDetailFullPage || failed || tasksView != .list
+            workspaceFilterRow.isHidden = isProjectDetailFullPage || topLevelView != .dashboard
+        }
     }
 
     /// The `tasksRow` column holding the flat task panel - see
@@ -2703,6 +2771,12 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         reviewFocusHeadline.textColor = ink
         reviewFocusCaption.textColor = muted
         reviewFocusChart.applyTheme(theme)
+        if drawsSidebarLayout {
+            scopeFilter.applyTheme(theme)
+            projectPopup.contentTintColor = ink
+            tasksTable.applyTheme(theme)
+            for card in reviewCards { card.applyTheme(theme) }
+        }
     }
 }
 
@@ -2820,3 +2894,372 @@ extension ShiftController: ModuleTabHosting {
     /// the toolbar does not carry them.
     func setModuleTabControlHidden(_ hidden: Bool) { viewTabs.isHidden = hidden }
 }
+
+// MARK: - The sidebar layout (stage 7)
+
+// The prototype's Tasks: Board, List, Calendar and Weekly review as the
+// toolbar's tabs, New task at the toolbar's far right, and no second column
+// inside the page. What that column held has a place on the page itself -
+// the filter row under the header carries its Workspace and Smart views
+// (with their counts), its Follow-ups jump and its Projects filter, beside
+// the sort and the Done window; Settings is the sidebar's own row and
+// Shortcuts is the toolbar's Search (⌘K). Every task view, card and action
+// is the page's own: the board is the same board with the prototype's lanes
+// and cards, the List tab is the same tasks as one table, and Follow-ups and
+// Projects stay where they always were, under the view.
+
+extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding {
+
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+        splitPage?.pageForcesCollapse = true
+        applyContentLeadingInset()
+        topToolbar?.isHidden = true
+        buildWorkspaceFilterRow()
+        contentStack.insertArrangedSubview(workspaceFilterRow, at: 0)
+        workspaceFilterRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        boardView.adoptWorkspaceStyle()
+        calendarView.adoptWorkspaceStyle()
+        if let index = dashboardContainer.arrangedSubviews.firstIndex(of: calendarView) {
+            dashboardContainer.insertArrangedSubview(tasksTable.card, at: index + 1)
+        } else {
+            dashboardContainer.addArrangedSubview(tasksTable.card)
+        }
+        tasksTable.card.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        adoptWorkspaceWeeklyReview()
+        render()
+    }
+
+    /// New task, at the toolbar's far right after Search.
+    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? newTaskButton : nil }
+
+    private func buildWorkspaceFilterRow() {
+        projectPopup.controlSize = .small
+        projectPopup.target = self
+        projectPopup.action = #selector(projectPopupChanged)
+        projectPopup.toolTip = "Show one project's tasks"
+        projectPopup.setAccessibilityLabel("Project")
+        projectPopup.setContentHuggingPriority(.required, for: .horizontal)
+        followUpsJump.setContentHuggingPriority(.required, for: .horizontal)
+        // The sort and the Done window move here from the tab row the
+        // toolbar's tabs replaced.
+        for view in [sortPopup, doneWindowNote] as [NSView] {
+            view.removeFromSuperview()
+        }
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        let spacerWidth = spacer.widthAnchor.constraint(equalToConstant: 0)
+        spacerWidth.priority = .defaultLow
+        spacerWidth.isActive = true
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        for view in [scopeFilter, followUpsJump, projectPopup, spacer, sortPopup, doneWindowNote] as [NSView] {
+            workspaceFilterRow.addArrangedSubview(view)
+        }
+        workspaceFilterRow.orientation = .horizontal
+        workspaceFilterRow.alignment = .centerY
+        workspaceFilterRow.spacing = HelmMetrics.s3
+        // Gotcha (10): `.fill`, so the spacer and not a control takes the slack.
+        workspaceFilterRow.distribution = .fill
+        workspaceFilterRow.translatesAutoresizingMaskIntoConstraints = false
+        workspaceFilterRow.setClippingResistancePriority(.defaultLow, for: .horizontal)
+    }
+
+    /// The filter row's counts and selection, the project list, and the
+    /// List tab's rows - from the same pass `render` just made.
+    fileprivate func renderWorkspaceChrome() {
+        let c = counts()
+        scopeFilter.setTitle(WorkspaceToolbar.tabLabel(ShiftTaskScope.all.title, count: c.open),
+                             forID: ShiftTaskScope.all.rawValue)
+        scopeFilter.setTitle(WorkspaceToolbar.tabLabel(ShiftTaskScope.dueToday.title, count: c.dueToday),
+                             forID: ShiftTaskScope.dueToday.rawValue)
+        scopeFilter.setTitle(WorkspaceToolbar.tabLabel(ShiftTaskScope.overdue.title, count: c.overdue),
+                             forID: ShiftTaskScope.overdue.rawValue)
+        scopeFilter.select(taskScope.rawValue)
+        followUpsJump.title = c.followUps > 0 ? "Follow-ups \u{2002}\(c.followUps)" : "Follow-ups"
+        followUpsJump.setAccessibilityLabel(c.followUps > 0 ? "Follow-ups, \(c.followUps) pending" : "Follow-ups")
+        let signature = Self.projectSignature(store.projects)
+        if signature != projectPopupSignature {
+            projectPopupSignature = signature
+            projectPopup.removeAllItems()
+            projectPopup.addItem(withTitle: "All projects")
+            for project in store.projects {
+                projectPopup.addItem(withTitle: project.name.isEmpty ? "Untitled project" : project.name)
+                projectPopup.lastItem?.representedObject = project.id
+                projectPopup.lastItem?.image = Self.projectDot(ShiftProjectPalette.tint(forProjectID: project.id),
+                                                              theme: theme)
+            }
+        }
+        let selected = projectFilter.flatMap { id in store.projects.firstIndex { $0.id == id }.map { $0 + 1 } } ?? 0
+        projectPopup.selectItem(at: selected)
+        doneWindowNote.isHidden = tasksView != .board
+        tasksTable.setRows(taskTableRows())
+    }
+
+    @objc fileprivate func projectPopupChanged() {
+        let id = projectPopup.selectedItem?.representedObject as? String
+        projectFilter = id
+        render()
+    }
+
+    @objc fileprivate func followUpsJumpClicked() {
+        scrollToPanel(followUpPanel)
+    }
+
+    /// A project's dot for its popup item, in the hue its cards and lanes use.
+    private static func projectDot(_ tint: HelmTint, theme: HelmTheme) -> NSImage {
+        let image = NSImage(size: NSSize(width: 10, height: 10), flipped: false) { rect in
+            HelmTheme.nsColor(tint.hex(in: theme)).setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
+            return true
+        }
+        return image
+    }
+
+    // MARK: The List tab
+
+    /// The filtered open tasks in the page's sort, then the ones finished in
+    /// the Done window - the board's three lanes as one list.
+    fileprivate func taskTableRows() -> [HelmDataTable.Row] {
+        let board = boardTasks()
+        let tasks = (board[.backlog] ?? []) + (board[.inProgress] ?? [])
+        let open = tasks.sorted(by: taskSort.areInOrder)
+        let done = board[.done] ?? []
+        let rows = open.map { taskRow($0, column: ShiftBoardColumn.column(for: $0.status) ?? .backlog) }
+            + done.map { taskRow($0, column: .done) }
+        guard rows.isEmpty else { return rows }
+        let filter = filterDescription()
+        return [.empty(symbol: "checklist", title: filter.text == nil ? "No tasks yet" : "No tasks match",
+                       body: filter.text.map { "Nothing \($0)." } ?? "New task adds one.",
+                       action: filter.text == nil
+                           ? .init(title: "New task", symbol: "plus") { [weak self] in self?.newTaskClicked() }
+                           : .init(title: filter.clearTitle, symbol: "line.3.horizontal.decrease.circle") {
+                               [weak self] in self?.clearFilters() })]
+    }
+
+    private func taskRow(_ task: ShiftTask, column: ShiftBoardColumn) -> HelmDataTable.Row {
+        var row = HelmDataTable.Row.record(task.id)
+        let isDone = column == .done
+        let check = ShiftTaskCheckBadge(size: 18)
+        check.setChecked(isDone, tint: HelmTheme.nsColor(isDone ? HelmTint.good.hex(in: theme) : theme.chromeLineHex))
+        check.setAccessibilityLabel(isDone ? "Reopen \(task.title)" : "Complete \(task.title)")
+        let id = task.id
+        check.target = self
+        check.action = #selector(tableCheckClicked(_:))
+        check.identifier = NSUserInterfaceItemIdentifier(id)
+        row.cells["done"] = .view(check)
+        var subtitle: String?
+        if !task.subtasks.isEmpty {
+            subtitle = "\(task.subtasks.filter(\.done).count) of \(task.subtasks.count) subtasks"
+        }
+        row.cells["task"] = .title(task.title, subtitle: subtitle, subtitleIsCode: false, symbol: nil,
+                                   tint: .neutral, tintHex: nil)
+        let project = task.projectID.flatMap { pid in store.projects.first { $0.id == pid } }
+        row.cells["project"] = .view(ShiftProjectTag(name: project?.name ?? "No project",
+                                                     tint: ShiftProjectPalette.tint(forProjectID: task.projectID),
+                                                     theme: theme))
+        row.cells["status"] = .muted(column.title)
+        if let pill = ShiftTaskSignals.priorityPill(task.priority) {
+            let chip = HelmStatusPill(style: .pill)
+            chip.configure(text: pill.text, tint: pill.tint, theme: theme)
+            row.cells["priority"] = .view(chip)
+        } else {
+            row.cells["priority"] = HelmDataTable.Cell.none
+        }
+        if isDone {
+            let done = task.completedAt.flatMap(ShiftStore.date(fromISO8601:))
+            row.cells["due"] = done.map { .muted("Done \(ShiftBoardCardView.doneDateFormatter.string(from: $0))") }
+                ?? HelmDataTable.Cell.none
+        } else if let due = ShiftTaskSignals.dueCaption(date: task.dueDate, time: task.dueTime) {
+            row.cells["due"] = due.tint.map { .status(due.text, tint: $0) } ?? .muted(due.text)
+        } else {
+            row.cells["due"] = HelmDataTable.Cell.none
+        }
+        row.activate = { [weak self] in self?.openBoardTask(id: id) }
+        var menu: [HelmDataTable.Action] = [
+            .init(title: "Open Task\u{2026}", symbol: "arrow.up.forward.square") { [weak self] in
+                self?.openBoardTask(id: id)
+            },
+            isDone
+                ? .init(title: "Reopen", symbol: "arrow.uturn.backward") { [weak self] in
+                    self?.moveTask(id: id, to: .backlog) }
+                : .init(title: "Mark Done", symbol: "checkmark.circle") { [weak self] in
+                    self?.moveTask(id: id, to: .done) },
+        ]
+        if !isDone {
+            for option in ShiftDuePush.allCases {
+                menu.append(.init(title: "Push to \(option.menuTitle)", symbol: "calendar.badge.clock") {
+                    [weak self] in self?.pushDueDate(task, by: option)
+                })
+            }
+            let focusing = focusTimer?.session?.taskID == id
+            if focusing {
+                row.primary = .init(title: "Stop", symbol: "stop.circle") { [weak self] in self?.stopFocus() }
+                row.pinsPrimary = true
+                menu.append(.init(title: "Stop Focus", symbol: "stop.circle") { [weak self] in self?.stopFocus() })
+            } else if focusTimer != nil {
+                let first = FocusTimerEngine.durationChoices.first ?? 25
+                row.primary = .init(title: "Focus \(first) min", symbol: "timer") { [weak self] in
+                    self?.startFocus(on: task, minutes: first)
+                }
+                for minutes in FocusTimerEngine.durationChoices {
+                    menu.append(.init(title: "Focus for \(minutes) minutes", symbol: "timer") { [weak self] in
+                        self?.startFocus(on: task, minutes: minutes)
+                    })
+                }
+            }
+        }
+        menu.append(.init(title: "Delete Task\u{2026}", symbol: "trash") { [weak self] in
+            self?.confirmDeleteTask(id: id)
+        })
+        row.menu = menu
+        return row
+    }
+
+    @objc fileprivate func tableCheckClicked(_ sender: ShiftTaskCheckBadge) {
+        guard let id = sender.identifier?.rawValue else { return }
+        if store.activeTasks.contains(where: { $0.id == id }) {
+            moveTask(id: id, to: .done)
+        } else {
+            moveTask(id: id, to: .backlog)
+        }
+    }
+
+    // MARK: Weekly review
+
+    private func adoptWorkspaceWeeklyReview() {
+        reviewGreeting.font = HelmType.sectionTitle()
+        reviewSubtitle.isHidden = true
+        reviewStatsCard.isHidden = true
+        reviewPushedBackCount.toolTip = "Tasks pushed back two or more times"
+        reviewPushedBackHeaderRow?.setActions([reviewPushedBackCount])
+        guard let statsIndex = weeklyReviewContainer.arrangedSubviews.firstIndex(of: reviewStatsCard) else { return }
+        weeklyReviewContainer.insertArrangedSubview(reviewCardsRow, at: statsIndex + 1)
+        reviewCardsRow.widthAnchor.constraint(equalTo: weeklyReviewContainer.widthAnchor).isActive = true
+        // Time on tasks beside Pushed back repeatedly, two to one, as the
+        // prototype sets its chart beside its checklist.
+        for panel in [reviewFocusPanel, reviewPushedBackPanel] {
+            weeklyReviewContainer.removeArrangedSubview(panel)
+            panel.removeFromSuperview()
+            reviewLowerRow.addArrangedSubview(panel)
+        }
+        reviewLowerRow.orientation = .horizontal
+        reviewLowerRow.alignment = .top
+        reviewLowerRow.distribution = .fill
+        reviewLowerRow.spacing = HelmMetrics.s4
+        reviewLowerRow.translatesAutoresizingMaskIntoConstraints = false
+        weeklyReviewContainer.addArrangedSubview(reviewLowerRow)
+        NSLayoutConstraint.activate([
+            reviewLowerRow.widthAnchor.constraint(equalTo: weeklyReviewContainer.widthAnchor),
+            reviewPushedBackPanel.widthAnchor.constraint(equalTo: reviewFocusPanel.widthAnchor, multiplier: 0.5),
+        ])
+    }
+
+    /// The five figures, each from the store's own records.
+    fileprivate func renderWorkspaceReview(_ summary: ShiftWeeklySummary) {
+        let lastWeek = Calendar.current.date(byAdding: .day, value: -7, to: Date())
+            .map { store.weeklySummary(reference: $0).completedCount }
+        reviewCards[0].configure(count: summary.completedCount)
+        if let lastWeek {
+            let delta = summary.completedCount - lastWeek
+            let text = delta == 0 ? "Same as last week" : "\(delta > 0 ? "+" : "\u{2212}")\(abs(delta)) vs last week"
+            reviewCards[0].setDetail(text, tint: delta > 0 ? .good : nil)
+        } else {
+            reviewCards[0].setDetail(nil)
+        }
+        let focusDays = store.focusSecondsByDay(days: 7)
+        let focusSeconds = focusDays.reduce(0) { $0 + $1.seconds }
+        let focusTasks = store.focusTaskCount(days: 7)
+        reviewCards[1].configure(text: focusSeconds > 0 ? FocusTimerFormat.total(focusSeconds) : "None yet",
+                                 signals: false)
+        reviewCards[1].setDetail(focusSeconds > 0
+            ? "last 7 days \u{00B7} \(focusTasks) task\(focusTasks == 1 ? "" : "s") with a timer"
+            : "Start a focus session from any task")
+        let c = counts()
+        reviewCards[2].configure(count: c.overdue)
+        let today = Calendar.current.startOfDay(for: Date())
+        let overdueTasks = store.activeTasks.filter(matchesProjectFilter).filter { task in
+            guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
+            return due < today
+        }.sorted(by: Self.byDueDateThenCreated)
+        reviewCards[2].setDetail(overdueTasks.first?.title ?? "Nothing late")
+        let pending = store.followUps.filter { $0.status == .pending }
+        let dueToday = pending.filter { fu in
+            fu.followUpAt.flatMap(ShiftDateFormatting.date(from:)).map { Calendar.current.isDate($0, inSameDayAs: Date()) }
+                ?? false
+        }.count
+        reviewCards[3].configure(text: "\(pending.count)", signals: false)
+        reviewCards[3].setDetail(dueToday > 0 ? "\(dueToday) due today" : "None due today")
+        reviewCards[4].configure(text: "\(summary.upcomingCount)", signals: false)
+        reviewCards[4].setDetail("tasks and follow-ups due")
+        reviewPushedBackHeader.stringValue = "Pushed back repeatedly"
+        reviewPushedBackCount.text = "\(summary.pushedBack.count)"
+        reviewPushedBackCount.applyTheme(theme)
+        for card in reviewCards { card.applyTheme(theme) }
+    }
+}
+
+/// A project's dot and name, as the List tab's Project column and the
+/// prototype's table draw it - the hue its board cards use.
+final class ShiftProjectTag: NSView {
+    static let dotSide = HelmMetrics.s2
+
+    private let dot = NSView()
+    private let label = NSTextField(labelWithString: "")
+
+    init(name: String, tint: HelmTint, theme: HelmTheme) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = Self.dotSide / 2
+        dot.layer?.backgroundColor = HelmTheme.nsColor(tint.hex(in: theme)).cgColor
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        label.stringValue = name
+        label.font = HelmType.body()
+        label.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        addSubview(dot)
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor),
+            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: Self.dotSide),
+            dot.heightAnchor.constraint(equalToConstant: Self.dotSide),
+            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 6),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            label.topAnchor.constraint(equalTo: topAnchor),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel(name)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+}
+
+#if FM_SELFTESTS
+extension ShiftController {
+    var debugWorkspaceFilterRow: NSStackView { workspaceFilterRow }
+    var debugScopeFilter: HelmSegmentedTabs { scopeFilter }
+    var debugProjectPopup: HelmPopUpButton { projectPopup }
+    var debugFollowUpsJump: HelmButton { followUpsJump }
+    var debugTasksTable: HelmDataTable { tasksTable }
+    var debugReviewCards: [HelmMetricCard] { reviewCards }
+    /// The Pushed back panel's count, when it is mounted and showing.
+    var debugPushedBackCount: String? {
+        reviewPushedBackCount.superview != nil && !reviewPushedBackCount.isHidden ? reviewPushedBackCount.text : nil
+    }
+    var debugNewTaskButton: HelmButton { newTaskButton }
+    var debugTasksViewID: String { topLevelView == .weeklyReview ? "review" : tasksView.rawValue }
+    /// Pick a project through the popup's own action, as a click does.
+    func debugPickProject(id: String?) {
+        let index = id.flatMap { pid in store.projects.firstIndex { $0.id == pid }.map { $0 + 1 } } ?? 0
+        projectPopup.selectItem(at: index)
+        _ = projectPopup.sendAction(projectPopup.action, to: projectPopup.target)
+    }
+}
+#endif

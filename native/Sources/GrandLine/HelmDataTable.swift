@@ -123,6 +123,12 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
         var reorderGroup: String?
         /// The empty state's one action, if it has one.
         var emptyAction: Action?
+        /// Show the primary action at rest, not only on hover and selection:
+        /// a row that asks the captain to act (an update to install, a fork
+        /// behind its upstream) keeps its button in sight, the rule
+        /// `ToolRowLayout.setActionsPinned` gives the floating bar's rows
+        /// (UI-43). The ⋯ still follows the pointer.
+        var pinsPrimary = false
 
         static func record(_ key: String) -> Row { Row(kind: .record(key: key)) }
         static func group(_ name: String) -> Row { Row(kind: .group(name)) }
@@ -498,7 +504,8 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
         }
         if let actions = table.view(atColumn: table.column(withIdentifier: NSUserInterfaceItemIdentifier(Self.actionsColumnID)),
                                     row: row, makeIfNecessary: false) as? HelmDataTableActionsCell {
-            actions.setRevealed(actionsAlwaysVisible || selected || row == hoveredRow)
+            actions.setRevealed(actionsAlwaysVisible || selected || row == hoveredRow,
+                                pinsPrimary: rows[row].pinsPrimary)
         }
     }
 
@@ -615,7 +622,8 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
                     guard let self, let cell else { return }
                     self.showOverflow(forKey: key, from: cell.overflowAnchor)
                 }
-                cell.setRevealed(actionsAlwaysVisible || tableView.selectedRowIndexes.contains(row) || row == hoveredRow)
+                cell.setRevealed(actionsAlwaysVisible || tableView.selectedRowIndexes.contains(row) || row == hoveredRow,
+                                 pinsPrimary: item.pinsPrimary)
                 return cell
             }
             let leading = isFirst ? Self.edgeInset : Self.cellInset
@@ -1247,11 +1255,11 @@ final class HelmDataTableActionsCell: NSView {
     /// The primary action and ⋯ show on hover, on the selected row, or always.
     /// Hidden rather than faded: an off-screen render draws an `alphaValue = 0`
     /// view visibly (AGENTS.md), and a hidden control takes no click.
-    func setRevealed(_ revealed: Bool) {
+    func setRevealed(_ revealed: Bool, pinsPrimary: Bool = false) {
         primaryButton.alphaValue = 1
         overflowButton.alphaValue = 1
         let primaryHidden = primaryRun == nil
-        primaryButton.isHidden = primaryHidden || !revealed
+        primaryButton.isHidden = primaryHidden || !(revealed || pinsPrimary)
         overflowButton.isHidden = !revealed || !offersActions
     }
 

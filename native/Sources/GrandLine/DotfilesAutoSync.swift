@@ -151,6 +151,15 @@ final class DotfilesAutoSync {
         set { stateLock.lock(); _status = newValue; stateLock.unlock() }
     }
     private var _statusHandlers: [(Status) -> Void] = []
+    /// Whether anything has set a status yet. `_status` starts at `.synced`
+    /// before any pass has run, so a reader that states it to the captain
+    /// (Setup's Dotfiles card, stage 7) asks `reportedStatus` instead and
+    /// draws a dash until there is something real to say (GL-14).
+    private var _hasReported = false
+    var reportedStatus: Status? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return _hasReported ? _status : nil
+    }
     private var pendingCommit: DispatchWorkItem?
     private var eventStream: FSEventStreamRef?
     private var safetyNetTimer: DispatchSourceTimer?
@@ -214,6 +223,12 @@ final class DotfilesAutoSync {
 
     // MARK: Status observation
 
+    #if FM_SELFTESTS
+    /// Report a status as a pass would, for a suite or a tour (`demo setup`).
+    /// Nothing is synced.
+    func debugSetStatus(_ status: Status) { setStatus(status) }
+    #endif
+
     /// Fires immediately with the current status, then on every change - the
     /// same contract as `ShiftGitSync.observeStatus`. Always delivered on main.
     func observeStatus(_ handler: @escaping (Status) -> Void) {
@@ -227,6 +242,7 @@ final class DotfilesAutoSync {
     private func setStatus(_ newStatus: Status) {
         stateLock.lock()
         _status = newStatus
+        _hasReported = true
         let handlers = _statusHandlers
         stateLock.unlock()
         switch newStatus {

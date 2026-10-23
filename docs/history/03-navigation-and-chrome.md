@@ -1024,3 +1024,109 @@ The floating bar never drew one and is unchanged.
 - The tour lab has `demo focus`.
   Every module's page was rendered in Dusk and Daylight at 1512 and 1100, in both layouts, before and after.
   The floating bar's renders matched pixel for pixel except clock times and the async PR read.
+
+## The captain's second list from the sidebar layout (modular-shell stage 7, `fm/grandline-stage7-tasks-setup-sidebar-1792665154`)
+
+The captain sent six items after living with the sidebar as the default layout.
+This stage is those six, for the sidebar layout only.
+The floating bar's pages draw exactly what they did, with one exception found on the way: GitHub sync's subtitle (below), which was wrong in both layouts.
+
+### The shape
+
+- **The sidebar is the system's Large source-list size.**
+  `WorkspaceSidebarMetrics` is the one table: 32pt module rows with 15pt names and a 24pt icon box (16pt symbol), 34pt group headings in 13pt, 30pt session rows, and a 19pt badge with 12pt digits.
+  The column drew the Medium size before (28pt rows, 13pt names).
+  Every size goes through `HelmType.scaled`, so the chrome text scale still moves them together.
+  The column keeps its 236pt width, and every name and badge fits at that and at the 200pt drag minimum, in Dusk and Daylight.
+  At 1100pt the shell still puts the sidebar away for room, as it has since stage 3: the column and a page's 940pt floor do not both fit.
+- **Quick Connect is a caption and two icons on Console.**
+  They are three toolbar items (`WorkspaceToolbar.QuickConnectIcon`): the caption, Console (`terminal`) and Hosts (`server.rack`).
+  Two separate image items, never one merged glyph, the way the trailing cluster's icons are built, and a toolbar space after them so they are their own capsule.
+  Hosts is what the one button did: Connections › Hosts with its quick-connect field focused (`revealHostsQuickConnect`).
+  Console focuses the session Console already has and opens one only when there is none (`ConsoleController.focusOrOpenSession`, the captain's Option B).
+  In the toolbar's overflow menu the caption is the old single Quick Connect item.
+- **Knowledge has no tree column.**
+  `KnowledgeTree.swift` is deleted, with its hooks in Notebook, Runbooks, Postmortems and Docs, and the content pane's leading column.
+  The content takes the tree's 248pt back, and Notebook shows its own Pages column again (the tree was why it was put away).
+- **Setup's four tabs share one row of summary cards** (`SetupSummary`, `SetupSummaryRow`): Tools up to date, Updates, Setup steps, Dotfiles and GitHub sync.
+  Nothing in the row checks anything.
+  It reads `BackgroundSignalsPoller`'s counts (which now carry their totals), `DotfilesAutoSync.reportedStatus` and `ConfigRepoPrivacy.lastReading`, so the cards and the sidebar's Setup badge cannot disagree.
+  A reading not taken this session is a dash, with the reason in the card's tooltip.
+  - **Updates** is one `HelmDataTable` of tools grouped by category: installed, available or Up to date, and source.
+    A row's action is Update only where the updater supports it, otherwise Install in Bootstrap, Run in Terminal or Check.
+    Check for updates (Check all) is the toolbar's far-right primary action, the All and Needs Attention filter and the tool filter stay, and a tool's details and last output are in the inspector.
+  - **Setup steps** is a list of steps with their status marks.
+    Each step's controls open under its Details button, and the current step carries its own action.
+    Run full setup is the primary action.
+  - **Automation** is one card of switches: each schedule (through `ScheduleStore.setEnabled`, the store Schedules reads), the dotfiles auto-commit and reconnecting dropped sessions, with Manage Schedules.
+    Run Automation is the primary action.
+  - **GitHub sync** opens on a "Pushing is paused" card (`SetupPausedPushNotice`) with Open on GitHub and Check again, shown only while `ConfigRepoPrivacy` has confirmed the config repo public.
+    Under it the forks are one table with commits behind, upstream, last checked and Sync on a fork that is behind.
+    Sync all is the primary action and Refresh sits beside it.
+- **Tasks' page column is the filter row.**
+  The five scopes are one control (with counts on All tasks, Due today and Overdue), Follow-ups is a button with its count, and Projects is a menu that filters to one project, beside the sort and the Done window.
+  Settings is the sidebar's own row and Shortcuts is the toolbar's Search, as before.
+  New task is the primary action.
+  - The board has the prototype's lanes, each a tint that hugs its own cards with a dashed add row, and its cards (`ShiftWorkspaceTaskCard`: project tag, priority and a due line).
+  - The List tab is one table: a check that completes and reopens, project, status, priority, due, a focus action and the board's menu on each row.
+  - The calendar is the prototype's month card.
+  - Weekly review is five cards (completed this week against last week, focus time, overdue, follow-ups open, coming up next week) over Time on tasks beside Pushed back repeatedly.
+    The floating bar's strip counted the tasks pushed back 2+ times, so that panel carries the count (`HelmCountBadge`).
+
+### Decisions
+
+- **Option B for the Console icon, the captain's call.**
+  The first build opened a new shell session on every click.
+  Asked to choose between that, focusing the current session (opening one only when there is none), and a menu of live sessions, the captain chose the second.
+  The real app's shared Console always has its Firstmate shell, so in practice the icon brings Console's session forward with the keyboard in it.
+- **The Knowledge tree goes, because nothing it offered lacked a home.**
+  The toolbar's tabs already switch Notebook, Runbooks, Postmortems, Docs and Reading list.
+  Each tab lists its own items, Notebook in its own Pages column again.
+  The tree's search field found notebook pages, runbooks and postmortems, and ⌘K does (`UnifiedSearchNotebookProvider`, `UnifiedSearchDocsProvider`).
+  Its "Not synced yet" note under Docs is the Docs page's own subtitle and empty state.
+- **Only real figures.**
+  Focus time and the comparison with last week come from the focus log and the completion history.
+  The prototype's review checklist has no data behind it in the app, so Pushed back repeatedly sits beside Time on tasks instead.
+  Nothing records when a fork last synced, so the forks table says when each was last checked.
+- **The paused card asks for a confirmed public repo.**
+  An unanswered visibility check (no `gh`, offline) never blocks a push (GL-22), so it never claims a pause either.
+
+### What was measured on the way
+
+- **GitHub sync said "all in sync" when every check had failed, in both layouts.**
+  The subtitle appended "all in sync" whenever nothing was behind or diverged, and a failed check is neither.
+  It now says "could not be checked", and "all in sync" only when every row is in sync (GL-14).
+- **Updates' category cards came back on the first filter change.**
+  `applyFilter` unhid them, so the sidebar layout now filters its one table and returns.
+- **Every lane came out as tall as the fullest.**
+  The clip view stretches its document, and the cards' stack was pinned to both of the document's ends, so a tie to the stack's height was a tie to the scroll view's own.
+  The stack's bottom is now `<=`, the lane's tint ends 8pt under its last card, and the body takes a stack-level hug (gotcha (12)).
+- **The calendar's Month and Week switch sat beside the title** rather than at the trailing edge.
+  A stack has no intrinsic size, so the title's stack needed a stack-level hug and the switch a fixed width (gotcha (12)).
+- **The paused card's two buttons ran out of the card at 1100** while they sat beside the sentence.
+  The sentence now wraps under the title at a width derived from the card (gotcha (22)), with the buttons under it.
+- **Automation's switch rows and Setup steps' details came out too tall at 1100.**
+  A description's `preferredMaxLayoutWidth` changed in `viewDidLayout` without asking for another pass, so both now set `needsLayout` when a width changes.
+- **A symbol image view's frame is not its layout box.**
+  An `NSImageView` showing an SF Symbol takes its alignment insets from the symbol's alignment rect, so the sidebar's 24pt icon box measures 24.5 x 37.5 as a frame for Home's house.
+  The suite measures `alignmentRect(forFrame:)`.
+- **Adjacent toolbar icons share one capsule.**
+  Without the space, the system drew Quick Connect's two icons and the trailing cluster's three as one capsule of five, and the caption read as the label for all five (measured in a real render).
+- **The sidebar's split pane is the sidebar plus an 8pt inset**, so a divider at 236pt makes a 228pt sidebar.
+- **The tour lab's Console starts with no session, and a self-test process starts locked.**
+  The first is why the suite can drive both halves of Option B through the real toolbar item.
+  The second is why the suite unlocks `AppLockGate` for the focus half, and checks that while locked the icon leaves the keyboard where it was.
+
+### Verification
+
+- `FM_RUN_SIDEBAR_REDESIGNS_MODEL_TESTS` is new and pure logic, so it runs in CI's blocking lane.
+  It covers the sidebar's sizes and the source guards that keep them in one table, Quick Connect's three items and their wiring (Option B included), that nothing declares the Knowledge tree again, every summary card's honest states, the readings behind them, and that Tasks' filter row keeps every filter the column had.
+- `FM_RUN_SIDEBAR_REDESIGNS_TESTS` is new and window-backed (`NEEDS_SESSION`).
+  It mounts the real sidebar shell and the real floating bar off screen, in its own stores, with every Console session `/usr/bin/true` and every tool check a fixture.
+  It measures the sidebar's rows at 236pt and at the 200pt minimum in both themes, and drives each icon, filter, switch, check and Details button through its own action.
+  The floating bar's Tasks, Updates, Setup steps, Automation, GitHub sync and Notebook are checked unchanged.
+- Twenty-one revert injections each failed a named check, and each file was restored and confirmed clean against git:
+  the Medium row height and a row's name off the table (the model guard and the measured font), Quick Connect not shown on Console, no space after its icons, Option B reverted, a column back beside Knowledge's body (`PageRedesignsSelfTest`), Updates' category cards back, the paused card for an unanswered check, the old "all in sync" subtitle (both layouts), Details doing nothing, a schedule switch writing nothing, a dash shown as "0 / 0", New task not the primary action, the scope control and the project menu not filtering, every lane as tall as the fullest, the List check doing nothing, Focus time not read from the focus log, the Pushed back count missing, Tasks' column coming back (`MainSplitShellSelfTest` and the round trip from Weekly review), and the floating bar's Tasks taking the sidebar layout's primary action.
+- `MainSplitShellSelfTest`, `PageRedesignsSelfTest` and `SplitShellModelSelfTest` changed where this stage changed what they pinned: Quick Connect's case drives the Hosts icon, the column reopen is measured on Notebook's Pages column, and the Knowledge cases check that there is no tree.
+- The tour lab has `demo setup`, `demo forks` and `demo focuslog`.
+  Every affected page was rendered in Dusk and Daylight at 1512 and 1100, in both layouts, before and after.
