@@ -56,6 +56,92 @@ enum NavigationCoherenceSelfTest {
         ok = checkWindowTitleComposition() && ok
         ok = checkNoControlOwnsACharacterChord() && ok
         ok = checkTheFeatureInventoryStaysWired() && ok
+        ok = checkCopyNamesPlacesThroughPlaceName() && ok
+        return ok
+    }
+
+    // MARK: R2-BUG-06 - copy names a place the way the running layout does
+
+    /// Copy kept naming the floating bar's map after the sidebar became the
+    /// default: "on Bootstrap", "Install in Bootstrap", "Open Hosts", and a
+    /// firstmate home "in Settings" that Settings never had. Every navigation
+    /// sentence now names its target through `PlaceName`. Two halves: what
+    /// `PlaceName` answers in each layout, and a source guard that no
+    /// production string literal names a destination after a navigation
+    /// word again.
+    private static func checkCopyNamesPlacesThroughPlaceName() -> Bool {
+        var ok = true
+        let saved = PlaceName.layout
+        defer { PlaceName.layout = saved }
+        PlaceName.layout = .sidebar
+        let sidebar = [PlaceName.of(.bootstrap), PlaceName.short(.bootstrap), PlaceName.of(.hosts),
+                       PlaceName.of(.settings), PlaceName.of(.overview)]
+        if sidebar != ["Setup \u{203A} Setup steps", "Setup steps", "Connections \u{203A} Hosts", "Settings",
+                       "Crew \u{203A} In flight"] {
+            fail("R2-BUG-06: the sidebar layout names its places \(sidebar)", &ok)
+        }
+        PlaceName.layout = .floatingBar
+        let floating = [PlaceName.of(.bootstrap), PlaceName.short(.bootstrap), PlaceName.of(.hosts),
+                        PlaceName.of(.overview)]
+        if floating != ["Bootstrap", "Bootstrap", "Hosts", "Fleet"] {
+            fail("R2-BUG-06: the floating bar names its places \(floating)", &ok)
+        }
+
+        guard let dir = SelfTestSources.appSourceDirectory() else {
+            fail("app sources are not next to this binary - the copy guard would pass vacuously", &ok)
+            return ok
+        }
+        // The names a sentence gets wrong in one layout or the other: every
+        // destination whose place differs between the two (Bootstrap is
+        // Setup › Setup steps, Hosts is Connections › Hosts, Fleet is Crew ›
+        // In flight), and the two the review found pointing at the wrong
+        // place altogether ("in Settings", "Open Setup").
+        PlaceName.layout = .sidebar
+        let moved = RailDestination.allCases.filter { PlaceName.of($0) != $0.title }.map(\.title)
+        PlaceName.layout = saved
+        let names = Set(moved + ["Settings", "Setup"])
+            .sorted { $0.count > $1.count }
+            .map { NSRegularExpression.escapedPattern(for: $0) }
+            .joined(separator: "|")
+        // A navigation word, then a destination's or a module's own name.
+        // "copied from" and "came from" name where a clipboard entry came
+        // from, not a place to go, and are left alone.
+        let pattern = "\\b(?:in|on|to|Open|open|Go to|(?<!copied )(?<!came )from)\\s+(?:the\\s+)?(?:\(names))\\b"
+        guard let navigation = try? NSRegularExpression(pattern: pattern),
+              let literal = try? NSRegularExpression(pattern: #""(?:[^"\\]|\\.)*""#) else {
+            fail("R2-BUG-06: the copy guard's patterns do not compile", &ok)
+            return ok
+        }
+        var offenders: [String] = []
+        var scanned = 0
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        // The menu bar (`main.swift`) and the ⌘K verbs name a feature under
+        // its own name inside a menu or palette group of that name ("Log
+        // Analyzer > Open Log Analyzer"), and the feature inventory keys
+        // those rows by exactly that title - they are commands, not
+        // directions to a place.
+        let exempt: Set<String> = ["main.swift", "UnifiedSearchProviders.swift", "PlaceName.swift"]
+        for file in files where file.pathExtension == "swift" && !exempt.contains(file.lastPathComponent) {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            for (index, line) in text.components(separatedBy: "\n").enumerated() {
+                let code = line.trimmingCharacters(in: .whitespaces)
+                guard !code.hasPrefix("//"), !code.hasPrefix("*") else { continue }
+                let range = NSRange(line.startIndex..., in: line)
+                for match in literal.matches(in: line, range: range) {
+                    scanned += 1
+                    guard let span = Range(match.range, in: line) else { continue }
+                    let string = String(line[span])
+                    if navigation.firstMatch(in: string, range: NSRange(string.startIndex..., in: string)) != nil {
+                        offenders.append("\(file.lastPathComponent):\(index + 1): \(string)")
+                    }
+                }
+            }
+        }
+        if scanned < 1000 { fail("R2-BUG-06: the copy guard read only \(scanned) string literals - it reads nothing", &ok) }
+        if !offenders.isEmpty {
+            fail("R2-BUG-06: navigation copy names a place literally rather than through PlaceName: "
+                 + offenders.joined(separator: "; "), &ok)
+        }
         return ok
     }
 

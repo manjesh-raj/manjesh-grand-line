@@ -60,10 +60,10 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
     private lazy var postmortemEmptyState = HelmEmptyState(
         symbol: "doc.text.magnifyingglass",
         title: "No postmortems yet",
-        body: "Postmortems are written for you from an SRE Lead investigation, or from the Log Analyzer's own \u{201C}Create RCA\u{201D} mode. Whichever writes one, it appears here.",
+        body: "Postmortems are written for you from an SRE Lead investigation, or from the \u{201C}Create RCA\u{201D} mode in \(PlaceName.of(.logAnalyzer)). Whichever writes one, it appears here.",
         size: .standard,
         accessory: {
-            let button = HelmButton(title: "Open Log Analyzer", variant: .secondary)
+            let button = HelmButton(title: "Open \(PlaceName.of(.logAnalyzer))", variant: .secondary)
             button.target = self
             button.action = #selector(openLogAnalyzerTapped)
             button.toolTip = "Analyze captured output and turn it into an RCA."

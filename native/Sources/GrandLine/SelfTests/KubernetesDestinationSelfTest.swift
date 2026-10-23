@@ -446,7 +446,7 @@ enum KubernetesDestinationSelfTest {
             return "the drill subtitle did not say there is no session: \(harness.controller.debugSubtitle ?? "nil")"
         }
         // The empty state's one action must actually reach Hosts.
-        guard let button = findButton(titled: "Open Hosts", in: harness.controller.view) else {
+        guard let button = findButton(titled: "Open \(PlaceName.of(.hosts))", in: harness.controller.view) else {
             return "the empty state had no Open Hosts button"
         }
         button.performClick(nil)

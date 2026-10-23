@@ -448,7 +448,7 @@ enum SidebarRedesignsSelfTest {
         } else {
             fail("the table has no quota-axi", &ok)
         }
-        check(row("gh")?.primary?.title == "Install in Bootstrap", "gh offers \(row("gh")?.primary?.title ?? "nothing")", &ok)
+        check(row("gh")?.primary?.title == "Install in \(PlaceName.short(.bootstrap))", "gh offers \(row("gh")?.primary?.title ?? "nothing")", &ok)
         if let up = row("tasks-axi") {
             check(up.primary == nil, "an up-to-date tool offers \(up.primary?.title ?? "")", &ok)
             if case .muted(let text)? = up.cells["available"] { check(text == "Up to date", "tasks-axi reads \(text)", &ok) }

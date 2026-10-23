@@ -1111,7 +1111,7 @@ enum ReviewTourLab {
                                headlineClause: "Claude is near its spend cap"),
             NeedsAttentionItem(id: "signal.checks", kind: .signal(.sessionChecks), source: "Session checks",
                                text: "Tool updates haven\u{2019}t been checked yet this session",
-                               chipText: "1 check not run", tone: .info, actionTitle: "Open Setup"),
+                               chipText: "1 check not run", tone: .info, actionTitle: "Open \(PlaceName.of(.bootstrap))"),
         ]
         let items = Array(pool.prefix(max(0, min(count, pool.count))))
         let state: NeedsAttentionSummary.State = items.isEmpty
@@ -1317,6 +1317,7 @@ enum ReviewTourLab {
         // shorter than the captain's. The sidebar shell keeps the system
         // title bar, as `main.swift` does for it.
         if layout == .floatingBar { WindowChromeFusion.apply(to: window) }
+        PlaceName.layout = layout
         // The sidebar shell's chrome is the system's - the sidebar material,
         // the toolbar, the system label colours - so its window has to follow
         // the theme's light/dark mode the way `main.swift`'s does, or a

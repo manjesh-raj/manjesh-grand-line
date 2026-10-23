@@ -968,7 +968,7 @@ final class CommandLibraryPageView: NSObject {
         workflowsRow.distribution = .fill
         workflowsRow.spacing = 5
         workflowsRow.translatesAutoresizingMaskIntoConstraints = false
-        workflowsRow.toolTip = "Multi-step command workflows live in Docs \u{2192} Runbooks - use a command's own \u{201C}+ Workflow\u{201D} button to add it as a step."
+        workflowsRow.toolTip = "Multi-step command workflows live in \(PlaceName.of(.runbooks)) - use a command's own \u{201C}+ Workflow\u{201D} button to add it as a step."
         workflowsRow.setAccessibilityElement(true)
         workflowsRow.setAccessibilityRole(.staticText)
         workflowsRow.setAccessibilityLabel(workflowsLabel.stringValue)
@@ -1408,7 +1408,7 @@ final class CommandLibraryPageView: NSObject {
         let title = "\(command.name) Workflow"
         let content = CommandLibraryWorkflow.newRunbookContent(title: title, command: command, generatedText: generatedText)
         let runbook = runbookStore.createRunbook(title: title, content: content)
-        Toast.show(in: view, message: "Created workflow \u{201C}\(runbook.title)\u{201D} in Docs \u{2192} Runbooks")
+        Toast.show(in: view, message: "Created workflow \u{201C}\(runbook.title)\u{201D} in \(PlaceName.of(.runbooks))")
         pendingWorkflowCommand = nil
     }
 

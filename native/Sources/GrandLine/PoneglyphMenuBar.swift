@@ -220,7 +220,7 @@ final class PoneglyphMenuBarPopoverController: NSViewController {
     private let subtitleLabel = NSTextField(labelWithString: "2FA codes")
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
     private let rowsStack = NSStackView()
-    private let openButton = HelmButton(title: "Open Poneglyph \u{2192}", variant: .quiet, size: .small)
+    private let openButton = HelmButton(title: "Open \(PlaceName.of(.poneglyph)) \u{2192}", variant: .quiet, size: .small)
     private let column = NSStackView()
 
     private var rows: [PoneglyphQuickCodeRow] = []

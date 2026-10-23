@@ -1856,11 +1856,11 @@ extension LogAnalyzerController {
                         explanation: "This incident write-up was generated from the current investigation. "
                             + "Copy it, or save it as a postmortem.",
                         body: body,
-                        saveTitle: "Save to Postmortems") { [weak self] in
+                        saveTitle: "Save to \(PlaceName.short(.postmortems))") { [weak self] in
             guard let self else { return }
             let created = self.runbookStore.createPostmortem(
                 title: "Incident: \(self.investigation.title)", content: body)
-            Toast.show(in: self.view, message: "Saved to Postmortems")
+            Toast.show(in: self.view, message: "Saved to \(PlaceName.short(.postmortems))")
             self.onOpenPostmortem?(created.id)
         }
     }
@@ -1876,11 +1876,11 @@ extension LogAnalyzerController {
                             + "steps are fenced in the shape SRE Lead's runbook runner already reads, so it "
                             + "can be run later from a host session.",
                         body: body,
-                        saveTitle: "Save to Runbooks") { [weak self] in
+                        saveTitle: "Save to \(PlaceName.short(.runbooks))") { [weak self] in
             guard let self else { return }
             let title = self.investigation.analysis?.ai?.rootCause?.summary ?? self.investigation.title
             let created = self.runbookStore.createRunbook(title: title, content: body)
-            Toast.show(in: self.view, message: "Saved to Runbooks")
+            Toast.show(in: self.view, message: "Saved to \(PlaceName.short(.runbooks))")
             self.onOpenRunbook?(created.id)
         }
     }

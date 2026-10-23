@@ -1055,7 +1055,7 @@ enum FleetGreeting {
                 title: "Point Grand Line at your firstmate home",
                 // UXP-06: the state in words. The path itself is shown once,
                 // in Bootstrap's editable field, where it can be changed.
-                meta: "No firstmate home was found where Grand Line is looking. Open Setup to choose the directory firstmate keeps its projects, backlog and crew state in.",
+                meta: "No firstmate home was found where Grand Line is looking. Open \(PlaceName.of(.bootstrap)) to choose the directory firstmate keeps its projects, backlog and crew state in.",
                 badgeSymbol: "wrench.and.screwdriver.fill",
                 isSetupPrompt: true,
                 metaRestatesCards: false)

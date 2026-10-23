@@ -394,7 +394,7 @@ enum StrawHatProposalExecutor {
         let content = body.hasPrefix("# ") ? body : "# \(proposal.title)\n\n\(body)"
         let runbook = docs.createRunbook(title: proposal.title, content: content)
         AppLog.ai.info("straw hat: captain confirmed a runbook draft")
-        return .written(message: "Saved \u{201C}\(runbook.title)\u{201D} to Runbooks", undo: {
+        return .written(message: "Saved \u{201C}\(runbook.title)\u{201D} to \(PlaceName.short(.runbooks))", undo: {
             docs.deleteRunbook(id: runbook.id)
         })
     }
@@ -474,7 +474,7 @@ enum StrawHatProposalExecutor {
             parameters: [], tags: ["crew-draft"], risk: risk)
         AppLog.ai.info("straw hat: captain confirmed a command draft, stored as \(risk.rawValue, privacy: .public)")
         return .written(
-            message: "Saved \u{201C}\(saved.name)\u{201D} to DevOps Commands as \(risk.displayName)",
+            message: "Saved \u{201C}\(saved.name)\u{201D} to \(PlaceName.short(.commandLibrary)) as \(risk.displayName)",
             undo: { commands.deleteCommand(id: saved.id) })
     }
 
@@ -556,7 +556,7 @@ enum StrawHatProposalExecutor {
         AppLog.ai.info("straw hat: captain confirmed a schedule draft for \(action.rawValue, privacy: .public), added disabled")
         return .written(
             message: "Added \u{201C}\(action.pickerTitle)\u{201D} \u{00B7} \(cadence.displayString)"
-                + " \u{00B7} off until you turn it on in Automation",
+                + " \u{00B7} off until you turn it on in \(PlaceName.of(.schedules))",
             undo: { schedules.delete(id: schedule.id) })
     }
 }

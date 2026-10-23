@@ -1190,7 +1190,7 @@ final class HomeCanvasController: NSViewController {
                 + " haven\u{2019}t been checked yet this session",
             chipText: "\(pending.count) \(pending.count == 1 ? "check" : "checks") not run",
             tone: .info,
-            actionTitle: "Open Setup")
+            actionTitle: "Open \(PlaceName.of(.bootstrap))")
     }
 
     /// "a", "a and b", "a, b, and c" - the reference's own joining.
@@ -2305,10 +2305,10 @@ final class HomeCanvasController: NSViewController {
         guard let record = AppSettings.shared.morningBriefingRecord, !record.clauses.isEmpty else {
             content.subtitle = AppSettings.shared.morningBriefingEnabled
                 ? "not generated yet today"
-                : "off in Settings"
+                : "off in \(PlaceName.of(.settings))"
             content.body = .note(AppSettings.shared.morningBriefingEnabled
                 ? "Your first briefing of the day appears here."
-                : "Turn on Morning briefing in Settings to get one short summary each morning.")
+                : "Turn on Morning briefing in \(PlaceName.of(.settings)) to get one short summary each morning.")
             return
         }
         // UI-8's rule on this card: the source count is a fact about the
@@ -2330,7 +2330,7 @@ final class HomeCanvasController: NSViewController {
         var clauses = Array(record.clauses.prefix(Self.briefingClauseCap(for: placement)))
         let hidden = record.clauses.count - clauses.count
         if hidden > 0 {
-            clauses.append(BriefingClause(text: "+\(hidden) more on Fleet.", target: .none))
+            clauses.append(BriefingClause(text: "+\(hidden) more in \(PlaceName.of(.overview)).", target: .none))
         }
         content.body = .paragraph(clauses)
     }
@@ -2795,7 +2795,7 @@ final class HomeCanvasController: NSViewController {
         guard snapshot.homeOk else {
             content.subtitle = "not read"
             content.chip = .warn(HelmReading<String>.unknownCaption)
-            content.body = .kpis(note: "Point Grand Line at your firstmate home in Settings.",
+            content.body = .kpis(note: "Point Grand Line at your firstmate home in \(PlaceName.of(.bootstrap)).",
                                  items: ["Working", "Done today", "Queued"].map {
                                      HelmKPIStrip.Item(.unread, caption: $0)
                                  })
@@ -3231,7 +3231,7 @@ final class HomeCanvasController: NSViewController {
         content.chip = .warn("\(updates) update\(updates == 1 ? "" : "s")")
         content.body = .metric(value: "\(updates)",
                                unit: updates == 1 ? "update" : "updates",
-                               note: "Ready to install from the Updates page.")
+                               note: "Ready to install from \(PlaceName.of(.updates)).")
     }
 
     /// Bootstrap: how many of the five setup steps have drifted. This is the
@@ -3423,7 +3423,7 @@ final class HomeCanvasController: NSViewController {
         content.artwork = PoneglyphIcon.image
         guard let vault = credentialVaultState?() else {
             content.subtitle = "encrypted credentials"
-            content.body = .note("Open Poneglyph to unlock it.")
+            content.body = .note("Open \(PlaceName.of(.poneglyph)) to unlock it.")
             return
         }
         switch vault.state {
@@ -3434,7 +3434,7 @@ final class HomeCanvasController: NSViewController {
         case .unreadable:
             content.subtitle = "unavailable"
             content.chip = .bad("Unreadable")
-            content.body = .note("The vault file could not be read. Nothing has been overwritten - open Poneglyph for details.")
+            content.body = .note("The vault file could not be read. Nothing has been overwritten - open \(PlaceName.of(.poneglyph)) for details.")
         case .present:
             content.subtitle = "encrypted credentials"
             guard vault.isUnlocked, let count = vault.count else {
@@ -3466,7 +3466,7 @@ final class HomeCanvasController: NSViewController {
             content.body = .note("Browsable offline - the captain's playbook, kept locally.")
         } else {
             content.chip = .warn("Not synced")
-            content.body = .note("Sync it once from the Docs page to browse it here, fully offline afterward.")
+            content.body = .note("Sync it once from \(PlaceName.of(.docs)) to browse it here, fully offline afterward.")
         }
     }
 

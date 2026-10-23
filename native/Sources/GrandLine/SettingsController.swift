@@ -305,7 +305,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// owners of one view start disagreeing.
     var onDrillSubtitleChanged: (() -> Void)?
 
-    /// Lets a row (Security's "Open Poneglyph") jump to another destination.
+    /// Lets a row (Security's "Open \(PlaceName.of(.poneglyph))") jump to another destination.
     /// `nil` in a suite.
     var onNavigate: ((RailDestination) -> Void)?
 
@@ -1769,8 +1769,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
         return [
             SettingsSection(heading: "Morning briefing", group: SettingsGroup(rows: [
-                SettingsRow(title: "Show a morning briefing on Fleet",
-                            description: "On the first visit to Fleet each day, one short generated paragraph over your fleet, PR queue, due tasks and drift - each clause linking to the page it came from.",
+                SettingsRow(title: "Show a morning briefing",
+                            description: "On the first visit to \(PlaceName.of(.overview)) each day, one short generated paragraph over your fleet, PR queue, due tasks and drift - each clause linking to the page it came from.",
                             control: morningBriefingSwitch),
             ]), foot: "Uses your own `claude` login for one call per day. Only counts and titles already shown elsewhere in the app are sent - never terminal output or logs. With `claude` unavailable the card still appears as a plain, locally-computed stat line with no AI call at all."),
         ]
@@ -1899,11 +1899,11 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         // states what is true from here and sends the captain to the one
         // place that can change it, rather than drawing controls that would
         // need a Touch ID prompt to populate.
-        let openVault = HelmButton(title: "Open Poneglyph", variant: .secondary,
+        let openVault = HelmButton(title: "Open \(PlaceName.of(.poneglyph))", variant: .secondary,
                                    target: self, action: #selector(openVault))
         let vaultRows = [
             SettingsRow(title: "Vault settings live in the vault",
-                        description: "Auto-lock, the clipboard-clear delay and Touch ID unlock are stored encrypted inside the vault file itself, so they are changed from Poneglyph after it is unlocked - never from here.",
+                        description: "Auto-lock, the clipboard-clear delay and Touch ID unlock are stored encrypted inside the vault file itself, so they are changed from \(PlaceName.of(.poneglyph)) after it is unlocked - never from here.",
                         control: openVault),
         ]
 

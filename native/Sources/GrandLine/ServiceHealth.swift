@@ -85,7 +85,7 @@ enum HealthService: String, CaseIterable {
         case .persistence:
             return "Writes hosts, keys, snippets, tasks and commands to disk."
         case .scheduledAutomations:
-            return "Runs the schedules set up on the Automation page."
+            return "Runs the schedules set up in \(PlaceName.of(.schedules))."
         }
     }
 

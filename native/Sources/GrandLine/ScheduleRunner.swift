@@ -491,7 +491,7 @@ enum ScheduleActions {
                 summary: "~/.dotfiles was not found on this machine, so nothing could be checked.",
                 whatFailed: "The drift check couldn\u{2019}t look at your dotfiles.",
                 why: "There is no ~/.dotfiles folder on this Mac, so there was nothing to compare against.",
-                whatToDo: "Open Bootstrap and use its dotfiles card to clone the repo, then run this schedule again.",
+                whatToDo: "Open \(PlaceName.of(.bootstrap)) and use its dotfiles card to clone the repo, then run this schedule again.",
                 log: log)
         }
         if dotfilesDone && agentDone {
@@ -588,7 +588,7 @@ enum ScheduleActions {
                 summary: summary,
                 whatFailed: "\(failed) of the \(statuses.count) tracked tools couldn\u{2019}t be checked for updates.",
                 why: "Those checks failed to return a version. The usual cause is no network, or the tool\u{2019}s own package manager being unavailable.",
-                whatToDo: "Open Updates to see which tools are affected and check them by hand. The \(checked) that did report are accurate.",
+                whatToDo: "Open \(PlaceName.of(.updates)) to see which tools are affected and check them by hand. The \(checked) that did report are accurate.",
                 log: log)
         case .clean:
             return ScheduleActionResult(verdict: .clean, summary: "All \(statuses.count) tracked tools up to date.", log: log)
@@ -677,7 +677,7 @@ enum ScheduleActions {
                 why: failed.isEmpty
                     ? "Every check failed to reach GitHub, which usually means no network or an expired gh login."
                     : "The fast-forward was refused by GitHub. The log below has what gh reported for each one.",
-                whatToDo: "Open GitHub Sync and try those repos by hand. Nothing was force-pushed, so no history was rewritten.",
+                whatToDo: "Open \(PlaceName.of(.githubSync)) and try those repos by hand. Nothing was force-pushed, so no history was rewritten.",
                 log: log)
         }
         // Some forks were checked and some were not: honest partial rather
@@ -688,7 +688,7 @@ enum ScheduleActions {
                 summary: summary,
                 whatFailed: "\(checkFailed) of the \(GitHubSyncCatalog.repos.count) forks couldn\u{2019}t be checked.",
                 why: "Those checks did not get an answer from GitHub. The rest were checked normally.",
-                whatToDo: "Open GitHub Sync to check the affected forks by hand. Whatever this run did report is accurate.",
+                whatToDo: "Open \(PlaceName.of(.githubSync)) to check the affected forks by hand. Whatever this run did report is accurate.",
                 log: log)
         }
         if parts.isEmpty {
@@ -720,10 +720,10 @@ enum ScheduleActions {
         guard let repoPath = VaultRecipeGit.resolveRepoPath() else {
             return ScheduleActionResult(
                 failing: .failed,
-                summary: "No local manjesh-config clone found - set it up from Bootstrap's dotfiles card first.",
+                summary: "No local manjesh-config clone found - set it up from the dotfiles card in \(PlaceName.of(.bootstrap)) first.",
                 whatFailed: "The vault recipe couldn\u{2019}t be exported.",
                 why: "There is no local clone of the manjesh-config repo on this Mac to write the recipe into.",
-                whatToDo: "Open Bootstrap and set up the dotfiles card, which clones manjesh-config, then run this schedule again.")
+                whatToDo: "Open \(PlaceName.of(.bootstrap)) and set up the dotfiles card, which clones manjesh-config, then run this schedule again.")
         }
         let snapshot = VaultSource.loadSnapshot()
         // H1/B1: the same guard the two manual export paths carry
@@ -740,7 +740,7 @@ enum ScheduleActions {
                 summary: "Couldn\u{2019}t read Automic Vault, so nothing was exported - a recipe built from a failed read would claim this machine has no secrets.",
                 whatFailed: "The vault recipe couldn\u{2019}t be exported.",
                 why: "Automic Vault didn\u{2019}t answer, so the list of secret names came back empty. Exporting that would have published a recipe claiming this Mac holds no secrets at all.",
-                whatToDo: "Nothing was written, so nothing is wrong in the repo. Open Poneglyph to check Automic Vault is responding, then run this schedule again.")
+                whatToDo: "Nothing was written, so nothing is wrong in the repo. Open \(PlaceName.of(.poneglyph)) to check Automic Vault is responding, then run this schedule again.")
         }
         let recipe = VaultRecipe.build(from: snapshot, generatedAt: ISO8601DateFormatter().string(from: Date()))
         let result = VaultRecipeGit.export(recipe: recipe, repoPath: repoPath)
@@ -755,7 +755,7 @@ enum ScheduleActions {
                 summary: result.message,
                 whatFailed: "The vault recipe couldn\u{2019}t be committed and pushed to manjesh-config.",
                 why: result.message,
-                whatToDo: "Open Poneglyph and export the recipe by hand to see the full error. No secret value was ever read, stored or sent.",
+                whatToDo: "Open \(PlaceName.of(.poneglyph)) and export the recipe by hand to see the full error. No secret value was ever read, stored or sent.",
                 log: log)
         }
         // `export` short-circuits with its own "nothing to push" message when
@@ -808,7 +808,7 @@ enum ScheduleActions {
                 summary: "Couldn\u{2019}t read this Mac\u{2019}s hosts, snippets and preferences, so no backup was made.",
                 whatFailed: "The config backup didn\u{2019}t run.",
                 why: "Building the backup bundle from the local stores returned nothing.",
-                whatToDo: "Open Settings and use the Backup card to export by hand, which reports the underlying error directly.")
+                whatToDo: "Open \(PlaceName.of(.settings)) and use the Backup card to export by hand, which reports the underlying error directly.")
         }
         do {
             try GitHubBackupSource.export(bundle)
@@ -825,7 +825,7 @@ enum ScheduleActions {
                 summary: "The backup couldn\u{2019}t be pushed to GitHub.",
                 whatFailed: "The backup couldn\u{2019}t be pushed to GitHub.",
                 why: error.localizedDescription,
-                whatToDo: "Open Settings and use the Backup card to export by hand - it runs the same push and shows the error in full. Nothing on GitHub was changed.")
+                whatToDo: "Open \(PlaceName.of(.settings)) and use the Backup card to export by hand - it runs the same push and shows the error in full. Nothing on GitHub was changed.")
         }
         let hostCount = bundle.hosts.count
         let snippetCount = bundle.snippets.count
@@ -938,7 +938,7 @@ enum ScheduleActions {
                 summary: summary,
                 whatFailed: "\(updateFailed.count) tool\(updateFailed.count == 1 ? "" : "s") couldn\u{2019}t be updated: \(updateFailed.joined(separator: ", ")).",
                 why: "The update itself was attempted and did not succeed. The log below has exactly what each tool\u{2019}s installer reported.",
-                whatToDo: "Open Updates and update those tools by hand. \(installed.isEmpty ? "Nothing else was changed." : "The \(installed.count) that did update are already done.")",
+                whatToDo: "Open \(PlaceName.of(.updates)) and update those tools by hand. \(installed.isEmpty ? "Nothing else was changed." : "The \(installed.count) that did update are already done.")",
                 log: log)
         }
         // Same GL-14 fix as the read-only check: some tools genuinely could
@@ -950,7 +950,7 @@ enum ScheduleActions {
                 summary: summary,
                 whatFailed: "\(checkFailed) of the \(DependencyCatalog.items.count) tracked tools couldn\u{2019}t be checked.",
                 why: "Those checks failed to return a version, so nothing was installed for them. The usual cause is no network, or the tool\u{2019}s own package manager being unavailable.",
-                whatToDo: "Open Updates to see which tools are affected. Whatever this run did install is already done.",
+                whatToDo: "Open \(PlaceName.of(.updates)) to see which tools are affected. Whatever this run did install is already done.",
                 log: log)
         }
         if parts.isEmpty {

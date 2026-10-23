@@ -253,7 +253,7 @@ enum IncidentSources {
     static func investigationSaved(title: String, id: String) -> IncidentTimelineEntry {
         IncidentTimelineEntry(kind: .logCapture,
                               title: "Saved investigation \u{201C}\(title)\u{201D}",
-                              detail: "Attached as evidence · open in Log Analyzer",
+                              detail: "Attached as evidence · open in \(PlaceName.of(.logAnalyzer))",
                               reference: id)
     }
 

@@ -794,7 +794,7 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
                     name: name, description: description, category: category, subcategory: subcategory,
                     commandTemplate: template, parameters: parameters, tags: tags, risk: risk)
                 Toast.showUndo(in: self.view,
-                               message: "Saved \u{201C}\(saved.name)\u{201D} to DevOps Commands as \(saved.risk.displayName)") {
+                               message: "Saved \u{201C}\(saved.name)\u{201D} to \(PlaceName.short(.commandLibrary)) as \(saved.risk.displayName)") {
                     commandLibraryStore.deleteCommand(id: saved.id)
                 }
             }

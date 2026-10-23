@@ -72,7 +72,7 @@ private final class UpdateRow {
     /// `.notInstalled`-only action, styled deliberately unlike `updateButton`
     /// (inline/link-style rather than a bordered rounded button) so it reads
     /// as "go elsewhere," not "click to install here" - see the file header.
-    let installInBootstrapButton = HelmButton(title: "Install in Bootstrap \u{2192}", variant: .quiet, size: .small)
+    let installInBootstrapButton = HelmButton(title: "Install in \(PlaceName.short(.bootstrap)) \u{2192}", variant: .quiet, size: .small)
     /// Shown in place of Update when the update needs a password: opens the
     /// exact command in a Console tab, where `sudo` has a terminal to ask in.
     let runInTerminalButton = HelmButton(title: "Run in Terminal", variant: .primary, size: .small)
@@ -1394,7 +1394,7 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
                     self?.runInTerminal(row)
                 }
             } else if row.status == .notInstalled {
-                tableRow.primary = .init(title: "Install in Bootstrap", symbol: "arrow.right") { [weak self] in
+                tableRow.primary = .init(title: "Install in \(PlaceName.short(.bootstrap))", symbol: "arrow.right") { [weak self] in
                     self?.onNavigateToBootstrap?()
                 }
             } else if row.status == .updateAvailable || row.status == .updateFailed {
@@ -1475,7 +1475,7 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
                     self?.runInTerminal(row)
                 })
             } else if row.status == .notInstalled {
-                detail.actions.append(.init("Install in Bootstrap", symbol: "arrow.right", role: .primary) { [weak self] in
+                detail.actions.append(.init("Install in \(PlaceName.short(.bootstrap))", symbol: "arrow.right", role: .primary) { [weak self] in
                     self?.onNavigateToBootstrap?()
                 })
             } else if row.status.showsUpdateButton {

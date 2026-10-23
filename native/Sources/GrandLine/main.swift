@@ -247,6 +247,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     lazy var appShell: WorkspaceShellController = {
         let keyStore = self.keyStore
         let snippetStore = self.snippetStore
+        // R2-BUG-06: copy names places in the layout this window runs.
+        PlaceName.layout = workspaceLayout
         return workspaceLayout.shellType.init(
             // PERF-01: both are autoclosures - evaluated on each page's first
             // use, not here.
