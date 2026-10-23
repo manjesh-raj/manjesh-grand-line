@@ -715,13 +715,15 @@ final class MainSplitShellController: WorkspaceShellController {
     // MARK: Modules and their tabs
 
     /// A module's sidebar row: the tab it showed last, or its first.
-    private func openModule(_ module: WorkspaceModule) {
+    override func openModule(_ module: WorkspaceModule) {
         if let tab = lastTab[module] ?? module.tabs.first {
             open(tab)
         } else {
             workspace.navigator.show(module.primaryRoute)
         }
     }
+
+    override func openModuleTab(_ tab: ModuleTab) { open(tab) }
 
     /// Show a tab: its page through the navigator, like every other route,
     /// then - for one of a page's own tabs - that tab, through the page.
@@ -756,19 +758,6 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     private func tabClicked(_ index: Int) {
-        if currentModule == .home {
-            let spaces = DaylightSpace.allCases
-            guard spaces.indices.contains(index) else { return }
-            let from = workspace.homeCanvas.selectedSpace
-            let switching = currentRoute == .homeCanvas && from != spaces[index]
-            if switching { workspace.content.crossfadeOutgoingPage(unless: false) }
-            selectSpace(spaces[index])
-            if switching {
-                playTabEntrance(towardsLater: (spaces.firstIndex(of: from) ?? 0) < index)
-            }
-            refreshModuleChrome()
-            return
-        }
         let tabs = currentModule.tabs
         guard tabs.indices.contains(index) else { return }
         open(tabs[index])
@@ -825,12 +814,11 @@ final class MainSplitShellController: WorkspaceShellController {
         } else {
             toolbar.setCrumb(group: module.group?.title, module: module.title)
         }
+        // R2-UX-02: Home draws no tabs. Its five spaces were a second map of
+        // the app over the sidebar's four groups; Home is its own arranged
+        // cards now, and Customize adds any other space's card to them.
         if module == .home {
-            let spaces = DaylightSpace.allCases
-            toolbar.setTabs(spaces.map(\.title),
-                            tooltips: spaces.map { "\($0.subtitle) (\u{2318}\($0.shortcutIndex))" },
-                            selected: spaces.firstIndex(of: workspace.homeCanvas.selectedSpace),
-                            accessibilityLabel: "Home spaces")
+            toolbar.setTabs([], selected: nil)
         } else {
             let tabs = module.tabs
             let current = currentTab
@@ -882,6 +870,14 @@ final class MainSplitShellController: WorkspaceShellController {
         let actions = (controller as? DaylightDrillActions)?.drillHeaderActions ?? []
         toolbar.setPageActions(actions.filter { $0 !== primary })
         toolbar.setPrimaryAction(primary)
+    }
+
+    /// R2-UX-02: Home has one space in this layout, its own. A route that
+    /// still names another space (a ⌘K verb, a notification, an older saved
+    /// session) lands on Home's own cards rather than on a filter nothing on
+    /// screen can switch back from.
+    override func selectSpace(_ space: DaylightSpace) {
+        super.selectSpace(.overview)
     }
 
     /// Home's Customize mode, on Home's own space - the one whose cards are

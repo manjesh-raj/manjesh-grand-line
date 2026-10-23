@@ -172,11 +172,12 @@ enum MainSplitShellSelfTest {
             } else {
                 check(shell.debugHeader == nil, "\(module.title) draws a header the captain dropped", &ok)
             }
-            // The middle of the toolbar: Home's spaces, the module's tabs with
-            // this page's lit, or nothing for a module that is one page.
+            // The middle of the toolbar: the module's tabs with this page's
+            // lit, or nothing for a module that is one page - and nothing for
+            // Home, whose five spaces were a second map of the app (R2-UX-02).
             let names = shell.toolbar.debugTabNames
             if module == .home {
-                check(names == DaylightSpace.allCases.map(\.title), "Home's toolbar shows \(names), not its spaces", &ok)
+                check(names.isEmpty, "Home's toolbar still shows tabs \(names) (R2-UX-02 retired its spaces)", &ok)
             } else if module.drawsToolbarTabs {
                 check(names == module.tabs.map(\.name), "\(module.title)'s toolbar shows \(names)", &ok)
                 let lit = selectedTabName(shell).flatMap { name in module.tabs.first { $0.name == name } }
@@ -540,11 +541,12 @@ enum MainSplitShellSelfTest {
         check(shell.toolbar.debugPageActions.isEmpty
                 && !shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.pageActions),
               "Home still shows the previous page's actions", &ok)
-        // Home's spaces filter its cards, as the pills did.
-        check(clickTab(DaylightSpace.operations.title, shell), "Home's toolbar has no Operations space", &ok)
-        check(shell.debugHomeCanvas.selectedSpace == .operations, "the toolbar's spaces did not filter Home", &ok)
-        clickTab(DaylightSpace.overview.title, shell)
-        check(shell.debugHomeCanvas.selectedSpace == .overview, "the Home space did not come back", &ok)
+        // R2-UX-02: Home has one space here, its own. A route that still
+        // names another one lands on Home's own cards.
+        shell.selectSpace(.operations)
+        settle(shell)
+        check(shell.debugHomeCanvas.selectedSpace == .overview && shell.debugCurrentDestination == .homeCanvas,
+              "a route naming the Operations space filtered Home to \(shell.debugHomeCanvas.selectedSpace)", &ok)
 
         // The badge is the bell's own count, from the one store. (`resetForTesting`
         // tells no observer, so the first real change is what the toolbar sees.)
@@ -735,11 +737,9 @@ enum MainSplitShellSelfTest {
         settle(shell)
         check(canvas.visibleModulesForTests == HomeCardLayout.standard.shown && AppSettings.shared.homeCardLayout == .standard,
               "Reset left \(canvas.visibleModulesForTests.map(\.rawValue))", &ok)
-        // Leaving Home's own space ends Customize.
-        clickTab(DaylightSpace.stores.title, shell)
-        check(!canvas.isCustomizing && shell.toolbar.debugModuleActionButton?.title == "Customize",
-              "switching to Stores kept Customize on", &ok)
-        clickTab(DaylightSpace.overview.title, shell)
+        // Home has no other space to leave Customize by (R2-UX-02), so Done
+        // is the way out, and it is checked above. End it for what follows.
+        if canvas.isCustomizing { shell.debugModuleAction(); settle(shell) }
     }
 
     private static func checkBackAndForward(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {

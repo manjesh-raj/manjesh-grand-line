@@ -738,9 +738,12 @@ enum NavigationCoherenceSelfTest {
                   "UX3: \(chord) (\(label)) was lost when Keys/Snippets folded under Hosts", &ok)
         }
 
-        // UX4's ⌘1-⌘5.
+        // UX4's ⌘1-⌘5, which are the floating bar's spaces. R2-UX-02 took the
+        // spaces out of the sidebar layout's menu; its number chords are the
+        // sidebar's modules (`ReviewTwoUXModelSelfTest`).
+        let floatingBound = allBindings(ReviewTwoUXModelSelfTest.mainMenu(for: .floatingBar))
         for index in 1...5 {
-            check(bound.contains(where: { $0.chord == "\u{2318}\(index)" }),
+            check(floatingBound.contains(where: { $0.chord == "\u{2318}\(index)" }),
                   "UX4: \u{2318}\(index) is not bound - the five spaces were meant to take \u{2318}1-\u{2318}5", &ok)
         }
 

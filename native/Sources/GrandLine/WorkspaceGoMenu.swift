@@ -1,0 +1,92 @@
+// Grand Line - native macOS app.
+//
+// R2-UX-02 of the second full review: one taxonomy.
+//
+// The sidebar layout drew one map of the app in its sidebar (Home, then Work,
+// Observe, Workbench and Machine) and a second one everywhere else: Home's
+// five space tabs in the toolbar and a Go menu generated from the floating
+// bar's spaces (Command, Operations, Stores, Engineering). A captain learned
+// two maps of one app. In the sidebar layout the spaces are gone from the
+// toolbar, and the Go menu is this: the sidebar's own map, read off
+// `ModuleTable` in sidebar order - each group, its modules, and under a module
+// of several pages its tabs - so the two can never disagree.
+//
+// The floating bar keeps the space pills and the spaces' Go menu it has
+// always had; it is the layout those spaces belong to.
+//
+// Two halves, the split the rest of the shell uses: `entries` is the pure
+// model `SplitShellModelSelfTest` asserts, and `populate` turns it into menu
+// items that reach `WorkspaceShellController` through the responder chain's
+// target, like every other Go menu row.
+
+import AppKit
+
+enum WorkspaceGoMenu {
+
+    enum Entry: Equatable {
+        /// A disabled caption: one of the sidebar's four groups.
+        case group(String)
+        /// Home or a module - the row a click on its sidebar item is.
+        case module(WorkspaceModule)
+        /// One of a module's tabs, indented under it.
+        case tab(ModuleTab)
+    }
+
+    /// The sidebar's map, top to bottom: Home, then each group with its
+    /// modules, and a module's tabs under it where the toolbar draws them.
+    static func entries() -> [Entry] {
+        var entries: [Entry] = [.module(.home)]
+        for group in WorkspaceGroup.allCases {
+            let modules = WorkspaceSidebarModel.modules(in: group)
+            guard !modules.isEmpty else { continue }
+            entries.append(.group(group.title))
+            for module in modules {
+                entries.append(.module(module))
+                entries.append(contentsOf: module.tabs.map(Entry.tab))
+            }
+        }
+        return entries
+    }
+
+    /// Append `entries` to `menu`. Separators go before each group, so the
+    /// fixed items above them stay their own block.
+    static func populate(_ menu: NSMenu, target: AnyObject?) {
+        for entry in entries() {
+            switch entry {
+            case .group(let title):
+                menu.addItem(.separator())
+                // The standard Mac caption for a run of items in one menu.
+                let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                header.isEnabled = false
+                menu.addItem(header)
+            case .module(let module):
+                let item = NSMenuItem(title: module.title,
+                                      action: #selector(WorkspaceShellController.selectModuleFromMenu(_:)),
+                                      keyEquivalent: "")
+                item.withSymbol(module.symbol)
+                item.representedObject = module.rawValue
+                item.target = target
+                item.indentationLevel = module == .home ? 0 : 1
+                menu.addItem(item)
+            case .tab(let tab):
+                let item = NSMenuItem(title: tab.name,
+                                      action: #selector(WorkspaceShellController.selectModuleTabFromMenu(_:)),
+                                      keyEquivalent: "")
+                item.representedObject = representation(of: tab)
+                item.target = target
+                item.indentationLevel = 2
+                menu.addItem(item)
+            }
+        }
+    }
+
+    /// A tab, as a menu item carries it: its module and its name.
+    static func representation(of tab: ModuleTab) -> String { "\(tab.module.rawValue)/\(tab.name)" }
+
+    static func tab(from representation: Any?) -> ModuleTab? {
+        guard let raw = representation as? String, let slash = raw.firstIndex(of: "/"),
+              let module = WorkspaceModule(rawValue: String(raw[..<slash])) else { return nil }
+        let name = String(raw[raw.index(after: slash)...])
+        return module.tabs.first { $0.name == name }
+    }
+}

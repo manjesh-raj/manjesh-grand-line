@@ -195,7 +195,7 @@ enum HelmConfirm {
         // every Log Out says how to turn the lock on instead.
         guard AppSettings.shared.appLockEnabled != false else {
             notice(title: "The app lock is off",
-                   body: "Grand Line opens without a password, so there is nothing to log out of. Turn on \u{201c}Require a password to open Grand Line\u{201d} in Settings \u{203A} Security to use Log Out.",
+                   body: "Grand Line opens without a password, so there is nothing to log out of. Turn on \u{201c}Require a password to open Grand Line\u{201d} in \(PlaceName.of(.settings)) \u{203A} Security to use Log Out.",
                    symbol: "lock.open", hue: .violet)
             return false
         }

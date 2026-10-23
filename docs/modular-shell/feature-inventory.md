@@ -192,12 +192,12 @@ Every actionable item in the real menu bar, read from `AppDelegate.buildMenu(ins
 | `menu.Go/Automation` | Go > Automation | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Setup › Automation) |  |
 | `menu.Go/Bootstrap` | Go > Bootstrap | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Setup › Setup steps) |  |
 | `menu.Go/Code Preview` | Go > Code Preview | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Code) |  |
-| `menu.Go/Command` | Go > Command | shortcut ⌘2 | Main menu › Go (⌘1-⌘6 select the first six sidebar items - Home, Tasks, Crew, Connections, Console, Knowledge - and the space names become sidebar sections) |  |
+| `menu.Go/Command` | Go > Command | shortcut ⌘2 | Main menu › Go, in the floating bar layout only (R2-UX-02: the sidebar layout's Go menu is the sidebar's own map, Home and the modules with their tabs)  |  |
 | `menu.Go/Console` | Go > Console | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Console) |  |
 | `menu.Go/DevOps Commands` | Go > DevOps Commands | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Connections › Commands) |  |
 | `menu.Go/Dictation` | Go > Dictation | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Dictation) |  |
 | `menu.Go/Docs` | Go > Docs | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Knowledge › Docs) |  |
-| `menu.Go/Engineering` | Go > Engineering | shortcut ⌘5 | Main menu › Go (⌘1-⌘6 select the first six sidebar items - Home, Tasks, Crew, Connections, Console, Knowledge - and the space names become sidebar sections) |  |
+| `menu.Go/Engineering` | Go > Engineering | shortcut ⌘5 | Main menu › Go, in the floating bar layout only (R2-UX-02: the sidebar layout's Go menu is the sidebar's own map, Home and the modules with their tabs)  |  |
 | `menu.Go/Fleet` | Go > Fleet | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Crew › In flight) |  |
 | `menu.Go/GitHub Sync` | Go > GitHub Sync | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Setup › GitHub sync) |  |
 | `menu.Go/Health` | Go > Health | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Health) |  |
@@ -206,7 +206,7 @@ Every actionable item in the real menu bar, read from `AppDelegate.buildMenu(ins
 | `menu.Go/Kubernetes` | Go > Kubernetes | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Kubernetes) |  |
 | `menu.Go/Log Analyzer` | Go > Log Analyzer | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Logs) |  |
 | `menu.Go/Notebook` | Go > Notebook | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Knowledge › Notebook) |  |
-| `menu.Go/Operations` | Go > Operations | shortcut ⌘3 | Main menu › Go (⌘1-⌘6 select the first six sidebar items - Home, Tasks, Crew, Connections, Console, Knowledge - and the space names become sidebar sections) |  |
+| `menu.Go/Operations` | Go > Operations | shortcut ⌘3 | Main menu › Go, in the floating bar layout only (R2-UX-02: the sidebar layout's Go menu is the sidebar's own map, Home and the modules with their tabs)  |  |
 | `menu.Go/Poneglyph` | Go > Poneglyph | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Secrets › Poneglyph) |  |
 | `menu.Go/Postmortems` | Go > Postmortems | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Knowledge › Postmortems) |  |
 | `menu.Go/Reading List` | Go > Reading List | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Knowledge › Reading list) |  |
@@ -215,7 +215,7 @@ Every actionable item in the real menu bar, read from `AppDelegate.buildMenu(ins
 | `menu.Go/Schedules` | Go > Schedules | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Schedules) |  |
 | `menu.Go/Settings` | Go > Settings | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Settings) |  |
 | `menu.Go/Sticky Board` | Go > Sticky Board | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Sticky Board) |  |
-| `menu.Go/Stores` | Go > Stores | shortcut ⌘4 | Main menu › Go (⌘1-⌘6 select the first six sidebar items - Home, Tasks, Crew, Connections, Console, Knowledge - and the space names become sidebar sections) |  |
+| `menu.Go/Stores` | Go > Stores | shortcut ⌘4 | Main menu › Go, in the floating bar layout only (R2-UX-02: the sidebar layout's Go menu is the sidebar's own map, Home and the modules with their tabs)  |  |
 | `menu.Go/Straw Hat Pirates` | Go > Straw Hat Pirates | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Crew › Ask the crew) |  |
 | `menu.Go/Tasks` | Go > Tasks | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Tasks) |  |
 | `menu.Go/Toggle Sidebar` | Go > Toggle Sidebar | shortcut ⌥⌘S | Main menu › Go (toggles the workspace sidebar) |  |
@@ -223,6 +223,30 @@ Every actionable item in the real menu bar, read from `AppDelegate.buildMenu(ins
 | `menu.Go/Updates` | Go > Updates | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Setup › Updates) |  |
 | `menu.Go/Vault` | Go > Vault | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Secrets › Automic Vault) |  |
 | `menu.Go/Whiteboard` | Go > Whiteboard | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Whiteboard) |  |
+| `menu.Go/Ask the crew` | Go > Ask the crew | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Crew › Ask the crew, indented under Crew) |  |
+| `menu.Go/Automic Vault` | Go > Automic Vault | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Secrets › Automic Vault, indented under Secrets) |  |
+| `menu.Go/Board` | Go > Board | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Tasks › Board, indented under Tasks) |  |
+| `menu.Go/Calendar` | Go > Calendar | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Tasks › Calendar, indented under Tasks) |  |
+| `menu.Go/Cluster` | Go > Cluster | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Kubernetes › Cluster, indented under Kubernetes) |  |
+| `menu.Go/Code` | Go > Code | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for the Code module, which opens it as its sidebar row does) |  |
+| `menu.Go/Commands` | Go > Commands | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Connections › Commands, indented under Connections) |  |
+| `menu.Go/Connections` | Go > Connections | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for the Connections module, which opens it as its sidebar row does) |  |
+| `menu.Go/Crew` | Go > Crew | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for the Crew module, which opens it as its sidebar row does) |  |
+| `menu.Go/GitHub sync` | Go > GitHub sync | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Setup › GitHub sync, indented under Setup) |  |
+| `menu.Go/In flight` | Go > In flight | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Crew › In flight, indented under Crew) |  |
+| `menu.Go/Keys` | Go > Keys | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Connections › Keys, indented under Connections) |  |
+| `menu.Go/Knowledge` | Go > Knowledge | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for the Knowledge module, which opens it as its sidebar row does) |  |
+| `menu.Go/List` | Go > List | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Tasks › List, indented under Tasks) |  |
+| `menu.Go/Log Tail` | Go > Log Tail | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Kubernetes › Log Tail, indented under Kubernetes) |  |
+| `menu.Go/Log` | Go > Log | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Crew › Log, indented under Crew) |  |
+| `menu.Go/Logs` | Go > Logs | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for the Logs module, which opens it as its sidebar row does) |  |
+| `menu.Go/Needs you` | Go > Needs you | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Crew › Needs you, indented under Crew) |  |
+| `menu.Go/Reading list` | Go > Reading list | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Knowledge › Reading list, indented under Knowledge) |  |
+| `menu.Go/Secrets` | Go > Secrets | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for the Secrets module, which opens it as its sidebar row does) |  |
+| `menu.Go/Setup steps` | Go > Setup steps | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Setup › Setup steps, indented under Setup) |  |
+| `menu.Go/Setup` | Go > Setup | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for the Setup module, which opens it as its sidebar row does) |  |
+| `menu.Go/Snippets` | Go > Snippets | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Connections › Snippets, indented under Connections) |  |
+| `menu.Go/Weekly review` | Go > Weekly review | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Tasks › Weekly review, indented under Tasks) |  |
 | `menu.Help/Keyboard Shortcuts…` | Help > Keyboard Shortcuts… | shortcut ⇧⌘/ | Main menu › Help (unchanged) |  |
 | `menu.Help/Manual Checks` | Help > Manual Checks | no shortcut | Main menu › Help (unchanged) |  |
 | `menu.Hosts/Manage Snippets…` | Hosts > Manage Snippets… | shortcut ⌥⌘P | Main menu › Hosts (unchanged; its items target Connections and Console) |  |
@@ -428,6 +452,10 @@ The shell's public routes, the notification categories and buttons, the App Inte
 | `link.route.selectSpaceByShortcut` | Route `selectSpaceByShortcut` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (⌘1-⌘6 select sidebar modules) |  |
 | `link.route.show` | Route `show` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (show(route) for every destination; stage 2 extracts it) |  |
 | `link.route.showHomeCanvas` | Route `showHomeCanvas` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (selects Home) |  |
+| `link.route.openModule` | Route `openModule` | WorkspaceShellController - the Go menu's module rows (R2-UX-02); the sidebar layout reopens the module's last tab | Sidebar (the same as the module's sidebar row) |  |
+| `link.route.openModuleTab` | Route `openModuleTab` | WorkspaceShellController - the Go menu's tab rows (R2-UX-02) | Toolbar (the same as clicking the module's tab) |  |
+| `link.route.selectModuleFromMenu` | Route `selectModuleFromMenu` | the sidebar layout's Go menu module rows (R2-UX-02) | Main menu › Go |  |
+| `link.route.selectModuleTabFromMenu` | Route `selectModuleTabFromMenu` | the sidebar layout's Go menu tab rows (R2-UX-02) | Main menu › Go |  |
 | `link.route.openWithoutLock` | Route `openWithoutLock` | the app delegate, at launch, when the app lock is off (R2-UX-01) | Window (the app opens with no lock overlay) |  |
 | `link.route.showLock` | Route `showLock` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Window (the lock overlay over sidebar, toolbar and content) |  |
 | `link.route.showLogAnalyzer` | Route `showLogAnalyzer` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (moved there in stage 2; AppShellController forwards to it) |  |
@@ -726,6 +754,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.KeyEditorController` | KeyEditorController controls | `chooseImportFile`, `copyFingerprint`, `copyPublicKey`, `deleteKey`, `generateKey`, `verifyImport` | Connections › Keys (key editor) |  |
 | `action.KubernetesController` | KubernetesController controls | `clearTailTapped`, `closeDescribeTapped`, `copyDescribeTapped`, `duplicateFeedTapped`, `feedTabPicked`, `namespaceCommitted`, `namespacePicked`, `openHostsTapped`, `refreshTapped`, `retryFeedTapped`, `retryStuckClusterRefreshTapped`, `revealHostTapped`, `toggleErrorsOnlyTapped`, `togglePauseTapped` | Kubernetes |  |
 | `action.KubernetesController+Render` | KubernetesController+Render controls | `togglePodSelection` | Kubernetes |  |
+| `action.WorkspaceGoMenu` | WorkspaceGoMenu controls | `WorkspaceShellController.selectModuleFromMenu`, `WorkspaceShellController.selectModuleTabFromMenu` | Main menu › Go (the sidebar layout's map of modules and tabs, R2-UX-02) |  |
 | `action.LockScreenController` | LockScreenController controls | `checkAgainTapped`, `copySetupCommandTapped`, `installTapped`, `localAuthTapped`, `submitTapped` | Window (the lock overlay) |  |
 | `action.LogAnalyzerController` | LogAnalyzerController controls | `addClipboardAsEvidence`, `addCurrentInputAsEvidence`, `addFileTapped`, `analyzeClipboard`, `analyzeTapped`, `clearTapped`, `comparePickerChanged`, `copyCommandTapped`, `copyComparison`, `copyEvidence`, `copyNextSteps`, `copyRootCause`, `createIncident`, `focusInput`, `goToConsole`, `investigateFurther`, `modeChanged`, `newInvestigation`, `overrideChanged`, `runCompare`, `sendCommandTapped`, `sourceChanged`, `storageRowClicked`, `toggleHistory`, `toggleRedactions`, `wrapLinesTapped` | Logs (in the sidebar layout Analyze is the toolbar's far-right primary action, Clear and Wrap lines are on the Input card, and Investigate Further, Create Incident and ⋯ are under the likely cause; in the floating bar Wrap lines is on the Provided output card, R2-BUG-16) |  |
 | `action.LogAnalyzerViews` | LogAnalyzerViews controls | `rowClicked` | Logs |  |
@@ -898,7 +927,7 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 |---|---|---|---|---|
 | `chrome.wordmark` | The app's logo tile and "Grand Line" wordmark | Bar, leading edge, on Home | Sidebar (the workspace header at the top of the sidebar: Grand Line, this Mac) | `DaylightBarController.swift` `NSTextField(labelWithString: "Grand Line")`; `WorkspaceSidebar.swift` `final class WorkspaceSidebarHeader` |
 | `chrome.sidebarHeaderRule` | A rule and room between the account header and Home | Not in the app | Sidebar (a 1pt rule with a gap either side under the workspace header - stage 6, the captain's call) | `WorkspaceSidebar.swift` `private let headerRule = NSView()` |
-| `chrome.spacePills` | Five space pills that filter Home's card grid | Bar, centre, on Home | Sidebar (the modules are the map; on Home the five spaces are its tabs in the middle of the toolbar and still filter its cards) | `DaylightBarController.swift` `var onSelectSpace`; `MainSplitShellController.swift` `accessibilityLabel: "Home spaces"` |
+| `chrome.spacePills` | Five space pills that filter Home's card grid | Bar, centre, on Home | Sidebar (the modules are the map; R2-UX-02 retired Home's spaces in the sidebar layout, so Home is its own arranged cards and Customize adds any other space's card; the floating bar keeps its pills) | `DaylightBarController.swift` `var onSelectSpace`; `MainSplitShellController.swift` `override func selectSpace(_ space: DaylightSpace)` |
 | `chrome.spaceFilter` | Home's canvas shows one space's cards at a time | Home canvas, picked by a pill | Home (Customize adds any card to Home; the module pages are one sidebar click away) | `DaylightSpace.swift` `func isVisible(in space` |
 | `chrome.drillBack` | Back to Home from any page | Bar's drill header back chevron | Toolbar (back and forward buttons at the leading edge) | `DaylightBarController.swift` `var onDrillBack`; `WorkspaceToolbar.swift` `@objc private func navigationClicked`; `NavigationHistory.swift` `struct NavigationHistory` |
 | `chrome.drillTitle` | The page's tile and title | Bar's drill header | Toolbar and content (the crumb names the module and its group, and the module's large title opens the content column; Connections and Console show none, per the captain) | `HelmDrillHeader.swift` `final class HelmDrillHeader`; `WorkspaceToolbar.swift` `func setCrumb(group: String?, module: String)`; `WorkspaceModuleHeader.swift` `final class WorkspaceModuleHeader` |

@@ -249,6 +249,27 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
         workspace.navigator.show(destination)
     }
 
+    /// R2-UX-02: the sidebar layout's Go menu rows (`WorkspaceGoMenu`) - a
+    /// module, as its sidebar row opens it, and one of a module's tabs.
+    @objc func selectModuleFromMenu(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let module = WorkspaceModule(rawValue: raw) else { return }
+        openModule(module)
+    }
+
+    @objc func selectModuleTabFromMenu(_ sender: NSMenuItem) {
+        guard let tab = WorkspaceGoMenu.tab(from: sender.representedObject) else { return }
+        openModuleTab(tab)
+    }
+
+    /// A module's page. The sidebar layout reopens the tab the module showed
+    /// last, as its sidebar row does; a shell with no modules shows the
+    /// module's first page.
+    func openModule(_ module: WorkspaceModule) { workspace.navigator.show(module.primaryRoute) }
+
+    /// One of a module's tabs. The sidebar layout selects a page's own tab
+    /// through the page; a shell with no toolbar tabs shows the tab's page.
+    func openModuleTab(_ tab: ModuleTab) { workspace.navigator.show(tab.route) }
+
     // MARK: The configurable quick-access pins (UX1/UX2)
 
     /// Pin or unpin `destination`, persist the result, and redraw the pins.

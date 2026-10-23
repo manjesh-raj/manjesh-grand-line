@@ -61,6 +61,15 @@ final class WelcomeSheetController: NSViewController {
                 return "Grand Line ships fourteen palettes. Pick one now - it applies as you click, "
                     + "and you can change it any time from the bar or from \(PlaceName.of(.settings))."
             case .tour:
+                // R2-UX-02: the sidebar layout has one map, the sidebar, so
+                // its tour describes that and not the floating bar's spaces.
+                if PlaceName.layout == .sidebar {
+                    return "The sidebar on the left is the whole app: Home, then every module in four groups - "
+                        + "Work, Observe, Workbench and Machine.\n\n"
+                        + "A module with several pages shows them as tabs at the top of the window, "
+                        + "and Back and Forward walk the pages you have opened.\n\n"
+                        + "Press \u{2318}K at any time to search for a page, a note, a task or a command."
+                }
                 return "The app is five spaces, and the bar at the top switches between them.\n\n"
                     + "Overview is the hub - what needs you right now.\n"
                     + "Command is the console, your tasks and the merge queue.\n"

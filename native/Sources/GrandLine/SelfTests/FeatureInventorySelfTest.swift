@@ -378,8 +378,8 @@ enum FeatureInventorySelfTest {
     /// title. Disabled caption rows (the Go menu's group headers) and
     /// separators are structure rather than features.
     static func menuIDs() -> [String: String] {
-        guard let menu = cachedMenu else { return [:] }
         var out: [String: String] = [:]
+        for menu in cachedMenus {
         for (index, top) in menu.items.enumerated() {
             guard let submenu = top.submenu else { continue }
             // `buildMenu` names each submenu and leaves its bar item untitled
@@ -388,6 +388,7 @@ enum FeatureInventorySelfTest {
             // name there.
             let topTitle = index == 0 || submenu.title.isEmpty ? "App" : submenu.title
             collectMenuItems(in: submenu, path: "menu.\(topTitle)", into: &out)
+        }
         }
         return out
     }
@@ -407,21 +408,26 @@ enum FeatureInventorySelfTest {
         }
     }
 
-    private static let cachedMenu: NSMenu? = AppDelegate().buildMenu(installing: false)
+    /// Both layouts' menus. Since R2-UX-02 their Go menus differ - the
+    /// floating bar lists its spaces and destinations, the sidebar layout its
+    /// modules and their tabs - so an item either one has is a feature.
+    private static let cachedMenus: [NSMenu] = [ReviewTwoUXModelSelfTest.mainMenu(for: .sidebar),
+                                                 ReviewTwoUXModelSelfTest.mainMenu(for: .floatingBar)]
 
     /// The Help menu's shortcut sheet, which is the app's own catalog: every
     /// menu chord, keyed by the chord, plus the configurable terminal and
     /// dictation bindings, keyed by what they do (their chord is the
     /// captain's to change).
     static func shortcutIDs() -> [String: String] {
-        guard let menu = cachedMenu else { return [:] }
         let suite = "fm.selftest.feature-inventory.\(ProcessInfo.processInfo.processIdentifier)"
         let defaults = UserDefaults(suiteName: suite) ?? .standard
         defer { defaults.removePersistentDomain(forName: suite) }
         var out: [String: String] = [:]
-        for section in KeyboardShortcutCatalog.sections(from: menu) {
-            for entry in section.entries {
-                out["key.\(entry.chord)"] = "\(section.title): \(entry.title)"
+        for menu in cachedMenus {
+            for section in KeyboardShortcutCatalog.sections(from: menu) {
+                for entry in section.entries where out["key.\(entry.chord)"] == nil {
+                    out["key.\(entry.chord)"] = "\(section.title): \(entry.title)"
+                }
             }
         }
         for action in TerminalShortcutAction.allCases {
