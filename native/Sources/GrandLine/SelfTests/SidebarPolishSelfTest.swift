@@ -164,6 +164,14 @@ enum SidebarPolishSelfTest {
               "the sidebar button's expand was \(String(describing: expand))", &ok)
         waitForPanes(shell)
         check(!shell.debugSidebarIsCollapsed, "the eased expand never landed", &ok)
+        // R2-BUG-02: and it lands at its own width. The eased expand released
+        // its pin in the animation's completion, before Home re-laid out for
+        // the narrower column, so the sidebar came back squeezed to its 200pt
+        // minimum - measured in the review's lab on every run.
+        pump(timeout: 1) { abs(shell.debugSidebarWidth - MainSplitShellController.sidebarWidth) < 0.5 }
+        settle(shell)
+        check(abs(shell.debugSidebarWidth - MainSplitShellController.sidebarWidth) < 0.5,
+              "R2-BUG-02: after an eased hide and show the sidebar is \(shell.debugSidebarWidth)pt, want \(MainSplitShellController.sidebarWidth)", &ok)
 
         // ⌘⇧D opens it the same way.
         check(!shell.debugSidebarIsCollapsed,

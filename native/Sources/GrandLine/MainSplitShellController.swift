@@ -492,7 +492,22 @@ final class MainSplitShellController: WorkspaceShellController {
             if collapsed { release() } else { DispatchQueue.main.async(execute: release) }
             return
         }
-        WorkspaceMotion.setCollapsed(sidebarItem, collapsed, animated: true, completion: release)
+        // R2-BUG-02: the eased expand handed back a sidebar squeezed to its
+        // 200pt minimum, on every run in the review's lab and 1 in 9 in PR
+        // #523's. Instrumented, the cause is not the page: Home had already
+        // re-laid out for the narrower column when the pin came off. It is
+        // the split view's own held divider position, which an animated
+        // uncollapse leaves where the animation started, so releasing the
+        // range let the pane fall to its minimum (measured: 236pt at the
+        // release, 200pt after the next layout pass). Setting the divider to
+        // the pinned width first makes that the position the split holds,
+        // and the release then waits the same one turn the plain path does.
+        WorkspaceMotion.setCollapsed(sidebarItem, collapsed, animated: true) { [weak self] in
+            guard !collapsed, let self else { release(); return }
+            self.splitController.splitView.setPosition(self.sidebarPaneWidth, ofDividerAt: 0)
+            self.splitController.splitView.layoutSubtreeIfNeeded()
+            DispatchQueue.main.async(execute: release)
+        }
     }
 
 
