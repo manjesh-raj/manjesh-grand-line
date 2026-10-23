@@ -403,6 +403,9 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             let cell = WorkspaceSidebarPageCell()
             cell.configure(symbol: module.symbol, title: module.title, badge: signals.badge(for: module), theme: theme)
             cell.setLit(lit, theme: theme)
+            // R2-UX-03: the row says its chord, as a menu item would.
+            cell.toolTip = WorkspaceGoMenu.chordText(for: module, hidden: hidden).map { "\(module.title) (\($0))" }
+                ?? module.title
             return cell
         case .session(let hostID):
             let cell = WorkspaceSidebarSessionCell()
@@ -617,7 +620,40 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 /// The outline view, with one seam a suite needs: `clickedRow` is set by
 /// AppKit only during a real right-click, so a check of the context menu
 /// stands in for it here rather than reimplementing the menu.
+///
+/// R2-A11Y-01: it also says when the keyboard is in the list. The lit row
+/// is drawn by `WorkspaceSidebarRowView`, which suppresses the source list's
+/// own emphasised selection - the one cue a stock sidebar gives for focus -
+/// so with nothing else the lit row looked the same whether or not the keys
+/// would move it. While the list holds the keyboard because a key put it
+/// there (⌘⇧D, Tab, Full Keyboard Access - `HelmFocusVisibility`), the lit
+/// row wears an accent ring as well as its wash. A mouse click does not
+/// light it, and the first arrow key after one does.
 final class WorkspaceSidebarOutlineView: NSOutlineView {
+    private(set) var showsKeyboardFocus = false {
+        didSet {
+            guard showsKeyboardFocus != oldValue else { return }
+            enumerateAvailableRowViews { rowView, _ in (rowView as? WorkspaceSidebarRowView)?.refreshFocus() }
+        }
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { showsKeyboardFocus = HelmFocusVisibility.shouldShowRing }
+        return became
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { showsKeyboardFocus = false }
+        return resigned
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if window?.firstResponder === self { showsKeyboardFocus = true }
+        super.keyDown(with: event)
+    }
+
     #if FM_SELFTESTS
     var debugClickedRow: Int?
     override var clickedRow: Int { debugClickedRow ?? super.clickedRow }
@@ -670,6 +706,29 @@ final class WorkspaceSidebarRowView: NSTableRowView {
         didSet { if isSelected != oldValue { paintFill() } }
     }
 
+    /// R2-A11Y-01: the accent ring on the lit row while the keyboard is in
+    /// the list (`WorkspaceSidebarOutlineView.showsKeyboardFocus`).
+    private(set) var showsFocusRing = false
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        refreshFocus()
+    }
+
+    func refreshFocus() {
+        let outline = sequence(first: superview, next: { $0?.superview })
+            .lazy.compactMap { $0 as? WorkspaceSidebarOutlineView }.first
+        let focused = isSelected && selectionHighlightStyle != .none && (outline?.showsKeyboardFocus ?? false)
+        showsFocusRing = focused
+        let theme = ThemeManager.shared.theme
+        HelmMotion.withoutActions {
+            fill.layer?.borderWidth = focused ? Self.focusRingWidth : 0
+            fill.layer?.borderColor = focused ? Self.litInk(theme).cgColor : nil
+        }
+    }
+
+    static let focusRingWidth: CGFloat = 2
+
     override func layout() {
         super.layout()
         fill.frame = bounds.insetBy(dx: HelmMetrics.s2, dy: 1)
@@ -698,6 +757,7 @@ final class WorkspaceSidebarRowView: NSTableRowView {
             color = nil
         }
         fill.paint(color, cornerRadius: HelmMetrics.rChip + 1)
+        refreshFocus()
     }
 
     static func wash(_ theme: HelmTheme) -> NSColor {

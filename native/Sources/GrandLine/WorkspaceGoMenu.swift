@@ -64,7 +64,8 @@ enum WorkspaceGoMenu {
             case .module(let module):
                 let item = NSMenuItem(title: module.title,
                                       action: #selector(WorkspaceShellController.selectModuleFromMenu(_:)),
-                                      keyEquivalent: "")
+                                      keyEquivalent: chord(for: module, hidden: hidden).map(String.init) ?? "")
+                item.keyEquivalentModifierMask = [.command]
                 item.withSymbol(module.symbol)
                 item.representedObject = module.rawValue
                 item.target = target
@@ -87,6 +88,26 @@ enum WorkspaceGoMenu {
 
     /// The tag every item `populate` adds carries.
     static let itemTag = 0x474F_4D4E
+
+    /// R2-UX-03: the number chord for `module` - ⌘1 to ⌘9 for the first nine
+    /// items the sidebar lists, in its order, so a hidden module gives its
+    /// number to the next one down. `nil` past the ninth.
+    ///
+    /// On Console, a host page and Tools the same chords pick that page's own
+    /// tab instead (`TabKeyboardShortcuts`, which sees the key first): the
+    /// captain's choice, option A. The Go menu still shows every chord, and
+    /// ⌘K and ⌘⇧[ / ⌘⇧] reach any module from those pages.
+    static func chord(for module: WorkspaceModule, hidden: Set<WorkspaceModule> = []) -> Int? {
+        guard let index = WorkspaceSidebarModel.listedModules(hidden: hidden).firstIndex(of: module), index < 9 else {
+            return nil
+        }
+        return index + 1
+    }
+
+    /// The chord as the captain reads it, for a tooltip or a palette row.
+    static func chordText(for module: WorkspaceModule, hidden: Set<WorkspaceModule> = []) -> String? {
+        chord(for: module, hidden: hidden).map { "\u{2318}\($0)" }
+    }
 
     /// A tab, as a menu item carries it: its module and its name.
     static func representation(of tab: ModuleTab) -> String { "\(tab.module.rawValue)/\(tab.name)" }

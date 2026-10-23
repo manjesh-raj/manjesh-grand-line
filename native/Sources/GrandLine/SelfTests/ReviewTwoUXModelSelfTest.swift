@@ -25,6 +25,7 @@ enum ReviewTwoUXModelSelfTest {
         checkTheHiddenModulesReachEveryReader(&ok)
         checkTheWelcomeOffersTheProfiles(&ok)
         checkThePlainLanguageCopy(&ok)
+        checkTheModuleChords(&ok)
         print(ok ? "ReviewTwoUXModelSelfTest: PASS" : "ReviewTwoUXModelSelfTest: FAIL")
         return ok
     }
@@ -276,6 +277,64 @@ enum ReviewTwoUXModelSelfTest {
         if let home = source("HomeCanvasController.swift") {
             check(home.contains("crew ? fleetAttentionItem() : nil") && home.contains("setup ? sessionChecksAttentionItem() : nil"),
                   "Home's attention card no longer leaves out the fleet and Setup rows for a profile that hides them", &ok)
+        }
+    }
+
+    // MARK: R2-UX-03 - module chords and keyboard parity
+
+    private static func checkTheModuleChords(_ ok: inout Bool) {
+        // The first nine sidebar items, in its order, whatever is hidden.
+        let operatorChords = WorkspaceSidebarModel.listedModules().compactMap { module in
+            WorkspaceGoMenu.chord(for: module).map { (module, $0) }
+        }
+        check(operatorChords.map(\.0) == Array(WorkspaceSidebarModel.listedModules().prefix(9))
+                && operatorChords.map(\.1) == Array(1...9),
+              "the Operator chords are \(operatorChords.map { "\($0.0.rawValue)=\($0.1)" })", &ok)
+        let hidden = WorkspaceProfile.personal.hiddenModules
+        check(WorkspaceGoMenu.chord(for: .tools, hidden: hidden) == 5 && WorkspaceGoMenu.chord(for: .dictation, hidden: hidden) == 9
+                && WorkspaceGoMenu.chord(for: .settings, hidden: hidden) == nil && WorkspaceGoMenu.chord(for: .crew, hidden: hidden) == nil,
+              "a hidden module does not hand its number to the next one down", &ok)
+        // The real menus: every module row in the first nine carries its
+        // chord, Previous and Next Tab are the sidebar layout's, and the
+        // floating bar keeps ⌘1-⌘6 for its spaces.
+        guard let sidebar = goMenu(for: .sidebar), let floating = goMenu(for: .floatingBar) else {
+            fail("there is no Go menu to read the chords from", &ok)
+            return
+        }
+        let rows = sidebar.items.filter { $0.action == #selector(WorkspaceShellController.selectModuleFromMenu(_:)) }
+        for (index, row) in rows.enumerated() {
+            let want = index < 9 ? "\(index + 1)" : ""
+            check(row.keyEquivalent == want && (want.isEmpty || row.keyEquivalentModifierMask == [.command]),
+                  "the Go menu's \(row.title) row carries \"\(row.keyEquivalent)\", want \u{2318}\(want)", &ok)
+        }
+        func item(_ menu: NSMenu, _ action: Selector) -> NSMenuItem? { menu.items.first { $0.action == action } }
+        let previous = item(sidebar, #selector(WorkspaceShellController.selectPreviousModuleTab(_:)))
+        let next = item(sidebar, #selector(WorkspaceShellController.selectNextModuleTab(_:)))
+        check(previous?.keyEquivalent == "{" && next?.keyEquivalent == "}"
+                && previous?.keyEquivalentModifierMask == [.command] && next?.keyEquivalentModifierMask == [.command],
+              "the sidebar layout's Go menu has no \u{2318}\u{21E7}[ / \u{2318}\u{21E7}] tab items", &ok)
+        check(item(floating, #selector(WorkspaceShellController.selectNextModuleTab(_:))) == nil,
+              "the floating bar's Go menu offers module tabs it does not draw", &ok)
+        // The palette's module rows say their chords.
+        var provider = UnifiedSearchActionProvider(actions: [])
+        provider.moduleActions = {
+            WorkspaceSidebarModel.listedModules().map { module in
+                .init(title: module.title, meta: "Module", keywords: [module.title],
+                      hint: WorkspaceGoMenu.chordText(for: module), run: {})
+            }
+        }
+        let tasks = provider.items(query: "Tasks").first { $0.title == "Tasks" }
+        check(tasks?.actionHint == "\u{2318}2", "the palette's Tasks row says \(tasks?.actionHint ?? "nothing"), want \u{2318}2", &ok)
+        if let shell = source("MainSplitShellController.swift") {
+            check(shell.contains("hint: WorkspaceGoMenu.chordText(for: module, hidden: hidden)"),
+                  "the sidebar shell's palette rows no longer carry their chords", &ok)
+        }
+        // Option A, the captain's choice: Console, a host page and Tools keep
+        // ⌘1-⌘9 for their own tabs, through the monitor that sees the key
+        // before the menu does.
+        if let navigator = source("Navigator.swift") {
+            check(navigator.contains("case .console: return workspace.console") && navigator.contains("case .tools: return workspace.tools"),
+                  "Console or Tools no longer keep their own number chords (option A)", &ok)
         }
     }
 }

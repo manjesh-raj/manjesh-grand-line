@@ -34,7 +34,8 @@ enum ReviewTwoUXSelfTest {
         defer { window.orderOut(nil) }
         settle(shell)
         for check in [checkTheSidebarFollowsTheHiddenModules, checkSettingsShowsAndHidesModules,
-                      checkTheLockSwitchNeedsAPassword, checkHomeSpeaksForTheVisibleModules] {
+                      checkTheLockSwitchNeedsAPassword, checkHomeSpeaksForTheVisibleModules,
+                      checkAChordReachesAModule, checkTheTabChords, checkTheSidebarShowsKeyboardFocus] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -224,6 +225,121 @@ enum ReviewTwoUXSelfTest {
         settle(shell)
         check(canvas.debugSignalAttentionIDs == operatorRows,
               "back on Operator, Home reports \(canvas.debugSignalAttentionIDs), want \(operatorRows)", &ok)
+    }
+
+    // MARK: R2-UX-03 - chords
+
+    /// ⌘3 through a real key event, the way the menu bar resolves it.
+    private static func checkAChordReachesAModule(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        AppSettings.shared.hiddenModules = []
+        shell.show(.homeCanvas)
+        settle(shell)
+        let menu = NSMenu(title: "Go")
+        WorkspaceGoMenu.populate(menu, target: shell)
+        func press(_ digit: Int) -> Bool {
+            guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command],
+                                               timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                               characters: "\(digit)", charactersIgnoringModifiers: "\(digit)",
+                                               isARepeat: false, keyCode: 0) else { return false }
+            let handled = menu.performKeyEquivalent(with: event)
+            settle(shell)
+            return handled
+        }
+        check(press(3) && shell.currentModule == .crew, "\u{2318}3 opened \(shell.currentModule.title), want Crew", &ok)
+        check(press(2) && shell.currentModule == .tasks, "\u{2318}2 opened \(shell.currentModule.title), want Tasks", &ok)
+        // The sidebar's tooltip says it.
+        let tasks = shell.sidebar.debugCell(for: .module(.tasks))
+        check(tasks?.toolTip == "Tasks (\u{2318}2)", "the Tasks row's tooltip is \(tasks?.toolTip ?? "nothing")", &ok)
+        // A hidden module gives its number away.
+        AppSettings.shared.setProfile(.personal)
+        settle(shell)
+        WorkspaceGoMenu.populate(menu, target: shell, hidden: AppSettings.shared.hiddenModules)
+        check(press(3) && shell.currentModule == .knowledge, "with Crew hidden \u{2318}3 opened \(shell.currentModule.title), want Knowledge", &ok)
+        AppSettings.shared.hiddenModules = []
+        settle(shell)
+        shell.show(.homeCanvas)
+        settle(shell)
+    }
+
+    private static func checkTheTabChords(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        shell.show(.notebook)
+        settle(shell)
+        shell.selectNextModuleTab(nil)
+        settle(shell)
+        check(shell.debugCurrentTab?.name == "Runbooks", "\u{2318}\u{21E7}] on Notebook showed \(shell.debugCurrentTab?.name ?? "nothing")", &ok)
+        shell.selectPreviousModuleTab(nil)
+        shell.selectPreviousModuleTab(nil)
+        settle(shell)
+        check(shell.debugCurrentTab?.name == "Reading list",
+              "\u{2318}\u{21E7}[ from Notebook did not wrap to the last tab (\(shell.debugCurrentTab?.name ?? "nothing"))", &ok)
+        // A page's own tab, through the page: Tasks' board to its list.
+        shell.show(.shift)
+        settle(shell)
+        let before = shell.debugCurrentTab?.name
+        shell.selectNextModuleTab(nil)
+        settle(shell)
+        check(before == "Board" && shell.debugCurrentTab?.name == "List",
+              "\u{2318}\u{21E7}] on Tasks went from \(before ?? "nothing") to \(shell.debugCurrentTab?.name ?? "nothing")", &ok)
+        shell.show(.homeCanvas)
+        settle(shell)
+    }
+
+    // MARK: R2-A11Y-01 - the sidebar's keyboard focus
+
+    private static func checkTheSidebarShowsKeyboardFocus(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        defer { HelmFocusVisibility.overrideForTests = nil }
+        shell.show(.shift)
+        settle(shell)
+        let outline = shell.sidebar.outlineView
+        guard let row = shell.sidebar.debugRowView(for: .module(.tasks)) else {
+            fail("the Tasks row is not on screen, so the focus check measures nothing", &ok)
+            return
+        }
+        func sample() -> NSColor? {
+            row.layoutSubtreeIfNeeded()
+            guard let rep = row.bitmapImageRepForCachingDisplay(in: row.bounds) else { return nil }
+            row.cacheDisplay(in: row.bounds, to: rep)
+            let fill = row.debugFill.frame
+            let scale = CGFloat(rep.pixelsWide) / row.bounds.width
+            // One point inside the wash's leading edge, half way down.
+            let x = Int((fill.minX + 1) * scale)
+            let yPoints = row.isFlipped ? fill.midY : row.bounds.height - fill.midY
+            return rep.colorAt(x: x, y: Int(yPoints * scale))
+        }
+        window.makeFirstResponder(nil)
+        settle(shell)
+        let resting = sample()
+        // A mouse click puts the keyboard in the list without a ring.
+        HelmFocusVisibility.overrideForTests = false
+        window.makeFirstResponder(outline)
+        settle(shell)
+        check(!row.showsFocusRing, "a click into the sidebar lit the keyboard ring", &ok)
+        window.makeFirstResponder(nil)
+        // A key does.
+        HelmFocusVisibility.overrideForTests = true
+        window.makeFirstResponder(outline)
+        settle(shell)
+        check(row.showsFocusRing && row.debugFill.layer?.borderWidth == WorkspaceSidebarRowView.focusRingWidth,
+              "with the keyboard in the sidebar the lit row shows no focus ring", &ok)
+        let focused = sample()
+        if let resting, let focused {
+            let a = resting.usingColorSpace(.deviceRGB) ?? resting, b = focused.usingColorSpace(.deviceRGB) ?? focused
+            let delta = abs(a.redComponent - b.redComponent) + abs(a.greenComponent - b.greenComponent)
+                + abs(a.blueComponent - b.blueComponent)
+            check(delta > 0.1, "the lit row's edge reads the same with and without keyboard focus (delta \(delta))", &ok)
+        } else {
+            fail("the lit row could not be sampled", &ok)
+        }
+        // Another row lit does not take the ring with it, and leaving the
+        // list takes it away.
+        if let other = shell.sidebar.debugRowView(for: .module(.home)) {
+            check(!other.showsFocusRing, "an unlit row shows the focus ring", &ok)
+        }
+        window.makeFirstResponder(nil)
+        settle(shell)
+        check(!row.showsFocusRing, "the ring stayed after the keyboard left the sidebar", &ok)
+        shell.show(.homeCanvas)
+        settle(shell)
     }
 }
 

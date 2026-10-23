@@ -80,7 +80,8 @@ final class WelcomeSheetController: NSViewController {
                         + "Work, Observe, Workbench and Machine.\n\n"
                         + "A module with several pages shows them as tabs at the top of the window, "
                         + "and Back and Forward walk the pages you have opened.\n\n"
-                        + "Press \u{2318}K at any time to search for a page, a note, a task or a command."
+                        + "\u{2318}1 to \u{2318}9 open the first nine items in the sidebar, \u{21E7}\u{2318}[ and \u{21E7}\u{2318}] "
+                        + "move between a module's tabs, and \u{2318}K searches for a page, a note, a task or a command."
                 }
                 return "The app is five spaces, and the bar at the top switches between them.\n\n"
                     + "Overview is the hub - what needs you right now.\n"

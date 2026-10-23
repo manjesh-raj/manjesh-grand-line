@@ -742,6 +742,27 @@ final class MainSplitShellController: WorkspaceShellController {
 
     override func openModuleTab(_ tab: ModuleTab) { open(tab) }
 
+    /// R2-UX-03: the module's tabs, wrapping at either end like a browser's.
+    /// A module of one page has nowhere to go.
+    override func stepModuleTab(by offset: Int) {
+        let tabs = currentModule.tabs
+        guard tabs.count > 1, let current = currentTab, let index = tabs.firstIndex(of: current) else { return }
+        open(tabs[(index + offset + tabs.count) % tabs.count])
+    }
+
+    /// R2-UX-03: one ⌘K row per module in the sidebar, in its order, with
+    /// the chord that opens it - "Tasks ⌘2" - so the palette teaches them.
+    override func paletteModuleActions() -> [UnifiedSearchActionProvider.Action] {
+        let hidden = AppSettings.shared.hiddenModules
+        return WorkspaceSidebarModel.listedModules(hidden: hidden).map { module in
+            UnifiedSearchActionProvider.Action(
+                title: module.title, meta: "Module", keywords: [module.title] + module.children,
+                icon: .destination(module.primaryRoute),
+                hint: WorkspaceGoMenu.chordText(for: module, hidden: hidden),
+                run: { [weak self] in self?.openModule(module) })
+        }
+    }
+
     override func hidesPage(_ destination: RailDestination) -> Bool {
         AppSettings.shared.hiddenModules.contains(ModuleTable.module(for: destination))
     }

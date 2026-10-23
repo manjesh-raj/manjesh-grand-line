@@ -726,14 +726,18 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
         /// The page a "Switch to" row opens, so a hidden module's pages can
         /// leave the list (R2-UX-01 (b)).
         var destination: RailDestination?
+        /// R2-UX-03: the row's chord, drawn where a row's hint goes.
+        var hint: String?
         let run: () -> Void
         init(title: String, meta: String, keywords: [String],
-             icon: UnifiedSearchItem.Icon? = nil, destination: RailDestination? = nil, run: @escaping () -> Void) {
+             icon: UnifiedSearchItem.Icon? = nil, destination: RailDestination? = nil, hint: String? = nil,
+             run: @escaping () -> Void) {
             self.title = title
             self.meta = meta
             self.keywords = keywords
             self.icon = icon
             self.destination = destination
+            self.hint = hint
             self.run = run
         }
     }
@@ -744,6 +748,11 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
     /// profile. Read on every query, so showing a module in Settings brings
     /// its rows straight back.
     var isHidden: (RailDestination) -> Bool = { _ in false }
+
+    /// R2-UX-03: the sidebar layout's module rows, each with its ⌘1-⌘9
+    /// chord, asked for on every query so they follow the hidden modules and
+    /// the chords they shift. Empty in the floating bar.
+    var moduleActions: () -> [Action] = { [] }
 
     /// Builds the real list. Every closure here is a call into a method that
     /// already backs a menu item.
@@ -815,6 +824,7 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
         ])
         var provider = UnifiedSearchActionProvider(actions: actions)
         provider.isHidden = { [weak shell] destination in shell?.hidesPage(destination) ?? false }
+        provider.moduleActions = { [weak shell] in shell?.paletteModuleActions() ?? [] }
         return provider
     }
 
@@ -828,7 +838,7 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
 
     func items(query: String) -> [UnifiedSearchItem] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return actions.filter { action in
+        return (moduleActions() + actions).filter { action in
             guard let destination = action.destination, isHidden(destination) else { return true }
             return false
         }.filter { Self.matches($0, query: trimmed) }.enumerated().map { index, action in
@@ -837,7 +847,7 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
                 id: "action:\(index):\(action.title)",
                 title: action.title,
                 meta: action.meta,
-                actionHint: nil,
+                actionHint: action.hint,
                 icon: action.icon,
                 activate: action.run
             )

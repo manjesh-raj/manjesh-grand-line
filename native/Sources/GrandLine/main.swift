@@ -2318,6 +2318,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // ten rows up must not list it again.
         let alreadyListed: Set<RailDestination> = [.homeCanvas]
         if workspaceLayout == .sidebar {
+            // R2-UX-03: a module's tabs, before and after the one showing -
+            // the system's own "show previous/next tab" chords. On Console,
+            // a host page and Tools `TabKeyboardShortcuts` sees ⌘⇧[ / ⌘⇧]
+            // first and moves between that page's own tabs, as it always has.
+            goMenu.addItem(NSMenuItem.separator())
+            let previousTab = NSMenuItem(title: "Previous Tab",
+                                         action: #selector(WorkspaceShellController.selectPreviousModuleTab(_:)),
+                                         keyEquivalent: "{").withSymbol("chevron.backward")
+            previousTab.target = menuTarget
+            goMenu.addItem(previousTab)
+            let nextTab = NSMenuItem(title: "Next Tab",
+                                     action: #selector(WorkspaceShellController.selectNextModuleTab(_:)),
+                                     keyEquivalent: "}").withSymbol("chevron.forward")
+            nextTab.target = menuTarget
+            goMenu.addItem(nextTab)
             WorkspaceGoMenu.populate(goMenu, target: menuTarget, hidden: AppSettings.shared.hiddenModules)
             // R2-UX-01 (b): a module shown or hidden in Settings comes and
             // goes here too, as it does in the sidebar.

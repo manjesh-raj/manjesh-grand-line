@@ -261,6 +261,15 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
         openModuleTab(tab)
     }
 
+    /// R2-UX-03: ⌘⇧[ and ⌘⇧] - the showing module's previous and next tab.
+    /// A shell with no toolbar tabs has none to move between.
+    /// R2-UX-03: ⌘K's module rows. Only the sidebar layout has modules.
+    func paletteModuleActions() -> [UnifiedSearchActionProvider.Action] { [] }
+
+    @objc func selectPreviousModuleTab(_ sender: Any?) { stepModuleTab(by: -1) }
+    @objc func selectNextModuleTab(_ sender: Any?) { stepModuleTab(by: 1) }
+    func stepModuleTab(by offset: Int) {}
+
     /// R2-UX-01 (b): whether the captain's profile hides `destination`'s
     /// module. Only the sidebar layout has modules to hide.
     func hidesPage(_ destination: RailDestination) -> Bool { false }

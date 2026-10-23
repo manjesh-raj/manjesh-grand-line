@@ -295,20 +295,11 @@ enum SidebarPolishSelfTest {
         clickTab("Board", shell)
         check(content.lastTransitionForTests?.skipped == true, "clicking the showing tab moved the page", &ok)
 
-        // Home's spaces too.
+        // Home's spaces took the same entrance until R2-UX-02 retired them
+        // in this layout: Home draws no tabs to switch between now.
         shell.show(.homeCanvas)
         settle(shell)
-        let spaces = shell.toolbar.debugTabNames
-        if spaces.count > 1 {
-            clickTab(spaces[0], shell)
-            shell.show(.homeCanvas)
-            clickTab(spaces[1], shell)
-            t = content.lastTransitionForTests
-            check(t?.skipped == false && t?.direction == .drillIn, "a Home space switch took no entrance: \(String(describing: t))", &ok)
-            clickTab(spaces[0], shell)
-        } else {
-            fail("Home shows \(spaces.count) spaces", &ok)
-        }
+        check(shell.toolbar.debugTabNames.isEmpty, "Home shows tabs \(shell.toolbar.debugTabNames) (R2-UX-02)", &ok)
 
         // Reduce Motion: the switch happens, the page does not move.
         HelmMotion.reducedOverrideForTests = true
