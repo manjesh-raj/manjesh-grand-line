@@ -561,10 +561,14 @@ enum ScheduleActions {
     private static func toolUpdateCheck() -> ScheduleActionResult {
         let outcomes = DependencyCatalog.items.map { (item: $0, outcome: UpdatesSource.check($0)) }
         let statuses = outcomes.map { $0.outcome.status }
-        let failed = statuses.filter { $0 == .checkFailed }.count
-        let available = statuses.filter { $0.showsUpdateButton }.count
+        // R2-BUG-03: the Updates page's own count. `showsUpdateButton` is
+        // also true for a failed check, so "N of the M that could be checked
+        // have an update" used to count the very checks that failed.
+        let counted = UpdatesSummary(statuses)
+        let failed = counted.couldNotCheck
+        let actionable = counted.needsAttention - counted.couldNotCheck
         let log = perToolLog(outcomes)
-        switch toolSweepVerdict(total: statuses.count, checkFailed: failed, actionable: available) {
+        switch toolSweepVerdict(total: statuses.count, checkFailed: failed, actionable: actionable) {
         case .failed:
             return ScheduleActionResult(
                 failing: .failed,
@@ -576,8 +580,8 @@ enum ScheduleActions {
         case .partial:
             let checked = statuses.count - failed
             var summary = "\(failed) of \(statuses.count) tools couldn\u{2019}t be checked"
-            summary += available > 0
-                ? "; \(available) of the \(checked) that could have an update available."
+            summary += actionable > 0
+                ? "; of the \(checked) that could, " + counted.parts.filter { !$0.contains("could not") }.joined(separator: ", ") + "."
                 : "; the \(checked) that could are up to date."
             return ScheduleActionResult(
                 failing: .partial,
@@ -591,7 +595,7 @@ enum ScheduleActions {
         case .foundSomething, .didWork:
             return ScheduleActionResult(
                 verdict: .foundSomething,
-                summary: "\(available) of \(statuses.count) tools have an update available.",
+                summary: "Of \(statuses.count) tools, " + counted.parts.joined(separator: ", ") + ".",
                 log: log)
         }
     }

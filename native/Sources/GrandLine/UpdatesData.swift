@@ -136,6 +136,79 @@ enum DependencyStatus: Equatable {
     }
 }
 
+/// One sweep's statuses, counted once, for every place that states them.
+///
+/// R2-BUG-03: the Updates page read one state three ways at once. Its toast
+/// said "Checked 13 tools, 8 updates available" by counting
+/// `showsUpdateButton`, which is also true for a tool that is not installed
+/// or whose check failed. Its header said "8 need attention" from the same
+/// predicate, its summary strip counted two of the four states, and Setup's
+/// Updates card read 0. A sweep where `brew` was unreachable told the
+/// captain every tool had an update. The toast, the drill header, the strip
+/// and the scheduled tool check now render this one value, and "updates
+/// available" counts only `.updateAvailable`.
+struct UpdatesSummary: Equatable {
+    let total: Int
+    let upToDate: Int
+    let updatesAvailable: Int
+    let notInstalled: Int
+    let couldNotCheck: Int
+    let updatesFailed: Int
+    /// A check or an update is still running, so nothing derived is known.
+    let isPending: Bool
+    /// Nothing has been checked yet.
+    let neverChecked: Bool
+
+    init(_ statuses: [DependencyStatus]) {
+        total = statuses.count
+        upToDate = statuses.filter { $0 == .upToDate }.count
+        updatesAvailable = statuses.filter { $0 == .updateAvailable }.count
+        notInstalled = statuses.filter { $0 == .notInstalled }.count
+        couldNotCheck = statuses.filter { $0 == .checkFailed }.count
+        updatesFailed = statuses.filter { $0 == .updateFailed }.count
+        isPending = statuses.contains { $0 == .checking || $0 == .updating }
+        neverChecked = !statuses.isEmpty && statuses.allSatisfy { $0 == .unknown }
+    }
+
+    /// GL-14: the derived counts are an answer only once nothing is pending
+    /// and something has been checked.
+    var isKnown: Bool { !isPending && !neverChecked }
+
+    /// Every tool with something to do or something wrong - the rows that
+    /// offer an action (`DependencyStatus.showsUpdateButton`).
+    var needsAttention: Int { updatesAvailable + notInstalled + couldNotCheck + updatesFailed }
+
+    /// Each non-zero count, worded for a sentence, updates first.
+    var parts: [String] {
+        var parts: [String] = []
+        if updatesAvailable > 0 {
+            parts.append(updatesAvailable == 1 ? "1 update available" : "\(updatesAvailable) updates available")
+        }
+        if upToDate > 0 { parts.append("\(upToDate) up to date") }
+        if notInstalled > 0 { parts.append("\(notInstalled) not installed") }
+        if couldNotCheck > 0 { parts.append("\(couldNotCheck) could not be checked") }
+        if updatesFailed > 0 {
+            parts.append(updatesFailed == 1 ? "1 update failed" : "\(updatesFailed) updates failed")
+        }
+        return parts
+    }
+
+    /// The drill header's live line.
+    var subtitle: String {
+        guard total > 0 else { return "No tools in the catalog" }
+        if isPending { return "\(total) tools \u{00B7} checking\u{2026}" }
+        if neverChecked { return "\(total) tools \u{00B7} not checked yet" }
+        if needsAttention > 0 { return "\(total) tools \u{00B7} \(needsAttention) need attention" }
+        return "\(total) tools \u{00B7} all up to date"
+    }
+
+    /// The toast a finished sweep shows.
+    var completionMessage: String {
+        if total > 0 && upToDate == total { return "Checked \(total) tools - all up to date" }
+        return "Checked \(total) tools: " + parts.joined(separator: ", ")
+    }
+}
+
 struct CheckOutcome {
     let installedLabel: String
     let latestLabel: String?

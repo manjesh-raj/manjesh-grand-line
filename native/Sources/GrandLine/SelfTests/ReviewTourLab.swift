@@ -211,6 +211,12 @@ enum ReviewTourLab {
         /// and fork totals - each through its real source's own seam. No
         /// `gh` runs.
         case demoSetup
+        /// `demo updates`: every Updates check offline, before the page is
+        /// first visited. npm resolves and its every call fails, and nothing
+        /// else resolves, so a sweep reads "Check failed" and "Not installed"
+        /// rows - the state the brew-unreachable scenario produces - without
+        /// one real npm, brew or git call.
+        case demoUpdates
         /// `demo focuslog`: focus sessions logged on the last five days against
         /// the store's own tasks, through `ShiftStore.logFocusSession` - so
         /// Weekly review's Time on tasks chart and Focus time card have a
@@ -303,6 +309,7 @@ enum ReviewTourLab {
             if argument == "signals" { return .success(.demoSignals) }
             if argument == "focus" { return .success(.demoFocus) }
             if argument == "setup" { return .success(.demoSetup) }
+            if argument == "updates" { return .success(.demoUpdates) }
             if argument == "forks" { return .success(.demoForks) }
             if argument == "focuslog" { return .success(.demoFocusLog) }
             if argument == "logs" { return .success(.demoLogs) }
@@ -628,6 +635,17 @@ enum ReviewTourLab {
                 shell.workspace.logAnalyzer.debugRender(demoLogInvestigation())
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo logs")
+            case .demoUpdates:
+                let scratch = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("tour-updates-\(UUID().uuidString)", isDirectory: true)
+                UpdatesDataTestSeam.resolveExecutable = { $0 == "npm" ? "/usr/local/bin/npm" : nil }
+                UpdatesDataTestSeam.homebrewPrefixes = [scratch.appendingPathComponent("homebrew")]
+                UpdatesDataTestSeam.applicationsDirectory = scratch.appendingPathComponent("Applications")
+                UpdatesDataTestSeam.run = { _, _, _ in
+                    SubprocessResult(outcome: .exited, status: 1, stdoutData: Data(),
+                                     stderrData: Data("demo: offline".utf8), duration: 0)
+                }
+                log.append("demo updates (offline: npm fails, nothing else resolves)")
             case .demoHealth:
                 seedDemoHealth(shell.workspace.health)
                 RunLoop.main.run(until: Date().addingTimeInterval(0.1))
