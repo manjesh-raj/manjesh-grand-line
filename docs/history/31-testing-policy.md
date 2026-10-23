@@ -66,4 +66,7 @@ This matches the earlier audit above: the time is structure, not misfiled or unn
 - The split, under macOS's bash 3.2: the three shards of the window-backed selection hold 40, 42 and 42 suites, 124 in all, each exactly once. On the measured medians they come to 6.9, 7.3 and 7.4 minutes.
 - Removing the `--shard=*)` case from the script fails `E2ETestingPolicySelfTest` by name ("the runner script no longer parses --shard=*").
 - A real sharded run of four suites ran two in each shard and reported its shard in the summary.
-- The pull request's own CI run is the proof of the times: CI_AFTER
+- The pull request's own CI run is the proof of the times: 15.2 minutes end to end against the 32-minute median, all eleven checks green.
+  The debug build was ready at 3.5 minutes, the release build finished at 6.8 beside the tests, and the shards ran 6.3, 8.2 and 8.4 minutes.
+  That run shared the account's five macOS slots with another pull request's run, so one shard waited 3.3 minutes for a slot; without the wait it ends at about 12.
+  The aggregate printed "124 window-backed suites, each in exactly one shard": the same 120 suites ran and passed as before, and the 4 runner-unsupported ones were skipped as before.
