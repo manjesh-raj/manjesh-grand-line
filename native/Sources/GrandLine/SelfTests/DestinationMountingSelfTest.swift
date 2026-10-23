@@ -694,7 +694,16 @@ enum DestinationMountingSelfTest {
             guard let settingsView = shell.destinationViewIfMountedForTests(.settings) else {
                 return "show(.settings) did not mount the settings slot"
             }
-            let labels = collectTextFieldValues(in: settingsView)
+            // R2-UX-01 (b): Appearance › Sidebar has one switch per module, and
+            // one of them is the Health module's. That row names the module it
+            // shows or hides; it is not the card this case is about, so its
+            // label is the one exception.
+            let moduleRows = ((shell.debugSlotController(.settings) as? SettingsController)?.debugModuleSwitches ?? [])
+                .compactMap { $0.toggle.enclosingSettingsRow }
+            let labels = collectTextFieldValues(in: settingsView, skipping: moduleRows)
+            guard !moduleRows.isEmpty else {
+                return "the Settings page has no module switches, so the Health exception would excuse nothing"
+            }
             guard !labels.contains("Health") else {
                 return "the Settings page still renders a \"Health\" card header - it should have moved to its own destination"
             }
@@ -959,10 +968,11 @@ enum DestinationMountingSelfTest {
 
     /// A plain recursive walk - this file's only need for one, so it stays
     /// local rather than becoming a shared utility.
-    private static func collectTextFieldValues(in view: NSView) -> [String] {
+    private static func collectTextFieldValues(in view: NSView, skipping skipped: [NSView] = []) -> [String] {
+        if skipped.contains(where: { $0 === view }) { return [] }
         var result: [String] = []
         if let field = view as? NSTextField { result.append(field.stringValue) }
-        for sub in view.subviews { result.append(contentsOf: collectTextFieldValues(in: sub)) }
+        for sub in view.subviews { result.append(contentsOf: collectTextFieldValues(in: sub, skipping: skipped)) }
         return result
     }
 
@@ -1192,6 +1202,18 @@ enum DestinationMountingSelfTest {
         )
         window.contentViewController = shell
         return (window, shell)
+    }
+}
+
+private extension NSView {
+    /// The Settings row this view sits in, if any.
+    var enclosingSettingsRow: SettingsRow? {
+        var view = superview
+        while let current = view {
+            if let row = current as? SettingsRow { return row }
+            view = current.superview
+        }
+        return nil
     }
 }
 
