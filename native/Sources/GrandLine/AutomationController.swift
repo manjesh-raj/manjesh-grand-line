@@ -958,9 +958,9 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     /// commentary on the run and has no counterpart on Bootstrap.
     var drillHeaderSubtitle: String? {
         if isRunning { return progressSummary }
-        var verdicts: [SetupStepKind: Bool?] = [:]
-        for kind in SetupStepKind.allCases { verdicts[kind] = stepIsDone(kind) }
-        return SetupPipelineProgress.of(verdicts).summary
+        // R2-BUG-05: the module's reading, the one the summary strip's
+        // "Setup steps" card renders, never this page's alone.
+        return SetupStepsReading.shared.progress.summary
     }
 
     var onDrillSubtitleChanged: (() -> Void)?
@@ -1055,9 +1055,12 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     /// shared derivation. Gated on being on screen so whichever of the two
     /// pages the captain is actually looking at is the one that speaks.
     private func publishSetupDriftSignal() {
-        guard isViewLoaded, !view.isHidden else { return }
+        guard isViewLoaded else { return }
         var results: [SetupStepKind: Bool?] = [:]
         for kind in SetupStepKind.allCases { results[kind] = stepIsDone(kind) }
+        // R2-BUG-05: the module's one reading hears every page, shown or not.
+        SetupStepsReading.shared.record(results)
+        guard !view.isHidden else { return }
         BackgroundSignalsPoller.shared.publishSetupStepResults(results)
     }
 

@@ -184,7 +184,7 @@ enum SidebarRedesignsModelSelfTest {
     private static func checkTheSetupSummary(_ ok: inout Bool) {
         typealias Counts = BackgroundSignalsPoller.SignalCounts
         // Nothing read yet: every figure a dash, with a reason.
-        let unknown = SetupSummary.cards(counts: Counts(), dotfiles: nil, configRepo: nil)
+        let unknown = SetupSummary.cards(counts: Counts(), steps: .of([:]), dotfiles: nil, configRepo: nil)
         check(unknown.map(\.caption) == SetupSummary.captions && unknown.allSatisfy { $0.text == nil && $0.unknownReason != nil },
               "a summary with no readings draws \(unknown.map { $0.text ?? "-" }), want five dashes", &ok)
 
@@ -193,17 +193,28 @@ enum SidebarRedesignsModelSelfTest {
         counts.toolsUpToDate = 6
         counts.toolsWithUpdate = 2
         counts.toolUpdates = 2
-        counts.setupStepsTotal = 6
-        counts.setupStepsDone = 5
         counts.setupDrift = 1
         counts.forksTotal = 8
         counts.forksChecked = 8
         counts.forkDrift = 0
-        let read = SetupSummary.cards(counts: counts, dotfiles: .synced, configRepo: nil)
-        check(read.map(\.text) == ["6 / 8", "2", "5 / 6", "Synced", "In sync"],
+        var steps: [SetupStepKind: Bool?] = [:]
+        for (index, kind) in SetupStepKind.allCases.enumerated() { steps[kind] = index != 1 }
+        let read = SetupSummary.cards(counts: counts, steps: .of(steps), dotfiles: .synced, configRepo: nil)
+        check(read.map(\.text) == ["6 / 8", "2", "4 / 5", "Synced", "In sync"],
               "the summary reads \(read.map { $0.text ?? "-" })", &ok)
         check(read[1].signals && read[1].tint == .warn && !read[0].signals,
               "two updates are not the Updates card's signal", &ok)
+
+        // R2-BUG-05: a step still being checked is a dash on the card while
+        // the subtitle, reading the same progress, says "checking" - never a
+        // confident count beside it.
+        var partial = steps
+        partial[.software] = Bool?.none as Bool??
+        let partialCard = SetupSummary.stepsCard(.of(partial))
+        check(partialCard.text == nil && partialCard.unknownReason?.contains("still being checked") == true,
+              "a step still being checked reads \(partialCard.text ?? "-") on the card", &ok)
+        check(SetupPipelineProgress.of(partial).summary.hasSuffix("checking\u{2026}"),
+              "fixture: the same progress makes the subtitle say checking", &ok)
 
         // A real zero is a zero; it is the dash that means unknown.
         counts.toolsWithUpdate = 0
@@ -263,11 +274,22 @@ enum SidebarRedesignsModelSelfTest {
                   + "\(String(describing: poller.lastCounts.forksChecked))", &ok)
         var results: [SetupStepKind: Bool?] = [:]
         for (index, kind) in SetupStepKind.allCases.enumerated() { results[kind] = index != 1 }
+        let reading = SetupStepsReading.shared
+        defer { reading.resetForTests() }
+        reading.resetForTests()
         poller.publishSetupStepResults(results, gatheredAt: Date().addingTimeInterval(3600))
-        check(poller.lastCounts.setupStepsTotal == SetupStepKind.allCases.count
-                && poller.lastCounts.setupStepsDone == SetupStepKind.allCases.count - 1,
-              "the step totals are \(String(describing: poller.lastCounts.setupStepsDone)) of "
-                  + "\(String(describing: poller.lastCounts.setupStepsTotal))", &ok)
+        // R2-BUG-05: the poller's pass is one of the module reading's
+        // producers, so the steps card hears it.
+        check(reading.progress.done == SetupStepKind.allCases.count - 1 && reading.progress.checking == 0,
+              "the module's step reading is \(reading.progress) after the poller's pass", &ok)
+        // An unanswered step never erases an answered one, and an older
+        // answer never replaces a newer one.
+        reading.record([.software: Bool?.none])
+        check(reading.verdicts[.software] == .some(true), "a step still being checked erased its answer", &ok)
+        reading.record([.software: false], gatheredAt: Date())
+        check(reading.verdicts[.software] == .some(true), "an older answer replaced a newer one", &ok)
+        reading.record([.software: false], gatheredAt: Date().addingTimeInterval(7200))
+        check(reading.verdicts[.software] == .some(false), "a newer answer did not replace an older one", &ok)
 
         // The dotfiles sync says nothing before a pass has reported - its
         // initial `.synced` is a default, not a reading.
