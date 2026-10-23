@@ -200,7 +200,11 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     /// The label stays as each button's tooltip and accessibility label.
     /// The floating bar's drill header has room for the labels and keeps
     /// them.
-    static let compactToolbarActionsBelow: CGFloat = 1300
+    ///
+    /// 1600 since U-02 put Quick Connect's two icons on every module and U-03
+    /// widened the sidebar by 28pt: measured at 1512, the labelled pair then
+    /// pushed Recents and the inspector button into the overflow menu again.
+    static let compactToolbarActionsBelow: CGFloat = 1600
 
     /// The two actions' titles for the window's current width.
     func applyToolbarActionWidth() {

@@ -230,7 +230,10 @@ final class MainSplitShellController: WorkspaceShellController {
         // is theirs and stays.
         hiddenModulesObserver = NotificationCenter.default.addObserver(
             forName: AppSettings.hiddenModulesDidChange, object: nil, queue: .main
-        ) { [weak self] _ in self?.applyProfileToHome() }
+        ) { [weak self] _ in
+            self?.applyProfileToHome()
+            self?.refreshModuleChrome()
+        }
         workspace.homeCanvas.onCardLayoutChanged = { layout in AppSettings.shared.homeCardLayout = layout }
         workspace.homeCanvas.onCustomizingChanged = { [weak self] _ in self?.refreshModuleChrome() }
 
@@ -940,7 +943,10 @@ final class MainSplitShellController: WorkspaceShellController {
         default:
             toolbar.setModuleAction(title: nil)
         }
-        toolbar.setQuickConnect(module == .console)
+        // U-02: Quick Connect on every module, the captain's call - each icon
+        // unless the profile hides the module it opens.
+        let hidden = AppSettings.shared.hiddenModules
+        toolbar.setQuickConnect(console: !hidden.contains(.console), hosts: !hidden.contains(.connections))
         contentPane.setHeader(title: module.showsHeader ? module.title : nil, subtitle: pageSubtitle)
         contentPane.setSessionStripVisible(module == .console && !workspace.hosts.sessions.isEmpty)
         applyTitleBar()

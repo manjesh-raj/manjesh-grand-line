@@ -92,7 +92,12 @@ enum MainSplitShellSelfTest {
         resize(window, width: 1100, shell)
         settle(shell)
         let notebook = shell.workspace.notebook
-        let wanted = [WorkspaceToolbar.ItemID.crumb, WorkspaceToolbar.ItemID.recents, WorkspaceToolbar.ItemID.inspector]
+        // The crumb and Recents stay. Since U-02 put Quick Connect on every
+        // module, Knowledge's five tabs leave room at 1100 for those two and
+        // not the inspector button too; Quick Connect's icons yield first in
+        // the compact toolbar and the inspector next, each still working from
+        // the overflow menu (checked below).
+        let wanted = [WorkspaceToolbar.ItemID.crumb, WorkspaceToolbar.ItemID.recents]
         func shown() -> [NSToolbarItem.Identifier] {
             let visible = Set((window.toolbar?.visibleItems ?? []).map(\.itemIdentifier))
             return wanted.filter { visible.contains($0) }
@@ -100,12 +105,25 @@ enum MainSplitShellSelfTest {
         check(notebook.debugToolbarActionTitles == ["", ""],
               "R2-BUG-07: at 1100 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles), want icons", &ok)
         check(shown() == wanted,
-              "R2-BUG-07: at 1100 on Notebook the toolbar shows only \(shown().map(\.rawValue)) of the crumb, Recents and inspector", &ok)
+              "R2-BUG-07: at 1100 on Notebook the toolbar shows only \(shown().map(\.rawValue)) of the crumb and Recents", &ok)
+        let visible = Set((window.toolbar?.visibleItems ?? []).map(\.itemIdentifier))
+        for item in window.toolbar?.items ?? [] where !visible.contains(item.itemIdentifier)
+            && item.itemIdentifier != .sidebarTrackingSeparator && item.itemIdentifier != .flexibleSpace && item.itemIdentifier != .space {
+            check(item.action != nil || item.menuFormRepresentation?.action != nil,
+                  "at 1100 on Notebook \(item.itemIdentifier.rawValue) overflowed with nothing to run", &ok)
+        }
+        // At 1512 too, since U-02 and U-03 (`compactToolbarActionsBelow`).
         resize(window, width: 1512, shell)
         settle(shell)
-        check(notebook.debugToolbarActionTitles == ["Today's note", "New page"],
-              "R2-BUG-07: at 1512 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles)", &ok)
+        check(notebook.debugToolbarActionTitles == ["", ""],
+              "R2-BUG-07: at 1512 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles), want icons", &ok)
         check(shown() == wanted, "at 1512 on Notebook the toolbar shows \(shown().map(\.rawValue))", &ok)
+        resize(window, width: 1700, shell)
+        settle(shell)
+        check(notebook.debugToolbarActionTitles == ["Today's note", "New page"],
+              "R2-BUG-07: at 1700 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles)", &ok)
+        check(shown() == wanted, "at 1700 on Notebook the toolbar shows \(shown().map(\.rawValue))", &ok)
+        resize(window, width: 1512, shell)
     }
 
     private static func settle(_ shell: MainSplitShellController) {
@@ -583,7 +601,11 @@ enum MainSplitShellSelfTest {
         for id in [WorkspaceToolbar.ItemID.search, WorkspaceToolbar.ItemID.notifications, WorkspaceToolbar.ItemID.theme] {
             check(priority(id) == .high, "\(id.rawValue) can overflow before the crumb", &ok)
         }
-        for id in [WorkspaceToolbar.ItemID.crumb, WorkspaceToolbar.ItemID.recents, WorkspaceToolbar.ItemID.inspector] {
+        // The crumb outlasts Quick Connect, the chip and the module's action
+        // since U-02: R2-UX-05 made it the one place that names the module.
+        check(priority(WorkspaceToolbar.ItemID.crumb) == WorkspaceToolbar.crumbPriority,
+              "the crumb left its overflow band", &ok)
+        for id in [WorkspaceToolbar.ItemID.recents, WorkspaceToolbar.ItemID.inspector] {
             check(priority(id) == .low, "\(id.rawValue) is not among the first to overflow", &ok)
         }
         check(items.first { $0.itemIdentifier == WorkspaceToolbar.ItemID.recents }?.menuFormRepresentation?.action != nil,
@@ -621,7 +643,7 @@ enum MainSplitShellSelfTest {
         // menu form.
         shell.show(.console)
         settle(shell)
-        check(shell.toolbar.debugQuickConnectCaption?.stringValue == "Quick Connect", "Console offers no Quick Connect", &ok)
+        check(shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.quickConnectHosts), "Console offers no Quick Connect", &ok)
         check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.quickConnectHosts), "Quick Connect has no Hosts icon", &ok)
         settle(shell)
         check(shell.debugCurrentDestination == .hosts && shell.currentModule == .connections,
@@ -894,9 +916,13 @@ enum MainSplitShellSelfTest {
         }
         check(chip.debugTitleText == task.title && chip.debugCountdownText == "25:00",
               "a running timer put \"\(chip.debugCountdownText) \(chip.debugTitleText)\" in the toolbar", &ok)
+        // The trailing cluster opens with Quick Connect's icons since U-02.
+        func clusterStart(_ ids: [NSToolbarItem.Identifier]) -> Int? {
+            ids.firstIndex { WorkspaceToolbar.ItemID.quickConnect.contains($0) || $0 == WorkspaceToolbar.ItemID.theme }
+        }
         let ids = toolbar.debugItemIdentifiers
         let focus = ids.firstIndex(of: WorkspaceToolbar.ItemID.focusTimer)
-        check(focus.map { $0 + 1 } == ids.firstIndex(of: WorkspaceToolbar.ItemID.theme),
+        check(focus.map { $0 + 1 } == clusterStart(ids),
               "the chip is not just before the trailing cluster: \(ids.map(\.rawValue))", &ok)
         // On every module, Console included - the strip never showed it
         // there - and still beside the trailing cluster after a module's own
@@ -906,7 +932,7 @@ enum MainSplitShellSelfTest {
             settle(shell)
             check(toolbar.debugFocusChipIsShown, "the focus chip is not in the toolbar under \(route.rawValue)", &ok)
             let ids = toolbar.debugItemIdentifiers
-            check(ids.firstIndex(of: WorkspaceToolbar.ItemID.focusTimer).map { $0 + 1 } == ids.firstIndex(of: WorkspaceToolbar.ItemID.theme),
+            check(ids.firstIndex(of: WorkspaceToolbar.ItemID.focusTimer).map { $0 + 1 } == clusterStart(ids),
                   "under \(route.rawValue) the chip is not just before the trailing cluster: \(ids.map(\.rawValue))", &ok)
         }
         // Through its own click recognizer, which is what Return, Space and

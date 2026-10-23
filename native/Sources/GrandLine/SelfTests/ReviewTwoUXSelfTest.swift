@@ -36,7 +36,7 @@ enum ReviewTwoUXSelfTest {
         for check in [checkTheSidebarFollowsTheHiddenModules, checkSettingsShowsAndHidesModules,
                       checkTheLockSwitchNeedsAPassword, checkHomeSpeaksForTheVisibleModules,
                       checkAChordReachesAModule, checkTheTabChords, checkTheSidebarShowsKeyboardFocus,
-                      checkTheSidebarIsWiderAndRemembered] {
+                      checkTheSidebarIsWiderAndRemembered, checkQuickConnectIsOnEveryModule] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -391,6 +391,65 @@ enum ReviewTwoUXSelfTest {
                     && source.contains("private var sidebarThickness: CGFloat = MainSplitShellController.rememberedSidebarWidth()"),
                   "a divider drag no longer stores the sidebar's width, or the shell no longer opens at it", &ok)
         }
+    }
+
+    // MARK: U-02 - Quick Connect on every module
+
+    private static func checkQuickConnectIsOnEveryModule(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        AppSettings.shared.hiddenModules = []
+        resize(window, width: 1512, shell)
+        let ids = WorkspaceToolbar.ItemID.quickConnect
+        for module in WorkspaceModule.allCases {
+            shell.debugOpenModule(module)
+            settle(shell)
+            let toolbar = shell.toolbar.debugItemIdentifiers
+            let positions = ids.compactMap { toolbar.firstIndex(of: $0) }
+            check(positions.count == 2 && positions[1] == positions[0] + 1
+                    && positions[1] + 2 < toolbar.count && toolbar[positions[1] + 1] == .space
+                    && toolbar[positions[1] + 2] == WorkspaceToolbar.ItemID.theme,
+                  "\(module.title)'s toolbar has no Quick Connect group before the trailing cluster: \(toolbar.map(\.rawValue))", &ok)
+            check(!toolbar.contains(NSToolbarItem.Identifier("workspace.quickConnect.caption")),
+                  "\(module.title)'s toolbar still carries Quick Connect's caption", &ok)
+        }
+        // Both icons do what they did, from any module.
+        shell.show(.notebook)
+        settle(shell)
+        check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.quickConnectHosts), "Quick Connect's Hosts icon has no action on Notebook", &ok)
+        settle(shell)
+        check(shell.debugCurrentDestination == .hosts, "the Hosts icon on Notebook opened \(String(describing: shell.debugCurrentDestination))", &ok)
+        shell.show(.notebook)
+        settle(shell)
+        check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.quickConnectConsole), "Quick Connect's Console icon has no action on Notebook", &ok)
+        settle(shell)
+        check(shell.debugCurrentDestination == .console, "the Console icon on Notebook opened \(String(describing: shell.debugCurrentDestination))", &ok)
+        // A profile that hides the module an icon opens leaves that icon out.
+        AppSettings.shared.setProfile(.personal)
+        settle(shell)
+        shell.show(.notebook)
+        settle(shell)
+        check(!shell.toolbar.debugItemIdentifiers.contains { ids.contains($0) || $0 == .space },
+              "a Personal toolbar still offers Quick Connect to modules it hides: \(shell.toolbar.debugItemIdentifiers.map(\.rawValue))", &ok)
+        AppSettings.shared.hiddenModules = [.console]
+        settle(shell)
+        check(shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.quickConnectHosts)
+                && !shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.quickConnectConsole),
+              "with only Console hidden Quick Connect shows \(shell.toolbar.debugItemIdentifiers.map(\.rawValue))", &ok)
+        AppSettings.shared.hiddenModules = []
+        settle(shell)
+        // At 1100 on the most crowded module the icons still do something:
+        // either they are on the toolbar, or in its overflow menu, which
+        // lists an image item by its label and runs its action.
+        resize(window, width: 1100, shell)
+        shell.show(.notebook)
+        settle(shell)
+        for id in ids {
+            let item = window.toolbar?.items.first { $0.itemIdentifier == id }
+            check(item?.action != nil && item?.label.hasPrefix("Quick Connect") == true,
+                  "at 1100 on Notebook \(id.rawValue) has no working overflow form", &ok)
+        }
+        resize(window, width: 1512, shell)
+        shell.show(.homeCanvas)
+        settle(shell)
     }
 }
 
