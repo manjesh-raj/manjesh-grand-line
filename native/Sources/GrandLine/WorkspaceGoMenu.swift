@@ -34,10 +34,10 @@ enum WorkspaceGoMenu {
 
     /// The sidebar's map, top to bottom: Home, then each group with its
     /// modules, and a module's tabs under it where the toolbar draws them.
-    static func entries() -> [Entry] {
+    static func entries(hidden: Set<WorkspaceModule> = []) -> [Entry] {
         var entries: [Entry] = [.module(.home)]
         for group in WorkspaceGroup.allCases {
-            let modules = WorkspaceSidebarModel.modules(in: group)
+            let modules = WorkspaceSidebarModel.modules(in: group, hidden: hidden)
             guard !modules.isEmpty else { continue }
             entries.append(.group(group.title))
             for module in modules {
@@ -50,8 +50,10 @@ enum WorkspaceGoMenu {
 
     /// Append `entries` to `menu`. Separators go before each group, so the
     /// fixed items above them stay their own block.
-    static func populate(_ menu: NSMenu, target: AnyObject?) {
-        for entry in entries() {
+    static func populate(_ menu: NSMenu, target: AnyObject?, hidden: Set<WorkspaceModule> = []) {
+        for item in menu.items.reversed() where item.tag == itemTag { menu.removeItem(item) }
+        let start = menu.items.count
+        for entry in entries(hidden: hidden) {
             switch entry {
             case .group(let title):
                 menu.addItem(.separator())
@@ -78,7 +80,13 @@ enum WorkspaceGoMenu {
                 menu.addItem(item)
             }
         }
+        // Tagged, so a later call can take exactly these out again when the
+        // captain hides or shows a module (R2-UX-01 (b)).
+        for item in menu.items[start...] { item.tag = itemTag }
     }
+
+    /// The tag every item `populate` adds carries.
+    static let itemTag = 0x474F_4D4E
 
     /// A tab, as a menu item carries it: its module and its name.
     static func representation(of tab: ModuleTab) -> String { "\(tab.module.rawValue)/\(tab.name)" }

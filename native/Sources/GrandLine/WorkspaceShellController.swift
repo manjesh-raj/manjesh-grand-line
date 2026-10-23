@@ -261,6 +261,10 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
         openModuleTab(tab)
     }
 
+    /// R2-UX-01 (b): whether the captain's profile hides `destination`'s
+    /// module. Only the sidebar layout has modules to hide.
+    func hidesPage(_ destination: RailDestination) -> Bool { false }
+
     /// A module's page. The sidebar layout reopens the tab the module showed
     /// last, as its sidebar row does; a shell with no modules shows the
     /// module's first page.

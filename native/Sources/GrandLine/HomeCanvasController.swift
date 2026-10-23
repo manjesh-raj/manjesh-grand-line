@@ -336,13 +336,21 @@ final class HomeCanvasController: NSViewController {
     }
     /// Every arrangement the captain makes in Customize, for the shell to keep.
     var onCardLayoutChanged: ((HomeCardLayout) -> Void)?
+    /// What Reset brings back: Home's own cards for the captain's profile
+    /// (R2-UX-01 (b)). The sidebar layout sets it; the hub's own five
+    /// otherwise.
+    var standardCardLayout: HomeCardLayout = .standard
     /// Customize: the tray above the grid and the controls on every card.
     private(set) var isCustomizing = false
     private lazy var customizeTray: HomeCustomizeTray = {
         let tray = HomeCustomizeTray()
         tray.translatesAutoresizingMaskIntoConstraints = false
         tray.onAdd = { [weak self] module in self?.arrange { $0.show(module) } }
-        tray.onReset = { [weak self] in self?.arrange { $0 = .standard } }
+        tray.onReset = { [weak self] in
+            guard let self else { return }
+            let standard = self.standardCardLayout
+            self.arrange { $0 = standard }
+        }
         tray.onDone = { [weak self] in self?.endCustomizing() }
         return tray
     }()

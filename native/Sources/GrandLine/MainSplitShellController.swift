@@ -169,6 +169,7 @@ final class MainSplitShellController: WorkspaceShellController {
     private var dividerDragObserver: NSObjectProtocol?
     private var scrollerStyleObserver: NSObjectProtocol?
     private var dayChangeObserver: NSObjectProtocol?
+    private var hiddenModulesObserver: NSObjectProtocol?
 
     override var namesThePageInTheTitleBar: Bool { true }
     override var clipboardHistoryController: ClipboardHistoryController? { clipboardHistory }
@@ -207,7 +208,13 @@ final class MainSplitShellController: WorkspaceShellController {
         // Home's own space shows the captain's arranged cards in this layout
         // only, set before Home's first render (it mounts eagerly). The
         // floating bar never sets one, so its hub is unchanged.
-        workspace.homeCanvas.cardLayout = AppSettings.shared.homeCardLayout
+        applyProfileToHome()
+        // R2-UX-01 (b): a profile chosen later (the welcome sheet, Settings)
+        // moves Home's default cards with it. A layout the captain arranged
+        // is theirs and stays.
+        hiddenModulesObserver = NotificationCenter.default.addObserver(
+            forName: AppSettings.hiddenModulesDidChange, object: nil, queue: .main
+        ) { [weak self] _ in self?.applyProfileToHome() }
         workspace.homeCanvas.onCardLayoutChanged = { layout in AppSettings.shared.homeCardLayout = layout }
         workspace.homeCanvas.onCustomizingChanged = { [weak self] _ in self?.refreshModuleChrome() }
 
@@ -237,6 +244,14 @@ final class MainSplitShellController: WorkspaceShellController {
         }
     }
 
+    /// Home's cards for the captain's profile: their arranged set, or the
+    /// profile's own when they have not arranged one.
+    private func applyProfileToHome() {
+        let canvas = workspace.homeCanvas
+        canvas.standardCardLayout = .standard(for: AppSettings.shared.workspaceProfile ?? .operator)
+        workspace.homeCanvas.cardLayout = AppSettings.shared.homeCardLayout
+    }
+
     /// Home's header under its title: the day, as the prototype draws it.
     /// Home has no live subtitle of its own - its attention card says what
     /// needs the captain - so the date is the one line that adds something.
@@ -250,6 +265,7 @@ final class MainSplitShellController: WorkspaceShellController {
         if let dividerDragObserver { NotificationCenter.default.removeObserver(dividerDragObserver) }
         if let scrollerStyleObserver { NotificationCenter.default.removeObserver(scrollerStyleObserver) }
         if let dayChangeObserver { NotificationCenter.default.removeObserver(dayChangeObserver) }
+        if let hiddenModulesObserver { NotificationCenter.default.removeObserver(hiddenModulesObserver) }
         if let focusTimerToken { workspace.focusTimer.unobserve(focusTimerToken) }
     }
 
@@ -724,6 +740,10 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     override func openModuleTab(_ tab: ModuleTab) { open(tab) }
+
+    override func hidesPage(_ destination: RailDestination) -> Bool {
+        AppSettings.shared.hiddenModules.contains(ModuleTable.module(for: destination))
+    }
 
     /// Show a tab: its page through the navigator, like every other route,
     /// then - for one of a page's own tabs - that tab, through the page.

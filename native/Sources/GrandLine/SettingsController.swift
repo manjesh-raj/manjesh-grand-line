@@ -205,7 +205,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         /// for the page that happens to hold it.
         var searchKeywords: String {
             switch self {
-            case .appearance: return "theme dark light colour color palette font text size system pair"
+            case .appearance: return "theme dark light colour color palette font text size system pair sidebar module profile personal operator hide show"
             case .terminal: return "shell working directory font size shortcut split pane tab ssh reconnect notification bell"
             case .capture: return "capture quick capture hotkey shortcut global option space accessibility permission note task sticky"
             case .menuBar: return "compact dock status item hotkey shortcut overdue badge menubar"
@@ -433,6 +433,10 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// Keyed by index into `ChromeTextScale.steps` (GL-32).
     private var uiScaleButtons: [Int: HelmButton] = [:]
     private let autoReconnectSwitch = HelmToggle()
+    /// R2-UX-01 (b): the sidebar's profile and one switch per module that
+    /// can be hidden, in sidebar order.
+    private var profileTabs: HelmSegmentedTabs!
+    private var moduleSwitches: [(module: WorkspaceModule, toggle: HelmToggle)] = []
     /// R2-UX-01: the app lock, an opt-in now.
     private let appLockSwitch = HelmToggle()
     private var appLockCheckInFlight = false
@@ -1340,6 +1344,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         return [
             SettingsSection(group: SettingsGroup(rows: [followRow, pairRow])),
             SettingsSection(heading: "Window", group: SettingsGroup(rows: [layoutRow])),
+            buildSidebarModulesSection(),
             SettingsSection(heading: "Theme", aside: themeFilterTabs,
                             group: SettingsGroup(custom: appearanceContainer)),
             SettingsSection(heading: "Text", group: SettingsGroup(rows: [
@@ -1348,6 +1353,63 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                             control: scaleRow),
             ])),
         ]
+    }
+
+    // MARK: - The sidebar's modules (R2-UX-01 (b))
+
+    /// The profile a first run chose, and a switch for every module that can
+    /// be hidden. The sidebar, the Go menu, ⌘K and Home's default cards all
+    /// read the one stored set (`AppSettings.hiddenModules`), so a change here
+    /// reaches them at once. The floating bar has no modules and ignores it.
+    private func buildSidebarModulesSection() -> SettingsSection {
+        profileTabs = HelmSegmentedTabs(
+            items: WorkspaceProfile.allCases.map { .init(id: $0.rawValue, title: $0.title) }
+                + [.init(id: Self.customProfileID, title: "Custom")],
+            selected: Self.profileID(for: AppSettings.shared.hiddenModules), size: .compact)
+        profileTabs.setAccessibilityLabel("Sidebar profile")
+        profileTabs.onSelect = { [weak self] id in
+            guard let self, let profile = WorkspaceProfile(rawValue: id) else {
+                // Custom is what the switches below make; choosing it
+                // changes nothing.
+                self?.refreshModuleSwitches()
+                return
+            }
+            AppSettings.shared.setProfile(profile)
+            self.refreshModuleSwitches()
+        }
+        let profileRow = SettingsRow(
+            title: "Profile",
+            description: "Personal shows the modules anyone can use. Operator adds the crew, hosts, the console and the operations modules.",
+            control: profileTabs)
+        var rows = [profileRow]
+        moduleSwitches = WorkspaceSidebarModel.listedModules().filter(\.canBeHidden).map { module in
+            let toggle = HelmToggle()
+            toggle.setAccessibilityLabel("Show \(module.title) in the sidebar")
+            toggle.onToggle = { [weak self, weak toggle] in
+                guard let toggle else { return }
+                var hidden = AppSettings.shared.hiddenModules
+                if toggle.isOn { hidden.remove(module) } else { hidden.insert(module) }
+                AppSettings.shared.hiddenModules = hidden
+                self?.refreshModuleSwitches()
+            }
+            rows.append(SettingsRow(title: module.title, control: toggle, isSubRow: true))
+            return (module, toggle)
+        }
+        refreshModuleSwitches()
+        return SettingsSection(heading: "Sidebar", group: SettingsGroup(rows: rows),
+                               foot: "Home and Settings are always in the sidebar. A hidden module's pages still open from a link or a notification, and nothing in them is deleted. Applies to the sidebar layout.")
+    }
+
+    private static let customProfileID = "custom"
+
+    private static func profileID(for hidden: Set<WorkspaceModule>) -> String {
+        WorkspaceProfile.matching(hidden)?.rawValue ?? customProfileID
+    }
+
+    private func refreshModuleSwitches() {
+        let hidden = AppSettings.shared.hiddenModules
+        for (module, toggle) in moduleSwitches { toggle.isOn = !hidden.contains(module) }
+        profileTabs?.select(Self.profileID(for: hidden))
     }
 
     /// The width one theme card will not go below.
@@ -2454,6 +2516,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         autoReconnectSwitch.isOn = AppSettings.shared.autoReconnect
         if !appLockCheckInFlight { appLockSwitch.isOn = AppSettings.shared.appLockEnabled != false }
+        refreshModuleSwitches()
         notifySwitch.isOn = AppSettings.shared.notifyOnNeedsDecision
         morningBriefingSwitch.isOn = AppSettings.shared.morningBriefingEnabled
         compactModeSwitch.isOn = AppSettings.shared.compactModeEnabled
@@ -2523,9 +2586,10 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         for toggle in [autoReconnectSwitch, appLockSwitch, notifySwitch, morningBriefingSwitch,
                        followSystemSwitch, compactModeSwitch, compactDockSwitch,
-                       compactBadgeSwitch] {
+                       compactBadgeSwitch] + moduleSwitches.map(\.toggle) {
             toggle.applyTheme(theme)
         }
+        profileTabs?.applyTheme(theme)
         themeFilterTabs?.applyTheme(theme)
         windowLayoutTabs?.applyTheme(theme)
         // The two popups are not in that loop: `HelmPopUpButton` observes the
@@ -2669,6 +2733,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     var debugAutoReconnectSwitch: HelmToggle { autoReconnectSwitch }
     var debugAppLockSwitch: HelmToggle { appLockSwitch }
+    /// R2-UX-01 (b): the sidebar's profile control and module switches.
+    var debugProfileTabs: HelmSegmentedTabs? { profileTabs }
+    var debugModuleSwitches: [(module: WorkspaceModule, toggle: HelmToggle)] { moduleSwitches }
     var debugNotifySwitch: HelmToggle { notifySwitch }
     var debugMorningBriefingSwitch: HelmToggle { morningBriefingSwitch }
     var debugCompactModeSwitch: HelmToggle { compactModeSwitch }

@@ -17,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// the app's ground - not a black band - runs to the top of the display.
     /// See `FullScreenMenuBarFill.swift`'s header for the measurement.
     private var fullScreenMenuBarFill: FullScreenMenuBarFill?
+    /// Keeps the sidebar layout's Go menu in step with the hidden modules.
+    private var goMenuObserver: NSObjectProtocol?
     // Phase 1: saved SSH hosts + the panel that lists and connects them. The
     // panel hands a `ssh` argv to the console, which opens it as a new tab.
     let hostStore = LaunchSignposts.measure("HostStore.init") { HostStore() }
@@ -2315,7 +2317,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // map and must stay complete; a menu that already listed something
         // ten rows up must not list it again.
         let alreadyListed: Set<RailDestination> = [.homeCanvas]
-        if workspaceLayout == .sidebar { WorkspaceGoMenu.populate(goMenu, target: menuTarget) }
+        if workspaceLayout == .sidebar {
+            WorkspaceGoMenu.populate(goMenu, target: menuTarget, hidden: AppSettings.shared.hiddenModules)
+            // R2-UX-01 (b): a module shown or hidden in Settings comes and
+            // goes here too, as it does in the sidebar.
+            if installing {
+                if let goMenuObserver { NotificationCenter.default.removeObserver(goMenuObserver) }
+                goMenuObserver = NotificationCenter.default.addObserver(
+                    forName: AppSettings.hiddenModulesDidChange, object: nil, queue: .main
+                ) { [weak goMenu, weak menuTarget] _ in
+                    guard let goMenu else { return }
+                    WorkspaceGoMenu.populate(goMenu, target: menuTarget, hidden: AppSettings.shared.hiddenModules)
+                }
+            }
+        }
         for group in AllDestinationsOverlayController.groups() where workspaceLayout == .floatingBar {
             let remaining = group.destinations.filter { !alreadyListed.contains($0) }
             guard !remaining.isEmpty else { continue }
@@ -3639,6 +3654,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_APP_LOCK_TESTS"] == "1" {
 // pure half - models, menus and source guards (`ReviewTwoUXModelSelfTest`).
 if ProcessInfo.processInfo.environment["FM_RUN_REVIEW2_UX_MODEL_TESTS"] == "1" {
     exit(ReviewTwoUXModelSelfTest.run() ? 0 : 1)
+}
+
+// ...and the window-backed half: a real sidebar shell, a real Settings page
+// and real pixels (`ReviewTwoUXSelfTest`, in `NEEDS_SESSION`).
+if ProcessInfo.processInfo.environment["FM_RUN_REVIEW2_UX_TESTS"] == "1" {
+    exit(ReviewTwoUXSelfTest.run() ? 0 : 1)
 }
 
 // R2-UX-01 (a): the app lock as an opt-in - the first launch's settlement, the

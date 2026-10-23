@@ -47,11 +47,16 @@ enum WorkspaceSidebarModel {
         var children: [Node] = []
     }
 
-    /// The sidebar's top level: Home, then the four groups.
-    static func roots(sessions: [HostSession]) -> [Node] {
+    /// The sidebar's top level: Home, then the four groups, without the
+    /// modules the captain's profile hides (R2-UX-01 (b)). A group with
+    /// nothing left in it is left out too, rather than drawn as an empty
+    /// heading.
+    static func roots(sessions: [HostSession], hidden: Set<WorkspaceModule> = []) -> [Node] {
         var roots = [Node(entry: .module(.home))]
         for group in WorkspaceGroup.allCases {
-            let rows = modules(in: group).map { module -> Node in
+            let shown = modules(in: group, hidden: hidden)
+            guard !shown.isEmpty else { continue }
+            let rows = shown.map { module -> Node in
                 guard module == .console else { return Node(entry: .module(module)) }
                 return Node(entry: .module(.console), children: sessions.map { Node(entry: .session(hostID: $0.hostID)) })
             }
@@ -61,14 +66,14 @@ enum WorkspaceSidebarModel {
     }
 
     /// The modules in `group`, in the module table's sidebar order.
-    static func modules(in group: WorkspaceGroup) -> [WorkspaceModule] {
-        WorkspaceModule.allCases.filter { $0.group == group }
+    static func modules(in group: WorkspaceGroup, hidden: Set<WorkspaceModule> = []) -> [WorkspaceModule] {
+        WorkspaceModule.allCases.filter { $0.group == group && !hidden.contains($0) }
     }
 
     /// Every module the sidebar lists, once - the completeness
     /// `SplitShellModelSelfTest` asserts against the module table.
-    static func listedModules() -> [WorkspaceModule] {
-        [.home] + WorkspaceGroup.allCases.flatMap(modules(in:))
+    static func listedModules(hidden: Set<WorkspaceModule> = []) -> [WorkspaceModule] {
+        [.home] + WorkspaceGroup.allCases.flatMap { modules(in: $0, hidden: hidden) }
     }
 }
 
@@ -166,6 +171,9 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// mistaken for the captain picking one.
     private var isApplyingSelection = false
     private var themeToken: ThemeObservation?
+    /// The modules the captain's profile leaves out (R2-UX-01 (b)).
+    private var hidden: Set<WorkspaceModule> = AppSettings.shared.hiddenModules
+    private var hiddenObserver: NSObjectProtocol?
 
     // MARK: Build
 
@@ -228,6 +236,17 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         ])
 
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
+        hiddenObserver = NotificationCenter.default.addObserver(
+            forName: AppSettings.hiddenModulesDidChange, object: nil, queue: .main
+        ) { [weak self] _ in self?.setHiddenModules(AppSettings.shared.hiddenModules) }
+        rebuild()
+    }
+
+    /// The captain showed or hid a module in Settings: rebuild the rows.
+    func setHiddenModules(_ modules: Set<WorkspaceModule>) {
+        guard modules != hidden else { return }
+        hidden = modules
+        guard isViewLoaded else { return }
         rebuild()
     }
 
@@ -236,6 +255,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
+        if let hiddenObserver { NotificationCenter.default.removeObserver(hiddenObserver) }
     }
 
     // MARK: What the shell tells it
@@ -281,7 +301,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     }
 
     private func rebuild() {
-        roots = WorkspaceSidebarModel.roots(sessions: sessions).map(WorkspaceSidebarItem.init)
+        roots = WorkspaceSidebarModel.roots(sessions: sessions, hidden: hidden).map(WorkspaceSidebarItem.init)
         isApplyingSelection = true
         outlineView.reloadData()
         for item in roots where item.isSection {

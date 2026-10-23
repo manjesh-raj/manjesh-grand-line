@@ -1070,7 +1070,10 @@ final class Workspace {
         // stands unchanged: a machine with no firstmate home resolved lands on
         // Setup instead, because a canvas of modules that can only report
         // zeroes is worse than the page that fixes the cause.
-        if FirstmateHome.homeOk() {
+        // R2-UX-01 (b): a profile that hides Setup has nothing there to fix -
+        // a general user has no firstmate home and needs none - so it opens on
+        // Home like any other launch.
+        if FirstmateHome.homeOk() || (PlaceName.layout == .sidebar && AppSettings.shared.hiddenModules.contains(.setup)) {
             navigator.show(.homeCanvas)
         } else {
             AppLog.lifecycle.info("firstmate home not configured - opening Setup instead of the home canvas")

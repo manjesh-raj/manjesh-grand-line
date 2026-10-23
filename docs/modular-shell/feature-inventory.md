@@ -491,6 +491,7 @@ The eight categories and every row whose title is a literal. Rows built in a loo
 | `settings.row.Light and dark pair` | Settings row: Light and dark pair | Settings > Appearance | Settings › Appearance (unchanged row) |  |
 | `settings.row.Live in the menu bar` | Settings row: Live in the menu bar | Settings > Menu Bar | Settings › Menu Bar (unchanged row) |  |
 | `settings.row.Lock after a full session` | Settings row: Lock after a full session | Settings > Security | Settings › Security (unchanged row) |  |
+| `settings.row.Profile` | Settings row: Profile - Personal, Operator or Custom, with a switch per module that can be hidden (R2-UX-01) | Settings > Appearance > Sidebar | Settings › Appearance |  |
 | `settings.row.Require a password to open Grand Line` | Settings row: Require a password to open Grand Line (the app lock's opt-in, R2-UX-01) | Settings > Security | Settings › Security |  |
 | `settings.row.Lock when idle` | Settings row: Lock when idle | Settings > Security | Settings › Security (unchanged row) |  |
 | `settings.row.Notify when the crew needs you` | Settings row: Notify when the crew needs you | Settings > Terminal | Settings › Terminal (unchanged row) |  |
@@ -536,6 +537,7 @@ Every `HelmSegmentedTabs` built from literal titles, plus the Hosts column, the 
 | `tab.LogAnalyzerController.Error Groups` | Log Analyzer result tab: Error Groups | Log Analyzer results | Logs (result tab, unchanged) |  |
 | `tab.LogAnalyzerController.Evidence` | Log Analyzer result tab: Evidence | Log Analyzer results | Logs (result tab, unchanged) |  |
 | `tab.LogAnalyzerController.Timeline` | Log Analyzer result tab: Timeline | Log Analyzer results | Logs (result tab, unchanged) |  |
+| `tab.SettingsController.Custom` | Sidebar profile: Custom (a hidden set neither profile starts with, R2-UX-01) | Settings > Appearance > Sidebar | Settings › Appearance |  |
 | `tab.SettingsController.All` | Theme filter: All | Settings > Appearance theme grid | Settings › Appearance (theme filter, unchanged) |  |
 | `tab.SettingsController.Dark` | Theme filter: Dark | Settings > Appearance theme grid | Settings › Appearance (theme filter, unchanged) |  |
 | `tab.SettingsController.Light` | Theme filter: Light | Settings > Appearance theme grid | Settings › Appearance (theme filter, unchanged) |  |
@@ -811,7 +813,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.UnifiedSearch` | UnifiedSearch controls | `clicked` | Toolbar (the search field and its ⌘K palette) |  |
 | `action.UpdatesController` | UpdatesController controls | `checkAllTapped`, `checkTapped`, `installInBootstrapTapped`, `runInTerminalTapped`, `updateTapped` | Setup › Updates |  |
 | `action.VaultController` | VaultController controls | `addSecretTapped`, `cancel`, `checkBackupTapped`, `closeTapped`, `confirm`, `copyNameTapped`, `exportRecipeTapped`, `refreshTapped`, `runInjectedTapped` | Secrets › Automic Vault |  |
-| `action.WelcomeSheetController` | WelcomeSheetController controls | `backTapped`, `copyCommandTapped`, `nextTapped`, `skipTapped`, `themePicked` | Window (first-run welcome sheet) |  |
+| `action.WelcomeSheetController` | WelcomeSheetController controls | `backTapped`, `copyCommandTapped`, `nextTapped`, `profilePicked`, `skipTapped`, `themePicked` | Window (first-run welcome sheet; the profile step is the sidebar layout's, R2-UX-01) |  |
 | `action.WhiteboardComposerPopover` | WhiteboardComposerPopover controls | `appendToggled`, `exampleClicked`, `generateClicked`, `startOverClicked` | Whiteboard |  |
 | `action.WhiteboardController` | WhiteboardController controls | `dslTapped`, `generateTapped` | Whiteboard |  |
 | `action.WhiteboardDSLPopover` | WhiteboardDSLPopover controls | `appendToggled`, `componentMenuPicked`, `componentsButtonClicked`, `insertClicked` | Whiteboard |  |
@@ -893,6 +895,7 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.followSystemAppearance` | Saved preference `fm.followSystemAppearance` | declared in AppSettings | Settings › Appearance |  |
 | `state.fm.fontSize` | Saved preference `fm.fontSize` | declared in AppSettings | Settings › Terminal |  |
 | `state.fm.hasSeenWelcome` | Saved preference `fm.hasSeenWelcome` | declared in AppSettings | Window (welcome sheet) |  |
+| `state.fm.hiddenModules` | Saved preference `fm.hiddenModules` | declared in AppSettings | Settings › Appearance (the modules the sidebar, the Go menu, ⌘K and Home's default cards leave out, R2-UX-01) |  |
 | `state.fm.homeCardLayout` | Saved preference `fm.homeCardLayout` | declared in AppSettings | Home (the cards Customize arranges on Home's own space; the floating bar's hub never reads it) |  |
 | `state.fm.keychainMigratedFromFirstmateCockpit` | Saved preference `fm.keychainMigratedFromFirstmateCockpit` | declared in LegacyNameMigration | System (launch migration marker, unchanged) |  |
 | `state.fm.keychainMigratedItems` | Saved preference `fm.keychainMigratedItems` | declared in LegacyNameMigration | System (launch migration marker, unchanged) |  |
@@ -912,6 +915,7 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.systemDarkThemeID` | Saved preference `fm.systemDarkThemeID` | declared in AppSettings | Settings › Appearance |  |
 | `state.fm.systemLightThemeID` | Saved preference `fm.systemLightThemeID` | declared in AppSettings | Settings › Appearance |  |
 | `state.fm.terminalShortcuts` | Saved preference `fm.terminalShortcuts` | declared in AppSettings | Settings › Terminal |  |
+| `state.fm.workspaceProfile` | Saved preference `fm.workspaceProfile` | declared in AppSettings | Settings › Appearance (the profile the sidebar started from - Personal on a fresh install, Operator on an existing one, R2-UX-01) |  |
 | `state.fm.themeID` | Saved preference `fm.themeID` | declared in ThemeManager | Settings › Appearance |  |
 | `state.fm.themeMode` | Saved preference `fm.themeMode` | declared in ThemeManager | Settings › Appearance (legacy key, migrated) |  |
 | `state.fm.todayCalendarRetired` | Saved preference `fm.todayCalendarRetired` | declared in TodayCalendarRetirement | System (one-time cleanup of the retired Today page's keys, unchanged) |  |
@@ -936,7 +940,7 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 | `chrome.primaryAction` | A page's one primary action at the toolbar's far right, after Search (Add Host, New Key, New Snippet, Analyze, Copy diagnostics) | Bar's drill header, among the page's actions | Toolbar (the far-right item, stage 6; the floating bar's drill header is unchanged) | `WorkspaceToolbar.swift` `static let primaryAction`; `WorkspacePagePresentation.swift` `protocol WorkspacePrimaryActionProviding` |
 | `chrome.searchPill` | Search pill with its ⌘K badge | Bar, trailing | Toolbar (search field with the ⌘K hint) | `DaylightBarController.swift` `final class DaylightSearchPill`; `WorkspaceToolbar.swift` `@objc private func searchClicked()` |
 | `chrome.recents` | Recents dropdown: recently visited pages and hosts | Bar, trailing, after search | Toolbar (a Recents button beside Back and Forward opens the same panel, with the same rows) | `RecentDestinationsPopover.swift` `final class RecentDestinationsController`; `RecentDestinationsPopover.swift` `func togglePanel(under anchor: NSView)`; `WorkspaceToolbar.swift` `@objc private func recentsClicked()` |
-| `chrome.quickAccess` | Captain-configured quick-access squares (default: Sticky Board, Code Preview, Tasks, Straw Hat, Poneglyph, Console, Hosts) | Bar, trailing | Sidebar (the sidebar layout draws no pins - stage 6, the captain's call: every page is one click on its module's row and one on its tab, and a Pinned section listed pages that already had both. The same saved list still drives the floating bar's squares) | `QuickAccessConfiguration.swift` `struct QuickAccessConfiguration`; `WorkspaceSidebar.swift` `static func roots(sessions: [HostSession])`; `DaylightBarController.swift` `quickAccessOverflowButton` |
+| `chrome.quickAccess` | Captain-configured quick-access squares (default: Sticky Board, Code Preview, Tasks, Straw Hat, Poneglyph, Console, Hosts) | Bar, trailing | Sidebar (the sidebar layout draws no pins - stage 6, the captain's call: every page is one click on its module's row and one on its tab, and a Pinned section listed pages that already had both. The same saved list still drives the floating bar's squares) | `QuickAccessConfiguration.swift` `struct QuickAccessConfiguration`; `WorkspaceSidebar.swift` `static func roots(sessions: [HostSession], hidden: Set<WorkspaceModule> = [])`; `DaylightBarController.swift` `quickAccessOverflowButton` |
 | `chrome.quickAccessOverflow` | "More destinations" overflow when the squares do not fit | Bar, below 1300pt | Sidebar (with no pins in the sidebar layout nothing overflows; the floating bar's overflow is unchanged) | `DaylightBarController.swift` `quickAccessOverflowButton` |
 | `chrome.quickAccessPin` | Pin or unpin a page to the quick-access row | Right-click a page in the ⌘⇧D map | Sidebar (the sidebar layout offers no Pin or Unpin since stage 6, the captain's call; the floating bar's ⌘⇧D map still pins and unpins, into the same saved list) | `WorkspaceShellController.swift` `func toggleQuickAccessPin` |
 | `chrome.allDestinations` | The ⌘⇧D map of every page | Floating panel over the window | Sidebar (the sidebar is the whole map; ⌘⇧D reveals and focuses it) | `AllDestinationsOverlay.swift` `final class AllDestinationsOverlayController`; `MainSplitShellController.swift` `override func revealDestinationMap() -> Bool` |

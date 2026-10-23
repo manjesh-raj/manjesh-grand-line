@@ -99,8 +99,10 @@ enum DaylightDrillPageSlice6SelfTest {
     /// removed the Briefings page's Daily review card and the Google Accounts
     /// page's three (Accounts, Calendar, OAuth client). Twenty-two since stage
     /// 3 of the modular-shell migration added the Appearance page's Window
-    /// card (the window layout: floating bar or sidebar).
-    private static let expectedCardCount = 22
+    /// card (the window layout: floating bar or sidebar). Twenty-three since
+    /// R2-UX-01 (b) added the Appearance page's Sidebar card (the profile and
+    /// a switch per module).
+    private static let expectedCardCount = 23
 
 
     static func run() -> Bool {

@@ -44,15 +44,24 @@ final class WelcomeSheetController: NSViewController {
 
     private enum Step: Int, CaseIterable {
         case theme
+        /// R2-UX-01 (b): the first-run choice of profile. The sidebar
+        /// layout's only - the floating bar has no modules to hide.
+        case profile
         case tour
         case lock
 
         var title: String {
             switch self {
             case .theme: return "Pick a look"
+            case .profile: return "How will you use Grand Line?"
             case .tour: return "What this is"
             case .lock: return "Locking the app"
             }
+        }
+
+        /// The steps a layout shows, in order.
+        static func steps(for layout: WorkspaceLayout) -> [Step] {
+            layout == .sidebar ? allCases : allCases.filter { $0 != .profile }
         }
 
         var blurb: String {
@@ -60,6 +69,9 @@ final class WelcomeSheetController: NSViewController {
             case .theme:
                 return "Grand Line ships fourteen palettes. Pick one now - it applies as you click, "
                     + "and you can change it any time from the bar or from \(PlaceName.of(.settings))."
+            case .profile:
+                return "Pick the modules your sidebar starts with. You can show or hide any of them later in "
+                    + "\(PlaceName.of(.settings)) \u{203A} Appearance, and nothing you hide is deleted."
             case .tour:
                 // R2-UX-02: the sidebar layout has one map, the sidebar, so
                 // its tour describes that and not the floating bar's spaces.
@@ -88,7 +100,9 @@ final class WelcomeSheetController: NSViewController {
         }
     }
 
-    private var step: Step = .theme
+    private let steps = Step.steps(for: PlaceName.layout)
+    private var stepIndex = 0
+    private var step: Step { steps[stepIndex] }
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let blurbLabel = NSTextField(wrappingLabelWithString: "")
@@ -100,6 +114,8 @@ final class WelcomeSheetController: NSViewController {
 
     private let themeGrid = NSStackView()
     private var themeButtons: [HelmButton] = []
+    private let profileStack = NSStackView()
+    private var profileButtons: [(profile: WorkspaceProfile, button: HelmButton)] = []
     private let commandWell = NSTextField(labelWithString: "")
     private let commandCopyButton = HelmButton(title: "Copy", variant: .secondary, symbol: "doc.on.doc")
 
@@ -121,13 +137,18 @@ final class WelcomeSheetController: NSViewController {
         skipButton.keyEquivalent = "\u{1b}"
 
         buildThemeGrid()
+        buildProfileChoice()
         buildCommandWell()
 
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
-        for child in [themeGrid, commandWell, commandCopyButton] as [NSView] {
+        for child in [themeGrid, profileStack, commandWell, commandCopyButton] as [NSView] {
             bodyContainer.addSubview(child)
         }
         NSLayoutConstraint.activate([
+            profileStack.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
+            profileStack.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
+            profileStack.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
+
             themeGrid.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
             themeGrid.trailingAnchor.constraint(lessThanOrEqualTo: bodyContainer.trailingAnchor),
             themeGrid.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
@@ -174,32 +195,33 @@ final class WelcomeSheetController: NSViewController {
     // MARK: Steps
 
     private func render() {
-        stepLabel.stringValue = "STEP \(step.rawValue + 1) OF \(Step.allCases.count)"
+        stepLabel.stringValue = "STEP \(stepIndex + 1) OF \(steps.count)"
         titleLabel.stringValue = step.title
         blurbLabel.stringValue = step.blurb
         themeGrid.isHidden = step != .theme
+        profileStack.isHidden = step != .profile
         commandWell.isHidden = step != .lock
         commandCopyButton.isHidden = step != .lock
-        backButton.isHidden = step == Step.allCases.first
-        nextButton.title = step == Step.allCases.last ? "Get started" : "Next"
+        backButton.isHidden = stepIndex == 0
+        nextButton.title = stepIndex == steps.count - 1 ? "Get started" : "Next"
         // On the last step, "Skip" would mean the same thing as the primary
         // action, and two buttons for one outcome is worse than one.
-        skipButton.isHidden = step == Step.allCases.last
+        skipButton.isHidden = stepIndex == steps.count - 1
         applyTheme(ThemeManager.shared.theme)
     }
 
     @objc private func nextTapped() {
-        guard let next = Step(rawValue: step.rawValue + 1) else {
+        guard stepIndex + 1 < steps.count else {
             finish()
             return
         }
-        step = next
+        stepIndex += 1
         render()
     }
 
     @objc private func backTapped() {
-        guard let previous = Step(rawValue: step.rawValue - 1) else { return }
-        step = previous
+        guard stepIndex > 0 else { return }
+        stepIndex -= 1
         render()
     }
 
@@ -246,6 +268,38 @@ final class WelcomeSheetController: NSViewController {
         render()
     }
 
+    /// R2-UX-01 (b): one button per profile with its one-line summary under
+    /// it. The choice applies on click, like the theme step's, and the install
+    /// already started on Personal (`AppSettings.settleFirstLaunch`), so
+    /// skipping keeps that.
+    private func buildProfileChoice() {
+        profileStack.orientation = .vertical
+        profileStack.alignment = .leading
+        profileStack.spacing = HelmMetrics.s3
+        profileStack.translatesAutoresizingMaskIntoConstraints = false
+        for profile in WorkspaceProfile.allCases {
+            let button = HelmButton(title: profile.title, variant: .secondary,
+                                    target: self, action: #selector(profilePicked(_:)))
+            button.identifier = NSUserInterfaceItemIdentifier(profile.rawValue)
+            let caption = NSTextField(wrappingLabelWithString: profile.summary)
+            caption.font = HelmType.caption()
+            caption.identifier = NSUserInterfaceItemIdentifier("caption")
+            let row = NSStackView(views: [button, caption])
+            row.orientation = .vertical
+            row.alignment = .leading
+            row.spacing = HelmMetrics.s1
+            profileStack.addArrangedSubview(row)
+            caption.widthAnchor.constraint(equalTo: profileStack.widthAnchor).isActive = true
+            profileButtons.append((profile, button))
+        }
+    }
+
+    @objc private func profilePicked(_ sender: NSButton) {
+        guard let profile = sender.identifier.flatMap({ WorkspaceProfile(rawValue: $0.rawValue) }) else { return }
+        AppSettings.shared.setProfile(profile)
+        render()
+    }
+
     private func buildCommandWell() {
         // The same string the lock screen shows, read from the same place -
         // a second copy is how the sheet and the lock screen would come to
@@ -284,6 +338,11 @@ final class WelcomeSheetController: NSViewController {
         for button in themeButtons {
             button.variant = button.identifier?.rawValue == theme.id ? .primary : .secondary
         }
+        let chosen = WorkspaceProfile.matching(AppSettings.shared.hiddenModules)
+        for (profile, button) in profileButtons { button.variant = profile == chosen ? .primary : .secondary }
+        for case let row as NSStackView in profileStack.arrangedSubviews {
+            for case let caption as NSTextField in row.arrangedSubviews { caption.textColor = HelmField.mutedInk(theme) }
+        }
     }
 
     deinit {
@@ -291,8 +350,14 @@ final class WelcomeSheetController: NSViewController {
     }
 
     #if FM_SELFTESTS
-    var debugStepIndex: Int { step.rawValue }
-    static var debugStepCount: Int { Step.allCases.count }
+    var debugStepIndex: Int { stepIndex }
+    static var debugStepCount: Int { Step.steps(for: PlaceName.layout).count }
+    var debugStepTitle: String { step.title }
+    var debugProfileChoiceIsHidden: Bool { profileStack.isHidden }
+    /// Pick a profile through its button's own target and action.
+    func debugPickProfile(_ profile: WorkspaceProfile) {
+        profileButtons.first { $0.profile == profile }?.button.performClick(nil)
+    }
     func debugNext() { nextTapped() }
     func debugBack() { backTapped() }
     func debugSkip() { skipTapped() }

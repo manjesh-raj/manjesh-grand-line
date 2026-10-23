@@ -56,6 +56,8 @@ final class AppSettings {
         static let workspaceLayout = "fm.workspaceLayout"
         static let homeCardLayout = "fm.homeCardLayout"
         static let appLockEnabled = "fm.appLockEnabled"
+        static let workspaceProfile = "fm.workspaceProfile"
+        static let hiddenModules = "fm.hiddenModules"
     }
 
     /// GL-P3 (audit §6.10): the defaults store is injectable.
@@ -535,7 +537,10 @@ final class AppSettings {
     /// does not read - a preference that cannot be read is not worth more
     /// than the default it replaces.
     var homeCardLayout: HomeCardLayout {
-        get { defaults.data(forKey: Keys.homeCardLayout).flatMap(HomeCardLayout.init(storedData:)) ?? .standard }
+        get {
+            defaults.data(forKey: Keys.homeCardLayout).flatMap(HomeCardLayout.init(storedData:))
+                ?? .standard(for: workspaceProfile ?? .operator)
+        }
         set {
             guard let data = newValue.storedData else { return }
             defaults.set(data, forKey: Keys.homeCardLayout)
@@ -584,7 +589,44 @@ final class AppSettings {
     ///
     /// - A fresh install opens unlocked; an existing one is left undecided so
     ///   its lock screen settles it (see `appLockEnabled`).
+    /// - A fresh install starts on the Personal profile, which the welcome
+    ///   sheet offers to change; an existing one is Operator, so every module
+    ///   it had stays in its sidebar.
     func settleFirstLaunch(isExistingInstall existing: Bool) {
         if appLockEnabled == nil, !existing { appLockEnabled = false }
+        if workspaceProfile == nil { setProfile(existing ? .operator : .personal) }
     }
+
+    /// R2-UX-01 (b): the profile the sidebar started from (`WorkspaceProfile`).
+    /// `nil` only before `settleFirstLaunch` - and in a self-test or tour
+    /// process, which never runs it, so those see every module.
+    var workspaceProfile: WorkspaceProfile? {
+        defaults.string(forKey: Keys.workspaceProfile).flatMap(WorkspaceProfile.init(rawValue:))
+    }
+
+    /// Choose a profile: its hidden set replaces the current one.
+    func setProfile(_ profile: WorkspaceProfile) {
+        defaults.set(profile.rawValue, forKey: Keys.workspaceProfile)
+        hiddenModules = profile.hiddenModules
+    }
+
+    /// R2-UX-01 (b): the modules the sidebar layout leaves out of its sidebar,
+    /// its Go menu, the ⌘K palette and Home's default cards. Stored as module
+    /// ids; an id this build does not know is dropped on read, and Home and
+    /// Settings can never be hidden. With nothing stored it is the profile's
+    /// set, and with no profile, none.
+    var hiddenModules: Set<WorkspaceModule> {
+        get {
+            guard let stored = defaults.stringArray(forKey: Keys.hiddenModules) else {
+                return workspaceProfile?.hiddenModules ?? []
+            }
+            return Set(stored.compactMap(WorkspaceModule.init(rawValue:)).filter(\.canBeHidden))
+        }
+        set {
+            defaults.set(newValue.filter(\.canBeHidden).map(\.rawValue).sorted(), forKey: Keys.hiddenModules)
+            NotificationCenter.default.post(name: AppSettings.hiddenModulesDidChange, object: self)
+        }
+    }
+
+    static let hiddenModulesDidChange = Notification.Name("fm.hiddenModulesDidChange")
 }

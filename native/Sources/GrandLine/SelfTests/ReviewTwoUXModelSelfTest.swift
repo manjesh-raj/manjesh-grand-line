@@ -20,6 +20,10 @@ enum ReviewTwoUXModelSelfTest {
         checkTheGoMenuIsTheSidebarsMap(&ok)
         checkTheGoMenuPerLayout(&ok)
         checkHomeDrawsNoSpaces(&ok)
+        checkTheProfiles(&ok)
+        checkTheFirstLaunchProfile(&ok)
+        checkTheHiddenModulesReachEveryReader(&ok)
+        checkTheWelcomeOffersTheProfiles(&ok)
         print(ok ? "ReviewTwoUXModelSelfTest: PASS" : "ReviewTwoUXModelSelfTest: FAIL")
         return ok
     }
@@ -123,6 +127,128 @@ enum ReviewTwoUXModelSelfTest {
         check(!shell.contains("DaylightSpace.allCases"),
               "the sidebar shell still lays Home's spaces out somewhere (DaylightSpace.allCases)", &ok)
         check(shell.contains("toolbar.setTabs([], selected: nil)"), "the sidebar shell no longer clears Home's tabs", &ok)
+    }
+
+    // MARK: R2-UX-01 (b) - Personal and Operator
+
+    static let personalModules: [WorkspaceModule] = [.home, .tasks, .knowledge, .secrets, .tools, .whiteboard,
+                                                     .stickyBoard, .code, .dictation, .settings]
+
+    /// A scratch settings store, removed after `body`.
+    static func withScratchSettings(_ name: String, _ body: (AppSettings) -> Void) {
+        let suite = "fm.selftest.review2ux.\(name).\(ProcessInfo.processInfo.processIdentifier)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        body(AppSettings(defaults: defaults))
+    }
+
+    private static func checkTheProfiles(_ ok: inout Bool) {
+        check(WorkspaceSidebarModel.listedModules(hidden: WorkspaceProfile.personal.hiddenModules) == personalModules,
+              "the Personal sidebar is \(WorkspaceSidebarModel.listedModules(hidden: WorkspaceProfile.personal.hiddenModules).map(\.rawValue)), want the review's ten", &ok)
+        check(WorkspaceProfile.operator.hiddenModules.isEmpty, "the Operator profile hides something", &ok)
+        check(!WorkspaceModule.home.canBeHidden && !WorkspaceModule.settings.canBeHidden,
+              "Home or Settings can be hidden - then nothing could bring a module back", &ok)
+        check(WorkspaceProfile.matching([]) == .operator && WorkspaceProfile.matching([.logs]) == nil,
+              "a hidden set is not matched to its profile, or an edited one is", &ok)
+        // A group whose modules are all hidden draws no empty heading.
+        let roots = WorkspaceSidebarModel.roots(sessions: [], hidden: WorkspaceProfile.personal.hiddenModules)
+        let sections = roots.compactMap { node -> String? in
+            if case .section(let title) = node.entry { return title }
+            return nil
+        }
+        check(sections == ["Work", "Workbench", "Machine"], "the Personal sidebar's headings are \(sections)", &ok)
+        // The stored set never holds Home or Settings, whatever is written.
+        withScratchSettings("hidden") { settings in
+            settings.hiddenModules = [.home, .settings, .logs]
+            check(settings.hiddenModules == [.logs], "the stored hidden set kept \(settings.hiddenModules.map(\.rawValue))", &ok)
+        }
+    }
+
+    private static func checkTheFirstLaunchProfile(_ ok: inout Bool) {
+        withScratchSettings("fresh") { settings in
+            settings.settleFirstLaunch(isExistingInstall: false)
+            check(settings.workspaceProfile == .personal && settings.hiddenModules == WorkspaceProfile.personal.hiddenModules,
+                  "a fresh install started on \(String(describing: settings.workspaceProfile)), want Personal", &ok)
+            check(settings.homeCardLayout == .standard(for: .personal),
+                  "a fresh Personal install's Home does not lead with its own cards", &ok)
+        }
+        withScratchSettings("existing") { settings in
+            settings.settleFirstLaunch(isExistingInstall: true)
+            check(settings.workspaceProfile == .operator && settings.hiddenModules.isEmpty,
+                  "an existing install lost modules at launch: \(settings.hiddenModules.map(\.rawValue))", &ok)
+            check(settings.homeCardLayout == .standard, "an existing install's Home changed its default cards", &ok)
+        }
+        withScratchSettings("kept") { settings in
+            settings.hiddenModules = [.kubernetes]
+            settings.setProfile(.operator)
+            settings.hiddenModules = [.kubernetes]
+            settings.settleFirstLaunch(isExistingInstall: false)
+            check(settings.hiddenModules == [.kubernetes], "a later launch replaced the captain's own hidden set", &ok)
+        }
+        let personal = HomeCardLayout.standard(for: .personal).shown
+        let operatorCards: Set<DaylightModule> = [.fleet, .briefing, .mergeQueue, .claudeStatus, .health]
+        check(Set(personal).isDisjoint(with: operatorCards),
+              "a Personal Home still leads with operator cards: \(personal.filter(operatorCards.contains).map(\.rawValue))", &ok)
+    }
+
+    private static func checkTheHiddenModulesReachEveryReader(_ ok: inout Bool) {
+        let hidden = WorkspaceProfile.personal.hiddenModules
+        // The Go menu.
+        let menuModules = WorkspaceGoMenu.entries(hidden: hidden).compactMap { entry -> WorkspaceModule? in
+            if case .module(let module) = entry { return module }
+            return nil
+        }
+        check(menuModules == personalModules, "the Personal Go menu lists \(menuModules.map(\.rawValue))", &ok)
+        let menu = NSMenu()
+        WorkspaceGoMenu.populate(menu, target: nil)
+        WorkspaceGoMenu.populate(menu, target: nil, hidden: hidden)
+        let rows = menu.items.filter { $0.action == #selector(WorkspaceShellController.selectModuleFromMenu(_:)) }
+        check(rows.map(\.title) == personalModules.map(\.title),
+              "repopulating the Go menu for a hidden set left \(rows.map(\.title))", &ok)
+        // The palette.
+        var provider = UnifiedSearchActionProvider(actions: [
+            .init(title: "Switch to Kubernetes", meta: "Destination", keywords: [], destination: .kubernetes, run: {}),
+            .init(title: "Switch to Notebook", meta: "Destination", keywords: [], destination: .notebook, run: {}),
+            .init(title: "New Task…", meta: "Tasks", keywords: [], run: {}),
+        ])
+        provider.isHidden = { hidden.contains(ModuleTable.module(for: $0)) }
+        let titles = provider.items(query: "").map(\.title)
+        check(titles == ["Switch to Notebook", "New Task…"], "the palette with Kubernetes hidden lists \(titles)", &ok)
+        // The launch landing, and the shell's answer (source guards: both
+        // need a whole workspace to drive).
+        if let workspace = source("Workspace.swift") {
+            check(workspace.contains("AppSettings.shared.hiddenModules.contains(.setup)"),
+                  "the launch landing no longer skips a hidden Setup (GL-31 would open a Personal install on Setup)", &ok)
+        }
+        if let shell = source("MainSplitShellController.swift") {
+            check(shell.contains("AppSettings.shared.hiddenModules.contains(ModuleTable.module(for: destination))"),
+                  "the sidebar shell no longer tells the palette which pages are hidden", &ok)
+        }
+        if let palette = source("UnifiedSearchProviders.swift") {
+            check(palette.contains("provider.isHidden = { [weak shell] destination in shell?.hidesPage(destination)"),
+                  "the palette's destinations no longer ask the shell what is hidden", &ok)
+        }
+    }
+
+    private static func checkTheWelcomeOffersTheProfiles(_ ok: inout Bool) {
+        let saved = PlaceName.layout
+        defer { PlaceName.layout = saved }
+        PlaceName.layout = .sidebar
+        let savedHidden = AppSettings.shared.hiddenModules
+        defer { AppSettings.shared.hiddenModules = savedHidden }
+        let sheet = WelcomeSheetController()
+        sheet.loadView()
+        sheet.debugNext()
+        check(sheet.debugStepTitle == "How will you use Grand Line?" && !sheet.debugProfileChoiceIsHidden,
+              "the welcome sheet's second step is \(sheet.debugStepTitle), not the profile choice", &ok)
+        sheet.debugPickProfile(.personal)
+        check(AppSettings.shared.hiddenModules == WorkspaceProfile.personal.hiddenModules,
+              "picking Personal on the welcome sheet did not hide its modules", &ok)
+        sheet.debugPickProfile(.operator)
+        check(AppSettings.shared.hiddenModules.isEmpty, "picking Operator on the welcome sheet left modules hidden", &ok)
+        PlaceName.layout = .floatingBar
+        check(WelcomeSheetController.debugStepCount == 3, "the floating bar's welcome sheet offers a profile it cannot use", &ok)
     }
 }
 
