@@ -743,6 +743,10 @@ enum MainSplitShellSelfTest {
     private static func checkTheInspector(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         resize(window, width: 1512, shell)
         check(shell.debugInspectorIsCollapsed, "the inspector is open at launch", &ok)
+        // R2-BUG-10: the button draws the standing choice. At launch it is
+        // on, so a selection opens the inspector.
+        check(shell.toolbar.debugInspectorSymbolName == WorkspaceToolbar.inspectorOnSymbol,
+              "R2-BUG-10: at launch the inspector button draws \(shell.toolbar.debugInspectorSymbolName)", &ok)
         check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector), "the inspector item has no action", &ok)
         settle(shell)
         check(!shell.debugInspectorIsCollapsed, "the inspector item did not open the inspector", &ok)
@@ -751,6 +755,16 @@ enum MainSplitShellSelfTest {
         shell.inspector.debugCloseButton.performClick(nil)
         settle(shell)
         check(shell.debugInspectorIsCollapsed, "the inspector's close button did not close it", &ok)
+        // R2-BUG-10: closing it turns the choice off for the session, and
+        // the button now says so - a closed pane with the choice on (nothing
+        // selected yet) and one with it off no longer look the same.
+        let item = shell.toolbar.debugInspectorItem
+        check(shell.toolbar.debugInspectorSymbolName == WorkspaceToolbar.inspectorOffSymbol,
+              "R2-BUG-10: after closing the inspector its button still draws the on state", &ok)
+        check(item?.toolTip?.contains("is off") == true,
+              "R2-BUG-10: the closed-and-off inspector's tooltip reads \(item?.toolTip ?? "nothing")", &ok)
+        check(WorkspaceToolbar.inspectorOnSymbol != WorkspaceToolbar.inspectorOffSymbol,
+              "fixture: the two states draw two symbols", &ok)
     }
 
     // MARK: 8 - the lock

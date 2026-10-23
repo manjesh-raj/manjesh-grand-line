@@ -600,7 +600,7 @@ final class MainSplitShellController: WorkspaceShellController {
         if !collapsed, columnFloor(inspectorShown: true) < contentItem.minimumThickness {
             contentItem.minimumThickness = columnFloor(inspectorShown: true)
         }
-        toolbar.setInspectorShown(!collapsed)
+        toolbar.setInspectorState(shown: !collapsed, wanted: inspectorWanted)
         let settle: () -> Void = { [weak self] in
             guard let self else { return }
             self.contentItem.minimumThickness = self.columnFloor
