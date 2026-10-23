@@ -205,18 +205,22 @@ enum WorkspaceSignalsSelfTest {
         check(signals { $0.setup = .unknown }.badge(for: .setup) == nil, "an unchecked Setup drew a badge", &ok)
         check(signals { $0.setup = .reading }.badge(for: .setup)?.mark == .count(WorkspaceSignals.scanningMark),
               "a first check in flight is not a dash", &ok)
-        let counts = WorkspaceSignals.SetupCounts(toolUpdates: 2, setupDrift: nil, forkDrift: 1)
-        let read = signals { $0.setup = .read(counts, at: t0) }
-        check(read.badge(for: .setup)?.mark == .count("3"), "two updates and a fork behind drew \(String(describing: read.badge(for: .setup)))", &ok)
-        check(read.badge(for: .setup)?.description == "2 tool updates, 1 fork behind, setup drift not checked yet",
-              "Setup's badge does not say which checks it counts: \(read.badge(for: .setup)?.description ?? "")", &ok)
-        let zero = signals { $0.setup = .read(.init(toolUpdates: 0, setupDrift: 0, forkDrift: 0), at: t0) }
+        // R2-BUG-09: one count, the tools needing attention. It used to be
+        // that plus drifted steps plus forks behind, a sum that grew as tabs
+        // were visited.
+        let read = signals { $0.setup = .read(2, at: t0) }
+        check(read.badge(for: .setup)?.mark == .count("2"), "two tools needing attention drew \(String(describing: read.badge(for: .setup)))", &ok)
+        check(read.badge(for: .setup)?.description == "2 tools need attention",
+              "Setup's badge does not say what it counts: \(read.badge(for: .setup)?.description ?? "")", &ok)
+        let one = signals { $0.setup = .read(1, at: t0) }
+        check(one.badge(for: .setup)?.description == "1 tool needs attention", "one tool reads in the singular", &ok)
+        let zero = signals { $0.setup = .read(0, at: t0) }
         check(zero.badge(for: .setup) == nil, "nothing to do drew a badge", &ok)
-        let stale = signals { $0.setup = .failed(last: counts, lastReadAt: t0, failedAt: t1) }
-        check(stale.badge(for: .setup)?.mark == .count("3")
+        let stale = signals { $0.setup = .failed(last: 2, lastReadAt: t0, failedAt: t1) }
+        check(stale.badge(for: .setup)?.mark == .count("2")
               && (stale.badge(for: .setup)?.description.contains(WorkspaceSignals.clock(t1)) ?? false),
               "a failed check dropped the count or did not say when it failed", &ok)
-        if ok { print("  OK   unknown, checking, counted with its parts, zero, failed") }
+        if ok { print("  OK   unknown, checking, one count, zero, failed") }
     }
 
     private static func checkConsole(_ ok: inout Bool) {

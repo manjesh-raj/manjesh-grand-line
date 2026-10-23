@@ -85,16 +85,6 @@ struct WorkspaceSignals: Equatable {
         var total: Int { today + overdue }
     }
 
-    /// Setup's three counts, each nil until its check has run this session.
-    struct SetupCounts: Equatable {
-        var toolUpdates: Int?
-        var setupDrift: Int?
-        var forkDrift: Int?
-
-        var known: [Int] { [toolUpdates, setupDrift, forkDrift].compactMap { $0 } }
-        var isEmpty: Bool { known.isEmpty }
-    }
-
     /// A service the Health page reports as failing or degraded.
     struct ServiceIssue: Equatable {
         let title: String
@@ -112,7 +102,16 @@ struct WorkspaceSignals: Equatable {
     var failingServices: [ServiceIssue] = []
     /// One or two failures in a row: worth a quiet dot, not an alarm.
     var degradedServices: [ServiceIssue] = []
-    var setup: WorkspaceReading<SetupCounts> = .unknown
+    /// How many tools need attention on Updates: an update to install, a
+    /// tool that is missing, or a check or update that failed - the count
+    /// Updates' own "Need attention" figure shows.
+    ///
+    /// R2-BUG-09: Setup's badge used to be this plus the drifted setup steps
+    /// plus the forks behind, each landing whenever its own page or the
+    /// poller reported, so the number grew as tabs were visited and meant
+    /// nothing a captain could act on. It counts one thing now. The steps and
+    /// the forks have their own cards on every Setup tab.
+    var setup: WorkspaceReading<Int> = .unknown
     /// Connected sessions in the registry.
     var liveSessions = 0
 }
@@ -225,35 +224,24 @@ extension WorkspaceSignals {
     }
 
     private func setupBadge(now: Date) -> WorkspaceBadge? {
-        func describe(_ counts: SetupCounts) -> String {
-            var parts: [String] = []
-            if let n = counts.toolUpdates { parts.append(n == 1 ? "1 tool update" : "\(n) tool updates") }
-            if let n = counts.setupDrift { parts.append(n == 1 ? "1 setup step drifted" : "\(n) setup steps drifted") }
-            if let n = counts.forkDrift { parts.append(n == 1 ? "1 fork behind" : "\(n) forks behind") }
-            var unchecked: [String] = []
-            if counts.toolUpdates == nil { unchecked.append("tool updates") }
-            if counts.setupDrift == nil { unchecked.append("setup drift") }
-            if counts.forkDrift == nil { unchecked.append("forks") }
-            if !unchecked.isEmpty { parts.append("\(unchecked.joined(separator: ", ")) not checked yet") }
-            return parts.joined(separator: ", ")
+        func describe(_ count: Int) -> String {
+            count == 1 ? "1 tool needs attention" : "\(count) tools need attention"
         }
         switch setup {
         case .unknown: return nil
         case .reading:
             return WorkspaceBadge(mark: .count(Self.scanningMark), tone: .neutral, description: "Checking for updates")
-        case .read(let counts, _):
-            let total = counts.known.reduce(0, +)
-            guard total > 0 else { return nil }
-            return WorkspaceBadge(mark: .count("\(total)"), tone: .neutral, description: describe(counts))
+        case .read(let count, _):
+            guard count > 0 else { return nil }
+            return WorkspaceBadge(mark: .count("\(count)"), tone: .neutral, description: describe(count))
         case .failed(let last, let lastReadAt, let failedAt):
             let failed = "The latest check failed at \(Self.clock(failedAt))"
-            guard let last, !last.isEmpty else {
+            guard let last else {
                 return WorkspaceBadge(mark: .count("?"), tone: .neutral, description: failed)
             }
-            let total = last.known.reduce(0, +)
-            guard total > 0 else { return nil }
+            guard last > 0 else { return nil }
             let when = lastReadAt.map { " as of \(Self.clock($0))" } ?? ""
-            return WorkspaceBadge(mark: .count("\(total)"), tone: .neutral, description: "\(describe(last))\(when). \(failed)")
+            return WorkspaceBadge(mark: .count("\(last)"), tone: .neutral, description: "\(describe(last))\(when). \(failed)")
         }
     }
 }

@@ -156,25 +156,23 @@ final class WorkspaceSignalsMonitor {
 
         let poller = BackgroundSignalsPoller.shared
         let counts = poller.lastCounts
-        let setupCounts = WorkspaceSignals.SetupCounts(toolUpdates: counts.toolUpdates, setupDrift: counts.setupDrift,
-                                                       forkDrift: counts.forkDrift)
+        // R2-BUG-09: one count - the tools needing attention.
+        let toolsNeedingAttention = counts.toolUpdates
         let pass = registry.state(.backgroundSignals)
-        let setup: WorkspaceReading<WorkspaceSignals.SetupCounts>
-        if setupCounts.isEmpty {
-            if pass.isRunning {
-                setup = .reading
-            } else if let failedAt = pass.lastFailure, pass.lastSuccess == nil {
-                setup = .failed(last: nil, lastReadAt: nil, failedAt: failedAt)
-            } else {
-                setup = .unknown
-            }
-        } else {
+        let setup: WorkspaceReading<Int>
+        if let count = toolsNeedingAttention {
             let readAt = poller.lastCompletedPassAt ?? pass.lastSuccess ?? Date()
             if let failedAt = pass.lastFailure, failedAt > (pass.lastSuccess ?? .distantPast) {
-                setup = .failed(last: setupCounts, lastReadAt: readAt, failedAt: failedAt)
+                setup = .failed(last: count, lastReadAt: readAt, failedAt: failedAt)
             } else {
-                setup = .read(setupCounts, at: readAt)
+                setup = .read(count, at: readAt)
             }
+        } else if pass.isRunning {
+            setup = .reading
+        } else if let failedAt = pass.lastFailure, pass.lastSuccess == nil {
+            setup = .failed(last: nil, lastReadAt: nil, failedAt: failedAt)
+        } else {
+            setup = .unknown
         }
 
         update {
