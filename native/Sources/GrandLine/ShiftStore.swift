@@ -145,19 +145,26 @@ final class ShiftStore {
         }
     }
 
+    /// GL-01's refusal for a file whose last read failed to parse, reported
+    /// through `StoreLoadFailure.refusesWrite` so it reaches the Health card
+    /// and the Notification Center. R2-BUG-01: it used to be an
+    /// `AppLog.store.error` alone, so a completion refused here said nothing
+    /// anywhere the captain would look.
+    private func refusesUnreadable(_ path: String) -> Bool {
+        guard loadFailurePaths.contains(path) else { return false }
+        var status = StoreLoadFailure.LoadStatus.clean
+        status.unreadableReason = "its last read failed to parse"
+        return StoreLoadFailure.refusesWrite(status, what: shortName(of: path),
+                                             url: URL(fileURLWithPath: path))
+    }
+
     /// The one write choke point: refuses to write a file this store could
     /// not read. Returns whether the write actually happened, so a caller
     /// that needs to know (a mutation that should not then announce success)
     /// can check.
     @discardableResult
     private func writeListGuarded(path: String, key: String, items: [Yaml]) -> Bool {
-        guard !loadFailurePaths.contains(path) else {
-            AppLog.store.error("""
-                Shift: refusing to write \(path, privacy: .public) - its last read failed to \
-                parse (GL-01). Fix or remove the file, then reload.
-                """)
-            return false
-        }
+        guard !refusesUnreadable(path) else { return false }
         do {
             try ShiftYaml.writeList(path: path, key: key, items: items)
             PersistenceFailureReporter.reportSuccess()
@@ -177,13 +184,7 @@ final class ShiftStore {
     /// `settings.yaml` was written with a bare `try?` in two places.
     @discardableResult
     private func writeMappingGuarded(path: String, doc: Yaml) -> Bool {
-        guard !loadFailurePaths.contains(path) else {
-            AppLog.store.error("""
-                Shift: refusing to write \(path, privacy: .public) - its last read failed to \
-                parse (GL-01). Fix or remove the file, then reload.
-                """)
-            return false
-        }
+        guard !refusesUnreadable(path) else { return false }
         do {
             try ShiftYaml.writeMapping(path: path, doc: doc)
             PersistenceFailureReporter.reportSuccess()
@@ -546,12 +547,23 @@ final class ShiftStore {
             task.status = .completed
             task.completedAt = iso
             task.updatedAt = iso
+            // R2-BUG-01: the month record is written first, and the task
+            // leaves `active.yaml` only once that write landed. The other
+            // order rewrote the active file without the task and then lost
+            // it outright when the month file refused (a parse-failed read)
+            // or the write threw. The worst this order can leave behind is
+            // the task in both files, which a reload shows and loses nothing.
+            guard appendToCompletedMonth(completedRecord(task, raw: nil), id: task.id,
+                                         month: ShiftStore.monthKey(for: now)) else {
+                // The refusal or the failure is already reported. Repaint, so
+                // a row that optimistically showed it done shows it active.
+                changeHandlers.forEach { $0() }
+                return
+            }
             activeTasks.remove(at: idx)
             let spawned = Self.nextOccurrence(after: task, now: now)
             if let spawned { activeTasks.append(spawned) }
             persistActiveTasks()
-            appendToCompletedMonth(completedRecord(task, raw: nil), id: task.id,
-                                   month: ShiftStore.monthKey(for: now))
             logActivity(kind: "task_completed", summary: "Completed \"\(task.title)\"", targetID: task.id, now: now)
             if let spawned {
                 logActivity(kind: "task_recurrence_advanced",
@@ -925,13 +937,16 @@ final class ShiftStore {
 
     /// Replaces (or adds) one task in a completed-month file. `raw` is the
     /// serialised record, already carrying whatever unknown keys it should.
-    private func appendToCompletedMonth(_ raw: Yaml, id: String, month: String) {
+    /// Returns whether the record reached disk, so a completion can keep
+    /// the task active when it did not (R2-BUG-01).
+    @discardableResult
+    private func appendToCompletedMonth(_ raw: Yaml, id: String, month: String) -> Bool {
         invalidateCompletedTasksCache()
         let path = completedPath(forMonth: month)
         var items = readListGuarded(path: path, key: "tasks")
         items.removeAll { ShiftYamlPassthrough.recordID($0) == id }
         items.append(raw)
-        writeListGuarded(path: path, key: "tasks", items: items)
+        return writeListGuarded(path: path, key: "tasks", items: items)
     }
 
     private func removeFromCompletedMonth(id: String, month: String) {
