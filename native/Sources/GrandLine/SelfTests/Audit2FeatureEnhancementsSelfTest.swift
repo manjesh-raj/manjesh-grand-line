@@ -285,7 +285,7 @@ enum Audit2FeatureEnhancementsSelfTest {
         guard let store = readCode(named: "CodePreviewStore.swift") else {
             return "could not read CodePreviewStore.swift"
         }
-        guard store.contains("func flushForTerminationNow()") else {
+        guard store.contains("func flushForTerminationNow(") else {
             return "CodePreviewGitSync has no bounded terminate flush - `shutdown()` would be "
                 + "running git on the main thread, off the shared serial queue"
         }
@@ -327,11 +327,11 @@ enum Audit2FeatureEnhancementsSelfTest {
         guard let shell = readCode(named: "WorkspaceShellController.swift") else {
             return "could not read WorkspaceShellController.swift"
         }
-        guard shell.contains("func shutdownCodePreview()") else {
+        guard shell.contains("func shutdownCodePreview(") else {
             return "the shell has no shutdownCodePreview() forward, so the app delegate "
                 + "cannot reach the (private) destination"
         }
-        guard main.contains("shutdownCodePreview()") else {
+        guard main.contains("shutdownCodePreview(") else {
             return "nothing calls Code Preview's shutdown - it had zero callers for its whole "
                 + "life (§2.8), so ⌘Q inside the page's 500ms edit debounce loses those "
                 + "keystrokes and the final commit+push never runs"
@@ -342,7 +342,7 @@ enum Audit2FeatureEnhancementsSelfTest {
             return "applicationWillTerminate is gone"
         }
         let tail = main[terminate.lowerBound...]
-        guard tail.contains("shutdownCodePreview()") else {
+        guard tail.contains("shutdownCodePreview(") else {
             return "shutdownCodePreview() is called somewhere other than applicationWillTerminate"
         }
         return nil

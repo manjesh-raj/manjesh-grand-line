@@ -102,6 +102,9 @@ final class ShiftGitSync {
         stateLock.lock(); defer { stateLock.unlock() }; return _hasReportedStatus
     }
     private var pendingCommit: DispatchWorkItem?
+    /// R2-BUG-04: whether a debounced commit is still owed, readable off
+    /// `queue` so the quit-time flush can skip a store with nothing pending.
+    private let pendingWork = GitSyncPendingWork()
     private var pullTimer: Timer?
 
     /// Set by `detectAndResolveConflicts()` whenever it finds real per-record
@@ -359,10 +362,16 @@ final class ShiftGitSync {
     /// call.
     func markDirty() {
         setStatus(.localChanges)
+        // R2-BUG-04: noted on the caller's thread, before the queue hop, so
+        // a quit straight after this call still sees the commit as pending.
+        let ticket = pendingWork.request()
         queue.async { [weak self] in
             guard let self else { return }
             self.pendingCommit?.cancel()
-            let item = DispatchWorkItem { [weak self] in self?.commitAndPushNow() }
+            let item = DispatchWorkItem { [weak self] in
+                self?.pendingWork.settle(ticket)
+                self?.commitAndPushNow()
+            }
             self.pendingCommit = item
             self.queue.asyncAfter(deadline: .now() + self.debounceInterval, execute: item)
         }
@@ -386,6 +395,10 @@ final class ShiftGitSync {
     /// queued does not reach the network.
     @discardableResult
     func flushForTerminationNow(deadline: DispatchTime = .now() + ShiftGitSync.terminateFlushBudget) -> Bool {
+        // R2-BUG-04: a store with nothing waiting does not join the shared
+        // queue at all. Every sync is on the one serial queue, so a flush
+        // that enqueued anyway waited out whatever slow git was ahead of it.
+        guard pendingWork.isPending else { return true }
         let done = DispatchSemaphore(value: 0)
         queue.async { [weak self] in
             defer { done.signal() }
@@ -394,6 +407,7 @@ final class ShiftGitSync {
             // touched on `queue`, so the item cannot be running concurrently.
             pending.cancel()
             self.pendingCommit = nil
+            self.pendingWork.settleAll()
             _ = self.commitAndPushNow()
         }
         guard done.wait(timeout: deadline) == .success else {
@@ -1209,5 +1223,49 @@ final class ShiftGitSync {
         Subprocess.git(args, cwd: cwd,
                        authenticateFor: authenticated ? remoteURL : nil,
                        timeout: Self.gitTimeout)
+    }
+}
+
+/// R2-BUG-04: whether a git sync still owes a debounced commit, readable from
+/// any thread.
+///
+/// Every sync in this app runs its git work on one serial queue
+/// (`ShiftGitSync.sharedQueue`), so a quit-time flush that enqueues a block
+/// just to discover there was nothing to commit still waits behind whatever
+/// is running there - a periodic `git fetch` on a flaky network, say. Seven
+/// such waits in a row, each with its own budget, held the main thread for
+/// about seventeen seconds at quit. A flush asks `isPending` first and skips
+/// the queue entirely when nothing is owed.
+///
+/// A ticket counter rather than a flag, so a debounced commit that starts
+/// running cannot clear a newer `markDirty()` that landed while it started:
+/// it settles only its own ticket.
+final class GitSyncPendingWork {
+    private let lock = NSLock()
+    private var requested = 0
+    private var settled = 0
+
+    /// `markDirty()` calls this on its own thread, before its queue hop.
+    func request() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        requested += 1
+        return requested
+    }
+
+    /// The debounced commit for `ticket` has started.
+    func settle(_ ticket: Int) {
+        lock.lock(); defer { lock.unlock() }
+        settled = max(settled, ticket)
+    }
+
+    /// A flush has taken over every commit requested so far.
+    func settleAll() {
+        lock.lock(); defer { lock.unlock() }
+        settled = requested
+    }
+
+    var isPending: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return requested > settled
     }
 }

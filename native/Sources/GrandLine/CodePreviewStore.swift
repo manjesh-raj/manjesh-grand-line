@@ -102,6 +102,9 @@ final class CodePreviewGitSync {
     private(set) var status: Status = .synced
     private var statusHandlers: [(Status) -> Void] = []
     private var pendingCommit: DispatchWorkItem?
+    /// R2-BUG-04: whether a debounced commit is still owed, readable off
+    /// `queue` so the quit-time flush can skip a store with nothing pending.
+    private let pendingWork = GitSyncPendingWork()
 
     /// `true` only for `.shared`. A standalone instance (every self-test, and
     /// any future non-production use) owns and clones its own working tree
@@ -206,10 +209,16 @@ final class CodePreviewGitSync {
     /// edits is one commit rather than one per keystroke.
     func markDirty() {
         setStatus(.localChanges)
+        // R2-BUG-04: noted on the caller's thread, before the queue hop, so
+        // a quit straight after this call still sees the commit as pending.
+        let ticket = pendingWork.request()
         queue.async { [weak self] in
             guard let self else { return }
             self.pendingCommit?.cancel()
-            let item = DispatchWorkItem { [weak self] in self?.commitAndPushNow() }
+            let item = DispatchWorkItem { [weak self] in
+                self?.pendingWork.settle(ticket)
+                self?.commitAndPushNow()
+            }
             self.pendingCommit = item
             self.queue.asyncAfter(deadline: .now() + self.debounceInterval, execute: item)
         }
@@ -254,7 +263,11 @@ final class CodePreviewGitSync {
     /// `snippetChanged`), so the captain's code is on disk either way, and an
     /// un-pushed commit is recovered on the next launch's own `markDirty()`.
     @discardableResult
-    func flushForTerminationNow() -> Bool {
+    func flushForTerminationNow(deadline: DispatchTime = .now() + CodePreviewGitSync.terminateFlushBudget) -> Bool {
+        // R2-BUG-04: a store with nothing waiting does not join the shared
+        // queue at all. Every sync is on the one serial queue, so a flush
+        // that enqueued anyway waited out whatever slow git was ahead of it.
+        guard pendingWork.isPending else { return true }
         // `committed` is written on `queue` and read here, and the bound means
         // the writer can still be running when this returns - so it is
         // lock-guarded rather than relying on the semaphore's ordering alone
@@ -266,16 +279,17 @@ final class CodePreviewGitSync {
             guard let self else { done.signal(); return }
             self.pendingCommit?.cancel()
             self.pendingCommit = nil
+            self.pendingWork.settleAll()
             let result = self.commitAndPushNow()
             lock.lock()
             committed = result
             lock.unlock()
             done.signal()
         }
-        if done.wait(timeout: .now() + Self.terminateFlushBudget) == .timedOut {
+        if done.wait(timeout: deadline) == .timedOut {
             AppLog.lifecycle.info("""
-                code preview: quit-time git flush still running after \
-                \(Self.terminateFlushBudget, privacy: .public)s - letting the app quit; \
+                code preview: quit-time git flush still running at the quit \
+                deadline - letting the app quit; \
                 the snippets are already on disk and the next launch re-commits
                 """)
             return false

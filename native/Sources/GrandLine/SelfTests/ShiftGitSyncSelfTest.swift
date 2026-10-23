@@ -560,6 +560,88 @@ enum ShiftGitSyncSelfTest {
             check(timer?.isValid == false, "REL-30: a released instance's periodic pull timer is invalidated")
         }
 
+        // MARK: R2-BUG-04. Every quit-time flush shares one deadline, and a
+        // sync with nothing pending never joins the queue.
+        //
+        // The six queue-sharing syncs on one serial queue, held the way a
+        // slow `git fetch` holds the real one. No git runs: nothing here has
+        // a checkout, so the work that drains afterwards fails fast.
+
+        do {
+            let queue = DispatchQueue(label: "r2-bug-04-shared-queue")
+            let root = scratch.appendingPathComponent("r2-bug-04", isDirectory: true)
+            func tree(_ name: String) -> URL { root.appendingPathComponent(name, isDirectory: true) }
+            let sticky = StickyBoardGitSync(workingTree: tree("sticky"), remoteURL: "", debounceInterval: 600, queue: queue)
+            let reading = ReadingListGitSync(workingTree: tree("reading"), remoteURL: "", debounceInterval: 600, queue: queue)
+            let code = CodePreviewGitSync(workingTree: tree("code"), remoteURL: "", debounceInterval: 600, queue: queue)
+            let notebook = NotebookGitSync(workingTree: tree("notebook"), remoteURL: "", debounceInterval: 600, queue: queue)
+            let vault = CredentialVaultGitSync(workingTree: tree("vault"), remoteURL: "", debounceInterval: 600, queue: queue)
+            let docs = DocsRunbookGitSync(workingTree: tree("docs"), remoteURL: "", debounceInterval: 600, queue: queue)
+
+            let release = DispatchSemaphore(value: 0)
+            let held = DispatchSemaphore(value: 0)
+            queue.async { held.signal(); release.wait() }
+            held.wait()
+
+            // Nothing pending anywhere: every flush returns at once, with
+            // the queue still held.
+            let idleStart = Date()
+            let idleResults = [
+                sticky.flushForTerminationNow(), reading.flushForTerminationNow(), code.flushForTerminationNow(),
+                notebook.flushForTerminationNow(), vault.flushForTerminationNow(), docs.flushForTerminationNow(),
+            ]
+            let idleWait = Date().timeIntervalSince(idleStart)
+            check(idleWait < 0.5,
+                  "R2-BUG-04: six flushes with nothing pending waited \(idleWait)s on a held queue - "
+                  + "a store with nothing queued must not join the queue")
+            check(idleResults.allSatisfy { $0 }, "R2-BUG-04: a flush with nothing to do reports done")
+
+            // Three syncs with a commit pending, under one 1.5s deadline:
+            // the first waits it out and the rest find it already passed.
+            sticky.markDirty(); notebook.markDirty(); docs.markDirty()
+            let budget: TimeInterval = 1.5
+            let deadline = DispatchTime.now() + budget
+            let pendingStart = Date()
+            _ = sticky.flushForTerminationNow(deadline: deadline)
+            _ = notebook.flushForTerminationNow(deadline: deadline)
+            _ = docs.flushForTerminationNow(deadline: deadline)
+            let pendingWait = Date().timeIntervalSince(pendingStart)
+            check(pendingWait >= budget - 0.3,
+                  "fixture: a pending flush on a held queue must wait for the deadline, waited \(pendingWait)s")
+            check(pendingWait < budget + 1.0,
+                  "R2-BUG-04: three pending flushes on a held queue waited \(pendingWait)s, past their "
+                  + "one shared \(budget)s deadline - the budgets are stacking again")
+
+            release.signal()
+            queue.sync {}
+            check(!sticky.hasPendingCommitForTests && !docs.hasPendingCommitForTests,
+                  "R2-BUG-04: the abandoned flushes still ran once the queue freed, and took the pending commits")
+            try? fm.removeItem(at: root)
+        }
+
+        // The quit path computes that deadline once, before the first flush,
+        // and hands it to every one of them.
+        if let dir = SelfTestSources.appSourceDirectory(),
+           let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8),
+           let start = main.range(of: "func applicationWillTerminate(") {
+            let body = String(main[start.lowerBound...].prefix(9000))
+            let deadlineAt = body.range(of: "let gitFlushDeadline")?.lowerBound
+            let firstFlushAt = body.range(of: "appShell.shutdownStickyBoard(")?.lowerBound
+            check(deadlineAt != nil && firstFlushAt != nil && deadlineAt! < firstFlushAt!,
+                  "R2-BUG-04: applicationWillTerminate computes one git flush deadline before the first flush")
+            for call in ["appShell.shutdownStickyBoard(deadline: gitFlushDeadline)",
+                         "appShell.shutdownCodePreview(deadline: gitFlushDeadline)",
+                         "appShell.shutdownNotebook(deadline: gitFlushDeadline)",
+                         "appShell.shutdownCredentialVault(deadline: gitFlushDeadline)",
+                         "appShell.shutdownReadingList(deadline: gitFlushDeadline)",
+                         "ShiftGitSync.shared.flushForTerminationNow(deadline: gitFlushDeadline)",
+                         "DocsRunbookGitSync.shared.flushForTerminationNow(deadline: gitFlushDeadline)"] {
+                check(body.contains(call), "R2-BUG-04: the quit path passes the shared deadline: \(call)")
+            }
+        } else {
+            check(false, "R2-BUG-04: could not read main.swift - the shared-deadline guard would silently pass")
+        }
+
         // The terminate path calls both flushes on the shared queue. A source
         // guard rather than a behaviour check, because `applicationWillTerminate`
         // cannot run inside a suite; the behaviour is the case above.

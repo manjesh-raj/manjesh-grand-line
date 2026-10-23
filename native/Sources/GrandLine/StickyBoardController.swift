@@ -308,7 +308,7 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     /// before ⌘Q are written and committed like every other edit - the same
     /// contract `CodePreviewController.shutdown()` carries for the same
     /// reason.
-    func shutdown() {
+    func shutdown(deadline: DispatchTime) {
         // The local YAML write first, synchronously: that is the captain's
         // actual note data, and it must be on disk before anything else is
         // allowed to give up on a budget.
@@ -319,7 +319,7 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         // this runs on the main thread inside `applicationWillTerminate`,
         // and the direct call both raced sibling commits against the shared
         // working tree and could hold ⌘Q on a real network push.
-        _ = store.gitSync?.flushForTerminationNow()
+        _ = store.gitSync?.flushForTerminationNow(deadline: deadline)
     }
 
     /// B13: the page's own subtitle is a claim about the sync, so it has to

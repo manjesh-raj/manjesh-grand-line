@@ -328,9 +328,9 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     /// whole point, and is `CodePreviewController.shutdown`'s: the bridge
     /// round trip has to land *before* the git flush, or the commit misses
     /// the very keystrokes this exists to save.
-    func shutdown() {
+    func shutdown(deadline: DispatchTime) {
         flushPendingEdits(waitingUpTo: CodePreviewController.terminateEditFlushBudget)
-        store.gitSync?.flushForTerminationNow()
+        store.gitSync?.flushForTerminationNow(deadline: deadline)
     }
 
     private func flushPendingEdits(waitingUpTo wait: TimeInterval? = nil) {

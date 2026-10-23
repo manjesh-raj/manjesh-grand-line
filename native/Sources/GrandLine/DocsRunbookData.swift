@@ -170,6 +170,9 @@ final class DocsRunbookGitSync {
     private(set) var status: Status = .synced
     private var statusHandlers: [(Status) -> Void] = []
     private var pendingCommit: DispatchWorkItem?
+    /// R2-BUG-04: whether a debounced commit is still owed, readable off
+    /// `queue` so the quit-time flush can skip a store with nothing pending.
+    private let pendingWork = GitSyncPendingWork()
 
     /// `true` only for `.shared` - see that property's own doc comment. A
     /// standalone instance (every self-test, and any future non-production
@@ -284,10 +287,16 @@ final class DocsRunbookGitSync {
     /// synchronously - same debounce shape as `ShiftGitSync.markDirty()`.
     func markDirty() {
         setStatus(.localChanges)
+        // R2-BUG-04: noted on the caller's thread, before the queue hop, so
+        // a quit straight after this call still sees the commit as pending.
+        let ticket = pendingWork.request()
         queue.async { [weak self] in
             guard let self else { return }
             self.pendingCommit?.cancel()
-            let item = DispatchWorkItem { [weak self] in self?.commitAndPushNow() }
+            let item = DispatchWorkItem { [weak self] in
+                self?.pendingWork.settle(ticket)
+                self?.commitAndPushNow()
+            }
             self.pendingCommit = item
             self.queue.asyncAfter(deadline: .now() + self.debounceInterval, execute: item)
         }
@@ -299,12 +308,17 @@ final class DocsRunbookGitSync {
     /// edit left uncommitted by a quit, and only on the next launch.
     @discardableResult
     func flushForTerminationNow(deadline: DispatchTime = .now() + ShiftGitSync.terminateFlushBudget) -> Bool {
+        // R2-BUG-04: a store with nothing waiting does not join the shared
+        // queue at all. Every sync is on the one serial queue, so a flush
+        // that enqueued anyway waited out whatever slow git was ahead of it.
+        guard pendingWork.isPending else { return true }
         let done = DispatchSemaphore(value: 0)
         queue.async { [weak self] in
             defer { done.signal() }
             guard let self, let pending = self.pendingCommit else { return }
             pending.cancel()
             self.pendingCommit = nil
+            self.pendingWork.settleAll()
             _ = self.commitAndPushNow()
         }
         guard done.wait(timeout: deadline) == .success else {

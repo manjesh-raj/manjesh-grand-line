@@ -399,12 +399,12 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// flush has to happen *after* the bridge round trip has landed, or it
     /// commits a working tree that does not yet contain the very keystrokes
     /// this method exists to save.
-    func shutdown() {
+    func shutdown(deadline: DispatchTime) {
         flushPendingEdits(waitingUpTo: Self.terminateEditFlushBudget)
         // Never `commitAndPushNow()` directly - see
         // `CodePreviewGitSync.flushForTerminationNow()` for why (it is §4.3's
         // fix, applied to this store as its call site finally appeared).
-        store.gitSync?.flushForTerminationNow()
+        store.gitSync?.flushForTerminationNow(deadline: deadline)
     }
 
     /// Posts whatever the page still has debounced.

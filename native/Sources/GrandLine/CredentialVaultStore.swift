@@ -1519,9 +1519,9 @@ final class CredentialVaultStore {
     /// `auditFlushDelay` (20s) on a main-queue timer that never fires once
     /// the process exits, so a quit inside that window lost the "last used"
     /// timestamps of everything revealed or copied in it.
-    func flushForTermination() {
+    func flushForTermination(deadline: DispatchTime = .now() + CredentialVaultGitSync.terminateFlushBudget) {
         flushPendingAuditWritesNow()
-        gitSync?.flushForTerminationNow()
+        gitSync?.flushForTerminationNow(deadline: deadline)
     }
 
     // MARK: Persistence
