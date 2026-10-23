@@ -73,11 +73,118 @@ enum StoreDurabilitySelfTest {
         rel22IncidentRewritesKeepWhatTheyCannotRead(scratch: scratch)
         rel22NestedTypesDecodeWithoutEveryKey()
         rel24FailedDeletesAndSavesAreReportedAndLoseNothing(scratch: scratch)
+        r2Bug11SessionStateIsComparedInMemory(scratch: scratch)
+        r2Bug11BackupNamesAreUniqueWithinASecond(scratch: scratch)
+        r2Bug14DecodeJSONHasOneForm()
+        r2Bug15ClearingTheSessionReportsAFailedDelete(scratch: scratch)
 
         print(failures.isEmpty
             ? "== PASS (store durability) =="
             : "== FAIL (store durability): \(failures.count) case(s) ==")
         return failures.isEmpty
+    }
+
+    // MARK: - R2-BUG-11, 14, 15: the session restore file and its backups
+
+    /// An undecodable `session-restore.json` used to be re-read on every
+    /// navigation (`saveSessionState`'s equality guard went through
+    /// `SessionRestoreStore.load`), and each read backed it up again. A
+    /// second read inside the same second collided with the first backup's
+    /// name, `copyItem` threw, the load was marked unpreserved, and the next
+    /// save refused with a false "no backup of it could be written".
+    private static func r2Bug11SessionStateIsComparedInMemory(scratch: URL) {
+        print("- R2-BUG-11: the session state is read once and compared in memory")
+        let root = scratch.appendingPathComponent("r2bug11-session", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("session-restore.json")
+        try? Data("{ this is not json".utf8).write(to: file)
+        let defaults = UserDefaults(suiteName: "fm-r2bug11-\(UUID().uuidString)") ?? AppDefaults.store
+        PersistenceFailureReporter.resetForTests()
+        withEnv(["FM_SESSION_RESTORE_FILE": file.path]) {
+            // The launch load, then the navigations that follow it inside
+            // the same second.
+            check(SessionRestoreStore.load(defaults: defaults) == nil, "fixture: the damaged file loads as nothing")
+            check(SessionRestoreStore.lastLoadStatus(for: file).backupPath != nil,
+                  "fixture: the launch load backed the damaged file up")
+            for _ in 0..<3 { _ = SessionRestoreStore.load(defaults: defaults) }
+            check(corruptBackupPaths(besides: file).count == 1,
+                  "R2-BUG-11: navigating does not re-read and re-back-up the file, got "
+                  + "\(corruptBackupPaths(besides: file).count) backups")
+            let state = SessionRestoreState(destination: RailDestination.vault.rawValue, consoleTabs: [])
+            check(SessionRestoreStore.save(state), "R2-BUG-11: the first save after a backed-up load lands")
+            check(!reported(file.path, containing: "session restore"),
+                  "R2-BUG-11: no false \"no backup could be written\" refusal is reported")
+
+            // The comparison really is in memory: a change made behind the
+            // store's back is not seen until a cold load.
+            let other = SessionRestoreState(destination: RailDestination.hosts.rawValue, consoleTabs: [])
+            if let data = try? JSONEncoder().encode(other) { try? data.write(to: file) }
+            check(SessionRestoreStore.load(defaults: defaults) == state,
+                  "R2-BUG-11: a load after a save answers from memory, not from disk")
+            SessionRestoreStore.forgetCachedStateForTests()
+            check(SessionRestoreStore.load(defaults: defaults) == other,
+                  "fixture: a cold load does read the file, so the check above can fail")
+        }
+        PersistenceFailureReporter.resetForTests()
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    /// Two backups of one file inside one second get two names.
+    private static func r2Bug11BackupNamesAreUniqueWithinASecond(scratch: URL) {
+        print("- R2-BUG-11: two backups in one second do not collide")
+        let root = scratch.appendingPathComponent("r2bug11-names", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("notes.json")
+        try? Data("{ damaged".utf8).write(to: file)
+        let first = StoreLoadFailure.backUp(file)
+        let second = StoreLoadFailure.backUp(file)
+        let third = StoreLoadFailure.backUp(file)
+        check(first != nil && second != nil && third != nil,
+              "R2-BUG-11: every backup in the same second is written, got \([first, second, third])")
+        check(Set([first, second, third].compactMap { $0 }).count == 3,
+              "R2-BUG-11: and each has its own name")
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    /// The two convenience overloads dropped `unreadableReason` and
+    /// `unpreserved`. A source guard, because the regression is a new
+    /// overload appearing, which no behaviour of the existing one can show.
+    private static func r2Bug14DecodeJSONHasOneForm() {
+        print("- R2-BUG-14: StoreLoadFailure.decodeJSON has only the status form")
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let text = try? String(contentsOf: dir.appendingPathComponent("StoreLoadFailure.swift"), encoding: .utf8) else {
+            check(false, "R2-BUG-14: could not read StoreLoadFailure.swift - the guard would silently pass")
+            return
+        }
+        let declarations = text.components(separatedBy: "static func decodeJSON<").count - 1
+        check(declarations == 1,
+              "R2-BUG-14: exactly one decodeJSON, the one taking `status: inout LoadStatus`, got \(declarations)")
+        check(!text.contains("didBackUp:"),
+              "R2-BUG-14: no decodeJSON form hands back the backup path alone")
+    }
+
+    /// `save(nil)` used to `try?` the delete and report success, so a stale
+    /// restore file that could not be removed came back on the next launch.
+    private static func r2Bug15ClearingTheSessionReportsAFailedDelete(scratch: URL) {
+        print("- R2-BUG-15: clearing the session state reports a delete that failed")
+        let root = scratch.appendingPathComponent("r2bug15", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("session-restore.json")
+        PersistenceFailureReporter.resetForTests()
+        withEnv(["FM_SESSION_RESTORE_FILE": file.path]) {
+            let state = SessionRestoreState(destination: RailDestination.vault.rawValue, consoleTabs: [])
+            check(SessionRestoreStore.save(state), "fixture: the state is written")
+            var cleared = true
+            withReadOnlyDirectory(root) { cleared = SessionRestoreStore.save(nil) }
+            check(FileManager.default.fileExists(atPath: file.path), "fixture: the read-only folder kept the file")
+            check(!cleared, "R2-BUG-15: a delete that failed is not reported as success")
+            check(reported(file.path, containing: "session restore"),
+                  "R2-BUG-15: and it reaches PersistenceFailureReporter")
+            check(SessionRestoreStore.save(nil) && !FileManager.default.fileExists(atPath: file.path),
+                  "R2-BUG-15: a delete that can land still does")
+        }
+        PersistenceFailureReporter.resetForTests()
+        try? FileManager.default.removeItem(at: root)
     }
 
     // MARK: - Helpers

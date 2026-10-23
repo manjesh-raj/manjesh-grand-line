@@ -36,6 +36,23 @@ import Foundation
 
 enum StoreLoadFailure {
 
+    /// `<file>.corrupt-<unix-seconds>`, or `-2`, `-3` and on when a backup
+    /// from the same second already exists. R2-BUG-11: a second failed load
+    /// inside one second used to collide with the first backup's name, so
+    /// `copyItem` threw and the store reported "no backup of it could be
+    /// written" about a file that had one.
+    static func uniqueBackupURL(for url: URL, now: Date = Date()) -> URL {
+        let folder = url.deletingLastPathComponent()
+        let base = "\(url.lastPathComponent).corrupt-\(Int(now.timeIntervalSince1970))"
+        var candidate = folder.appendingPathComponent(base)
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = folder.appendingPathComponent("\(base)-\(suffix)")
+            suffix += 1
+        }
+        return candidate
+    }
+
     /// Copy `url` aside to `<name>.corrupt-<unix-ts>` and return the backup's
     /// path, or `nil` if the copy itself failed (a full disk, a read-only
     /// directory). Either way this logs - a silent decode failure is what
@@ -50,8 +67,7 @@ enum StoreLoadFailure {
             AppLog.store.error("\(name, privacy: .public) failed to load and does not exist on disk - nothing to back up")
             return nil
         }
-        let backupURL = url.deletingLastPathComponent()
-            .appendingPathComponent("\(url.lastPathComponent).corrupt-\(Int(Date().timeIntervalSince1970))")
+        let backupURL = uniqueBackupURL(for: url)
         do {
             try FileManager.default.copyItem(at: url, to: backupURL)
             // M3: `copyItem` carries the source's own mode across, so once a
@@ -275,6 +291,11 @@ enum StoreLoadFailure {
     /// file that exists but could not be read at all (REL-21): that one is
     /// backed up when the copy can be made, logged, and marked so the store's
     /// `refusesWrite` check keeps the next write off it.
+    ///
+    /// R2-BUG-14: this is the only form. Two convenience overloads (one
+    /// handing back the backup path alone, one handing back nothing) dropped
+    /// `unreadableReason` and `unpreserved`, so the next store to reach for
+    /// the short form would have lost the refusal REL-21 exists for.
     static func decodeJSON<T: Decodable>(
         _ type: T.Type,
         at url: URL,
@@ -298,34 +319,5 @@ enum StoreLoadFailure {
             status.unpreserved = status.backupPath == nil
             return nil
         }
-    }
-
-    /// `decodeJSON` for a caller that only wants the backup path.
-    static func decodeJSON<T: Decodable>(
-        _ type: T.Type,
-        at url: URL,
-        decoder: JSONDecoder = JSONDecoder(),
-        label: String? = nil,
-        sensitive: Bool = false,
-        didBackUp: inout String?
-    ) -> T? {
-        var status = LoadStatus.clean
-        let decoded = decodeJSON(type, at: url, decoder: decoder, label: label,
-                                 sensitive: sensitive, status: &status)
-        didBackUp = status.backupPath
-        return decoded
-    }
-
-    /// `decodeJSON` for a caller that does not need the backup path.
-    static func decodeJSON<T: Decodable>(
-        _ type: T.Type,
-        at url: URL,
-        decoder: JSONDecoder = JSONDecoder(),
-        label: String? = nil,
-        sensitive: Bool = false
-    ) -> T? {
-        var ignored: String?
-        return decodeJSON(type, at: url, decoder: decoder, label: label,
-                          sensitive: sensitive, didBackUp: &ignored)
     }
 }

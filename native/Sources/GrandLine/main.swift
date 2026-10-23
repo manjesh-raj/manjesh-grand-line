@@ -1036,10 +1036,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Records where the captain is, for the next launch.
     ///
     /// Called on quit and on every navigation - the second is what makes this
-    /// survive a crash or a force-quit, and it is cheap: a handful of tabs
-    /// encoded to JSON, written only when the result actually differs from
-    /// what is already stored (`UserDefaults` would otherwise take a write on
-    /// every single navigation, most of which change nothing).
+    /// survive a crash or a force-quit, and it is cheap: the comparison is
+    /// against `SessionRestoreStore`'s in-memory copy (R2-BUG-11), and the
+    /// file is written only when the result actually differs, since most
+    /// navigations change nothing.
     func saveSessionState() {
         guard appShell.isViewLoaded else { return }
         let state = appShell.captureSessionState()
