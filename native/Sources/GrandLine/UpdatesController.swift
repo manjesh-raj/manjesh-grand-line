@@ -45,6 +45,9 @@ private final class UpdateRow {
     var latestLabel: String?
     var detail: String = "Not checked yet"
     var log: String = ""
+    /// The installed version the last check read, for the sidebar layout's
+    /// Installed column (stage 7). `nil` until a check has answered.
+    var installedLabel: String?
     /// Set when the last Update was not started because it needs the
     /// captain's password - `UpdateOutcome.terminalCommand`. Cleared by the
     /// next check, which re-asks the machine.
@@ -152,6 +155,46 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// needs a real `sudo` prompt. The completion carries the exit status.
     var onRunCommandTracked: ((String, String, @escaping (Bool) -> Void) -> Void)?
     private var lastCheckedAt: Date?
+
+    // MARK: The sidebar layout's state (stage 7)
+
+    /// Set once, the first time the sidebar shell shows this page
+    /// (`adoptSidebarLayout`). The floating bar never sets it.
+    private var drawsSidebarLayout = false
+    private var pageStack: NSStackView?
+    private var statsRowView: NSView?
+    /// Setup's five summary cards, shared with the module's other tabs.
+    private lazy var setupSummary = SetupSummaryRow()
+    /// Every tool in one table, grouped by where it comes from - the
+    /// prototype's one table card, with the real groups.
+    private lazy var toolsTable: HelmDataTable = {
+        let table = HelmDataTable(columns: [
+            .init(id: "tool", title: "Tool", width: 260, minWidth: 180, flexible: true),
+            .init(id: "installed", title: "Installed", width: 130),
+            .init(id: "available", title: "Available", width: 170),
+            .init(id: "source", title: "Source", width: 120, hiddenBelow: 720),
+        ], actionsWidth: 170)
+        table.sizesToFitRows = true
+        table.accessibilityName = "Tools"
+        table.onSelect = { [weak self] key in
+            self?.selectedToolID = key
+            self?.onInspectorContentChanged?()
+        }
+        return table
+    }()
+    private let toolsLastChecked = NSTextField(labelWithString: "")
+    /// The toolbar's primary action: Check all, by the prototype's name. The
+    /// floating bar keeps its Check all pill.
+    private lazy var checkForUpdatesButton: HelmButton = {
+        let button = HelmButton(title: "Check for updates", variant: .secondary, size: .small,
+                                symbol: "arrow.clockwise", target: self, action: #selector(checkAllTapped))
+        button.toolTip = "Check every tool for updates"
+        return button
+    }()
+    private var selectedToolID: String?
+    private lazy var toolDetail = WorkspaceDetailView()
+    var onInspectorContentChanged: (() -> Void)?
+    var onShowInspector: (() -> Void)?
     private var lastCheckedTimer: Timer?
     private var hasCheckedOnce = false
 
@@ -185,6 +228,8 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // UI-33's scale: 16 between sections, 24 from the top.
         stack.spacing = HelmMetrics.s4
         stack.translatesAutoresizingMaskIntoConstraints = false
+        pageStack = stack
+        statsRowView = statsRow
 
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -384,6 +429,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         guard !isCheckingAll else { return }
         isCheckingAll = true
         checkAllPill.isHidden = true
+        checkForUpdatesButton.isEnabled = false
         checkAllProgressBar.isHidden = false
         checkAllProgressLabel.isHidden = false
 
@@ -406,7 +452,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     private func finishCheckAll() {
         isCheckingAll = false
-        checkAllPill.isHidden = false
+        // The sidebar layout's toolbar carries Check for updates instead.
+        checkAllPill.isHidden = drawsSidebarLayout
+        checkForUpdatesButton.isEnabled = true
         checkAllProgressBar.isHidden = true
         checkAllProgressLabel.isHidden = true
         lastCheckedAt = Date()
@@ -525,6 +573,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
                   : .init(.unread, caption: "Need attention"),
             .init(.value(relativeLastChecked()), caption: "Last checked"),
         ], theme: theme)
+        if drawsSidebarLayout {
+            toolsLastChecked.stringValue = lastCheckedAt == nil ? "not checked yet" : "checked \(relativeLastChecked())"
+        }
     }
 
     /// `fm/grandline-engineering-cards-stale-counts`: hand the freshly-learned
@@ -617,6 +668,12 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// once none of its rows match. An empty query with "All" selected shows
     /// everything.
     private func applyFilter() {
+        // The sidebar layout filters its one table; the category cards are
+        // the floating bar's and stay hidden there.
+        if drawsSidebarLayout {
+            renderToolsTable()
+            return
+        }
         let q = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         for section in categorySections {
             var anyVisible = false
@@ -812,6 +869,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
                 }
                 row.status = outcome.status
                 row.latestLabel = outcome.latestLabel
+                row.installedLabel = outcome.installedLabel
                 row.detail = outcome.detail
                 row.log = outcome.log
                 row.terminalCommand = nil
@@ -837,8 +895,12 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// re-checks the row once that command exits, whatever its status - the
     /// machine is the source of truth, not the command's exit code.
     @objc private func runInTerminalTapped(_ sender: NSButton) {
-        guard let row = row(for: sender), let command = row.terminalCommand,
-              let onRunCommandTracked else { return }
+        guard let row = row(for: sender) else { return }
+        runInTerminal(row)
+    }
+
+    private func runInTerminal(_ row: UpdateRow) {
+        guard let command = row.terminalCommand, let onRunCommandTracked else { return }
         onRunCommandTracked("Update \(row.item.name)", command) { [weak self] _ in
             DispatchQueue.main.async { self?.check(row, forceRefresh: true) }
         }
@@ -1107,6 +1169,12 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         }
         summaryStrip.applyTheme(theme)
         for row in rows { applyThemeToRow(row) }
+        if drawsSidebarLayout {
+            setupSummary.applyTheme(theme)
+            toolsTable.applyTheme(theme)
+            toolsLastChecked.textColor = HelmTheme.mutedInk(theme)
+            renderToolsTable()
+        }
     }
 
     private func applyThemeToRow(_ row: UpdateRow) {
@@ -1242,3 +1310,240 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     #endif
 
 }
+
+// MARK: - The sidebar layout (stage 7)
+
+// The prototype's Updates: Setup's summary cards, the filter row, and every
+// tool in one table - name, installed version, the available version or "Up
+// to date", where it comes from, and the row's own action where there is one.
+// The rows are the page's own `UpdateRow`s and every action is the method the
+// floating bar's row button reaches, so the two layouts check and update one
+// way. A tool's detail and its last command output - the floating bar's
+// expandable log - are the inspector's.
+
+extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding, WorkspaceInspectorSource {
+
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+        guard let stack = pageStack else { return }
+        statsRowView?.isHidden = true
+        for card in cards { card.isHidden = true }
+        checkAllPill.isHidden = true
+        stack.insertArrangedSubview(setupSummary, at: 0)
+        setupSummary.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        toolsLastChecked.font = HelmType.caption()
+        let title = NSTextField(labelWithString: "Tools")
+        _ = toolsTable.card.setHeader(symbol: "shippingbox", titleLabel: title, subtitleLabel: toolsLastChecked)
+        stack.addArrangedSubview(toolsTable.card)
+        toolsTable.card.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        renderStats()
+        applyTheme()
+    }
+
+    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? checkForUpdatesButton : nil }
+
+    var inspectorContent: WorkspaceInspectorContent? {
+        guard drawsSidebarLayout, let id = selectedToolID, let row = rows.first(where: { $0.item.id == id }) else {
+            return nil
+        }
+        toolDetail.show(toolDetail(for: row))
+        return WorkspaceInspectorContent(title: row.item.name, view: toolDetail)
+    }
+
+    var inspectorEmptyText: (title: String, body: String) {
+        ("No tool selected", "Select a tool to see its versions and the output of its last check or update.")
+    }
+
+    /// The tools that pass the filter row, grouped as the floating bar's
+    /// cards are.
+    fileprivate func renderToolsTable() {
+        guard drawsSidebarLayout else { return }
+        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var tableRows: [HelmDataTable.Row] = []
+        for category in DependencyCatalog.categoryOrder {
+            let matching = rows.filter { row in
+                row.item.category == category
+                    && (query.isEmpty || row.item.name.lowercased().contains(query))
+                    && (filterMode == .all || row.status.showsUpdateButton)
+            }
+            guard !matching.isEmpty else { continue }
+            tableRows.append(.group(category))
+            tableRows += matching.map(toolRow)
+        }
+        if tableRows.isEmpty {
+            tableRows = [filterMode == .needsAttention && query.isEmpty
+                ? .empty(symbol: "checkmark.seal", title: "Nothing needs attention",
+                         body: "Every tool that has been checked is up to date.")
+                : .empty(symbol: "magnifyingglass", title: "No tools match",
+                         body: "No tool's name contains \u{201C}\(query)\u{201D}.")]
+        }
+        toolsTable.setRows(tableRows)
+        onInspectorContentChanged?()
+    }
+
+    private func toolRow(_ row: UpdateRow) -> HelmDataTable.Row {
+        var tableRow = HelmDataTable.Row.record(row.item.id)
+        let failed = row.status == .checkFailed || row.status == .updateFailed
+        tableRow.cells["tool"] = .title(row.item.name, subtitle: failed ? row.detail : nil, subtitleIsCode: false,
+                                        symbol: row.item.kind.symbol,
+                                        tint: DependencyCatalog.tint(for: row.item.category), tintHex: nil)
+        if let installed = row.installedLabel, row.status != .notInstalled {
+            tableRow.cells["installed"] = .code(installed)
+        } else {
+            tableRow.cells["installed"] = HelmDataTable.Cell.none
+        }
+        tableRow.cells["available"] = availableCell(row)
+        tableRow.cells["source"] = .muted(row.item.kind.sourceName)
+        let busy = row.status == .checking || row.status == .updating
+        if !busy {
+            if row.terminalCommand != nil {
+                tableRow.primary = .init(title: "Run in Terminal", symbol: "terminal") { [weak self] in
+                    self?.runInTerminal(row)
+                }
+            } else if row.status == .notInstalled {
+                tableRow.primary = .init(title: "Install in Bootstrap", symbol: "arrow.right") { [weak self] in
+                    self?.onNavigateToBootstrap?()
+                }
+            } else if row.status == .updateAvailable || row.status == .updateFailed {
+                tableRow.primary = .init(title: "Update", symbol: "arrow.down.circle") { [weak self] in
+                    self?.confirmAndUpdate(row)
+                }
+            } else if row.status.showsCheckButton {
+                tableRow.primary = .init(title: "Check", symbol: "arrow.clockwise") { [weak self] in
+                    self?.check(row, forceRefresh: true)
+                }
+            }
+            // The row that asks the captain to act keeps its button in sight.
+            tableRow.pinsPrimary = row.status.showsUpdateButton
+            var menu: [HelmDataTable.Action] = []
+            if tableRow.primary?.title != "Check" {
+                menu.append(.init(title: "Check Now", symbol: "arrow.clockwise") { [weak self] in
+                    self?.check(row, forceRefresh: true)
+                })
+            }
+            if row.status == .checkFailed {
+                menu.append(.init(title: "Update", symbol: "arrow.down.circle") { [weak self] in
+                    self?.confirmAndUpdate(row)
+                })
+            }
+            menu.append(.init(title: "Show Details", symbol: "sidebar.right") { [weak self] in
+                self?.showDetails(row)
+            })
+            tableRow.menu = menu
+        }
+        tableRow.activate = { [weak self] in self?.showDetails(row) }
+        return tableRow
+    }
+
+    /// The available version, or what stands in its place: "Up to date", or
+    /// the row's state while it has no version to offer.
+    private func availableCell(_ row: UpdateRow) -> HelmDataTable.Cell {
+        switch row.status {
+        case .upToDate: return .muted("Up to date")
+        case .updateAvailable:
+            return .status("\u{2191} \(row.latestLabel ?? "newer version")", tint: .warn)
+        case .notInstalled:
+            return .status(row.latestLabel.map { "Not installed \u{00B7} \($0)" } ?? "Not installed", tint: .warn)
+        case .checking: return .muted("Checking\u{2026}")
+        case .updating: return .muted("Updating\u{2026}")
+        case .checkFailed: return .status("Check failed", tint: .critical)
+        case .updateFailed:
+            return row.terminalCommand != nil ? .status("Needs password", tint: .warn)
+                                              : .status("Update failed", tint: .critical)
+        case .unknown: return .muted("Not checked")
+        }
+    }
+
+    private func showDetails(_ row: UpdateRow) {
+        toolsTable.select(key: row.item.id)
+        selectedToolID = row.item.id
+        onInspectorContentChanged?()
+        onShowInspector?()
+    }
+
+    private func toolDetail(for row: UpdateRow) -> WorkspaceDetail {
+        var detail = WorkspaceDetail(symbol: row.item.kind.symbol, kicker: row.item.category, title: row.item.name,
+                                     subtitle: row.detail)
+        detail.tint = DependencyCatalog.tint(for: row.item.category)
+        if let installed = row.installedLabel, row.status != .notInstalled {
+            detail.fields.append(.init("Installed", installed, isCode: true))
+        }
+        if let latest = row.latestLabel { detail.fields.append(.init("Latest", latest, isCode: true)) }
+        detail.fields.append(.init("Source", row.item.kind.sourceName))
+        let (word, _, _) = pillVisuals(row)
+        if !word.isEmpty { detail.fields.append(.init("Status", word)) }
+        if let command = row.terminalCommand { detail.sections.append(.init("Command", [command], isCode: true)) }
+        let lines = row.log.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        detail.sections.append(.init("Output", row.log.isEmpty ? ["No output yet."] : lines, isCode: !row.log.isEmpty))
+        let busy = row.status == .checking || row.status == .updating
+        if !busy {
+            if row.terminalCommand != nil {
+                detail.actions.append(.init("Run in Terminal", symbol: "terminal", role: .primary) { [weak self] in
+                    self?.runInTerminal(row)
+                })
+            } else if row.status == .notInstalled {
+                detail.actions.append(.init("Install in Bootstrap", symbol: "arrow.right", role: .primary) { [weak self] in
+                    self?.onNavigateToBootstrap?()
+                })
+            } else if row.status.showsUpdateButton {
+                detail.actions.append(.init("Update", symbol: "arrow.down.circle", role: .primary) { [weak self] in
+                    self?.confirmAndUpdate(row)
+                })
+            }
+            detail.actions.append(.init("Check Now", symbol: "arrow.clockwise") { [weak self] in
+                self?.check(row, forceRefresh: true)
+            })
+        }
+        return detail
+    }
+}
+
+extension DependencyKind {
+    /// Where the tool comes from, as the sidebar layout's Source column says
+    /// it - read off how `UpdatesSource` checks and updates it.
+    var sourceName: String {
+        switch self {
+        case .npmGlobal: return "npm"
+        case .brewFormula, .brewCask, .herdr: return "Homebrew"
+        case .noMistakes: return "no-mistakes"
+        case .firstmate: return "GitHub"
+        case .docs: return "GitHub Pages"
+        }
+    }
+}
+
+#if FM_SELFTESTS
+extension UpdatesController {
+    var debugDrawsSidebarLayout: Bool { drawsSidebarLayout }
+    /// Whether any of the floating bar's category cards, or its stat strip,
+    /// is drawn.
+    var debugCategoryCardsShown: Bool { cards.contains { !$0.isHidden } }
+    var debugStatsStripShown: Bool { !(statsRowView?.isHidden ?? true) }
+    var debugToolsTable: HelmDataTable { toolsTable }
+    var debugSetupSummary: SetupSummaryRow { setupSummary }
+    var debugCheckForUpdatesButton: HelmButton { checkForUpdatesButton }
+    var debugToolsLastChecked: String { toolsLastChecked.stringValue }
+    /// The filter row's two controls, driven through their own paths.
+    func debugSetFilter(needsAttention: Bool) {
+        filterTabs.debugClickTab(id: needsAttention ? "needsAttention" : "all")
+    }
+    func debugSetQuery(_ query: String) {
+        searchField.stringValue = query
+        searchField.onTextChanged?(query)
+    }
+    /// Land a fixture check result on a row through the same fields a real
+    /// check writes, then the page's own render.
+    func debugApplyOutcome(id: String, status: DependencyStatus, installed: String?, latest: String?,
+                           detail: String = "fixture", log: String = "") {
+        guard let row = rows.first(where: { $0.item.id == id }) else { return }
+        row.status = status
+        row.installedLabel = installed
+        row.latestLabel = latest
+        row.detail = detail
+        row.log = log
+        render(row)
+    }
+}
+#endif

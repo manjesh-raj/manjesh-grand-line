@@ -20,24 +20,36 @@
 //     not automatically as text (`FM_RUN_CONTRAST_TESTS`' rule).
 //   - **Unknown is never zero (GL-14).** `configure(value: nil ...)` draws a
 //     dash and says why in the caption's tooltip.
+//   - **A third line is opt-in** (stage 7, Tasks' Weekly review): a card built
+//     with `showsDetail` says one more fact under its figure - a muted line,
+//     or a tinted pill when the fact is a judgement ("+3 vs last week"). A
+//     card without it keeps its height, so Logs' and Health's rows are
+//     unchanged.
 
 import AppKit
 
 final class HelmMetricCard: NSView {
 
     static let height: CGFloat = 82
+    /// A card with a detail line under its figure.
+    static let detailHeight: CGFloat = 108
     /// The metric's size: the prototype's summary figure.
     static let metricSize: CGFloat = 26
 
     private let card = HelmCard()
     private let captionLabel = NSTextField(labelWithString: "")
     private let valueLabel = NSTextField(labelWithString: "")
+    private let detailLabel = NSTextField(labelWithString: "")
+    private let detailPill = HelmStatusPill(style: .pill)
+    private var detailTint: HelmTint?
+    private let showsDetail: Bool
     private var tint: HelmTint?
     private var signals = false
     private var theme: HelmTheme = ThemeManager.shared.theme
 
-    init(caption: String, tint: HelmTint? = nil) {
+    init(caption: String, tint: HelmTint? = nil, showsDetail: Bool = false) {
         self.tint = tint
+        self.showsDetail = showsDetail
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         captionLabel.stringValue = caption
@@ -52,6 +64,17 @@ final class HelmMetricCard: NSView {
         stack.alignment = .leading
         stack.spacing = HelmMetrics.s1
         stack.translatesAutoresizingMaskIntoConstraints = false
+        if showsDetail {
+            detailLabel.font = HelmType.caption()
+            detailLabel.lineBreakMode = .byTruncatingTail
+            detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            // The stack detaches whichever of the two is hidden, so the line
+            // is the label's height or the pill's, never both.
+            stack.detachesHiddenViews = true
+            stack.addArrangedSubview(detailLabel)
+            stack.addArrangedSubview(detailPill)
+            detailPill.isHidden = true
+        }
         card.setBody(stack, insets: HelmCard.contentInsets)
         addSubview(card)
         NSLayoutConstraint.activate([
@@ -59,7 +82,7 @@ final class HelmMetricCard: NSView {
             card.trailingAnchor.constraint(equalTo: trailingAnchor),
             card.topAnchor.constraint(equalTo: topAnchor),
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
-            heightAnchor.constraint(equalToConstant: Self.height),
+            heightAnchor.constraint(equalToConstant: showsDetail ? Self.detailHeight : Self.height),
         ])
         setAccessibilityElement(true)
         setAccessibilityRole(.staticText)
@@ -79,6 +102,30 @@ final class HelmMetricCard: NSView {
         applyTheme(theme)
     }
 
+    /// The hue the figure takes while it is the signal, for a card whose
+    /// figure changes kind (Setup's Dotfiles card is ink while synced and
+    /// critical when it diverged).
+    func setTint(_ tint: HelmTint?) {
+        self.tint = tint
+        applyTheme(theme)
+    }
+
+    /// The line under the figure, on a card built with `showsDetail`: muted
+    /// text, or a pill in `tint` when the fact is a judgement. `nil` leaves
+    /// the line empty rather than claiming anything.
+    func setDetail(_ text: String?, tint: HelmTint? = nil) {
+        guard showsDetail else { return }
+        detailTint = tint
+        let pill = tint != nil && text != nil
+        detailPill.isHidden = !pill
+        detailLabel.isHidden = pill
+        detailLabel.stringValue = pill ? "" : (text ?? "")
+        if pill, let text, let tint { detailPill.configure(text: text, tint: tint, theme: theme) }
+        let figure = valueLabel.stringValue
+        setAccessibilityLabel([captionLabel.stringValue, figure, text].compactMap { $0 }.joined(separator: ", "))
+        applyTheme(theme)
+    }
+
     func configure(count: Int?, unknownReason: String? = nil) {
         configure(text: count.map(String.init), signals: (count ?? 0) > 0, unknownReason: unknownReason)
     }
@@ -95,6 +142,10 @@ final class HelmMetricCard: NSView {
         } else {
             valueLabel.textColor = ink
         }
+        if showsDetail {
+            detailLabel.textColor = HelmTheme.mutedInk(theme)
+            if let detailTint { detailPill.configure(text: detailPill.text, tint: detailTint, theme: theme) }
+        }
     }
 
     #if FM_SELFTESTS
@@ -102,6 +153,12 @@ final class HelmMetricCard: NSView {
     var debugValue: String { valueLabel.stringValue }
     var debugValueColor: NSColor? { valueLabel.textColor }
     var debugCard: HelmCard { card }
+    /// The detail line as drawn, whichever form it takes.
+    var debugDetail: String? {
+        guard showsDetail else { return nil }
+        return detailPill.isHidden ? detailLabel.stringValue : detailPill.text
+    }
+    var debugDetailIsPill: Bool { showsDetail && !detailPill.isHidden }
     #endif
 }
 

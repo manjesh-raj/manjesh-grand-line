@@ -15,9 +15,9 @@
 //      in the shell's pane, and lets it go when the vault locks. Automic
 //      Vault's two lists are tables under their own cards, with B1's three
 //      states intact.
-//   3. **Knowledge** has one tree beside Notebook, Runbooks, Postmortems and
-//      Docs - not the Reading list - read from the stores, opening an item
-//      through its page, with its own search; Notebook puts its column away.
+//   3. **Knowledge** draws no column beside its tabs (stage 7 removed the
+//      tree): Notebook keeps its own page column, Runbooks and Postmortems
+//      list their items, and the toolbar's Search finds all three kinds.
 //   4. **Crew › Needs you** is a real tab: the parked tasks and their open
 //      decisions, with Reply, an honest summary, and the bell's and Home's
 //      ways in.
@@ -64,7 +64,7 @@ enum PageRedesignsSelfTest {
                 ReviewTourLab.seedDemoKnowledge(shell.workspace)
                 settle(shell)
                 for check in [checkConnectionsTables, checkTheInspectorKeepsTheWindow, checkPoneglyphTable,
-                              checkAutomicVaultTables, checkKnowledgeTree, checkNeedsYou] {
+                              checkAutomicVaultTables, checkKnowledgeHasNoTree, checkNeedsYou] {
                     var ok = true
                     check(shell, window, scratch, &ok)
                     allOK = allOK && ok
@@ -499,65 +499,80 @@ enum PageRedesignsSelfTest {
 
     // MARK: 3 - Knowledge
 
-    private static func checkKnowledgeTree(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
-                                           _ ok: inout Bool) {
+    /// Stage 7: the captain asked whether Knowledge needed its second
+    /// sidebar, and it did not. Every row it held is still one click from
+    /// its own tab, and its search is the toolbar's: the module draws no
+    /// column beside the body, Notebook keeps its own page column (the only
+    /// tab whose items are not listed on the page itself), Runbooks and
+    /// Postmortems list theirs, and ⌘K finds a page, a runbook and a
+    /// postmortem from anywhere.
+    private static func checkKnowledgeHasNoTree(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
+                                                _ ok: inout Bool) {
         resize(window, width: 1512, shell)
+        let pane = shell.debugContentPane
+        let body = shell.debugBodyContainer
+        for route in [RailDestination.notebook, .runbooks, .postmortems, .docs, .readingList] {
+            shell.show(route)
+            settle(shell)
+            let frame = body.convert(body.bounds, to: pane)
+            check(frame.minX.magnitude < 0.5 && abs(frame.width - pane.bounds.width) < 0.5,
+                  "\(route.title) draws the body from \(frame.minX)pt, \(frame.width)pt of a \(pane.bounds.width)pt pane - "
+                      + "a column is back beside it", &ok)
+        }
+        check(!pane.subviews.contains { $0 !== body && !($0 is NSStackView) && !$0.isHidden },
+              "the content pane holds a view beside its header and body", &ok)
+
+        // Notebook's own page column is back: the tree was the reason it
+        // was put away.
         shell.show(.notebook)
         settle(shell)
-        let tree = shell.knowledgeTree
-        check(shell.debugLeadingColumn === tree.view && onScreen(tree.view),
-              "the Knowledge tree is not beside Notebook", &ok)
-        check(shell.workspace.notebook.splitPage?.pageForcesCollapse == true,
-              "Notebook kept its own page column beside the Knowledge tree", &ok)
-        tree.debugReadNow()
-        settle(shell)
-        let sections = tree.debugSections
-        check(sections.map(\.title) == ["Notebook", "Runbooks", "Postmortems", "Docs"],
-              "the tree's groups are \(sections.map(\.title))", &ok)
-        let notebook = sections.first { $0.title == "Notebook" }?.children ?? []
-        check(notebook.contains { $0.title == "Ideas" && $0.kind == .item }
-                && notebook.contains { $0.title == "Team" && $0.kind == .folder && $0.children.count == 2 },
-              "the Notebook group is \(notebook.map(\.title)), want Ideas and the Team folder of two", &ok)
-        let runbooks = sections.first { $0.title == "Runbooks" }?.children.map(\.title) ?? []
-        check(Set(runbooks) == ["Rotate a TLS certificate", "Fail over the database"], "the Runbooks group is \(runbooks)", &ok)
-        let docs = sections.first { $0.title == "Docs" }?.children ?? []
-        check(docs.count == 1 && docs[0].kind == .note && docs[0].title == "Not synced yet",
-              "the Docs group says \(docs.map(\.title)) for a playbook that is not synced", &ok)
-        check(tree.debugSelectedID?.hasPrefix("notebook:") == true,
-              "the tree does not select the page Notebook has open (selected: \(String(describing: tree.debugSelectedID)))", &ok)
+        let notebook = shell.workspace.notebook
+        check(notebook.splitPage?.pageForcesCollapse == false && notebook.splitPage?.isSidebarCollapsed == false
+                && onScreen(notebook.debugSidebar),
+              "Notebook's page column is not showing in the sidebar layout", &ok)
+        let pages = Set(notebook.debugPages.map(\.title))
+        check(pages.isSuperset(of: ["Ideas", "Edge architecture", "On-call handbook"]),
+              "Notebook lists \(pages), want the three seeded pages", &ok)
 
-        // An item opens its tab and the item, through the page's own path.
-        guard let runbook = shell.workspace.docsRunbookStore.listRunbooks().first(where: { $0.title == "Rotate a TLS certificate" })
-        else {
-            fail("the seeded runbook is missing", &ok)
-            return
-        }
-        let itemID = KnowledgeTreeItem.runbookID(runbook.id)
-        check(tree.debugOpen(id: itemID), "the tree has no row for the runbook", &ok)
+        // Runbooks and Postmortems list their own items.
+        shell.show(.runbooks)
         settle(shell)
-        check(shell.debugCurrentDestination == .runbooks, "opening a runbook from the tree did not open Runbooks", &ok)
-        check(shell.workspace.runbooks.knowledgeShowingItemID == itemID,
-              "opening a runbook from the tree did not open it in the page's editor", &ok)
-        check(shell.debugCurrentTab?.name == "Runbooks", "the toolbar does not light Runbooks after the tree opened one", &ok)
-        check(shell.debugLeadingColumn === tree.view, "the tree left the column on Runbooks", &ok)
+        let runbooks = Set(shell.workspace.runbooks.debugRunbookPlates.map(\.debugTitle))
+        check(runbooks == ["Rotate a TLS certificate", "Fail over the database"], "Runbooks lists \(runbooks)", &ok)
+        shell.show(.postmortems)
+        settle(shell)
+        let postmortems = Set(shell.workspace.postmortems.debugPostmortemPlates.map(\.debugTitle))
+        check(postmortems == ["Cache outage, 9 October", "Certificate expiry, 2 September"],
+              "Postmortems lists \(postmortems)", &ok)
 
-        // Its own search narrows to the matching items.
-        tree.debugSetQuery("cert")
-        let visible = tree.debugVisibleTitles
-        check(visible.contains("Rotate a TLS certificate") && !visible.contains("Fail over the database"),
-              "searching \"cert\" shows \(visible)", &ok)
-        tree.debugSetQuery("")
-
-        // The Reading list keeps its cards, with no tree.
-        shell.show(.readingList)
-        settle(shell)
-        check(shell.debugLeadingColumn == nil, "the Knowledge tree shows beside the Reading list", &ok)
-        shell.show(.docs)
-        settle(shell)
-        check(shell.debugLeadingColumn === tree.view, "the Knowledge tree is not beside Docs", &ok)
+        // The tree's own search has its home in the toolbar's: the palette's
+        // providers find each kind, and a result opens its tab and the item.
+        let index = UnifiedSearchIndex()
+        index.register(UnifiedSearchDocsProvider(
+            store: shell.workspace.docsRunbookStore,
+            onOpenRunbook: { [weak shell] id in shell?.openRunbook(id: id) },
+            onOpenPostmortem: { [weak shell] id in shell?.openPostmortem(id: id) }))
+        index.register(UnifiedSearchNotebookProvider(
+            store: shell.workspace.notebookStore,
+            onOpen: { [weak shell] id in shell?.openNotebookPage(id: id) }))
+        let found = index.flatItems(query: "cert").map(\.title)
+        check(found.contains("Rotate a TLS certificate") && found.contains("Certificate expiry, 2 September")
+                && !found.contains("Fail over the database"),
+              "searching \"cert\" finds \(found)", &ok)
+        check(index.flatItems(query: "edge").contains { $0.title == "Edge architecture" },
+              "searching \"edge\" does not find the Notebook page", &ok)
         shell.show(.homeCanvas)
         settle(shell)
-        check(shell.debugLeadingColumn == nil, "the Knowledge tree stayed on Home", &ok)
+        if let runbook = index.flatItems(query: "Rotate").first(where: { $0.title == "Rotate a TLS certificate" }) {
+            runbook.activate()
+            settle(shell)
+            check(shell.debugCurrentDestination == .runbooks && shell.debugCurrentTab?.name == "Runbooks"
+                    && shell.workspace.runbooks.debugRunbookEditorIsOpen,
+                  "a runbook found by Search did not open in Runbooks", &ok)
+            shell.workspace.runbooks.debugCancelRunbookEditor()
+        } else {
+            fail("Search has no result for the seeded runbook", &ok)
+        }
     }
 
     // MARK: 4 - Crew › Needs you

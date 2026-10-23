@@ -170,9 +170,6 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
 
     private static let gutter: CGFloat = HelmMetrics.s3
 
-    /// The sidebar layout's Knowledge tree (`KnowledgeTreePage`, at the end of
-    /// this file): told when the pages or the open page change.
-    var onKnowledgeChanged: ((KnowledgeChange) -> Void)?
     static let railColumnWidth: CGFloat = 200
 
     // MARK: Init
@@ -644,7 +641,6 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         }
         refreshStatusLine()
         onDrillSubtitleChanged?()
-        onKnowledgeChanged?(.list)
     }
 
     /// The clone can land after this page first mounted, exactly as it can
@@ -720,7 +716,6 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         refreshRail()
         refreshStatusLine()
         onDrillSubtitleChanged?()
-        onKnowledgeChanged?(.showing)
     }
 
     // MARK: Editing
@@ -1339,23 +1334,4 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         webView.call(name, payload: payload, completion: completion)
     }
     #endif
-}
-
-// MARK: - Knowledge's tree in the sidebar layout
-
-// The sidebar layout draws one tree over Notebook, Runbooks, Postmortems and
-// Docs at the module's edge (`KnowledgeTree.swift`), so this page puts its own
-// page column away there - the tree's Notebook group is the same pages in the
-// same folders, and opens them through `openPage(id:)`. The floating bar
-// keeps the column.
-
-extension NotebookController: SidebarLayoutAdopting, KnowledgeTreePage {
-    func adoptSidebarLayout() {
-        _ = view
-        splitPage?.pageForcesCollapse = true
-    }
-
-    var knowledgeShowingItemID: String? { currentID.map(KnowledgeTreeItem.notebookID) }
-
-    func openKnowledgeItem(id: String) { openPage(id: KnowledgeTreeItem.storeID(id)) }
 }

@@ -3405,8 +3405,9 @@ if ProcessInfo.processInfo.environment["FM_RUN_MAIN_SPLIT_SHELL_TESTS"] == "1" {
     exit(MainSplitShellSelfTest.run() ? 0 : 1)
 }
 // The later page work: the host, key, snippet and credential tables with the
-// shell's inspector, Knowledge's tree and Crew › Needs you, in a real
-// off-screen sidebar shell - and the floating bar's same pages unchanged.
+// shell's inspector, Knowledge with no tree (stage 7) and Crew › Needs you, in
+// a real off-screen sidebar shell - and the floating bar's same pages
+// unchanged.
 if ProcessInfo.processInfo.environment["FM_RUN_PAGE_REDESIGNS_TESTS"] == "1" {
     exit(PageRedesignsSelfTest.run() ? 0 : 1)
 }
@@ -3426,6 +3427,18 @@ if ProcessInfo.processInfo.environment["FM_RUN_SIDEBAR_POLISH_TESTS"] == "1" {
 // sidebar shell - and the floating bar's same pages unchanged.
 if ProcessInfo.processInfo.environment["FM_RUN_SIDEBAR_PAGE_FIXES_TESTS"] == "1" {
     exit(SidebarPageFixesSelfTest.run() ? 0 : 1)
+}
+
+// Stage 7 of the modular-shell migration: the sidebar at the Large size, Quick
+// Connect's two icons, Knowledge with no tree, Setup's four tabs and Tasks'
+// four as the prototype draws them. The models and source guards first (pure,
+// CI's blocking lane), then the pages in a real off-screen sidebar shell - and
+// the floating bar's same pages unchanged.
+if ProcessInfo.processInfo.environment["FM_RUN_SIDEBAR_REDESIGNS_MODEL_TESTS"] == "1" {
+    exit(SidebarRedesignsModelSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_SIDEBAR_REDESIGNS_TESTS"] == "1" {
+    exit(SidebarRedesignsSelfTest.run() ? 0 : 1)
 }
 
 // `fm/grandline-engineering-cards-stale-counts`: a hub summary card must

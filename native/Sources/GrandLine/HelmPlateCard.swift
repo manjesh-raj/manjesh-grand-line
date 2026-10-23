@@ -307,6 +307,9 @@ final class HelmPlateCard: NSView {
     // MARK: Probe / self-test surface
 
     #if FM_SELFTESTS
+    /// The plate's title as drawn.
+    var debugTitle: String { titleLabel.stringValue }
+
     struct Anatomy {
         let hasRibbon: Bool
         let ribbonHeight: CGFloat

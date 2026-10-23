@@ -1079,3 +1079,9 @@ What changed:
 - **No environment variables were added.** stdin is already `/dev/null` (`aBackgroundChildReadsEndOfFileFromStdin` measures it), and nothing in the child's environment stops `pam_tid` from asking. `HOMEBREW_NO_AUTO_UPDATE` was considered and left out, because nothing measured showed auto-update mattered here, and `ensureTapped`'s `brew tap` is what refreshes the tap for Check.
 
 `FM_RUN_UPDATES_FAILURE_TESTS` covers the data side, including the real runner reproducing `Error: SIGTERM` from a `/bin/sh` child that traps TERM. `UpdatesActionVisibilitySelfTest.checkANeedsPasswordRowOffersTheTerminalNotUpdate` covers the row through the real completion path and a real `performClick`.
+
+## Setup in the sidebar layout (modular-shell stage 7)
+
+In the sidebar layout, Setup's four tabs share one row of summary cards (`SetupSummary`), Updates is one table of tools, Setup steps is a list with Details, Automation is one card of switches, and GitHub sync opens on a paused-push card over a forks table.
+The floating bar's pages are unchanged, except GitHub sync's subtitle, which no longer says "all in sync" over checks that failed.
+The account, the decisions and the measurements are in [`03-navigation-and-chrome.md`](03-navigation-and-chrome.md), under "The captain's second list from the sidebar layout".

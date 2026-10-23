@@ -188,6 +188,24 @@ final class BackgroundSignalsPoller {
         /// renders as "hasn't been checked yet this session" rather than as a
         /// confident zero (GL-14).
         var vaultSecrets: Int?
+
+        // Stage 7: the totals behind Setup's summary cards ("Tools up to
+        // date 6 / 8", "Setup steps 5 / 6", the forks). Written by the same
+        // publish that writes the count beside each, in the same assignment,
+        // so a card and the sidebar's badge never read two different passes.
+        // `nil` until that publish has run, like every field here (GL-14).
+        var toolsTotal: Int? = nil
+        var toolsUpToDate: Int? = nil
+        /// Tools with a newer version to install - `.updateAvailable` only,
+        /// where `toolUpdates` also counts a tool that is missing or whose
+        /// check failed (`DependencyStatus.showsUpdateButton`).
+        var toolsWithUpdate: Int? = nil
+        var setupStepsTotal: Int? = nil
+        var setupStepsDone: Int? = nil
+        var forksTotal: Int? = nil
+        /// Forks whose check came back - in sync, behind or diverged - so a
+        /// summary can tell "all in sync" from "nothing could be read".
+        var forksChecked: Int? = nil
     }
 
     /// When the data behind each published signal was gathered - see
@@ -772,7 +790,13 @@ extension BackgroundSignalsPoller {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let count = Self.toolUpdateCount(from: statuses) else { return }
         guard acceptsReading(.tools, gatheredAt: gatheredAt) else { return }
-        lastCounts.toolUpdates = count
+        // One assignment, so observers hear the count and its totals together.
+        var counts = lastCounts
+        counts.toolUpdates = count
+        counts.toolsTotal = statuses.count
+        counts.toolsUpToDate = statuses.filter { $0 == .upToDate }.count
+        counts.toolsWithUpdate = statuses.filter { $0 == .updateAvailable }.count
+        lastCounts = counts
         NotificationSources.setToolUpdates(count: count, children: children, updateAll: updateAll) {
             [weak self] in self?.onNavigateToUpdates?()
         }
@@ -787,7 +811,16 @@ extension BackgroundSignalsPoller {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let count = Self.forkDriftCount(from: statuses) else { return }
         guard acceptsReading(.forks, gatheredAt: gatheredAt) else { return }
-        lastCounts.forkDrift = count
+        var counts = lastCounts
+        counts.forkDrift = count
+        counts.forksTotal = statuses.count
+        counts.forksChecked = statuses.filter { status in
+            switch status {
+            case .inSync, .behind, .diverged: return true
+            default: return false
+            }
+        }.count
+        lastCounts = counts
         NotificationSources.setGitHubSync(count: count, children: children, syncAll: syncAll) {
             [weak self] in self?.onNavigateToGitHubSync?()
         }
@@ -798,7 +831,11 @@ extension BackgroundSignalsPoller {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let count = Self.setupDriftCount(from: results) else { return }
         guard acceptsReading(.setup, gatheredAt: gatheredAt) else { return }
-        lastCounts.setupDrift = count
+        var counts = lastCounts
+        counts.setupDrift = count
+        counts.setupStepsTotal = SetupStepKind.allCases.count
+        counts.setupStepsDone = SetupStepKind.allCases.count - count
+        lastCounts = counts
         // The drifted steps name themselves - `results` is keyed by
         // `SetupStepKind`, so no page has to hand them over separately.
         let children = SetupStepKind.allCases

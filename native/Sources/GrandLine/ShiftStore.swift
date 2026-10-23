@@ -1037,6 +1037,23 @@ final class ShiftStore {
         return ids.count
     }
 
+    /// How many distinct tasks were focused in the last `days` days, today
+    /// included - the "4 tasks with a timer" under the sidebar layout's
+    /// Focus time card (stage 7), over the same days its chart draws.
+    func focusTaskCount(days: Int, reference: Date = Date()) -> Int {
+        let cal = Calendar.current
+        guard days > 0, let first = cal.date(byAdding: .day, value: -(days - 1),
+                                             to: cal.startOfDay(for: reference)) else { return 0 }
+        var ids: Set<String> = []
+        for entry in recentActivityEntries(monthsBack: max(1, days / 28 + 1), reference: reference)
+        where entry.kind == FocusActivityLog.kind {
+            guard let targetID = entry.targetID, let at = ShiftStore.iso8601Date(entry.timestamp),
+                  at >= first, at <= reference else { continue }
+            ids.insert(targetID)
+        }
+        return ids.count
+    }
+
     private func persistActiveTasks() {
         writeListGuarded(path: activeTasksPath, key: "tasks",
                          items: activeTasks.map { taskPassthrough.merged(ShiftYaml.toYaml($0), id: $0.id) }

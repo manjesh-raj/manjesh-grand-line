@@ -20,7 +20,9 @@
 //   - the showing page's own actions (its `drillHeaderActions`, which the
 //     floating bar drew in its drill header), and the module's one action
 //     where a real verb has no other home in this layout (Home's Customize,
-//     Console's Quick Connect, Connections' Activity),
+//     Connections' Activity) - or, on Console, Quick Connect: the caption
+//     and two separate icons beside it, one for a Console terminal and one
+//     for a host (stage 7, the captain's call),
 //   - while a focus timer runs, F7's chip (the floating bar shows it beside
 //     its search pill), just before the trailing cluster - it was on the
 //     layout's status strip until the captain had the strip removed,
@@ -54,6 +56,26 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         static let search = NSToolbarItem.Identifier("workspace.search")
         static let primaryAction = NSToolbarItem.Identifier("workspace.primaryAction")
         static let focusTimer = NSToolbarItem.Identifier("workspace.focusTimer")
+        /// Console's Quick Connect: the caption, then its two icons.
+        static let quickConnectCaption = NSToolbarItem.Identifier("workspace.quickConnect.caption")
+        static let quickConnectConsole = NSToolbarItem.Identifier("workspace.quickConnect.console")
+        static let quickConnectHosts = NSToolbarItem.Identifier("workspace.quickConnect.hosts")
+        static let quickConnect = [quickConnectCaption, quickConnectConsole, quickConnectHosts]
+    }
+
+    /// Quick Connect's two icons. Separate image items rather than one
+    /// control with two segments, so each is its own button and the system
+    /// groups them in one capsule the way it groups the light/dark toggle,
+    /// the bell and the inspector toggle - two icons side by side, never one
+    /// merged glyph (the captain's words: "lets not merge them").
+    enum QuickConnectIcon {
+        static let consoleSymbol = "terminal"
+        static let hostsSymbol = "server.rack"
+        static let caption = "Quick Connect"
+        static let consoleLabel = "Console"
+        static let hostsLabel = "Hosts"
+        static let consoleHelp = "Go to your Console session, or open one if there is none"
+        static let hostsHelp = "Connect to a saved host, or type ssh user@host"
     }
 
     let toolbar = NSToolbar(identifier: "workspace.toolbar")
@@ -66,6 +88,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// A tab was picked, by its index in what `setTabs` last showed.
     var onSelectTab: ((Int) -> Void)?
     var onModuleAction: (() -> Void)?
+    /// Quick Connect's Console icon and its Hosts icon.
+    var onQuickConnectConsole: (() -> Void)?
+    var onQuickConnectHosts: (() -> Void)?
     var onToggleTheme: (() -> Void)?
     var onNotifications: ((NSView) -> Void)?
     var onToggleInspector: (() -> Void)?
@@ -99,6 +124,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// what `debugTabNames` reports and what a click is matched against.
     private var tabNames: [String] = []
     private let moduleActionButton = NSButton()
+    /// Quick Connect's caption: plain text, like the crumb, so the system
+    /// draws no capsule around it.
+    private let quickConnectCaption = NSTextField(labelWithString: QuickConnectIcon.caption)
+    private var wantsQuickConnect = false
+    private var quickConnectConsoleItem: NSToolbarItem?
+    private var quickConnectHostsItem: NSToolbarItem?
     private let bellButton = NSButton()
     /// The unread count on the bell's corner. Drawn here rather than with
     /// `NSToolbarItem.badge`, which is macOS 26 only and absent from the SDK
@@ -208,6 +239,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         moduleActionButton.target = self
         moduleActionButton.action = #selector(moduleActionClicked)
 
+        quickConnectCaption.lineBreakMode = .byClipping
+        quickConnectCaption.setContentCompressionResistancePriority(.required, for: .horizontal)
+        quickConnectCaption.setAccessibilityRole(.staticText)
+        applyQuickConnectCaption(ThemeManager.shared.theme)
+
         pageActions.translatesAutoresizingMaskIntoConstraints = false
         pageActions.orientation = .horizontal
         pageActions.alignment = .centerY
@@ -298,7 +334,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         toolbarDefaultItemIdentifiers(toolbar) + [ItemID.tabs, ItemID.pageActions, ItemID.moduleAction, ItemID.primaryAction,
-                                                  ItemID.focusTimer]
+                                                  ItemID.focusTimer, .space] + ItemID.quickConnect
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
@@ -315,9 +351,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         // would do nothing - measured at 1100 on Knowledge, whose five tabs
         // leave room for the page's actions or the chip, and on Home, where
         // Customize and the chip did not both fit.
+        // Quick Connect's caption says what its icons are for, so it goes
+        // before them; the icons themselves are the module's action.
         switch identifier {
-        case ItemID.crumb, ItemID.recents, ItemID.inspector: item?.visibilityPriority = .low
-        case ItemID.moduleAction: item?.visibilityPriority = Self.moduleActionPriority
+        case ItemID.crumb, ItemID.recents, ItemID.inspector, ItemID.quickConnectCaption: item?.visibilityPriority = .low
+        case ItemID.moduleAction, ItemID.quickConnectConsole, ItemID.quickConnectHosts:
+            item?.visibilityPriority = Self.moduleActionPriority
         case ItemID.focusTimer: item?.visibilityPriority = Self.focusChipPriority
         case ItemID.search, ItemID.notifications, ItemID.theme, ItemID.tabs, ItemID.sidebar, ItemID.navigation,
              ItemID.primaryAction:
@@ -361,6 +400,27 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             let menuForm = NSMenuItem(title: moduleActionButton.title, action: #selector(moduleActionClicked), keyEquivalent: "")
             menuForm.target = self
             item.menuFormRepresentation = menuForm
+            return item
+        case ItemID.quickConnectCaption:
+            let item = viewItem(identifier, view: quickConnectCaption, label: QuickConnectIcon.caption)
+            // In the overflow menu the caption is the old single action, so
+            // choosing it does what clicking Quick Connect always did.
+            let menuForm = NSMenuItem(title: QuickConnectIcon.caption, action: #selector(quickConnectHostsClicked),
+                                      keyEquivalent: "")
+            menuForm.target = self
+            item.menuFormRepresentation = menuForm
+            return item
+        case ItemID.quickConnectConsole:
+            let item = imageItem(identifier, symbol: QuickConnectIcon.consoleSymbol, label: QuickConnectIcon.consoleLabel,
+                                 help: QuickConnectIcon.consoleHelp, action: #selector(quickConnectConsoleClicked))
+            item.paletteLabel = "Quick Connect: Console"
+            quickConnectConsoleItem = item
+            return item
+        case ItemID.quickConnectHosts:
+            let item = imageItem(identifier, symbol: QuickConnectIcon.hostsSymbol, label: QuickConnectIcon.hostsLabel,
+                                 help: QuickConnectIcon.hostsHelp, action: #selector(quickConnectHostsClicked))
+            item.paletteLabel = "Quick Connect: Hosts"
+            quickConnectHostsItem = item
             return item
         case ItemID.theme:
             let item = imageItem(identifier, symbol: DaylightThemeToggleButton.lightSymbol, label: "Appearance",
@@ -500,6 +560,21 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         reconcileDynamicItems()
     }
 
+    /// Console's Quick Connect - the caption and its Console and Hosts icons -
+    /// or none.
+    func setQuickConnect(_ shown: Bool) {
+        guard shown != wantsQuickConnect else { return }
+        wantsQuickConnect = shown
+        reconcileDynamicItems()
+    }
+
+    /// The caption in the toolbar's text style: the crumb's module ink, at
+    /// the size the toolbar's other words use.
+    private func applyQuickConnectCaption(_ theme: HelmTheme) {
+        quickConnectCaption.font = .systemFont(ofSize: HelmType.scaled(13), weight: .medium)
+        quickConnectCaption.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+    }
+
     /// The showing page's own actions, or none. The views are the page's -
     /// the same ones the floating bar's drill header held - so a page needs
     /// no change to put its buttons here.
@@ -558,6 +633,21 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         } else if moduleActionIndex == nil {
             toolbar.insertItem(withItemIdentifier: ItemID.moduleAction, at: beforeTheFocusChipAndTheCluster)
         }
+        // Quick Connect's three go in together and in order, so the caption
+        // always sits just before its two icons, and a space follows them.
+        // Without it the system draws adjacent icons as one capsule, and the
+        // two icons became the first two of five with the trailing cluster's
+        // (measured in a real render) - the caption then read as the label
+        // for all five.
+        let shownQuickConnect = toolbar.items.filter { ItemID.quickConnect.contains($0.itemIdentifier) }
+        if !wantsQuickConnect {
+            removeQuickConnect()
+        } else if shownQuickConnect.map(\.itemIdentifier) != ItemID.quickConnect || quickConnectSpaceIndex == nil {
+            removeQuickConnect()
+            for identifier in ItemID.quickConnect + [.space] {
+                toolbar.insertItem(withItemIdentifier: identifier, at: beforeTheFocusChipAndTheCluster)
+            }
+        }
         let focusIndex = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.focusTimer }
         if !wantsFocusChip {
             if let focusIndex { toolbar.removeItem(at: focusIndex) }
@@ -583,6 +673,22 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     private var beforeTheFocusChipAndTheCluster: Int {
         toolbar.items.firstIndex { $0.itemIdentifier == ItemID.focusTimer || $0.itemIdentifier == ItemID.theme }
             ?? toolbar.items.count
+    }
+
+    /// The space Quick Connect puts after its Hosts icon, when it is there.
+    /// Found by position, so a space anywhere else is never taken for it.
+    private var quickConnectSpaceIndex: Int? {
+        guard let hosts = toolbar.items.firstIndex(where: { $0.itemIdentifier == ItemID.quickConnectHosts }),
+              hosts + 1 < toolbar.items.count, toolbar.items[hosts + 1].itemIdentifier == .space else { return nil }
+        return hosts + 1
+    }
+
+    private func removeQuickConnect() {
+        if let space = quickConnectSpaceIndex { toolbar.removeItem(at: space) }
+        for index in toolbar.items.indices.reversed()
+        where ItemID.quickConnect.contains(toolbar.items[index].itemIdentifier) {
+            toolbar.removeItem(at: index)
+        }
     }
 
     /// Between `.low` (-1000) and `.standard` (0), which the page's actions
@@ -621,6 +727,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     func applyThemeSymbol(_ theme: HelmTheme) {
         setSearchHint(theme)
         applyCrumb(theme)
+        applyQuickConnectCaption(theme)
         let isDark = theme.mode == .dark
         themeItem?.image = symbol(isDark ? DaylightThemeToggleButton.darkSymbol : DaylightThemeToggleButton.lightSymbol)
         themeItem?.toolTip = DaylightThemeToggleButton.tooltip(isDark: isDark)
@@ -637,6 +744,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     @objc private func inspectorClicked() { onToggleInspector?() }
     @objc private func searchClicked() { onSearch?() }
     @objc private func moduleActionClicked() { onModuleAction?() }
+    @objc private func quickConnectConsoleClicked() { onQuickConnectConsole?() }
+    @objc private func quickConnectHostsClicked() { onQuickConnectHosts?() }
     @objc private func focusChipClicked() { onFocusChip?(focusChip) }
     @objc private func focusChipFromOverflow() { onFocusChip?(navigation) }
 
@@ -673,6 +782,21 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     var debugCrumb: String { crumb.stringValue }
     var debugIsCompact: Bool { isCompact }
     var debugModuleActionButton: NSButton? { wantsModuleAction ? moduleActionButton : nil }
+    /// Quick Connect's caption as drawn, or `nil` while it is not in the
+    /// toolbar.
+    var debugQuickConnectCaption: NSTextField? {
+        toolbar.items.contains { $0.itemIdentifier == ItemID.quickConnectCaption } ? quickConnectCaption : nil
+    }
+    var debugQuickConnectConsoleItem: NSToolbarItem? { quickConnectConsoleItem }
+    var debugQuickConnectHostsItem: NSToolbarItem? { quickConnectHostsItem }
+    /// Choose the caption's overflow menu form, the way a click on it does.
+    func debugPerformQuickConnectMenuForm() -> Bool {
+        guard let menu = toolbar.items.first(where: { $0.itemIdentifier == ItemID.quickConnectCaption })?
+                .menuFormRepresentation,
+              let action = menu.action, let target = menu.target as? NSObject else { return false }
+        target.perform(action, with: menu)
+        return true
+    }
     var debugBellButton: NSButton { bellButton }
     var debugRecentsButton: NSButton { recentsButton }
     var debugSearchButton: NSButton { searchButton }

@@ -212,6 +212,49 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     /// otherwise go stale after that switch.
     private var stepAccentBars: [(bar: NSView, hex: (HelmTheme) -> String)] = []
 
+    // MARK: The sidebar layout's state (stage 7)
+
+    private var drawsSidebarLayout = false
+    private var pageStack: NSStackView?
+    private var runCardView: NSView?
+    private lazy var setupSummary = SetupSummaryRow()
+    /// Holds the Automation card, which is rebuilt when the schedules change.
+    private let automationHost = NSStackView()
+    private var automationGroup: SettingsGroup?
+    /// The app's one schedule store, handed in by the workspace (GL-23). The
+    /// Automation card lists its schedules with their switches.
+    var scheduleStore: ScheduleStore?
+    /// Open the Schedules page, where schedules are added and edited.
+    var onOpenSchedules: (() -> Void)?
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        // Gotcha (22): each row's description wraps at the card's own width.
+        guard drawsSidebarLayout else { return }
+        var changed = false
+        if let automationGroup {
+            let before = automationGroup.rows.map { $0.descriptionLabel?.preferredMaxLayoutWidth ?? 0 }
+            automationGroup.relayoutDescriptions(cardWidth: automationGroup.bounds.width)
+            changed = before != automationGroup.rows.map { $0.descriptionLabel?.preferredMaxLayoutWidth ?? 0 }
+        }
+        // The same for each pipeline step's line, which is built at a fixed
+        // 500pt and left an empty second line under a sentence that fit.
+        for label in stepDetailLabels {
+            let width = floor(label.superview?.bounds.width ?? 0)
+            guard width > 0, abs(label.preferredMaxLayoutWidth - width) > 0.5 else { continue }
+            label.preferredMaxLayoutWidth = width
+            label.invalidateIntrinsicContentSize()
+            changed = true
+        }
+        // A new wrap width is a new height, which only the next pass lays
+        // out: without it each row kept the height of its first, narrower
+        // wrap (measured at 1100: rows twice their text's height).
+        if changed { view.needsLayout = true }
+    }
+
+    /// Each pipeline step's detail line, for `viewDidLayout`.
+    private var stepDetailLabels: [NSTextField] = []
+
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 720))
         root.wantsLayer = true
@@ -243,6 +286,8 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
+        pageStack = stack
+        runCardView = runCard
 
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -320,6 +365,9 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     override func viewWillAppear() {
         super.viewWillAppear()
         settleDeferredThemeRebuild()
+        // The Schedules page may have changed a schedule while this one was
+        // away; its store's one change hook is that page's.
+        if drawsSidebarLayout { renderAutomationList() }
         if isLoadingDotfiles { refreshDotfiles() }
         if isLoadingSoftware { checkAllSoftware() }
         // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
@@ -695,6 +743,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         detailLabel.preferredMaxLayoutWidth = 500
         detailLabel.textColor = HelmTheme.mutedInk(theme)
         dynamicLabels.append(detailLabel)
+        stepDetailLabels.append(detailLabel)
 
         var bodyViews: [NSView] = [titleRow, detailLabel]
 
@@ -1022,6 +1071,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         stepContentBoxes.removeAll()
         stepAccentBars.removeAll()
         dynamicLabels.removeAll()
+        stepDetailLabels.removeAll()
         for v in stepperStack.arrangedSubviews {
             stepperStack.removeArrangedSubview(v)
             v.removeFromSuperview()
@@ -1071,3 +1121,105 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         }
     }
 }
+
+// MARK: - The sidebar layout (stage 7)
+
+// The prototype's Automation: Setup's summary cards, then what runs on this
+// Mac without the captain - each with its switch. The reference's own rows
+// were mock-ups, so these are the real ones: every schedule the Schedules
+// page holds, the dotfiles auto-commit Setup steps' dotfiles card switches,
+// and Console's reconnect. Each switch writes the same setting its own page
+// writes, so the two always agree. The pipeline Run Automation sequences
+// stays below, and Run Automation is the toolbar's primary action.
+
+extension AutomationController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding {
+
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+        guard let stack = pageStack else { return }
+        runCardView?.isHidden = true
+        automationHost.orientation = .vertical
+        automationHost.alignment = .leading
+        automationHost.translatesAutoresizingMaskIntoConstraints = false
+        stack.insertArrangedSubview(setupSummary, at: 0)
+        stack.insertArrangedSubview(automationHost, at: 1)
+        for view in [setupSummary, automationHost] as [NSView] {
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        renderAutomationList()
+    }
+
+    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? runButton : nil }
+
+    /// The rows, from the live settings and schedules.
+    fileprivate func renderAutomationList() {
+        guard drawsSidebarLayout else { return }
+        var rows: [SettingsRow] = []
+        for schedule in scheduleStore?.schedules ?? [] {
+            let toggle = HelmToggle()
+            toggle.isOn = schedule.isEnabled
+            toggle.setAccessibilityLabel(schedule.action.title)
+            let id = schedule.id
+            toggle.onToggle = { [weak self, weak toggle] in
+                guard let self, let toggle else { return }
+                self.scheduleStore?.setEnabled(toggle.isOn, id: id)
+                self.renderAutomationList()
+            }
+            rows.append(SettingsRow(title: schedule.action.title,
+                                    description: "Runs through Schedules \u{00B7} \(schedule.metaLine())",
+                                    control: toggle))
+        }
+        let dotfiles = HelmToggle()
+        dotfiles.isOn = AppSettings.shared.dotfilesAutoCommitEnabled
+        dotfiles.setAccessibilityLabel("Commit and push dotfiles changes automatically")
+        dotfiles.onToggle = { [weak self, weak dotfiles] in
+            guard let dotfiles else { return }
+            AppSettings.shared.dotfilesAutoCommitEnabled = dotfiles.isOn
+            DotfilesAutoSync.shared.settingChanged()
+            self?.renderAutomationList()
+        }
+        rows.append(SettingsRow(title: "Commit and push dotfiles changes automatically",
+                                description: "Watches ~/.dotfiles/\(DotfilesAutoSync.autoCommitSubpath) and pushes "
+                                    + "each change to the config repo",
+                                control: dotfiles))
+        let reconnect = HelmToggle()
+        reconnect.isOn = AppSettings.shared.autoReconnect
+        reconnect.setAccessibilityLabel("Reconnect dropped terminal sessions")
+        reconnect.onToggle = { [weak reconnect] in
+            guard let reconnect else { return }
+            AppSettings.shared.autoReconnect = reconnect.isOn
+        }
+        rows.append(SettingsRow(title: "Reconnect dropped terminal sessions",
+                                description: "Console starts a session again when its process exits unexpectedly",
+                                control: reconnect))
+
+        let group = SettingsGroup(rows: rows)
+        let manage = HelmButton(title: "Manage Schedules", variant: .quiet, size: .small, symbol: "calendar",
+                                target: self, action: #selector(openSchedulesClicked))
+        _ = group.card.setHeader(symbol: "bolt", title: "Automation", actions: [manage])
+        for old in automationHost.arrangedSubviews {
+            automationHost.removeArrangedSubview(old)
+            old.removeFromSuperview()
+        }
+        automationHost.addArrangedSubview(group)
+        group.widthAnchor.constraint(equalTo: automationHost.widthAnchor).isActive = true
+        automationGroup = group
+        group.applyTheme(theme)
+        setupSummary.applyTheme(theme)
+        view.needsLayout = true
+    }
+
+    @objc fileprivate func openSchedulesClicked() { onOpenSchedules?() }
+}
+
+#if FM_SELFTESTS
+extension AutomationController {
+    var debugDrawsSidebarLayout: Bool { drawsSidebarLayout }
+    var debugRunCardShown: Bool { !(runCardView?.isHidden ?? true) }
+    var debugSetupSummary: SetupSummaryRow { setupSummary }
+    var debugAutomationRows: [SettingsRow] { automationGroup?.rows ?? [] }
+    var debugRunButton: HelmButton { runButton }
+}
+#endif
