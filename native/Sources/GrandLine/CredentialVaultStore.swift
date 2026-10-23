@@ -415,14 +415,14 @@ final class CredentialVaultStore {
     /// reads as one decision rather than being threaded through this function's
     /// several exits.
     private func computeLoadState(at url: URL) -> VaultLoadState {
-        var backup: String?
+        var status = StoreLoadFailure.LoadStatus.clean
         guard let decoded = StoreLoadFailure.decodeJSON(CredentialVaultFile.self,
                                                         at: url,
                                                         label: "credential vault",
                                                         sensitive: true,
-                                                        didBackUp: &backup) else {
-            loadFailureBackupPath = backup
-            return .unreadable(reason: "The vault file could not be read.", backupPath: backup)
+                                                        status: &status) else {
+            loadFailureBackupPath = status.backupPath
+            return .unreadable(reason: "The vault file could not be read.", backupPath: status.backupPath)
         }
         guard decoded.formatVersion <= CredentialVaultFile.currentFormatVersion else {
             // A *newer* build wrote it. Refusing is the only safe answer: this
@@ -552,13 +552,13 @@ final class CredentialVaultStore {
             completion(.noVaultYet)
             return
         }
-        var backup: String?
+        var status = StoreLoadFailure.LoadStatus.clean
         guard let onDisk = StoreLoadFailure.decodeJSON(CredentialVaultFile.self,
                                                        at: url,
                                                        label: "credential vault",
                                                        sensitive: true,
-                                                       didBackUp: &backup) else {
-            loadFailureBackupPath = backup
+                                                       status: &status) else {
+            loadFailureBackupPath = status.backupPath
             completion(.unreadable("The vault file could not be read."))
             return
         }
@@ -594,13 +594,13 @@ final class CredentialVaultStore {
             completion(.throttled(retryAfter: wait))
             return
         }
-        var backup: String?
+        var status = StoreLoadFailure.LoadStatus.clean
         guard let onDisk = StoreLoadFailure.decodeJSON(CredentialVaultFile.self,
                                                        at: fileURL,
                                                        label: "credential vault",
                                                        sensitive: true,
-                                                       didBackUp: &backup) else {
-            loadFailureBackupPath = backup
+                                                       status: &status) else {
+            loadFailureBackupPath = status.backupPath
             completion(.unreadable("The vault file could not be read."))
             return
         }
@@ -1327,13 +1327,13 @@ final class CredentialVaultStore {
             completion(.throttled(retryAfter: wait))
             return
         }
-        var backup: String?
+        var status = StoreLoadFailure.LoadStatus.clean
         guard let onDisk = StoreLoadFailure.decodeJSON(CredentialVaultFile.self,
                                                        at: fileURL,
                                                        label: "credential vault",
                                                        sensitive: true,
-                                                       didBackUp: &backup) else {
-            loadFailureBackupPath = backup
+                                                       status: &status) else {
+            loadFailureBackupPath = status.backupPath
             completion(.unreadable("The vault file could not be read."))
             return
         }
@@ -1519,9 +1519,9 @@ final class CredentialVaultStore {
     /// `auditFlushDelay` (20s) on a main-queue timer that never fires once
     /// the process exits, so a quit inside that window lost the "last used"
     /// timestamps of everything revealed or copied in it.
-    func flushForTermination() {
+    func flushForTermination(deadline: DispatchTime = .now() + CredentialVaultGitSync.terminateFlushBudget) {
         flushPendingAuditWritesNow()
-        gitSync?.flushForTerminationNow()
+        gitSync?.flushForTerminationNow(deadline: deadline)
     }
 
     // MARK: Persistence

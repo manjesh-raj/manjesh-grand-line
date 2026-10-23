@@ -433,7 +433,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             notificationsItem = item
             return item
         case ItemID.inspector:
-            let item = imageItem(identifier, symbol: "sidebar.right", label: "Inspector",
+            let item = imageItem(identifier, symbol: Self.inspectorOnSymbol, label: "Inspector",
                                  help: "Show or hide the inspector", action: #selector(inspectorClicked))
             inspectorItem = item
             return item
@@ -720,9 +720,30 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         reconcileDynamicItems()
     }
 
-    func setInspectorShown(_ shown: Bool) {
-        inspectorItem?.toolTip = shown ? "Hide the inspector" : "Show the inspector"
+    /// The inspector button while the inspector opens itself on a selection
+    /// (a filled right-hand pane), and while the captain has turned that off
+    /// (the outline).
+    static let inspectorOnSymbol = "inset.filled.rightthird.rectangle"
+    static let inspectorOffSymbol = "sidebar.right"
+    private var inspectorSymbolName = WorkspaceToolbar.inspectorOnSymbol
+
+    /// R2-BUG-10: whether the pane is showing, and whether the captain's
+    /// standing choice still opens it on a selection. Closing the inspector
+    /// turns that choice off for the session, and nothing on screen used to
+    /// say so: a credential selected an hour later simply showed nothing.
+    /// The button now draws the choice, and its tooltip names it.
+    func setInspectorState(shown: Bool, wanted: Bool) {
+        inspectorSymbolName = wanted ? Self.inspectorOnSymbol : Self.inspectorOffSymbol
+        inspectorItem?.image = symbol(inspectorSymbolName)
+        inspectorItem?.toolTip = shown ? "Hide the inspector"
+            : wanted ? "Show the inspector"
+            : "The inspector is off, so selecting an item does not open it. Click to turn it back on."
     }
+
+    #if FM_SELFTESTS
+    var debugInspectorItem: NSToolbarItem? { inspectorItem }
+    var debugInspectorSymbolName: String { inspectorSymbolName }
+    #endif
 
     func applyThemeSymbol(_ theme: HelmTheme) {
         setSearchHint(theme)

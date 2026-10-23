@@ -180,7 +180,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         accessory: failureDetailButton, hue: RailDestination.review.domainHue)
     private var failureDetailShown = false
     private static let failureBody = "Open pull requests are read from the clones in your firstmate home's "
-        + "projects folder. If it has moved, set the firstmate home again on Bootstrap."
+        + "projects folder. If it has moved, set the firstmate home again in \(PlaceName.of(.bootstrap))."
 
     /// Set by `AppShellController`: "my live numbers changed, re-read my
     /// subtitle". See `DaylightDrillActions.drillHeaderSubtitle`.

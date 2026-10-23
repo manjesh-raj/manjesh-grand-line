@@ -120,6 +120,9 @@ final class NotebookGitSync {
     private(set) var status: Status = .synced
     private var statusHandlers: [(Status) -> Void] = []
     private var pendingCommit: DispatchWorkItem?
+    /// R2-BUG-04: whether a debounced commit is still owed, readable off
+    /// `queue` so the quit-time flush can skip a store with nothing pending.
+    private let pendingWork = GitSyncPendingWork()
 
     /// `true` only for `.shared`. A standalone instance (every self-test, and
     /// any future non-production use) owns and clones its own working tree, so
@@ -216,10 +219,16 @@ final class NotebookGitSync {
     /// synchronously - same debounce shape as `ShiftGitSync.markDirty()`.
     func markDirty() {
         setStatus(.localChanges)
+        // R2-BUG-04: noted on the caller's thread, before the queue hop, so
+        // a quit straight after this call still sees the commit as pending.
+        let ticket = pendingWork.request()
         queue.async { [weak self] in
             guard let self else { return }
             self.pendingCommit?.cancel()
-            let item = DispatchWorkItem { [weak self] in self?.commitAndPushNow() }
+            let item = DispatchWorkItem { [weak self] in
+                self?.pendingWork.settle(ticket)
+                self?.commitAndPushNow()
+            }
             self.pendingCommit = item
             self.queue.asyncAfter(deadline: .now() + self.debounceInterval, execute: item)
         }
@@ -233,7 +242,11 @@ final class NotebookGitSync {
     /// already running there), cancels the pending debounce *inside* the queue
     /// block, and is bounded so a wedged git never blocks ⌘Q.
     @discardableResult
-    func flushForTerminationNow() -> Bool {
+    func flushForTerminationNow(deadline: DispatchTime = .now() + NotebookGitSync.terminateFlushBudget) -> Bool {
+        // R2-BUG-04: a store with nothing waiting does not join the shared
+        // queue at all. Every sync is on the one serial queue, so a flush
+        // that enqueued anyway waited out whatever slow git was ahead of it.
+        guard pendingWork.isPending else { return true }
         var committed = false
         let lock = NSLock()
         let done = DispatchSemaphore(value: 0)
@@ -241,16 +254,17 @@ final class NotebookGitSync {
             guard let self else { done.signal(); return }
             self.pendingCommit?.cancel()
             self.pendingCommit = nil
+            self.pendingWork.settleAll()
             let result = self.commitAndPushNow()
             lock.lock()
             committed = result
             lock.unlock()
             done.signal()
         }
-        if done.wait(timeout: .now() + Self.terminateFlushBudget) == .timedOut {
+        if done.wait(timeout: deadline) == .timedOut {
             AppLog.lifecycle.info("""
-                notebook: quit-time git flush still running after \
-                \(Self.terminateFlushBudget, privacy: .public)s - letting the app quit; \
+                notebook: quit-time git flush still running at the quit \
+                deadline - letting the app quit; \
                 the pages are already on disk and the next launch re-commits
                 """)
             return false

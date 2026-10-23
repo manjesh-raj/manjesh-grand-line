@@ -188,7 +188,7 @@ enum VaultRecipeGit {
             // manual step, as before this fix.
             return VaultRecipeExportResult(
                 ok: false,
-                message: "Your manjesh-config clone has diverged from GitHub (there are commits on each side the other doesn't have), so this can't fast-forward automatically. Resolve it by hand from Bootstrap's \"Dotfiles & machine config\" card, then export again - nothing was force-pushed or discarded.",
+                message: "Your manjesh-config clone has diverged from GitHub (there are commits on each side the other doesn't have), so this can't fast-forward automatically. Resolve it by hand from the \"Dotfiles & machine config\" card in \(PlaceName.of(.bootstrap)), then export again - nothing was force-pushed or discarded.",
                 filePath: filePath
             )
         }
@@ -215,7 +215,7 @@ enum VaultRecipeGit {
                 // repeating a claim that might not be true.
                 return VaultRecipeExportResult(
                     ok: false,
-                    message: "Couldn't bring in new changes from GitHub before committing: \(merge.stderr.isEmpty ? "unknown error" : merge.stderr). Resolve it by hand from Bootstrap's \"Dotfiles & machine config\" card, then export again - nothing was force-pushed or discarded.",
+                    message: "Couldn't bring in new changes from GitHub before committing: \(merge.stderr.isEmpty ? "unknown error" : merge.stderr). Resolve it by hand from the \"Dotfiles & machine config\" card in \(PlaceName.of(.bootstrap)), then export again - nothing was force-pushed or discarded.",
                     filePath: filePath
                 )
             }

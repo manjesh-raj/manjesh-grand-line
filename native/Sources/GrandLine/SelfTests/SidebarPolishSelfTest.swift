@@ -164,6 +164,14 @@ enum SidebarPolishSelfTest {
               "the sidebar button's expand was \(String(describing: expand))", &ok)
         waitForPanes(shell)
         check(!shell.debugSidebarIsCollapsed, "the eased expand never landed", &ok)
+        // R2-BUG-02: and it lands at its own width. The eased expand released
+        // its pin in the animation's completion, before Home re-laid out for
+        // the narrower column, so the sidebar came back squeezed to its 200pt
+        // minimum - measured in the review's lab on every run.
+        pump(timeout: 1) { abs(shell.debugSidebarWidth - MainSplitShellController.sidebarWidth) < 0.5 }
+        settle(shell)
+        check(abs(shell.debugSidebarWidth - MainSplitShellController.sidebarWidth) < 0.5,
+              "R2-BUG-02: after an eased hide and show the sidebar is \(shell.debugSidebarWidth)pt, want \(MainSplitShellController.sidebarWidth)", &ok)
 
         // ⌘⇧D opens it the same way.
         check(!shell.debugSidebarIsCollapsed,
@@ -524,9 +532,14 @@ enum SidebarPolishSelfTest {
         counts.toolUpdates = 2
         counts.forkDrift = 1
         BackgroundSignalsPoller.shared.debugSetCounts(counts)
-        pump { shell.debugSignalsMonitor.signals.setup.value?.known.reduce(0, +) == 3 }
+        counts.setupDrift = 4
+        BackgroundSignalsPoller.shared.debugSetCounts(counts)
+        pump { shell.debugSignalsMonitor.signals.setup.value == 2 }
         settle(shell)
-        check(badge(.setup, shell)?.mark == .count("3"), "two updates and a fork behind drew \(String(describing: badge(.setup, shell)))", &ok)
+        // R2-BUG-09: the badge counts the tools needing attention and nothing
+        // else - the fork behind and the drifted steps are not added in.
+        check(badge(.setup, shell)?.mark == .count("2"),
+              "two tools needing attention, a fork behind and four drifted steps drew \(String(describing: badge(.setup, shell)))", &ok)
         BackgroundSignalsPoller.shared.debugSetCounts(BackgroundSignalsPoller.SignalCounts())
         settle(shell)
         if ok { print("  OK   failing and recovered; counted and cleared") }

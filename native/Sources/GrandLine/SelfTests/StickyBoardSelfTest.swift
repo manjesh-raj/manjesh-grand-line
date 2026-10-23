@@ -408,6 +408,9 @@ enum StickyBoardSelfTest {
                     return m
                 }()),
             ])
+            // R2-BUG-04: a flush with nothing pending skips the queue, so the
+            // edit is marked the way a real one is.
+            sync.markDirty()
             let queuedStart = Date()
             // The queue is held, so this cannot get on it and must give up on
             // its own bound rather than running inline or waiting forever.
@@ -458,7 +461,7 @@ enum StickyBoardSelfTest {
                     let code = text.split(separator: "\n", omittingEmptySubsequences: false)
                         .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
                         .joined(separator: "\n")
-                    check(code.contains("flushForTerminationNow()"),
+                    check(code.contains("flushForTerminationNow("),
                           "StickyBoardController no longer uses the bounded, serial-queue terminate flush")
                     check(!code.contains("commitAndPushNow()"),
                           "StickyBoardController calls commitAndPushNow() directly again - back on the main "

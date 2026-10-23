@@ -72,7 +72,7 @@ private final class UpdateRow {
     /// `.notInstalled`-only action, styled deliberately unlike `updateButton`
     /// (inline/link-style rather than a bordered rounded button) so it reads
     /// as "go elsewhere," not "click to install here" - see the file header.
-    let installInBootstrapButton = HelmButton(title: "Install in Bootstrap \u{2192}", variant: .quiet, size: .small)
+    let installInBootstrapButton = HelmButton(title: "Install in \(PlaceName.short(.bootstrap)) \u{2192}", variant: .quiet, size: .small)
     /// Shown in place of Update when the update needs a password: opens the
     /// exact command in a Console tab, where `sudo` has a terminal to ask in.
     let runInTerminalButton = HelmButton(title: "Run in Terminal", variant: .primary, size: .small)
@@ -460,11 +460,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         lastCheckedAt = Date()
         renderStats()
 
-        let updateCount = rows.filter { $0.status.showsUpdateButton }.count
-        let message = updateCount > 0
-            ? "Checked \(rows.count) tools, \(updateCount) update\(updateCount == 1 ? "" : "s") available"
-            : "Checked \(rows.count) tools - all up to date"
-        showToastIfOnScreen(message)
+        // R2-BUG-03: "updates available" counts updates, and the rest is
+        // stated separately, from the one summary the header and strip read.
+        showToastIfOnScreen(summary.completionMessage)
         // Anything the notification popover asked for while this sweep was
         // running now has a real, current status to act on.
         runPendingNotificationUpdates()
@@ -519,18 +517,14 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// Read straight off the same `rows` array the four stat tiles above are
     /// built from, so the header and the tiles can never disagree.
     var drillHeaderSubtitle: String? {
-        let total = rows.count
-        guard total > 0 else { return "No tools in the catalog" }
-        // Phase 3's honesty rule: a first pass still running is "checking",
-        // not "0 updates". `.unknown` is the never-checked state.
-        if rows.contains(where: { $0.status == .checking || $0.status == .updating }) {
-            return "\(total) tools \u{00B7} checking\u{2026}"
-        }
-        if rows.allSatisfy({ $0.status == .unknown }) { return "\(total) tools \u{00B7} not checked yet" }
-        let needsUpdate = rows.filter { $0.status.showsUpdateButton }.count
-        if needsUpdate > 0 { return "\(total) tools \u{00B7} \(needsUpdate) need attention" }
-        return "\(total) tools \u{00B7} all up to date"
+        // Phase 3's honesty rule (a first pass still running is "checking",
+        // not "0 updates") lives in `UpdatesSummary.subtitle` now.
+        summary.subtitle
     }
+
+    /// R2-BUG-03: the one count of this page's rows that its toast, header
+    /// and strip all render.
+    var summary: UpdatesSummary { UpdatesSummary(rows.map(\.status)) }
 
     var onDrillSubtitleChanged: (() -> Void)?
 
@@ -555,21 +549,18 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // one place the header's line has to be re-read from.
         onDrillSubtitleChanged?()
         publishToolUpdateSignal()
-        let total = rows.count
-        let upToDate = rows.filter { $0.status == .upToDate }.count
-        let needsUpdate = rows.filter { $0.status == .updateAvailable || $0.status == .notInstalled }.count
+        let summary = self.summary
         // B9 (`data/grand-line-e2e-audit/report.md`): "0 Updates Available"
         // while 13 checks are still running is a confident claim about an
         // answer this page does not have yet - GL-14. Only the two *derived*
         // counts go unknown. "Tools installed" is the catalog's own size and
-        // is true before any check runs.
-        let pending = rows.contains { $0.status == .checking || $0.status == .updating }
-        let neverChecked = !rows.isEmpty && rows.allSatisfy { $0.status == .unknown }
-        let known = !(pending || neverChecked)
+        // is true before any check runs. R2-BUG-03: "Need attention" is the
+        // header's own count, not a second one that left out failed checks.
+        let known = summary.isKnown
         summaryStrip.configure([
-            .init(.value("\(total)"), caption: "Tools installed"),
-            known ? .count(upToDate, caption: "Up to date") : .init(.unread, caption: "Up to date"),
-            known ? .count(needsUpdate, caption: "Need attention", tintWhenNonZero: .warn)
+            .init(.value("\(summary.total)"), caption: "Tools installed"),
+            known ? .count(summary.upToDate, caption: "Up to date") : .init(.unread, caption: "Up to date"),
+            known ? .count(summary.needsAttention, caption: "Need attention", tintWhenNonZero: .warn)
                   : .init(.unread, caption: "Need attention"),
             .init(.value(relativeLastChecked()), caption: "Last checked"),
         ], theme: theme)
@@ -1403,7 +1394,7 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
                     self?.runInTerminal(row)
                 }
             } else if row.status == .notInstalled {
-                tableRow.primary = .init(title: "Install in Bootstrap", symbol: "arrow.right") { [weak self] in
+                tableRow.primary = .init(title: "Install in \(PlaceName.short(.bootstrap))", symbol: "arrow.right") { [weak self] in
                     self?.onNavigateToBootstrap?()
                 }
             } else if row.status == .updateAvailable || row.status == .updateFailed {
@@ -1484,7 +1475,7 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
                     self?.runInTerminal(row)
                 })
             } else if row.status == .notInstalled {
-                detail.actions.append(.init("Install in Bootstrap", symbol: "arrow.right", role: .primary) { [weak self] in
+                detail.actions.append(.init("Install in \(PlaceName.short(.bootstrap))", symbol: "arrow.right", role: .primary) { [weak self] in
                     self?.onNavigateToBootstrap?()
                 })
             } else if row.status.showsUpdateButton {

@@ -247,6 +247,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     lazy var appShell: WorkspaceShellController = {
         let keyStore = self.keyStore
         let snippetStore = self.snippetStore
+        // R2-BUG-06: copy names places in the layout this window runs.
+        PlaceName.layout = workspaceLayout
         return workspaceLayout.shellType.init(
             // PERF-01: both are autoclosures - evaluated on each page's first
             // use, not here.
@@ -1036,10 +1038,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Records where the captain is, for the next launch.
     ///
     /// Called on quit and on every navigation - the second is what makes this
-    /// survive a crash or a force-quit, and it is cheap: a handful of tabs
-    /// encoded to JSON, written only when the result actually differs from
-    /// what is already stored (`UserDefaults` would otherwise take a write on
-    /// every single navigation, most of which change nothing).
+    /// survive a crash or a force-quit, and it is cheap: the comparison is
+    /// against `SessionRestoreStore`'s in-memory copy (R2-BUG-11), and the
+    /// file is written only when the result actually differs, since most
+    /// navigations change nothing.
     func saveSessionState() {
         guard appShell.isViewLoaded else { return }
         let state = appShell.captureSessionState()
@@ -1305,7 +1307,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // `StickyBoardStore.persistDebounce` of the last keystroke would lose
         // it.
         saveSessionState()
-        appShell.shutdownStickyBoard()
+        // R2-BUG-04: one deadline for every quit-time git flush. All seven
+        // syncs share one serial queue, and each used to wait on its own
+        // budget, so one slow git call ahead of them stacked 3+3+3+2+3+3s of
+        // main-thread block. Now the whole set waits at most this long, and
+        // a store with nothing pending does not join the queue at all.
+        let gitFlushDeadline = DispatchTime.now() + ShiftGitSync.terminateFlushBudget
+        appShell.shutdownStickyBoard(deadline: gitFlushDeadline)
         // F9: the same class again, one page over. The Scratchpad pad's write
         // is debounced at 500ms, so ⌘Q straight after typing would otherwise
         // lose the last line of a pad whose whole promise is that it is still
@@ -1316,23 +1324,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // promised since it shipped while having none. Without it, ⌘Q inside
         // the page's 500ms edit debounce loses those keystrokes and the final
         // commit+push never runs.
-        appShell.shutdownCodePreview()
+        appShell.shutdownCodePreview(deadline: gitFlushDeadline)
         // B7: the Notebook's own 500ms edit debounce plus its git commit.
         // `NotebookController.shutdown()` documented itself as called on quit
         // and had no caller, so ⌘Q inside that window lost the last
         // keystrokes - the same class as the four flushes around it.
-        appShell.shutdownNotebook()
+        appShell.shutdownNotebook(deadline: gitFlushDeadline)
         // `fm/implement-grand-line-secrets-vault-poneg-ad`: the credential
         // vault's git backup is debounced the same way, so ⌘Q within that
         // window would leave a just-added credential committed locally but not
         // pushed - i.e. absent from the next machine, which is the one property
         // this feature exists to guarantee.
-        appShell.shutdownCredentialVault()
+        appShell.shutdownCredentialVault(deadline: gitFlushDeadline)
         // F4: the reading list's commit+push is debounced at 3s like the
         // Sticky Board's, so ⌘Q within that window would leave a link saved
         // locally but never pushed - i.e. absent from the next machine, which
         // is the whole reason the list is git-synced.
-        appShell.shutdownReadingList()
+        appShell.shutdownReadingList(deadline: gitFlushDeadline)
         // Straw Hat Pirates phase 1: nothing to flush (no on-disk history yet
         // by explicit scope) - this stops an in-flight `claude -p` child from
         // outliving the app by up to its 300s bound.
@@ -1343,10 +1351,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appShell.shutdownClipboardHistory()
         // REL-23: the tasks repo's own 3s commit debounce (Tasks, Commands,
         // Incidents, the Log Analyzer) and the runbooks' one beside it, on
-        // the same serial queue and so under one shared deadline. Neither had
-        // a quit-time flush, so an edit inside the window stayed uncommitted
-        // and unpushed until the next edit.
-        let gitFlushDeadline = DispatchTime.now() + ShiftGitSync.terminateFlushBudget
+        // the same serial queue and so under the deadline every flush above
+        // shares. Neither had a quit-time flush, so an edit inside the window
+        // stayed uncommitted and unpushed until the next edit.
         ShiftGitSync.shared.flushForTerminationNow(deadline: gitFlushDeadline)
         DocsRunbookGitSync.shared.flushForTerminationNow(deadline: gitFlushDeadline)
         shiftHotkey.stop()

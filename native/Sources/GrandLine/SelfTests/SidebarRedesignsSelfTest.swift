@@ -448,7 +448,7 @@ enum SidebarRedesignsSelfTest {
         } else {
             fail("the table has no quota-axi", &ok)
         }
-        check(row("gh")?.primary?.title == "Install in Bootstrap", "gh offers \(row("gh")?.primary?.title ?? "nothing")", &ok)
+        check(row("gh")?.primary?.title == "Install in \(PlaceName.short(.bootstrap))", "gh offers \(row("gh")?.primary?.title ?? "nothing")", &ok)
         if let up = row("tasks-axi") {
             check(up.primary == nil, "an up-to-date tool offers \(up.primary?.title ?? "")", &ok)
             if case .muted(let text)? = up.cells["available"] { check(text == "Up to date", "tasks-axi reads \(text)", &ok) }
@@ -592,17 +592,21 @@ enum SidebarRedesignsSelfTest {
         counts.toolsUpToDate = 6
         counts.toolsWithUpdate = 2
         counts.toolUpdates = 2
-        counts.setupStepsTotal = 6
-        counts.setupStepsDone = 5
         counts.setupDrift = 1
         counts.forksTotal = 8
         counts.forksChecked = 8
         counts.forkDrift = 0
         BackgroundSignalsPoller.shared.debugSetCounts(counts)
+        // Newer than anything the scratch pages answer for themselves, so
+        // the fixture is what every tab reads.
+        var steps: [SetupStepKind: Bool?] = [:]
+        for (index, kind) in SetupStepKind.allCases.enumerated() { steps[kind] = index != 1 }
+        SetupStepsReading.shared.record(steps, gatheredAt: Date().addingTimeInterval(3600))
+        defer { SetupStepsReading.shared.resetForTests() }
         DotfilesAutoSync.shared.debugSetStatus(.synced)
         ConfigRepoPrivacy.debugRecord(.publicRepo)
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-        let want = ["6 / 8", "2", "5 / 6", "Synced", "Paused"]
+        let want = ["6 / 8", "2", "4 / 5", "Synced", "Paused"]
         let rows: [(String, SetupSummaryRow)] = [
             ("Updates", shell.workspace.updates.debugSetupSummary),
             ("Setup steps", shell.workspace.bootstrap.debugSetupSummary),
@@ -612,6 +616,11 @@ enum SidebarRedesignsSelfTest {
         for (name, row) in rows {
             check(row.debugValues == want, "\(name)'s summary reads \(row.debugValues), want \(want)", &ok)
         }
+        // R2-BUG-05: both step tabs' subtitles state the reading the card
+        // renders, whichever tab computed last.
+        let subtitles = [shell.workspace.bootstrap.drillHeaderSubtitle, shell.workspace.automation.drillHeaderSubtitle]
+        check(subtitles.allSatisfy { $0 == "4 of 5 steps done" },
+              "the Setup tabs' subtitles read \(subtitles) beside a \"4 / 5\" card", &ok)
     }
 
     // MARK: 5 - The floating bar

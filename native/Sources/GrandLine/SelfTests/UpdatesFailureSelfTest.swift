@@ -56,6 +56,8 @@ enum UpdatesFailureSelfTest {
             ("eachSudoDirectiveIsRecognisedAndNothingElse", test_sudoDirectiveMatrix),
             ("aCaskNotYetInstalledOnlyAsksAboutInstalling", test_notInstalledIgnoresUninstall),
             ("theTestSeamSurvivesConcurrentChecks", test_seamIsThreadSafe),
+            ("r2Bug03UpdatesAvailableCountsOnlyUpdates", test_r2Bug03SummaryCountsUpdatesAsUpdates),
+            ("r2Bug03TheToastHeaderStripAndScheduleReadOneSummary", test_r2Bug03OneSummaryEverywhere),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -74,6 +76,71 @@ enum UpdatesFailureSelfTest {
             ? "UpdatesFailureSelfTest: all \(cases.count) cases passed"
             : "UpdatesFailureSelfTest: \(failures)/\(cases.count) cases FAILED")
         return failures == 0
+    }
+
+    // MARK: R2-BUG-03 - one count of a sweep, and "updates available" means updates
+
+    /// The review's own render: five up to date, two not installed, three
+    /// checks failed, three updates that failed. The toast used to say "8
+    /// updates available" for this, and "13 updates available" when brew was
+    /// unreachable and every check failed.
+    private static func test_r2Bug03SummaryCountsUpdatesAsUpdates() -> String? {
+        let mixed = UpdatesSummary(Array(repeating: DependencyStatus.upToDate, count: 5)
+            + Array(repeating: .notInstalled, count: 2) + Array(repeating: .checkFailed, count: 3)
+            + Array(repeating: .updateFailed, count: 3))
+        guard mixed.total == 13, mixed.needsAttention == 8 else {
+            return "fixture: eight rows offer an action, got \(mixed.needsAttention)"
+        }
+        guard mixed.updatesAvailable == 0 else { return "no row has an update available, got \(mixed.updatesAvailable)" }
+        let message = mixed.completionMessage
+        guard !message.contains("updates available") && !message.contains("update available") else {
+            return "a sweep with no update available still says so: \(message)"
+        }
+        guard message == "Checked 13 tools: 5 up to date, 2 not installed, 3 could not be checked, 3 updates failed" else {
+            return "the toast does not state each count separately: \(message)"
+        }
+        guard mixed.subtitle == "13 tools \u{00B7} 8 need attention" else { return "subtitle: \(mixed.subtitle)" }
+
+        let unreachable = UpdatesSummary(Array(repeating: DependencyStatus.checkFailed, count: 13))
+        guard unreachable.completionMessage == "Checked 13 tools: 13 could not be checked" else {
+            return "brew unreachable reads \(unreachable.completionMessage)"
+        }
+        let two = UpdatesSummary([.updateAvailable, .updateAvailable, .upToDate])
+        guard two.completionMessage == "Checked 3 tools: 2 updates available, 1 up to date" else {
+            return "real updates read \(two.completionMessage)"
+        }
+        guard UpdatesSummary([.upToDate, .upToDate]).completionMessage == "Checked 2 tools - all up to date" else {
+            return "an all-clear sweep lost its sentence"
+        }
+        guard !UpdatesSummary([.upToDate, .checking]).isKnown,
+              !UpdatesSummary([.unknown, .unknown]).isKnown else {
+            return "GL-14: a sweep still running or never run reads as known"
+        }
+        return nil
+    }
+
+    /// The toast, the drill header, the strip and the scheduled tool check
+    /// all render `UpdatesSummary`. A source guard, because the toast is
+    /// raised at the end of a real 13-tool sweep that a headless suite does
+    /// not run, and the strip is the one place the old second count lived.
+    private static func test_r2Bug03OneSummaryEverywhere() -> String? {
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let page = try? String(contentsOf: dir.appendingPathComponent("UpdatesController.swift"), encoding: .utf8),
+              let runner = try? String(contentsOf: dir.appendingPathComponent("ScheduleRunner.swift"), encoding: .utf8) else {
+            return "could not read UpdatesController.swift or ScheduleRunner.swift - the guard would silently pass"
+        }
+        guard page.contains("showToastIfOnScreen(summary.completionMessage)") else {
+            return "the sweep's toast no longer renders UpdatesSummary"
+        }
+        guard page.contains("summary.subtitle") else { return "the drill header no longer renders UpdatesSummary" }
+        guard page.contains("summary.needsAttention, caption: \"Need attention\"") else {
+            return "the strip's Need attention is a second count again"
+        }
+        guard !page.contains("update\\(updateCount == 1") else { return "the old updates-available toast is back" }
+        guard runner.contains("UpdatesSummary(statuses)"), !runner.contains("$0.showsUpdateButton }.count") else {
+            return "the scheduled tool check counts failed checks as updates again"
+        }
+        return nil
     }
 
     // MARK: Fixtures

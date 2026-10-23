@@ -188,6 +188,41 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
 
     var drillHeaderActions: [NSView] { [todayButton, newPageButton] }
 
+    // MARK: R2-BUG-07 - the toolbar's room at narrow widths
+
+    /// Below this window width, the two actions the sidebar layout's toolbar
+    /// carries for this page draw as their icons alone.
+    ///
+    /// At 1100 the toolbar needed about 147pt more than it had (the crumb,
+    /// Recents and the inspector button all fell into the overflow menu),
+    /// and these two labelled buttons were 222pt of it. As the sun and the
+    /// plus they free about 140pt, which keeps those three on the toolbar.
+    /// The label stays as each button's tooltip and accessibility label.
+    /// The floating bar's drill header has room for the labels and keeps
+    /// them.
+    static let compactToolbarActionsBelow: CGFloat = 1300
+
+    /// The two actions' titles for the window's current width.
+    func applyToolbarActionWidth() {
+        guard let window = view.window else { return }
+        // In the window toolbar (the sidebar layout) the buttons sit outside
+        // the window's content view; in the floating bar's drill header they
+        // sit inside it. Not `todayButton.window`, which a toolbar item's
+        // view loses while the toolbar is re-fitting itself to a new width.
+        let inToolbar = todayButton.superview != nil
+            && !(window.contentView.map { todayButton.isDescendant(of: $0) } ?? true)
+        let compact = inToolbar && window.frame.width < Self.compactToolbarActionsBelow
+        for (button, label) in [(todayButton, "Today's note"), (newPageButton, "New page")] {
+            let title = compact ? "" : label
+            if button.title != title { button.title = title }
+            button.setAccessibilityLabel(label)
+        }
+    }
+
+    #if FM_SELFTESTS
+    var debugToolbarActionTitles: [String] { [todayButton.title, newPageButton.title] }
+    #endif
+
     var drillHeaderSubtitle: String? {
         if let lastError { return lastError }
         if !CodePreviewAssets.isAvailable { return "The Monaco bundle is missing" }
@@ -309,6 +344,13 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         }
     }
 
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        // A window resize lays the showing page out again, so the toolbar
+        // actions follow the width without an observer of their own.
+        applyToolbarActionWidth()
+    }
+
     override func viewDidAppear() {
         super.viewDidAppear()
         webView.refreshDisplayGating()
@@ -328,9 +370,9 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     /// whole point, and is `CodePreviewController.shutdown`'s: the bridge
     /// round trip has to land *before* the git flush, or the commit misses
     /// the very keystrokes this exists to save.
-    func shutdown() {
+    func shutdown(deadline: DispatchTime) {
         flushPendingEdits(waitingUpTo: CodePreviewController.terminateEditFlushBudget)
-        store.gitSync?.flushForTerminationNow()
+        store.gitSync?.flushForTerminationNow(deadline: deadline)
     }
 
     private func flushPendingEdits(waitingUpTo wait: TimeInterval? = nil) {

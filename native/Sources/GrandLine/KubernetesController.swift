@@ -408,7 +408,7 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
             size: .standard,
             boxed: false,
             accessory: {
-                let button = HelmButton(title: "Open Hosts", variant: .secondary)
+                let button = HelmButton(title: "Open \(PlaceName.of(.hosts))", variant: .secondary)
                 button.target = self
                 button.action = #selector(openHostsTapped)
                 return button

@@ -43,12 +43,18 @@ import Foundation
 
 /// The one place `SessionRestoreState` is read from and written to.
 ///
-/// Deliberately re-reads nothing and caches nothing: `AppSettings` owns the
-/// accessor callers use, this owns the bytes, and there is exactly one write
-/// per navigation that actually changed something (see
-/// `AppDelegate.saveSessionState`'s equality guard). GL-23's "a store that
-/// caches gets one shared instance" therefore does not apply - this one
-/// caches nothing and may be constructed freely.
+/// `AppSettings` owns the accessor callers use, and this owns the bytes.
+/// There is exactly one write per navigation that actually changed something
+/// (see `AppDelegate.saveSessionState`'s equality guard).
+///
+/// R2-BUG-11: the state is cached in memory per path, so that equality guard
+/// compares two values rather than stat-ing, mode-checking, reading and
+/// decoding the file on the main thread for every navigation. The file is
+/// read once per launch. The cache is static on this enum and keyed by path,
+/// which keeps GL-23's one-instance rule (there is no second copy to diverge)
+/// and keeps a suite's scratch file from ever answering for another path. A
+/// load that left the file write-refused is not cached, so a later load can
+/// still find it readable, as REL-21 intends.
 enum SessionRestoreStore {
 
     /// The `UserDefaults` key this state used to live under. Kept - and only
@@ -78,6 +84,7 @@ enum SessionRestoreStore {
     /// a bad trade for a LOW finding.
     static func load(defaults: UserDefaults = .standard) -> SessionRestoreState? {
         let url = storeURL()
+        if let cached = cachedState(for: url) { return cached.state }
         // GL-01: an undecodable file is backed up rather than silently read
         // as "no saved session", which would otherwise look exactly like a
         // first launch and then be overwritten by the next save. REL-21: a
@@ -90,10 +97,12 @@ enum SessionRestoreStore {
         )
         setLastLoadStatus(status, for: url)
         if decoded != nil || status != .clean || FileManager.default.fileExists(atPath: url.path) {
+            if !status.refusesWrites { setCachedState(decoded, for: url) }
             return decoded
         }
         guard let legacy = defaults.data(forKey: legacyDefaultsKey),
               let decoded = try? JSONDecoder().decode(SessionRestoreState.self, from: legacy) else {
+            setCachedState(nil, for: url)
             return nil
         }
         if save(decoded) {
@@ -112,8 +121,12 @@ enum SessionRestoreStore {
             return false
         }
         guard let state else {
-            try? FileManager.default.removeItem(at: url)
-            return true
+            // R2-BUG-15: a stale file that cannot be removed is restored on
+            // the next launch, so the failure is reported and `false`, never a
+            // silent `try?` and a claimed success.
+            let removed = PersistenceFailureReporter.removeItem(at: url, what: "the session restore state")
+            if removed { setCachedState(nil, for: url) }
+            return removed
         }
         do {
             let encoder = JSONEncoder()
@@ -123,6 +136,7 @@ enum SessionRestoreStore {
             // not worth here, and `SensitiveFile` for the ordering the
             // atomic write relies on.
             try AtomicWrite.data(data, to: url, sensitive: true)
+            setCachedState(state, for: url)
             return true
         } catch {
             // GL-10: reported, never a silent `try?`. Losing this state costs
@@ -156,4 +170,32 @@ enum SessionRestoreStore {
         defer { statusLock.unlock() }
         return lastLoadStatuses[url.path] ?? .clean
     }
+
+    // MARK: - The in-memory copy (R2-BUG-11)
+
+    /// What this process last read from or wrote to each path. A wrapper so
+    /// "cached as no saved state" and "never read" are different answers.
+    private struct Cached { let state: SessionRestoreState? }
+    private static var cachedStates: [String: Cached] = [:]
+
+    private static func cachedState(for url: URL) -> Cached? {
+        statusLock.lock()
+        defer { statusLock.unlock() }
+        return cachedStates[url.path]
+    }
+
+    private static func setCachedState(_ state: SessionRestoreState?, for url: URL) {
+        statusLock.lock()
+        defer { statusLock.unlock() }
+        cachedStates[url.path] = Cached(state: state)
+    }
+
+    #if FM_SELFTESTS
+    /// Drops the in-memory copy, so a case can prove what a cold load reads.
+    static func forgetCachedStateForTests() {
+        statusLock.lock()
+        defer { statusLock.unlock() }
+        cachedStates.removeAll()
+    }
+    #endif
 }

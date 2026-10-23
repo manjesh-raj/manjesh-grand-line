@@ -565,7 +565,7 @@ final class CredentialVaultInspectorView: NSView {
             // "No silent caps" - say what was left out rather than trimming
             // quietly. The full log is in the settings sheet.
             let more = NSTextField(wrappingLabelWithString:
-                "Showing the \(Self.maxEvents) most recent of \(auditEvents.count) events. The full log is in Poneglyph settings.")
+                "Showing the \(Self.maxEvents) most recent of \(auditEvents.count) events. The full log is in the settings of \(PlaceName.of(.poneglyph)).")
             more.font = HelmType.captionSmall()
             more.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             mutedLabels.append(more)

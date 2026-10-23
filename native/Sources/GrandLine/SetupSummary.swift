@@ -7,7 +7,9 @@
 // **Nothing here checks anything.** Each figure is a reading something else
 // already takes and publishes:
 //
-//   - the tools, the steps and the forks are `BackgroundSignalsPoller`'s
+//   - the steps are `SetupStepsReading`, the module's one reading, which
+//     every tab's subtitle states too (R2-BUG-05);
+//   - the tools and the forks are `BackgroundSignalsPoller`'s
 //     counts, which the poller's own pass writes and which Updates, Setup
 //     steps, Automation and GitHub sync overwrite with fresher statuses
 //     while they are on screen - the same numbers the sidebar's Setup badge
@@ -43,9 +45,10 @@ enum SetupSummary {
     static let captions = ["Tools up to date", "Updates", "Setup steps", "Dotfiles", "GitHub sync"]
 
     static func cards(counts: BackgroundSignalsPoller.SignalCounts,
+                      steps: SetupPipelineProgress,
                       dotfiles: DotfilesAutoSync.Status?,
                       configRepo: ConfigRepoPrivacy.Reading?) -> [Card] {
-        [toolsCard(counts), updatesCard(counts), stepsCard(counts), dotfilesCard(dotfiles),
+        [toolsCard(counts), updatesCard(counts), stepsCard(steps), dotfilesCard(dotfiles),
          githubCard(counts, configRepo: configRepo)]
     }
 
@@ -66,12 +69,19 @@ enum SetupSummary {
         return Card(caption: captions[1], text: "\(updates)", tint: .warn, signals: updates > 0, unknownReason: nil)
     }
 
-    static func stepsCard(_ counts: BackgroundSignalsPoller.SignalCounts) -> Card {
-        guard let done = counts.setupStepsDone, let total = counts.setupStepsTotal else {
-            return Card(caption: captions[2], text: nil, tint: nil, signals: false,
-                        unknownReason: "The setup steps have not been checked yet this session.")
+    /// R2-BUG-05: the module's one reading (`SetupStepsReading`), the same
+    /// one every Setup tab's subtitle states, so the two cannot disagree. A
+    /// step still being checked makes the figure a dash (GL-14), while the
+    /// subtitle says "checking".
+    static func stepsCard(_ steps: SetupPipelineProgress) -> Card {
+        guard steps.checking == 0 else {
+            let reason = steps.checking == steps.total
+                ? "The setup steps have not been checked yet this session."
+                : "\(steps.checking) of the \(steps.total) setup steps are still being checked."
+            return Card(caption: captions[2], text: nil, tint: nil, signals: false, unknownReason: reason)
         }
-        return Card(caption: captions[2], text: "\(done) / \(total)", tint: nil, signals: false, unknownReason: nil)
+        return Card(caption: captions[2], text: "\(steps.done) / \(steps.total)", tint: nil, signals: false,
+                    unknownReason: nil)
     }
 
     static func dotfilesCard(_ status: DotfilesAutoSync.Status?) -> Card {
@@ -125,6 +135,7 @@ final class SetupSummaryRow: NSView {
     private let cards = SetupSummary.captions.map { HelmMetricCard(caption: $0, tint: nil) }
     private var countsToken: BackgroundSignalsPoller.CountsObservation?
     private var configRepoToken: UUID?
+    private var stepsToken: UUID?
     private var dotfiles: DotfilesAutoSync.Status?
     private var configRepo: ConfigRepoPrivacy.Reading?
     private var theme: HelmTheme = ThemeManager.shared.theme
@@ -151,6 +162,7 @@ final class SetupSummaryRow: NSView {
             self?.configRepo = reading
             self?.render()
         }
+        stepsToken = SetupStepsReading.shared.observe { [weak self] in self?.render() }
         dotfiles = DotfilesAutoSync.shared.reportedStatus
         configRepo = ConfigRepoPrivacy.lastReading
         render()
@@ -161,11 +173,13 @@ final class SetupSummaryRow: NSView {
     deinit {
         if let countsToken { BackgroundSignalsPoller.shared.unobserveCounts(countsToken) }
         if let configRepoToken { ConfigRepoPrivacy.unobserve(configRepoToken) }
+        if let stepsToken { SetupStepsReading.shared.unobserve(stepsToken) }
     }
 
     /// Re-read the three readings and repaint the cards.
     func render() {
-        shown = SetupSummary.cards(counts: BackgroundSignalsPoller.shared.lastCounts, dotfiles: dotfiles,
+        shown = SetupSummary.cards(counts: BackgroundSignalsPoller.shared.lastCounts,
+                                   steps: SetupStepsReading.shared.progress, dotfiles: dotfiles,
                                    configRepo: configRepo)
         for (card, figure) in zip(cards, shown) {
             card.setTint(figure.tint)

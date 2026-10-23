@@ -835,7 +835,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
     @objc private func exportRecipeTapped() {
         guard !isRecipeBusy else { return }
         guard let repoPath = VaultRecipeGit.resolveRepoPath() else {
-            recipeDetailLabel.stringValue = "No local manjesh-config clone found yet - set it up from Bootstrap's \u{201c}Dotfiles & machine config\u{201d} card first."
+            recipeDetailLabel.stringValue = "No local manjesh-config clone found yet - set it up from the \u{201c}Dotfiles & machine config\u{201d} card in \(PlaceName.of(.bootstrap)) first."
             setRecipeLabelColor(.warn)
             return
         }
@@ -869,7 +869,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
     @objc private func checkBackupTapped() {
         guard !isRecipeBusy else { return }
         guard let repoPath = VaultRecipeGit.resolveRepoPath() else {
-            recipeDetailLabel.stringValue = "No local manjesh-config clone found yet - set it up from Bootstrap's \u{201c}Dotfiles & machine config\u{201d} card first."
+            recipeDetailLabel.stringValue = "No local manjesh-config clone found yet - set it up from the \u{201c}Dotfiles & machine config\u{201d} card in \(PlaceName.of(.bootstrap)) first."
             setRecipeLabelColor(.warn)
             return
         }

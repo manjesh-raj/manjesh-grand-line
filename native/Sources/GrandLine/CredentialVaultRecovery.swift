@@ -109,7 +109,7 @@ enum CredentialVaultRecoveryError: LocalizedError, Equatable {
         case .malformedRecoveryKey:
             return "That doesn't look like a Grand Line recovery key - it should be 32 letters and digits."
         case .noRecoveryKeyEnrolled:
-            return "This vault has no recovery key. Print one from Poneglyph's Recovery & import sheet while it is unlocked."
+            return "This vault has no recovery key. Print one from the Recovery & import sheet in \(PlaceName.of(.poneglyph)) while it is unlocked."
         }
     }
 }

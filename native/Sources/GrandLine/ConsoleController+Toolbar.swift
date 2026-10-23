@@ -131,7 +131,7 @@ extension ConsoleController {
         // read as one cluster - the placement the captain asked for.
         if !isFirstmateConsole {
             let button = makeLabeledButton(symbol: "text.magnifyingglass", title: "Analyze Logs",
-                                           tooltip: "Send this tab's last command output to the Log Analyzer. "
+                                           tooltip: "Send this tab's last command output to \(PlaceName.of(.logAnalyzer)). "
                                                + "Select text in the terminal first to send that instead.",
                                            action: #selector(analyzeLogsTapped))
             analyzeLogsButton = button

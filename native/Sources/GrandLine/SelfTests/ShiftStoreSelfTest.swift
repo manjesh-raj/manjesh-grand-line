@@ -481,6 +481,7 @@ enum ShiftStoreSelfTest {
               "deleting an already-deleted follow-up should report that nothing was removed")
 
         checkUnknownKeyPassthrough(check)
+        checkRefusedCompletionKeepsTheTask(check)
 
         return report(failures)
     }
@@ -572,6 +573,89 @@ enum ShiftStoreSelfTest {
         check(reloaded.debugTaskRecordsWithUnknownKeys == 1,
               "the same two keys are still unknown after a reload, got "
               + "\(reloaded.debugTaskRecordsWithUnknownKeys)")
+    }
+
+    // MARK: R2-BUG-01 - a refused or failed month write keeps the task
+
+    /// Completing a task used to rewrite `active.yaml` without it *before*
+    /// writing the completed-month file, so a month write that was refused
+    /// (its last read failed to parse) or that threw left the task in
+    /// neither file. Both halves are driven here against a disposable
+    /// `FM_SHIFT_DIR`: the parse-failed refusal, which must also be reported
+    /// rather than only logged, and a write that throws.
+    private static func checkRefusedCompletionKeepsTheTask(_ check: (Bool, String) -> Void) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shift-r2bug01-\(UUID().uuidString)", isDirectory: true)
+        let completedDir = root.appendingPathComponent("tasks/completed", isDirectory: true)
+        try? FileManager.default.createDirectory(at: completedDir, withIntermediateDirectories: true)
+        let activeFile = root.appendingPathComponent("tasks/active.yaml")
+        try? """
+        tasks:
+          - id: "keep-me"
+            title: "Finish the quarterly report"
+            description: ""
+            status: "todo"
+            priority: "normal"
+            created_at: "2026-10-01T09:00:00Z"
+            updated_at: "2026-10-01T09:00:00Z"
+          - id: "keep-me-too"
+            title: "File the expenses"
+            description: ""
+            status: "todo"
+            priority: "normal"
+            created_at: "2026-10-01T09:00:00Z"
+            updated_at: "2026-10-01T09:00:00Z"
+        """.write(to: activeFile, atomically: true, encoding: .utf8)
+        let monthFile = completedDir.appendingPathComponent("2026-10.yaml")
+        let damaged = "tasks:\n  - id: \"half-synced\n    title: [unterminated\n"
+        try? damaged.write(to: monthFile, atomically: true, encoding: .utf8)
+
+        let savedShiftDir = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+        setenv("FM_SHIFT_DIR", root.path, 1)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: completedDir.path)
+            if let savedShiftDir { setenv("FM_SHIFT_DIR", savedShiftDir, 1) } else { unsetenv("FM_SHIFT_DIR") }
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        // The fixture's discriminating power: the month file really does
+        // fail to parse, and the store really did load both tasks.
+        var monthFileFailsToParse = false
+        if case .parseFailed = ShiftYaml.readListChecked(path: monthFile.path, key: "tasks") {
+            monthFileFailsToParse = true
+        }
+        check(monthFileFailsToParse,
+              "fixture: the damaged month file must fail to parse, or the refusal is never exercised")
+        let store = ShiftStore()
+        check(store.activeTasks.map(\.id).sorted() == ["keep-me", "keep-me-too"],
+              "fixture: both tasks load, got \(store.activeTasks.map(\.id))")
+
+        // Half one: the parse-failed refusal.
+        PersistenceFailureReporter.resetForTests()
+        let october = ShiftStoreSelfTest.date(year: 2026, month: 10, day: 22)
+        store.setTaskCompleted(id: "keep-me", completed: true, now: october)
+        check(store.activeTasks.contains { $0.id == "keep-me" },
+              "R2-BUG-01: a completion whose month write was refused keeps the task active in memory")
+        check(ShiftStore().activeTasks.contains { $0.id == "keep-me" },
+              "R2-BUG-01: and in active.yaml - the task must not end up in neither file")
+        check((try? String(contentsOf: monthFile, encoding: .utf8)) == damaged,
+              "GL-01: the month file this store could not parse is left exactly as it was")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(PersistenceFailureReporter.recent.contains { $0.path == monthFile.path },
+              "R2-BUG-01: the refusal reaches PersistenceFailureReporter (the Health card), "
+              + "not only the log, got \(PersistenceFailureReporter.recent.map(\.path))")
+
+        // Half two: a month write that throws. A fresh month with its folder
+        // read-only, so the file cannot be created at all.
+        let november = ShiftStoreSelfTest.date(year: 2026, month: 11, day: 3)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: completedDir.path)
+        store.setTaskCompleted(id: "keep-me-too", completed: true, now: november)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: completedDir.path)
+        check(!FileManager.default.fileExists(atPath: completedDir.appendingPathComponent("2026-11.yaml").path),
+              "fixture: the read-only folder really did stop the month write")
+        check(ShiftStore().activeTasks.contains { $0.id == "keep-me-too" },
+              "R2-BUG-01: a completion whose month write threw keeps the task in active.yaml")
+        PersistenceFailureReporter.resetForTests()
     }
 
     private static func report(_ failures: [String]) -> Bool {

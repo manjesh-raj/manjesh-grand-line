@@ -197,7 +197,7 @@ enum SettingsSidebarNavigationSelfTest {
 
         // Discriminating power first: the walk really reads the pages, so an
         // absence below cannot pass because nothing was collected.
-        guard strings.contains(where: { $0.1 == "Show a morning briefing on Fleet" }) else {
+        guard strings.contains(where: { $0.1 == "Show a morning briefing" }) else {
             print("  FAIL the walk did not find the Briefings page's own row - it reads nothing")
             ok = false
             return
@@ -444,7 +444,7 @@ enum SettingsSidebarNavigationSelfTest {
              { AppSettings.shared.autoReconnect }, settings.debugAutoReconnectSwitch),
             (.terminal, "Bell & notifications",
              { AppSettings.shared.notifyOnNeedsDecision }, settings.debugNotifySwitch),
-            (.briefings, "Show a morning briefing on Fleet",
+            (.briefings, "Show a morning briefing",
              { AppSettings.shared.morningBriefingEnabled }, settings.debugMorningBriefingSwitch),
             (.menuBar, "Badge the status item",
              { AppSettings.shared.compactModeBadgesOverdueCount }, settings.debugCompactBadgeSwitch),

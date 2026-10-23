@@ -291,7 +291,7 @@ enum StrawHatProposalKind: String, CaseIterable {
         switch self {
         case .addTask: return "Added to Tasks"
         case .addFollowUp: return "Added to Follow-ups"
-        case .createRunbookDraft: return "Saved to Runbooks"
+        case .createRunbookDraft: return "Saved to \(PlaceName.short(.runbooks))"
         case .addSticky: return "Added to Sticky Board"
         case .saveCommandDraft: return "Saved to Commands"
         case .createScheduleDraft: return "Added to Schedules"

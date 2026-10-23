@@ -211,6 +211,12 @@ enum ReviewTourLab {
         /// and fork totals - each through its real source's own seam. No
         /// `gh` runs.
         case demoSetup
+        /// `demo updates`: every Updates check offline, before the page is
+        /// first visited. npm resolves and its every call fails, and nothing
+        /// else resolves, so a sweep reads "Check failed" and "Not installed"
+        /// rows - the state the brew-unreachable scenario produces - without
+        /// one real npm, brew or git call.
+        case demoUpdates
         /// `demo focuslog`: focus sessions logged on the last five days against
         /// the store's own tasks, through `ShiftStore.logFocusSession` - so
         /// Weekly review's Time on tasks chart and Focus time card have a
@@ -303,6 +309,7 @@ enum ReviewTourLab {
             if argument == "signals" { return .success(.demoSignals) }
             if argument == "focus" { return .success(.demoFocus) }
             if argument == "setup" { return .success(.demoSetup) }
+            if argument == "updates" { return .success(.demoUpdates) }
             if argument == "forks" { return .success(.demoForks) }
             if argument == "focuslog" { return .success(.demoFocusLog) }
             if argument == "logs" { return .success(.demoLogs) }
@@ -628,6 +635,17 @@ enum ReviewTourLab {
                 shell.workspace.logAnalyzer.debugRender(demoLogInvestigation())
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo logs")
+            case .demoUpdates:
+                let scratch = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("tour-updates-\(UUID().uuidString)", isDirectory: true)
+                UpdatesDataTestSeam.resolveExecutable = { $0 == "npm" ? "/usr/local/bin/npm" : nil }
+                UpdatesDataTestSeam.homebrewPrefixes = [scratch.appendingPathComponent("homebrew")]
+                UpdatesDataTestSeam.applicationsDirectory = scratch.appendingPathComponent("Applications")
+                UpdatesDataTestSeam.run = { _, _, _ in
+                    SubprocessResult(outcome: .exited, status: 1, stdoutData: Data(),
+                                     stderrData: Data("demo: offline".utf8), duration: 0)
+                }
+                log.append("demo updates (offline: npm fails, nothing else resolves)")
             case .demoHealth:
                 seedDemoHealth(shell.workspace.health)
                 RunLoop.main.run(until: Date().addingTimeInterval(0.1))
@@ -1093,7 +1111,7 @@ enum ReviewTourLab {
                                headlineClause: "Claude is near its spend cap"),
             NeedsAttentionItem(id: "signal.checks", kind: .signal(.sessionChecks), source: "Session checks",
                                text: "Tool updates haven\u{2019}t been checked yet this session",
-                               chipText: "1 check not run", tone: .info, actionTitle: "Open Setup"),
+                               chipText: "1 check not run", tone: .info, actionTitle: "Open \(PlaceName.of(.bootstrap))"),
         ]
         let items = Array(pool.prefix(max(0, min(count, pool.count))))
         let state: NeedsAttentionSummary.State = items.isEmpty
@@ -1299,6 +1317,7 @@ enum ReviewTourLab {
         // shorter than the captain's. The sidebar shell keeps the system
         // title bar, as `main.swift` does for it.
         if layout == .floatingBar { WindowChromeFusion.apply(to: window) }
+        PlaceName.layout = layout
         // The sidebar shell's chrome is the system's - the sidebar material,
         // the toolbar, the system label colours - so its window has to follow
         // the theme's light/dark mode the way `main.swift`'s does, or a
@@ -1468,7 +1487,13 @@ enum ReviewTourLab {
             edge.lineWidth = scale
             edge.stroke()
         }
-        for item in descendants(frameView, named: "NSToolbarItemViewer")
+        // The overflow chevron is its own viewer class. Left out, the
+        // platter painted above covered it and a dark render showed an empty
+        // circle where the chevron is - R2-BUG-07's "chevron does not draw in
+        // Dusk", which was this lab and not the app.
+        let viewers = descendants(frameView, named: "NSToolbarItemViewer")
+            + descendants(frameView, named: "NSToolbarClippedItemsIndicatorViewer")
+        for item in viewers
         where !item.isHiddenOrHasHiddenAncestor && item.bounds.width > 0 {
             guard let rep = item.bitmapImageRepForCachingDisplay(in: item.bounds) else { continue }
             item.cacheDisplay(in: item.bounds, to: rep)

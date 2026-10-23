@@ -205,7 +205,7 @@ final class StrawHatMenuBarController: NSObject, NSPopoverDelegate {
 }
 
 /// The popover's content: a header, a compact reply area, a one-line field +
-/// Ask button, and a persistent "Open Straw Hat Pirates" link.
+/// Ask button, and a persistent "Open \(PlaceName.of(.strawHat))" link.
 ///
 /// ## What this deliberately does not do
 ///
@@ -283,7 +283,7 @@ final class StrawHatMenuBarPopoverController: NSViewController {
 
     private let field = HelmTextField(placeholder: "Message the crew\u{2026}")
     private let askButton = HelmButton(title: "Ask", variant: .primary, size: .small, symbol: "arrow.up")
-    private let openFullChatButton = HelmButton(title: "Open Straw Hat Pirates", variant: .quiet, size: .small,
+    private let openFullChatButton = HelmButton(title: "Open \(PlaceName.of(.strawHat))", variant: .quiet, size: .small,
                                                 symbol: "arrow.up.forward.square")
 
     private var theme = ThemeManager.shared.theme

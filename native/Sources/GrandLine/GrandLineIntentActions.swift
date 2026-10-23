@@ -491,7 +491,7 @@ enum GrandLineIntentActions {
             // is no window to show a toast in anyway.
             return finish(.failure(.vaultLocked(
                 "\u{201C}\(credential.title)\u{201D} is set to require Touch ID, and this Mac has no biometry. "
-                + "Copy it from the Poneglyph page instead.")))
+                + "Copy it from \(PlaceName.of(.poneglyph)) instead.")))
         }
         challenge.evaluate("Copy \u{201C}\(credential.title)\u{201D}") { allowed in
             guard allowed else {

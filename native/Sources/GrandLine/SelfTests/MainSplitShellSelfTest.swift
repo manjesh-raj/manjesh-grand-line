@@ -71,13 +71,41 @@ enum MainSplitShellSelfTest {
                       checkTheLockHidesTheToolbar, checkTheContentReachesTheFoot, checkTheFocusChipIsInTheToolbar,
                       checkTheFocusChipFitsTheNarrowToolbar, checkOnlyADividerDragIsAChosenWidth,
                       checkToastsLandInTheColumn,
-                      checkTheAccountMenu] {
+                      checkTheAccountMenu, checkNotebookLeavesTheToolbarRoomAtNarrowWidths] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
         }
         print(allOK ? "MainSplitShellSelfTest: all checks passed" : "MainSplitShellSelfTest: FAILED")
         return allOK
+    }
+
+    // MARK: R2-BUG-07 - Notebook's toolbar at 1100
+
+    /// At 1100 Notebook's two labelled toolbar actions (222pt) pushed the
+    /// crumb, Recents and the inspector button into the overflow menu. Below
+    /// `NotebookController.compactToolbarActionsBelow` they draw as icons
+    /// and all three stay on the toolbar; at 1512 they keep their labels.
+    private static func checkNotebookLeavesTheToolbarRoomAtNarrowWidths(_ shell: MainSplitShellController,
+                                                                       _ window: NSWindow, _ ok: inout Bool) {
+        shell.show(.notebook)
+        resize(window, width: 1100, shell)
+        settle(shell)
+        let notebook = shell.workspace.notebook
+        let wanted = [WorkspaceToolbar.ItemID.crumb, WorkspaceToolbar.ItemID.recents, WorkspaceToolbar.ItemID.inspector]
+        func shown() -> [NSToolbarItem.Identifier] {
+            let visible = Set((window.toolbar?.visibleItems ?? []).map(\.itemIdentifier))
+            return wanted.filter { visible.contains($0) }
+        }
+        check(notebook.debugToolbarActionTitles == ["", ""],
+              "R2-BUG-07: at 1100 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles), want icons", &ok)
+        check(shown() == wanted,
+              "R2-BUG-07: at 1100 on Notebook the toolbar shows only \(shown().map(\.rawValue)) of the crumb, Recents and inspector", &ok)
+        resize(window, width: 1512, shell)
+        settle(shell)
+        check(notebook.debugToolbarActionTitles == ["Today's note", "New page"],
+              "R2-BUG-07: at 1512 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles)", &ok)
+        check(shown() == wanted, "at 1512 on Notebook the toolbar shows \(shown().map(\.rawValue))", &ok)
     }
 
     private static func settle(_ shell: MainSplitShellController) {
@@ -743,6 +771,10 @@ enum MainSplitShellSelfTest {
     private static func checkTheInspector(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         resize(window, width: 1512, shell)
         check(shell.debugInspectorIsCollapsed, "the inspector is open at launch", &ok)
+        // R2-BUG-10: the button draws the standing choice. At launch it is
+        // on, so a selection opens the inspector.
+        check(shell.toolbar.debugInspectorSymbolName == WorkspaceToolbar.inspectorOnSymbol,
+              "R2-BUG-10: at launch the inspector button draws \(shell.toolbar.debugInspectorSymbolName)", &ok)
         check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector), "the inspector item has no action", &ok)
         settle(shell)
         check(!shell.debugInspectorIsCollapsed, "the inspector item did not open the inspector", &ok)
@@ -751,6 +783,16 @@ enum MainSplitShellSelfTest {
         shell.inspector.debugCloseButton.performClick(nil)
         settle(shell)
         check(shell.debugInspectorIsCollapsed, "the inspector's close button did not close it", &ok)
+        // R2-BUG-10: closing it turns the choice off for the session, and
+        // the button now says so - a closed pane with the choice on (nothing
+        // selected yet) and one with it off no longer look the same.
+        let item = shell.toolbar.debugInspectorItem
+        check(shell.toolbar.debugInspectorSymbolName == WorkspaceToolbar.inspectorOffSymbol,
+              "R2-BUG-10: after closing the inspector its button still draws the on state", &ok)
+        check(item?.toolTip?.contains("is off") == true,
+              "R2-BUG-10: the closed-and-off inspector's tooltip reads \(item?.toolTip ?? "nothing")", &ok)
+        check(WorkspaceToolbar.inspectorOnSymbol != WorkspaceToolbar.inspectorOffSymbol,
+              "fixture: the two states draw two symbols", &ok)
     }
 
     // MARK: 8 - the lock

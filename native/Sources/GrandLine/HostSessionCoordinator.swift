@@ -510,8 +510,8 @@ final class HostSessionCoordinator {
             // Hosts and pressing Connect on a row that is already there.
             navigator.show(.hosts)
             return sessions.sessions.isEmpty
-                ? "You don't have a live host session right now - connect one from Hosts and ask me again."
-                : "None of your host pages are connected right now - open one from Hosts and connect it, then ask me again."
+                ? "You don't have a live host session right now - connect one from \(PlaceName.of(.hosts)) and ask me again."
+                : "None of your host pages are connected right now - open one from \(PlaceName.of(.hosts)) and connect it, then ask me again."
         }
 
         let chosen: HostSession
@@ -536,7 +536,7 @@ final class HostSessionCoordinator {
                     !$0.isConnected && $0.label.lowercased().contains(needle)
                 }
                 return restoredMatch
-                    ? "\u{201C}\(hint)\u{201D} is open but not connected - connect it from Hosts and ask me again."
+                    ? "\u{201C}\(hint)\u{201D} is open but not connected - connect it from \(PlaceName.of(.hosts)) and ask me again."
                     : "I don't have a live session called \u{201C}\(hint)\u{201D} - here are your hosts."
             } else {
                 navigator.show(.hosts)
@@ -559,7 +559,7 @@ final class HostSessionCoordinator {
         materializePendingRestoredHost(chosen.hostID)
         guard let controller = hostConsoles[chosen.hostID] else {
             navigator.show(.hosts)
-            return "I couldn't reach \u{201C}\(chosen.label)\u{201D}'s page - open it from Hosts and ask me again."
+            return "I couldn't reach \u{201C}\(chosen.label)\u{201D}'s page - open it from \(PlaceName.of(.hosts)) and ask me again."
         }
         switchToSession(hostID: chosen.hostID)
         guard controller.openSRELeadFromCrewHandoff() else {

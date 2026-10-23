@@ -232,7 +232,7 @@ final class MultiHostSendPickerController: NSViewController {
             let empty = HelmEmptyState(
                 symbol: selection.hosts.isEmpty ? "server.rack" : "line.3.horizontal.decrease.circle",
                 body: selection.hosts.isEmpty
-                    ? "No saved hosts yet.\nAdd one in Hosts to send commands to it."
+                    ? "No saved hosts yet.\nAdd one in \(PlaceName.of(.hosts)) to send commands to it."
                     : "No saved host carries that tag.")
             empty.translatesAutoresizingMaskIntoConstraints = false
             listStack.addArrangedSubview(empty)

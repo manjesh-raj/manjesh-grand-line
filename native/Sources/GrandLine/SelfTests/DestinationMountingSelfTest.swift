@@ -343,12 +343,13 @@ enum DestinationMountingSelfTest {
             shell.setDictationEngineStatus(.recording)
             _ = shell.poneglyphQuickCodes
             _ = shell.poneglyphIsUnlocked
-            shell.shutdownStickyBoard()
+            let deadline = DispatchTime.now() + ShiftGitSync.terminateFlushBudget
+            shell.shutdownStickyBoard(deadline: deadline)
             shell.shutdownScratchpads()
-            shell.shutdownReadingList()
-            shell.shutdownCodePreview()
-            shell.shutdownNotebook()
-            shell.shutdownCredentialVault()
+            shell.shutdownReadingList(deadline: deadline)
+            shell.shutdownCodePreview(deadline: deadline)
+            shell.shutdownNotebook(deadline: deadline)
+            shell.shutdownCredentialVault(deadline: deadline)
             shell.shutdownStrawHatCrew()
             let built = shell.builtLazyDestinationsForTests
             guard built.isEmpty else {

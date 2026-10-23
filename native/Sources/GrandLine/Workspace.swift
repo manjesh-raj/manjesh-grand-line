@@ -1086,17 +1086,17 @@ final class Workspace {
     /// `applicationWillTerminate` lives. It is safe to call on a destination
     /// that was never mounted: the controller is constructed eagerly, its
     /// store with it, and a store with nothing queued flushes nothing.
-    func shutdownStickyBoard() {
+    func shutdownStickyBoard(deadline: DispatchTime) {
         // PERF-01: the store can hold a pending write while the page was never
         // built - ⌘K, the crew and a widget tap all write to it directly - so
         // an unbuilt page still gets the store's two quit-time halves, in the
         // page's own order.
         guard isBuilt(.stickyBoard) else {
             stickyBoardStore.flushPendingWrite()
-            _ = stickyBoardStore.gitSync?.flushForTerminationNow()
+            _ = stickyBoardStore.gitSync?.flushForTerminationNow(deadline: deadline)
             return
         }
-        stickyBoard.shutdown()
+        stickyBoard.shutdown(deadline: deadline)
     }
 
     /// Flush every open Scratchpad tab's debounced text on the way to quitting
@@ -1122,15 +1122,15 @@ final class Workspace {
     /// `applicationWillTerminate` lives. Safe on a destination that was never
     /// mounted - the controller and its store are built eagerly at init, and a
     /// store with nothing queued flushes nothing.
-    func shutdownReadingList() {
+    func shutdownReadingList(deadline: DispatchTime) {
         // PERF-01: ⌥Space and ⌘K write links without building the page, so
         // an unbuilt page still drains the store - the page's own two halves.
         guard isBuilt(.readingList) else {
             readingListStore.flush()
-            readingListStore.gitSync?.flushForTerminationNow()
+            readingListStore.gitSync?.flushForTerminationNow(deadline: deadline)
             return
         }
-        readingList.shutdown()
+        readingList.shutdown(deadline: deadline)
     }
 
     /// Flush and commit anything Code Preview still has in flight, on the way
@@ -1144,14 +1144,14 @@ final class Workspace {
     /// mounted, but its controller and store are built eagerly at init, and
     /// `CodePreviewController.shutdown()` no-ops on a page whose editor never
     /// loaded while its store still commits anything genuinely queued.
-    func shutdownCodePreview() {
+    func shutdownCodePreview(deadline: DispatchTime) {
         // PERF-01: an unbuilt page has no editor edits to wait for, but a
         // capture can still have written a snippet, so the git half runs.
         guard isBuilt(.codePreview) else {
-            codePreviewStore.gitSync?.flushForTerminationNow()
+            codePreviewStore.gitSync?.flushForTerminationNow(deadline: deadline)
             return
         }
-        codePreview.shutdown()
+        codePreview.shutdown(deadline: deadline)
     }
 
     /// Flush the Notebook's debounced edit and its git commit on the way to
@@ -1165,13 +1165,13 @@ final class Workspace {
     ///
     /// The shell's forward for the same reason the others here are: `notebook`
     /// is `private` and the app delegate is where quit is handled.
-    func shutdownNotebook() {
+    func shutdownNotebook(deadline: DispatchTime) {
         // PERF-01: the same split as Code Preview's, for the same reason.
         guard isBuilt(.notebook) else {
-            notebookStore.gitSync?.flushForTerminationNow()
+            notebookStore.gitSync?.flushForTerminationNow(deadline: deadline)
             return
         }
-        notebook.shutdown()
+        notebook.shutdown(deadline: deadline)
     }
 
     /// Flush the credential vault's debounced backup on the way to quitting,
@@ -1185,14 +1185,14 @@ final class Workspace {
     /// a destination that was never mounted - the controller and its store
     /// are built eagerly, and a store with nothing queued (or a vault that was
     /// never unlocked) flushes nothing.
-    func shutdownCredentialVault() {
+    func shutdownCredentialVault(deadline: DispatchTime) {
         // PERF-01: the page and `GrandLineServices` hold one store; a store
         // nobody built has nothing to flush, and quitting must not build one.
         guard isBuilt(.poneglyph) else {
-            if GrandLineServices.shared.hasBuiltVault { GrandLineServices.shared.vault.flushForTermination() }
+            if GrandLineServices.shared.hasBuiltVault { GrandLineServices.shared.vault.flushForTermination(deadline: deadline) }
             return
         }
-        poneglyph.shutdown()
+        poneglyph.shutdown(deadline: deadline)
     }
 
     /// Cancel any in-flight Straw Hat turn on the way to quitting

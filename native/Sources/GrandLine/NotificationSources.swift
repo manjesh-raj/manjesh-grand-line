@@ -106,7 +106,7 @@ enum NotificationSources {
             AppNotificationAction(label: count == 1 ? "Update" : "Update all",
                                   doneMessage: count == 1 ? "Updating the tool" : "Updating every tool",
                                   perform: $0)
-        } ?? AppNotificationAction(label: "Open Updates", doneMessage: "Opened Updates", perform: navigate)
+        } ?? AppNotificationAction(label: "Open \(PlaceName.of(.updates))", doneMessage: "Opened Updates", perform: navigate)
         GrandLineNotificationCenter.shared.set(
             AppNotification(
                 id: toolUpdatesID, title: title,
@@ -145,7 +145,7 @@ enum NotificationSources {
             AppNotificationAction(label: count == 1 ? "Sync" : "Sync all",
                                   doneMessage: count == 1 ? "Syncing the fork" : "Syncing every fork",
                                   perform: $0)
-        } ?? AppNotificationAction(label: "Open GitHub Sync", doneMessage: "Opened GitHub Sync", perform: navigate)
+        } ?? AppNotificationAction(label: "Open \(PlaceName.of(.githubSync))", doneMessage: "Opened GitHub Sync", perform: navigate)
         GrandLineNotificationCenter.shared.set(
             AppNotification(
                 id: githubSyncID, title: title,
@@ -178,7 +178,7 @@ enum NotificationSources {
                 source: "Vault",
                 clearCondition: "Clears when each tool is hardened.",
                 kind: .informational, tint: .violet,
-                primaryAction: AppNotificationAction(label: "Open Vault", doneMessage: "Opened Vault",
+                primaryAction: AppNotificationAction(label: "Open \(PlaceName.of(.vault))", doneMessage: "Opened \(PlaceName.of(.vault))",
                                                     perform: navigate),
                 navigate: navigate
             ),

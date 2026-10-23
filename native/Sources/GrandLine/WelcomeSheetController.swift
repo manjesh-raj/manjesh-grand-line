@@ -59,7 +59,7 @@ final class WelcomeSheetController: NSViewController {
             switch self {
             case .theme:
                 return "Grand Line ships fourteen palettes. Pick one now - it applies as you click, "
-                    + "and you can change it any time from the bar or from Settings."
+                    + "and you can change it any time from the bar or from \(PlaceName.of(.settings))."
             case .tour:
                 return "The app is five spaces, and the bar at the top switches between them.\n\n"
                     + "Overview is the hub - what needs you right now.\n"

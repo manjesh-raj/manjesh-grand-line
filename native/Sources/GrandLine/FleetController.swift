@@ -160,7 +160,7 @@ final class FleetController: NSViewController {
     private let needsYouSummary = NSTextField(wrappingLabelWithString: "")
     private let needsYouEmpty = HelmEmptyState(symbol: "checkmark.circle", title: "Nothing needs you",
                                                body: "", size: .standard, boxed: true)
-    private let needsYouSetupButton = HelmButton(title: "Open Setup", variant: .secondary, size: .small,
+    private let needsYouSetupButton = HelmButton(title: "Open \(PlaceName.of(.bootstrap))", variant: .secondary, size: .small,
                                                  symbol: "hammer")
     /// When the crew's state was last read, which the summary says - never a
     /// count without its age.
@@ -498,7 +498,7 @@ final class FleetController: NSViewController {
 
         crewButton.target = self
         crewButton.action = #selector(crewTapped)
-        crewButton.toolTip = "Open the Straw Hat Pirates page"
+        crewButton.toolTip = "Open \(PlaceName.of(.strawHat))"
         crewButton.setContentHuggingPriority(.required, for: .horizontal)
         crewButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         crewButton.translatesAutoresizingMaskIntoConstraints = false
@@ -638,7 +638,7 @@ final class FleetController: NSViewController {
         let tile = HelmStatTile(symbol: icon, value: value, caption: label, tint: tint)
         if let onClick {
             tile.onClick = onClick
-            tile.toolTip = "View in Review"
+            tile.toolTip = "View in \(PlaceName.short(.review))"
         }
         return tile
     }
@@ -1009,7 +1009,7 @@ final class FleetController: NSViewController {
             title: answer.title,
             meta: answer.meta,
             badgeSymbol: answer.badgeSymbol,
-            chipText: answer.isSetupPrompt ? "Open Setup" : nil)
+            chipText: answer.isSetupPrompt ? "Open \(PlaceName.of(.bootstrap))" : nil)
         bannerRow.configure(content, theme: theme)
         // GL-31: only the not-configured banner is clickable, and it leads
         // straight into the Bootstrap stepper where firstmate home is set.

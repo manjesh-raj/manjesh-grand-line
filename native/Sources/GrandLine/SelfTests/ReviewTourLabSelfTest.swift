@@ -89,6 +89,21 @@ enum ReviewTourLabSelfTest {
         check(breakBad.count == 4, "a bad card, a missing and a bad fleet action and a missing label must be "
               + "4 errors, got \(breakBad)", &ok)
 
+        // `demo updates` (R2-BUG-03's renders): every Updates check offline.
+        let (offline, offlineErrors) = ReviewTourLab.parse(tour: "demo updates")
+        check(offlineErrors.isEmpty && offline == [.demoUpdates], "demo updates parsed to \(offline) \(offlineErrors)", &ok)
+
+        // R2-BUG-07: a dark render redraws the overflow chevron's own viewer
+        // after painting the toolbar's glass. Without it the chevron read as
+        // an empty circle - a defect of this lab, reported as the app's.
+        if let dir = SelfTestSources.appSourceDirectory(),
+           let lab = try? String(contentsOf: dir.appendingPathComponent("SelfTests/ReviewTourLab.swift"), encoding: .utf8) {
+            check(lab.contains("descendants(frameView, named: \"NSToolbarClippedItemsIndicatorViewer\")"),
+                  "R2-BUG-07: the dark toolbar repaint no longer redraws the overflow chevron", &ok)
+        } else {
+            check(false, "could not read ReviewTourLab.swift - the chevron guard would silently pass", &ok)
+        }
+
         // Every bad line, not just the first: a hand-written tour fixed one
         // error per run is a tool nobody keeps.
         let bad = """

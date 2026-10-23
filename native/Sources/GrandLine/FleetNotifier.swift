@@ -159,7 +159,7 @@ final class FleetNotifier {
                 } else {
                     ServiceHealthRegistry.shared.recordFailure(
                         .fleetTasks,
-                        "Firstmate home is not readable at \(FirstmateHome.root.path) - set it in Setup > Bootstrap.")
+                        "Firstmate home is not readable at \(FirstmateHome.root.path) - set it in \(PlaceName.of(.bootstrap)).")
                 }
                 guard let self else { return }
                 // PF14: told before `reconcile`, which is what decides whether

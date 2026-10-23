@@ -165,7 +165,7 @@ final class SessionStripView: NSView, NSGestureRecognizerDelegate {
         addButton.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(addClicked)))
         addButton.accessibilityRoleOverride = .button
         addButton.accessibilityLabelOverride = "New session"
-        addButton.toolTip = "Open Hosts to start a new session"
+        addButton.toolTip = "Open \(PlaceName.of(.hosts)) to start a new session"
     }
 
     // MARK: Render

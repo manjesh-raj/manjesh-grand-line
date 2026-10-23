@@ -190,7 +190,8 @@ final class BackgroundSignalsPoller {
         var vaultSecrets: Int?
 
         // Stage 7: the totals behind Setup's summary cards ("Tools up to
-        // date 6 / 8", "Setup steps 5 / 6", the forks). Written by the same
+        // date 6 / 8", the forks). The steps card reads `SetupStepsReading`
+        // instead (R2-BUG-05). Written by the same
         // publish that writes the count beside each, in the same assignment,
         // so a card and the sidebar's badge never read two different passes.
         // `nil` until that publish has run, like every field here (GL-14).
@@ -200,8 +201,6 @@ final class BackgroundSignalsPoller {
         /// where `toolUpdates` also counts a tool that is missing or whose
         /// check failed (`DependencyStatus.showsUpdateButton`).
         var toolsWithUpdate: Int? = nil
-        var setupStepsTotal: Int? = nil
-        var setupStepsDone: Int? = nil
         var forksTotal: Int? = nil
         /// Forks whose check came back - in sync, behind or diverged - so a
         /// summary can tell "all in sync" from "nothing could be read".
@@ -829,12 +828,11 @@ extension BackgroundSignalsPoller {
     /// Publish freshly-learned setup-step results.
     func publishSetupStepResults(_ results: [SetupStepKind: Bool?], gatheredAt: Date = Date()) {
         dispatchPrecondition(condition: .onQueue(.main))
+        SetupStepsReading.shared.record(results, gatheredAt: gatheredAt)
         guard let count = Self.setupDriftCount(from: results) else { return }
         guard acceptsReading(.setup, gatheredAt: gatheredAt) else { return }
         var counts = lastCounts
         counts.setupDrift = count
-        counts.setupStepsTotal = SetupStepKind.allCases.count
-        counts.setupStepsDone = SetupStepKind.allCases.count - count
         lastCounts = counts
         // The drifted steps name themselves - `results` is keyed by
         // `SetupStepKind`, so no page has to hand them over separately.

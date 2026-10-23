@@ -186,6 +186,66 @@ struct SetupPipelineProgress: Equatable {
     }
 }
 
+/// Setup's one reading of its five steps, owned by the module rather than by
+/// whichever tab last computed it.
+///
+/// R2-BUG-05: the summary strip's "Setup steps" card read the poller's last
+/// published count, which a page publishes only while it is on screen and
+/// only once every step has answered, while each tab's subtitle read that
+/// tab's own verdicts. So one tab read "-" beside "0 of 5 steps done", and
+/// another read "0 / 5" beside "0 of 5 steps done - checking...". Every
+/// producer (both Setup pages, shown or not, and the poller's own pass) now
+/// records its per-step verdicts here, and the subtitle and the card both
+/// render `progress`.
+///
+/// Per step, the newest answer wins, and an unanswered step (`nil`, still
+/// being checked) never erases one that was answered. Main thread only.
+final class SetupStepsReading {
+    static let shared = SetupStepsReading()
+
+    private var answers: [SetupStepKind: (done: Bool, at: Date)] = [:]
+    private var observers: [UUID: () -> Void] = [:]
+
+    /// Fold in one producer's verdicts, gathered at `gatheredAt`.
+    func record(_ results: [SetupStepKind: Bool?], gatheredAt: Date = Date()) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        var changed = false
+        for (kind, answer) in results {
+            guard let done = answer else { continue }
+            if let existing = answers[kind], existing.at > gatheredAt { continue }
+            if answers[kind]?.done != done { changed = true }
+            answers[kind] = (done, gatheredAt)
+        }
+        guard changed else { return }
+        for observer in observers.values { observer() }
+    }
+
+    /// Every step's verdict, `nil` for one nothing has answered yet.
+    var verdicts: [SetupStepKind: Bool?] {
+        var verdicts: [SetupStepKind: Bool?] = [:]
+        for kind in SetupStepKind.allCases { verdicts[kind] = answers[kind]?.done }
+        return verdicts
+    }
+
+    var progress: SetupPipelineProgress { .of(verdicts) }
+
+    @discardableResult
+    func observe(_ fn: @escaping () -> Void) -> UUID {
+        let token = UUID()
+        observers[token] = fn
+        return token
+    }
+
+    func unobserve(_ token: UUID) { observers[token] = nil }
+
+    #if FM_SELFTESTS
+    func resetForTests() {
+        answers = [:]
+        for observer in observers.values { observer() }
+    }
+    #endif
+}
+
 /// The one command Bootstrap's dotfiles step and Automation's own dotfiles
 /// step both run - fetches first, fast-forwards only, never a forced
 /// overwrite (see `BootstrapController`'s own doc comment on the equivalent

@@ -76,6 +76,9 @@ final class CredentialVaultGitSync {
     }
     private var _statusHandlers: [(Status) -> Void] = []
     private var pendingCommit: DispatchWorkItem?
+    /// R2-BUG-04: whether a debounced commit is still owed, readable off
+    /// `queue` so the quit-time flush can skip a store with nothing pending.
+    private let pendingWork = GitSyncPendingWork()
 
     /// Audit 2 §4.3's budget, and the same number `StickyBoardGitSync` uses.
     /// Short on purpose: what a timeout abandons is only the *push*, and the
@@ -187,10 +190,16 @@ final class CredentialVaultGitSync {
     /// synchronously - the same debounce shape as every sibling.
     func markDirty() {
         setStatus(.localChanges)
+        // R2-BUG-04: noted on the caller's thread, before the queue hop, so
+        // a quit straight after this call still sees the commit as pending.
+        let ticket = pendingWork.request()
         queue.async { [weak self] in
             guard let self else { return }
             self.pendingCommit?.cancel()
-            let item = DispatchWorkItem { [weak self] in self?.commitAndPushNow() }
+            let item = DispatchWorkItem { [weak self] in
+                self?.pendingWork.settle(ticket)
+                self?.commitAndPushNow()
+            }
             self.pendingCommit = item
             self.queue.asyncAfter(deadline: .now() + self.debounceInterval, execute: item)
         }
@@ -204,7 +213,11 @@ final class CredentialVaultGitSync {
     /// `pendingCommit` is only ever touched, so the cancel takes if the item
     /// has not started and is moot if it has), and it is **bounded**.
     @discardableResult
-    func flushForTerminationNow() -> Bool {
+    func flushForTerminationNow(deadline: DispatchTime = .now() + CredentialVaultGitSync.terminateFlushBudget) -> Bool {
+        // R2-BUG-04: a store with nothing waiting does not join the shared
+        // queue at all. Every sync is on the one serial queue, so a flush
+        // that enqueued anyway waited out whatever slow git was ahead of it.
+        guard pendingWork.isPending else { return true }
         let lock = NSLock()
         var committed = false
         let done = DispatchSemaphore(value: 0)
@@ -212,16 +225,17 @@ final class CredentialVaultGitSync {
             guard let self else { done.signal(); return }
             self.pendingCommit?.cancel()
             self.pendingCommit = nil
+            self.pendingWork.settleAll()
             let result = self.commitAndPushNow()
             lock.lock()
             committed = result
             lock.unlock()
             done.signal()
         }
-        if done.wait(timeout: .now() + Self.terminateFlushBudget) == .timedOut {
+        if done.wait(timeout: deadline) == .timedOut {
             AppLog.lifecycle.info("""
-                credential vault: quit-time git flush still running after \
-                \(Self.terminateFlushBudget, privacy: .public)s - letting the app quit; \
+                credential vault: quit-time git flush still running at the quit \
+                deadline - letting the app quit; \
                 the encrypted file is already on disk and the next launch re-commits
                 """)
             return false

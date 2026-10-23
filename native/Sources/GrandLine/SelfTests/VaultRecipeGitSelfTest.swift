@@ -178,7 +178,7 @@ enum VaultRecipeGitSelfTest {
             check("genuinely diverged export is refused", !result.ok)
             check(
                 "genuinely diverged export shows today's EXACT unchanged safety message",
-                result.message == "Your manjesh-config clone has diverged from GitHub (there are commits on each side the other doesn't have), so this can't fast-forward automatically. Resolve it by hand from Bootstrap's \"Dotfiles & machine config\" card, then export again - nothing was force-pushed or discarded."
+                result.message == "Your manjesh-config clone has diverged from GitHub (there are commits on each side the other doesn't have), so this can't fast-forward automatically. Resolve it by hand from the \"Dotfiles & machine config\" card in \(PlaceName.of(.bootstrap)), then export again - nothing was force-pushed or discarded."
             )
 
             let commitsAfter = commitMessages(captain)
@@ -221,8 +221,8 @@ enum VaultRecipeGitSelfTest {
                 "dirty-tree-blocked pull is NOT reported as graph-level divergence (ahead == 0, so that claim would be false)",
                 !result.message.contains("there are commits on each side the other doesn't have")
             )
-            check("dirty-tree-blocked pull still points at Bootstrap's dotfiles card",
-                  result.message.contains("Dotfiles & machine config"))
+            check("dirty-tree-blocked pull still points at the dotfiles card in \(PlaceName.of(.bootstrap))",
+                  result.message.contains("Dotfiles & machine config") && result.message.contains(PlaceName.of(.bootstrap)))
 
             let dirtyContent = try? String(contentsOf: captain.appendingPathComponent("base.txt"), encoding: .utf8)
             check("dirty-tree-blocked pull: the captain's uncommitted edit is untouched, not discarded",

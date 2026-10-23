@@ -110,7 +110,7 @@ enum DaylightDrillPageSlice6SelfTest {
                       checkPlatesDoNotAccumulate,
                       checkCodeEditorsAreWells, checkSettingsDetailPaneIsThemeIndependent,
                       checkToggleRecipe, checkSharedPill, checkNoWindowWidthFloor,
-                      checkSettingsRendersOnFirstLoad] {
+                      checkSettingsRendersOnFirstLoad, checkARingNoteTooLongEndsInAnEllipsis] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -118,6 +118,50 @@ enum DaylightDrillPageSlice6SelfTest {
         print(allOK ? "DaylightDrillPageSlice6SelfTest: all checks passed"
                     : "DaylightDrillPageSlice6SelfTest: FAILED")
         return allOK
+    }
+
+    // MARK: R2-BUG-08 - a ring note that runs out of lines says so
+
+    /// The Health card's ring note was cut mid-sentence ("Docs & runbooks
+    /// sync needs") with no ellipsis: three wrapped lines, then nothing. A
+    /// real card in a real window, at a width that leaves the note column
+    /// narrow, with a note longer than three lines.
+    private static func checkARingNoteTooLongEndsInAnEllipsis(_ ok: inout Bool) {
+        print("\n-- R2-BUG-08: a ring note too long for its lines ends in an ellipsis --")
+        let note = "Background signals, Dotfiles auto-sync, Docs & runbooks sync, Scheduled automations "
+            + "and Persistence need a look."
+        let window = OffScreenProbe.window(width: 1200, height: 700, styleMask: [.titled, .resizable])
+        let host = NSView(frame: window.contentLayoutRect)
+        window.contentView = host
+        defer { window.close() }
+        let card = HelmModuleCard()
+        card.configure(HelmModuleCard.Content(
+            title: "Health", subtitle: "background services", symbol: "heart.text.square",
+            hue: HelmDomainHue(tint: .critical), chip: nil,
+            body: .ring(value: 3, total: 8, title: "Reporting", note: note)))
+        card.applyTheme(ThemeManager.shared.theme)
+        host.addSubview(card)
+        NSLayoutConstraint.activate([
+            card.widthAnchor.constraint(equalToConstant: 300),
+            card.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            card.topAnchor.constraint(equalTo: host.topAnchor),
+        ])
+        // Twice, for the wrap-width pass `checkPlateNoteFits` explains.
+        host.layoutSubtreeIfNeeded()
+        host.layoutSubtreeIfNeeded()
+        let anatomy = card.anatomyForTests
+        let rendered = anatomy.noteRenderedLineCounts.first ?? 0
+        // The counter reports the overflow past the label's three lines as
+        // a further fragment, so "more than it can show" reads as 4 or more.
+        if rendered <= 3 {
+            print("  FAIL fixture: the note must want more than its three lines, laid out \(rendered)")
+            ok = false
+        }
+        if anatomy.noteEllipsizes.first != true {
+            print("  FAIL R2-BUG-08: a ring note cut at its last line ends mid-sentence with no ellipsis")
+            ok = false
+        }
+        if ok { print("  ok   \(rendered) lines of text in three, the last one ellipsised") }
     }
 
     // MARK: Fixtures

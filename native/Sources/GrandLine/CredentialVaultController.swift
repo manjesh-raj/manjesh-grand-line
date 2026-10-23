@@ -1207,8 +1207,8 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
 
     /// Quit-time: flush the debounced backup so a credential added seconds
     /// before quitting is still pushed.
-    func shutdown() {
-        store.flushForTermination()
+    func shutdown(deadline: DispatchTime) {
+        store.flushForTermination(deadline: deadline)
     }
 
     // MARK: Locking the page down

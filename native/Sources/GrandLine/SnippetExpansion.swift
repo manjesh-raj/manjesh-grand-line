@@ -401,7 +401,7 @@ enum SnippetExpansionRefusal: Equatable {
 
     var explanation: String {
         switch self {
-        case .expansionTurnedOff: return "Snippet expansion is turned off in Settings."
+        case .expansionTurnedOff: return "Snippet expansion is turned off in \(PlaceName.of(.settings))."
         case .appLocked: return "Grand Line is locked."
         case .accessibilityNotTrusted: return "Grand Line is not a trusted Accessibility app yet."
         case .noTrigger: return "This snippet has no trigger."

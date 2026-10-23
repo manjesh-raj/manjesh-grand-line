@@ -494,12 +494,12 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     #endif
 
     // The pages' own quit-time flushes and menu-bar surfaces.
-    func shutdownStickyBoard() { workspace.shutdownStickyBoard() }
+    func shutdownStickyBoard(deadline: DispatchTime) { workspace.shutdownStickyBoard(deadline: deadline) }
     func shutdownScratchpads() { workspace.shutdownScratchpads() }
-    func shutdownReadingList() { workspace.shutdownReadingList() }
-    func shutdownCodePreview() { workspace.shutdownCodePreview() }
-    func shutdownNotebook() { workspace.shutdownNotebook() }
-    func shutdownCredentialVault() { workspace.shutdownCredentialVault() }
+    func shutdownReadingList(deadline: DispatchTime) { workspace.shutdownReadingList(deadline: deadline) }
+    func shutdownCodePreview(deadline: DispatchTime) { workspace.shutdownCodePreview(deadline: deadline) }
+    func shutdownNotebook(deadline: DispatchTime) { workspace.shutdownNotebook(deadline: deadline) }
+    func shutdownCredentialVault(deadline: DispatchTime) { workspace.shutdownCredentialVault(deadline: deadline) }
     func shutdownStrawHatCrew() { workspace.shutdownStrawHatCrew() }
     func askCrewFromMenuBar(_ text: String, completion: @escaping (Result<[StrawHatSection], StrawHatError>) -> Void) {
         workspace.askCrewFromMenuBar(text, completion: completion)

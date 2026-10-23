@@ -62,6 +62,9 @@ final class ReadingListGitSync {
     private(set) var status: Status = .synced
     private var statusHandlers: [(Status) -> Void] = []
     private var pendingCommit: DispatchWorkItem?
+    /// R2-BUG-04: whether a debounced commit is still owed, readable off
+    /// `queue` so the quit-time flush can skip a store with nothing pending.
+    private let pendingWork = GitSyncPendingWork()
 
     /// `true` only for `.shared`. A standalone instance clones its own tree,
     /// so a suite can never reach `ShiftGitSync.shared`'s production clone.
@@ -151,10 +154,16 @@ final class ReadingListGitSync {
     /// Rapid edits - marking three articles read - coalesce into one commit.
     func markDirty() {
         setStatus(.localChanges)
+        // R2-BUG-04: noted on the caller's thread, before the queue hop, so
+        // a quit straight after this call still sees the commit as pending.
+        let ticket = pendingWork.request()
         queue.async { [weak self] in
             guard let self else { return }
             self.pendingCommit?.cancel()
-            let item = DispatchWorkItem { [weak self] in self?.commitAndPushNow() }
+            let item = DispatchWorkItem { [weak self] in
+                self?.pendingWork.settle(ticket)
+                self?.commitAndPushNow()
+            }
             self.pendingCommit = item
             self.queue.asyncAfter(deadline: .now() + self.debounceInterval, execute: item)
         }
@@ -167,7 +176,11 @@ final class ReadingListGitSync {
     static let terminateFlushBudget: TimeInterval = 3.0
 
     @discardableResult
-    func flushForTerminationNow() -> Bool {
+    func flushForTerminationNow(deadline: DispatchTime = .now() + ReadingListGitSync.terminateFlushBudget) -> Bool {
+        // R2-BUG-04: a store with nothing waiting does not join the shared
+        // queue at all. Every sync is on the one serial queue, so a flush
+        // that enqueued anyway waited out whatever slow git was ahead of it.
+        guard pendingWork.isPending else { return true }
         let lock = NSLock()
         var committed = false
         let done = DispatchSemaphore(value: 0)
@@ -178,16 +191,17 @@ final class ReadingListGitSync {
             // item is not running concurrently with this one.
             self.pendingCommit?.cancel()
             self.pendingCommit = nil
+            self.pendingWork.settleAll()
             let result = self.commitAndPushNow()
             lock.lock()
             committed = result
             lock.unlock()
             done.signal()
         }
-        if done.wait(timeout: .now() + Self.terminateFlushBudget) == .timedOut {
+        if done.wait(timeout: deadline) == .timedOut {
             AppLog.lifecycle.info("""
-                reading list: quit-time git flush still running after \
-                \(Self.terminateFlushBudget, privacy: .public)s - letting the app quit; \
+                reading list: quit-time git flush still running at the quit \
+                deadline - letting the app quit; \
                 the links are already on disk and the next launch re-commits
                 """)
             return false

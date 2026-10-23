@@ -1425,6 +1425,12 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         // is what bounds it and AppKit ellipsises the *last* line, which is
         // the behaviour the property was set for.
         label.lineBreakMode = .byWordWrapping
+        // R2-BUG-08: and the ellipsis on that last line is not automatic.
+        // A wrapping cell cut at `maximumNumberOfLines` simply stops, so the
+        // Health ring's note read "Docs & runbooks sync needs" with nothing
+        // to say it went on. `truncatesLastVisibleLine` is what puts the
+        // ellipsis there.
+        label.cell?.truncatesLastVisibleLine = true
         label.translatesAutoresizingMaskIntoConstraints = false
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         noteLabels.append(label)
@@ -2533,6 +2539,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// `fittingSize` or from the body's height can see that; only the real
         /// line count can.
         let noteRenderedLineCounts: [Int]
+        /// Whether each note label ellipsises the last line it can show
+        /// (R2-BUG-08), rather than stopping mid-sentence.
+        let noteEllipsizes: [Bool]
         /// Every big-number / metric-styled line the body rendered.
         let metricTexts: [String]
         /// The height the card actually resolved to - `standardHeight` in
@@ -2682,6 +2691,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
                 usageStatusColors: usageStatusLabels.map { $0.label.textColor },
                 noteTexts: noteLabels.map(\.stringValue),
                 noteRenderedLineCounts: noteLabels.map(Self.renderedLineCount(of:)),
+                noteEllipsizes: noteLabels.map { $0.cell?.truncatesLastVisibleLine == true },
                 metricTexts: metricLabels.map(\.stringValue),
                 cardHeight: frame.height,
                 bodyAreaHeight: bodyContainer.frame.height,
