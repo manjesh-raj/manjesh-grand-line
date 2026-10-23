@@ -1110,6 +1110,8 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     override func workspaceDidRevealHostPage(_ controller: ConsoleController, label: String) {
+        // R2-UX-06: a host page's console draws its actions up here too.
+        controller.adoptSidebarLayout()
         pageController = controller
         showingHostPage = true
         hostPageLabel = label

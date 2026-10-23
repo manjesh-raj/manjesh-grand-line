@@ -978,6 +978,11 @@ final class HelmCard: NSView {
 /// save.keyEquivalent = "\r"
 /// ```
 final class HelmButton: NSButton {
+    /// R2-UX-06: the name this button goes by in the window toolbar's overflow
+    /// menu when it draws as an icon alone (its title is empty then). `nil`
+    /// falls back to the accessibility label.
+    var menuFormTitle: String?
+
     /// Which of the four roles a button plays. Picked per site from what the
     /// button already did, not assigned mechanically: `.primary` is the one
     /// action a sheet or card is *for*, `.secondary` is everything ordinary,
@@ -5411,4 +5416,20 @@ final class HelmCountBadge: NSView {
 
 private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
+// R2-UX-06: a segmented switch in the window toolbar's overflow menu - one
+// row per segment, the showing one ticked, each choosing it as a click does.
+extension HelmSegmentedTabs: WorkspaceToolbarMenuRepresentable {
+    func workspaceToolbarMenuItems() -> [NSMenuItem] {
+        pills.map { pill in
+            let item = WorkspaceToolbar.closureItem(pill.label.stringValue) { [weak self] in
+                guard let self else { return }
+                self.select(pill.id)
+                self.onSelect?(pill.id)
+            }
+            item.state = pill.id == selected ? .on : .off
+            return item
+        }
+    }
 }

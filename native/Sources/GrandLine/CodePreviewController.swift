@@ -145,6 +145,8 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// field, so a required `width == 0` on it would be a conflict.
     private var editorBesideSidebar: NSLayoutConstraint!
     private var editorAtPageEdge: NSLayoutConstraint!
+    /// R2-UX-06: set once the sidebar layout shows this page.
+    private(set) var drawsSidebarLayout = false
     private lazy var plusButton = HelmPageToolbar.iconButton(
         symbol: "plus", tooltip: "New snippet",
         target: self, action: #selector(newSnippetTapped))
@@ -268,7 +270,16 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     var onDrillSubtitleChanged: (() -> Void)?
 
     /// Empty on purpose - see the file header. Console makes the same call.
-    var drillHeaderActions: [NSView] { [] }
+    /// R2-UX-06: in the sidebar layout this page's action cluster is the
+    /// window toolbar's, so two toolbars no longer stack; the snippet tabs
+    /// stay in the page's own row, which is content rather than chrome. The
+    /// floating bar keeps the cluster in that row.
+    var drillHeaderActions: [NSView] { drawsSidebarLayout ? pageActionViews : [] }
+
+    /// The cluster, in the reviewed mockup's order.
+    private var pageActionViews: [NSView] {
+        [runnersButton, formatButton, runButton, languagePicker, findButton, wrapButton, zoomStepper, moreMenu.button]
+    }
 
     var drillHeaderSubtitle: String? {
         if let lastError { return lastError }
@@ -472,10 +483,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // this page has nowhere to put - it has tab chips where the mockup
         // drew a snippet sidebar - so the same information is one click away
         // in a popover rather than permanently occupying 180pt of editor.
-        toolbar.setTrailing(HelmPageToolbar.group([
-            runnersButton, formatButton, runButton,
-            languagePicker, findButton, wrapButton, zoomStepper, moreMenu.button,
-        ]))
+        toolbar.setTrailing(HelmPageToolbar.group(pageActionViews))
 
         NSLayoutConstraint.activate([
             toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -1938,4 +1946,12 @@ final class CodePreviewDropView: NSView {
         }
     }
     #endif
+}
+
+extension CodePreviewController: SidebarLayoutAdopting {
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+    }
 }

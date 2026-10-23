@@ -37,7 +37,8 @@ enum ReviewTwoUXSelfTest {
                       checkTheLockSwitchNeedsAPassword, checkHomeSpeaksForTheVisibleModules,
                       checkAChordReachesAModule, checkTheTabChords, checkTheSidebarShowsKeyboardFocus,
                       checkTheSidebarIsWiderAndRemembered, checkQuickConnectIsOnEveryModule,
-                      checkTheToolbarTakesThePalette, checkOneNamePerLevel, checkOnePrimaryActionRule] {
+                      checkTheToolbarTakesThePalette, checkOneNamePerLevel, checkOnePrimaryActionRule,
+                      checkThePageToolbarsAreTheWindowToolbar] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -595,6 +596,59 @@ enum ReviewTwoUXSelfTest {
             check(add.isDescendant(of: shell.debugContentPane) == false,
                   "Add Secret is still inside the page", &ok)
         }
+        shell.show(.homeCanvas)
+        settle(shell)
+    }
+
+    // MARK: R2-UX-06 - one toolbar on Console, Code and Notebook
+
+    private static func checkThePageToolbarsAreTheWindowToolbar(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                               _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        func inPage(_ view: NSView) -> Bool { view.isDescendant(of: shell.debugContentPane) }
+        // Console: its whole action cluster is the window toolbar's; its tab
+        // strip stays in the page.
+        shell.show(.console)
+        settle(shell)
+        let console = shell.workspace.console
+        let consoleActions = shell.toolbar.debugPageActions
+        check(!consoleActions.isEmpty && consoleActions.map(ObjectIdentifier.init) == console.pageToolViews.map(ObjectIdentifier.init),
+              "Console's toolbar actions are not its page cluster", &ok)
+        check(!console.pageToolViews.contains(where: inPage), "a Console action is still in the page's own row", &ok)
+        check(console.pageToolViews.contains { $0 === console.findButton } && console.pageToolViews.contains { $0 === console.zoomStepper },
+              "Console's Find or text-size stepper is missing from the toolbar", &ok)
+        // Code: the same, with its snippet tabs left in the page.
+        shell.show(.codePreview)
+        settle(shell)
+        let codeActions = shell.toolbar.debugPageActions
+        check(codeActions.count == 8 && !codeActions.contains(where: inPage),
+              "Code's toolbar carries \(codeActions.count) of its 8 actions, or some are still in the page", &ok)
+        // Notebook: no page row at all; its controls are up here.
+        shell.show(.notebook)
+        settle(shell)
+        let notebook = shell.workspace.notebook
+        check(!notebook.debugPageToolbarIsShown, "Notebook still draws its own toolbar row", &ok)
+        let popUp = notebook.debugToolbarModePopUp
+        check(shell.toolbar.debugPageActions.contains { $0 === popUp }, "Notebook's view mode is not in the toolbar", &ok)
+        popUp.selectItem(at: 2)
+        _ = popUp.sendAction(popUp.action, to: popUp.target)
+        settle(shell)
+        check(notebook.debugMode == .preview, "picking Preview in the toolbar left Notebook in \(notebook.debugMode)", &ok)
+        notebook.debugSetMode(.split)
+        settle(shell)
+        check(popUp.titleOfSelectedItem == "Split", "the toolbar's view mode did not follow the page (\(popUp.titleOfSelectedItem ?? ""))", &ok)
+        // The overflow form runs a control, through the control.
+        let menuItems = WorkspaceToolbar.menuItems(for: [popUp])
+        if let preview = menuItems.first?.submenu?.items.first(where: { $0.title == "Preview" }),
+           let action = preview.action {
+            _ = (preview.target as? NSObject)?.perform(action, with: preview)
+            settle(shell)
+            check(notebook.debugMode == .preview, "the overflow menu's Preview did not switch Notebook", &ok)
+        } else {
+            fail("the view mode's overflow form has no Preview row", &ok)
+        }
+        notebook.debugSetMode(.split)
+        settle(shell)
         shell.show(.homeCanvas)
         settle(shell)
     }

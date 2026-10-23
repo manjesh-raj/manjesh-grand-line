@@ -127,3 +127,12 @@ final class HelmZoomStepper: NSView {
     func debugTapReadout() { reset() }
     #endif
 }
+
+// R2-UX-06: the stepper's rows in the window toolbar's overflow menu.
+extension HelmZoomStepper: WorkspaceToolbarMenuRepresentable {
+    func workspaceToolbarMenuItems() -> [NSMenuItem] {
+        [WorkspaceToolbar.closureItem("Smaller Text") { [weak self] in self?.smaller() },
+         WorkspaceToolbar.closureItem("Actual Size") { [weak self] in self?.reset() },
+         WorkspaceToolbar.closureItem("Larger Text") { [weak self] in self?.larger() }]
+    }
+}

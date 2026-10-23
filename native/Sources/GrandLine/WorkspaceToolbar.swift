@@ -165,6 +165,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// three in the overflow menu (measured on Knowledge).
     static let compactWidth: CGFloat = 1240
     private var shownActions: [NSView] = []
+    /// R2-UX-06: the page actions' overflow form.
+    private var pageActionsMenu: NSMenu?
     /// A page hides and shows its own buttons as its state changes (a vault
     /// that is not set up offers none of its four), so the item follows each
     /// button's `isHidden` rather than only the list it was handed.
@@ -358,6 +360,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         case ItemID.moduleAction: item?.visibilityPriority = Self.moduleActionPriority
         case ItemID.quickConnectConsole, ItemID.quickConnectHosts: item?.visibilityPriority = quickConnectPriorityNow
         case ItemID.focusTimer: item?.visibilityPriority = Self.focusChipPriority
+        case ItemID.pageActions: item?.visibilityPriority = pageActionsPriorityNow
         case ItemID.search, ItemID.notifications, ItemID.theme, ItemID.tabs, ItemID.sidebar, ItemID.navigation,
              ItemID.primaryAction:
             item?.visibilityPriority = .high
@@ -392,7 +395,19 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         case ItemID.tabs:
             return viewItem(identifier, view: tabs, label: "Tabs")
         case ItemID.pageActions:
-            return viewItem(identifier, view: pageActions, label: "Page actions")
+            let item = viewItem(identifier, view: pageActions, label: "Page actions")
+            // R2-UX-06: Console, Code and Notebook moved their whole action
+            // clusters up here, so on a narrow window this item can overflow
+            // - and a view item in the overflow menu does nothing without a
+            // menu form. The form is rebuilt from the page's visible controls
+            // each time the overflow menu opens.
+            let menuForm = NSMenuItem(title: "Page Actions", action: nil, keyEquivalent: "")
+            let submenu = NSMenu(title: "Page Actions")
+            submenu.delegate = self
+            menuForm.submenu = submenu
+            item.menuFormRepresentation = menuForm
+            pageActionsMenu = submenu
+            return item
         case ItemID.primaryAction:
             return viewItem(identifier, view: primaryActionHost, label: "Primary action")
         case ItemID.moduleAction:
@@ -485,6 +500,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         for item in toolbar.items where ItemID.quickConnect.contains(item.itemIdentifier) {
             item.visibilityPriority = quickConnectPriorityNow
         }
+        toolbar.items.first { $0.itemIdentifier == ItemID.pageActions }?.visibilityPriority = pageActionsPriorityNow
         searchButton.imagePosition = compact ? .imageOnly : .imageLeading
         focusChip.showsTitle = !compact
         setSearchHint(ThemeManager.shared.theme)
@@ -712,6 +728,17 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     private var quickConnectPriorityNow: NSToolbarItem.VisibilityPriority {
         isCompact ? Self.quickConnectCompactPriority : Self.quickConnectPriority
     }
+
+    /// R2-UX-06, in the compact toolbar: the page's actions yield before the
+    /// crumb, now that their overflow form runs each of them. Measured at
+    /// 1100 on Notebook, whose five tabs leave room for one of the two: the
+    /// crumb is the module's one name (R2-UX-05), and the actions are one
+    /// overflow menu away. At full width they stay `.standard`, above it.
+    static let pageActionsCompactPriority = NSToolbarItem.VisibilityPriority(rawValue: -300)
+
+    private var pageActionsPriorityNow: NSToolbarItem.VisibilityPriority {
+        isCompact ? Self.pageActionsCompactPriority : .standard
+    }
     /// The crumb names the module, and R2-UX-05 made it the one place that
     /// does, so it outlasts Quick Connect, the chip and the module's action -
     /// measured on Knowledge, whose five tabs left the crumb the first thing
@@ -849,6 +876,81 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
               let action = item.action, let target = item.target as? NSObject else { return false }
         target.perform(action, with: item)
         return true
+    }
+    #endif
+}
+
+// MARK: - R2-UX-06: the page actions' overflow menu
+
+/// A toolbar control that knows its own menu form - a segmented switch, a
+/// stepper - for when the page-actions item overflows. A plain button needs
+/// nothing: it is listed by its title, or its accessibility label.
+protocol WorkspaceToolbarMenuRepresentable: AnyObject {
+    func workspaceToolbarMenuItems() -> [NSMenuItem]
+}
+
+extension WorkspaceToolbar: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === pageActionsMenu else { return }
+        menu.removeAllItems()
+        for item in Self.menuItems(for: shownActions.filter { !$0.isHidden }) { menu.addItem(item) }
+    }
+
+    /// The overflow menu's rows for `views`, in toolbar order, separated per
+    /// control that brings several. Each row runs the control's own action.
+    static func menuItems(for views: [NSView]) -> [NSMenuItem] {
+        var items: [NSMenuItem] = []
+        for view in views {
+            if let representable = view as? WorkspaceToolbarMenuRepresentable {
+                if !items.isEmpty { items.append(.separator()) }
+                items += representable.workspaceToolbarMenuItems()
+                continue
+            }
+            if let popUp = view as? NSPopUpButton {
+                let row = NSMenuItem(title: popUp.accessibilityLabel() ?? popUp.toolTip ?? "Choose", action: nil, keyEquivalent: "")
+                let submenu = NSMenu()
+                for (index, choice) in popUp.itemArray.enumerated() where !choice.isSeparatorItem {
+                    let entry = closureItem(choice.title) { [weak popUp] in
+                        guard let popUp else { return }
+                        popUp.selectItem(at: index)
+                        popUp.sendAction(popUp.action, to: popUp.target)
+                    }
+                    entry.state = index == popUp.indexOfSelectedItem ? .on : .off
+                    submenu.addItem(entry)
+                }
+                row.submenu = submenu
+                items.append(row)
+                continue
+            }
+            if let button = view as? NSButton, let overflow = button.target as? HelmOverflowMenu {
+                // A page's "More" button: its own menu, as a submenu.
+                let row = NSMenuItem(title: "More", action: nil, keyEquivalent: "")
+                row.submenu = overflow.makeMenu()
+                items.append(row)
+                continue
+            }
+            if let button = view as? NSButton {
+                let title = [button.title, (button as? HelmButton)?.menuFormTitle ?? "", button.accessibilityLabel() ?? "",
+                             button.toolTip ?? ""].first { !$0.isEmpty } ?? "Action"
+                let entry = closureItem(title) { [weak button] in button?.performClick(nil) }
+                entry.isEnabled = button.isEnabled
+                items.append(entry)
+            }
+        }
+        return items
+    }
+
+    static func closureItem(_ title: String, _ action: @escaping () -> Void) -> NSMenuItem {
+        let item = WorkspaceSidebarMenuItem(title: title, action: #selector(WorkspaceSidebarMenuItem.fire), keyEquivalent: "")
+        item.target = item
+        item.handler = action
+        return item
+    }
+
+    #if FM_SELFTESTS
+    /// The page actions' overflow menu, built as the overflow menu builds it.
+    var debugPageActionsMenuTitles: [String] {
+        Self.menuItems(for: shownActions.filter { !$0.isHidden }).filter { !$0.isSeparatorItem }.map(\.title)
     }
     #endif
 }

@@ -92,37 +92,54 @@ enum MainSplitShellSelfTest {
         resize(window, width: 1100, shell)
         settle(shell)
         let notebook = shell.workspace.notebook
-        // The crumb and Recents stay. Since U-02 put Quick Connect on every
-        // module, Knowledge's five tabs leave room at 1100 for those two and
-        // not the inspector button too; Quick Connect's icons yield first in
-        // the compact toolbar and the inspector next, each still working from
-        // the overflow menu (checked below).
-        let wanted = [WorkspaceToolbar.ItemID.crumb, WorkspaceToolbar.ItemID.recents]
-        func shown() -> [NSToolbarItem.Identifier] {
+        // What R2-BUG-07 kept on the toolbar, as far as Knowledge's five tabs
+        // (422pt) leave room for it now that R2-UX-06 moved Notebook's own
+        // toolbar row up here and U-02 put Quick Connect on every module: the
+        // crumb, which is the module's one name (R2-UX-05), at every width,
+        // and Recents and the inspector button from 1700. Whatever does not
+        // fit runs from the overflow menu - checked item by item below, and
+        // the page's own controls through their menu form.
+        func shown(_ wanted: [NSToolbarItem.Identifier]) -> [NSToolbarItem.Identifier] {
             let visible = Set((window.toolbar?.visibleItems ?? []).map(\.itemIdentifier))
             return wanted.filter { visible.contains($0) }
         }
+        func overflowRuns(_ width: Int) {
+            let visible = Set((window.toolbar?.visibleItems ?? []).map(\.itemIdentifier))
+            for item in window.toolbar?.items ?? [] where !visible.contains(item.itemIdentifier)
+                && item.itemIdentifier != .sidebarTrackingSeparator && item.itemIdentifier != .flexibleSpace
+                && item.itemIdentifier != .space {
+                // An image item runs its own action from the overflow menu. A
+                // view item needs a form of its own: AppKit synthesises one
+                // that sends `_standardCustomMenuFormRepresentationClicked:`
+                // back to the item, which for a view item runs nothing
+                // (measured), so only a submenu or a real target counts.
+                let form = item.menuFormRepresentation
+                let realTarget = form?.target.map { !($0 is NSToolbarItem) } ?? false
+                let runs = item.view == nil ? item.action != nil
+                    : (form?.submenu != nil || (realTarget && form?.action != nil))
+                check(runs, "at \(width) on Notebook \(item.itemIdentifier.rawValue) overflowed with nothing to run", &ok)
+            }
+        }
+        let crumb = [WorkspaceToolbar.ItemID.crumb]
         check(notebook.debugToolbarActionTitles == ["", ""],
               "R2-BUG-07: at 1100 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles), want icons", &ok)
-        check(shown() == wanted,
-              "R2-BUG-07: at 1100 on Notebook the toolbar shows only \(shown().map(\.rawValue)) of the crumb and Recents", &ok)
-        let visible = Set((window.toolbar?.visibleItems ?? []).map(\.itemIdentifier))
-        for item in window.toolbar?.items ?? [] where !visible.contains(item.itemIdentifier)
-            && item.itemIdentifier != .sidebarTrackingSeparator && item.itemIdentifier != .flexibleSpace && item.itemIdentifier != .space {
-            check(item.action != nil || item.menuFormRepresentation?.action != nil,
-                  "at 1100 on Notebook \(item.itemIdentifier.rawValue) overflowed with nothing to run", &ok)
-        }
+        check(shown(crumb) == crumb, "R2-BUG-07: at 1100 on Notebook the crumb is not on the toolbar", &ok)
+        overflowRuns(1100)
+        check(shell.toolbar.debugPageActionsMenuTitles == ["View", "Today's note", "More"],
+              "Notebook's page actions overflow as \(shell.toolbar.debugPageActionsMenuTitles)", &ok)
         // At 1512 too, since U-02 and U-03 (`compactToolbarActionsBelow`).
         resize(window, width: 1512, shell)
         settle(shell)
         check(notebook.debugToolbarActionTitles == ["", ""],
               "R2-BUG-07: at 1512 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles), want icons", &ok)
-        check(shown() == wanted, "at 1512 on Notebook the toolbar shows \(shown().map(\.rawValue))", &ok)
+        check(shown(crumb) == crumb, "at 1512 on Notebook the crumb is not on the toolbar", &ok)
+        overflowRuns(1512)
+        let all = [WorkspaceToolbar.ItemID.crumb, WorkspaceToolbar.ItemID.recents, WorkspaceToolbar.ItemID.inspector]
         resize(window, width: 1700, shell)
         settle(shell)
         check(notebook.debugToolbarActionTitles == ["Today's note", "New page"],
               "R2-BUG-07: at 1700 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles)", &ok)
-        check(shown() == wanted, "at 1700 on Notebook the toolbar shows \(shown().map(\.rawValue))", &ok)
+        check(shown(all) == all, "at 1700 on Notebook the toolbar shows \(shown(all).map(\.rawValue))", &ok)
         resize(window, width: 1512, shell)
     }
 
@@ -973,14 +990,17 @@ enum MainSplitShellSelfTest {
 
     /// At 1100 the narrow toolbar drops the chip's task name, and a running
     /// timer never pushes the page's own actions into the overflow menu -
-    /// measured on Knowledge, whose five tabs leave the least room.
+    /// measured on Console, whose whole action cluster is in the toolbar
+    /// since R2-UX-06. (Knowledge's five tabs leave Notebook's actions no
+    /// room at 1100 at all now; they run from the overflow menu's form,
+    /// which `checkNotebookLeavesTheToolbarRoomAtNarrowWidths` covers.)
     private static func checkTheFocusChipFitsTheNarrowToolbar(_ shell: MainSplitShellController, _ window: NSWindow,
                                                                _ ok: inout Bool) {
         let toolbar = shell.toolbar!
         let width = window.frame.width
         defer { resize(window, width: width, shell) }
         resize(window, width: 1100, shell)
-        shell.show(.notebook)
+        shell.show(.console)
         settle(shell)
         let actionsAlone = toolbar.debugPageActions.first?.window != nil
         var task = ShiftTask.fresh()
@@ -993,9 +1013,9 @@ enum MainSplitShellSelfTest {
               "at 1100 the chip still names its task, or its tooltip does not", &ok)
         // The fixture can fail: the page's actions fit at 1100 without a
         // timer, or there is nothing to push out.
-        check(actionsAlone, "Knowledge's actions are already in the overflow at 1100 with no timer", &ok)
+        check(actionsAlone, "Console's actions are already in the overflow at 1100 with no timer", &ok)
         check(toolbar.debugPageActions.first?.window != nil,
-              "at 1100 a running timer pushed Knowledge's actions into the toolbar's overflow menu", &ok)
+              "at 1100 a running timer pushed Console's actions into the toolbar's overflow menu", &ok)
         // Where even the compact chip leaves no room, it is the chip that
         // yields, and its overflow item still opens the ring popover.
         if chip.window == nil {
