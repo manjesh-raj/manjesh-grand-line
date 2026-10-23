@@ -55,10 +55,16 @@
 // (`AppDelegate.applicationDidFinishLaunching`), so there is no window where
 // skipping persistence would let content through unlocked.
 //
-// Every threshold and the poll interval are overridable via env vars purely
-// for live verification (see this file's own test pass) - never read from
-// `AppSettings`/UserDefaults, so there is no way to configure a longer idle
-// window from inside the (locked) app itself.
+// R2-UX-08: the two thresholds are the captain's to choose, in Settings >
+// Security, from a fixed list (`idleChoices`, `sessionChoices`). They used to
+// be environment variables only, on the reasoning that nothing inside the app
+// should be able to lengthen them. That reasoning stopped holding with
+// R2-UX-01, which made the lock itself an opt-in the same page can turn off,
+// and Settings is reachable only while the app is unlocked anyway. What stays
+// true: a stored value is clamped to the list's own range on every read, so a
+// hand-edited preference cannot stretch the idle window past four hours, and
+// the `FM_APP_LOCK_*` overrides (kept for live verification) still win.
+// The poll interval stays an environment variable only.
 import Foundation
 #if canImport(CoreGraphics)
 import CoreGraphics
@@ -79,8 +85,13 @@ final class AppLockController {
     /// Not `private`: `AppLockControllerSelfTest` constructs instances with
     /// injected clocks/idle-time providers to exercise the timing logic
     /// without a real event loop or real elapsed wall-clock hours.
-    let idleThreshold: TimeInterval
-    let sessionThreshold: TimeInterval
+    /// Fixed by a suite's initialiser, or nil to read the configured value
+    /// live (`configuredThresholds`) - so a change in Settings applies on the
+    /// next tick rather than the next launch.
+    private let fixedIdleThreshold: TimeInterval?
+    private let fixedSessionThreshold: TimeInterval?
+    var idleThreshold: TimeInterval { fixedIdleThreshold ?? Self.configuredThresholds().idle }
+    var sessionThreshold: TimeInterval { fixedSessionThreshold ?? Self.configuredThresholds().session }
     private let pollInterval: TimeInterval
     private let now: () -> Date
     private let systemIdleSeconds: () -> TimeInterval
@@ -140,41 +151,59 @@ final class AppLockController {
     var onOpenWithoutLock: (() -> Void)?
 
     init(
-        idleThreshold: TimeInterval = AppLockController.envThreshold("FM_APP_LOCK_IDLE_SECONDS", default: 3600),
-        sessionThreshold: TimeInterval = AppLockController.envThreshold("FM_APP_LOCK_SESSION_SECONDS", default: 12 * 3600),
+        idleThreshold: TimeInterval? = nil,
+        sessionThreshold: TimeInterval? = nil,
         pollInterval: TimeInterval = AppLockController.envThreshold("FM_APP_LOCK_POLL_SECONDS", default: 30),
         now: @escaping () -> Date = Date.init,
         systemIdleSeconds: @escaping () -> TimeInterval = AppLockController.realSystemIdleSeconds
     ) {
-        self.idleThreshold = idleThreshold
-        self.sessionThreshold = sessionThreshold
+        self.fixedIdleThreshold = idleThreshold
+        self.fixedSessionThreshold = sessionThreshold
         self.pollInterval = pollInterval
         self.now = now
         self.systemIdleSeconds = systemIdleSeconds
     }
 
-    /// The two thresholds this app is configured with, for a page that wants
-    /// to *state* them rather than change them.
+    /// The idle times Settings offers, shortest first. Their ends are also
+    /// the bounds a stored value is clamped to.
+    static let idleChoices: [TimeInterval] = [5 * 60, 15 * 60, 30 * 60, 3600, 2 * 3600, 4 * 3600]
+    /// The session ceilings Settings offers, shortest first.
+    static let sessionChoices: [TimeInterval] = [3600, 4 * 3600, 8 * 3600, 12 * 3600, 24 * 3600]
+    static let defaultIdleThreshold: TimeInterval = 3600
+    static let defaultSessionThreshold: TimeInterval = 12 * 3600
+
+    static let idleOverrideKey = "FM_APP_LOCK_IDLE_SECONDS"
+    static let sessionOverrideKey = "FM_APP_LOCK_SESSION_SECONDS"
+
+    /// The two thresholds in force: an `FM_APP_LOCK_*` override where one is
+    /// set, otherwise the captain's choice in Settings clamped to its list's
+    /// range, otherwise the default.
     ///
-    /// `fm/grandline-settings-page-redesign`: the Settings page's App lock
-    /// section shows both, and it has to show the values actually in force -
-    /// which are the `FM_APP_LOCK_*` environment overrides where they are
-    /// set, and the defaults otherwise. Reading the same `envThreshold` the
-    /// initialiser reads is what keeps the page from claiming an hour while
-    /// the controller runs on five minutes.
-    ///
-    /// Deliberately not a read of the live controller: the app builds exactly
-    /// one and Settings has no reference to it, and a page that could reach
-    /// it could also change it - which these are not (there is no UI for
-    /// setting them, on purpose; see the section's own copy).
-    static func configuredThresholds() -> (idle: TimeInterval, session: TimeInterval) {
-        (idle: envThreshold("FM_APP_LOCK_IDLE_SECONDS", default: 3600),
-         session: envThreshold("FM_APP_LOCK_SESSION_SECONDS", default: 12 * 3600))
+    /// Settings states these and the live controller reads them, through this
+    /// one function, so the page can never claim an hour while the controller
+    /// runs on five minutes.
+    static func configuredThresholds(settings: AppSettings = .shared,
+                                     environment: [String: String] = ProcessInfo.processInfo.environment)
+        -> (idle: TimeInterval, session: TimeInterval) {
+        (idle: environmentOverride(idleOverrideKey, in: environment)
+            ?? settings.appLockIdleSeconds.map { clamp($0, to: idleChoices) } ?? defaultIdleThreshold,
+         session: environmentOverride(sessionOverrideKey, in: environment)
+            ?? settings.appLockSessionSeconds.map { clamp($0, to: sessionChoices) } ?? defaultSessionThreshold)
+    }
+
+    /// The override for `key`, if the environment sets a number there.
+    static func environmentOverride(_ key: String,
+                                    in environment: [String: String] = ProcessInfo.processInfo.environment) -> TimeInterval? {
+        environment[key].flatMap(TimeInterval.init)
+    }
+
+    private static func clamp(_ value: TimeInterval, to choices: [TimeInterval]) -> TimeInterval {
+        guard let low = choices.first, let high = choices.last, value.isFinite else { return choices.first ?? value }
+        return min(max(value, low), high)
     }
 
     private static func envThreshold(_ key: String, default def: TimeInterval) -> TimeInterval {
-        guard let raw = ProcessInfo.processInfo.environment[key], let value = TimeInterval(raw) else { return def }
-        return value
+        environmentOverride(key) ?? def
     }
 
     #if canImport(CoreGraphics)

@@ -393,12 +393,23 @@ enum SettingsSidebarNavigationSelfTest {
                 print("  FAIL on \(category.rawValue) the subtitle reads \"\(subtitle)\"")
                 ok = false
             }
-            // The one fact this page's own caption used to carry, and the
-            // reason the subtitle is not just the category name.
-            if !subtitle.contains("stored locally on this machine") {
-                print("  FAIL the subtitle dropped the locality fact: \"\(subtitle)\"")
+            // R2-UX-08: the locality fact was on this screen three times -
+            // here, the header row and the column's footer. The footer keeps
+            // it, so the subtitle must not say it again.
+            if subtitle.lowercased().contains("stored locally") {
+                print("  FAIL the subtitle repeats the footer's locality fact: \"\(subtitle)\"")
                 ok = false
             }
+        }
+        // ...and the footer really does carry it, so the fact is said once
+        // rather than not at all.
+        if !settings.debugFooterText.hasPrefix("Stored locally") {
+            print("  FAIL the column footer reads \"\(settings.debugFooterText)\", not the locality fact")
+            ok = false
+        }
+        if settings.debugToolbarTexts.contains(where: { $0.contains("Saved on this Mac") }) {
+            print("  FAIL the header row still says \"Saved on this Mac\" beside the footer")
+            ok = false
         }
         // Vacuity: identical subtitles everywhere would satisfy a sloppier
         // version of the prefix check above.

@@ -28,6 +28,9 @@ enum ReviewTwoUXModelSelfTest {
         checkTheModuleChords(&ok)
         checkTheSidebarChordIsOneThing(&ok)
         checkTheToolbarEnforcesOneFilledButton(&ok)
+        checkHistoryWalksAPagesPlaces(&ok)
+        checkTheLockThresholds(&ok)
+        checkTheRelaunchHelper(&ok)
         print(ok ? "ReviewTwoUXModelSelfTest: PASS" : "ReviewTwoUXModelSelfTest: FAIL")
         return ok
     }
@@ -373,6 +376,116 @@ enum ReviewTwoUXModelSelfTest {
         toolbar.setPrimaryAction(primary)
         check(action.variant == .secondary, "a page action stays filled in the toolbar", &ok)
         check(primary.variant == .primary, "the far-right primary is drawn outlined", &ok)
+    }
+
+    // MARK: R2-UX-08 - Settings housekeeping
+
+    /// The window's Back and Forward walk a page's own places (Settings'
+    /// categories), so the page needs no arrows of its own.
+    private static func checkHistoryWalksAPagesPlaces(_ ok: inout Bool) {
+        var history = NavigationHistory()
+        history.arrive(.rail(.shift))
+        history.arrive(.rail(.settings))
+        history.settlePlace("appearance")
+        history.arrive(.rail(.settings), place: "terminal")
+        history.arrive(.rail(.settings), place: "security")
+        check(history.backEntries.map(\.identityKey) == ["rail:shift", "rail:settings#appearance", "rail:settings#terminal"],
+              "three categories after Tasks left Back \(history.backEntries.map(\.identityKey))", &ok)
+        // Re-reporting the place that is showing is not a visit.
+        history.arrive(.rail(.settings), place: "security")
+        history.arrive(.rail(.settings))
+        check(history.backEntries.count == 3, "re-reporting the current category pushed it onto Back", &ok)
+        // Back within the page.
+        history.expect(.back)
+        history.arrive(.rail(.settings), place: "terminal")
+        history.finishStep(.back, arrived: true)
+        check(history.currentEntry?.identityKey == "rail:settings#terminal"
+                && history.forwardEntries.map(\.identityKey) == ["rail:settings#security"],
+              "Back within Settings left \(history.currentEntry?.identityKey ?? "-"), forward \(history.forwardEntries.map(\.identityKey))", &ok)
+        // Back out of the page and Forward into it: the arrival names no
+        // place, and the entry keeps the one it was recorded with.
+        history.expect(.back)
+        history.arrive(.rail(.settings), place: "appearance")
+        history.expect(.back)
+        history.arrive(.rail(.shift))
+        history.expect(.forward)
+        history.arrive(.rail(.settings))
+        check(history.currentEntry?.identityKey == "rail:settings#appearance",
+              "Forward into Settings is \(history.currentEntry?.identityKey ?? "-"), want its first category", &ok)
+        // A place named before the shell settled one is that step's place.
+        var early = NavigationHistory()
+        early.arrive(.rail(.shift))
+        early.arrive(.rail(.settings))
+        early.arrive(.rail(.settings), place: "backup")
+        check(early.backEntries.map(\.identityKey) == ["rail:shift"] && early.currentEntry?.identityKey == "rail:settings#backup",
+              "a category named before the shell settled one became a visit: \(early.backEntries.map(\.identityKey))", &ok)
+        // A different page still clears Forward.
+        history.arrive(.rail(.notebook))
+        check(!history.canGoForward, "a new page after Back left Forward offered", &ok)
+    }
+
+    /// The lock's thresholds: the captain's choice, clamped to the list's
+    /// range, with the environment override still winning.
+    private static func checkTheLockThresholds(_ ok: inout Bool) {
+        withScratchSettings("lock-thresholds") { settings in
+            let none: [String: String] = [:]
+            var thresholds = AppLockController.configuredThresholds(settings: settings, environment: none)
+            check(thresholds.idle == 3600 && thresholds.session == 12 * 3600,
+                  "the defaults are \(thresholds.idle)s and \(thresholds.session)s, want an hour and 12 hours", &ok)
+            settings.appLockIdleSeconds = 15 * 60
+            settings.appLockSessionSeconds = 4 * 3600
+            thresholds = AppLockController.configuredThresholds(settings: settings, environment: none)
+            check(thresholds.idle == 15 * 60 && thresholds.session == 4 * 3600,
+                  "a stored choice reads back as \(thresholds.idle)s and \(thresholds.session)s", &ok)
+            // A hand-edited preference cannot stretch the idle window, or
+            // shrink either below the list.
+            settings.appLockIdleSeconds = 30 * 24 * 3600
+            settings.appLockSessionSeconds = 5
+            thresholds = AppLockController.configuredThresholds(settings: settings, environment: none)
+            check(thresholds.idle == AppLockController.idleChoices.last && thresholds.session == AppLockController.sessionChoices.first,
+                  "out-of-range values read back as \(thresholds.idle)s and \(thresholds.session)s, not clamped", &ok)
+            settings.appLockIdleSeconds = .infinity
+            check(AppLockController.configuredThresholds(settings: settings, environment: none).idle == AppLockController.idleChoices.first,
+                  "an infinite idle time was not refused", &ok)
+            let env = [AppLockController.idleOverrideKey: "7", AppLockController.sessionOverrideKey: "11"]
+            thresholds = AppLockController.configuredThresholds(settings: settings, environment: env)
+            check(thresholds.idle == 7 && thresholds.session == 11, "the environment override lost to the stored choice", &ok)
+            check(SettingsController.thresholdDescription("Base.", overrideKey: AppLockController.idleOverrideKey,
+                                                          environment: env).contains(AppLockController.idleOverrideKey),
+                  "an overridden threshold's row does not say so", &ok)
+            check(!SettingsController.thresholdDescription("Base.", overrideKey: AppLockController.idleOverrideKey,
+                                                           environment: none).contains("FM_"),
+                  "a row with no override still names an environment variable", &ok)
+        }
+        guard let lock = source("AppLock.swift") else {
+            fail("cannot read AppLock.swift, so the threshold guard measures nothing", &ok)
+            return
+        }
+        check(lock.contains("fixedIdleThreshold ?? Self.configuredThresholds().idle"),
+              "the live lock no longer reads the configured idle time", &ok)
+    }
+
+    /// The relaunch helper, run for real with `open` swapped for `echo`: it
+    /// waits for the pid, opens only once that pid is gone, and passes the
+    /// path through as one argument.
+    private static func checkTheRelaunchHelper(_ ok: inout Bool) {
+        let path = "/Applications/Grand \"Line\" $(touch x).app"
+        func run(pid: Int32, attempts: Int) -> String {
+            var args = AppRelaunch.helperArguments(pid: pid, bundlePath: path, attempts: attempts)
+            guard args.count == 5, args[1].contains("/usr/bin/open") else { return "unexpected argv \(args)" }
+            args[1] = args[1].replacingOccurrences(of: "/usr/bin/open", with: "/bin/echo")
+            return Subprocess.run(executable: "/bin/sh", arguments: args, timeout: 10).stdout
+        }
+        check(AppRelaunch.helperArguments(pid: 42, bundlePath: path).suffix(2) == ["42", path],
+              "the pid and the path are not passed as their own arguments", &ok)
+        check(!AppRelaunch.helperArguments(pid: 42, bundlePath: path)[1].contains(path),
+              "the bundle path is spliced into the script", &ok)
+        // A pid that cannot exist: the wait ends at once and the bundle opens.
+        let opened = run(pid: 99_999_999, attempts: 3)
+        check(opened == path, "after the app exited the helper opened \(opened), want \(path)", &ok)
+        // This process, which is alive: the helper gives up and opens nothing.
+        let alive = run(pid: ProcessInfo.processInfo.processIdentifier, attempts: 2)
+        check(alive.isEmpty, "the helper opened a second copy while the first was still running: \(alive)", &ok)
     }
 }
 

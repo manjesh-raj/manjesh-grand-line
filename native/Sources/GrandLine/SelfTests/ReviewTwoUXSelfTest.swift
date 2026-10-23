@@ -38,7 +38,8 @@ enum ReviewTwoUXSelfTest {
                       checkAChordReachesAModule, checkTheTabChords, checkTheSidebarShowsKeyboardFocus,
                       checkTheSidebarIsWiderAndRemembered, checkQuickConnectIsOnEveryModule,
                       checkTheToolbarTakesThePalette, checkOneNamePerLevel, checkOnePrimaryActionRule,
-                      checkThePageToolbarsAreTheWindowToolbar, checkEmptyStatesInvite] {
+                      checkThePageToolbarsAreTheWindowToolbar, checkEmptyStatesInvite,
+                      checkSettingsHousekeeping] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -720,6 +721,145 @@ enum ReviewTwoUXSelfTest {
             postmortems.debugRefreshEmptyCopy()
             check(postmortems.debugOpenLogsButtonIsShown, "an Operator Postmortems page lost Open Logs", &ok)
         }
+        shell.show(.homeCanvas)
+        settle(shell)
+    }
+
+    // MARK: R2-UX-08 - Settings housekeeping
+
+    /// Four things on one page: the window's Back and Forward walk the
+    /// categories (so the page draws no arrows of its own), a relaunch button
+    /// sits beside each row that waits for the next launch, the lock's two
+    /// thresholds are the captain's to choose, and the locality fact is said
+    /// once.
+    private static func checkSettingsHousekeeping(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        shell.show(.shift)
+        settle(shell)
+        shell.show(.settings)
+        settle(shell)
+        guard let settings = shell.debugSlotController(.settings) as? SettingsController else {
+            fail("Settings did not mount", &ok)
+            return
+        }
+        // No second pair of arrows, and no second storage notice.
+        check(!settings.debugHeaderRowShown, "Settings still draws its own Back and Forward under the window's", &ok)
+        check(settings.debugFooterText.hasPrefix("Stored locally"), "the column footer reads \(settings.debugFooterText)", &ok)
+        check(!(shell.debugHeader?.subtitle ?? "").lowercased().contains("stored locally"),
+              "the module line repeats the footer: \(shell.debugHeader?.subtitle ?? "")", &ok)
+
+        // The window's Back and Forward walk the categories: Tasks, then
+        // Settings on the category it opened with, then two more.
+        let first = settings.debugSelectedCategory
+        let picks = SettingsController.Category.allCases.filter { $0 != first }.prefix(2)
+        guard picks.count == 2 else { fail("Settings has fewer than three categories", &ok); return }
+        for category in picks {
+            settings.debugSidebar.debugClickRow(id: category.rawValue)
+            settle(shell)
+        }
+        let navigation = shell.toolbar.debugNavigation
+        // The real control's own action. It is momentary, which drops a
+        // selection set from code, so the press holds it for the one send.
+        func press(_ segment: Int) {
+            guard navigation.isEnabled(forSegment: segment) else {
+                fail("\(segment == 0 ? "Back" : "Forward") is not offered", &ok)
+                return
+            }
+            navigation.trackingMode = .selectOne
+            navigation.selectedSegment = segment
+            _ = navigation.sendAction(navigation.action, to: navigation.target)
+            navigation.trackingMode = .momentary
+            settle(shell)
+        }
+        let walkedBack = [picks.first!, first]
+        for want in walkedBack {
+            press(0)
+            check(shell.debugHistory.current == .rail(.settings) && settings.debugSelectedCategory == want,
+                  "Back from a category reached \(String(describing: shell.debugHistory.current)) on \(settings.debugSelectedCategory.rawValue), want Settings on \(want.rawValue)", &ok)
+        }
+        press(0)
+        check(shell.debugHistory.current == .rail(.shift),
+              "Back past Settings' first category reached \(String(describing: shell.debugHistory.current)), want Tasks", &ok)
+        press(1)
+        check(shell.debugHistory.current == .rail(.settings) && settings.debugSelectedCategory == first,
+              "Forward into Settings landed on \(settings.debugSelectedCategory.rawValue), want \(first.rawValue)", &ok)
+        press(1)
+        check(settings.debugSelectedCategory == picks.first!,
+              "Forward within Settings landed on \(settings.debugSelectedCategory.rawValue), want \(picks.first!.rawValue)", &ok)
+        check(navigation.isEnabled(forSegment: 1), "Forward is not offered with one more category ahead", &ok)
+
+        // Relaunch: offered only while a row has a change waiting, and the
+        // button reaches the relaunch path. The path itself is a recorder.
+        settings.debugSidebar.debugClickRow(id: SettingsController.Category.appearance.rawValue)
+        settle(shell)
+        let savedLayout = AppSettings.shared.workspaceLayout
+        let savedPerform = AppRelaunch.perform
+        var relaunches = 0
+        AppRelaunch.perform = { relaunches += 1 }
+        // This binary has no bundle, so the real button is disabled here -
+        // asserted, then overridden so the click path can be measured.
+        check(!AppRelaunch.canRelaunch && !settings.debugLayoutRelaunchButton.isEnabled,
+              "an unbundled binary offers an enabled Relaunch Grand Line it cannot carry out", &ok)
+        AppRelaunch.canRelaunchOverrideForTests = true
+        defer {
+            AppSettings.shared.workspaceLayout = savedLayout
+            AppRelaunch.perform = savedPerform
+            AppRelaunch.canRelaunchOverrideForTests = nil
+        }
+        check(settings.debugLayoutRelaunchButton.isHidden, "Relaunch is offered beside Window layout with nothing to apply", &ok)
+        check(settings.debugTextSizeRelaunchButton.isHidden, "Relaunch is offered beside text size with nothing to apply", &ok)
+        let other = WorkspaceLayout.allCases.first { $0 != PlaceName.layout } ?? .floatingBar
+        settings.debugWindowLayoutTabs.debugClickTab(id: other.rawValue)
+        settle(shell)
+        check(!settings.debugLayoutRelaunchButton.isHidden,
+              "choosing the other window layout does not offer Relaunch Grand Line", &ok)
+        settings.debugLayoutRelaunchButton.performClick(nil)
+        check(relaunches == 1, "Relaunch Grand Line beside Window layout did not reach the relaunch path", &ok)
+        settings.debugWindowLayoutTabs.debugClickTab(id: PlaceName.layout.rawValue)
+        settle(shell)
+        check(settings.debugLayoutRelaunchButton.isHidden, "Relaunch stays offered after the layout went back", &ok)
+
+        let savedScale = ChromeTextScale.shared.scale
+        defer { ChromeTextScale.shared.setScale(savedScale) }
+        if let index = ChromeTextScale.steps.firstIndex(where: { abs($0.scale - ChromeTextScale.shared.launchScale) > 0.001 }),
+           let button = settings.debugUIScaleButtons[index] {
+            button.performClick(nil)
+            settle(shell)
+            check(!settings.debugTextSizeRelaunchButton.isHidden,
+                  "a new text size does not offer Relaunch Grand Line beside it", &ok)
+            settings.debugTextSizeRelaunchButton.performClick(nil)
+            check(relaunches == 2, "Relaunch Grand Line beside text size did not reach the relaunch path", &ok)
+        } else {
+            fail("no text size differs from the launch one, so the text-size relaunch measures nothing", &ok)
+        }
+
+        // The lock thresholds: a choice is stored and the live lock reads it.
+        settings.debugSidebar.debugClickRow(id: SettingsController.Category.security.rawValue)
+        settle(shell)
+        let savedIdle = AppSettings.shared.appLockIdleSeconds
+        let savedSession = AppSettings.shared.appLockSessionSeconds
+        defer {
+            AppSettings.shared.appLockIdleSeconds = savedIdle
+            AppSettings.shared.appLockSessionSeconds = savedSession
+        }
+        let idle = settings.debugLockIdlePopUp
+        let session = settings.debugLockSessionPopUp
+        check(idle.isEnabled && session.isEnabled, "the lock's thresholds are not editable in Settings", &ok)
+        check(idle.numberOfItems == AppLockController.idleChoices.count,
+              "Lock when idle offers \(idle.numberOfItems) choices, want \(AppLockController.idleChoices.count)", &ok)
+        let lock = AppLockController()
+        for (popUp, want) in [(idle, TimeInterval(15 * 60)), (session, TimeInterval(4 * 3600))] {
+            guard let index = popUp.itemArray.firstIndex(where: { ($0.representedObject as? TimeInterval) == want }) else {
+                fail("\(popUp.accessibilityLabel() ?? "a threshold") does not offer \(want)s", &ok)
+                continue
+            }
+            popUp.selectItem(at: index)
+            _ = popUp.sendAction(popUp.action, to: popUp.target)
+        }
+        check(AppSettings.shared.appLockIdleSeconds == 15 * 60 && AppSettings.shared.appLockSessionSeconds == 4 * 3600,
+              "choosing 15 minutes and 4 hours stored \(String(describing: AppSettings.shared.appLockIdleSeconds)) and \(String(describing: AppSettings.shared.appLockSessionSeconds))", &ok)
+        check(lock.idleThreshold == 15 * 60 && lock.sessionThreshold == 4 * 3600,
+              "the running lock still uses \(lock.idleThreshold)s and \(lock.sessionThreshold)s", &ok)
         shell.show(.homeCanvas)
         settle(shell)
     }

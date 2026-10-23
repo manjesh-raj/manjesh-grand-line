@@ -1073,11 +1073,34 @@ final class MainSplitShellController: WorkspaceShellController {
 
     private func step(_ step: NavigationHistory.Step) {
         guard let target = step == .back ? history.backTarget : history.forwardTarget else { return }
-        let before = history.current?.identityKey
+        let before = history.currentEntry?.identityKey
         history.expect(step)
-        workspace.navigator.navigateToRecentDestination(target)
-        history.finishStep(step, arrived: history.current?.identityKey != before)
+        if target.kind.identityKey == history.current?.identityKey, let place = target.place,
+           let page = pageController as? WorkspaceHistoryPlace {
+            // R2-UX-08: another place on the page that is showing. The page
+            // moves, and reports it through `onHistoryPlaceChanged`.
+            page.showHistoryPlace(place)
+        } else {
+            workspace.navigator.navigateToRecentDestination(target.kind)
+            if let place = target.place, let page = pageController as? WorkspaceHistoryPlace,
+               history.current?.identityKey == target.kind.identityKey {
+                page.showHistoryPlace(place)
+            }
+        }
+        history.finishStep(step, arrived: history.currentEntry?.identityKey != before)
         toolbar.setHistory(canGoBack: history.canGoBack, canGoForward: history.canGoForward)
+    }
+
+    /// R2-UX-08: a page with places of its own records them here, so the
+    /// window's Back and Forward walk them and the page needs no arrows.
+    private func adoptHistoryPlace(_ controller: NSViewController) {
+        guard let page = controller as? WorkspaceHistoryPlace else { return }
+        history.settlePlace(page.historyPlace)
+        page.onHistoryPlaceChanged = { [weak self, weak page] in
+            guard let self, let page, self.pageController === page, let kind = self.history.current else { return }
+            self.history.arrive(kind, place: page.historyPlace)
+            self.toolbar.setHistory(canGoBack: self.history.canGoBack, canGoForward: self.history.canGoForward)
+        }
     }
 
     // MARK: Chrome verbs
@@ -1099,6 +1122,7 @@ final class MainSplitShellController: WorkspaceShellController {
         // Adopted first, so a page whose sidebar presentation has its own
         // live subtitle (Crew, Settings - R2-UX-05) is read in that form.
         adoptPage(slot.controller)
+        adoptHistoryPlace(slot.controller)
         pageSubtitle = page?.drillHeaderSubtitle ?? dest.drillSubtitle
         if dest == .homeCanvas, pageSubtitle.isEmpty { pageSubtitle = Self.homeSubtitle() }
         if dest == currentModule.pageTabHost, let host = slot.controller as? ModuleTabHosting { adoptTabHost(host) }

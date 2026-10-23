@@ -277,8 +277,13 @@ enum DaylightDrillPageSlice6SelfTest {
         let settings = makeSettings()
         let settingsWindow = mount(settings)
         defer { _ = settingsWindow }
-        guard let line = settings.drillHeaderSubtitle, line.contains("locally") else {
-            print("  FAIL Settings' subtitle does not carry the local-storage claim: \"\(settings.drillHeaderSubtitle ?? "nil")\"")
+        // R2-UX-08: the local-storage claim was on this page three times. It
+        // is the column footer's alone now, so the line names the category
+        // and the footer carries the claim - once, not zero times.
+        guard let line = settings.drillHeaderSubtitle, line == settings.debugSelectedCategory.title,
+              !line.contains("locally"), settings.debugFooterText.hasPrefix("Stored locally") else {
+            print("  FAIL Settings' subtitle is \"\(settings.drillHeaderSubtitle ?? "nil")\" and its footer "
+                  + "\"\(settings.debugFooterText)\" - want the category's name, and the local-storage claim in the footer")
             ok = false
             return
         }

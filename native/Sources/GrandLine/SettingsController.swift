@@ -305,6 +305,10 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// owners of one view start disagreeing.
     var onDrillSubtitleChanged: (() -> Void)?
 
+    /// R2-UX-08: set by the sidebar layout's shell, which records each
+    /// category in the window's Back and Forward (`WorkspaceHistoryPlace`).
+    var onHistoryPlaceChanged: (() -> Void)?
+
     /// Lets a row (Security's "Open \(PlaceName.of(.poneglyph))") jump to another destination.
     /// `nil` in a suite.
     var onNavigate: ((RailDestination) -> Void)?
@@ -318,7 +322,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     var drillHeaderSubtitle: String? {
         if drawsSidebarLayout { return selectedCategory.heroDescription }
-        return "\(selectedCategory.title) \u{00B7} everything here is stored locally on this machine"
+        // R2-UX-08: the locality fact is the column footer's alone.
+        return selectedCategory.title
     }
 
     // MARK: - State
@@ -384,8 +389,11 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private let toolbar = NSStackView()
     private let backButton = HelmButton(symbol: "chevron.left", variant: .quiet, target: nil, action: nil)
     private let forwardButton = HelmButton(symbol: "chevron.right", variant: .quiet, target: nil, action: nil)
-    private let toolbarLocalLabel = NSTextField(labelWithString: "Saved on this Mac")
-    private let toolbarLocalIcon = NSImageView()
+    /// R2-UX-08: the header row is taken out in the sidebar layout, where the
+    /// window's own Back and Forward walk this page's categories, and the
+    /// scroll area moves up into its place.
+    private var scrollTopUnderToolbar: NSLayoutConstraint!
+    private var scrollTopAtRoot: NSLayoutConstraint!
 
     /// The detail pane's own column, holding exactly the selected page.
     private let pageContainer = LayoutReportingStack()
@@ -444,6 +452,13 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// R2-UX-01: the app lock, an opt-in now.
     private let appLockSwitch = HelmToggle()
     private var appLockCheckInFlight = false
+    /// R2-UX-08: the lock's two thresholds, chosen from a fixed list.
+    private let lockIdlePopUp = HelmPopUpButton()
+    private let lockSessionPopUp = HelmPopUpButton()
+    /// R2-UX-08: one "Relaunch Grand Line" beside each row that waits for the
+    /// next launch, shown while that row has a change still waiting.
+    private lazy var layoutRelaunchButton = makeRelaunchButton()
+    private lazy var textSizeRelaunchButton = makeRelaunchButton()
     private let notifySwitch = HelmToggle()
 
     private var shortcutRecorders: [TerminalShortcutAction: KeyChordRecorderView] = [:]
@@ -707,7 +722,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             // its rule - see the note where `visibleCentreNudge` used to be.
             scroll.leadingAnchor.constraint(equalTo: split.contentPane.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: HelmMetrics.s2),
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             // Gotcha (4): pin the document to the *clip* view, never the
             // outer scroll view - a non-overlay scroller reserves a real
@@ -730,6 +744,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                         constant: -2 * HelmMetrics.pageGutter)
         toolbarWidthGrow.priority = HelmSplitPage.contentGrowPriority
         toolbarWidthGrow.isActive = true
+        scrollTopUnderToolbar = scroll.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: HelmMetrics.s2)
+        scrollTopAtRoot = scroll.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s3)
+        applyHeaderRow()
 
         mountPage(selectedCategory)
 
@@ -899,13 +916,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        toolbarLocalIcon.image = HelmSymbol.image("lock", pointSize: 10, weight: .medium)
-        toolbarLocalIcon.translatesAutoresizingMaskIntoConstraints = false
-        toolbarLocalIcon.setContentHuggingPriority(.required, for: .horizontal)
-        toolbarLocalLabel.font = HelmType.caption()
-        toolbarLocalLabel.lineBreakMode = .byTruncatingTail
-        muted(toolbarLocalLabel)
-
         toolbar.orientation = .horizontal
         toolbar.alignment = .centerY
         toolbar.spacing = HelmMetrics.s1 + 2
@@ -913,16 +923,27 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         // drifts with whatever the title happens to say.
         toolbar.distribution = .fill
         toolbar.translatesAutoresizingMaskIntoConstraints = false
-        // UXP-17: no title between the arrows and the caption. The pane's
-        // name was here, in the hero a row below, and in the drill header's
-        // subtitle - three copies of one word. The hero names the pane, and
-        // the drill subtitle (which never scrolls) says where you are once
-        // the hero has scrolled away.
-        for view in [backButton, forwardButton, spacer,
-                     toolbarLocalIcon, toolbarLocalLabel] as [NSView] {
+        // UXP-17: no title beside the arrows. The pane's name was here, in
+        // the hero a row below, and in the drill header's subtitle - three
+        // copies of one word. The hero names the pane, and the drill subtitle
+        // (which never scrolls) says where you are once the hero has
+        // scrolled away.
+        //
+        // R2-UX-08: and no "Saved on this Mac" either. That fact was on this
+        // screen three times (here, the subtitle and the column's footer);
+        // the footer keeps it, with the version beside it.
+        for view in [backButton, forwardButton, spacer] as [NSView] {
             toolbar.addArrangedSubview(view)
         }
-        toolbar.setCustomSpacing(HelmMetrics.s2, after: forwardButton)
+    }
+
+    /// The floating bar keeps the arrows; the sidebar layout's window has
+    /// its own, which walk this page's categories too (`WorkspaceHistoryPlace`).
+    private func applyHeaderRow() {
+        guard let scrollTopUnderToolbar, let scrollTopAtRoot else { return }
+        toolbar.isHidden = drawsSidebarLayout
+        scrollTopUnderToolbar.isActive = !drawsSidebarLayout
+        scrollTopAtRoot.isActive = drawsSidebarLayout
     }
 
     private func refreshToolbar() {
@@ -972,6 +993,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         refreshToolbar()
         // The shell owns the drill header; this page only says "re-read me".
         onDrillSubtitleChanged?()
+        onHistoryPlaceChanged?()
         view.layoutSubtreeIfNeeded()
         scrollToTop()
     }
@@ -1337,14 +1359,15 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             items: WorkspaceLayout.allCases.map { .init(id: $0.rawValue, title: $0.title) },
             selected: AppSettings.shared.workspaceLayout.rawValue, size: .compact)
         windowLayoutTabs.setAccessibilityLabel("Window layout")
-        windowLayoutTabs.onSelect = { id in
+        windowLayoutTabs.onSelect = { [weak self] id in
             guard let layout = WorkspaceLayout(rawValue: id) else { return }
             AppSettings.shared.workspaceLayout = layout
+            self?.refreshRelaunchButtons()
         }
         let layoutRow = SettingsRow(
             title: "Window layout",
             description: "A sidebar with a window toolbar and an inspector, or the floating bar. Takes effect the next time Grand Line opens.",
-            control: windowLayoutTabs)
+            control: Self.controlWithRelaunch(windowLayoutTabs, layoutRelaunchButton))
 
         return [
             SettingsSection(group: SettingsGroup(rows: [followRow, pairRow])),
@@ -1355,7 +1378,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             SettingsSection(heading: "Text", group: SettingsGroup(rows: [
                 SettingsRow(title: "Interface text size",
                             description: "Scales the app's own labels, captions and titles. Pages that set their fonts once pick this up after a relaunch.",
-                            control: scaleRow),
+                            control: Self.controlWithRelaunch(scaleRow, textSizeRelaunchButton)),
             ])),
         ]
     }
@@ -1960,11 +1983,19 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                         description: "Off by default. When it is on, Grand Line asks for the password saved in Automic Vault as \(VaultSource.appPasswordSecretName) when it opens, after the idle time below, and after a full session.",
                         control: appLockSwitch),
             SettingsRow(title: "Lock when idle",
-                        description: "The lock screen appears after this long with no keyboard or mouse anywhere on the Mac. Set with FM_APP_LOCK_IDLE_SECONDS.",
-                        control: rowLabel(Self.durationText(idle))),
+                        description: Self.thresholdDescription(
+                            "The lock screen appears after this long with no keyboard or mouse anywhere on the Mac.",
+                            overrideKey: AppLockController.idleOverrideKey),
+                        control: configureThresholdPopUp(lockIdlePopUp, choices: AppLockController.idleChoices,
+                                                         value: idle, overrideKey: AppLockController.idleOverrideKey,
+                                                         label: "Lock when idle")),
             SettingsRow(title: "Lock after a full session",
-                        description: "A hard ceiling, regardless of activity. Set with FM_APP_LOCK_SESSION_SECONDS.",
-                        control: rowLabel(Self.durationText(session))),
+                        description: Self.thresholdDescription(
+                            "A hard ceiling, counted from the last unlock, regardless of activity.",
+                            overrideKey: AppLockController.sessionOverrideKey),
+                        control: configureThresholdPopUp(lockSessionPopUp, choices: AppLockController.sessionChoices,
+                                                         value: session, overrideKey: AppLockController.sessionOverrideKey,
+                                                         label: "Lock after a full session")),
         ]
 
         // The vault's own settings (auto-lock, clipboard clear, Touch ID
@@ -2399,6 +2430,77 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         return host
     }
 
+    // MARK: - Lock thresholds and relaunch (R2-UX-08)
+
+    /// A threshold row's description, and the one case it is not the
+    /// captain's to change: an `FM_APP_LOCK_*` override for this run.
+    static func thresholdDescription(_ base: String, overrideKey: String,
+                                     environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        guard AppLockController.environmentOverride(overrideKey, in: environment) != nil else { return base }
+        return base + " Set by \(overrideKey) for this run."
+    }
+
+    /// Fill `popUp` with `choices`, select `value`, and wire it. A value the
+    /// list does not hold (an environment override) is listed too, so the
+    /// control never claims a choice that is not in force.
+    private func configureThresholdPopUp(_ popUp: HelmPopUpButton, choices: [TimeInterval], value: TimeInterval,
+                                         overrideKey: String, label: String) -> HelmPopUpButton {
+        popUp.removeAllItems()
+        var values = choices
+        if !values.contains(value) { values.append(value); values.sort() }
+        for seconds in values {
+            popUp.addItem(withTitle: Self.durationText(seconds))
+            popUp.lastItem?.representedObject = seconds
+        }
+        if let index = values.firstIndex(of: value) { popUp.selectItem(at: index) }
+        popUp.target = self
+        popUp.action = #selector(lockThresholdPicked(_:))
+        popUp.isEnabled = AppLockController.environmentOverride(overrideKey) == nil
+        popUp.setAccessibilityLabel(label)
+        return popUp
+    }
+
+    @objc private func lockThresholdPicked(_ sender: NSPopUpButton) {
+        guard let seconds = sender.selectedItem?.representedObject as? TimeInterval else { return }
+        if sender === lockIdlePopUp {
+            AppSettings.shared.appLockIdleSeconds = seconds
+        } else if sender === lockSessionPopUp {
+            AppSettings.shared.appLockSessionSeconds = seconds
+        }
+    }
+
+    private func makeRelaunchButton() -> HelmButton {
+        let button = HelmButton(title: "Relaunch Grand Line", variant: .secondary, symbol: "arrow.clockwise",
+                                target: self, action: #selector(relaunchTapped))
+        button.isHidden = true
+        return button
+    }
+
+    /// A row's own control with its relaunch button after it.
+    private static func controlWithRelaunch(_ control: NSView, _ relaunch: HelmButton) -> NSStackView {
+        let stack = NSStackView(views: [control, relaunch])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = HelmMetrics.s2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        return stack
+    }
+
+    /// Show each relaunch button while its row has a change waiting.
+    private func refreshRelaunchButtons() {
+        layoutRelaunchButton.isHidden = AppSettings.shared.workspaceLayout == PlaceName.layout
+        textSizeRelaunchButton.isHidden = abs(ChromeTextScale.shared.scale - ChromeTextScale.shared.launchScale) < 0.001
+        for button in [layoutRelaunchButton, textSizeRelaunchButton] {
+            button.isEnabled = AppRelaunch.canRelaunch
+            button.toolTip = AppRelaunch.canRelaunch ? "Quit and open Grand Line again"
+                : "This copy is not an app bundle, so it cannot reopen itself. Quit and start it again."
+        }
+    }
+
+    @objc private func relaunchTapped() {
+        AppRelaunch.perform()
+    }
+
     private func rowLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
         label.font = HelmType.caption()
@@ -2520,6 +2622,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                 Int(AppSettings.shared.fontSize) == size ? .primary : .secondary
         }
         autoReconnectSwitch.isOn = AppSettings.shared.autoReconnect
+        refreshRelaunchButtons()
         if !appLockCheckInFlight { appLockSwitch.isOn = AppSettings.shared.appLockEnabled != false }
         refreshModuleSwitches()
         notifySwitch.isOn = AppSettings.shared.notifyOnNeedsDecision
@@ -2570,7 +2673,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         identityInitial.textColor = HelmContrast.legibleOn(fill: HelmTheme.nsColor(theme.accentHex),
                                                    preferring: .white)
         identityName.textColor = ink
-        toolbarLocalIcon.contentTintColor = muted
 
         for page in pages.values {
             page.hero.applyTheme(theme)
@@ -2657,6 +2759,15 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// UXP-17: every label in the page header row, so a suite can assert the
     /// pane's name is not one of them.
     var debugToolbarTexts: [String] { toolbar.arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue } }
+    var debugFooterText: String { sidebarFooter.stringValue }
+    var debugLayoutRelaunchButton: HelmButton { layoutRelaunchButton }
+    var debugTextSizeRelaunchButton: HelmButton { textSizeRelaunchButton }
+    var debugUIScaleButtons: [Int: HelmButton] { uiScaleButtons }
+    var debugLockIdlePopUp: HelmPopUpButton { lockIdlePopUp }
+    var debugLockSessionPopUp: HelmPopUpButton { lockSessionPopUp }
+    /// R2-UX-08: whether the page's own header row (the floating bar's
+    /// arrows) is drawn.
+    var debugHeaderRowShown: Bool { !toolbar.isHidden }
     var debugCanGoBack: Bool { backButton.isEnabled }
     var debugCanGoForward: Bool { forwardButton.isEnabled }
     func debugGoBack() { goBack() }
@@ -2814,6 +2925,18 @@ extension SettingsController: SidebarLayoutAdopting {
         guard !drawsSidebarLayout else { return }
         drawsSidebarLayout = true
         for page in pages.values { page.hero.isHidden = true }
+        if isViewLoaded { applyHeaderRow() }
         onDrillSubtitleChanged?()
+    }
+}
+
+// R2-UX-08: the window's Back and Forward walk the categories, so the page's
+// own arrows step aside in this layout (`applyHeaderRow`).
+extension SettingsController: WorkspaceHistoryPlace {
+    var historyPlace: String { selectedCategory.rawValue }
+
+    func showHistoryPlace(_ place: String) {
+        guard let category = Category(rawValue: place) else { return }
+        select(category)
     }
 }

@@ -59,6 +59,8 @@ final class AppSettings {
         static let workspaceProfile = "fm.workspaceProfile"
         static let hiddenModules = "fm.hiddenModules"
         static let sidebarWidth = "fm.sidebarWidth"
+        static let appLockIdleSeconds = "fm.appLockIdleSeconds"
+        static let appLockSessionSeconds = "fm.appLockSessionSeconds"
     }
 
     /// GL-P3 (audit §6.10): the defaults store is injectable.
@@ -572,6 +574,29 @@ final class AppSettings {
     }
 
     static let appLockPreferenceDidChange = Notification.Name("fm.appLockPreferenceDidChange")
+
+    /// R2-UX-08: how long the Mac may sit idle, and how long one unlocked
+    /// session may run, before the lock screen comes back. Nil is the
+    /// default. `AppLockController.configuredThresholds` clamps whatever is
+    /// stored here to its own bounds, and an `FM_APP_LOCK_*` override still
+    /// wins over both.
+    var appLockIdleSeconds: TimeInterval? {
+        get { defaults.object(forKey: Keys.appLockIdleSeconds) == nil ? nil : defaults.double(forKey: Keys.appLockIdleSeconds) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Keys.appLockIdleSeconds) } else {
+                defaults.removeObject(forKey: Keys.appLockIdleSeconds)
+            }
+        }
+    }
+
+    var appLockSessionSeconds: TimeInterval? {
+        get { defaults.object(forKey: Keys.appLockSessionSeconds) == nil ? nil : defaults.double(forKey: Keys.appLockSessionSeconds) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Keys.appLockSessionSeconds) } else {
+                defaults.removeObject(forKey: Keys.appLockSessionSeconds)
+            }
+        }
+    }
 
     /// R2-UX-01: whether this launch is the first one on this Mac. Read once,
     /// by `settleFirstLaunch`, before anything this launch writes: an install
