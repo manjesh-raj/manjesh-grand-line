@@ -546,6 +546,9 @@ final class FleetController: NSViewController {
     /// without that the row shrinks to its content and Refresh stops being at
     /// the page's trailing edge.
     private var headerRow: NSStackView!
+    /// R2-UX-05: the sidebar layout's module line, from the last read.
+    private var liveSubtitle: String?
+    var onDrillSubtitleChanged: (() -> Void)?
 
     private func buildStatsRow() {
         statsRow.orientation = .horizontal
@@ -955,6 +958,12 @@ final class FleetController: NSViewController {
         subtitleLabel.stringValue = snapshot.homeOk
             ? "\(Self.weekdayFormatter.string(from: Date())) \u{00B7} the fleet is yours"
             : "Setup isn't finished yet"
+        // R2-UX-05: in the sidebar layout the greeting is gone and what it
+        // said about the fleet is the module's live line.
+        liveSubtitle = snapshot.homeOk
+            ? "\(working.count) working \u{00B7} \(needs.count) waiting on you \u{00B7} \(snapshot.queuedCount) queued \u{00B7} \(snapshot.doneCount) done today"
+            : "Setup isn't finished yet"
+        onDrillSubtitleChanged?()
 
         // One definition of "ready to merge" for the banner and the tile
         // alike - see `FleetDataSource.readyToMerge`. Both used to render the
@@ -1469,6 +1478,10 @@ extension FleetController: SidebarLayoutAdopting {
         guard !drawsSidebarLayout else { return }
         _ = view
         drawsSidebarLayout = true
+        // R2-UX-05: the greeting was a fourth name for this place, under the
+        // crumb, the sidebar row and the module header. Its live half is the
+        // header's subtitle now (`drillHeaderSubtitle`).
+        headerRow.isHidden = true
 
         needsYouSummary.font = HelmType.body()
         needsYouSummary.maximumNumberOfLines = 0
@@ -1649,4 +1662,19 @@ struct FleetNeedsYouReading: Equatable {
     let checkedAt: Date?
     /// The last read could not read the task list at all.
     let readFailed: Bool
+}
+
+#if FM_SELFTESTS
+extension FleetController {
+    /// R2-UX-05: whether the greeting draws on the page.
+    var debugGreetingIsShown: Bool { !(headerRow?.isHiddenOrHasHiddenAncestor ?? true) }
+}
+#endif
+
+// R2-UX-05: the module line the sidebar layout's header draws for Crew's
+// In flight tab. The floating bar keeps its greeting, so it gets no actions
+// and the static subtitle from here.
+extension FleetController: DaylightDrillActions {
+    var drillHeaderActions: [NSView] { [] }
+    var drillHeaderSubtitle: String? { drawsSidebarLayout ? liveSubtitle : nil }
 }

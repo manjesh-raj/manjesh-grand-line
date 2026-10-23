@@ -1096,9 +1096,11 @@ final class MainSplitShellController: WorkspaceShellController {
         currentRoute = dest
         showingHostPage = false
         currentModule = ModuleTable.module(for: dest)
+        // Adopted first, so a page whose sidebar presentation has its own
+        // live subtitle (Crew, Settings - R2-UX-05) is read in that form.
+        adoptPage(slot.controller)
         pageSubtitle = page?.drillHeaderSubtitle ?? dest.drillSubtitle
         if dest == .homeCanvas, pageSubtitle.isEmpty { pageSubtitle = Self.homeSubtitle() }
-        adoptPage(slot.controller)
         if dest == currentModule.pageTabHost, let host = slot.controller as? ModuleTabHosting { adoptTabHost(host) }
         // Home has no actions of its own; its spaces sit in the middle
         // instead, where the floating bar showed its pills.
@@ -1158,6 +1160,7 @@ final class MainSplitShellController: WorkspaceShellController {
     var debugSignalsMonitor: WorkspaceSignalsMonitor { signalsMonitor }
     var debugInspector: WorkspaceInspectorController { inspector }
     var debugContentPane: NSView { contentPane.view }
+    var debugContentPaneHeader: WorkspaceModuleHeader { contentPane.header }
     var debugBodyContainer: NSView { workspace.content.bodyContainer }
     var debugSidebarIsCollapsed: Bool { sidebarItem.isCollapsed }
     var debugInspectorIsCollapsed: Bool { inspectorItem.isCollapsed }
@@ -1272,7 +1275,8 @@ final class WorkspaceContentPaneController: NSViewController {
     func setHeader(title: String?, subtitle: String) {
         _ = view
         if let title { header.configure(title: title, subtitle: subtitle) }
-        header.isHidden = title == nil
+        // R2-UX-05: the header is its subtitle, so with none there is no header.
+        header.isHidden = title == nil || subtitle.isEmpty
     }
 
     func setSessionStripVisible(_ visible: Bool) {

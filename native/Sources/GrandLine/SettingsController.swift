@@ -317,7 +317,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     var drillHeaderActions: [NSView] { [] }
 
     var drillHeaderSubtitle: String? {
-        "\(selectedCategory.title) \u{00B7} everything here is stored locally on this machine"
+        if drawsSidebarLayout { return selectedCategory.heroDescription }
+        return "\(selectedCategory.title) \u{00B7} everything here is stored locally on this machine"
     }
 
     // MARK: - State
@@ -334,6 +335,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private var historyIndex = 0
 
     private var pages: [Category: Page] = [:]
+    /// R2-UX-05: set once the sidebar layout shows this page
+    /// (`SidebarLayoutAdopting`).
+    private(set) var drawsSidebarLayout = false
     private var mountedCategory: Category?
 
     private var sudoTouchIDStatus: SudoTouchIDStatus = .checking
@@ -1094,6 +1098,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private func buildPage(_ category: Category) -> Page {
         let hero = SettingsHero(symbol: category.symbol, tint: category.tint,
                                 title: category.title, description: category.heroDescription)
+        hero.isHidden = drawsSidebarLayout
         let sections: [SettingsSection]
         switch category {
         case .appearance: sections = buildAppearanceSections()
@@ -2733,6 +2738,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     var debugAutoReconnectSwitch: HelmToggle { autoReconnectSwitch }
     var debugAppLockSwitch: HelmToggle { appLockSwitch }
+    /// R2-UX-05: whether any category's hero draws.
+    var debugAnyHeroIsShown: Bool { pages.values.contains { !$0.hero.isHidden } }
     /// R2-UX-01 (b): the sidebar's profile control and module switches.
     var debugProfileTabs: HelmSegmentedTabs? { profileTabs }
     var debugModuleSwitches: [(module: WorkspaceModule, toggle: HelmToggle)] { moduleSwitches }
@@ -2795,5 +2802,18 @@ final class LayoutReportingStack: NSStackView {
     override func layout() {
         super.layout()
         onLayout?()
+    }
+}
+
+// R2-UX-05: in the sidebar layout the category is named by the page's own
+// column, and its description is the module line (`drillHeaderSubtitle`), so
+// the hero would be a fourth name for one place. The floating bar has no
+// module line and keeps it.
+extension SettingsController: SidebarLayoutAdopting {
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        drawsSidebarLayout = true
+        for page in pages.values { page.hero.isHidden = true }
+        onDrillSubtitleChanged?()
     }
 }

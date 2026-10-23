@@ -164,6 +164,7 @@ final class Workspace {
         // selected category, the way the reference mockup's "Settings /
         // Shortcuts & Siri" does.
         settings.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
+        overview.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
         // cockpit-settings-sudo-touchid: Settings' "Touch ID for sudo" row
         // runs `sudo av harden sudo`, which needs a real interactive `sudo`
         // prompt exactly like Bootstrap's provisioning actions - same

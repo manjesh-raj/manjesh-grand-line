@@ -37,7 +37,7 @@ enum ReviewTwoUXSelfTest {
                       checkTheLockSwitchNeedsAPassword, checkHomeSpeaksForTheVisibleModules,
                       checkAChordReachesAModule, checkTheTabChords, checkTheSidebarShowsKeyboardFocus,
                       checkTheSidebarIsWiderAndRemembered, checkQuickConnectIsOnEveryModule,
-                      checkTheToolbarTakesThePalette] {
+                      checkTheToolbarTakesThePalette, checkOneNamePerLevel] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -503,6 +503,40 @@ enum ReviewTwoUXSelfTest {
                   "in \(theme.id) the window's own background is not the palette's ground", &ok)
         }
         print("  ok   the toolbar band matched the palette's ground in \(HelmTheme.allThemes.count) palettes, worst \(worst.theme) at \(worst.delta)")
+    }
+
+    // MARK: R2-UX-05 - one name per level
+
+    private static func checkOneNamePerLevel(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        for destination in [RailDestination.homeCanvas, .shift, .overview, .notebook, .health, .settings] {
+            shell.show(destination)
+            settle(shell)
+            let module = ModuleTable.module(for: destination)
+            check(shell.toolbar.debugCrumb.contains(module.title), "\(module.title)'s crumb does not name it: \(shell.toolbar.debugCrumb)", &ok)
+            check(!shell.debugContentPaneHeader.debugDrawsTitle,
+                  "\(module.title)'s content header still draws its name under the crumb", &ok)
+        }
+        // Crew: no greeting, and its live line is the module line.
+        shell.show(.overview)
+        settle(shell)
+        let fleet = shell.workspace.overview
+        check(!fleet.debugGreetingIsShown, "Crew still opens with its greeting", &ok)
+        check(shell.debugHeader?.subtitle == fleet.drillHeaderSubtitle && !(fleet.drillHeaderSubtitle ?? "").isEmpty,
+              "Crew's module line is \(shell.debugHeader?.subtitle ?? "nothing"), not its live line \(fleet.drillHeaderSubtitle ?? "nothing")", &ok)
+        // Settings: no hero, and the category's description is the line.
+        shell.show(.settings)
+        settle(shell)
+        if let settings = shell.debugSlotController(.settings) as? SettingsController {
+            check(!settings.debugAnyHeroIsShown, "Settings still draws a hero in the sidebar layout", &ok)
+            check(shell.debugHeader?.subtitle == SettingsController.Category.appearance.heroDescription
+                    || SettingsController.Category.allCases.map(\.heroDescription).contains(shell.debugHeader?.subtitle ?? ""),
+                  "Settings' module line is \(shell.debugHeader?.subtitle ?? "nothing"), not its category's description", &ok)
+        } else {
+            fail("Settings did not mount", &ok)
+        }
+        shell.show(.homeCanvas)
+        settle(shell)
     }
 }
 
