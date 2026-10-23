@@ -38,3 +38,28 @@
   - **The boat is positioned by Auto Layout with priorities, never by a fraction of the window's height** - that fraction was this file's first draft and a captain screenshot on a tall window caught it landing on top of the password field. It sails on the sea now: one **required** anti-overlap constraint (`boat.top >= card.bottom + s5`, relating two subviews only, so it can never cap the window - gotcha (13)) plus two waterline pins at priority **250/400**, both below `NSLayoutPriorityWindowSizeStayPut`. On a window too short for both, the boat rides up and the card stays intact.
   - **The sea is drawn with quadratic arcs, two layers deep, and that is not decoration.** The old wave was a straight-line zigzag; at the sea's real on-screen size it read as a row of triangles, which the near-black night palette hid and Daylight's pale one did not. `swellPath(width:height:crest:)` is the smooth, seamlessly-tiling replacement, with a paler swell behind drifting at a different rate.
   - **`FM_RUN_LOCK_SCREEN_TESTS=1`** is the suite (window-backed, so it joins `run-all-tests.sh`'s `NEEDS_SESSION` list). **All six injected regressions reproduced by name**, not merely passed: `root.layer = skyLayer` restored, the raw amber fill, a password form offered in `.serviceNotRunning`, the shadow host set to clip, the field-centring fix reverted, and a plain `NSTextFieldCell` on the secure field.
+
+## The lock becomes an opt-in, and its thresholds a setting (`fm/grandline-review2-ux-1792762059`)
+
+R2-UX-01 (a) and R2-UX-08 of the second full review.
+This entry corrects two claims above.
+
+- **The lock is a Settings opt-in now** ("Require a password to open Grand Line", Settings › Security), stored as `fm.appLockEnabled`.
+  A fresh install starts with it off, because a general user has no Automic Vault password to type.
+  An install from before the setting is left undecided, so its launch is locked exactly as before.
+  Its lock screen then settles it: a configured password turns the setting on, and a confirmed absent one turns it off.
+  `.avUnavailable` and the transient states settle nothing, which is the safe side.
+- **Turning it on checks that the password exists first.**
+  A lock with no password is a window nobody can open on the next launch.
+  Turning it off asks through `HelmConfirm`.
+- **The lock screen has no "relaunch" instruction any more.**
+  Its no-password state offers Check again, which re-runs the availability check in place.
+- **The thresholds are the captain's to choose**, from a fixed list: 5 minutes to 4 hours idle, 1 to 24 hours per session.
+  They are stored as `fm.appLockIdleSeconds` and `fm.appLockSessionSeconds`.
+  A stored value is clamped to its list's range on every read, so a hand-edited preference cannot stretch the idle window.
+  The live controller reads them on each tick, so a change applies without a relaunch.
+  The `FM_APP_LOCK_*` variables still win for live verification, and the row says so when one is set.
+- **Why "never read from `AppSettings`" no longer holds.**
+  Its reasoning was that nothing inside the app should be able to lengthen the windows.
+  Once the lock itself became an opt-in the same page can turn off, a longer window is not a new capability.
+  Settings is reachable only while the app is unlocked anyway.
