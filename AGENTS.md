@@ -322,6 +322,13 @@ the ones that mount a real `NSWindow`. The split lives in `NEEDS_SESSION` in
 enforces **both** directions of it. A suite that a runner genuinely cannot
 support belongs in `CI_UNSUPPORTED`, with the measurement that put it there.
 
+`test-windowed` runs as three shards side by side (`--shard=K/N`, balanced by
+the measured `SHARD_WEIGHTS` in the same script). Its check passes only when
+every shard did and the shards between them ran each window-backed suite
+exactly once, and `swift build` passes only when the debug and release builds,
+now separate jobs, both do. A slow new window-backed suite belongs in
+`SHARD_WEIGHTS`, or its shard runs long.
+
 ---
 
 ## Verification conventions
@@ -532,18 +539,19 @@ down as a parameter.
 ## Writing a self-test
 
 A suite is **window-backed or pure logic**, and the choice is not a style
-preference: it decides whether the suite guards the **blocking** CI job or only
-ever runs locally. Getting it wrong costs real coverage silently, because a
-misclassified suite still passes.
+preference: it decides which CI lane the suite runs in, and for a suite that
+also lands in `CI_UNSUPPORTED`, whether CI runs it at all. Getting it wrong is
+silent, because a misclassified suite still passes.
 
-- **The classification decides whether a suite guards the blocking CI job at
-  all, which is why getting it wrong is silent.** `NEEDS_SESSION` in
-  `Scripts/run-all-tests.sh` is the operative list: `--ci` skips it,
-  `--session-only` runs exactly it (CI's *non-blocking* windowed job). So a
-  pure-logic suite parked there still runs locally, still passes, still looks
-  healthy - and never once guards a merge. Nothing about that is visible in a
-  diff, a review or the suite's own output, which is precisely why it
-  accumulated.
+- **The classification decides which CI lane a suite guards, which is why
+  getting it wrong is silent.** `NEEDS_SESSION` in `Scripts/run-all-tests.sh`
+  is the operative list: `--ci` skips it, `--session-only` runs exactly it
+  (CI's windowed job). Both lanes block a merge since P8 of full review #3,
+  but the windowed one is the slow, sharded one, so a pure-logic suite parked
+  there costs every run time it does not need. It was worse while that job
+  was non-blocking: such a suite never once guarded a merge. Nothing about
+  either is visible in a diff, a review or the suite's own output, which is
+  precisely why it accumulated.
 - **The test is what the suite *asserts*, never what it imports.** Real
   hover/press/focus-ring behaviour, real rendered geometry or pixels, a real
   `NSPanel`/`NSPopover`/sheet/`NSStatusItem`/drag session, real window-server
