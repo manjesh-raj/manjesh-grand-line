@@ -98,7 +98,8 @@ extension WorkspaceModule {
 /// Sidebars: 32pt rows, 24pt icons, 15pt text). The column drew the Medium
 /// size (28pt rows, 13pt text) until stage 7, when the captain asked for
 /// bigger text and icons because the column had room to spare below
-/// Settings. Every row still fits the column's 236pt width beside its badge,
+/// Settings. Every row still fits the column's 264pt width beside its badge
+/// (U-03 widened it from 236, which still fits and is where it narrows to),
 /// and the list scrolls in a window too short to show it all, as it always
 /// did. Each size goes through `HelmType.scaled`, so the chrome text scale
 /// still moves all of them together.
@@ -178,7 +179,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     // MARK: Build
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 236, height: 600))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: MainSplitShellController.sidebarWidth, height: 600))
         view = root
 
         header.translatesAutoresizingMaskIntoConstraints = false

@@ -54,11 +54,23 @@ import AppKit
 
 final class MainSplitShellController: WorkspaceShellController {
 
-    /// The prototype's sidebar width, which is where it opens; the captain
-    /// can drag it between `sidebarMinimum` and `sidebarMaximum`.
-    static let sidebarWidth: CGFloat = 236
+    /// Where the sidebar opens until the captain drags it; they can drag it
+    /// between `sidebarMinimum` and `sidebarMaximum`, and the width they
+    /// leave it at is remembered across launches (`AppSettings.sidebarWidth`).
+    ///
+    /// U-03: 264pt, up from the prototype's 236. The captain found the column
+    /// too narrow at the Large source-list size; at 236 "Connections" and a
+    /// two-digit badge were 9pt apart. 360pt is room for a long session label
+    /// without the column ever taking half of a 1512pt window from a page.
+    static let sidebarWidth: CGFloat = 264
     static let sidebarMinimum: CGFloat = 200
-    static let sidebarMaximum: CGFloat = 320
+    static let sidebarMaximum: CGFloat = 360
+    /// U-03: the narrowest the sidebar is drawn at before it steps aside for
+    /// room - the old 236pt default, at which stage 7 measured every row and
+    /// badge fitting at the Large size. Between it and the captain's width
+    /// the sidebar narrows to what the window has, so a wider default does
+    /// not lose the sidebar at any window width it used to show at.
+    static let sidebarComfortWidth: CGFloat = 236
     /// The narrowest the content column may be, which is the widest page's
     /// own minimum: the 29 pages were laid out for the floating bar's
     /// full-width body, and two of them hold more width than a column beside
@@ -160,12 +172,16 @@ final class MainSplitShellController: WorkspaceShellController {
     /// way into a collapse - measured: by the time a narrowing window's
     /// resize notification arrives, the split view has already squeezed the
     /// sidebar to its 200pt minimum, and that is not a width anyone chose.
-    private var sidebarThickness: CGFloat = MainSplitShellController.sidebarWidth
+    private var sidebarThickness: CGFloat = MainSplitShellController.rememberedSidebarWidth()
+
+    /// The captain's stored width, clamped to the range the sidebar allows.
+    static func rememberedSidebarWidth(_ settings: AppSettings = .shared) -> CGFloat {
+        guard let stored = settings.sidebarWidth, stored.isFinite else { return sidebarWidth }
+        return min(max(stored, sidebarMinimum), sidebarMaximum)
+    }
     /// The inset macOS 26 floats the sidebar in (0 before it), measured once
     /// the panes are first laid out.
     private var sidebarInset: CGFloat = 0
-    /// The room the sidebar's pane takes while it shows.
-    private var sidebarPaneWidth: CGFloat { sidebarThickness + sidebarInset }
     private var dividerDragObserver: NSObjectProtocol?
     private var scrollerStyleObserver: NSObjectProtocol?
     private var dayChangeObserver: NSObjectProtocol?
@@ -274,8 +290,8 @@ final class MainSplitShellController: WorkspaceShellController {
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         // Opens at the prototype's width; `viewDidLayout` relaxes the range
         // once the split view has a real size.
-        sidebarItem.minimumThickness = Self.sidebarWidth
-        sidebarItem.maximumThickness = Self.sidebarWidth
+        sidebarItem.minimumThickness = sidebarThickness
+        sidebarItem.maximumThickness = sidebarThickness
         sidebarItem.canCollapse = true
         sidebarItem.canCollapseFromWindowResize = true
         // The content column takes every change in the window's width; the
@@ -353,6 +369,8 @@ final class MainSplitShellController: WorkspaceShellController {
             guard let self, let window = self.view.window, Self.isDividerDrag(NSApp?.currentEvent, in: window),
                   !self.sidebarItem.isCollapsed, self.sidebar.view.frame.width > 0 else { return }
             self.sidebarThickness = self.sidebar.view.frame.width
+            // U-03: the captain's width survives a relaunch.
+            AppSettings.shared.sidebarWidth = self.sidebarThickness
         }
     }
 
@@ -435,10 +453,16 @@ final class MainSplitShellController: WorkspaceShellController {
 
     // MARK: Room for the content column
 
-    /// The content column's width with the sidebar showing, at `windowWidth`.
-    private func columnWidthWithSidebar(windowWidth: CGFloat) -> CGFloat {
-        windowWidth - sidebarPaneWidth - (inspectorItem.isCollapsed ? 0 : WorkspaceInspectorController.width)
+    /// U-03: the width the sidebar can have beside the column's floor at
+    /// `windowWidth`, up to the captain's own.
+    private func sidebarFitWidth(windowWidth: CGFloat) -> CGFloat {
+        let inspector = inspectorItem.isCollapsed ? 0 : WorkspaceInspectorController.width
+        return min(sidebarThickness, windowWidth - columnFloor - inspector - sidebarInset)
     }
+
+    /// The narrowest the sidebar is drawn at before it steps aside: the
+    /// comfort width, or the captain's own if they chose narrower.
+    private var sidebarStepsAsideBelow: CGFloat { min(sidebarThickness, Self.sidebarComfortWidth) }
 
     /// Keep the content column at least `contentMinimum` wide: collapse the
     /// sidebar when the window is too narrow for both, and bring it back
@@ -455,13 +479,15 @@ final class MainSplitShellController: WorkspaceShellController {
         let width = window.contentRect(forFrameRect: window.frame).width
         guard width > 0 else { return }
         toolbar.setCompact(width < WorkspaceToolbar.compactWidth)
-        let floor = columnFloor
+        let fit = sidebarFitWidth(windowWidth: width)
         if !sidebarItem.isCollapsed {
-            if columnWidthWithSidebar(windowWidth: width) < floor {
+            if fit < sidebarStepsAsideBelow {
                 setSidebarCollapsed(true, animated: false)
                 sidebarCollapsedForRoom = true
+            } else {
+                holdSidebar(at: fit)
             }
-        } else if sidebarCollapsedForRoom, columnWidthWithSidebar(windowWidth: width) >= floor {
+        } else if sidebarCollapsedForRoom, fit >= sidebarStepsAsideBelow {
             // Lay the panes out at the window's new width first, with the
             // sidebar still collapsed - which is safe, the column only gets
             // wider - so the expand below is measured against the size the
@@ -469,6 +495,28 @@ final class MainSplitShellController: WorkspaceShellController {
             view.layoutSubtreeIfNeeded()
             setSidebarCollapsed(false, animated: false)
             sidebarCollapsedForRoom = false
+        }
+    }
+
+    /// U-03: keep the showing sidebar at `width` - narrower than the
+    /// captain's while the window is short of room for it, and back out to
+    /// theirs as the window widens. The split view never grows it back by
+    /// itself (the column's holding priority is the lower one, so it takes
+    /// every point a widening window adds), and on the way in it squeezed the
+    /// sidebar to its 200pt minimum - measured, at 1196pt - because a page
+    /// still holds the wider column's widths at `contentTie` (499), above the
+    /// sidebar's 489, until it re-lays out on the next turn. So the width is
+    /// pinned for that one turn, exactly as an expand pins it.
+    private func holdSidebar(at width: CGFloat) {
+        guard didSettleInitialSidebarWidth, !sidebarItem.isCollapsed,
+              abs(sidebar.view.frame.width - width) > 0.5 else { return }
+        sidebarItem.minimumThickness = width
+        sidebarItem.maximumThickness = width
+        splitController.splitView.layoutSubtreeIfNeeded()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.sidebarItem.isCollapsed else { return }
+            self.sidebarItem.minimumThickness = Self.sidebarMinimum
+            self.sidebarItem.maximumThickness = Self.sidebarMaximum
         }
     }
 
@@ -487,9 +535,13 @@ final class MainSplitShellController: WorkspaceShellController {
         #if FM_SELFTESTS
         lastPaneMotionForTests = (pane: "sidebar", collapsed: collapsed, duration: animate ? WorkspaceMotion.paneDuration : nil)
         #endif
+        // U-03: it comes back at the captain's width, or at what the window
+        // has room for beside the column when that is less.
+        let expandWidth = view.window.map { max(sidebarStepsAsideBelow, sidebarFitWidth(
+            windowWidth: $0.contentRect(forFrameRect: $0.frame).width)) } ?? sidebarThickness
         if !collapsed {
-            sidebarItem.minimumThickness = sidebarThickness
-            sidebarItem.maximumThickness = sidebarThickness
+            sidebarItem.minimumThickness = expandWidth
+            sidebarItem.maximumThickness = expandWidth
         }
         let release: () -> Void = { [weak self] in
             guard let self, !collapsed else { return }
@@ -521,7 +573,7 @@ final class MainSplitShellController: WorkspaceShellController {
         // and the release then waits the same one turn the plain path does.
         WorkspaceMotion.setCollapsed(sidebarItem, collapsed, animated: true) { [weak self] in
             guard !collapsed, let self else { release(); return }
-            self.splitController.splitView.setPosition(self.sidebarPaneWidth, ofDividerAt: 0)
+            self.splitController.splitView.setPosition(expandWidth + self.sidebarInset, ofDividerAt: 0)
             self.splitController.splitView.layoutSubtreeIfNeeded()
             DispatchQueue.main.async(execute: release)
         }
@@ -537,7 +589,9 @@ final class MainSplitShellController: WorkspaceShellController {
         guard let window = view.window else { return }
         let floor = inspectorShown && inspectorSource?.inspectorContent != nil
             ? Self.inspectorColumnMinimum : Self.contentMinimum
-        let needed = floor + (sidebarShown ? sidebarPaneWidth : 0)
+        // U-03: room for the sidebar at its comfort width, which is where it
+        // narrows to - not the captain's wider one.
+        let needed = floor + (sidebarShown ? sidebarStepsAsideBelow + sidebarInset : 0)
             + (inspectorShown ? WorkspaceInspectorController.width : 0)
         let current = window.contentRect(forFrameRect: window.frame).width
         guard current < needed else { return }
@@ -600,7 +654,7 @@ final class MainSplitShellController: WorkspaceShellController {
             makeRoom(sidebarShown: !sidebarItem.isCollapsed, inspectorShown: true)
             let floor = details ? Self.inspectorColumnMinimum : Self.contentMinimum
             if let window = view.window, !sidebarItem.isCollapsed,
-               window.contentRect(forFrameRect: window.frame).width - sidebarPaneWidth
+               window.contentRect(forFrameRect: window.frame).width - sidebarStepsAsideBelow - sidebarInset
                 - WorkspaceInspectorController.width < floor {
                 setSidebarCollapsed(true, animated: false)
                 sidebarCollapsedForRoom = true

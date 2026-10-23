@@ -35,7 +35,8 @@ enum ReviewTwoUXSelfTest {
         settle(shell)
         for check in [checkTheSidebarFollowsTheHiddenModules, checkSettingsShowsAndHidesModules,
                       checkTheLockSwitchNeedsAPassword, checkHomeSpeaksForTheVisibleModules,
-                      checkAChordReachesAModule, checkTheTabChords, checkTheSidebarShowsKeyboardFocus] {
+                      checkAChordReachesAModule, checkTheTabChords, checkTheSidebarShowsKeyboardFocus,
+                      checkTheSidebarIsWiderAndRemembered] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -340,6 +341,56 @@ enum ReviewTwoUXSelfTest {
         check(!row.showsFocusRing, "the ring stayed after the keyboard left the sidebar", &ok)
         shell.show(.homeCanvas)
         settle(shell)
+    }
+
+    // MARK: U-03 - a wider sidebar, remembered, that narrows before it steps aside
+
+    private static func checkTheSidebarIsWiderAndRemembered(_ shell: MainSplitShellController,
+                                                           _ window: NSWindow, _ ok: inout Bool) {
+        let height = window.frame.height
+        resize(window, width: 1512, shell)
+        check(MainSplitShellController.sidebarWidth == 264 && MainSplitShellController.sidebarMaximum == 360,
+              "the sidebar opens at \(MainSplitShellController.sidebarWidth) and drags to \(MainSplitShellController.sidebarMaximum)", &ok)
+        check(!shell.debugSidebarIsCollapsed && abs(shell.debugSidebarWidth - 264) < 0.5,
+              "at 1512 the sidebar is \(shell.debugSidebarWidth)pt, want 264", &ok)
+        let inset = (shell.debugSidebarPane?.frame.width ?? 272) - shell.debugSidebarWidth
+        // Short of room for 264 but not for 236: it narrows, and the window
+        // keeps its width - the sidebar shows at every width it used to.
+        let narrow = (MainSplitShellController.contentMinimum + 236 + inset + 12).rounded()
+        resize(window, width: narrow, shell)
+        check(abs(window.frame.width - narrow) < 0.5, "at \(Int(narrow))pt the window grew to \(Int(window.frame.width))pt", &ok)
+        check(!shell.debugSidebarIsCollapsed && shell.debugSidebarWidth < 263 && shell.debugSidebarWidth >= 236,
+              "at \(Int(narrow))pt the sidebar is \(shell.debugSidebarIsCollapsed ? "collapsed" : "\(shell.debugSidebarWidth)pt"), want it narrowed between 236 and 264", &ok)
+        // Below the old threshold it steps aside, as it always did.
+        resize(window, width: 1100, shell)
+        check(shell.debugSidebarIsCollapsed, "at 1100 the sidebar is still showing", &ok)
+        // And it comes back out at its own width.
+        resize(window, width: 1512, shell)
+        check(!shell.debugSidebarIsCollapsed && abs(shell.debugSidebarWidth - 264) < 0.5,
+              "back at 1512 the sidebar is \(shell.debugSidebarWidth)pt, want 264", &ok)
+        resize(window, width: narrow, shell)
+        resize(window, width: 1512, shell)
+        check(abs(shell.debugSidebarWidth - 264) < 0.5,
+              "a narrowed sidebar did not grow back to 264 with the window (\(shell.debugSidebarWidth)pt)", &ok)
+        var frame = window.frame
+        frame.size.height = height
+        window.setFrame(frame, display: true)
+
+        // The width the captain drags to is kept, inside the range.
+        ReviewTwoUXModelSelfTest.withScratchSettings("sidebarwidth") { settings in
+            check(MainSplitShellController.rememberedSidebarWidth(settings) == 264, "with nothing stored the sidebar does not open at 264", &ok)
+            settings.sidebarWidth = 300
+            check(MainSplitShellController.rememberedSidebarWidth(settings) == 300, "a stored 300pt sidebar does not open at 300", &ok)
+            settings.sidebarWidth = 900
+            check(MainSplitShellController.rememberedSidebarWidth(settings) == 360, "a stored 900pt sidebar is not held to 360", &ok)
+            settings.sidebarWidth = 20
+            check(MainSplitShellController.rememberedSidebarWidth(settings) == 200, "a stored 20pt sidebar is not held to 200", &ok)
+        }
+        if let source = ReviewTwoUXModelSelfTest.source("MainSplitShellController.swift") {
+            check(source.contains("AppSettings.shared.sidebarWidth = self.sidebarThickness")
+                    && source.contains("private var sidebarThickness: CGFloat = MainSplitShellController.rememberedSidebarWidth()"),
+                  "a divider drag no longer stores the sidebar's width, or the shell no longer opens at it", &ok)
+        }
     }
 }
 

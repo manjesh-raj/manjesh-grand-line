@@ -58,6 +58,7 @@ final class AppSettings {
         static let appLockEnabled = "fm.appLockEnabled"
         static let workspaceProfile = "fm.workspaceProfile"
         static let hiddenModules = "fm.hiddenModules"
+        static let sidebarWidth = "fm.sidebarWidth"
     }
 
     /// GL-P3 (audit §6.10): the defaults store is injectable.
@@ -629,4 +630,17 @@ final class AppSettings {
     }
 
     static let hiddenModulesDidChange = Notification.Name("fm.hiddenModulesDidChange")
+
+    /// U-03: the sidebar's width as the captain last dragged it, in the
+    /// sidebar layout. `nil` until they drag it; the shell clamps whatever it
+    /// reads to its own range, so a stored width from another build or a
+    /// hand-edited plist can never open the sidebar outside it.
+    var sidebarWidth: CGFloat? {
+        get { defaults.object(forKey: Keys.sidebarWidth) == nil ? nil : CGFloat(defaults.double(forKey: Keys.sidebarWidth)) }
+        set {
+            if let newValue { defaults.set(Double(newValue), forKey: Keys.sidebarWidth) } else {
+                defaults.removeObject(forKey: Keys.sidebarWidth)
+            }
+        }
+    }
 }

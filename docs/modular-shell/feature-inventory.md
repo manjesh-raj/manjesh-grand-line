@@ -923,6 +923,7 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.renamedFromFirstmateCockpit` | Saved preference `fm.renamedFromFirstmateCockpit` | declared in LegacyNameMigration | System (launch migration marker, unchanged) |  |
 | `state.fm.sessionRestoreState` | Saved preference `fm.sessionRestoreState` | declared in SessionRestoreStore | Navigator (session restore reopens the same route; legacy key, migrated to a file) |  |
 | `state.fm.shift.taskSort` | Saved preference `fm.shift.taskSort` | declared in ShiftController | Tasks |  |
+| `state.fm.sidebarWidth` | Saved preference `fm.sidebarWidth` | declared in AppSettings | Sidebar (the width the captain last dragged it to, 200-360pt, opening at 264 until then - U-03) |  |
 | `state.fm.snippetExpansionEnabled` | Saved preference `fm.snippetExpansionEnabled` | declared in AppSettings | Settings › Capture |  |
 | `state.fm.systemDarkThemeID` | Saved preference `fm.systemDarkThemeID` | declared in AppSettings | Settings › Appearance |  |
 | `state.fm.systemLightThemeID` | Saved preference `fm.systemLightThemeID` | declared in AppSettings | Settings › Appearance |  |
