@@ -782,8 +782,13 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
                               + "Everything you write here is a markdown file \(whereItGoes).",
                           // X5: the Welcome page, offered where the captain
                           // is actually looking.
-                          actions: [("New page", #selector(newPageTapped)),
-                                    ("Add a Welcome page", #selector(seedWelcomePageTapped))])
+                          // R2-UX-07: in the sidebar layout New page is the
+                          // toolbar's far-right primary, so the page offers
+                          // its one example, like every module's empty state.
+                          actions: drawsSidebarLayout
+                              ? [("Add a Welcome page", #selector(seedWelcomePageTapped))]
+                              : [("New page", #selector(newPageTapped)),
+                                 ("Add a Welcome page", #selector(seedWelcomePageTapped))])
     }
 
     private func open(pageID: String) {
@@ -1332,9 +1337,12 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         } else {
             accessory = buttons.first
         }
+        // R2-UX-07: the page's own artwork, as Runbooks', Postmortems' and the
+        // Sticky Board's empty states draw it - one empty state, one look.
         let state = HelmEmptyState(symbol: symbol, title: title, body: body,
                                    size: .standard, accessory: accessory,
-                                   hue: RailDestination.notebook.domainHue)
+                                   hue: RailDestination.notebook.domainHue,
+                                   symbolWatermark: true)
         state.translatesAutoresizingMaskIntoConstraints = false
         // The card's width is the page's, never the sentence's: the one-line
         // copy at compression 750 held the editor card - and through the

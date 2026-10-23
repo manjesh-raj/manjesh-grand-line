@@ -64,6 +64,7 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
         size: .standard,
         accessory: {
             let button = HelmButton(title: "Open \(PlaceName.of(.logAnalyzer))", variant: .secondary)
+            openLogsButton = button
             button.target = self
             button.action = #selector(openLogAnalyzerTapped)
             button.toolTip = "Analyze captured output and turn it into an RCA."
@@ -71,7 +72,9 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
             // else to *earn* a postmortem, which is right but is not an
             // answer to "what does a postmortem look like". The seeded
             // example is, and it is opt-in - see `SeedExamples`' header.
-            let seed = HelmButton(title: "Add an example", variant: .quiet)
+            // R2-UX-07: the page's one example row, outlined like every
+            // module's.
+            let seed = HelmButton(title: "Add an example", variant: .secondary)
             seed.target = self
             seed.action = #selector(seedExamplePostmortemTapped)
             seed.toolTip = "Writes one short example postmortem you can read, edit or delete."
@@ -86,6 +89,22 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
         // D4: this is the whole content area of a full-width page - the "big
         // pages open onto beige silence" case that watermark exists for.
         artwork: RailDestination.postmortems.drillHeaderArtwork)
+
+    private weak var openLogsButton: HelmButton?
+
+    /// R2-UX-07: the empty state's copy for the captain's profile. A profile
+    /// that hides Logs (Personal) has no SRE Lead and no Create RCA to point
+    /// at, so it is told what a postmortem is and offered the example, and
+    /// the button to a module it does not have goes.
+    private func refreshEmptyCopy() {
+        let logsShown = PlaceName.layout != .sidebar || !AppSettings.shared.hiddenModules.contains(.logs)
+        postmortemEmptyState.setText(
+            title: "No postmortems yet",
+            body: logsShown
+                ? "Postmortems are written for you from an SRE Lead investigation, or from the \u{201C}Create RCA\u{201D} mode in \(PlaceName.of(.logAnalyzer)). Whichever writes one, it appears here."
+                : "A postmortem writes down what went wrong, why, and what changes next time. Start from an example and make it yours.")
+        openLogsButton?.isHidden = !logsShown
+    }
 
     /// Where this page hands a destination change up, exactly the shape
     /// `FleetController` and `SchedulesController` already use.
@@ -273,6 +292,7 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
 
     private func applyPostmortems(_ postmortems: [DocsRunbook]) {
         postmortemEmptyState.isHidden = !postmortems.isEmpty
+        if postmortems.isEmpty { refreshEmptyCopy() }
         postmortemListScroll.isHidden = postmortems.isEmpty
         postmortemGridItems = postmortems.map { postmortem in
             // A postmortem's own `## Root Cause` section is what its card
@@ -336,6 +356,8 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
     /// X5: the real button's action, so a check drives what a click drives.
     func debugSeedExamplePostmortem() { seedExamplePostmortemTapped() }
     var debugPostmortemEmptyState: HelmEmptyState { postmortemEmptyState }
+    var debugOpenLogsButtonIsShown: Bool { !(openLogsButton?.isHidden ?? true) }
+    func debugRefreshEmptyCopy() { refreshEmptyCopy() }
     #endif
 
     // MARK: Theme

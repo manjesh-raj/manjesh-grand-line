@@ -38,7 +38,7 @@ enum ReviewTwoUXSelfTest {
                       checkAChordReachesAModule, checkTheTabChords, checkTheSidebarShowsKeyboardFocus,
                       checkTheSidebarIsWiderAndRemembered, checkQuickConnectIsOnEveryModule,
                       checkTheToolbarTakesThePalette, checkOneNamePerLevel, checkOnePrimaryActionRule,
-                      checkThePageToolbarsAreTheWindowToolbar] {
+                      checkThePageToolbarsAreTheWindowToolbar, checkEmptyStatesInvite] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -649,6 +649,77 @@ enum ReviewTwoUXSelfTest {
         }
         notebook.debugSetMode(.split)
         settle(shell)
+        shell.show(.homeCanvas)
+        settle(shell)
+    }
+
+    // MARK: R2-UX-07 - empty states that invite
+
+    /// Every visible, page-level empty state under `view`.
+    static func pageEmptyStates(in view: NSView) -> [HelmEmptyState] {
+        var found: [HelmEmptyState] = []
+        func walk(_ v: NSView) {
+            if v.isHidden || v.alphaValue == 0 { return }
+            if let state = v as? HelmEmptyState, state.frame.height > 0 { found.append(state) }
+            v.subviews.forEach(walk)
+        }
+        walk(view)
+        return found
+    }
+
+    private static func checkEmptyStatesInvite(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        // Tasks with nothing in it: one invitation, not three empty states.
+        shell.show(.shift)
+        settle(shell)
+        guard let shift = shell.debugSlotController(.shift) as? ShiftController else {
+            fail("Tasks did not mount", &ok)
+            return
+        }
+        if shift.debugStoreIsEmpty {
+            check(!shift.debugStartHereState.isHiddenOrHasHiddenAncestor,
+                  "an empty Tasks page has no start-here state", &ok)
+            check(shift.debugStartHereReplacesHidden.allSatisfy { $0 },
+                  "an empty Tasks page still draws Follow-ups or Projects under its start-here state", &ok)
+            check(shift.drillHeaderSubtitle == "No tasks yet", "an empty Tasks page says \(shift.drillHeaderSubtitle ?? "")", &ok)
+            check(pageEmptyStates(in: shell.debugContentPane).count == 1,
+                  "an empty Tasks page draws \(pageEmptyStates(in: shell.debugContentPane).count) empty states, want one", &ok)
+            check(shift.debugStartHereState.debugHasWatermark, "Tasks' start-here state is not the shared look", &ok)
+        } else {
+            fail("the suite's Tasks store is not empty, so the start-here check measures nothing", &ok)
+        }
+        // Schedules with nothing: one invitation, not three cards of zeros.
+        shell.show(.schedules)
+        settle(shell)
+        if let schedules = shell.debugSlotController(.schedules) as? SchedulesController {
+            check(!schedules.debugPageEmptyState.isHiddenOrHasHiddenAncestor && schedules.debugEmptyReplacesHidden.allSatisfy { $0 },
+                  "an empty Schedules page shows its invitation \(schedules.debugPageEmptyState.isHidden ? "hidden" : "shown") over sections hidden \(schedules.debugEmptyReplacesHidden)", &ok)
+            check(pageEmptyStates(in: shell.debugContentPane).count == 1,
+                  "an empty Schedules page draws \(pageEmptyStates(in: shell.debugContentPane).count) empty states, want one", &ok)
+        }
+        // Knowledge's tabs: the same look - a watermark, not a tile or an
+        // outline of their own - and Docs' state is not inside a card.
+        for destination in [RailDestination.notebook, .runbooks, .postmortems, .docs, .readingList] {
+            shell.show(destination)
+            settle(shell)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            settle(shell)
+            let states = pageEmptyStates(in: shell.debugContentPane).filter { $0.debugIsPageLevel }
+            check(states.count == 1, "\(destination.rawValue) draws \(states.count) page-level empty states, want one", &ok)
+            if let state = states.first {
+                check(state.debugHasWatermark, "\(destination.rawValue)'s empty state is not the shared look (no watermark)", &ok)
+            }
+        }
+        // Profile-aware copy: a Personal Postmortems page is told what a
+        // postmortem is and is not sent to a module it does not have.
+        if let postmortems = shell.debugSlotController(.postmortems) as? PostmortemsController {
+            AppSettings.shared.setProfile(.personal)
+            postmortems.debugRefreshEmptyCopy()
+            check(!postmortems.debugOpenLogsButtonIsShown, "a Personal Postmortems page still offers Open Logs", &ok)
+            AppSettings.shared.hiddenModules = []
+            postmortems.debugRefreshEmptyCopy()
+            check(postmortems.debugOpenLogsButtonIsShown, "an Operator Postmortems page lost Open Logs", &ok)
+        }
         shell.show(.homeCanvas)
         settle(shell)
     }

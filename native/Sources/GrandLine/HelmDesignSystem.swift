@@ -3677,7 +3677,11 @@ final class HelmEmptyState: NSView {
          /// exist) at 25-30% scale/opacity". `RailDestination.
          /// drillHeaderArtwork` is where those icons live, so a page passes
          /// its own and nothing new ships.
-         artwork: NSImage? = nil) {
+         artwork: NSImage? = nil,
+         /// R2-UX-07: draw the watermark from `symbol` for a page that has no
+         /// artwork of its own (Notebook, the Reading list), so every
+         /// page-level empty state has the same one look.
+         symbolWatermark: Bool = false) {
         self.size = size
         self.boxed = boxed
         self.accessory = accessory
@@ -3741,7 +3745,14 @@ final class HelmEmptyState: NSView {
         // crossing live text. It sits **above** the glyph now (the finding's
         // own first suggestion), so it overlaps nothing but the top of the
         // icon row and never reaches a word.
-        hasWatermark = artwork != nil
+        hasWatermark = artwork != nil || symbolWatermark
+        if artwork == nil, symbolWatermark {
+            watermarkUsesSymbol = true
+            watermark.imageScaling = .scaleProportionallyUpOrDown
+            watermark.alphaValue = Self.watermarkOpacity
+            watermark.translatesAutoresizingMaskIntoConstraints = false
+            watermark.setAccessibilityElement(false)
+        }
         if let artwork {
             // B4: a raster that is really a solid tile is swapped for the
             // destination's own glyph; `applyTheme` is what renders and tints
@@ -3757,7 +3768,7 @@ final class HelmEmptyState: NSView {
         }
 
         addSubview(stack)
-        if artwork != nil {
+        if hasWatermark {
             // UI-46: the watermark is the state's one mark, so it sits **in
             // the stack's flow** above the title - where it cannot overlap a
             // word whatever the container's height. (U3's earlier fix floated
@@ -3804,6 +3815,8 @@ final class HelmEmptyState: NSView {
     /// is not boxed as an object in a flow - which is what the placement
     /// rule governs.
     var debugIsPageLevel: Bool { size == .standard && !boxed }
+    /// R2-UX-07: whether this state draws the shared watermark look.
+    var debugHasWatermark: Bool { hasWatermark }
     /// UI-26: a `.quiet` state draws neither the gradient tile nor the glyph.
     var debugArtworkHidden: Bool { tile.isHidden && iconView.isHidden }
     /// What the watermark is *actually drawing* - review #3's B4. A check that

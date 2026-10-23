@@ -144,6 +144,37 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
     private static let runHistoryRowID = "run-history"
 
     private let activityCard = HelmCard()
+    /// R2-UX-07: the sections the page-level empty state stands in for.
+    private var emptyReplaces: [NSView] = []
+    /// The app's one page-level empty state: the page's own artwork, one
+    /// sentence and one example. New Schedule is the toolbar's primary.
+    private lazy var pageEmptyState: HelmEmptyState = {
+        let example = HelmButton(title: "Add a daily GitHub sync", variant: .secondary, symbol: "plus")
+        example.target = self
+        example.action = #selector(addExampleScheduleTapped)
+        example.toolTip = "Syncs your personal forks with upstream every day at 11:10."
+        let state = HelmEmptyState(
+            symbol: "calendar.badge.plus", title: "No schedules yet",
+            body: "Pick one of the app's existing actions and a cadence, and it will run on its own - "
+                + "reporting to Health, and telling you only when it matters.",
+            size: .standard, accessory: example, hue: RailDestination.schedules.domainHue,
+            artwork: RailDestination.schedules.drillHeaderArtwork)
+        state.translatesAutoresizingMaskIntoConstraints = false
+        state.isHidden = true
+        return state
+    }()
+
+    private var showsPageEmptyState = false
+
+    private func applyPageEmptyState() {
+        pageEmptyState.isHidden = !showsPageEmptyState
+        for view in emptyReplaces { view.isHidden = showsPageEmptyState }
+    }
+
+    /// The schedule a first launch seeds, offered here as the example.
+    @objc private func addExampleScheduleTapped() {
+        scheduleStore.add(AutomationSchedule(action: .forkSync, cadence: ScheduleSeeding.dailyGitHubSyncCadence))
+    }
     private let activityStack = NSStackView()
     private let overviewCard = HelmCard()
     private let overviewSummary = NSTextField(labelWithString: "")
@@ -175,6 +206,12 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
         refreshButton.toolTip = "Re-read the schedules and their run history, and re-time every "
             + "\u{201C}in 13h\u{201D} / \u{201C}6h ago\u{201D} on this page"
 
+        // R2-UX-07: with no schedule and no run, the page is one invitation
+        // rather than three empty cards (the list, Recent activity, and a
+        // "0 runs - all clean" overview) under a row of zeros.
+        emptyReplaces = [statsRow, schedulesCardView, insightsRow]
+        // The first render can land while these are still being built.
+        applyPageEmptyState()
         let stack = NSStackView(views: [statsRow, schedulesCardView, insightsRow])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -233,6 +270,9 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
         // never the outer scroll view - see `AutomationController`'s
         // identical comment for the full reasoning.
         content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor).isActive = true
+        // UXP-13: centred in the content pane like every other page-level
+        // empty state, not resting at the top of the scroll document.
+        pageEmptyState.placeAsPageEmptyState(in: split.contentPane)
         splitPage = split
         scrollView = scroll
 
@@ -634,6 +674,12 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
     private func renderAll() {
         let schedules = scheduleStore.schedules
         let history = ScheduleRunHistoryStore.shared.allEntries()
+        let nothing = schedules.isEmpty && history.isEmpty
+        // Last, after the sections have rendered: drawing one re-shows it.
+        defer {
+            showsPageEmptyState = nothing
+            applyPageEmptyState()
+        }
         schedulesCard.setSchedules(schedules,
                                    runningID: ScheduleRunner.shared.runningScheduleID,
                                    history: history,
@@ -646,6 +692,7 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
     /// Every themed surface this page owns, without rebuilding a row: the
     /// four tiles, the three cards and the sidebar.
     private func applyThemeToSurfaces(_ theme: HelmTheme) {
+        pageEmptyState.applyTheme(theme)
         summaryStrip.applyTheme(theme)
         schedulesCard.applyTheme(theme)
         activityCard.applyTheme(theme)
@@ -733,6 +780,9 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
     var debugSidebar: HelmPageSidebar { sidebar }
     /// UI-48: the painted fills, read straight off the layers.
     var debugSummaryValueColors: [NSColor?] { summaryStrip.debugValueColors }
+    /// R2-UX-07: the page-level empty state, and the sections it stands for.
+    var debugPageEmptyState: HelmEmptyState { pageEmptyState }
+    var debugEmptyReplacesHidden: [Bool] { emptyReplaces.map(\.isHidden) }
     var debugSchedulesCardFill: CGColor? { schedulesCard.card.layer?.backgroundColor }
     var debugScrollOffsetY: CGFloat { scrollView?.contentView.bounds.origin.y ?? -1 }
     var debugVisibleScheduleRowCount: Int { schedulesCard.debugRowCount }

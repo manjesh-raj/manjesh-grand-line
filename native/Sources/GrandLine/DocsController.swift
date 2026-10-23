@@ -247,6 +247,9 @@ final class DocsController: NSViewController, DaylightDrillActions {
     /// sync, with the same spinner beside it.
     private func buildEmptyState() {
         syncButton.title = "Sync Now"
+        // R2-UX-07 and R2-UX-04: an empty state's action is outlined, like
+        // every module's example row; the filled button is the toolbar's.
+        syncButton.variant = .secondary
         syncButton.controlSize = .regular
         syncButton.target = self
         syncButton.action = #selector(syncNowTapped)
@@ -375,9 +378,11 @@ final class DocsController: NSViewController, DaylightDrillActions {
             webView.isHidden = true
             emptyStateContainer.isHidden = false
             showToolbar(false)
+            applyTheme()
             return
         }
         emptyStateContainer.isHidden = true
+        applyTheme()
         webView.isHidden = false
         showToolbar(true)
         // PF5: a sync can land while the page is parked off screen. Loading
@@ -430,6 +435,14 @@ final class DocsController: NSViewController, DaylightDrillActions {
         HelmCard.applyCardSurface(to: playbookCard, theme: theme,
                                   cornerRadius: HelmMetrics.rCard,
                                   daylightRadius: HelmMetrics.dSurface)
+        // R2-UX-07: the empty state sits on the page, as every module's does,
+        // not inside a full-height card around nothing. The card is the
+        // playbook's frame, so it draws only while there is a playbook.
+        if !emptyStateContainer.isHidden {
+            playbookCard.layer?.backgroundColor = nil
+            playbookCard.layer?.borderWidth = 0
+            playbookCard.layer?.shadowOpacity = 0
+        }
         playbookEmptyState?.applyTheme(theme)
         emptyStateContainer.wantsLayer = true
         // Transparent, so the card's own fill shows through rather than a

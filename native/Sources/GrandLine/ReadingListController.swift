@@ -523,6 +523,10 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
     /// The File menu's "New Link" and the drill header's Paste button.
     func newLinkFromMenu() { pasteTapped() }
 
+    @objc private func addExampleLinkTapped() {
+        _ = store.add(SeedExamples.readingListURL)
+    }
+
     @objc private func pasteTapped() {
         // The concealed-pasteboard rule, asked **before** the string is read:
         // `CredentialVaultClipboard.isConcealed` is this app's one definition
@@ -860,13 +864,21 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
                 size: .standard,
                 hue: .rose)
         } else if store.links.isEmpty {
+            // R2-UX-07: the shape every module's empty state takes - the
+            // page's own artwork and one example to start from - where this
+            // one drew a tile of its own and offered nothing to press.
+            let example = HelmButton(title: "Add an example link", variant: .secondary, symbol: "plus")
+            example.target = self
+            example.action = #selector(addExampleLinkTapped)
             state = HelmEmptyState(
                 symbol: "link",
                 title: "Nothing saved yet",
                 body: "Paste a link with \u{2318}V, drop one anywhere on this page, or press \u{2318}6 "
                     + "in the \u{2325}Space capture panel. Titles are read on this machine.",
                 size: .standard,
-                hue: RailDestination.readingList.domainHue)
+                accessory: example,
+                hue: RailDestination.readingList.domainHue,
+                symbolWatermark: true)
         } else {
             state = HelmEmptyState(
                 symbol: "line.3.horizontal.decrease.circle",
