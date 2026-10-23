@@ -36,7 +36,8 @@ enum ReviewTwoUXSelfTest {
         for check in [checkTheSidebarFollowsTheHiddenModules, checkSettingsShowsAndHidesModules,
                       checkTheLockSwitchNeedsAPassword, checkHomeSpeaksForTheVisibleModules,
                       checkAChordReachesAModule, checkTheTabChords, checkTheSidebarShowsKeyboardFocus,
-                      checkTheSidebarIsWiderAndRemembered, checkQuickConnectIsOnEveryModule] {
+                      checkTheSidebarIsWiderAndRemembered, checkQuickConnectIsOnEveryModule,
+                      checkTheToolbarTakesThePalette] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -450,6 +451,58 @@ enum ReviewTwoUXSelfTest {
         resize(window, width: 1512, shell)
         shell.show(.homeCanvas)
         settle(shell)
+    }
+
+    // MARK: U-01 - the toolbar and title bar take the palette's ground
+
+    /// A pixel of the toolbar band where no item is drawn, against the
+    /// palette's ground, in every palette - the render check the captain's
+    /// screenshot asked for. Compared in the bitmap's own colour space
+    /// (AGENTS.md's probe rule): the expected colour is converted into it,
+    /// and the sample is read raw.
+    private static func checkTheToolbarTakesThePalette(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        let restore = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(restore) }
+        resize(window, width: 1512, shell)
+        shell.show(.homeCanvas)
+        settle(shell)
+        check(window.titlebarAppearsTransparent, "the title bar is opaque, so macOS draws its own material under the toolbar", &ok)
+        var worst: (theme: String, delta: CGFloat) = ("", 0)
+        for theme in HelmTheme.allThemes {
+            ThemeManager.shared.setTheme(theme)
+            settle(shell)
+            guard let frameView = window.contentView?.superview,
+                  let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else {
+                fail("the window could not be rendered", &ok)
+                return
+            }
+            frameView.cacheDisplay(in: frameView.bounds, to: rep)
+            // Half way along the content column, half way down the toolbar:
+            // Home's toolbar has nothing between its crumb and its trailing
+            // cluster there, only flexible space.
+            let pane = shell.debugContentPane.convert(shell.debugContentPane.bounds, to: nil)
+            let barHeight = frameView.bounds.height - window.contentLayoutRect.maxY
+            let point = NSPoint(x: pane.midX - 120, y: frameView.bounds.height - barHeight / 2)
+            let scale = CGFloat(rep.pixelsWide) / frameView.bounds.width
+            let x = Int(point.x * scale)
+            let y = Int((frameView.bounds.height - point.y) * scale)
+            guard let sample = rep.colorAt(x: x, y: y),
+                  let expected = HelmTheme.nsColor(theme.backgroundHex).usingColorSpace(rep.colorSpace) else {
+                fail("the toolbar band could not be sampled in \(theme.id)", &ok)
+                continue
+            }
+            let delta = max(abs(sample.redComponent - expected.redComponent),
+                            abs(sample.greenComponent - expected.greenComponent),
+                            abs(sample.blueComponent - expected.blueComponent))
+            if delta > worst.delta { worst = (theme.id, delta) }
+            check(delta < 0.012,
+                  "in \(theme.id) the toolbar band is \(sample) against the palette's ground \(expected) (delta \(delta))", &ok)
+            let window3 = HelmContrast.components(window.backgroundColor)
+            let ground3 = HelmContrast.components(HelmTheme.nsColor(theme.backgroundHex))
+            check(abs(window3.0 - ground3.0) < 0.01 && abs(window3.1 - ground3.1) < 0.01 && abs(window3.2 - ground3.2) < 0.01,
+                  "in \(theme.id) the window's own background is not the palette's ground", &ok)
+        }
+        print("  ok   the toolbar band matched the palette's ground in \(HelmTheme.allThemes.count) palettes, worst \(worst.theme) at \(worst.delta)")
     }
 }
 

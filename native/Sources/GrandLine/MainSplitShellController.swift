@@ -252,7 +252,11 @@ final class MainSplitShellController: WorkspaceShellController {
         workspace.lock.install(in: self, over: root)
         workspace.lock.onOverlayVisibilityChanged = { [weak self] shown in self?.lockOverlayDidChange(shown) }
 
-        themeToken = ThemeManager.shared.observe { [weak self] theme in self?.toolbar?.applyThemeSymbol(theme) }
+        themeToken = ThemeManager.shared.observe { [weak self] theme in
+            self?.toolbar?.applyThemeSymbol(theme)
+            // U-01: the window's own ground follows the palette, live.
+            self?.view.window?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex)
+        }
         // Home's subtitle is the date, so it turns over at midnight.
         dayChangeObserver = NotificationCenter.default.addObserver(
             forName: .NSCalendarDayChanged, object: nil, queue: .main
@@ -613,11 +617,23 @@ final class MainSplitShellController: WorkspaceShellController {
     /// The crumb names the module, so the system title stays out of the
     /// toolbar. It still names the window - for the Window menu, Mission
     /// Control and VoiceOver - and says only the app's name under the lock.
+    ///
+    /// U-01: the title bar is transparent always, not only under the lock.
+    /// Opaque, macOS 26 lays a "hard scroll pocket" (`NSTitlebarBackgroundView`
+    /// > `NSHardPocketView`) under the toolbar, painted with the system's own
+    /// content-background material at 90% - so in Dusk the toolbar band read
+    /// as a warm grey (about #262322 in the captain's screenshot) over a navy
+    /// window, and the same in every palette, measured in the view tree.
+    /// Transparent, AppKit hides that background and the content pane's
+    /// ground (`WorkspaceContentPaneController`, painted under the toolbar)
+    /// is what the band and the glass capsules over it show. The window's
+    /// own background takes the palette's ground too, for the frame's edges.
     private func applyTitleBar() {
         guard let window = view.window else { return }
         window.toolbar?.isVisible = !lockOverlayIsShown
         window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = lockOverlayIsShown
+        window.titlebarAppearsTransparent = true
+        window.backgroundColor = HelmTheme.nsColor(ThemeManager.shared.theme.backgroundHex)
         window.title = lockOverlayIsShown ? AppPaths.displayName : windowTitle
         window.subtitle = ""
     }
