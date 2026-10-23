@@ -27,6 +27,24 @@ enum ReviewTwoUXSelfTest {
         defer { AppSettings.shared.appLockEnabled = savedLock }
         let savedCheck = SettingsController.appPasswordCheck
         defer { SettingsController.appPasswordCheck = savedCheck }
+        // The empty-state checks need empty stores, and CI points every suite
+        // in a shard at one shared set that earlier suites have written to.
+        // So this suite brings its own, removed at exit.
+        let stores = FileManager.default.temporaryDirectory
+            .appendingPathComponent("review2-ux-stores-\(ProcessInfo.processInfo.processIdentifier)")
+        try? FileManager.default.removeItem(at: stores)
+        try? FileManager.default.createDirectory(at: stores, withIntermediateDirectories: true)
+        let redirected = ["FM_SHIFT_DIR": "tasks", "FM_SCHEDULES_FILE": "schedules.json",
+                          "FM_SCHEDULE_HISTORY_DIR": "schedule-history", "FM_DOCS_DIR": "docs",
+                          "FM_DOCS_RUNBOOKS_DIR": "runbooks"]
+        let previous = redirected.keys.map { ($0, ProcessInfo.processInfo.environment[$0]) }
+        for (key, name) in redirected { setenv(key, stores.appendingPathComponent(name).path, 1) }
+        defer {
+            for (key, value) in previous {
+                if let value { setenv(key, value, 1) } else { unsetenv(key) }
+            }
+            try? FileManager.default.removeItem(at: stores)
+        }
 
         var allOK = true
         let (window, shell) = ReviewTourLab.makeOffScreenSplitShell()
@@ -361,7 +379,13 @@ enum ReviewTwoUXSelfTest {
         // keeps its width - the sidebar shows at every width it used to.
         let narrow = (MainSplitShellController.contentMinimum + 236 + inset + 12).rounded()
         resize(window, width: narrow, shell)
-        check(abs(window.frame.width - narrow) < 0.5, "at \(Int(narrow))pt the window grew to \(Int(window.frame.width))pt", &ok)
+        // What the window was measured against, so a runner that disagrees
+        // says why (CI's 1x runner grew this window by 17pt once).
+        let measured = "window minSize \(Int(window.minSize.width)), contentMinSize \(Int(window.contentMinSize.width)), "
+            + "column floor \(Int(shell.debugColumnMinimum)), content pane \(Int(shell.debugContentPane.frame.width)) "
+            + "fitting \(Int(shell.debugContentPane.fittingSize.width)), sidebar pane \(Int(shell.debugSidebarPane?.frame.width ?? -1)), "
+            + "backing \(window.backingScaleFactor)x"
+        check(abs(window.frame.width - narrow) < 0.5, "at \(Int(narrow))pt the window grew to \(Int(window.frame.width))pt (\(measured))", &ok)
         check(!shell.debugSidebarIsCollapsed && shell.debugSidebarWidth < 263 && shell.debugSidebarWidth >= 236,
               "at \(Int(narrow))pt the sidebar is \(shell.debugSidebarIsCollapsed ? "collapsed" : "\(shell.debugSidebarWidth)pt"), want it narrowed between 236 and 264", &ok)
         // Below the old threshold it steps aside, as it always did.
