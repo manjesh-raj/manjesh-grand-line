@@ -462,8 +462,15 @@ final class MainSplitShellController: WorkspaceShellController {
     /// `windowWidth`, up to the captain's own.
     private func sidebarFitWidth(windowWidth: CGFloat) -> CGFloat {
         let inspector = inspectorItem.isCollapsed ? 0 : WorkspaceInspectorController.width
-        return min(sidebarThickness, windowWidth - columnFloor - inspector - sidebarInset)
+        return min(sidebarThickness, windowWidth - columnFloor - inspector - sidebarChrome)
     }
+
+    /// What a showing sidebar takes beside its own width: its pane's inset
+    /// and the divider after it. The divider counts: measured on CI's 1x
+    /// runner, which draws no inset, a sidebar sized without its 1pt divider
+    /// overfilled the window by that point, and the window grew to keep the
+    /// sidebar at full width instead (955 + 264 + 1 = 1220 for 1203).
+    private var sidebarChrome: CGFloat { sidebarInset + splitController.splitView.dividerThickness }
 
     /// The narrowest the sidebar is drawn at before it steps aside: the
     /// comfort width, or the captain's own if they chose narrower.
@@ -596,7 +603,7 @@ final class MainSplitShellController: WorkspaceShellController {
             ? Self.inspectorColumnMinimum : Self.contentMinimum
         // U-03: room for the sidebar at its comfort width, which is where it
         // narrows to - not the captain's wider one.
-        let needed = floor + (sidebarShown ? sidebarStepsAsideBelow + sidebarInset : 0)
+        let needed = floor + (sidebarShown ? sidebarStepsAsideBelow + sidebarChrome : 0)
             + (inspectorShown ? WorkspaceInspectorController.width : 0)
         let current = window.contentRect(forFrameRect: window.frame).width
         guard current < needed else { return }
@@ -676,7 +683,7 @@ final class MainSplitShellController: WorkspaceShellController {
             makeRoom(sidebarShown: !sidebarItem.isCollapsed, inspectorShown: true)
             let floor = details ? Self.inspectorColumnMinimum : Self.contentMinimum
             if let window = view.window, !sidebarItem.isCollapsed,
-               window.contentRect(forFrameRect: window.frame).width - sidebarStepsAsideBelow - sidebarInset
+               window.contentRect(forFrameRect: window.frame).width - sidebarStepsAsideBelow - sidebarChrome
                 - WorkspaceInspectorController.width < floor {
                 setSidebarCollapsed(true, animated: false)
                 sidebarCollapsedForRoom = true
@@ -1194,6 +1201,7 @@ final class MainSplitShellController: WorkspaceShellController {
     var debugSidebarIsCollapsed: Bool { sidebarItem.isCollapsed }
     var debugInspectorIsCollapsed: Bool { inspectorItem.isCollapsed }
     var debugColumnMinimum: CGFloat { contentItem.minimumThickness }
+    var debugDividerThickness: CGFloat { splitController.splitView.dividerThickness }
     /// The inspector back at its launch state: wanted, not held open.
     func debugResetInspectorPreference() {
         inspectorWanted = true

@@ -384,7 +384,7 @@ enum ReviewTwoUXSelfTest {
         let measured = "window minSize \(Int(window.minSize.width)), contentMinSize \(Int(window.contentMinSize.width)), "
             + "column floor \(Int(shell.debugColumnMinimum)), content pane \(Int(shell.debugContentPane.frame.width)) "
             + "fitting \(Int(shell.debugContentPane.fittingSize.width)), sidebar pane \(Int(shell.debugSidebarPane?.frame.width ?? -1)), "
-            + "backing \(window.backingScaleFactor)x"
+            + "divider \(shell.debugDividerThickness), backing \(window.backingScaleFactor)x"
         check(abs(window.frame.width - narrow) < 0.5, "at \(Int(narrow))pt the window grew to \(Int(window.frame.width))pt (\(measured))", &ok)
         check(!shell.debugSidebarIsCollapsed && shell.debugSidebarWidth < 263 && shell.debugSidebarWidth >= 236,
               "at \(Int(narrow))pt the sidebar is \(shell.debugSidebarIsCollapsed ? "collapsed" : "\(shell.debugSidebarWidth)pt"), want it narrowed between 236 and 264", &ok)
