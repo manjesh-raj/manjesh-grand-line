@@ -1130,3 +1130,105 @@ The floating bar's pages draw exactly what they did, with one exception found on
 - `MainSplitShellSelfTest`, `PageRedesignsSelfTest` and `SplitShellModelSelfTest` changed where this stage changed what they pinned: Quick Connect's case drives the Hosts icon, the column reopen is measured on Notebook's Pages column, and the Knowledge cases check that there is no tree.
 - The tour lab has `demo setup`, `demo forks` and `demo focuslog`.
   Every affected page was rendered in Dusk and Daylight at 1512 and 1100, in both layouts, before and after.
+
+## The second full review's UX pass (`fm/grandline-review2-ux-1792762059`)
+
+This branch fixes R2-UX-01 to R2-UX-09 of the second full review, and the captain's three UI items U-01 to U-03.
+The report is `data/grandline-full-review-2-1792743067/report.md` in the firstmate home.
+One commit per id, with the id in the message.
+
+### What shipped
+
+- **R2-UX-02, one taxonomy.**
+  In the sidebar layout Home draws no space tabs, and the Go menu is read off `ModuleTable` in sidebar order (`WorkspaceGoMenu`).
+  The floating bar keeps its spaces and the spaces' Go menu, because that is the layout they belong to.
+- **R2-UX-01 (b), profiles.**
+  `WorkspaceProfile` has Personal (ten modules) and Operator (everything).
+  A fresh install starts Personal, and an install from before profiles is Operator, so nothing it had disappears.
+  The stored truth is `fm.hiddenModules`, and the sidebar, the Go menu, ⌘K and Home's default cards all read it.
+  A hidden module's pages are never torn down, and a link that names one still opens it.
+- **R2-UX-01 (c), plain language** outside the operator modules: Home's notes, the lock screen's greeting, and quick capture's copy.
+- **R2-UX-03 and R2-A11Y-01, chords and focus.**
+  ⌘1 to ⌘9 pick the first nine listed modules, and the Go menu shows them.
+  On Console, a host page and Tools the same chords keep picking that page's own tab (`TabKeyboardShortcuts` sees the key first).
+  That is option A, the captain's choice through firstmate.
+  Option B would move those pages' tab chords to ⌥⌘1 to ⌥⌘9.
+  ⌘{ and ⌘} step a module's tabs, the sidebar row tooltips name the chord, and a focused sidebar draws a 2pt ring on its lit row.
+- **R2-UX-09.** ⌥⌘S always toggles the app sidebar.
+  The page's own column (Notebook's Pages, Settings' categories, Schedules' list) is ⌥⇧⌘S, in the sidebar layout only.
+- **U-03, the sidebar's width.**
+  It opens at 264pt, can be dragged to 200-360pt, and remembers the width (`fm.sidebarWidth`).
+  When the window narrows it first gives width back down to 236pt, and only then steps aside.
+- **U-02, Quick Connect.** Two icons with no caption, on every module, at the head of the trailing cluster.
+- **U-01, the title bar.**
+  On macOS 26 an opaque title bar inserts `NSTitlebarBackgroundView` and an `NSHardPocketView` with system material.
+  That material, not the toolbar, is what painted a band that did not match the palette.
+  `applyTitleBar` keeps the title bar transparent, so the content pane's ground shows through in all 26 palettes.
+- **R2-UX-05, one name per level.**
+  The crumb names the module.
+  The content line under it carries only the live subtitle, and is hidden when there is none.
+  Crew's greeting and Settings' hero step aside in the sidebar layout.
+- **R2-UX-04 and R2-UI-02.**
+  The toolbar enforces one rule: the page's primary verb is the far-right filled button, and every page action is outlined.
+  Crew, Automic Vault and Dictation moved their primary out of the page.
+  Health's Refresh is `HelmButton.refresh()`.
+- **R2-UX-06.**
+  Console, Code and Notebook put their page tools in the window toolbar rather than a second row under it.
+  Every page action has a working overflow menu form (`WorkspaceToolbarMenuRepresentable`).
+- **R2-UX-07, empty states.**
+  Tasks shows one start-here state with an example task.
+  Schedules shows one centred invitation with an example schedule instead of three empty cards.
+  Reading list offers an example link.
+  Notebook, Reading list and Schedules share the watermarked look, and Postmortems' copy follows the profile.
+- **R2-UX-08, Settings housekeeping.**
+  Window layout and Interface text size have a Relaunch Grand Line button while a change is waiting (`AppRelaunch`).
+  The lock thresholds are editable (see `15-app-lock.md`).
+  The locality fact is said once, in the column footer.
+  In the sidebar layout the window's Back and Forward walk Settings' categories, so the page draws no arrows of its own.
+
+### What was measured on the way
+
+- **AppKit synthesises a menu form for a view toolbar item, and it does nothing.**
+  Its target is the `NSToolbarItem` itself, with `_standardCustomMenuFormRepresentationClicked:`.
+  So an overflowed page action looked present and ran nothing.
+  The overflow check rejects any item whose target is an `NSToolbarItem`.
+- **The crumb overflowed first on Notebook at 1512**, with about 50pt short.
+  Notebook's three-segment Source/Split/Preview switch became a pop-up, and its utilities moved to a More menu.
+  Its labelled actions become icons below 1600pt.
+  Quick Connect yields first only in the compact toolbar, or it would push out R2-BUG-07's items.
+- **R2-BUG-07's guarantee changed, and says so.**
+  The crumb stays at 1100 and at 1512, and Recents and the inspector stay from 1700.
+  Below that, whatever overflows has a working menu form.
+- **The window's Back and Forward recorded destinations only**, so removing Settings' own arrows would have dropped its category history.
+  `NavigationHistory` now records a place per entry for a page that adopts `WorkspaceHistoryPlace`.
+  An arrival that names no place matches any place on that destination, and the entry keeps the place it was recorded with.
+- **A momentary `NSSegmentedControl` drops a selection set from code**, so `selectedSegment` reads -1 and the action does nothing.
+  The suite holds the selection with `.selectOne` tracking for the one send, then restores `.momentary`.
+- **A second copy cannot be opened next to this one to relaunch.**
+  `SingleInstanceGuard` hands its launch straight back.
+  So `AppRelaunch` starts a detached `/bin/sh` that waits for this pid to exit and only then runs `open`.
+  The pid and the path are positional parameters, never spliced into the script.
+- **Setting the window's `backgroundColor` to the palette ground dropped every toolbar item from the frame.**
+  U-01's first version did it "for the frame's edges".
+  The after-renders showed Daylight with no crumb, no buttons and no bell, while Dusk drew them.
+  The title bar rendered alone still drew its items, and removing the one line brought them back with the band still matching.
+  The window server's own image of an off-screen window omits the title bar in every theme, so it could not settle the question either way.
+  The U-01 check sampled only where no item is drawn, which is why it passed.
+  It now also counts the Search item's ink pixels in every palette.
+- **Schedules' and Tasks' empty states sat at the top of their scroll documents.**
+  Both are placed in the content pane with `placeAsPageEmptyState`, like the Reading list's.
+  At the suite's 720pt window a state at the top is close enough to the middle to pass a middle-third test, so the check measures at 950pt and asks for the centre within 8% of the pane.
+- **The tour lab starts locked**, so Console never opens its first shell tab, and its tab row renders empty.
+  In an unlocked session the row holds the tab chips and "+".
+- **`boardTasks()` is a dictionary**, so `isEmpty` on it was never true for an empty store.
+
+### Verification
+
+- `FM_RUN_REVIEW2_UX_MODEL_TESTS` is new and pure logic, in CI's blocking lane.
+- `FM_RUN_REVIEW2_UX_TESTS` is new and window-backed (`NEEDS_SESSION`).
+  It mounts the real sidebar shell off screen, in its own stores.
+- `FM_RUN_APP_LOCK_OPT_IN_TESTS` is new and pure logic.
+- Every fix was reverted at least once and failed a named check.
+  The proofs are under the task's data folder, one file per id.
+- Assertions that legitimately changed: Settings' card count (22 to 23, the Sidebar section), Slice 6's toggle count (7 to 8, the lock switch), the floating-bar subtitle no longer carrying the locality fact (`SettingsSidebarNavigationSelfTest`, `DaylightDrillPageSlice6SelfTest`), and R2-BUG-07's guarantee above.
+- Before and after renders were taken with the tour lab in Dusk and Daylight, at 1512 and 1100, in both layouts.

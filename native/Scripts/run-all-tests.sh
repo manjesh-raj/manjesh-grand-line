@@ -188,6 +188,7 @@ FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS 135
 FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TESTS 102
 FM_RUN_DESTINATION_MOUNTING_TESTS 84
 FM_RUN_MAIN_SPLIT_SHELL_TESTS 48
+FM_RUN_REVIEW2_UX_TESTS 36
 FM_RUN_SCHEDULE_RUN_HISTORY_STATUS_LOG_TESTS 43
 FM_RUN_PAGE_POLISH_UXP_TESTS 35
 FM_RUN_SHIFT_TASKS_PAGE_TESTS 32
@@ -347,6 +348,10 @@ NEEDS_SESSION=(
   # sidebar shell. Its models and source guards
   # (`FM_RUN_SIDEBAR_REDESIGNS_MODEL_TESTS`) are deliberately NOT here.
   "FM_RUN_SIDEBAR_REDESIGNS_TESTS"  # session-not-window: builds its windows via ReviewTourLab.makeOffScreenSplitShell() and makeOffScreenShell()
+  # The second full review's UX items and the captain's three UI items, in a
+  # real sidebar shell. Its models and source guards
+  # (`FM_RUN_REVIEW2_UX_MODEL_TESTS`) are deliberately NOT here.
+  "FM_RUN_REVIEW2_UX_TESTS"  # session-not-window: builds its windows via ReviewTourLab.makeOffScreenSplitShell() and makeOffScreenShell()
   "FM_RUN_HELM_KIT_VIEW_TESTS"
   # `fm/grandline-claude-widget-refresh-shift`: builds a real `HelmModuleCard`
   # and a real hub in real windows and reads resolved header frames back after

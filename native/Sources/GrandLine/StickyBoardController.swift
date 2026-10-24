@@ -897,3 +897,9 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     }
     #endif
 }
+
+// R2-UX-04: New Note is the page's primary verb, the far-right filled button
+// in the sidebar layout; Archive stays an outlined page action.
+extension StickyBoardController: WorkspacePrimaryActionProviding {
+    var workspacePrimaryAction: NSView? { newNoteButton }
+}

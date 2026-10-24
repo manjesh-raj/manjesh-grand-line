@@ -89,6 +89,11 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// B10 workaround on the label).
     private let modelReadyPill = HelmStatusPill(style: .dotWord)
     private let modelActionButton = HelmButton(title: "", variant: .primary)
+    /// R2-UX-04: the sidebar layout's toolbar primary - the model row's
+    /// action while it is the page's main one (Download Model, Retry
+    /// Download), so it is not a filled button inside a card.
+    private let toolbarModelButton = HelmButton(title: "Download Model", variant: .primary, symbol: "arrow.down.circle")
+    private(set) var drawsSidebarLayout = false
     /// GL-35: 547MB is not a footprint to strand. Only shown while the model
     /// is actually on disk. UI-53: a quiet "⋯" whose menu holds Delete Model…,
     /// which still asks through `HelmConfirm` - not a destructive button at
@@ -980,6 +985,13 @@ final class DictationController: NSViewController, DaylightDrillActions {
     private func applyActionEmphasis() {
         let variant: HelmButton.Variant = modelActionIsMain && statusActionButton.isHidden ? .primary : .secondary
         if modelActionButton.variant != variant { modelActionButton.variant = variant }
+        // R2-UX-04: in the sidebar layout the main action is the toolbar's,
+        // and the card's own button steps out while the toolbar carries it.
+        guard drawsSidebarLayout else { return }
+        let inToolbar = variant == .primary
+        toolbarModelButton.title = modelActionButton.title
+        if toolbarModelButton.isHidden == inToolbar { toolbarModelButton.isHidden = !inToolbar }
+        modelActionButton.isHidden = inToolbar
     }
 
     /// Re-reads `store.vocabulary` and re-seeds the well's tokens - called on
@@ -1184,3 +1196,27 @@ final class DictationController: NSViewController, DaylightDrillActions {
         }
     }
 }
+
+// R2-UX-04: the model download, when it is what the page is for right now,
+// is the toolbar's far-right filled button in the sidebar layout.
+extension DictationController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding {
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+        toolbarModelButton.target = self
+        toolbarModelButton.action = #selector(modelActionTapped)
+        toolbarModelButton.toolTip = "Download the local speech model (about 547MB) to this Mac"
+        toolbarModelButton.isHidden = true
+        applyActionEmphasis()
+    }
+
+    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? toolbarModelButton : nil }
+}
+
+#if FM_SELFTESTS
+extension DictationController {
+    var debugToolbarModelButton: HelmButton { toolbarModelButton }
+    var debugCardModelButtonIsHidden: Bool { modelActionButton.isHidden }
+}
+#endif

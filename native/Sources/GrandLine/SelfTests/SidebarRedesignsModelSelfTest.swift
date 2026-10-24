@@ -96,22 +96,19 @@ enum SidebarRedesignsModelSelfTest {
     private static func checkQuickConnectIsTwoIcons(_ ok: inout Bool) {
         let toolbar = WorkspaceToolbar(splitView: NSSplitView())
         let ids = WorkspaceToolbar.ItemID.quickConnect
-        check(ids == [WorkspaceToolbar.ItemID.quickConnectCaption, WorkspaceToolbar.ItemID.quickConnectConsole,
-                      WorkspaceToolbar.ItemID.quickConnectHosts],
-              "Quick Connect is not its caption, then Console, then Hosts", &ok)
+        // U-02 took the caption out: Console, then Hosts.
+        check(ids == [WorkspaceToolbar.ItemID.quickConnectConsole, WorkspaceToolbar.ItemID.quickConnectHosts],
+              "Quick Connect is not Console, then Hosts", &ok)
         let allowed = toolbar.toolbarAllowedItemIdentifiers(toolbar.toolbar)
         check(ids.allSatisfy(allowed.contains), "the toolbar cannot show Quick Connect's items", &ok)
         let item = { (id: NSToolbarItem.Identifier) in
             toolbar.toolbar(toolbar.toolbar, itemForItemIdentifier: id, willBeInsertedIntoToolbar: true)
         }
-        guard let caption = item(WorkspaceToolbar.ItemID.quickConnectCaption),
-              let console = item(WorkspaceToolbar.ItemID.quickConnectConsole),
+        guard let console = item(WorkspaceToolbar.ItemID.quickConnectConsole),
               let hosts = item(WorkspaceToolbar.ItemID.quickConnectHosts) else {
-            fail("the toolbar builds no item for one of Quick Connect's three", &ok)
+            fail("the toolbar builds no item for one of Quick Connect's two", &ok)
             return
         }
-        check((caption.view as? NSTextField)?.stringValue == "Quick Connect",
-              "the caption reads \((caption.view as? NSTextField)?.stringValue ?? "nothing")", &ok)
         // Two separate icons: two items, each its own image and its own
         // action - one merged glyph would be one item.
         check(console.image != nil && hosts.image != nil && console !== hosts
@@ -119,13 +116,21 @@ enum SidebarRedesignsModelSelfTest {
               "Console and Hosts are not two icons with two actions", &ok)
         check(WorkspaceToolbar.QuickConnectIcon.consoleSymbol != WorkspaceToolbar.QuickConnectIcon.hostsSymbol,
               "Console and Hosts draw the same symbol", &ok)
-        check(console.label == "Console" && hosts.label == "Hosts", "the icons are labelled \(console.label) and \(hosts.label)", &ok)
-        check(caption.menuFormRepresentation?.action != nil,
-              "the caption has no overflow menu form - in the overflow menu it would do nothing", &ok)
-        check(console.visibilityPriority == WorkspaceToolbar.moduleActionPriority
-                && hosts.visibilityPriority == WorkspaceToolbar.moduleActionPriority
-                && caption.visibilityPriority == .low,
-              "Quick Connect's items left the module action's overflow band", &ok)
+        // With no caption, each icon's label says what it is - for VoiceOver,
+        // and for the overflow menu, which lists an image item by its label.
+        check(console.label == "Quick Connect to Console" && hosts.label == "Quick Connect to a Host",
+              "the icons are labelled \(console.label) and \(hosts.label)", &ok)
+        check(console.toolTip?.hasPrefix("Quick Connect to Console") == true && hosts.toolTip?.hasPrefix("Quick Connect to a host") == true,
+              "the icons' tooltips do not say they are Quick Connect: \(console.toolTip ?? "") / \(hosts.toolTip ?? "")", &ok)
+        check(console.image?.accessibilityDescription == console.label && hosts.image?.accessibilityDescription == hosts.label,
+              "the icons' images are not described for VoiceOver", &ok)
+        // U-02: above the module's action and the chip, below the page's own
+        // actions, so a narrow window keeps them and still has the page's.
+        check(console.visibilityPriority == WorkspaceToolbar.quickConnectPriority
+                && hosts.visibilityPriority == WorkspaceToolbar.quickConnectPriority
+                && WorkspaceToolbar.quickConnectPriority.rawValue > WorkspaceToolbar.focusChipPriority.rawValue
+                && WorkspaceToolbar.quickConnectPriority.rawValue < NSToolbarItem.VisibilityPriority.standard.rawValue,
+              "Quick Connect's icons left their overflow band", &ok)
 
         guard let shell = code("MainSplitShellController.swift") else {
             fail("could not read MainSplitShellController.swift - the guard would pass vacuously", &ok)
@@ -133,8 +138,8 @@ enum SidebarRedesignsModelSelfTest {
         }
         check(!shell.contains("setModuleAction(title: \"Quick Connect\""),
               "the shell draws Quick Connect as one button again", &ok)
-        check(shell.contains("toolbar.setQuickConnect(module == .console)"),
-              "the shell no longer shows Quick Connect on Console alone", &ok)
+        check(shell.contains("toolbar.setQuickConnect(console: !hidden.contains(.console), hosts: !hidden.contains(.connections))"),
+              "the shell no longer shows Quick Connect on every module (U-02)", &ok)
         check(shell.contains("toolbar.onQuickConnectHosts = { [weak self] in self?.revealHostsQuickConnect() }"),
               "the Hosts icon no longer opens the quick-connect host picker", &ok)
         let consoleBody = shell.range(of: "private func quickConnectConsole()").map {

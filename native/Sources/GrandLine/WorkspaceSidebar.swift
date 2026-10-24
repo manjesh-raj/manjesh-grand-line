@@ -47,11 +47,16 @@ enum WorkspaceSidebarModel {
         var children: [Node] = []
     }
 
-    /// The sidebar's top level: Home, then the four groups.
-    static func roots(sessions: [HostSession]) -> [Node] {
+    /// The sidebar's top level: Home, then the four groups, without the
+    /// modules the captain's profile hides (R2-UX-01 (b)). A group with
+    /// nothing left in it is left out too, rather than drawn as an empty
+    /// heading.
+    static func roots(sessions: [HostSession], hidden: Set<WorkspaceModule> = []) -> [Node] {
         var roots = [Node(entry: .module(.home))]
         for group in WorkspaceGroup.allCases {
-            let rows = modules(in: group).map { module -> Node in
+            let shown = modules(in: group, hidden: hidden)
+            guard !shown.isEmpty else { continue }
+            let rows = shown.map { module -> Node in
                 guard module == .console else { return Node(entry: .module(module)) }
                 return Node(entry: .module(.console), children: sessions.map { Node(entry: .session(hostID: $0.hostID)) })
             }
@@ -61,14 +66,14 @@ enum WorkspaceSidebarModel {
     }
 
     /// The modules in `group`, in the module table's sidebar order.
-    static func modules(in group: WorkspaceGroup) -> [WorkspaceModule] {
-        WorkspaceModule.allCases.filter { $0.group == group }
+    static func modules(in group: WorkspaceGroup, hidden: Set<WorkspaceModule> = []) -> [WorkspaceModule] {
+        WorkspaceModule.allCases.filter { $0.group == group && !hidden.contains($0) }
     }
 
     /// Every module the sidebar lists, once - the completeness
     /// `SplitShellModelSelfTest` asserts against the module table.
-    static func listedModules() -> [WorkspaceModule] {
-        [.home] + WorkspaceGroup.allCases.flatMap(modules(in:))
+    static func listedModules(hidden: Set<WorkspaceModule> = []) -> [WorkspaceModule] {
+        [.home] + WorkspaceGroup.allCases.flatMap { modules(in: $0, hidden: hidden) }
     }
 }
 
@@ -93,7 +98,8 @@ extension WorkspaceModule {
 /// Sidebars: 32pt rows, 24pt icons, 15pt text). The column drew the Medium
 /// size (28pt rows, 13pt text) until stage 7, when the captain asked for
 /// bigger text and icons because the column had room to spare below
-/// Settings. Every row still fits the column's 236pt width beside its badge,
+/// Settings. Every row still fits the column's 264pt width beside its badge
+/// (U-03 widened it from 236, which still fits and is where it narrows to),
 /// and the list scrolls in a window too short to show it all, as it always
 /// did. Each size goes through `HelmType.scaled`, so the chrome text scale
 /// still moves all of them together.
@@ -166,11 +172,14 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// mistaken for the captain picking one.
     private var isApplyingSelection = false
     private var themeToken: ThemeObservation?
+    /// The modules the captain's profile leaves out (R2-UX-01 (b)).
+    private var hidden: Set<WorkspaceModule> = AppSettings.shared.hiddenModules
+    private var hiddenObserver: NSObjectProtocol?
 
     // MARK: Build
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 236, height: 600))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: MainSplitShellController.sidebarWidth, height: 600))
         view = root
 
         header.translatesAutoresizingMaskIntoConstraints = false
@@ -228,6 +237,17 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         ])
 
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
+        hiddenObserver = NotificationCenter.default.addObserver(
+            forName: AppSettings.hiddenModulesDidChange, object: nil, queue: .main
+        ) { [weak self] _ in self?.setHiddenModules(AppSettings.shared.hiddenModules) }
+        rebuild()
+    }
+
+    /// The captain showed or hid a module in Settings: rebuild the rows.
+    func setHiddenModules(_ modules: Set<WorkspaceModule>) {
+        guard modules != hidden else { return }
+        hidden = modules
+        guard isViewLoaded else { return }
         rebuild()
     }
 
@@ -236,6 +256,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
+        if let hiddenObserver { NotificationCenter.default.removeObserver(hiddenObserver) }
     }
 
     // MARK: What the shell tells it
@@ -281,7 +302,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     }
 
     private func rebuild() {
-        roots = WorkspaceSidebarModel.roots(sessions: sessions).map(WorkspaceSidebarItem.init)
+        roots = WorkspaceSidebarModel.roots(sessions: sessions, hidden: hidden).map(WorkspaceSidebarItem.init)
         isApplyingSelection = true
         outlineView.reloadData()
         for item in roots where item.isSection {
@@ -383,6 +404,9 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             let cell = WorkspaceSidebarPageCell()
             cell.configure(symbol: module.symbol, title: module.title, badge: signals.badge(for: module), theme: theme)
             cell.setLit(lit, theme: theme)
+            // R2-UX-03: the row says its chord, as a menu item would.
+            cell.toolTip = WorkspaceGoMenu.chordText(for: module, hidden: hidden).map { "\(module.title) (\($0))" }
+                ?? module.title
             return cell
         case .session(let hostID):
             let cell = WorkspaceSidebarSessionCell()
@@ -597,7 +621,40 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 /// The outline view, with one seam a suite needs: `clickedRow` is set by
 /// AppKit only during a real right-click, so a check of the context menu
 /// stands in for it here rather than reimplementing the menu.
+///
+/// R2-A11Y-01: it also says when the keyboard is in the list. The lit row
+/// is drawn by `WorkspaceSidebarRowView`, which suppresses the source list's
+/// own emphasised selection - the one cue a stock sidebar gives for focus -
+/// so with nothing else the lit row looked the same whether or not the keys
+/// would move it. While the list holds the keyboard because a key put it
+/// there (⌘⇧D, Tab, Full Keyboard Access - `HelmFocusVisibility`), the lit
+/// row wears an accent ring as well as its wash. A mouse click does not
+/// light it, and the first arrow key after one does.
 final class WorkspaceSidebarOutlineView: NSOutlineView {
+    private(set) var showsKeyboardFocus = false {
+        didSet {
+            guard showsKeyboardFocus != oldValue else { return }
+            enumerateAvailableRowViews { rowView, _ in (rowView as? WorkspaceSidebarRowView)?.refreshFocus() }
+        }
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { showsKeyboardFocus = HelmFocusVisibility.shouldShowRing }
+        return became
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { showsKeyboardFocus = false }
+        return resigned
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if window?.firstResponder === self { showsKeyboardFocus = true }
+        super.keyDown(with: event)
+    }
+
     #if FM_SELFTESTS
     var debugClickedRow: Int?
     override var clickedRow: Int { debugClickedRow ?? super.clickedRow }
@@ -650,6 +707,29 @@ final class WorkspaceSidebarRowView: NSTableRowView {
         didSet { if isSelected != oldValue { paintFill() } }
     }
 
+    /// R2-A11Y-01: the accent ring on the lit row while the keyboard is in
+    /// the list (`WorkspaceSidebarOutlineView.showsKeyboardFocus`).
+    private(set) var showsFocusRing = false
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        refreshFocus()
+    }
+
+    func refreshFocus() {
+        let outline = sequence(first: superview, next: { $0?.superview })
+            .lazy.compactMap { $0 as? WorkspaceSidebarOutlineView }.first
+        let focused = isSelected && selectionHighlightStyle != .none && (outline?.showsKeyboardFocus ?? false)
+        showsFocusRing = focused
+        let theme = ThemeManager.shared.theme
+        HelmMotion.withoutActions {
+            fill.layer?.borderWidth = focused ? Self.focusRingWidth : 0
+            fill.layer?.borderColor = focused ? Self.litInk(theme).cgColor : nil
+        }
+    }
+
+    static let focusRingWidth: CGFloat = 2
+
     override func layout() {
         super.layout()
         fill.frame = bounds.insetBy(dx: HelmMetrics.s2, dy: 1)
@@ -678,6 +758,7 @@ final class WorkspaceSidebarRowView: NSTableRowView {
             color = nil
         }
         fill.paint(color, cornerRadius: HelmMetrics.rChip + 1)
+        refreshFocus()
     }
 
     static func wash(_ theme: HelmTheme) -> NSColor {

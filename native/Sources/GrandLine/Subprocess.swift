@@ -648,9 +648,9 @@ enum Subprocess {
     /// without capturing its output.
     ///
     /// This is the one shape `run` cannot express, and it exists for exactly
-    /// one caller: the self-update relaunch helper (`AppUpdateInstaller`),
+    /// one caller: Settings' "Relaunch Grand Line" helper (`AppRelaunch`),
     /// whose child is waiting for *this* process to exit before it opens the
-    /// replaced bundle. Waiting for it, as every other call site does, would
+    /// bundle again. Waiting for it, as every other call site does, would
     /// deadlock by construction.
     ///
     /// It is on `Subprocess` rather than hand-rolled at the call site so that

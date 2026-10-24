@@ -92,20 +92,55 @@ enum MainSplitShellSelfTest {
         resize(window, width: 1100, shell)
         settle(shell)
         let notebook = shell.workspace.notebook
-        let wanted = [WorkspaceToolbar.ItemID.crumb, WorkspaceToolbar.ItemID.recents, WorkspaceToolbar.ItemID.inspector]
-        func shown() -> [NSToolbarItem.Identifier] {
+        // What R2-BUG-07 kept on the toolbar, as far as Knowledge's five tabs
+        // (422pt) leave room for it now that R2-UX-06 moved Notebook's own
+        // toolbar row up here and U-02 put Quick Connect on every module: the
+        // crumb, which is the module's one name (R2-UX-05), at every width,
+        // and Recents and the inspector button from 1700. Whatever does not
+        // fit runs from the overflow menu - checked item by item below, and
+        // the page's own controls through their menu form.
+        func shown(_ wanted: [NSToolbarItem.Identifier]) -> [NSToolbarItem.Identifier] {
             let visible = Set((window.toolbar?.visibleItems ?? []).map(\.itemIdentifier))
             return wanted.filter { visible.contains($0) }
         }
+        func overflowRuns(_ width: Int) {
+            let visible = Set((window.toolbar?.visibleItems ?? []).map(\.itemIdentifier))
+            for item in window.toolbar?.items ?? [] where !visible.contains(item.itemIdentifier)
+                && item.itemIdentifier != .sidebarTrackingSeparator && item.itemIdentifier != .flexibleSpace
+                && item.itemIdentifier != .space {
+                // An image item runs its own action from the overflow menu. A
+                // view item needs a form of its own: AppKit synthesises one
+                // that sends `_standardCustomMenuFormRepresentationClicked:`
+                // back to the item, which for a view item runs nothing
+                // (measured), so only a submenu or a real target counts.
+                let form = item.menuFormRepresentation
+                let realTarget = form?.target.map { !($0 is NSToolbarItem) } ?? false
+                let runs = item.view == nil ? item.action != nil
+                    : (form?.submenu != nil || (realTarget && form?.action != nil))
+                check(runs, "at \(width) on Notebook \(item.itemIdentifier.rawValue) overflowed with nothing to run", &ok)
+            }
+        }
+        let crumb = [WorkspaceToolbar.ItemID.crumb]
         check(notebook.debugToolbarActionTitles == ["", ""],
               "R2-BUG-07: at 1100 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles), want icons", &ok)
-        check(shown() == wanted,
-              "R2-BUG-07: at 1100 on Notebook the toolbar shows only \(shown().map(\.rawValue)) of the crumb, Recents and inspector", &ok)
+        check(shown(crumb) == crumb, "R2-BUG-07: at 1100 on Notebook the crumb is not on the toolbar", &ok)
+        overflowRuns(1100)
+        check(shell.toolbar.debugPageActionsMenuTitles == ["View", "Today's note", "More"],
+              "Notebook's page actions overflow as \(shell.toolbar.debugPageActionsMenuTitles)", &ok)
+        // At 1512 too, since U-02 and U-03 (`compactToolbarActionsBelow`).
         resize(window, width: 1512, shell)
         settle(shell)
+        check(notebook.debugToolbarActionTitles == ["", ""],
+              "R2-BUG-07: at 1512 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles), want icons", &ok)
+        check(shown(crumb) == crumb, "at 1512 on Notebook the crumb is not on the toolbar", &ok)
+        overflowRuns(1512)
+        let all = [WorkspaceToolbar.ItemID.crumb, WorkspaceToolbar.ItemID.recents, WorkspaceToolbar.ItemID.inspector]
+        resize(window, width: 1700, shell)
+        settle(shell)
         check(notebook.debugToolbarActionTitles == ["Today's note", "New page"],
-              "R2-BUG-07: at 1512 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles)", &ok)
-        check(shown() == wanted, "at 1512 on Notebook the toolbar shows \(shown().map(\.rawValue))", &ok)
+              "R2-BUG-07: at 1700 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles)", &ok)
+        check(shown(all) == all, "at 1700 on Notebook the toolbar shows \(shown(all).map(\.rawValue))", &ok)
+        resize(window, width: 1512, shell)
     }
 
     private static func settle(_ shell: MainSplitShellController) {
@@ -172,11 +207,12 @@ enum MainSplitShellSelfTest {
             } else {
                 check(shell.debugHeader == nil, "\(module.title) draws a header the captain dropped", &ok)
             }
-            // The middle of the toolbar: Home's spaces, the module's tabs with
-            // this page's lit, or nothing for a module that is one page.
+            // The middle of the toolbar: the module's tabs with this page's
+            // lit, or nothing for a module that is one page - and nothing for
+            // Home, whose five spaces were a second map of the app (R2-UX-02).
             let names = shell.toolbar.debugTabNames
             if module == .home {
-                check(names == DaylightSpace.allCases.map(\.title), "Home's toolbar shows \(names), not its spaces", &ok)
+                check(names.isEmpty, "Home's toolbar still shows tabs \(names) (R2-UX-02 retired its spaces)", &ok)
             } else if module.drawsToolbarTabs {
                 check(names == module.tabs.map(\.name), "\(module.title)'s toolbar shows \(names)", &ok)
                 let lit = selectedTabName(shell).flatMap { name in module.tabs.first { $0.name == name } }
@@ -283,16 +319,17 @@ enum MainSplitShellSelfTest {
         } else {
             fail("Notebook has no column of its own", &ok)
         }
-        // The same reopen from ⌥⌘S, on a page whose column is the captain's.
+        // The same reopen from Toggle Page Column (⌥⇧⌘S since R2-UX-09), on a
+        // page whose column is the captain's.
         shell.show(.settings)
         settle(shell)
         if let split = (shell.debugSlotController(.settings) as? HelmSplitPageHosting)?.splitPage {
-            shell.toggleSidebarFromMenu()
+            shell.togglePageColumnFromMenu()
             settle(shell)
-            check(split.isSidebarCollapsed, "⌥⌘S did not put Settings' column away", &ok)
-            shell.toggleSidebarFromMenu()
+            check(split.isSidebarCollapsed, "Toggle Page Column did not put Settings' column away", &ok)
+            shell.togglePageColumnFromMenu()
             settle(shell)
-            check(!split.isSidebarCollapsed, "⌥⌘S did not bring Settings' column back", &ok)
+            check(!split.isSidebarCollapsed, "Toggle Page Column did not bring Settings' column back", &ok)
             check(abs(window.frame.width - 1100) < 0.5,
                   "Settings' column coming back grew a 1100pt window to \(Int(window.frame.width))pt", &ok)
         } else {
@@ -384,7 +421,8 @@ enum MainSplitShellSelfTest {
         check(!shell.debugSidebarIsCollapsed && window.firstResponder === shell.sidebar.outlineView,
               "⌘⇧D did not reveal the sidebar and focus it", &ok)
 
-        // ⌥⌘S on a page with its own column: that column, as before.
+        // R2-UX-09: ⌥⌘S on a page with its own column is still the app's
+        // sidebar, and the column is Toggle Page Column's.
         shell.show(.settings)
         settle(shell)
         guard let split = (shell.debugSlotController(.settings) as? HelmSplitPageHosting)?.splitPage else {
@@ -394,9 +432,15 @@ enum MainSplitShellSelfTest {
         let columnWasCollapsed = split.isSidebarCollapsed
         shell.toggleSidebarFromMenu()
         settle(shell)
-        check(split.isSidebarCollapsed != columnWasCollapsed && !shell.debugSidebarIsCollapsed,
-              "⌥⌘S on Settings did not toggle Settings' own column (or hid the sidebar instead)", &ok)
+        check(split.isSidebarCollapsed == columnWasCollapsed && shell.debugSidebarIsCollapsed,
+              "⌥⌘S on Settings toggled Settings' own column, or left the sidebar showing (R2-UX-09)", &ok)
         shell.toggleSidebarFromMenu()
+        settle(shell)
+        shell.togglePageColumnFromMenu()
+        settle(shell)
+        check(split.isSidebarCollapsed != columnWasCollapsed && !shell.debugSidebarIsCollapsed,
+              "Toggle Page Column on Settings did not toggle Settings' own column (or hid the sidebar instead)", &ok)
+        shell.togglePageColumnFromMenu()
         settle(shell)
 
         // On Connections the page's column is put away for the toolbar's
@@ -540,11 +584,12 @@ enum MainSplitShellSelfTest {
         check(shell.toolbar.debugPageActions.isEmpty
                 && !shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.pageActions),
               "Home still shows the previous page's actions", &ok)
-        // Home's spaces filter its cards, as the pills did.
-        check(clickTab(DaylightSpace.operations.title, shell), "Home's toolbar has no Operations space", &ok)
-        check(shell.debugHomeCanvas.selectedSpace == .operations, "the toolbar's spaces did not filter Home", &ok)
-        clickTab(DaylightSpace.overview.title, shell)
-        check(shell.debugHomeCanvas.selectedSpace == .overview, "the Home space did not come back", &ok)
+        // R2-UX-02: Home has one space here, its own. A route that still
+        // names another one lands on Home's own cards.
+        shell.selectSpace(.operations)
+        settle(shell)
+        check(shell.debugHomeCanvas.selectedSpace == .overview && shell.debugCurrentDestination == .homeCanvas,
+              "a route naming the Operations space filtered Home to \(shell.debugHomeCanvas.selectedSpace)", &ok)
 
         // The badge is the bell's own count, from the one store. (`resetForTesting`
         // tells no observer, so the first real change is what the toolbar sees.)
@@ -573,7 +618,11 @@ enum MainSplitShellSelfTest {
         for id in [WorkspaceToolbar.ItemID.search, WorkspaceToolbar.ItemID.notifications, WorkspaceToolbar.ItemID.theme] {
             check(priority(id) == .high, "\(id.rawValue) can overflow before the crumb", &ok)
         }
-        for id in [WorkspaceToolbar.ItemID.crumb, WorkspaceToolbar.ItemID.recents, WorkspaceToolbar.ItemID.inspector] {
+        // The crumb outlasts Quick Connect, the chip and the module's action
+        // since U-02: R2-UX-05 made it the one place that names the module.
+        check(priority(WorkspaceToolbar.ItemID.crumb) == WorkspaceToolbar.crumbPriority,
+              "the crumb left its overflow band", &ok)
+        for id in [WorkspaceToolbar.ItemID.recents, WorkspaceToolbar.ItemID.inspector] {
             check(priority(id) == .low, "\(id.rawValue) is not among the first to overflow", &ok)
         }
         check(items.first { $0.itemIdentifier == WorkspaceToolbar.ItemID.recents }?.menuFormRepresentation?.action != nil,
@@ -611,7 +660,7 @@ enum MainSplitShellSelfTest {
         // menu form.
         shell.show(.console)
         settle(shell)
-        check(shell.toolbar.debugQuickConnectCaption?.stringValue == "Quick Connect", "Console offers no Quick Connect", &ok)
+        check(shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.quickConnectHosts), "Console offers no Quick Connect", &ok)
         check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.quickConnectHosts), "Quick Connect has no Hosts icon", &ok)
         settle(shell)
         check(shell.debugCurrentDestination == .hosts && shell.currentModule == .connections,
@@ -735,11 +784,9 @@ enum MainSplitShellSelfTest {
         settle(shell)
         check(canvas.visibleModulesForTests == HomeCardLayout.standard.shown && AppSettings.shared.homeCardLayout == .standard,
               "Reset left \(canvas.visibleModulesForTests.map(\.rawValue))", &ok)
-        // Leaving Home's own space ends Customize.
-        clickTab(DaylightSpace.stores.title, shell)
-        check(!canvas.isCustomizing && shell.toolbar.debugModuleActionButton?.title == "Customize",
-              "switching to Stores kept Customize on", &ok)
-        clickTab(DaylightSpace.overview.title, shell)
+        // Home has no other space to leave Customize by (R2-UX-02), so Done
+        // is the way out, and it is checked above. End it for what follows.
+        if canvas.isCustomizing { shell.debugModuleAction(); settle(shell) }
     }
 
     private static func checkBackAndForward(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
@@ -886,9 +933,13 @@ enum MainSplitShellSelfTest {
         }
         check(chip.debugTitleText == task.title && chip.debugCountdownText == "25:00",
               "a running timer put \"\(chip.debugCountdownText) \(chip.debugTitleText)\" in the toolbar", &ok)
+        // The trailing cluster opens with Quick Connect's icons since U-02.
+        func clusterStart(_ ids: [NSToolbarItem.Identifier]) -> Int? {
+            ids.firstIndex { WorkspaceToolbar.ItemID.quickConnect.contains($0) || $0 == WorkspaceToolbar.ItemID.theme }
+        }
         let ids = toolbar.debugItemIdentifiers
         let focus = ids.firstIndex(of: WorkspaceToolbar.ItemID.focusTimer)
-        check(focus.map { $0 + 1 } == ids.firstIndex(of: WorkspaceToolbar.ItemID.theme),
+        check(focus.map { $0 + 1 } == clusterStart(ids),
               "the chip is not just before the trailing cluster: \(ids.map(\.rawValue))", &ok)
         // On every module, Console included - the strip never showed it
         // there - and still beside the trailing cluster after a module's own
@@ -898,7 +949,7 @@ enum MainSplitShellSelfTest {
             settle(shell)
             check(toolbar.debugFocusChipIsShown, "the focus chip is not in the toolbar under \(route.rawValue)", &ok)
             let ids = toolbar.debugItemIdentifiers
-            check(ids.firstIndex(of: WorkspaceToolbar.ItemID.focusTimer).map { $0 + 1 } == ids.firstIndex(of: WorkspaceToolbar.ItemID.theme),
+            check(ids.firstIndex(of: WorkspaceToolbar.ItemID.focusTimer).map { $0 + 1 } == clusterStart(ids),
                   "under \(route.rawValue) the chip is not just before the trailing cluster: \(ids.map(\.rawValue))", &ok)
         }
         // Through its own click recognizer, which is what Return, Space and
@@ -939,14 +990,17 @@ enum MainSplitShellSelfTest {
 
     /// At 1100 the narrow toolbar drops the chip's task name, and a running
     /// timer never pushes the page's own actions into the overflow menu -
-    /// measured on Knowledge, whose five tabs leave the least room.
+    /// measured on Console, whose whole action cluster is in the toolbar
+    /// since R2-UX-06. (Knowledge's five tabs leave Notebook's actions no
+    /// room at 1100 at all now; they run from the overflow menu's form,
+    /// which `checkNotebookLeavesTheToolbarRoomAtNarrowWidths` covers.)
     private static func checkTheFocusChipFitsTheNarrowToolbar(_ shell: MainSplitShellController, _ window: NSWindow,
                                                                _ ok: inout Bool) {
         let toolbar = shell.toolbar!
         let width = window.frame.width
         defer { resize(window, width: width, shell) }
         resize(window, width: 1100, shell)
-        shell.show(.notebook)
+        shell.show(.console)
         settle(shell)
         let actionsAlone = toolbar.debugPageActions.first?.window != nil
         var task = ShiftTask.fresh()
@@ -959,9 +1013,9 @@ enum MainSplitShellSelfTest {
               "at 1100 the chip still names its task, or its tooltip does not", &ok)
         // The fixture can fail: the page's actions fit at 1100 without a
         // timer, or there is nothing to push out.
-        check(actionsAlone, "Knowledge's actions are already in the overflow at 1100 with no timer", &ok)
+        check(actionsAlone, "Console's actions are already in the overflow at 1100 with no timer", &ok)
         check(toolbar.debugPageActions.first?.window != nil,
-              "at 1100 a running timer pushed Knowledge's actions into the toolbar's overflow menu", &ok)
+              "at 1100 a running timer pushed Console's actions into the toolbar's overflow menu", &ok)
         // Where even the compact chip leaves no room, it is the chip that
         // yields, and its overflow item still opens the ring popover.
         if chip.window == nil {

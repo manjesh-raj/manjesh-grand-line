@@ -54,11 +54,23 @@ import AppKit
 
 final class MainSplitShellController: WorkspaceShellController {
 
-    /// The prototype's sidebar width, which is where it opens; the captain
-    /// can drag it between `sidebarMinimum` and `sidebarMaximum`.
-    static let sidebarWidth: CGFloat = 236
+    /// Where the sidebar opens until the captain drags it; they can drag it
+    /// between `sidebarMinimum` and `sidebarMaximum`, and the width they
+    /// leave it at is remembered across launches (`AppSettings.sidebarWidth`).
+    ///
+    /// U-03: 264pt, up from the prototype's 236. The captain found the column
+    /// too narrow at the Large source-list size; at 236 "Connections" and a
+    /// two-digit badge were 9pt apart. 360pt is room for a long session label
+    /// without the column ever taking half of a 1512pt window from a page.
+    static let sidebarWidth: CGFloat = 264
     static let sidebarMinimum: CGFloat = 200
-    static let sidebarMaximum: CGFloat = 320
+    static let sidebarMaximum: CGFloat = 360
+    /// U-03: the narrowest the sidebar is drawn at before it steps aside for
+    /// room - the old 236pt default, at which stage 7 measured every row and
+    /// badge fitting at the Large size. Between it and the captain's width
+    /// the sidebar narrows to what the window has, so a wider default does
+    /// not lose the sidebar at any window width it used to show at.
+    static let sidebarComfortWidth: CGFloat = 236
     /// The narrowest the content column may be, which is the widest page's
     /// own minimum: the 29 pages were laid out for the floating bar's
     /// full-width body, and two of them hold more width than a column beside
@@ -160,15 +172,20 @@ final class MainSplitShellController: WorkspaceShellController {
     /// way into a collapse - measured: by the time a narrowing window's
     /// resize notification arrives, the split view has already squeezed the
     /// sidebar to its 200pt minimum, and that is not a width anyone chose.
-    private var sidebarThickness: CGFloat = MainSplitShellController.sidebarWidth
+    private var sidebarThickness: CGFloat = MainSplitShellController.rememberedSidebarWidth()
+
+    /// The captain's stored width, clamped to the range the sidebar allows.
+    static func rememberedSidebarWidth(_ settings: AppSettings = .shared) -> CGFloat {
+        guard let stored = settings.sidebarWidth, stored.isFinite else { return sidebarWidth }
+        return min(max(stored, sidebarMinimum), sidebarMaximum)
+    }
     /// The inset macOS 26 floats the sidebar in (0 before it), measured once
     /// the panes are first laid out.
     private var sidebarInset: CGFloat = 0
-    /// The room the sidebar's pane takes while it shows.
-    private var sidebarPaneWidth: CGFloat { sidebarThickness + sidebarInset }
     private var dividerDragObserver: NSObjectProtocol?
     private var scrollerStyleObserver: NSObjectProtocol?
     private var dayChangeObserver: NSObjectProtocol?
+    private var hiddenModulesObserver: NSObjectProtocol?
 
     override var namesThePageInTheTitleBar: Bool { true }
     override var clipboardHistoryController: ClipboardHistoryController? { clipboardHistory }
@@ -207,7 +224,16 @@ final class MainSplitShellController: WorkspaceShellController {
         // Home's own space shows the captain's arranged cards in this layout
         // only, set before Home's first render (it mounts eagerly). The
         // floating bar never sets one, so its hub is unchanged.
-        workspace.homeCanvas.cardLayout = AppSettings.shared.homeCardLayout
+        applyProfileToHome()
+        // R2-UX-01 (b): a profile chosen later (the welcome sheet, Settings)
+        // moves Home's default cards with it. A layout the captain arranged
+        // is theirs and stays.
+        hiddenModulesObserver = NotificationCenter.default.addObserver(
+            forName: AppSettings.hiddenModulesDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.applyProfileToHome()
+            self?.refreshModuleChrome()
+        }
         workspace.homeCanvas.onCardLayoutChanged = { layout in AppSettings.shared.homeCardLayout = layout }
         workspace.homeCanvas.onCustomizingChanged = { [weak self] _ in self?.refreshModuleChrome() }
 
@@ -226,7 +252,9 @@ final class MainSplitShellController: WorkspaceShellController {
         workspace.lock.install(in: self, over: root)
         workspace.lock.onOverlayVisibilityChanged = { [weak self] shown in self?.lockOverlayDidChange(shown) }
 
-        themeToken = ThemeManager.shared.observe { [weak self] theme in self?.toolbar?.applyThemeSymbol(theme) }
+        themeToken = ThemeManager.shared.observe { [weak self] theme in
+            self?.toolbar?.applyThemeSymbol(theme)
+        }
         // Home's subtitle is the date, so it turns over at midnight.
         dayChangeObserver = NotificationCenter.default.addObserver(
             forName: .NSCalendarDayChanged, object: nil, queue: .main
@@ -235,6 +263,15 @@ final class MainSplitShellController: WorkspaceShellController {
             self.pageSubtitle = Self.homeSubtitle()
             self.refreshModuleChrome()
         }
+    }
+
+    /// Home's cards for the captain's profile: their arranged set, or the
+    /// profile's own when they have not arranged one.
+    private func applyProfileToHome() {
+        let canvas = workspace.homeCanvas
+        canvas.standardCardLayout = .standard(for: AppSettings.shared.workspaceProfile ?? .operator)
+        canvas.hiddenModules = AppSettings.shared.hiddenModules
+        workspace.homeCanvas.cardLayout = AppSettings.shared.homeCardLayout
     }
 
     /// Home's header under its title: the day, as the prototype draws it.
@@ -250,6 +287,7 @@ final class MainSplitShellController: WorkspaceShellController {
         if let dividerDragObserver { NotificationCenter.default.removeObserver(dividerDragObserver) }
         if let scrollerStyleObserver { NotificationCenter.default.removeObserver(scrollerStyleObserver) }
         if let dayChangeObserver { NotificationCenter.default.removeObserver(dayChangeObserver) }
+        if let hiddenModulesObserver { NotificationCenter.default.removeObserver(hiddenModulesObserver) }
         if let focusTimerToken { workspace.focusTimer.unobserve(focusTimerToken) }
     }
 
@@ -257,8 +295,8 @@ final class MainSplitShellController: WorkspaceShellController {
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         // Opens at the prototype's width; `viewDidLayout` relaxes the range
         // once the split view has a real size.
-        sidebarItem.minimumThickness = Self.sidebarWidth
-        sidebarItem.maximumThickness = Self.sidebarWidth
+        sidebarItem.minimumThickness = sidebarThickness
+        sidebarItem.maximumThickness = sidebarThickness
         sidebarItem.canCollapse = true
         sidebarItem.canCollapseFromWindowResize = true
         // The content column takes every change in the window's width; the
@@ -336,6 +374,8 @@ final class MainSplitShellController: WorkspaceShellController {
             guard let self, let window = self.view.window, Self.isDividerDrag(NSApp?.currentEvent, in: window),
                   !self.sidebarItem.isCollapsed, self.sidebar.view.frame.width > 0 else { return }
             self.sidebarThickness = self.sidebar.view.frame.width
+            // U-03: the captain's width survives a relaunch.
+            AppSettings.shared.sidebarWidth = self.sidebarThickness
         }
     }
 
@@ -418,10 +458,23 @@ final class MainSplitShellController: WorkspaceShellController {
 
     // MARK: Room for the content column
 
-    /// The content column's width with the sidebar showing, at `windowWidth`.
-    private func columnWidthWithSidebar(windowWidth: CGFloat) -> CGFloat {
-        windowWidth - sidebarPaneWidth - (inspectorItem.isCollapsed ? 0 : WorkspaceInspectorController.width)
+    /// U-03: the width the sidebar can have beside the column's floor at
+    /// `windowWidth`, up to the captain's own.
+    private func sidebarFitWidth(windowWidth: CGFloat) -> CGFloat {
+        let inspector = inspectorItem.isCollapsed ? 0 : WorkspaceInspectorController.width
+        return min(sidebarThickness, windowWidth - columnFloor - inspector - sidebarChrome)
     }
+
+    /// What a showing sidebar takes beside its own width: its pane's inset
+    /// and the divider after it. The divider counts: measured on CI's 1x
+    /// runner, which draws no inset, a sidebar sized without its 1pt divider
+    /// overfilled the window by that point, and the window grew to keep the
+    /// sidebar at full width instead (955 + 264 + 1 = 1220 for 1203).
+    private var sidebarChrome: CGFloat { sidebarInset + splitController.splitView.dividerThickness }
+
+    /// The narrowest the sidebar is drawn at before it steps aside: the
+    /// comfort width, or the captain's own if they chose narrower.
+    private var sidebarStepsAsideBelow: CGFloat { min(sidebarThickness, Self.sidebarComfortWidth) }
 
     /// Keep the content column at least `contentMinimum` wide: collapse the
     /// sidebar when the window is too narrow for both, and bring it back
@@ -438,13 +491,15 @@ final class MainSplitShellController: WorkspaceShellController {
         let width = window.contentRect(forFrameRect: window.frame).width
         guard width > 0 else { return }
         toolbar.setCompact(width < WorkspaceToolbar.compactWidth)
-        let floor = columnFloor
+        let fit = sidebarFitWidth(windowWidth: width)
         if !sidebarItem.isCollapsed {
-            if columnWidthWithSidebar(windowWidth: width) < floor {
+            if fit < sidebarStepsAsideBelow {
                 setSidebarCollapsed(true, animated: false)
                 sidebarCollapsedForRoom = true
+            } else {
+                holdSidebar(at: fit)
             }
-        } else if sidebarCollapsedForRoom, columnWidthWithSidebar(windowWidth: width) >= floor {
+        } else if sidebarCollapsedForRoom, fit >= sidebarStepsAsideBelow {
             // Lay the panes out at the window's new width first, with the
             // sidebar still collapsed - which is safe, the column only gets
             // wider - so the expand below is measured against the size the
@@ -452,6 +507,28 @@ final class MainSplitShellController: WorkspaceShellController {
             view.layoutSubtreeIfNeeded()
             setSidebarCollapsed(false, animated: false)
             sidebarCollapsedForRoom = false
+        }
+    }
+
+    /// U-03: keep the showing sidebar at `width` - narrower than the
+    /// captain's while the window is short of room for it, and back out to
+    /// theirs as the window widens. The split view never grows it back by
+    /// itself (the column's holding priority is the lower one, so it takes
+    /// every point a widening window adds), and on the way in it squeezed the
+    /// sidebar to its 200pt minimum - measured, at 1196pt - because a page
+    /// still holds the wider column's widths at `contentTie` (499), above the
+    /// sidebar's 489, until it re-lays out on the next turn. So the width is
+    /// pinned for that one turn, exactly as an expand pins it.
+    private func holdSidebar(at width: CGFloat) {
+        guard didSettleInitialSidebarWidth, !sidebarItem.isCollapsed,
+              abs(sidebar.view.frame.width - width) > 0.5 else { return }
+        sidebarItem.minimumThickness = width
+        sidebarItem.maximumThickness = width
+        splitController.splitView.layoutSubtreeIfNeeded()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.sidebarItem.isCollapsed else { return }
+            self.sidebarItem.minimumThickness = Self.sidebarMinimum
+            self.sidebarItem.maximumThickness = Self.sidebarMaximum
         }
     }
 
@@ -470,9 +547,13 @@ final class MainSplitShellController: WorkspaceShellController {
         #if FM_SELFTESTS
         lastPaneMotionForTests = (pane: "sidebar", collapsed: collapsed, duration: animate ? WorkspaceMotion.paneDuration : nil)
         #endif
+        // U-03: it comes back at the captain's width, or at what the window
+        // has room for beside the column when that is less.
+        let expandWidth = view.window.map { max(sidebarStepsAsideBelow, sidebarFitWidth(
+            windowWidth: $0.contentRect(forFrameRect: $0.frame).width)) } ?? sidebarThickness
         if !collapsed {
-            sidebarItem.minimumThickness = sidebarThickness
-            sidebarItem.maximumThickness = sidebarThickness
+            sidebarItem.minimumThickness = expandWidth
+            sidebarItem.maximumThickness = expandWidth
         }
         let release: () -> Void = { [weak self] in
             guard let self, !collapsed else { return }
@@ -504,7 +585,7 @@ final class MainSplitShellController: WorkspaceShellController {
         // and the release then waits the same one turn the plain path does.
         WorkspaceMotion.setCollapsed(sidebarItem, collapsed, animated: true) { [weak self] in
             guard !collapsed, let self else { release(); return }
-            self.splitController.splitView.setPosition(self.sidebarPaneWidth, ofDividerAt: 0)
+            self.splitController.splitView.setPosition(expandWidth + self.sidebarInset, ofDividerAt: 0)
             self.splitController.splitView.layoutSubtreeIfNeeded()
             DispatchQueue.main.async(execute: release)
         }
@@ -520,7 +601,9 @@ final class MainSplitShellController: WorkspaceShellController {
         guard let window = view.window else { return }
         let floor = inspectorShown && inspectorSource?.inspectorContent != nil
             ? Self.inspectorColumnMinimum : Self.contentMinimum
-        let needed = floor + (sidebarShown ? sidebarPaneWidth : 0)
+        // U-03: room for the sidebar at its comfort width, which is where it
+        // narrows to - not the captain's wider one.
+        let needed = floor + (sidebarShown ? sidebarStepsAsideBelow + sidebarChrome : 0)
             + (inspectorShown ? WorkspaceInspectorController.width : 0)
         let current = window.contentRect(forFrameRect: window.frame).width
         guard current < needed else { return }
@@ -539,11 +622,28 @@ final class MainSplitShellController: WorkspaceShellController {
     /// The crumb names the module, so the system title stays out of the
     /// toolbar. It still names the window - for the Window menu, Mission
     /// Control and VoiceOver - and says only the app's name under the lock.
+    ///
+    /// U-01: the title bar is transparent always, not only under the lock.
+    /// Opaque, macOS 26 lays a "hard scroll pocket" (`NSTitlebarBackgroundView`
+    /// > `NSHardPocketView`) under the toolbar, painted with the system's own
+    /// content-background material at 90% - so in Dusk the toolbar band read
+    /// as a warm grey (about #262322 in the captain's screenshot) over a navy
+    /// window, and the same in every palette, measured in the view tree.
+    /// Transparent, AppKit hides that background and the content pane's
+    /// ground (`WorkspaceContentPaneController`, painted under the toolbar)
+    /// is what the band and the glass capsules over it show.
+    ///
+    /// The window's own `backgroundColor` is left alone, deliberately.
+    /// Setting it to a light palette's ground (Daylight, measured) made the
+    /// frame stop drawing every toolbar item over the content pane - the
+    /// crumb, the buttons and the bell were gone, while a dark palette's ground
+    /// drew them. The title bar alone still drew its items, so it was the
+    /// frame's composition, and the band matches the palette without it.
     private func applyTitleBar() {
         guard let window = view.window else { return }
         window.toolbar?.isVisible = !lockOverlayIsShown
         window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = lockOverlayIsShown
+        window.titlebarAppearsTransparent = true
         window.title = lockOverlayIsShown ? AppPaths.displayName : windowTitle
         window.subtitle = ""
     }
@@ -583,7 +683,7 @@ final class MainSplitShellController: WorkspaceShellController {
             makeRoom(sidebarShown: !sidebarItem.isCollapsed, inspectorShown: true)
             let floor = details ? Self.inspectorColumnMinimum : Self.contentMinimum
             if let window = view.window, !sidebarItem.isCollapsed,
-               window.contentRect(forFrameRect: window.frame).width - sidebarPaneWidth
+               window.contentRect(forFrameRect: window.frame).width - sidebarStepsAsideBelow - sidebarChrome
                 - WorkspaceInspectorController.width < floor {
                 setSidebarCollapsed(true, animated: false)
                 sidebarCollapsedForRoom = true
@@ -700,27 +800,53 @@ final class MainSplitShellController: WorkspaceShellController {
         return true
     }
 
-    /// ⌥⌘S, Go > Toggle Sidebar. On a page with a column of its own it still
-    /// toggles that column, exactly as in the floating bar; everywhere else -
-    /// including a page whose column is put away, as Connections' is while the
-    /// toolbar draws its tabs - it shows or hides this shell's sidebar.
+    /// ⌥⌘S, Go > Toggle Sidebar: this shell's sidebar, on every page.
+    ///
+    /// R2-UX-09: it used to toggle a page's own column where the page had
+    /// one (Notebook, Settings, Schedules) and the app sidebar everywhere
+    /// else - two behaviours on one chord, so the same keys did different
+    /// things a page apart. The page columns are Toggle Page Column, ⌥⇧⌘S
+    /// (`togglePageColumnFromMenu`).
     override func toggleSidebarFromMenu() {
-        if let page = workspace.navigator.showingSplitPage, !page.pageForcesCollapse {
-            super.toggleSidebarFromMenu()
-        } else {
-            toggleWorkspaceSidebar()
-        }
+        toggleWorkspaceSidebar()
     }
 
     // MARK: Modules and their tabs
 
     /// A module's sidebar row: the tab it showed last, or its first.
-    private func openModule(_ module: WorkspaceModule) {
+    override func openModule(_ module: WorkspaceModule) {
         if let tab = lastTab[module] ?? module.tabs.first {
             open(tab)
         } else {
             workspace.navigator.show(module.primaryRoute)
         }
+    }
+
+    override func openModuleTab(_ tab: ModuleTab) { open(tab) }
+
+    /// R2-UX-03: the module's tabs, wrapping at either end like a browser's.
+    /// A module of one page has nowhere to go.
+    override func stepModuleTab(by offset: Int) {
+        let tabs = currentModule.tabs
+        guard tabs.count > 1, let current = currentTab, let index = tabs.firstIndex(of: current) else { return }
+        open(tabs[(index + offset + tabs.count) % tabs.count])
+    }
+
+    /// R2-UX-03: one ⌘K row per module in the sidebar, in its order, with
+    /// the chord that opens it - "Tasks ⌘2" - so the palette teaches them.
+    override func paletteModuleActions() -> [UnifiedSearchActionProvider.Action] {
+        let hidden = AppSettings.shared.hiddenModules
+        return WorkspaceSidebarModel.listedModules(hidden: hidden).map { module in
+            UnifiedSearchActionProvider.Action(
+                title: module.title, meta: "Module", keywords: [module.title] + module.children,
+                icon: .destination(module.primaryRoute),
+                hint: WorkspaceGoMenu.chordText(for: module, hidden: hidden),
+                run: { [weak self] in self?.openModule(module) })
+        }
+    }
+
+    override func hidesPage(_ destination: RailDestination) -> Bool {
+        AppSettings.shared.hiddenModules.contains(ModuleTable.module(for: destination))
     }
 
     /// Show a tab: its page through the navigator, like every other route,
@@ -756,19 +882,6 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     private func tabClicked(_ index: Int) {
-        if currentModule == .home {
-            let spaces = DaylightSpace.allCases
-            guard spaces.indices.contains(index) else { return }
-            let from = workspace.homeCanvas.selectedSpace
-            let switching = currentRoute == .homeCanvas && from != spaces[index]
-            if switching { workspace.content.crossfadeOutgoingPage(unless: false) }
-            selectSpace(spaces[index])
-            if switching {
-                playTabEntrance(towardsLater: (spaces.firstIndex(of: from) ?? 0) < index)
-            }
-            refreshModuleChrome()
-            return
-        }
         let tabs = currentModule.tabs
         guard tabs.indices.contains(index) else { return }
         open(tabs[index])
@@ -825,12 +938,11 @@ final class MainSplitShellController: WorkspaceShellController {
         } else {
             toolbar.setCrumb(group: module.group?.title, module: module.title)
         }
+        // R2-UX-02: Home draws no tabs. Its five spaces were a second map of
+        // the app over the sidebar's four groups; Home is its own arranged
+        // cards now, and Customize adds any other space's card to them.
         if module == .home {
-            let spaces = DaylightSpace.allCases
-            toolbar.setTabs(spaces.map(\.title),
-                            tooltips: spaces.map { "\($0.subtitle) (\u{2318}\($0.shortcutIndex))" },
-                            selected: spaces.firstIndex(of: workspace.homeCanvas.selectedSpace),
-                            accessibilityLabel: "Home spaces")
+            toolbar.setTabs([], selected: nil)
         } else {
             let tabs = module.tabs
             let current = currentTab
@@ -857,7 +969,10 @@ final class MainSplitShellController: WorkspaceShellController {
         default:
             toolbar.setModuleAction(title: nil)
         }
-        toolbar.setQuickConnect(module == .console)
+        // U-02: Quick Connect on every module, the captain's call - each icon
+        // unless the profile hides the module it opens.
+        let hidden = AppSettings.shared.hiddenModules
+        toolbar.setQuickConnect(console: !hidden.contains(.console), hosts: !hidden.contains(.connections))
         contentPane.setHeader(title: module.showsHeader ? module.title : nil, subtitle: pageSubtitle)
         contentPane.setSessionStripVisible(module == .console && !workspace.hosts.sessions.isEmpty)
         applyTitleBar()
@@ -882,6 +997,14 @@ final class MainSplitShellController: WorkspaceShellController {
         let actions = (controller as? DaylightDrillActions)?.drillHeaderActions ?? []
         toolbar.setPageActions(actions.filter { $0 !== primary })
         toolbar.setPrimaryAction(primary)
+    }
+
+    /// R2-UX-02: Home has one space in this layout, its own. A route that
+    /// still names another space (a ⌘K verb, a notification, an older saved
+    /// session) lands on Home's own cards rather than on a filter nothing on
+    /// screen can switch back from.
+    override func selectSpace(_ space: DaylightSpace) {
+        super.selectSpace(.overview)
     }
 
     /// Home's Customize mode, on Home's own space - the one whose cards are
@@ -960,11 +1083,34 @@ final class MainSplitShellController: WorkspaceShellController {
 
     private func step(_ step: NavigationHistory.Step) {
         guard let target = step == .back ? history.backTarget : history.forwardTarget else { return }
-        let before = history.current?.identityKey
+        let before = history.currentEntry?.identityKey
         history.expect(step)
-        workspace.navigator.navigateToRecentDestination(target)
-        history.finishStep(step, arrived: history.current?.identityKey != before)
+        if target.kind.identityKey == history.current?.identityKey, let place = target.place,
+           let page = pageController as? WorkspaceHistoryPlace {
+            // R2-UX-08: another place on the page that is showing. The page
+            // moves, and reports it through `onHistoryPlaceChanged`.
+            page.showHistoryPlace(place)
+        } else {
+            workspace.navigator.navigateToRecentDestination(target.kind)
+            if let place = target.place, let page = pageController as? WorkspaceHistoryPlace,
+               history.current?.identityKey == target.kind.identityKey {
+                page.showHistoryPlace(place)
+            }
+        }
+        history.finishStep(step, arrived: history.currentEntry?.identityKey != before)
         toolbar.setHistory(canGoBack: history.canGoBack, canGoForward: history.canGoForward)
+    }
+
+    /// R2-UX-08: a page with places of its own records them here, so the
+    /// window's Back and Forward walk them and the page needs no arrows.
+    private func adoptHistoryPlace(_ controller: NSViewController) {
+        guard let page = controller as? WorkspaceHistoryPlace else { return }
+        history.settlePlace(page.historyPlace)
+        page.onHistoryPlaceChanged = { [weak self, weak page] in
+            guard let self, let page, self.pageController === page, let kind = self.history.current else { return }
+            self.history.arrive(kind, place: page.historyPlace)
+            self.toolbar.setHistory(canGoBack: self.history.canGoBack, canGoForward: self.history.canGoForward)
+        }
     }
 
     // MARK: Chrome verbs
@@ -983,9 +1129,12 @@ final class MainSplitShellController: WorkspaceShellController {
         currentRoute = dest
         showingHostPage = false
         currentModule = ModuleTable.module(for: dest)
+        // Adopted first, so a page whose sidebar presentation has its own
+        // live subtitle (Crew, Settings - R2-UX-05) is read in that form.
+        adoptPage(slot.controller)
+        adoptHistoryPlace(slot.controller)
         pageSubtitle = page?.drillHeaderSubtitle ?? dest.drillSubtitle
         if dest == .homeCanvas, pageSubtitle.isEmpty { pageSubtitle = Self.homeSubtitle() }
-        adoptPage(slot.controller)
         if dest == currentModule.pageTabHost, let host = slot.controller as? ModuleTabHosting { adoptTabHost(host) }
         // Home has no actions of its own; its spaces sit in the middle
         // instead, where the floating bar showed its pills.
@@ -995,6 +1144,8 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     override func workspaceDidRevealHostPage(_ controller: ConsoleController, label: String) {
+        // R2-UX-06: a host page's console draws its actions up here too.
+        controller.adoptSidebarLayout()
         pageController = controller
         showingHostPage = true
         hostPageLabel = label
@@ -1045,10 +1196,12 @@ final class MainSplitShellController: WorkspaceShellController {
     var debugSignalsMonitor: WorkspaceSignalsMonitor { signalsMonitor }
     var debugInspector: WorkspaceInspectorController { inspector }
     var debugContentPane: NSView { contentPane.view }
+    var debugContentPaneHeader: WorkspaceModuleHeader { contentPane.header }
     var debugBodyContainer: NSView { workspace.content.bodyContainer }
     var debugSidebarIsCollapsed: Bool { sidebarItem.isCollapsed }
     var debugInspectorIsCollapsed: Bool { inspectorItem.isCollapsed }
     var debugColumnMinimum: CGFloat { contentItem.minimumThickness }
+    var debugDividerThickness: CGFloat { splitController.splitView.dividerThickness }
     /// The inspector back at its launch state: wanted, not held open.
     func debugResetInspectorPreference() {
         inspectorWanted = true
@@ -1159,7 +1312,8 @@ final class WorkspaceContentPaneController: NSViewController {
     func setHeader(title: String?, subtitle: String) {
         _ = view
         if let title { header.configure(title: title, subtitle: subtitle) }
-        header.isHidden = title == nil
+        // R2-UX-05: the header is its subtitle, so with none there is no header.
+        header.isHidden = title == nil || subtitle.isEmpty
     }
 
     func setSessionStripVisible(_ visible: Bool) {

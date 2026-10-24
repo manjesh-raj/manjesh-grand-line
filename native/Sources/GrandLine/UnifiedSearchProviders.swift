@@ -723,18 +723,36 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
         /// artwork and hue - rather than the one teal square every action row
         /// used to share.
         var icon: UnifiedSearchItem.Icon?
+        /// The page a "Switch to" row opens, so a hidden module's pages can
+        /// leave the list (R2-UX-01 (b)).
+        var destination: RailDestination?
+        /// R2-UX-03: the row's chord, drawn where a row's hint goes.
+        var hint: String?
         let run: () -> Void
         init(title: String, meta: String, keywords: [String],
-             icon: UnifiedSearchItem.Icon? = nil, run: @escaping () -> Void) {
+             icon: UnifiedSearchItem.Icon? = nil, destination: RailDestination? = nil, hint: String? = nil,
+             run: @escaping () -> Void) {
             self.title = title
             self.meta = meta
             self.keywords = keywords
             self.icon = icon
+            self.destination = destination
+            self.hint = hint
             self.run = run
         }
     }
 
     let actions: [Action]
+
+    /// R2-UX-01 (b): whether a page's module is hidden by the captain's
+    /// profile. Read on every query, so showing a module in Settings brings
+    /// its rows straight back.
+    var isHidden: (RailDestination) -> Bool = { _ in false }
+
+    /// R2-UX-03: the sidebar layout's module rows, each with its ⌘1-⌘9
+    /// chord, asked for on every query so they follow the hidden modules and
+    /// the chords they shift. Empty in the floating bar.
+    var moduleActions: () -> [Action] = { [] }
 
     /// Builds the real list. Every closure here is a call into a method that
     /// already backs a menu item.
@@ -750,6 +768,7 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
                 meta: "Destination",
                 keywords: [destination.title],
                 icon: .destination(destination),
+                destination: destination,
                 run: { [weak shell] in shell?.show(destination) }
             )
         }
@@ -803,7 +822,10 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
             Action(title: "All Destinations\u{2026}", meta: "App", keywords: ["map", "pages", "everything", "navigate"],
                    run: { [weak shell] in shell?.onShowAllDestinations?() }),
         ])
-        return UnifiedSearchActionProvider(actions: actions)
+        var provider = UnifiedSearchActionProvider(actions: actions)
+        provider.isHidden = { [weak shell] destination in shell?.hidesPage(destination) ?? false }
+        provider.moduleActions = { [weak shell] in shell?.paletteModuleActions() ?? [] }
+        return provider
     }
 
     static func matches(_ action: Action, query: String) -> Bool {
@@ -816,13 +838,16 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
 
     func items(query: String) -> [UnifiedSearchItem] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return actions.filter { Self.matches($0, query: trimmed) }.enumerated().map { index, action in
+        return (moduleActions() + actions).filter { action in
+            guard let destination = action.destination, isHidden(destination) else { return true }
+            return false
+        }.filter { Self.matches($0, query: trimmed) }.enumerated().map { index, action in
             UnifiedSearchItem(
                 kind: .action,
                 id: "action:\(index):\(action.title)",
                 title: action.title,
                 meta: action.meta,
-                actionHint: nil,
+                actionHint: action.hint,
                 icon: action.icon,
                 activate: action.run
             )

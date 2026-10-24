@@ -85,11 +85,15 @@ final class HealthController: NSViewController, DaylightDrillActions {
     /// Read every service's latest report again and redraw - the rows'
     /// relative times ("13 minutes ago") are written once per render. It runs
     /// nothing: a service is re-run only by its own Retry.
+    ///
+    /// R2-UI-02: the app's one Refresh (`HelmButton.refresh()`), labelled, as
+    /// on Review, Automic Vault, Schedules and Dictation - it was a bare glyph
+    /// here, the one Refresh in the toolbar a captain had to recognise.
     private lazy var refreshButton: HelmButton = {
-        let button = HelmButton(symbol: "arrow.clockwise", variant: .quiet, size: .small,
-                                target: self, action: #selector(refreshTapped))
+        let button = HelmButton.refresh()
+        button.target = self
+        button.action = #selector(refreshTapped)
         button.toolTip = "Read every service's latest report again"
-        button.setAccessibilityLabel("Refresh")
         return button
     }()
 

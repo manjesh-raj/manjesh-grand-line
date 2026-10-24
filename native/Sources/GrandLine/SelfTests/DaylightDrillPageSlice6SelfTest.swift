@@ -99,8 +99,10 @@ enum DaylightDrillPageSlice6SelfTest {
     /// removed the Briefings page's Daily review card and the Google Accounts
     /// page's three (Accounts, Calendar, OAuth client). Twenty-two since stage
     /// 3 of the modular-shell migration added the Appearance page's Window
-    /// card (the window layout: floating bar or sidebar).
-    private static let expectedCardCount = 22
+    /// card (the window layout: floating bar or sidebar). Twenty-three since
+    /// R2-UX-01 (b) added the Appearance page's Sidebar card (the profile and
+    /// a switch per module).
+    private static let expectedCardCount = 23
 
 
     static func run() -> Bool {
@@ -275,8 +277,13 @@ enum DaylightDrillPageSlice6SelfTest {
         let settings = makeSettings()
         let settingsWindow = mount(settings)
         defer { _ = settingsWindow }
-        guard let line = settings.drillHeaderSubtitle, line.contains("locally") else {
-            print("  FAIL Settings' subtitle does not carry the local-storage claim: \"\(settings.drillHeaderSubtitle ?? "nil")\"")
+        // R2-UX-08: the local-storage claim was on this page three times. It
+        // is the column footer's alone now, so the line names the category
+        // and the footer carries the claim - once, not zero times.
+        guard let line = settings.drillHeaderSubtitle, line == settings.debugSelectedCategory.title,
+              !line.contains("locally"), settings.debugFooterText.hasPrefix("Stored locally") else {
+            print("  FAIL Settings' subtitle is \"\(settings.drillHeaderSubtitle ?? "nil")\" and its footer "
+                  + "\"\(settings.debugFooterText)\" - want the category's name, and the local-storage claim in the footer")
             ok = false
             return
         }
@@ -799,15 +806,16 @@ enum DaylightDrillPageSlice6SelfTest {
         // bare `NSSwitch`, which is exactly what the last check in this case
         // is about. Seven since `fm/grandline-remove-today-calendar-1792553365`
         // removed three: the daily review's own switch, its Mac-calendar
-        // sub-row and Google Accounts' calendar switch.
+        // sub-row and Google Accounts' calendar switch. Eight since R2-UX-01
+        // made the app lock an opt-in with its own switch in Security.
         let restore = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(restore) }
         ThemeManager.shared.setTheme(daylight)
         let settings = makeSettings()
         let window = mount(settings)
         defer { _ = settings.view.window.map { _ in () }; _ = window }
-        if settings.debugToggles.count != 7 {
-            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 7")
+        if settings.debugToggles.count != 8 {
+            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 8")
             ok = false
         }
         // Reached by **name**, never by an index into `debugToggles`: that

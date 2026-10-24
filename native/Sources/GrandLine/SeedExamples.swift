@@ -100,6 +100,14 @@ enum SeedExamples {
     - There is an alert on connection saturation.
     """
 
+    // MARK: Reading list
+
+    /// R2-UX-07: the Reading list's one example - Apple's own guide to the
+    /// Mac, a page every captain can read and nobody minds deleting. Saved
+    /// only when the example button is pressed; its title is read then, on
+    /// this machine, like any link's.
+    static let readingListURL = "https://support.apple.com/guide/mac-help/welcome/mac"
+
     // MARK: Sticky board
 
     static let stickyTitle = "Example note"

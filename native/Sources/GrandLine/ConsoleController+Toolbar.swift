@@ -174,6 +174,7 @@ extension ConsoleController {
         // `setTrailing` also installs the clearance inequality that keeps a
         // long tab strip truncating rather than running under the actions -
         // the constraint this method used to activate by hand.
+        pageToolViews = toolViews
         tabBar.setTrailing(HelmPageToolbar.group(toolViews))
     }
 
@@ -440,7 +441,13 @@ extension ConsoleController {
     /// The conformance is still worth having: `drillHeaderSubtitle` below is
     /// what gives this destination - and every dedicated host page, which the
     /// shell also routes through this controller - a live header line.
-    var drillHeaderActions: [NSView] { [] }
+    ///
+    /// R2-UX-06 revisits that for the sidebar layout, where the "row above"
+    /// is the window toolbar: its action cluster moves up there whole, so
+    /// the two toolbars no longer stack, and the tab strip stays in the
+    /// page's own row - the tabs are content, not chrome. Nothing is on
+    /// screen twice. The floating bar keeps the cluster in the tab bar.
+    var drillHeaderActions: [NSView] { drawsSidebarLayout ? pageToolViews : [] }
 
     /// §6.4's "`caption()` subtitle with live numbers", from state this page
     /// already has: how many tabs are open and which one is showing. No new
@@ -538,4 +545,12 @@ extension ConsoleController {
 extension ConsoleController {
     /// Forwards, never handles. See `onTailLogs`' own doc comment.
     @objc func tailLogsTapped() { onTailLogs?() }
+}
+
+extension ConsoleController: SidebarLayoutAdopting {
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+    }
 }

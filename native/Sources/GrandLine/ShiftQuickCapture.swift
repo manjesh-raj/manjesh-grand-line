@@ -341,7 +341,9 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
     private let sectionLabel = NSTextField(labelWithString: "FILE IT AS")
     private let tileRow = NSStackView()
     private var tiles: [CaptureDestinationTile] = []
-    private let crewButton = HelmButton(title: "Ask the crew to file it",
+    // R2-UX-01 (c): what it does, rather than who does it - the crew is an
+    // operator's word, and this panel is everyone's.
+    private let crewButton = HelmButton(title: "Suggest where it goes",
                                         variant: .quiet, size: .small, symbol: "person.2")
     private let hintLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
@@ -705,7 +707,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         guard !classificationInFlight else { return }
         classificationInFlight = true
         crewButton.isEnabled = false
-        show(status: "Asking the crew\u{2026}", isError: false)
+        show(status: "Working out where it goes\u{2026}", isError: false)
 
         let done: (CaptureDestination?) -> Void = { [weak self] destination in
             guard let self else { return }
@@ -714,7 +716,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
             guard let destination else {
                 // GL-14's shape: "the crew could not say" is not "file it as a
                 // task". The captain stays in the loop with the text intact.
-                self.show(status: "The crew couldn\u{2019}t place it - pick a destination.",
+                self.show(status: "Couldn\u{2019}t work out where it goes - pick a destination.",
                           isError: true)
                 return
             }
@@ -729,7 +731,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         guard let executable = ClaudeOneShot.resolve() else {
             classificationInFlight = false
             crewButton.isEnabled = true
-            show(status: "The crew needs the claude CLI on PATH.", isError: true)
+            show(status: "Suggesting a place needs the claude CLI on PATH.", isError: true)
             return
         }
         ClaudeOneShot.run(executable: executable,

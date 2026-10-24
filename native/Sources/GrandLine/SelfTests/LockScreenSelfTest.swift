@@ -208,8 +208,10 @@ enum LockScreenSelfTest {
             }
 
             // The title copy the captain chose, verbatim.
-            if controller.debugTitle.stringValue != "Welcome back, Manjesh" {
-                fail(&ok, "\(register.id): locked title is \"\(controller.debugTitle.stringValue)\", expected \"Welcome back, Manjesh\"")
+            // R2-UX-01 (c): the account's own first name, which is Manjesh on
+            // the captain's Mac.
+            if controller.debugTitle.stringValue != LockScreenController.greeting() {
+                fail(&ok, "\(register.id): locked title is \"\(controller.debugTitle.stringValue)\", expected \"\(LockScreenController.greeting())\"")
             }
         }
         if ok { print("  6 states x 2 registers: view sets, hues, copy and card chrome all correct") }

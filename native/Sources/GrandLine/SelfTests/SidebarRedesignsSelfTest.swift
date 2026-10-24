@@ -209,14 +209,14 @@ enum SidebarRedesignsSelfTest {
         settle(shell)
         let toolbarIDs = shell.toolbar.debugItemIdentifiers
         let positions = ids.compactMap { toolbarIDs.firstIndex(of: $0) }
-        check(positions.count == 3 && positions == positions.sorted() && positions[2] - positions[0] == 2,
-              "Console's toolbar does not show the caption, then Console, then Hosts: \(toolbarIDs.map(\.rawValue))", &ok)
+        check(positions.count == 2 && positions[1] - positions[0] == 1,
+              "Console's toolbar does not show Console, then Hosts: \(toolbarIDs.map(\.rawValue))", &ok)
         // Adjacent icons share one capsule, so a space keeps the two icons
         // their own group rather than the first two of the trailing cluster.
-        check(positions.count == 3 && positions[2] + 1 < toolbarIDs.count && toolbarIDs[positions[2] + 1] == .space,
-              "nothing separates Quick Connect's icons from the trailing cluster: \(toolbarIDs.map(\.rawValue))", &ok)
+        check(positions.count == 2 && positions[1] + 2 < toolbarIDs.count && toolbarIDs[positions[1] + 1] == .space
+                && toolbarIDs[positions[1] + 2] == WorkspaceToolbar.ItemID.theme,
+              "Quick Connect's icons are not their own group at the head of the trailing cluster: \(toolbarIDs.map(\.rawValue))", &ok)
         check(shell.toolbar.debugModuleActionButton == nil, "Console still draws a one-button Quick Connect", &ok)
-        check(shell.toolbar.debugQuickConnectCaption?.stringValue == "Quick Connect", "the caption is missing", &ok)
 
         // Hosts: the quick-connect host picker, as Quick Connect always was.
         check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.quickConnectHosts), "the Hosts icon has no action", &ok)
@@ -264,17 +264,12 @@ enum SidebarRedesignsSelfTest {
                          : "the Console icon left the keyboard in \(String(describing: window.firstResponder))", &ok)
         }
 
-        // In the overflow menu the caption is the old single action.
-        check(shell.toolbar.debugPerformQuickConnectMenuForm(), "the caption has no menu form", &ok)
-        settle(shell)
-        check(shell.debugCurrentDestination == .hosts, "the caption's menu form did not open the host picker", &ok)
-
-        // Quick Connect is Console's alone.
+        // U-02: Quick Connect is on every module now, the same two icons in
+        // the same place - `ReviewTwoUXSelfTest` walks every module.
         shell.show(.homeCanvas)
         settle(shell)
-        check(!shell.toolbar.debugItemIdentifiers.contains { ids.contains($0) || $0 == .space },
-              "Quick Connect (or its space) followed the captain to Home: "
-                  + "\(shell.toolbar.debugItemIdentifiers.map(\.rawValue))", &ok)
+        check(ids.allSatisfy(shell.toolbar.debugItemIdentifiers.contains),
+              "Quick Connect is missing on Home: \(shell.toolbar.debugItemIdentifiers.map(\.rawValue))", &ok)
     }
 
     // MARK: 3 - Tasks

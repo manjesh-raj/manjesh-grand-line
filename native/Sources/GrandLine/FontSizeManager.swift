@@ -113,10 +113,15 @@ final class ChromeTextScale {
     ]
 
     private(set) var scale: CGFloat
+    /// R2-UX-08: the scale this process started with. A page that set its
+    /// fonts once still draws at this one, so Settings offers a relaunch
+    /// while `scale` differs from it.
+    let launchScale: CGFloat
     private var observers: [(token: ChromeTextScaleObservation, fn: (CGFloat) -> Void)] = []
 
     private init() {
         scale = AppSettings.shared.uiTextScale
+        launchScale = scale
     }
 
     func setScale(_ newScale: CGFloat) {

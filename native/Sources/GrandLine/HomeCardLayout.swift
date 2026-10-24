@@ -68,6 +68,20 @@ struct HomeCardLayout: Equatable {
     static let standard = HomeCardLayout(shown: [.briefing, .fleet, .health, .claudeStatus, .mergeQueue],
                                          sizes: [.mergeQueue: .large])
 
+    /// R2-UX-01 (b): Home before the captain arranges it, for a profile. The
+    /// Operator's is the hub's own five above. A Personal Home leads with what
+    /// a general user keeps here - tasks, notes, stickies, saved links, code
+    /// and credentials - rather than the fleet, and fills two rows at four
+    /// columns the same way.
+    static func standard(for profile: WorkspaceProfile) -> HomeCardLayout {
+        switch profile {
+        case .operator: return standard
+        case .personal:
+            return HomeCardLayout(shown: [.tasks, .notebook, .stickyBoard, .readingList, .codePreview, .poneglyph],
+                                  sizes: [.tasks: .large, .readingList: .large])
+        }
+    }
+
     /// The shown cards this build knows, in order.
     var shown: [DaylightModule] { shownIDs.compactMap(DaylightModule.init(rawValue:)) }
 

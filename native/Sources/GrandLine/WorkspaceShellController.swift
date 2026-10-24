@@ -249,6 +249,40 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
         workspace.navigator.show(destination)
     }
 
+    /// R2-UX-02: the sidebar layout's Go menu rows (`WorkspaceGoMenu`) - a
+    /// module, as its sidebar row opens it, and one of a module's tabs.
+    @objc func selectModuleFromMenu(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let module = WorkspaceModule(rawValue: raw) else { return }
+        openModule(module)
+    }
+
+    @objc func selectModuleTabFromMenu(_ sender: NSMenuItem) {
+        guard let tab = WorkspaceGoMenu.tab(from: sender.representedObject) else { return }
+        openModuleTab(tab)
+    }
+
+    /// R2-UX-03: ⌘⇧[ and ⌘⇧] - the showing module's previous and next tab.
+    /// A shell with no toolbar tabs has none to move between.
+    /// R2-UX-03: ⌘K's module rows. Only the sidebar layout has modules.
+    func paletteModuleActions() -> [UnifiedSearchActionProvider.Action] { [] }
+
+    @objc func selectPreviousModuleTab(_ sender: Any?) { stepModuleTab(by: -1) }
+    @objc func selectNextModuleTab(_ sender: Any?) { stepModuleTab(by: 1) }
+    func stepModuleTab(by offset: Int) {}
+
+    /// R2-UX-01 (b): whether the captain's profile hides `destination`'s
+    /// module. Only the sidebar layout has modules to hide.
+    func hidesPage(_ destination: RailDestination) -> Bool { false }
+
+    /// A module's page. The sidebar layout reopens the tab the module showed
+    /// last, as its sidebar row does; a shell with no modules shows the
+    /// module's first page.
+    func openModule(_ module: WorkspaceModule) { workspace.navigator.show(module.primaryRoute) }
+
+    /// One of a module's tabs. The sidebar layout selects a page's own tab
+    /// through the page; a shell with no toolbar tabs shows the tab's page.
+    func openModuleTab(_ tab: ModuleTab) { workspace.navigator.show(tab.route) }
+
     // MARK: The configurable quick-access pins (UX1/UX2)
 
     /// Pin or unpin `destination`, persist the result, and redraw the pins.
@@ -367,6 +401,7 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
 
     // The lock.
     func showLock(reason: AppLockReason) { workspace.lock.showLock(reason: reason) }
+    func openWithoutLock() { workspace.lock.openWithoutLock() }
     func attemptUnlockFromCompactMode(password: String, completion: @escaping (Bool) -> Void) {
         workspace.lock.attemptUnlockFromCompactMode(password: password, completion: completion)
     }
@@ -437,6 +472,9 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     @objc func newCodeSnippetFromMenu() { workspace.navigator.newCodeSnippetFromMenu() }
     @objc func runCodeSnippetFromMenu() { workspace.navigator.runCodeSnippetFromMenu() }
     @objc func toggleSidebarFromMenu() { workspace.navigator.toggleSidebarFromMenu() }
+    /// R2-UX-09: the showing page's own column, where it has one - the
+    /// sidebar layout's ⌥⇧⌘S, now that ⌥⌘S is always its sidebar.
+    @objc func togglePageColumnFromMenu() { workspace.navigator.toggleSidebarFromMenu() }
     @objc func toggleCodePreviewSidebarFromMenu() { workspace.navigator.toggleCodePreviewSidebarFromMenu() }
     @objc func captureScreenRegionFromMenu() { workspace.navigator.captureScreenRegionFromMenu() }
     @objc func copyWhiteboardImageFromMenu() { workspace.navigator.copyWhiteboardImageFromMenu() }

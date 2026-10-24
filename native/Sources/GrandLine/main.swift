@@ -17,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// the app's ground - not a black band - runs to the top of the display.
     /// See `FullScreenMenuBarFill.swift`'s header for the measurement.
     private var fullScreenMenuBarFill: FullScreenMenuBarFill?
+    /// Keeps the sidebar layout's Go menu in step with the hidden modules.
+    private var goMenuObserver: NSObjectProtocol?
     // Phase 1: saved SSH hosts + the panel that lists and connects them. The
     // panel hands a `ssh` argv to the console, which opens it as a new tab.
     let hostStore = LaunchSignposts.measure("HostStore.init") { HostStore() }
@@ -777,6 +779,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // and correctly disabled the menu). Locking after the window/
         // contentViewController assignment below closes that race.
         appLock.onLock = { [weak self] reason in self?.appShell.showLock(reason: reason) }
+        // R2-UX-01: the lock is off, so the launch opens the app instead.
+        appLock.onOpenWithoutLock = { [weak self] in self?.appShell.openWithoutLock() }
         appShell.onUnlocked = { [weak self] in self?.appLock.recordUnlock() }
         appShell.onLogoutRequested = { [weak self] in self?.appLock.lock(reason: .manualLogout) }
         appShell.onLockStateChanged = { [weak self] locked in self?.setContentMenusEnabled(!locked) }
@@ -2267,7 +2271,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainMenu.addItem(goMenuItem)
         let goMenu = NSMenu(title: "Go")
         goMenuItem.submenu = goMenu
-        for space in DaylightSpace.allCases {
+        // R2-UX-02: the spaces are the floating bar's map, so only it lists
+        // them. The sidebar layout's Go menu is the sidebar's own map, at
+        // the end of this menu (`WorkspaceGoMenu`).
+        for space in DaylightSpace.allCases where workspaceLayout == .floatingBar {
             let item = NSMenuItem(title: space.title,
                                   action: #selector(WorkspaceShellController.selectSpaceByShortcut(_:)),
                                   keyEquivalent: "\(space.shortcutIndex)")
@@ -2276,7 +2283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.target = menuTarget
             goMenu.addItem(item)
         }
-        goMenu.addItem(NSMenuItem.separator())
+        if workspaceLayout == .floatingBar { goMenu.addItem(NSMenuItem.separator()) }
         // P9: the standard sidebar command for the seven pages whose column is
         // a real split-view sidebar. Not the system's ⌃⌘S, which this app
         // already gives to Show Hosts; ⌥⌘S was checked free against this
@@ -2287,6 +2294,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggleSidebarItem.keyEquivalentModifierMask = [.command, .option]
         toggleSidebarItem.target = menuTarget
         goMenu.addItem(toggleSidebarItem)
+        // R2-UX-09: in the sidebar layout ⌥⌘S is always the app's sidebar,
+        // so a page's own column (Notebook, Settings, Schedules) has its own
+        // item, a Shift away.
+        if workspaceLayout == .sidebar {
+            let pageColumnItem = NSMenuItem(title: "Toggle Page Column",
+                                            action: #selector(WorkspaceShellController.togglePageColumnFromMenu),
+                                            keyEquivalent: "s").withSymbol("sidebar.squares.left")
+            pageColumnItem.keyEquivalentModifierMask = [.command, .option, .shift]
+            pageColumnItem.target = menuTarget
+            goMenu.addItem(pageColumnItem)
+        }
         goMenu.addItem(NSMenuItem.separator())
         let allDestinationsItem = NSMenuItem(title: "All Destinations\u{2026}",
                                              action: #selector(AppDelegate.showAllDestinations),
@@ -2310,7 +2328,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // map and must stay complete; a menu that already listed something
         // ten rows up must not list it again.
         let alreadyListed: Set<RailDestination> = [.homeCanvas]
-        for group in AllDestinationsOverlayController.groups() {
+        if workspaceLayout == .sidebar {
+            // R2-UX-03: a module's tabs, before and after the one showing -
+            // the system's own "show previous/next tab" chords. On Console,
+            // a host page and Tools `TabKeyboardShortcuts` sees ⌘⇧[ / ⌘⇧]
+            // first and moves between that page's own tabs, as it always has.
+            goMenu.addItem(NSMenuItem.separator())
+            let previousTab = NSMenuItem(title: "Previous Tab",
+                                         action: #selector(WorkspaceShellController.selectPreviousModuleTab(_:)),
+                                         keyEquivalent: "{").withSymbol("chevron.backward")
+            previousTab.target = menuTarget
+            goMenu.addItem(previousTab)
+            let nextTab = NSMenuItem(title: "Next Tab",
+                                     action: #selector(WorkspaceShellController.selectNextModuleTab(_:)),
+                                     keyEquivalent: "}").withSymbol("chevron.forward")
+            nextTab.target = menuTarget
+            goMenu.addItem(nextTab)
+            WorkspaceGoMenu.populate(goMenu, target: menuTarget, hidden: AppSettings.shared.hiddenModules)
+            // R2-UX-01 (b): a module shown or hidden in Settings comes and
+            // goes here too, as it does in the sidebar.
+            if installing {
+                if let goMenuObserver { NotificationCenter.default.removeObserver(goMenuObserver) }
+                goMenuObserver = NotificationCenter.default.addObserver(
+                    forName: AppSettings.hiddenModulesDidChange, object: nil, queue: .main
+                ) { [weak goMenu, weak menuTarget] _ in
+                    guard let goMenu else { return }
+                    WorkspaceGoMenu.populate(goMenu, target: menuTarget, hidden: AppSettings.shared.hiddenModules)
+                }
+            }
+        }
+        for group in AllDestinationsOverlayController.groups() where workspaceLayout == .floatingBar {
             let remaining = group.destinations.filter { !alreadyListed.contains($0) }
             guard !remaining.isEmpty else { continue }
             goMenu.addItem(NSMenuItem.separator())
@@ -3629,6 +3676,24 @@ if ProcessInfo.processInfo.environment["FM_RUN_APP_LOCK_TESTS"] == "1" {
     exit(AppLockControllerSelfTest.run() ? 0 : 1)
 }
 
+// The second full review's UX findings and the captain's three UI items: the
+// pure half - models, menus and source guards (`ReviewTwoUXModelSelfTest`).
+if ProcessInfo.processInfo.environment["FM_RUN_REVIEW2_UX_MODEL_TESTS"] == "1" {
+    exit(ReviewTwoUXModelSelfTest.run() ? 0 : 1)
+}
+
+// ...and the window-backed half: a real sidebar shell, a real Settings page
+// and real pixels (`ReviewTwoUXSelfTest`, in `NEEDS_SESSION`).
+if ProcessInfo.processInfo.environment["FM_RUN_REVIEW2_UX_TESTS"] == "1" {
+    exit(ReviewTwoUXSelfTest.run() ? 0 : 1)
+}
+
+// R2-UX-01 (a): the app lock as an opt-in - the first launch's settlement, the
+// lock screen settling an undecided install, and Check again. Pure logic.
+if ProcessInfo.processInfo.environment["FM_RUN_APP_LOCK_OPT_IN_TESTS"] == "1" {
+    exit(AppLockOptInSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-log-analyzer-build`: same convention, for the Log Analyzer's
 // whole pure-logic layer - redaction (including byte-level greps of a built
 // AI prompt and a saved investigation for planted secrets), source detection,
@@ -4717,6 +4782,13 @@ if !unknownSuiteFlags.isEmpty {
 if !AppPaths.isScratchRedirected() {
     LegacyNameMigration.runAtLaunch()
 }
+
+// R2-UX-01: settle what a first launch decides (the app lock, and the
+// sidebar's profile), before anything below writes a preference or creates
+// the data folder - `SingleInstanceGuard.acquire()` is the first thing that
+// does. After `LegacyNameMigration`, so a pre-rename install counts as the
+// existing install it is.
+AppSettings.shared.settleFirstLaunch(isExistingInstall: AppSettings.shared.isExistingInstall())
 
 // GL-05: refuse to be a second instance. This sits *after* every
 // `FM_RUN_*_TESTS` block above (each of which `exit()`s, so a headless

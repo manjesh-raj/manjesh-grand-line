@@ -1181,7 +1181,10 @@ enum ReviewUIUXSelfTest {
     // MARK: X3 - navigation vocabulary
 
     private static func test_x3GoMenu() -> String? {
-        let menu = AppDelegate().buildMenu(installing: false)
+        // The destination-by-destination Go menu is the floating bar's (the
+        // sidebar layout's lists its modules - R2-UX-02, asserted by
+        // `ReviewTwoUXModelSelfTest`), so this reads that layout's.
+        let menu = ReviewTwoUXModelSelfTest.mainMenu(for: .floatingBar)
         guard let go = menu.items.compactMap(\.submenu).first(where: { $0.title == "Go" }) else {
             return "there is no Go menu, so this case is measuring nothing"
         }

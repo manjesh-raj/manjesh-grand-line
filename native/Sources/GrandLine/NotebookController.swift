@@ -186,7 +186,56 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     var onDrillSubtitleChanged: (() -> Void)?
     var onDrillActionsChanged: (() -> Void)?
 
-    var drillHeaderActions: [NSView] { [todayButton, newPageButton] }
+    /// R2-UX-06: in the sidebar layout the page's own toolbar row is the
+    /// window toolbar's - the mode switch, Today's note, find, the details
+    /// column and delete - so two toolbars no longer stack. New page is the
+    /// far-right primary (R2-UX-04).
+    ///
+    /// Measured at 1512 with the sidebar showing: Knowledge's five tabs take
+    /// 422pt, and the row's six controls beside them (342pt) pushed the
+    /// crumb, Recents, Quick Connect and the inspector button out. So the
+    /// three page utilities - find, the details column and delete - are one
+    /// "More" menu here (`HelmOverflowMenu`, UI-47's rule), and the mode
+    /// switch and Today's note stay on the toolbar.
+    ///
+    /// The labelled three-way switch does not fit either: at 1512 beside the
+    /// five tabs about 50pt are left for it. So in the window toolbar the
+    /// mode is one pop-up showing the mode it is in, with the same three
+    /// choices (`toolbarModePopUp`).
+    var drillHeaderActions: [NSView] {
+        drawsSidebarLayout ? [toolbarModePopUp, todayButton, toolbarMoreMenu.button, newPageButton]
+            : [todayButton, newPageButton]
+    }
+    /// R2-UX-06: Source, Split or Preview, in the sidebar layout's toolbar.
+    private lazy var toolbarModePopUp: HelmPopUpButton = {
+        let popUp = HelmPopUpButton()
+        popUp.addItems(withTitles: ViewMode.allCases.map(\.title))
+        popUp.target = self
+        popUp.action = #selector(toolbarModePicked(_:))
+        popUp.toolTip = "Show the source, the preview, or both"
+        popUp.setAccessibilityLabel("View")
+        return popUp
+    }()
+
+    @objc private func toolbarModePicked(_ sender: NSPopUpButton) {
+        guard ViewMode.allCases.indices.contains(sender.indexOfSelectedItem) else { return }
+        mode = ViewMode.allCases[sender.indexOfSelectedItem]
+        modeTabs.select(mode.rawValue)
+        applyMode()
+    }
+    /// R2-UX-06: find, the details column and delete, in the sidebar
+    /// layout's window toolbar - the same handlers the row's three buttons run.
+    private lazy var toolbarMoreMenu = HelmOverflowMenu(items: [
+        .init("Find in Page", symbol: "magnifyingglass") { [weak self] in self?.showFind() },
+        .init("Show or Hide Page Details", symbol: "sidebar.right") { [weak self] in self?.toggleRail() },
+        .init("Delete Page\u{2026}", symbol: "trash",
+              isEnabled: { [weak self] in self?.deleteButton.isEnabled ?? false }) { [weak self] in self?.deleteTapped() },
+    ], tooltip: "More - find, page details or delete this page")
+    private(set) var drawsSidebarLayout = false
+    /// The editor under the page's toolbar row, or - once that row's controls
+    /// are the window toolbar's - at the top of the page.
+    private var splitUnderToolbar: NSLayoutConstraint!
+    private var splitAtTop: NSLayoutConstraint!
 
     // MARK: R2-BUG-07 - the toolbar's room at narrow widths
 
@@ -200,7 +249,11 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     /// The label stays as each button's tooltip and accessibility label.
     /// The floating bar's drill header has room for the labels and keeps
     /// them.
-    static let compactToolbarActionsBelow: CGFloat = 1300
+    ///
+    /// 1600 since U-02 put Quick Connect's two icons on every module and U-03
+    /// widened the sidebar by 28pt: measured at 1512, the labelled pair then
+    /// pushed Recents and the inspector button into the overflow menu again.
+    static let compactToolbarActionsBelow: CGFloat = 1600
 
     /// The two actions' titles for the window's current width.
     func applyToolbarActionWidth() {
@@ -216,6 +269,7 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
             let title = compact ? "" : label
             if button.title != title { button.title = title }
             button.setAccessibilityLabel(label)
+            button.menuFormTitle = label
         }
     }
 
@@ -480,13 +534,15 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         // The two cards share the remaining width evenly in `.split`. The tie
         // is the one constraint `applyMode` swaps, so the three modes are one
         // activation each rather than three layouts.
+        splitUnderToolbar = split.view.topAnchor.constraint(equalTo: toolbar.bottomAnchor)
+        splitAtTop = split.view.topAnchor.constraint(equalTo: root.topAnchor)
         editorWidthTie = editorCard.widthAnchor.constraint(equalTo: previewCard.widthAnchor)
         editorWidthTie.priority = HelmDaylightPriority.contentTie
 
         NSLayoutConstraint.activate([
             split.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             split.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            split.view.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            splitUnderToolbar,
             split.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
             editorCard.leadingAnchor.constraint(equalTo: pane.leadingAnchor,
@@ -615,6 +671,11 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     // MARK: Modes
 
     private func applyMode() {
+        // The toolbar's pop-up says the mode however it was chosen.
+        if drawsSidebarLayout, let index = ViewMode.allCases.firstIndex(of: mode),
+           toolbarModePopUp.indexOfSelectedItem != index {
+            toolbarModePopUp.selectItem(at: index)
+        }
         // UXP-11: a notebook with no page open has nothing to preview, so the
         // preview card stands down and the editor's empty state is the one
         // thing on the page. Preview mode still shows the editor then, or the
@@ -721,8 +782,13 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
                               + "Everything you write here is a markdown file \(whereItGoes).",
                           // X5: the Welcome page, offered where the captain
                           // is actually looking.
-                          actions: [("New page", #selector(newPageTapped)),
-                                    ("Add a Welcome page", #selector(seedWelcomePageTapped))])
+                          // R2-UX-07: in the sidebar layout New page is the
+                          // toolbar's far-right primary, so the page offers
+                          // its one example, like every module's empty state.
+                          actions: drawsSidebarLayout
+                              ? [("Add a Welcome page", #selector(seedWelcomePageTapped))]
+                              : [("New page", #selector(newPageTapped)),
+                                 ("Add a Welcome page", #selector(seedWelcomePageTapped))])
     }
 
     private func open(pageID: String) {
@@ -1271,9 +1337,12 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         } else {
             accessory = buttons.first
         }
+        // R2-UX-07: the page's own artwork, as Runbooks', Postmortems' and the
+        // Sticky Board's empty states draw it - one empty state, one look.
         let state = HelmEmptyState(symbol: symbol, title: title, body: body,
                                    size: .standard, accessory: accessory,
-                                   hue: RailDestination.notebook.domainHue)
+                                   hue: RailDestination.notebook.domainHue,
+                                   symbolWatermark: true)
         state.translatesAutoresizingMaskIntoConstraints = false
         // The card's width is the page's, never the sentence's: the one-line
         // copy at compression 750 held the editor card - and through the
@@ -1377,3 +1446,36 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     }
     #endif
 }
+
+// R2-UX-04: New page is the page's primary verb, so the sidebar layout draws
+// it at the toolbar's far right; Today's note stays an outlined page action.
+extension NotebookController: WorkspacePrimaryActionProviding {
+    var workspacePrimaryAction: NSView? { newPageButton }
+}
+
+// R2-UX-06: the sidebar layout's Notebook has no page toolbar row. Its
+// controls go up into the window toolbar (`drillHeaderActions`), keeping
+// R2-BUG-07's icon-only actions below `compactToolbarActionsBelow`, and the
+// editor takes the row's height back. The floating bar keeps the row.
+extension NotebookController: SidebarLayoutAdopting {
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+        toolbarModePopUp.selectItem(at: ViewMode.allCases.firstIndex(of: mode) ?? 0)
+        toolbar.isHidden = true
+        splitUnderToolbar.isActive = false
+        // A hidden view keeps its height in the layout (gotcha (11)), so the
+        // editor is re-pinned to the page's top rather than left under it.
+        splitAtTop.isActive = true
+        onDrillActionsChanged?()
+    }
+}
+
+#if FM_SELFTESTS
+extension NotebookController {
+    var debugPageToolbarIsShown: Bool { !toolbar.isHidden }
+    var debugToolbarModePopUp: HelmPopUpButton { toolbarModePopUp }
+    var debugMode: ViewMode { mode }
+}
+#endif

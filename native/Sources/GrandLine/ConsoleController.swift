@@ -285,6 +285,12 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// overwritten on the next theme change - `tint` is the seam.
     var plusButton: HelmButton!
     var findButton: HelmButton!
+    /// R2-UX-06: the tab bar's trailing action cluster, in its order - the
+    /// sidebar layout's window toolbar carries it (`drillHeaderActions`).
+    var pageToolViews: [NSView] = []
+    /// R2-UX-06: set once the sidebar layout shows this console (the shared
+    /// one, or a host page).
+    var drawsSidebarLayout = false
     /// E7's stepper capsule - see `HelmZoomStepper`.
     var zoomStepper: HelmZoomStepper!
     /// `fm/cockpit-block-view-stage0` - only ever shown for the one opted-in

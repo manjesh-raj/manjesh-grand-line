@@ -738,9 +738,12 @@ enum NavigationCoherenceSelfTest {
                   "UX3: \(chord) (\(label)) was lost when Keys/Snippets folded under Hosts", &ok)
         }
 
-        // UX4's ⌘1-⌘5.
+        // UX4's ⌘1-⌘5, which are the floating bar's spaces. R2-UX-02 took the
+        // spaces out of the sidebar layout's menu; its number chords are the
+        // sidebar's modules (`ReviewTwoUXModelSelfTest`).
+        let floatingBound = allBindings(ReviewTwoUXModelSelfTest.mainMenu(for: .floatingBar))
         for index in 1...5 {
-            check(bound.contains(where: { $0.chord == "\u{2318}\(index)" }),
+            check(floatingBound.contains(where: { $0.chord == "\u{2318}\(index)" }),
                   "UX4: \u{2318}\(index) is not bound - the five spaces were meant to take \u{2318}1-\u{2318}5", &ok)
         }
 
@@ -866,8 +869,11 @@ enum NavigationCoherenceSelfTest {
         // state, and `loadView` builds views with no window server.
         let sheet = WelcomeSheetController()
         sheet.loadView()
-        check(WelcomeSheetController.debugStepCount == 3,
-              "UX13: the finding asks for a three-step sheet, got \(WelcomeSheetController.debugStepCount)", &ok)
+        // Three steps, plus R2-UX-01 (b)'s profile choice in the sidebar
+        // layout - the floating bar has no modules to choose between.
+        let wantSteps = PlaceName.layout == .sidebar ? 4 : 3
+        check(WelcomeSheetController.debugStepCount == wantSteps,
+              "UX13: the sheet has \(WelcomeSheetController.debugStepCount) steps, want \(wantSteps)", &ok)
         check(sheet.debugStepIndex == 0, "UX13: the sheet should open on its first step", &ok)
         check(sheet.debugBackIsHidden, "UX13: there is nothing to go back to on the first step", &ok)
         check(!sheet.debugThemeGridIsHidden, "UX13: step one should show the theme picker", &ok)
@@ -879,14 +885,15 @@ enum NavigationCoherenceSelfTest {
         check(sheet.debugThemeGridIsHidden, "UX13: the theme picker belongs on step one only", &ok)
 
         sheet.debugNext()
-        check(sheet.debugStepIndex == 2, "UX13: Next did not reach the last step", &ok)
+        if wantSteps == 4 { sheet.debugNext() }
+        check(sheet.debugStepIndex == wantSteps - 1, "UX13: Next did not reach the last step", &ok)
         check(!sheet.debugCommandWellIsHidden,
               "UX13: the last step should show the lock-setup command", &ok)
         check(sheet.debugNextButtonTitle != "Next",
               "UX13: the last step's primary button should not still say Next", &ok)
 
         sheet.debugBack()
-        check(sheet.debugStepIndex == 1, "UX13: Back did not go back", &ok)
+        check(sheet.debugStepIndex == wantSteps - 2, "UX13: Back did not go back", &ok)
         return ok
     }
 

@@ -336,13 +336,33 @@ final class HomeCanvasController: NSViewController {
     }
     /// Every arrangement the captain makes in Customize, for the shell to keep.
     var onCardLayoutChanged: ((HomeCardLayout) -> Void)?
+    /// What Reset brings back: Home's own cards for the captain's profile
+    /// (R2-UX-01 (b)). The sidebar layout sets it; the hub's own five
+    /// otherwise.
+    var standardCardLayout: HomeCardLayout = .standard
+
+    /// R2-UX-01 (c): the modules the captain's profile hides. The attention
+    /// card speaks only for modules in the sidebar: a Personal Home does not
+    /// tell a writer that their "firstmate home" is missing, that the fleet
+    /// is idle or that setup checks have not run. Empty - the floating bar,
+    /// and Operator - reports everything, exactly as before.
+    var hiddenModules: Set<WorkspaceModule> = [] {
+        didSet {
+            guard hiddenModules != oldValue, isViewLoaded else { return }
+            render()
+        }
+    }
     /// Customize: the tray above the grid and the controls on every card.
     private(set) var isCustomizing = false
     private lazy var customizeTray: HomeCustomizeTray = {
         let tray = HomeCustomizeTray()
         tray.translatesAutoresizingMaskIntoConstraints = false
         tray.onAdd = { [weak self] module in self?.arrange { $0.show(module) } }
-        tray.onReset = { [weak self] in self?.arrange { $0 = .standard } }
+        tray.onReset = { [weak self] in
+            guard let self else { return }
+            let standard = self.standardCardLayout
+            self.arrange { $0 = standard }
+        }
         tray.onDone = { [weak self] in self?.endCustomizing() }
         return tray
     }()
@@ -1088,7 +1108,12 @@ final class HomeCanvasController: NSViewController {
     /// into this page for cards it already draws. What is new is that the
     /// card at the top of the page now says so in words as well.
     private func signalAttentionItems() -> [NeedsAttentionItem] {
-        [fleetAttentionItem(), claudeAttentionItem(), sessionChecksAttentionItem()]
+        // R2-UX-01 (c): the fleet and Claude's usage are the crew's, and the
+        // session checks are Setup's.
+        let crew = !hiddenModules.contains(.crew)
+        let setup = !hiddenModules.contains(.setup)
+        return [crew ? fleetAttentionItem() : nil, crew ? claudeAttentionItem() : nil,
+                setup ? sessionChecksAttentionItem() : nil]
             .compactMap { $0 }
     }
 
@@ -1217,7 +1242,9 @@ final class HomeCanvasController: NSViewController {
     /// rather than behind a count being zero.
     private func clearNotes() -> [String] {
         var notes: [String] = []
-        if let snapshot = fleetSnapshot,
+        // R2-UX-01 (c): a note speaks for a module in the sidebar only.
+        let crew = !hiddenModules.contains(.crew)
+        if crew, let snapshot = fleetSnapshot,
            snapshot.tasks.allSatisfy({ $0.status != "working" }),
            snapshot.tasks.allSatisfy({ $0.status != "needs_decision" && $0.status != "blocked" }) {
             notes.append("Fleet idle")
@@ -1229,10 +1256,10 @@ final class HomeCanvasController: NSViewController {
                                         hasReported: state.hasReported)
         }
         let health = Self.healthRingSummary(readings)
-        if health.total > 0, health.value == health.total {
+        if !hiddenModules.contains(.health), health.total > 0, health.value == health.total {
             notes.append("\(health.value)/\(health.total) services healthy")
         }
-        if let snapshot = quotaSnapshot,
+        if crew, let snapshot = quotaSnapshot,
            let plan = Self.claudePlanLimitsStatus(for: snapshot), plan.state == .ok {
             notes.append("Claude plan limits comfortable")
         }
@@ -3545,7 +3572,8 @@ final class HomeCanvasController: NSViewController {
         let runbooks = sources.docsRunbookStore.listRunbooks()
         content.subtitle = "step-by-step procedures"
         guard !runbooks.isEmpty else {
-            content.body = .note("No runbooks yet. Write one, or let SRE Lead generate one from an investigation.")
+            // R2-UX-01 (c): what a runbook is, before who can write one.
+            content.body = .note("No runbooks yet. A runbook is a checklist of steps you can follow again - write one, or start from an example.")
             return
         }
         let rows = runbooks.prefix(2).map { runbook in
@@ -3566,7 +3594,7 @@ final class HomeCanvasController: NSViewController {
         let postmortems = sources.docsRunbookStore.listPostmortems()
         content.subtitle = "incident write-ups"
         guard !postmortems.isEmpty else {
-            content.body = .note("No postmortems yet. Generate one from an SRE Lead investigation.")
+            content.body = .note("No postmortems yet. A postmortem writes down what went wrong, why, and what changes next time.")
             return
         }
         let rows = postmortems.prefix(2).map { postmortem in
@@ -3836,6 +3864,10 @@ final class HomeCanvasController: NSViewController {
     /// without seeding a Tasks store with dated tasks.
     /// P5: the attention card's rows, as its list holds them.
     var debugAttentionRows: [NSView] { attentionCard.debugRows }
+    /// R2-UX-01 (c): the attention card's signal rows and closing notes, as
+    /// this page composes them now.
+    var debugSignalAttentionIDs: [String] { signalAttentionItems().map(\.id) }
+    var debugClearNotes: [String] { clearNotes() }
     var debugAttentionOverride: NeedsAttentionSummary?
     var debugAttentionSubline = "1 decision waiting - the crew is holding for you."
     /// The scroll view's document, for a render of the whole page rather

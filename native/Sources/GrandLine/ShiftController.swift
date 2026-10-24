@@ -53,6 +53,25 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     private let projectsHeader = NSTextField(labelWithString: "")
     private let projectsCountBadge = NSTextField(labelWithString: "")
     private let projectsPanel = HelmCard()
+    /// R2-UX-07: the dashboard's sections a start-here state stands in for.
+    private var startHereReplaces: [NSView] = []
+    /// The app's one page-level empty state, in the shape every module's
+    /// takes: its own artwork, one sentence, and one example to start from.
+    /// New task is the toolbar's far-right primary already.
+    private lazy var startHereState: HelmEmptyState = {
+        let example = HelmButton(title: "Add an example task", variant: .secondary, symbol: "plus")
+        example.target = self
+        example.action = #selector(addExampleTaskTapped)
+        let state = HelmEmptyState(
+            symbol: "checkmark.circle", title: "Start with a task",
+            body: "A task is one thing to do, with a due date, a project and a priority if you want them. "
+                + "Add your own with New task, or start from an example.",
+            size: .standard, accessory: example, hue: RailDestination.shift.domainHue,
+            artwork: RailDestination.shift.drillHeaderArtwork)
+        state.translatesAutoresizingMaskIntoConstraints = false
+        return state
+    }()
+
     private let projectsGridContainer = NSStackView()
     private let projectsDetailContainer = NSStackView()
 
@@ -592,6 +611,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         // multi-column card grid of its own and reads better spanning the
         // page than confined to half of it.
         dashboardContainer.addArrangedSubview(projectsSection)
+        startHereReplaces = [tasksRow, projectsSection]
         // The project *detail* is also a direct child of the dashboard: it
         // takes the whole page when open (`applyProjectDetailFullPage`), so
         // nesting it inside any column would cap it at that column's width.
@@ -922,6 +942,9 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// than "0 open".
     var drillHeaderSubtitle: String? {
         if store.isInFailedLoadState { return "Task list could not be read" }
+        // R2-UX-07: four zeros said nothing a "start here" state does not say
+        // better.
+        if showsStartHere { return "No tasks yet" }
         let c = counts()
         let parts = [
             "\(c.open) open",
@@ -2032,6 +2055,18 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             tasksLeftColumn?.isHidden = true
             tasksTable.card.isHidden = isProjectDetailFullPage || failed || tasksView != .list
             workspaceFilterRow.isHidden = isProjectDetailFullPage || topLevelView != .dashboard
+            // R2-UX-07: an empty Tasks page was three empty states (the
+            // board's lanes, Follow-ups and Projects) under a filter row of
+            // zeros. With nothing at all it is one invitation instead.
+            let startHere = showsStartHere && !failed && !isProjectDetailFullPage
+            startHereState.isHidden = !startHere
+            if startHere {
+                for view in [boardSection, calendarView, tasksTable.card, workspaceFilterRow] + startHereReplaces {
+                    view.isHidden = true
+                }
+            } else {
+                for view in startHereReplaces { view.isHidden = false }
+            }
         }
     }
 
@@ -2929,7 +2964,39 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         }
         tasksTable.card.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         adoptWorkspaceWeeklyReview()
+        // Centred in the content pane like every page-level empty state
+        // (UXP-13), not resting at the top of the scroll document.
+        if let pane = splitPage?.contentPane {
+            startHereState.placeAsPageEmptyState(in: pane)
+        } else {
+            dashboardContainer.insertArrangedSubview(startHereState, at: 0)
+            startHereState.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        }
+        startHereState.isHidden = true
         render()
+    }
+
+    // MARK: R2-UX-07 - an empty Tasks page that invites
+
+    /// Nothing open, nothing completed lately, no follow-up and no project:
+    /// a store a captain has never used.
+    private var showsStartHere: Bool {
+        drawsSidebarLayout && !store.isInFailedLoadState && store.activeTasks.isEmpty && store.followUps.isEmpty
+            && store.projects.isEmpty && boardTasks().values.allSatisfy(\.isEmpty)
+    }
+
+    #if FM_SELFTESTS
+    var debugStartHereState: HelmEmptyState { startHereState }
+    var debugStoreIsEmpty: Bool { store.activeTasks.isEmpty && store.followUps.isEmpty && store.projects.isEmpty }
+    var debugStartHereReplacesHidden: [Bool] { startHereReplaces.map(\.isHidden) }
+    #endif
+
+    /// One example, due today, that explains itself and is gone when ticked.
+    @objc func addExampleTaskTapped() {
+        var task = ShiftTask.fresh()
+        task.title = "Tick this task when you have read it - that is how a task is done"
+        task.dueDate = ShiftDateFormatting.components(from: Date()).dateStr
+        store.addTask(task)
     }
 
     /// New task, at the toolbar's far right after Search.

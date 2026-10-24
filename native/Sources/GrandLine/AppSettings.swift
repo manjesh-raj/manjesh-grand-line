@@ -55,6 +55,12 @@ final class AppSettings {
         static let systemDarkThemeID = "fm.systemDarkThemeID"
         static let workspaceLayout = "fm.workspaceLayout"
         static let homeCardLayout = "fm.homeCardLayout"
+        static let appLockEnabled = "fm.appLockEnabled"
+        static let workspaceProfile = "fm.workspaceProfile"
+        static let hiddenModules = "fm.hiddenModules"
+        static let sidebarWidth = "fm.sidebarWidth"
+        static let appLockIdleSeconds = "fm.appLockIdleSeconds"
+        static let appLockSessionSeconds = "fm.appLockSessionSeconds"
     }
 
     /// GL-P3 (audit §6.10): the defaults store is injectable.
@@ -534,10 +540,132 @@ final class AppSettings {
     /// does not read - a preference that cannot be read is not worth more
     /// than the default it replaces.
     var homeCardLayout: HomeCardLayout {
-        get { defaults.data(forKey: Keys.homeCardLayout).flatMap(HomeCardLayout.init(storedData:)) ?? .standard }
+        get {
+            defaults.data(forKey: Keys.homeCardLayout).flatMap(HomeCardLayout.init(storedData:))
+                ?? .standard(for: workspaceProfile ?? .operator)
+        }
         set {
             guard let data = newValue.storedData else { return }
             defaults.set(data, forKey: Keys.homeCardLayout)
+        }
+    }
+
+    /// R2-UX-01: whether Grand Line asks for its password when it opens, and
+    /// again after the idle and session thresholds. `nil` means nothing has
+    /// decided yet.
+    ///
+    /// The lock is an opt-in from Settings > Security now. A fresh install
+    /// opens straight to Home (`settleFirstLaunch` writes `false` for it),
+    /// so a general user's first launch is never gated on Automic Vault, a
+    /// terminal command and a relaunch. An install from before this setting
+    /// existed keeps exactly the lock it had: it reads `nil` here, its launch
+    /// is locked as before, and the lock screen's own check settles it -
+    /// `true` when the password is configured, `false` only when it is
+    /// confirmed not to be (`AppLockMigration`). An unanswered check never
+    /// settles anything, so it can never turn a protection off.
+    var appLockEnabled: Bool? {
+        get { defaults.object(forKey: Keys.appLockEnabled) == nil ? nil : defaults.bool(forKey: Keys.appLockEnabled) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Keys.appLockEnabled) } else {
+                defaults.removeObject(forKey: Keys.appLockEnabled)
+            }
+            NotificationCenter.default.post(name: AppSettings.appLockPreferenceDidChange, object: self)
+        }
+    }
+
+    static let appLockPreferenceDidChange = Notification.Name("fm.appLockPreferenceDidChange")
+
+    /// R2-UX-08: how long the Mac may sit idle, and how long one unlocked
+    /// session may run, before the lock screen comes back. Nil is the
+    /// default. `AppLockController.configuredThresholds` clamps whatever is
+    /// stored here to its own bounds, and an `FM_APP_LOCK_*` override still
+    /// wins over both.
+    var appLockIdleSeconds: TimeInterval? {
+        get { defaults.object(forKey: Keys.appLockIdleSeconds) == nil ? nil : defaults.double(forKey: Keys.appLockIdleSeconds) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Keys.appLockIdleSeconds) } else {
+                defaults.removeObject(forKey: Keys.appLockIdleSeconds)
+            }
+        }
+    }
+
+    var appLockSessionSeconds: TimeInterval? {
+        get { defaults.object(forKey: Keys.appLockSessionSeconds) == nil ? nil : defaults.double(forKey: Keys.appLockSessionSeconds) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Keys.appLockSessionSeconds) } else {
+                defaults.removeObject(forKey: Keys.appLockSessionSeconds)
+            }
+        }
+    }
+
+    /// R2-UX-01: whether this launch is the first one on this Mac. Read once,
+    /// by `settleFirstLaunch`, before anything this launch writes: an install
+    /// that has ever stored a preference (every key this app owns starts
+    /// `fm.`), or that has a data folder with anything in it, is an existing
+    /// install and keeps what it had.
+    func isExistingInstall(dataRoot: URL = AppPaths.dataRoot()) -> Bool {
+        if defaults.dictionaryRepresentation().keys.contains(where: { $0.hasPrefix("fm.") }) { return true }
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: dataRoot.path)) ?? []
+        return contents.contains { !$0.hasPrefix(".") }
+    }
+
+    /// R2-UX-01: the decisions a first launch makes, written once so a later
+    /// launch reads them rather than guessing again. Runs before anything
+    /// else in `applicationDidFinishLaunching`.
+    ///
+    /// - A fresh install opens unlocked; an existing one is left undecided so
+    ///   its lock screen settles it (see `appLockEnabled`).
+    /// - A fresh install starts on the Personal profile, which the welcome
+    ///   sheet offers to change; an existing one is Operator, so every module
+    ///   it had stays in its sidebar.
+    func settleFirstLaunch(isExistingInstall existing: Bool) {
+        if appLockEnabled == nil, !existing { appLockEnabled = false }
+        if workspaceProfile == nil { setProfile(existing ? .operator : .personal) }
+    }
+
+    /// R2-UX-01 (b): the profile the sidebar started from (`WorkspaceProfile`).
+    /// `nil` only before `settleFirstLaunch` - and in a self-test or tour
+    /// process, which never runs it, so those see every module.
+    var workspaceProfile: WorkspaceProfile? {
+        defaults.string(forKey: Keys.workspaceProfile).flatMap(WorkspaceProfile.init(rawValue:))
+    }
+
+    /// Choose a profile: its hidden set replaces the current one.
+    func setProfile(_ profile: WorkspaceProfile) {
+        defaults.set(profile.rawValue, forKey: Keys.workspaceProfile)
+        hiddenModules = profile.hiddenModules
+    }
+
+    /// R2-UX-01 (b): the modules the sidebar layout leaves out of its sidebar,
+    /// its Go menu, the ⌘K palette and Home's default cards. Stored as module
+    /// ids; an id this build does not know is dropped on read, and Home and
+    /// Settings can never be hidden. With nothing stored it is the profile's
+    /// set, and with no profile, none.
+    var hiddenModules: Set<WorkspaceModule> {
+        get {
+            guard let stored = defaults.stringArray(forKey: Keys.hiddenModules) else {
+                return workspaceProfile?.hiddenModules ?? []
+            }
+            return Set(stored.compactMap(WorkspaceModule.init(rawValue:)).filter(\.canBeHidden))
+        }
+        set {
+            defaults.set(newValue.filter(\.canBeHidden).map(\.rawValue).sorted(), forKey: Keys.hiddenModules)
+            NotificationCenter.default.post(name: AppSettings.hiddenModulesDidChange, object: self)
+        }
+    }
+
+    static let hiddenModulesDidChange = Notification.Name("fm.hiddenModulesDidChange")
+
+    /// U-03: the sidebar's width as the captain last dragged it, in the
+    /// sidebar layout. `nil` until they drag it; the shell clamps whatever it
+    /// reads to its own range, so a stored width from another build or a
+    /// hand-edited plist can never open the sidebar outside it.
+    var sidebarWidth: CGFloat? {
+        get { defaults.object(forKey: Keys.sidebarWidth) == nil ? nil : CGFloat(defaults.double(forKey: Keys.sidebarWidth)) }
+        set {
+            if let newValue { defaults.set(Double(newValue), forKey: Keys.sidebarWidth) } else {
+                defaults.removeObject(forKey: Keys.sidebarWidth)
+            }
         }
     }
 }
