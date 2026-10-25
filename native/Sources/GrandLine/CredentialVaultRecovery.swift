@@ -90,6 +90,8 @@ struct CredentialVaultRecoveryWrap: Codable, Equatable {
         algorithm = try c.decode(String.self, forKey: .algorithm)
         salt = try c.decode(Data.self, forKey: .salt)
         rounds = try c.decode(UInt32.self, forKey: .rounds)
+        // R2-SEC-07: the same bounds as the file's own KDF parameters.
+        try CredentialVaultFile.KDFParameters.checkRounds(rounds, algorithm: algorithm)
         wrappedKey = try c.decode(Data.self, forKey: .wrappedKey)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }

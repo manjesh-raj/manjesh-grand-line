@@ -72,6 +72,7 @@ enum CredentialVaultSelfTest {
         checkSortOrderMigrationAppendAndReorder(scratch: scratch, check)
         checkARapidSequenceOfEditsAllPersist(scratch: scratch, check)
         checkTouchIDUnlockStatesItsTradeOff(check)
+        checkTheRoundCountIsBounded(scratch: scratch, check)
 
         if failures.isEmpty {
             print("CredentialVaultSelfTest: all checks passed")
@@ -80,6 +81,76 @@ enum CredentialVaultSelfTest {
         print("CredentialVaultSelfTest: FAILED")
         failures.forEach { print("  FAIL: \($0)") }
         return false
+    }
+
+    // MARK: R2-SEC-07 - the round count read from the file is bounded
+
+    /// A git-synced vault file chooses its own PBKDF2 round count, so one with
+    /// `UInt32.max` pinned a thread for hours per unlock attempt. Both
+    /// decoders now refuse a count outside `acceptedRounds` with
+    /// `unsupportedKDF` - and a real 600,000-round vault, which is what every
+    /// existing vault carries, still opens.
+    private static func checkTheRoundCountIsBounded(scratch: URL, _ check: (Bool, String) -> Void) {
+        func kdf(_ rounds: UInt64) -> Result<CredentialVaultFile.KDFParameters, Error> {
+            let json = #"{"algorithm":"\#(CredentialVaultCrypto.pbkdf2Name)","salt":"AAAA","rounds":\#(rounds)}"#
+            return Result { try JSONDecoder().decode(CredentialVaultFile.KDFParameters.self, from: Data(json.utf8)) }
+        }
+        func wrap(_ rounds: UInt64) -> Result<CredentialVaultRecoveryWrap, Error> {
+            let json = #"{"algorithm":"\#(CredentialVaultCrypto.pbkdf2Name)","salt":"AAAA","rounds":\#(rounds),"wrappedKey":"AAAA"}"#
+            return Result { try JSONDecoder().decode(CredentialVaultRecoveryWrap.self, from: Data(json.utf8)) }
+        }
+        func refusedAsKDF<T>(_ result: Result<T, Error>) -> Bool {
+            if case .failure(let error) = result, case .unsupportedKDF? = error as? CredentialVaultCryptoError { return true }
+            return false
+        }
+        for rounds: UInt64 in [100_000, UInt64(CredentialVaultCrypto.defaultRounds), 10_000_000] {
+            check((try? kdf(rounds).get()) != nil, "R2-SEC-07: a vault file with \(rounds) rounds no longer decodes")
+            check((try? wrap(rounds).get()) != nil, "R2-SEC-07: a recovery wrap with \(rounds) rounds no longer decodes")
+        }
+        for rounds: UInt64 in [0, 1_000, 99_999, 10_000_001, UInt64(UInt32.max)] {
+            check(refusedAsKDF(kdf(rounds)), "R2-SEC-07: a vault file with \(rounds) rounds decodes - it must report unsupportedKDF")
+            check(refusedAsKDF(wrap(rounds)), "R2-SEC-07: a recovery wrap with \(rounds) rounds decodes - it must report unsupportedKDF")
+        }
+
+        // A real vault at the default count still opens through the store.
+        let (_, root) = makeVault(scratch, name: "kdf-bounds")
+        let reopened = CredentialVaultStore(root: root)
+        let file = reopened.fileURL
+        guard let data = try? Data(contentsOf: file),
+              var json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              var kdfJSON = json["kdf"] as? [String: Any] else {
+            check(false, "could not read the created vault file back")
+            return
+        }
+        check((kdfJSON["rounds"] as? NSNumber)?.uint32Value == 600_000,
+              "fixture: a new vault carries \(kdfJSON["rounds"] ?? "nothing") rounds, not the 600,000 every existing vault has")
+        var opened: VaultUnlockOutcome?
+        waitFor(timeout: 30) { done in
+            reopened.unlock(masterPassword: "test-master-password") { opened = $0; done() }
+        }
+        check(opened == .unlocked, "R2-SEC-07: a 600,000-round vault no longer opens: \(String(describing: opened))")
+
+        // The same file with the count set to UInt32.max is refused before any
+        // derivation, and says why.
+        kdfJSON["rounds"] = UInt32.max
+        json["kdf"] = kdfJSON
+        guard let tampered = try? JSONSerialization.data(withJSONObject: json) else { return check(false, "could not re-encode") }
+        try? tampered.write(to: file)
+        let hostile = CredentialVaultStore(root: root)
+        if case .unreadable(let reason, _) = hostile.loadState() {
+            check(reason.contains("4294967295 rounds"), "R2-SEC-07: the refusal does not say why: \(reason)")
+        } else {
+            check(false, "R2-SEC-07: a vault file with UInt32.max rounds loads as \(hostile.loadState())")
+        }
+        var refused: VaultUnlockOutcome?
+        let started = Date()
+        waitFor(timeout: 30) { done in
+            hostile.unlock(masterPassword: "test-master-password") { refused = $0; done() }
+        }
+        if case .unreadable? = refused {} else {
+            check(false, "R2-SEC-07: unlocking a UInt32.max-round vault answered \(String(describing: refused))")
+        }
+        check(Date().timeIntervalSince(started) < 5, "R2-SEC-07: the refused unlock still took \(Date().timeIntervalSince(started))s")
     }
 
     // MARK: R2-SEC-02 - Touch ID unlock is off by default and says what it costs
@@ -635,7 +706,10 @@ enum CredentialVaultSelfTest {
     private static func checkSortOrderMigrationAppendAndReorder(scratch: URL, _ check: (Bool, String) -> Void) {
         let root = scratch.appendingPathComponent("sortorder-migration", isDirectory: true)
         let salt = CredentialVaultCrypto.newSalt()
-        guard let key = try? CredentialVaultCrypto.deriveKey(password: "migration-password", salt: salt, rounds: 1_000) else {
+        // The lowest count a vault file may carry (R2-SEC-07), so the fixture
+        // stays quick to derive and still decodes.
+        let rounds = CredentialVaultFile.KDFParameters.acceptedRounds.lowerBound
+        guard let key = try? CredentialVaultCrypto.deriveKey(password: "migration-password", salt: salt, rounds: rounds) else {
             check(false, "deriveKey should succeed"); return
         }
         // Three credentials in the SAME category, sealed with no `sortOrder`
@@ -664,7 +738,7 @@ enum CredentialVaultSelfTest {
         // under a purpose this test has no access to (both are `private` on
         // the store) - the simplest honest stand-in for a legacy file whose
         // own log/settings blobs are equally absent-or-minimal.
-        let legacyFile = CredentialVaultFile(kdf: .init(salt: salt, rounds: 1_000),
+        let legacyFile = CredentialVaultFile(kdf: .init(salt: salt, rounds: rounds),
                                              verifier: verifier, items: entries,
                                              auditLog: Data(), settings: Data())
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

@@ -522,6 +522,23 @@ struct CredentialVaultFile: Codable {
         var salt: Data
         var rounds: UInt32
 
+        /// R2-SEC-07: the round counts a vault file may carry.
+        ///
+        /// The count is read from a file that is git-synced, so whoever can
+        /// write the config repo chooses it. `UInt32.max` pinned a background
+        /// thread for hours on every unlock attempt. Every vault this app has
+        /// written carries `CredentialVaultCrypto.defaultRounds` (600,000),
+        /// which sits well inside the range, so no valid vault is refused.
+        static let acceptedRounds: ClosedRange<UInt32> = 100_000...10_000_000
+
+        /// Throws `unsupportedKDF` for a count outside `acceptedRounds`. Shared
+        /// by this type's and `CredentialVaultRecoveryWrap`'s decoders.
+        static func checkRounds(_ rounds: UInt32, algorithm: String) throws {
+            guard acceptedRounds.contains(rounds) else {
+                throw CredentialVaultCryptoError.unsupportedKDF("\(algorithm) with \(rounds) rounds")
+            }
+        }
+
         init(algorithm: String = CredentialVaultCrypto.pbkdf2Name,
              salt: Data,
              rounds: UInt32 = CredentialVaultCrypto.defaultRounds) {
@@ -540,6 +557,7 @@ struct CredentialVaultFile: Codable {
             algorithm = try c.decode(String.self, forKey: .algorithm)
             salt = try c.decode(Data.self, forKey: .salt)
             rounds = try c.decode(UInt32.self, forKey: .rounds)
+            try Self.checkRounds(rounds, algorithm: algorithm)
         }
     }
 
