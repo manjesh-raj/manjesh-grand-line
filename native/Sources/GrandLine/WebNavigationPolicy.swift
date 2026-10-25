@@ -24,6 +24,7 @@
 // One definition rather than three copies, because three copies is how the
 // prefix bug ends up fixed in one of them.
 
+import AppKit
 import Foundation
 
 enum WebNavigationPolicy {
@@ -75,4 +76,36 @@ enum WebNavigationPolicy {
         guard let scheme = url.scheme?.lowercased() else { return false }
         return scheme == "http" || scheme == "https"
     }
+
+    /// Hands `url` to the system only when `opensExternally` allows it.
+    ///
+    /// R2-SEC-11: the one way to open a URL that came from data rather than
+    /// from this app's own source - a pull request link from a forge's API, a
+    /// notification's URL, a fork's name, a saved reading-list link. Those
+    /// were handed to `NSWorkspace` as they arrived, so a forge response (or a
+    /// git-synced store) carrying `file:` or a custom scheme opened a local
+    /// path or fired a system action on a click. The web views already
+    /// applied this check; these sites now apply the same one.
+    /// `source` names the surface for the refusal's log line.
+    @discardableResult
+    static func openExternally(_ url: URL, from source: String) -> Bool {
+        guard opensExternally(url) else {
+            AppLog.ui.error("refused to open a \(url.scheme ?? "scheme-less", privacy: .public) URL from \(source, privacy: .public)")
+            return false
+        }
+        #if FM_SELFTESTS
+        if let opener = openerForTests {
+            opener(url)
+            return true
+        }
+        #endif
+        NSWorkspace.shared.open(url)
+        return true
+    }
+
+    #if FM_SELFTESTS
+    /// Records what would have been opened, so a suite never opens a browser.
+    /// Every user restores `nil`.
+    static var openerForTests: ((URL) -> Void)?
+    #endif
 }

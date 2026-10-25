@@ -40,6 +40,7 @@ enum SecretBoundariesSelfTest {
         checkEverySyncedCommitIsScanned(sources, &ok)
         checkAMisspeltSuiteFlagNeverReachesTheApp(&ok)
         checkLogLinesCarryNoChildOutputOrTitles(sources, &ok)
+        checkEveryDataDerivedOpenIsSchemeChecked(sources, &ok)
         print(ok ? "SecretBoundariesSelfTest: all checks passed" : "SecretBoundariesSelfTest: FAILED")
         return ok
     }
@@ -187,6 +188,51 @@ extension SecretBoundariesSelfTest {
     }
 }
 
+extension SecretBoundariesSelfTest {
+
+    // MARK: R2-SEC-11 - a URL from data is scheme-checked before the system opens it
+
+    /// The `NSWorkspace.open` calls that open something this app's own source
+    /// names, never a URL that arrived as data. Per function, with the reason.
+    static let fixedOpenTargets: [String: String] = [
+        "DocsController.swift openLiveTapped": "the playbook's own live site, a constant",
+        "main.swift showManualChecks": "MANUAL-CHECKS.md beside this build's sources",
+        "SettingsController.swift openAccessibilitySettings": "a fixed System Settings pane",
+        "ShiftController.swift openFailedFile": "the app's own store file that failed to read",
+    ]
+
+    static func checkEveryDataDerivedOpenIsSchemeChecked(_ sources: ProductionSources, _ ok: inout Bool) {
+        print("\n-- R2-SEC-11: every data-derived URL open goes through the scheme check --")
+        var opened: [URL] = []
+        WebNavigationPolicy.openerForTests = { opened.append($0) }
+        defer { WebNavigationPolicy.openerForTests = nil }
+        for raw in ["file:///Applications/Calculator.app", "x-apple.systempreferences:com.apple.preference.security",
+                    "shortcuts://run-shortcut?name=x", "javascript:alert(1)"] {
+            check(!WebNavigationPolicy.openExternally(URL(string: raw)!, from: "a test"),
+                  "R2-SEC-11: \(raw) was handed to the system", &ok)
+        }
+        check(WebNavigationPolicy.openExternally(URL(string: "https://bitbucket.org/ws/repo/pull-requests/7")!, from: "a test"),
+              "R2-SEC-11: an ordinary https pull request link was refused", &ok)
+        check(opened.map(\.scheme) == ["https"], "R2-SEC-11: the system was asked to open \(opened)", &ok)
+
+        var sites = 0
+        for file in sources.files where file.name != "WebNavigationPolicy.swift" {
+            for (index, line) in file.codeLines.enumerated() where line.contains("NSWorkspace.shared.open(") {
+                sites += 1
+                let body = ProductionSources.enclosingFunction(file.codeLines, upTo: index)
+                let function = body.first.map(ProductionSources.functionName) ?? "?"
+                let gated = body.contains { $0.contains("WebNavigationPolicy.opensExternally(") }
+                check(gated || fixedOpenTargets["\(file.name) \(function)"] != nil,
+                      "R2-SEC-11: \(file.name):\(index + 1) (\(function)) opens a URL without the scheme check - "
+                      + "use WebNavigationPolicy.openExternally", &ok)
+            }
+        }
+        let routed = sources.files.reduce(0) { $0 + $1.codeLines.filter { $0.contains("WebNavigationPolicy.openExternally(") }.count }
+        check(routed >= 8, "R2-SEC-11: only \(routed) sites use openExternally - a data-derived open lost its check", &ok)
+        if ok { print("  OK   \(sites) direct opens are fixed targets or checked; \(routed) data-derived opens use the policy") }
+    }
+}
+
 /// The app's production sources with comments stripped, read once.
 struct ProductionSources {
     struct File {
@@ -228,6 +274,13 @@ struct ProductionSources {
             index = line.index(after: index)
         }
         return line
+    }
+
+    /// The name in a `func` declaration line, or "?".
+    static func functionName(_ declaration: String) -> String {
+        guard let funcWord = declaration.range(of: "func ") else { return "?" }
+        let rest = declaration[funcWord.upperBound...]
+        return String(rest.prefix { $0.isLetter || $0.isNumber || $0 == "_" })
     }
 
     /// The lines from the nearest `func` or `init` declaration above `index`

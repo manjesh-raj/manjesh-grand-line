@@ -987,7 +987,7 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
 
     @objc fileprivate func openConfigRepoSettings() {
         guard let url = ConfigRepoPrivacy.settingsURL else { return }
-        NSWorkspace.shared.open(url)
+        WebNavigationPolicy.openExternally(url, from: "GitHub sync's config repo")
     }
 
     /// The same check every push runs first, run now. Off the main thread:
@@ -1095,7 +1095,7 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
 
     private static func openOnGitHub(_ fullName: String) {
         guard let url = URL(string: "https://github.com/\(fullName)") else { return }
-        NSWorkspace.shared.open(url)
+        WebNavigationPolicy.openExternally(url, from: "GitHub sync's fork list")
     }
 
     /// "just now", "5m ago", "2h ago", the way Updates says when it checked.

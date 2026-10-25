@@ -390,7 +390,7 @@ final class NotificationActionRouter: NSObject, UNUserNotificationCenterDelegate
             if let handler = onOpenURL {
                 handler(raw)
             } else if let url = URL(string: raw) {
-                NSWorkspace.shared.open(url)
+                WebNavigationPolicy.openExternally(url, from: "a notification")
             }
         case let .show(destination):
             onShow?(destination)

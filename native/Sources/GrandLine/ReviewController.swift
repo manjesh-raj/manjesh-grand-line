@@ -714,7 +714,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
 
     @objc private func reviewPR(_ sender: NSButton) {
         guard let raw = sender.identifier?.rawValue, let url = URL(string: raw) else { return }
-        NSWorkspace.shared.open(url)
+        WebNavigationPolicy.openExternally(url, from: "Review")
     }
 
     @objc private func mergePR(_ sender: NSButton) {
