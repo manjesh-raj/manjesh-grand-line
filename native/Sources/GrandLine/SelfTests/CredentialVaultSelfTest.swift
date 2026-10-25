@@ -1540,6 +1540,20 @@ enum CredentialVaultSelfTest {
         if case .wrongPassword = wrongOutcome {} else {
             check(false, "a wrong password on the new machine must be refused, got \(String(describing: wrongOutcome))")
         }
+
+        // R2-SEC-12: a `.corrupt-<ts>` copy beside the vault file stays on
+        // this Mac. Written through the real backup helper, then synced with
+        // an ordinary edit that must still travel.
+        let backup = StoreLoadFailure.backUp(store.fileURL, label: "credential vault")
+        check(backup.map { FileManager.default.fileExists(atPath: $0) } == true,
+              "fixture: StoreLoadFailure.backUp did not write a .corrupt copy beside the vault")
+        _ = store.add(VaultCredential(title: "After the backup", category: .cloud, account: "x", secret: "y"))
+        check(sync.commitAndPushNow(), "R2-SEC-12: the vault sync failed with a .corrupt copy present")
+        let tracked = shell("/usr/bin/git", ["-C", workingTree.path, "ls-files", CredentialVaultGitSync.vaultSubpath]).stdout
+        check(!tracked.contains(".corrupt-"), "R2-SEC-12: a .corrupt vault backup was committed to the config repo: \(tracked)")
+        check(tracked.contains(CredentialVaultGitSync.vaultFileName), "fixture: the vault file itself is no longer tracked")
+        let pending = shell("/usr/bin/git", ["-C", workingTree.path, "status", "--short", "--"] + CredentialVaultGitSync.syncedPathspec).stdout
+        check(pending.isEmpty, "R2-SEC-12: the .corrupt copy keeps the vault sync permanently dirty: \(pending)")
     }
 
     // MARK: Helpers
