@@ -1232,3 +1232,13 @@ One commit per id, with the id in the message.
   The proofs are under the task's data folder, one file per id.
 - Assertions that legitimately changed: Settings' card count (22 to 23, the Sidebar section), Slice 6's toggle count (7 to 8, the lock switch), the floating-bar subtitle no longer carrying the locality fact (`SettingsSidebarNavigationSelfTest`, `DaylightDrillPageSlice6SelfTest`), and R2-BUG-07's guarantee above.
 - Before and after renders were taken with the tour lab in Dusk and Daylight, at 1512 and 1100, in both layouts.
+
+## A column floor per page (R2-UX-10)
+
+The sidebar layout's content column had one 940pt floor, set by Log Analyzer and DevOps Commands, so the sidebar stepped aside below about 1180pt on every page.
+`ModuleDescriptor.minimumContentWidth` gives each page its own floor, read on navigation, scaled with the chrome text size.
+The values were measured by laying every page and toolbar tab out in a narrower column at text scale 1.0 and 1.3, in Dusk and Daylight: 660pt by default, Fleet 760, Log Analyzer and Commands 980.
+940 had only held for those two when they were shown at a narrow width; narrowing the window while either showed needed 973 and 964.
+Tasks' Weekly review is the one tab wider than its page (920pt), so it alone steps the sidebar aside, and its width tie is active only while it shows (gotcha (15)).
+The inspector takes its room from the sidebar before the window, and in the compact toolbar beside a showing sidebar the crumb yields first, with an overflow item that shows the place in the sidebar.
+At 1100 the sidebar now stays beside every page except Log Analyzer, Commands and Tasks' Weekly review, and at 1280 beside every page. `MainSplitShellSelfTest` asserts both, in both palettes.
