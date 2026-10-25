@@ -172,7 +172,11 @@ final class WidgetSnapshotPublisher {
             // `AtomicWrite` because a widget process may be reading this
             // file at any instant - a partial write is a decode failure the
             // captain sees as "Not available".
-            try AtomicWrite.data(data, to: snapshotURL)
+            //
+            // R2-SEC-12: sensitive, because it carries task titles and sticky
+            // bodies of up to 400 characters. The widget runs as the same
+            // user, so 0600 costs it nothing.
+            try AtomicWrite.data(data, to: snapshotURL, sensitive: true)
             lastPublishedBytes = data
             PersistenceFailureReporter.reportSuccess()
         } catch {
