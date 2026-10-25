@@ -99,6 +99,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     var onNotifications: ((NSView) -> Void)?
     var onToggleInspector: (() -> Void)?
     var onSearch: (() -> Void)?
+    /// R2-UX-10: the crumb's overflow form - show where you are in the sidebar.
+    var onShowLocation: (() -> Void)?
     /// The focus timer chip was clicked; the view is where its popover hangs.
     var onFocusChip: ((NSView) -> Void)?
 
@@ -356,7 +358,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         // forms work in the overflow menu, where the page's actions would not.
         switch identifier {
         case ItemID.recents, ItemID.inspector: item?.visibilityPriority = .low
-        case ItemID.crumb: item?.visibilityPriority = Self.crumbPriority
+        case ItemID.crumb: item?.visibilityPriority = crumbPriorityNow
         case ItemID.moduleAction: item?.visibilityPriority = Self.moduleActionPriority
         case ItemID.quickConnectConsole, ItemID.quickConnectHosts: item?.visibilityPriority = quickConnectPriorityNow
         case ItemID.focusTimer: item?.visibilityPriority = Self.focusChipPriority
@@ -391,7 +393,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             item.menuFormRepresentation = menuForm
             return item
         case ItemID.crumb:
-            return viewItem(identifier, view: crumb, label: "Location")
+            let item = viewItem(identifier, view: crumb, label: "Location")
+            // R2-UX-10: beside a showing sidebar at a laptop width the crumb
+            // is the first item to overflow, and a view item does nothing
+            // from the overflow menu without a form of its own. Its form
+            // shows the same place in the sidebar, as ⌘⇧D does.
+            let form = NSMenuItem(title: "Show in Sidebar", action: #selector(showLocationFromOverflow), keyEquivalent: "")
+            form.target = self
+            item.menuFormRepresentation = form
+            return item
         case ItemID.tabs:
             return viewItem(identifier, view: tabs, label: "Tabs")
         case ItemID.pageActions:
@@ -501,6 +511,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             item.visibilityPriority = quickConnectPriorityNow
         }
         toolbar.items.first { $0.itemIdentifier == ItemID.pageActions }?.visibilityPriority = pageActionsPriorityNow
+        toolbar.items.first { $0.itemIdentifier == ItemID.crumb }?.visibilityPriority = crumbPriorityNow
         searchButton.imagePosition = compact ? .imageOnly : .imageLeading
         focusChip.showsTitle = !compact
         setSearchHint(ThemeManager.shared.theme)
@@ -744,6 +755,26 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// measured on Knowledge, whose five tabs left the crumb the first thing
     /// to go at 1512 once Quick Connect was on every module.
     static let crumbPriority = NSToolbarItem.VisibilityPriority(rawValue: -100)
+    /// R2-UX-10: in the compact toolbar beside a showing sidebar, the
+    /// sidebar's selection names the module and the tab, so the crumb says
+    /// nothing it does not and is the first item to yield. Keeping the
+    /// sidebar at laptop widths leaves the toolbar about 250pt less beside
+    /// it, and measured at 1100 on Knowledge that is the crumb or the page's
+    /// actions. At full width, and with the sidebar put away, the crumb keeps
+    /// `crumbPriority`.
+    static let crumbSidebarShownPriority = NSToolbarItem.VisibilityPriority(rawValue: -1200)
+
+    private var sidebarShown = true
+    private var crumbPriorityNow: NSToolbarItem.VisibilityPriority {
+        sidebarShown && isCompact ? Self.crumbSidebarShownPriority : Self.crumbPriority
+    }
+
+    /// Whether the window's sidebar is showing (R2-UX-10).
+    func setSidebarShown(_ shown: Bool) {
+        guard shown != sidebarShown else { return }
+        sidebarShown = shown
+        toolbar.items.first { $0.itemIdentifier == ItemID.crumb }?.visibilityPriority = crumbPriorityNow
+    }
 
     static let badgeHeight: CGFloat = 15
 
@@ -806,6 +837,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     // MARK: Actions
 
     @objc private func sidebarClicked() { onToggleSidebar?() }
+    @objc private func showLocationFromOverflow() { onShowLocation?() }
     @objc private func recentsClicked() { onRecents?(recentsButton) }
     @objc private func recentsFromOverflow() { onRecents?(navigation) }
     @objc private func themeClicked() { onToggleTheme?() }

@@ -278,7 +278,8 @@ enum PageRedesignsSelfTest {
         shell.show(.logAnalyzer)
         settle(shell)
         check(shell.debugInspectorIsCollapsed, "the inspector stayed open on Logs", &ok)
-        check(shell.debugColumnMinimum == MainSplitShellController.contentMinimum,
+        // R2-UX-10: back up to Log Analyzer's own floor.
+        check(shell.debugColumnMinimum == MainSplitShellController.contentMinimum(for: .logAnalyzer),
               "the column's floor stayed at \(shell.debugColumnMinimum) off Hosts", &ok)
         check(abs(window.frame.width - 1100) < 0.5, "leaving Hosts grew the window to \(window.frame.width)pt", &ok)
 
