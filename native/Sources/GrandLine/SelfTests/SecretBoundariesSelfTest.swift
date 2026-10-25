@@ -38,6 +38,7 @@ enum SecretBoundariesSelfTest {
         }
         checkEveryPasteboardReadAsksIsConcealedFirst(sources, &ok)
         checkEverySyncedCommitIsScanned(sources, &ok)
+        checkAMisspeltSuiteFlagNeverReachesTheApp(&ok)
         print(ok ? "SecretBoundariesSelfTest: all checks passed" : "SecretBoundariesSelfTest: FAILED")
         return ok
     }
@@ -117,6 +118,38 @@ extension SecretBoundariesSelfTest {
         check(!sources.files.contains { $0.text.contains("func containsLikelySecret") },
               "R2-SEC-04: LogRedactor.containsLikelySecret is back with no caller", &ok)
         if ok { print("  OK   \(scanned) synced stores scan before staging") }
+    }
+}
+
+extension SecretBoundariesSelfTest {
+
+    // MARK: R2-SEC-09 - a misspelt suite flag exits 2
+
+    /// Asserted on the pure predicate and on `main.swift`'s text, never by
+    /// starting a process: with the fix reverted, such a process would
+    /// activate the captain's running app.
+    static func checkAMisspeltSuiteFlagNeverReachesTheApp(_ ok: inout Bool) {
+        print("\n-- R2-SEC-09: any FM_RUN_ key that no suite answered exits 2 --")
+        for flag in [["FM_RUN_CONTRAST": "1"], ["FM_RUN_CONTRAST_TESTS": "yes"], ["FM_RUN_CONTRAST_TESTS": "0"],
+                     ["FM_RUN_CONTRAST_TEST": "1"], ["FM_RUN_X": ""], ["FM_RUN_CONTRAST_TESTS": "1"]] {
+            check(SelfTestFlags.unknownSuiteFlags(in: flag.merging(["PATH": "/usr/bin", "FM_HOME": "/tmp"]) { a, _ in a })
+                  == Array(flag.keys),
+                  "R2-SEC-09: \(flag) reaching the end of the suite blocks is not treated as unknown", &ok)
+        }
+        check(SelfTestFlags.unknownSuiteFlags(in: ["PATH": "/usr/bin", "FM_REVIEW_TOUR": "/tmp/t.txt",
+                                                   "FM_SHIFT_DIR": "/tmp/s"]).isEmpty,
+              "R2-SEC-09: an ordinary launch environment reads as an unknown suite flag", &ok)
+
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8),
+              let check2 = main.range(of: "SelfTestFlags.unknownSuiteFlags(in: ProcessInfo.processInfo.environment)"),
+              let exit2 = main.range(of: "exit(2)", range: check2.upperBound..<main.endIndex),
+              let acquire = main.range(of: "switch SingleInstanceGuard.acquire()") else {
+            return fail("R2-SEC-09: main.swift no longer asks SelfTestFlags.unknownSuiteFlags before exit(2)", &ok)
+        }
+        check(exit2.upperBound < acquire.lowerBound,
+              "R2-SEC-09: the unknown-flag exit sits after SingleInstanceGuard.acquire()", &ok)
+        if ok { print("  OK   every FM_RUN_ key is unknown at the end of the blocks, and exits before the instance guard") }
     }
 }
 

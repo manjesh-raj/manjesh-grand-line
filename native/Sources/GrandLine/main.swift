@@ -4767,9 +4767,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_HERDR_RESTART_BUTTON_TESTS"] == "
 // would report the typo as a pass. Measured while writing the modular-shell
 // inventory: the HelmKit guard's flag, misspelt with an extra word, "passed"
 // in 0.1s through `run-all-tests.sh` and ran nothing.
-let unknownSuiteFlags = ProcessInfo.processInfo.environment
-    .filter { $0.key.hasPrefix("FM_RUN_") && $0.key.hasSuffix("_TESTS") && $0.value == "1" }
-    .keys.sorted()
+//
+// R2-SEC-09: any key with the suite prefix at all, whatever its suffix or
+// value. The redirect block above arms on the prefix alone, so a flag missing
+// its `_TESTS` suffix, or set to `yes` instead of `1`, used to arm it, match
+// no suite, and fall through to `SingleInstanceGuard.acquire()` - which
+// activates the captain's running app and exits 0. (No flag is spelt out
+// here: `run-all-tests.sh` discovers suites by grepping this file.)
+let unknownSuiteFlags = SelfTestFlags.unknownSuiteFlags(in: ProcessInfo.processInfo.environment)
 if !unknownSuiteFlags.isEmpty {
     print("no suite answers to \(unknownSuiteFlags.joined(separator: ", ")) - "
           + "check the spelling against the flags this file dispatches")
