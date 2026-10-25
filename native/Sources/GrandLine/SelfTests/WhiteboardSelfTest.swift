@@ -93,6 +93,10 @@ enum WhiteboardSelfTest {
             return
         }
         check(WhiteboardAssets.isAvailable, "isAvailable should agree with webDirectory()")
+        // R2-SEC-12: every shipped file matches the digest its build recorded.
+        for problem in VendoredBundleDigests.problems(in: dir) {
+            check(false, "R2-SEC-12: Excalidraw bundle: \(problem)")
+        }
 
         let fm = FileManager.default
         for name in ["index.html", "whiteboard.js", "whiteboard.css"] {
