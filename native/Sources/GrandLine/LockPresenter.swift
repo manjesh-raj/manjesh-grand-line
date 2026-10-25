@@ -114,11 +114,6 @@ final class LockPresenter {
                 DispatchQueue.main.async { completion(allowed) }
             }
         }
-        // fm/grandline-vault-bootstrap-fix: "Install Automic Vault" on the
-        // `.avUnavailable` state - a plain Homebrew-cask install
-        // (`VaultSource.updateInstall()`, the same mechanism the
-        // Updates/Vault pages already use for this catalog entry), so it
-        // needs no prior unlock and is safe to trigger straight from here.
         // R2-UX-01: the two setup states used to end in "then relaunch".
         // Check again runs the same check a new lock screen runs, so a
         // password saved (or Automic Vault installed) while this screen is up
@@ -127,17 +122,6 @@ final class LockPresenter {
             guard let self else { return }
             self.appPasswordRetryAttempt = 0
             self.checkAppPasswordAvailability(reason: self.shownReason)
-        }
-        lockScreen.onInstallAutomicVault = { completion in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let outcome = VaultSource.updateInstall()
-                DispatchQueue.main.async {
-                    let message = outcome.ok
-                        ? "Installed. Set a password with \u{201c}av save GRANDLINE_APP_PASSWORD\u{201d}, then choose Check again."
-                        : "Install failed: \(outcome.detail)"
-                    completion(outcome.ok, message)
-                }
-            }
         }
     }
 

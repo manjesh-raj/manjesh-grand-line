@@ -90,8 +90,8 @@ final class LockScreenController: NSViewController {
         /// `av` itself isn't installed on this Mac at all - distinct from
         /// `.noPasswordConfigured` (av installed, no secret saved yet): the
         /// "run av save..." instruction is actively wrong here since there's
-        /// no `av` to run. Shows a real "Install Automic Vault" action
-        /// instead (`onInstallAutomicVault`).
+        /// no `av` to run. Shows the Homebrew install command in the copyable
+        /// well instead, and never runs it (R2-SEC-06).
         case avUnavailable
         /// `av` is on PATH but its background approval service (the
         /// "Automic Vault" menu-bar app) isn't reachable yet - the password
@@ -157,15 +157,6 @@ final class LockScreenController: NSViewController {
     /// has (or lacks) Touch ID, and so this controller keeps knowing nothing
     /// about `LocalAuthentication`.
     var localAuthAvailable: () -> Bool = { false }
-
-    /// Fired when the captain clicks "Install Automic Vault" on the
-    /// `.avUnavailable` state - the caller runs the real Homebrew-cask
-    /// install (`VaultSource.updateInstall()`, the same mechanism the
-    /// Updates/Vault pages already use for this catalog entry) on a
-    /// background queue and calls back with the outcome; this controller
-    /// only shows install progress/result text, it knows nothing about
-    /// `UpdatesSource`/`DependencyCatalog`.
-    var onInstallAutomicVault: ((@escaping (Bool, String) -> Void) -> Void)?
 
     /// R2-UX-01: "Check again" on the two setup states, which used to end in
     /// "then relaunch". The caller runs the same availability check a new
@@ -276,12 +267,19 @@ final class LockScreenController: NSViewController {
     private let setupCommandLabel = NSTextField(labelWithString: VaultSource.appPasswordSetupCommand)
     private let copyCommandButton = HelmButton(title: "Copy", variant: .secondary, size: .small)
     private let setupCommandStack = NSStackView()
+    /// The command the well shows and Copy copies: the app-password setup
+    /// line, or on `.avUnavailable` the Homebrew install line.
+    private var shownSetupCommand = VaultSource.appPasswordSetupCommand
 
-    // `.avUnavailable`-only UI: a distinct message plus a real install
-    // action - see `onInstallAutomicVault` above.
+    // `.avUnavailable`-only UI: a distinct message above the command well.
+    //
+    // R2-SEC-06: this state used to carry an "Install Automic Vault" button
+    // that ran `brew install --cask` straight from here. The one screen whose
+    // purpose is to require a credential offered a machine-changing,
+    // network-reaching action to whoever was standing at it. It shows the
+    // command instead, in the same copyable well as the password setup line,
+    // and the captain runs it themselves.
     private let avMessageLabel = NSTextField(wrappingLabelWithString: "")
-    private let installButton = HelmButton(title: "Install Automic Vault", variant: .primary)
-    private let installStatusLabel = NSTextField(wrappingLabelWithString: "")
     private let avUnavailableStack = NSStackView()
 
     /// R2-UX-01: the way forward from both setup states, without quitting.
@@ -546,22 +544,13 @@ final class LockScreenController: NSViewController {
         avMessageLabel.maximumNumberOfLines = 6
         avMessageLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        installButton.target = self
-        installButton.action = #selector(installTapped)
-        installButton.translatesAutoresizingMaskIntoConstraints = false
 
-        installStatusLabel.font = HelmType.caption()
-        installStatusLabel.alignment = .center
-        installStatusLabel.maximumNumberOfLines = 4
-        installStatusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         avUnavailableStack.orientation = .vertical
         avUnavailableStack.alignment = .centerX
         avUnavailableStack.spacing = HelmMetrics.s3
         avUnavailableStack.translatesAutoresizingMaskIntoConstraints = false
         avUnavailableStack.addArrangedSubview(avMessageLabel)
-        avUnavailableStack.addArrangedSubview(installButton)
-        avUnavailableStack.addArrangedSubview(installStatusLabel)
         avUnavailableStack.isHidden = true
 
         checkAgainButton.target = self
@@ -653,13 +642,11 @@ final class LockScreenController: NSViewController {
             errorLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
             messageLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
             avMessageLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
-            installStatusLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
             formStack.widthAnchor.constraint(equalTo: body.widthAnchor),
             passwordWell.widthAnchor.constraint(equalTo: formStack.widthAnchor),
             unlockButton.widthAnchor.constraint(equalTo: formStack.widthAnchor),
             setupCommandStack.widthAnchor.constraint(equalTo: body.widthAnchor),
             avUnavailableStack.widthAnchor.constraint(equalTo: body.widthAnchor),
-            installButton.widthAnchor.constraint(equalTo: avUnavailableStack.widthAnchor),
             checkAgainButton.widthAnchor.constraint(equalTo: body.widthAnchor),
             footerStack.widthAnchor.constraint(equalTo: body.widthAnchor),
             footerDivider.widthAnchor.constraint(equalTo: footerStack.widthAnchor),
@@ -799,7 +786,6 @@ final class LockScreenController: NSViewController {
         subtitleLabel.textColor = muted
         messageLabel.textColor = muted
         avMessageLabel.textColor = muted
-        installStatusLabel.textColor = muted
         waitingLabel.textColor = muted
         localAuthNote.textColor = muted
         footerLeftLabel.textColor = muted
@@ -824,7 +810,6 @@ final class LockScreenController: NSViewController {
         // and the corrected fill is `DaylightPalette.primaryButtonFill`'s job,
         // not a literal: white on the raw amber measures 3.27:1.
         unlockButton.domainHue = currentHue
-        installButton.domainHue = currentHue
         applyLayerGeometry()
     }
 
@@ -1143,7 +1128,7 @@ final class LockScreenController: NSViewController {
             // GL-31: the command itself lives in the copyable well below, so
             // the prose can just say what to do with it.
             subtitleLabel.stringValue = "The app lock is on, and no app password is saved yet. Run this in a terminal (or set it from Automic Vault's own app), then choose Check again."
-            setupCommandStack.isHidden = false
+            showSetupCommand(VaultSource.appPasswordSetupCommand)
             checkAgainButton.isHidden = onCheckAgain == nil
             footerLeftLabel.stringValue = "The one screen where nothing else is reachable"
 
@@ -1151,11 +1136,10 @@ final class LockScreenController: NSViewController {
             titleLabel.stringValue = "Automic Vault isn't installed"
             subtitleLabel.stringValue = "Grand Line keeps your app password in Automic Vault's keychain. Install it to continue."
             avUnavailableStack.isHidden = false
-            avMessageLabel.stringValue = "Once it's installed, set a password with \u{201c}\(VaultSource.appPasswordSetupCommand)\u{201d} (or Automic Vault's own app), then choose Check again."
+            avMessageLabel.stringValue = "Install it by running this in a terminal. Then set a password with \u{201c}\(VaultSource.appPasswordSetupCommand)\u{201d} (or Automic Vault's own app), and choose Check again."
+            showSetupCommand(VaultSource.installCommand)
             checkAgainButton.isHidden = onCheckAgain == nil
-            installButton.isEnabled = true
-            installStatusLabel.stringValue = ""
-            footerLeftLabel.stringValue = "Installs via Homebrew"
+            footerLeftLabel.stringValue = "Nothing is installed from this screen"
 
         case .serviceNotRunning:
             titleLabel.stringValue = "Waking Automic Vault"
@@ -1269,29 +1253,20 @@ final class LockScreenController: NSViewController {
         onCheckAgain?()
     }
 
+    private func showSetupCommand(_ command: String) {
+        shownSetupCommand = command
+        setupCommandLabel.stringValue = command
+        setupCommandStack.isHidden = false
+    }
+
     @objc private func copySetupCommandTapped() {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(VaultSource.appPasswordSetupCommand, forType: .string)
+        NSPasteboard.general.setString(shownSetupCommand, forType: .string)
         // `HelmButton` owns its own `attributedTitle` (`restyle()` rebuilds it
         // on every theme change), so the confirmation goes through `title`.
         copyCommandButton.title = "Copied"
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
             self?.copyCommandButton.title = "Copy"
-        }
-    }
-
-    @objc private func installTapped() {
-        guard let onInstallAutomicVault else { return }
-        installButton.isEnabled = false
-        installStatusLabel.stringValue = "Installing Automic Vault\u{2026}"
-        onInstallAutomicVault { [weak self] success, message in
-            guard let self else { return }
-            self.installStatusLabel.stringValue = message
-            // Leave the button disabled on success (the state itself will
-            // move on to `.noPasswordConfigured`/`.serviceNotRunning` once
-            // `AppShellController` re-checks); re-enable on failure so the
-            // captain can retry without relaunching.
-            self.installButton.isEnabled = !success
         }
     }
 
@@ -1375,7 +1350,7 @@ extension LockScreenController {
     var debugSubtitle: NSTextField { subtitleLabel }
     var debugPasswordField: HelmSecureTextField { passwordField }
     var debugUnlockButton: HelmButton { unlockButton }
-    var debugInstallButton: HelmButton { installButton }
+    var debugSetupCommand: String { setupCommandLabel.stringValue }
     var debugCopyButton: HelmButton { copyCommandButton }
     var debugErrorLabel: NSTextField { errorLabel }
     var debugSetupCommandWell: NSStackView { setupCommandStack }

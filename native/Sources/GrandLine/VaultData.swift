@@ -308,6 +308,13 @@ enum VaultSource {
     /// `setup-guide.md` cannot drift apart.
     static var appPasswordSetupCommand: String { "av save \(appPasswordSecretName)" }
 
+    /// R2-SEC-06: the install line the lock screen shows (and never runs),
+    /// built from the same catalog entry `checkInstall`/`updateInstall` use.
+    static var installCommand: String {
+        if case .brewCask(let cask, _) = dependencyItem.kind { return "brew install --cask \(cask)" }
+        return "brew install --cask automic-vault/isotopes/automic-vault"
+    }
+
     enum AppPasswordAvailability {
         case configured
         case notConfigured
