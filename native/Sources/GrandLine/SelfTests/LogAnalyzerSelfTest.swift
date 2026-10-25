@@ -749,8 +749,48 @@ enum LogAnalyzerSelfTest {
         }
 
         checkTheInputPaneShowsWholeLines(check)
+        checkTheClipboardActionsRefuseAConcealedSecret(check)
 
         return finish(failures)
+    }
+
+    // MARK: R2-SEC-03 - the clipboard actions ask isConcealed first
+
+    /// Driven through the two real `@objc` actions the button, the ⋯ menu and
+    /// the app menu reach, against a named board so the captain's clipboard is
+    /// never written. The refused case comes first and uses `analyzeClipboard`,
+    /// which would start `claude -p` if it got past the check - it returns
+    /// before that, which is the point.
+    private static func checkTheClipboardActionsRefuseAConcealedSecret(_ check: (Bool, String) -> Void) {
+        let board = NSPasteboard(name: NSPasteboard.Name("fm-log-analyzer-concealed-\(UUID().uuidString)"))
+        LogAnalyzerController.debugPasteboard = board
+        defer {
+            LogAnalyzerController.debugPasteboard = nil
+            board.releaseGlobally()
+        }
+        autoreleasepool {
+            let controller = LogAnalyzerController(commandLibrary: CommandLibraryStore())
+            _ = controller.view
+            let secret = "vault-copied-passphrase-Tr0ub4dor"
+
+            board.clearContents()
+            board.setString(secret, forType: .string)
+            board.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+            check(CredentialVaultClipboard.isConcealed(board),
+                  "fixture: the board carries the concealed marker, or the refusal below proves nothing")
+            controller.analyzeClipboard()
+            controller.addClipboardAsEvidence()
+            check(controller.debugEvidenceCount == 0,
+                  "R2-SEC-03: a concealed clipboard became \(controller.debugEvidenceCount) evidence item(s)")
+
+            // The same text without the marker is read, so the zero above is
+            // the check's doing and not a board the page cannot see.
+            board.clearContents()
+            board.setString(secret, forType: .string)
+            controller.addClipboardAsEvidence()
+            check(controller.debugEvidenceCount == 1,
+                  "an ordinary clipboard was not added as evidence (\(controller.debugEvidenceCount) items)")
+        }
     }
 
     // MARK: R2-BUG-16 - the Input pane shows every line in full

@@ -1504,23 +1504,48 @@ extension LogAnalyzerController: NSTextViewDelegate {
     }
 
     @objc func analyzeClipboard() {
-        guard let text = NSPasteboard.general.string(forType: .string),
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            Toast.show(in: view, message: "Clipboard is empty")
-            return
-        }
+        guard let text = clipboardTextForEvidence() else { return }
         addEvidence(raw: text, label: "Clipboard", origin: .clipboard)
         runAnalysis()
     }
 
     @objc func addClipboardAsEvidence() {
-        guard let text = NSPasteboard.general.string(forType: .string),
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            Toast.show(in: view, message: "Clipboard is empty")
-            return
-        }
+        guard let text = clipboardTextForEvidence() else { return }
         addEvidence(raw: text, label: "Clipboard", origin: .clipboard)
         Toast.show(in: view, message: "Clipboard added as evidence")
+    }
+
+    /// The clipboard's text for the two clipboard actions, or `nil` after
+    /// saying why there is none.
+    ///
+    /// **R2-SEC-03: refuses a concealed pasteboard, asked before the string is
+    /// read.** Evidence is persisted by `LogAnalyzerStore.save` and sent to
+    /// `claude -p`, and `LogRedactor` catches token-shaped values rather than
+    /// an arbitrary password - so without this, one chord inside the vault's
+    /// clipboard window moved a copied credential to disk and off the Mac.
+    /// `CredentialVaultClipboard.isConcealed` is this app's one definition of
+    /// "a secret is on the pasteboard" (AGENTS.md's "Stores, subprocesses and
+    /// secrets").
+    private func clipboardTextForEvidence() -> String? {
+        guard !CredentialVaultClipboard.isConcealed(clipboard) else {
+            Toast.show(in: view, message: "That clipboard entry came from Poneglyph, so it was not read")
+            return nil
+        }
+        guard let text = clipboard.string(forType: .string),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            Toast.show(in: view, message: "Clipboard is empty")
+            return nil
+        }
+        return text
+    }
+
+    /// The general pasteboard, or a suite's own named board so a check never
+    /// writes the captain's clipboard.
+    private var clipboard: NSPasteboard {
+        #if FM_SELFTESTS
+        if let board = Self.debugPasteboard { return board }
+        #endif
+        return .general
     }
 
     @objc func addCurrentInputAsEvidence() {
@@ -3116,6 +3141,10 @@ extension LogAnalyzerController {
         guard let tab = tabViews[id] else { return false }
         return !tab.isHidden && !tab.isHiddenOrHasHiddenAncestor
     }
+    /// R2-SEC-03: the pasteboard the clipboard actions read instead of the
+    /// general one. Every user restores `nil`.
+    static var debugPasteboard: NSPasteboard?
+    var debugEvidenceCount: Int { investigation.evidence.count }
     func debugSetInput(_ text: String) {
         _ = view
         inputTextView.string = text

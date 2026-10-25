@@ -3872,6 +3872,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_EXTERNAL_TOOL_GUARD_TESTS"] == "1
     exit(ExternalToolGuardSelfTest.run() ? 0 : 1)
 }
 
+// The second full review's security findings (R2-SEC-01 to R2-SEC-12): the
+// source guards that every pasteboard read, network session, AI call, log
+// line, synced commit and data-derived URL open takes its one shared path.
+// Pure logic. See SecretBoundariesSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SECRET_BOUNDARIES_TESTS"] == "1" {
+    exit(SecretBoundariesSelfTest.run() ? 0 : 1)
+}
+
 // GL-29 (Phase 3): `FleetDataSource`/`OpenPRsSource` - the pair behind Overview
 // and Review, including the merge action's argv. See
 // `FleetDataSelfTest.swift`'s header.
