@@ -170,6 +170,18 @@ enum DictationCleanup {
             completion(.failure(DictationCleanupError(message: "empty transcript")))
             return
         }
+        // R2-SEC-05: dictation types into other apps, password fields
+        // included, so a transcript is redacted before it can leave the Mac.
+        // A transcript the redactor changed is not sent at all rather than
+        // sent redacted: the rewrite replaces what gets pasted, so a redacted
+        // send would paste the placeholder instead of what the captain said.
+        // Failing here takes every caller's existing "paste the raw
+        // transcript" fallback.
+        guard LogRedactor.redact(trimmed).isEmpty else {
+            completion(.failure(DictationCleanupError(
+                message: "the transcript looked like it held a secret, so it was not sent to Claude")))
+            return
+        }
         guard let claude = claudePathOverrideForTests ?? SRELead.resolveClaude() else {
             completion(.failure(DictationCleanupError(message: "claude is not installed or not on PATH")))
             return

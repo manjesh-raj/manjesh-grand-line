@@ -289,6 +289,7 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
         toolbarRow.translatesAutoresizingMaskIntoConstraints = false
 
         sendButton.translatesAutoresizingMaskIntoConstraints = false
+        sendButton.toolTip = AITransparency.willSendToClaude("your question and the cluster output it reads")
         sendButton.target = self
         sendButton.action = #selector(submit)
         sendButton.isEnabled = false

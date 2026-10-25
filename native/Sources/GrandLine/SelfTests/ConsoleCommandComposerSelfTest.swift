@@ -94,6 +94,27 @@ enum ConsoleCommandComposerSelfTest {
             check(prompt.lowercased().contains("code fence"), "prompt should explicitly rule out a code fence")
         }
 
+        // R2-SEC-05: the intent is redacted before it is sent. Read from what
+        // the fake `claude` really received on stdin, not from `prompt(for:)`.
+        do {
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("grandline-composer-prompt-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let script = dir.appendingPathComponent("claude")
+            let body = "#!/bin/sh\ncat > \"$(dirname \"$0\")/prompt.txt\"\n"
+                + "printf '%s\\n' '{\"result\": \"curl -H x\", \"is_error\": false}'\n"
+            try? body.write(to: script, atomically: true, encoding: .utf8)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+            ConsoleCommandComposer.claudePathOverrideForTests = script.path
+            let token = "eyJhbGciOiJIUzI1NiJ9.ZmFrZS1wYXlsb2Fk.c2lnbmF0dXJlLWhlcmU"
+            _ = runGenerateSync(intent: "curl the status api with Authorization: Bearer \(token)")
+            let sent = (try? String(contentsOf: dir.appendingPathComponent("prompt.txt"), encoding: .utf8)) ?? ""
+            check(sent.contains("curl the status api"), "fixture: the fake claude did not record the prompt (\(sent.count) chars)")
+            check(!sent.contains(token), "R2-SEC-05: the composer sent a token in the intent to claude")
+            check(sent.contains(LogRedactor.placeholder), "R2-SEC-05: the sent intent carries no redaction placeholder")
+        }
+
         return ok
 
         func check(_ condition: Bool, _ message: String) {

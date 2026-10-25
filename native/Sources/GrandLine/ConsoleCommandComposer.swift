@@ -79,7 +79,11 @@ enum ConsoleCommandComposer {
         // completion on the main thread exactly once, and the generated command
         // is still only ever shown for review - `generate` never touches a
         // terminal.
-        ClaudeOneShot.run(executable: claude, prompt: prompt(for: trimmed),
+        //
+        // R2-SEC-05: the intent is redacted first. It is free text typed into a
+        // terminal's composer, which is exactly where a pasted token lands, and
+        // the generated command is only ever shown for review.
+        ClaudeOneShot.run(executable: claude, prompt: prompt(for: LogRedactor.redact(trimmed).text),
                           timeout: timeout, label: "claude -p (compose)") { result in
             switch result {
             case .success(let reply):

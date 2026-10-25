@@ -457,6 +457,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
             tileRow.addArrangedSubview(tile)
         }
 
+        crewButton.toolTip = AITransparency.willSendToClaude("what you captured")
         crewButton.target = self
         crewButton.action = #selector(askTheCrew)
         crewButton.translatesAutoresizingMaskIntoConstraints = false

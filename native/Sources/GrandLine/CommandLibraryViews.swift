@@ -297,7 +297,8 @@ final class CommandLibraryPageView: NSObject {
         detailParamsStack.translatesAutoresizingMaskIntoConstraints = false
 
         detailExplainButton.controlSize = .small
-        detailExplainButton.toolTip = "Explain, improve or troubleshoot this command"
+        detailExplainButton.toolTip = "Explain, improve or troubleshoot this command. "
+            + AITransparency.willSendToClaude("the command and any error you paste, redacted,")
         detailExplainButton.target = self
         detailExplainButton.action = #selector(aiClicked(_:))
         detailExplainButton.translatesAutoresizingMaskIntoConstraints = false

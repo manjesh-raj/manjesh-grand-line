@@ -38,6 +38,7 @@ enum AITransparencySelfTest {
 
         checkTheClaimsSayWhereTheTextWent(check)
         checkEverySurfaceStatesItsOwnClaim(check)
+        checkEveryAICallerHasASurfaceThatSaysSo(check)
 
         if failures.isEmpty {
             print("AITransparencySelfTest: OK")
@@ -79,6 +80,44 @@ enum AITransparencySelfTest {
                 continue
             }
             check(body.contains(needle), "\(file) no longer states \(needle) - \(why)")
+        }
+    }
+
+    /// R2-SEC-05: every file that runs `claude -p`, and the file holding the
+    /// control that starts it. Each of those controls says, through
+    /// `AITransparency.willSendToClaude`, what it is about to send. A twelfth
+    /// caller fails here until it names its surface.
+    static let aiCallers: [String: [String]] = [
+        "CommandLibraryAI.swift": ["CommandLibraryViews.swift", "CommandLibraryAIPopover.swift"],
+        "ConsoleCommandComposer.swift": ["ConsoleController+Toolbar.swift", "ConsoleComposerPopover.swift"],
+        "DictationCleanup.swift": ["DictationController.swift"],
+        "LogAnalyzerAI.swift": ["LogAnalyzerController.swift"],
+        "MorningBriefingData.swift": ["MorningBriefingCard.swift"],
+        "ReadingListAI.swift": ["ReadingListCardView.swift"],
+        "ShiftQuickCapture.swift": ["ShiftQuickCapture.swift"],
+        "SRELeadPostmortem.swift": ["ConsoleController+SRELead.swift"],
+        "SRELeadRunner.swift": ["SRELeadChatView.swift"],
+        "StrawHatRunner.swift": ["StrawHatChatView.swift"],
+        "WhiteboardDiagram.swift": ["WhiteboardController.swift"],
+    ]
+
+    private static func checkEveryAICallerHasASurfaceThatSaysSo(_ check: (Bool, String) -> Void) {
+        guard let files = SelfTestSources.appSourceFiles(), files.count > 50 else {
+            check(false, "could not list the app's sources - this guard cannot run")
+            return
+        }
+        let callers = files.filter { (try? String(contentsOf: $0, encoding: .utf8))?.contains("ClaudeOneShot.run(") == true }
+            .map(\.lastPathComponent)
+        check(callers.count >= 11, "fixture: found \(callers.count) claude -p callers - the scan is not seeing the app")
+        for caller in callers {
+            guard let surfaces = aiCallers[caller] else {
+                check(false, "R2-SEC-05: \(caller) runs claude -p and names no surface that tells the captain")
+                continue
+            }
+            for surface in surfaces {
+                check(source(surface)?.contains("AITransparency.willSendToClaude(") == true,
+                      "R2-SEC-05: \(surface) starts \(caller)'s claude -p call without saying what it sends")
+            }
         }
     }
 

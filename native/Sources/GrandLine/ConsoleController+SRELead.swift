@@ -65,7 +65,7 @@ extension ConsoleController {
         sreLeadGeneratePostmortemButton.title = ""
         sreLeadGeneratePostmortemButton.isBordered = false
         sreLeadGeneratePostmortemButton.wantsLayer = true
-        sreLeadGeneratePostmortemButton.toolTip = "Generate Postmortem"
+        sreLeadGeneratePostmortemButton.toolTip = "Generate Postmortem. " + AITransparency.willSendToClaude("this incident's transcript")
         sreLeadGeneratePostmortemButton.image = HelmSymbol.image("doc.badge.plus", pointSize: 12,
                                                          weight: HelmSymbol.weight(for: .semibold),
                                                          accessibilityDescription: "Generate Postmortem")

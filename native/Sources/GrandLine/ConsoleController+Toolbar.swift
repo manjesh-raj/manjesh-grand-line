@@ -55,7 +55,8 @@ extension ConsoleController {
 
         blockViewToggleButton = makeLabeledButton(symbol: "rectangle.grid.1x2", title: "Blocks", tooltip: "Show Parsed Blocks (Stage 0)", action: #selector(toggleBlockView))
         blockViewRefreshButton = makeIconButton(symbol: "arrow.clockwise", tooltip: "Refresh Blocks", action: #selector(refreshBlockView))
-        composeButton = makeLabeledButton(symbol: "sparkles", title: "Compose", tooltip: "Compose a command…", action: #selector(toggleComposer))
+        composeButton = makeLabeledButton(symbol: "sparkles", title: "Compose", tooltip: "Compose a command… " + AITransparency.willSendToClaude("what you type"),
+                                         action: #selector(toggleComposer))
         quotaUsageButton = makeLabeledButton(symbol: quotaUsageGaugeSymbol, title: "Claude usage",
                                              tooltip: "Check Claude usage", action: #selector(toggleQuotaUsage))
         // `fm/grandline-drag-forward-indicator`: seeded with `.local`'s

@@ -289,7 +289,8 @@ final class MorningBriefingCard: NSView {
     override init(frame frameRect: NSRect) {
         // `target`/`action` are assigned in `build()` - `self` is not available
         // until after `super.init`.
-        refreshButton = HelmPageToolbar.iconButton(symbol: "clock", tooltip: "Regenerate the briefing",
+        refreshButton = HelmPageToolbar.iconButton(symbol: "clock", tooltip: "Regenerate the briefing. "
+                                                       + AITransparency.willSendToClaude("today's counts, never a title or a note,"),
                                                   target: nil, action: nil)
         dismissButton = HelmPageToolbar.iconButton(symbol: "xmark", tooltip: "Dismiss until tomorrow",
                                                   target: nil, action: nil)

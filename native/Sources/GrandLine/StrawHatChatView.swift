@@ -543,6 +543,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     /// much room the text box takes.
     private func buildSendButton() {
         sendButton.translatesAutoresizingMaskIntoConstraints = false
+        sendButton.toolTip = AITransparency.willSendToClaude("your message, and what the crew reads from your stores,")
         sendButton.target = self
         sendButton.action = #selector(submit)
         sendButton.isEnabled = false

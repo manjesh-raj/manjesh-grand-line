@@ -196,6 +196,28 @@ enum DictationCleanupSelfTest {
             check(expectation == .success("He's a bit older than expected for this position."), "a correctly-declined correction should pass through unmodified, got \(expectation)", &ok)
         }
 
+        // R2-SEC-05: a transcript that holds a token never reaches `claude`.
+        // The fake records its prompt, so "not sent" is measured rather than
+        // inferred from the failure; the caller then pastes the raw
+        // transcript, which is its existing fallback.
+        do {
+            let script = writeFakeClaudeCapturingPrompt(outputJSON: #"{"result": "Rewritten.", "is_error": false}"#)
+            let dir = script.deletingLastPathComponent()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            DictationCleanup.claudePathOverrideForTests = script.path
+            let token = "eyJhbGciOiJIUzI1NiJ9.ZmFrZS1wYXlsb2Fk.c2lnbmF0dXJlLWhlcmU"
+            check(!LogRedactor.redact("Authorization: Bearer \(token)").isEmpty,
+                  "fixture: the redactor does not see the planted token, so nothing below can fail", &ok)
+            let outcome = runRewriteSync("set the header to Authorization: Bearer \(token) please")
+            check(outcome.isFailure, "R2-SEC-05: a transcript holding a token was rewritten, so it was sent", &ok)
+            check(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("prompt.txt").path),
+                  "R2-SEC-05: a transcript holding a token reached claude", &ok)
+            // The same fake does run for an ordinary transcript, so the
+            // absence above is the redaction check's doing.
+            check(runRewriteSync("the deploy finished") == .success("Rewritten."),
+                  "fixture: the capturing fake did not answer an ordinary transcript", &ok)
+        }
+
         return ok
     }
 

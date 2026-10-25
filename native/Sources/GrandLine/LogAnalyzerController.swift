@@ -3000,7 +3000,7 @@ extension LogAnalyzerController: SidebarLayoutAdopting, WorkspacePrimaryActionPr
         // Analyze leaves the input row for the toolbar.
         inputControls.removeArrangedSubview(analyzeButton)
         analyzeButton.removeFromSuperview()
-        analyzeButton.toolTip = "Analyze (\u{2318}\u{21A9})"
+        analyzeButton.toolTip = "Analyze (\u{2318}\u{21A9}). " + AITransparency.willSendToClaude("the redacted evidence")
         inputHintLabel.isHidden = true
 
         // The input, once it is evidence: the redacted output, with Clear.

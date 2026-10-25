@@ -543,7 +543,8 @@ final class DictationController: NSViewController, DaylightDrillActions {
         // network/fallback nuance is still covered by the page's footnote
         // ("only the optional \"Clean up my sentences\" rewrite above needs
         // network access").
-        cleanupDetailLabel.stringValue = "Rewrites each dictation into a well-formed sentence before pasting."
+        cleanupDetailLabel.stringValue = "Rewrites each dictation into a well-formed sentence before pasting. "
+            + AITransparency.willSendToClaude("each transcript") + ", unless it looks like it holds a secret."
         // This same pass also corrects a misheard word against "Words I use
         // often" below, using the rest of the sentence for context - see
         // `DictationCleanup.swift`'s header for why that rides on this toggle
