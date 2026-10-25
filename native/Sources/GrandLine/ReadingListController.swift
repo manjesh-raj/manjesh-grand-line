@@ -666,7 +666,11 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         readerTitle.stringValue = link.displayTitle
         readerCard.isHidden = false
         gridScroll.isHidden = true
-        readerWebView.load(URLRequest(url: url))
+        // R2-SEC-01: WebKit fetches from its own process, where the network
+        // gate's URLProtocol cannot see, so a test or tour asks first.
+        if NetworkGate.allowsOutOfProcessLoad(url) {
+            readerWebView.load(URLRequest(url: url))
+        }
         if !link.isRead {
             store.setRead(id: id, read: true)
             refreshCard(id: id)

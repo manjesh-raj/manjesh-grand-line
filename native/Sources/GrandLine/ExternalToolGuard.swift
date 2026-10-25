@@ -90,8 +90,10 @@ enum ExternalToolGuard {
     /// - `open` launches an app (the vault's approval service, a browser).
     /// - `ssh` connects to a real host.
     /// - `screencapture` captures the real screen.
+    /// - `npm` reaches the registry (`npm view`, `npm outdated`) and can
+    ///   change the machine's global packages (R2-SEC-01).
     static let protectedTools: Set<String> = [
-        "av", "brew", "gh", "claude", "herdr", "no-mistakes", "quota-axi", "open", "ssh", "screencapture",
+        "av", "brew", "gh", "claude", "herdr", "no-mistakes", "quota-axi", "open", "ssh", "screencapture", "npm",
     ]
 
     /// Interpreters whose first path argument is the program actually run.
@@ -108,6 +110,30 @@ enum ExternalToolGuard {
         for program in programs {
             if let reason = refusal(forProgram: program) { return reason }
         }
+        if (executable as NSString).lastPathComponent == "git", gitSubcommand(arguments) == "credential" {
+            return "'git credential' reads the captain's stored git credentials"
+        }
+        return nil
+    }
+
+    /// R2-SEC-01: `git credential fill` hands back the captain's real token
+    /// from the system credential helper (Fleet's Bitbucket fetch asked for
+    /// one). Only that subcommand is refused - the git-sync suites run real
+    /// `git` against local bare repos, so a blanket `git` block would break
+    /// them.
+    ///
+    /// The first argument that is not an option, skipping the value of the
+    /// global options that take one (`git -C <path> credential fill`).
+    static func gitSubcommand(_ arguments: [String]) -> String? {
+        let takesValue: Set<String> = ["-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                                       "--super-prefix", "--config-env"]
+        var skipNext = false
+        for argument in arguments {
+            if skipNext { skipNext = false; continue }
+            if takesValue.contains(argument) { skipNext = true; continue }
+            if argument.hasPrefix("-") { continue }
+            return argument
+        }
         return nil
     }
 
@@ -117,6 +143,9 @@ enum ExternalToolGuard {
         let name = (path as NSString).lastPathComponent
         if protectedTools.contains(name) {
             return "'\(name)' is one of the captain's own tools"
+        }
+        if name.hasPrefix("git-credential") {
+            return "'\(name)' reads the captain's stored git credentials"
         }
         if firstmateHomes.contains(where: { path.hasPrefix($0 + "/") })
             || (name.hasPrefix("fm-") && name.hasSuffix(".sh")) {

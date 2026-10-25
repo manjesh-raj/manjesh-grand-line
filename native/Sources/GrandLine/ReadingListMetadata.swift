@@ -95,6 +95,16 @@ final class LinkPresentationMetadataFetcher: ReadingListMetadataFetching {
             return
         }
 
+        // R2-SEC-01: LinkPresentation fetches from its own process, where the
+        // network gate's URLProtocol cannot see, so a test or tour asks first.
+        guard NetworkGate.allowsOutOfProcessLoad(parsed) else {
+            DispatchQueue.main.async {
+                completion(.failure(ReadingListMetadataError(
+                    message: "Network requests are refused in a self-test or tour process.")))
+            }
+            return
+        }
+
         let provider = LPMetadataProvider()
         provider.timeout = Self.timeout
 

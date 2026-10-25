@@ -2529,6 +2529,10 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     // Pids are reused, so a folder by this name can be an earlier process's.
     // See `SelfTestScratchRoot`.
     SelfTestScratchRoot.startEmpty(scratchRoot)
+    // R2-SEC-01: no request leaves this process for anywhere but loopback.
+    // `ExternalToolGuard` fences the programs a suite or tour may start; this
+    // fences what `URLSession` does. See `NetworkGate`'s header.
+    NetworkGate.arm()
     // P4 (full review #3): the sibling of every redirect below, for the one
     // piece of shared state that is NOT a file path.
     //
@@ -3870,6 +3874,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_STARTUP_SNIPPET_GATE_TESTS"] == "
 // Pure logic. See ExternalToolGuardSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_EXTERNAL_TOOL_GUARD_TESTS"] == "1" {
     exit(ExternalToolGuardSelfTest.run() ? 0 : 1)
+}
+
+// R2-SEC-01: a self-test or tour process sends no request anywhere but
+// loopback. A tripwire behind the gate counts anything that gets past it.
+// Pure logic. See NetworkGateSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_NETWORK_GATE_TESTS"] == "1" {
+    exit(NetworkGateSelfTest.run() ? 0 : 1)
 }
 
 // The second full review's security findings (R2-SEC-01 to R2-SEC-12): the
