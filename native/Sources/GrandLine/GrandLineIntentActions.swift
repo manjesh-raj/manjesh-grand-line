@@ -148,12 +148,15 @@ struct IntentBiometricChallenge {
     var isAvailable: () -> Bool
     var evaluate: (String, @escaping (Bool) -> Void) -> Void
 
+    /// R2-SEC-08: available whenever `RevealAuthentication` has a policy -
+    /// Touch ID, or the login password on a Mac without it - and evaluated
+    /// with that same policy, so the Intent and the vault page cannot differ.
     static let live = IntentBiometricChallenge(
-        isAvailable: { CredentialVaultKeyStore.biometryAvailable },
+        isAvailable: { RevealAuthentication.livePolicy != nil },
         evaluate: { reason, completion in
             let context = LAContextFactory.make(reason: reason)
             DispatchQueue.global(qos: .userInitiated).async {
-                let allowed = LAContextFactory.evaluate(context)
+                let allowed = RevealAuthentication.livePolicy.map { LAContextFactory.evaluate(context, policy: $0) } ?? false
                 DispatchQueue.main.async { completion(allowed) }
             }
         })
@@ -483,15 +486,12 @@ enum GrandLineIntentActions {
 
         guard credential.requiresTouchIDToReveal else { return copyNow() }
         guard challenge.isAvailable() else {
-            // The same call from the vault page proceeds here with a toast,
-            // because the master password has already been entered and the
-            // item would otherwise be unreachable. This path refuses instead:
-            // an Intent may be running with nobody at the keyboard, which is
-            // the exact circumstance the per-item gate exists for, and there
-            // is no window to show a toast in anyway.
+            // Only a Mac that cannot authenticate its owner at all reaches
+            // here (R2-SEC-08: without Touch ID the challenge asks for the
+            // login password). The vault page refuses in the same case.
             return finish(.failure(.vaultLocked(
-                "\u{201C}\(credential.title)\u{201D} is set to require Touch ID, and this Mac has no biometry. "
-                + "Copy it from \(PlaceName.of(.poneglyph)) instead.")))
+                "\u{201C}\(credential.title)\u{201D} is set to require Touch ID, and this Mac cannot confirm it is you. "
+                + "Nothing was copied.")))
         }
         challenge.evaluate("Copy \u{201C}\(credential.title)\u{201D}") { allowed in
             guard allowed else {
