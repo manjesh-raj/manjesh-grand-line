@@ -155,6 +155,8 @@ final class MainSplitShellController: WorkspaceShellController {
     private var currentRoute: RailDestination = .homeCanvas
     /// The text scale the column's floor was last settled for.
     private var floorScale = ChromeTextScale.shared.scale
+    /// The window width `fitPanesToWindow` last fitted the panes to.
+    private var lastFittedWindowWidth: CGFloat = .greatestFiniteMagnitude
     /// Console's dedicated host page is showing, which is not a route.
     private var showingHostPage = false
     private var hostPageLabel = ""
@@ -519,13 +521,22 @@ final class MainSplitShellController: WorkspaceShellController {
         guard width > 0 else { return }
         toolbar.setCompact(width < WorkspaceToolbar.compactWidth)
         defer { toolbar.setSidebarShown(!sidebarItem.isCollapsed) }
+        // R2-UX-10: a narrower window with the sidebar still showing - which
+        // the per-page floors made the usual case at laptop widths - needs
+        // the same one-turn pin as a narrower sidebar. Measured in the tour
+        // lab: Home shrunk from 1512 to 1100 left the sidebar at its 200pt
+        // minimum, because Home's grid still held the wider column's widths
+        // at 499, above the sidebar's 489, and the sidebar was already at
+        // the width it was asked for, so nothing pinned it.
+        let narrowed = width < lastFittedWindowWidth - 0.5
+        lastFittedWindowWidth = width
         let fit = sidebarFitWidth(windowWidth: width)
         if !sidebarItem.isCollapsed {
             if fit < sidebarStepsAsideBelow {
                 setSidebarCollapsed(true, animated: false)
                 sidebarCollapsedForRoom = true
             } else {
-                holdSidebar(at: fit)
+                holdSidebar(at: fit, evenIfUnchanged: narrowed)
             }
         } else if sidebarCollapsedForRoom, fit >= sidebarStepsAsideBelow {
             // Lay the panes out at the window's new width first, with the
@@ -547,9 +558,9 @@ final class MainSplitShellController: WorkspaceShellController {
     /// still holds the wider column's widths at `contentTie` (499), above the
     /// sidebar's 489, until it re-lays out on the next turn. So the width is
     /// pinned for that one turn, exactly as an expand pins it.
-    private func holdSidebar(at width: CGFloat) {
+    private func holdSidebar(at width: CGFloat, evenIfUnchanged: Bool = false) {
         guard didSettleInitialSidebarWidth, !sidebarItem.isCollapsed,
-              abs(sidebar.view.frame.width - width) > 0.5 else { return }
+              evenIfUnchanged || abs(sidebar.view.frame.width - width) > 0.5 else { return }
         sidebarItem.minimumThickness = width
         sidebarItem.maximumThickness = width
         splitController.splitView.layoutSubtreeIfNeeded()
