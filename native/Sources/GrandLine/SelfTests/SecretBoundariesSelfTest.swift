@@ -39,6 +39,7 @@ enum SecretBoundariesSelfTest {
         checkEveryPasteboardReadAsksIsConcealedFirst(sources, &ok)
         checkEverySyncedCommitIsScanned(sources, &ok)
         checkAMisspeltSuiteFlagNeverReachesTheApp(&ok)
+        checkLogLinesCarryNoChildOutputOrTitles(sources, &ok)
         print(ok ? "SecretBoundariesSelfTest: all checks passed" : "SecretBoundariesSelfTest: FAILED")
         return ok
     }
@@ -150,6 +151,39 @@ extension SecretBoundariesSelfTest {
         check(exit2.upperBound < acquire.lowerBound,
               "R2-SEC-09: the unknown-flag exit sits after SingleInstanceGuard.acquire()", &ok)
         if ok { print("  OK   every FM_RUN_ key is unknown at the end of the blocks, and exits before the instance guard") }
+    }
+}
+
+extension SecretBoundariesSelfTest {
+
+    // MARK: R2-SEC-10 - log lines
+
+    /// A subprocess failure excerpt is redacted and private, and no log line
+    /// publishes a window's or a record's title.
+    static func checkLogLinesCarryNoChildOutputOrTitles(_ sources: ProductionSources, _ ok: inout Bool) {
+        print("\n-- R2-SEC-10: no child output or title in a public log line --")
+        let token = "eyJhbGciOiJIUzI1NiJ9.ZmFrZS1wYXlsb2Fk.c2lnbmF0dXJlLWhlcmU"
+        let excerpt = Subprocess.excerpt("error: request failed\nAuthorization: Bearer \(token)\n")
+        check(!excerpt.contains(token), "R2-SEC-10: a failing child's output reaches the log unredacted", &ok)
+        check(excerpt.contains("request failed"), "fixture: the excerpt lost the ordinary text too: \(excerpt)", &ok)
+
+        var lines = 0
+        for file in sources.files {
+            for (index, line) in file.codeLines.enumerated() where line.contains("privacy: .public") {
+                lines += 1
+                let leaks = ["excerpt(", ".stderr", ".stdout", "failureSummary", ".title,", ".title)"]
+                    .filter { needle in
+                        // Each interpolation is checked on its own, so a
+                        // public `name` beside a private excerpt passes.
+                        line.components(separatedBy: "\\(").dropFirst()
+                            .contains { $0.contains(needle) && $0.contains("privacy: .public") }
+                    }
+                check(leaks.isEmpty,
+                      "R2-SEC-10: \(file.name):\(index + 1) logs \(leaks.joined(separator: ", ")) publicly", &ok)
+            }
+        }
+        check(lines > 50, "fixture: found only \(lines) public log interpolations - the scan is not seeing the app", &ok)
+        if ok { print("  OK   \(lines) public log interpolations, none carries child output or a title") }
     }
 }
 
