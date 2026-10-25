@@ -1418,6 +1418,12 @@ extension LogAnalyzerController: NSTextViewDelegate {
     /// no later code path has an unredacted copy to leak. Spec §14.
     @discardableResult
     private func addEvidence(raw: String, label: String, origin: LogEvidenceOrigin, sourceDetail: String? = nil) -> Bool {
+        // R2-SEC-12: the redaction sweep below runs on the main thread, so
+        // an uncapped paste was a beachball. Refused before anything reads it.
+        if let refusal = InputSizeLimit.refusal(forText: raw, what: label) {
+            Toast.show(in: view, message: refusal)
+            return false
+        }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         return addRedactedEvidence(LogRedactor.redact(raw), label: label, origin: origin, sourceDetail: sourceDetail)
@@ -1473,7 +1479,8 @@ extension LogAnalyzerController: NSTextViewDelegate {
         if !pending.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let label = importSourceLabel.map { "Terminal output - \($0)" } ?? "Pasted output"
             let origin: LogEvidenceOrigin = importSourceLabel == nil ? .pasted : .terminal
-            addEvidence(raw: pending, label: label, origin: origin, sourceDetail: importSourceLabel)
+            // A refusal (R2-SEC-12's size cap) leaves the text where it is.
+            guard addEvidence(raw: pending, label: label, origin: origin, sourceDetail: importSourceLabel) else { return }
             inputTextView.string = ""
         }
         runAnalysis()
@@ -1582,7 +1589,13 @@ extension LogAnalyzerController: NSTextViewDelegate {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var loaded: [(LogRedactionResult, URL)] = []
             var unreadable: [String] = []
+            var tooLarge: [String] = []
             for url in urls {
+                // R2-SEC-12: refused from its size on disk, before it is read.
+                if let refusal = InputSizeLimit.refusal(forFileAt: url, what: url.lastPathComponent) {
+                    tooLarge.append(refusal)
+                    continue
+                }
                 guard let text = try? String(contentsOf: url, encoding: .utf8) else {
                     unreadable.append(url.lastPathComponent)
                     continue
@@ -1593,6 +1606,9 @@ extension LogAnalyzerController: NSTextViewDelegate {
                 guard let self else { return }
                 for name in unreadable {
                     Toast.show(in: self.view, message: "Could not read \(name) as text")
+                }
+                for refusal in tooLarge {
+                    Toast.show(in: self.view, message: refusal)
                 }
                 var added = 0
                 for (result, url) in loaded
