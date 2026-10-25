@@ -90,7 +90,7 @@ final class CredentialVaultSettingsController: NSViewController {
         let touchIDRow = HelmToggleRow(
             title: "Unlock with Touch ID",
             subtitle: touchIDAvailable
-                ? "Stores your derived key - never your password - in this Mac's Keychain, for this device only. It does not travel to another machine, so the first unlock there is always your password."
+                ? VaultSettings.touchIDUnlockDescription
                 : "This Mac has no biometry available.")
         touchIDRow.isOn = settings.touchIDUnlockEnabled
         touchIDRow.toggle.isEnabled = touchIDAvailable

@@ -71,6 +71,7 @@ enum CredentialVaultSelfTest {
         checkGitPortability(scratch: scratch, check)
         checkSortOrderMigrationAppendAndReorder(scratch: scratch, check)
         checkARapidSequenceOfEditsAllPersist(scratch: scratch, check)
+        checkTouchIDUnlockStatesItsTradeOff(check)
 
         if failures.isEmpty {
             print("CredentialVaultSelfTest: all checks passed")
@@ -79,6 +80,31 @@ enum CredentialVaultSelfTest {
         print("CredentialVaultSelfTest: FAILED")
         failures.forEach { print("  FAIL: \($0)") }
         return false
+    }
+
+    // MARK: R2-SEC-02 - Touch ID unlock is off by default and says what it costs
+
+    /// The interim fix for R2-SEC-02 (the real one needs Developer ID signing):
+    /// the toggle is off unless the captain turns it on, and the sheet says
+    /// that turning it on swaps the master password for the login keychain.
+    private static func checkTouchIDUnlockStatesItsTradeOff(_ check: (Bool, String) -> Void) {
+        check(!VaultSettings.default.touchIDUnlockEnabled, "R2-SEC-02: Touch ID unlock is on by default")
+        let older = try? JSONDecoder().decode(VaultSettings.self, from: Data("{}".utf8))
+        check(older?.touchIDUnlockEnabled == false,
+              "R2-SEC-02: a settings file without the key decodes with Touch ID unlock on")
+
+        let copy = VaultSettings.touchIDUnlockDescription
+        for phrase in ["login keychain", "rather than by your master password", "Off by default"] {
+            check(copy.contains(phrase), "R2-SEC-02: the Touch ID description no longer says \"\(phrase)\"")
+        }
+        autoreleasepool {
+            let sheet = CredentialVaultSettingsController(settings: .default, auditEvents: [], syncSummary: "",
+                                                          touchIDAvailable: true)
+            _ = sheet.view
+            check(sheet.debugTouchIDRow.debugSubtitle == copy,
+                  "R2-SEC-02: the settings sheet shows \(sheet.debugTouchIDRow.debugSubtitle ?? "nothing"), not the trade-off")
+            check(!sheet.debugTouchIDRow.isOn, "R2-SEC-02: the sheet shows Touch ID unlock on for default settings")
+        }
     }
 
     // MARK: Crypto

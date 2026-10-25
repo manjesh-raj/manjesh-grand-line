@@ -447,9 +447,27 @@ struct VaultSettings: Codable, Equatable {
     static let autoLockChoices = [60, 300, 900, 0]
     static let clipboardChoices = [10, 20, 45, 60]
 
+    /// Off, and it must stay off (R2-SEC-02): the toggle trades the master
+    /// password for the login keychain's protection, so it is the captain's
+    /// choice to make, never a default.
     static let `default` = VaultSettings(autoLockSeconds: 300,
                                          clipboardClearSeconds: 20,
                                          touchIDUnlockEnabled: false)
+
+    /// What the Touch ID unlock toggle says in the vault's settings sheet.
+    ///
+    /// R2-SEC-02: the app is self-signed, with no hardened runtime and no
+    /// access-control flags on its Keychain items (`CredentialVaultKeyStore`'s
+    /// header says why), so the derived key is a plain generic password in the
+    /// login keychain. Turning this on therefore makes the vault on this Mac
+    /// only as safe as that keychain, and the description has to say so. The
+    /// real fix is the Developer ID item (`native/Widgets/README.md`):
+    /// `.biometryCurrentSet` access control on the key item.
+    static let touchIDUnlockDescription =
+        "Stores your derived key - never your password - in this Mac's login keychain, for this device only, "
+        + "so the first unlock on another machine is always your password. While this is on, the vault on this Mac "
+        + "is protected by your login keychain rather than by your master password: once your Mac account is "
+        + "unlocked, software running as you can reach the key. Off by default."
 
     init(autoLockSeconds: Int, clipboardClearSeconds: Int, touchIDUnlockEnabled: Bool) {
         self.autoLockSeconds = autoLockSeconds
