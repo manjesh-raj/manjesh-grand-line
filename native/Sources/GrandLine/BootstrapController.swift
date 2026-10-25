@@ -232,6 +232,8 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private let refreshLabel = NSTextField(labelWithString: "Refresh")
     private let refreshBusyLabel = NSTextField(labelWithString: "Checking\u{2026}")
     private var isRefreshingAll = false
+    /// `SetupStepsReading`'s observation, so the header follows its verdicts.
+    private var readingToken: UUID?
 
     private let currentPathLabel = NSTextField(labelWithString: "")
     /// UXP-06: "In use instead" plus `currentPathLabel`, shown only when the
@@ -588,6 +590,18 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         // immediately; refreshDotfiles's own initial call (viewWillAppear,
         // called right after loadView) then kicks off the real background
         // check.
+        //
+        // The header's line is `SetupStepsReading`'s, which other producers
+        // answer too (the summary strip, the sidebar's signals). Without this
+        // a verdict recorded elsewhere left the header saying "checking…"
+        // after the page itself had moved on - found by the sidebar shell
+        // suite once a test process stopped running the real `npm`
+        // (R2-SEC-01) and those answers began arriving early.
+        readingToken = SetupStepsReading.shared.observe { [weak self] in self?.onDrillSubtitleChanged?() }
+    }
+
+    deinit {
+        if let readingToken { SetupStepsReading.shared.unobserve(readingToken) }
     }
 
 
