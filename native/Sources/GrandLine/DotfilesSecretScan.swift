@@ -182,6 +182,59 @@ enum DotfilesSecretScan {
         return nil
     }
 
+    // MARK: Every git-synced store (R2-SEC-04)
+
+    /// Every dirty path in `statusLines` (`git status --short` output, paths
+    /// relative to `workingTree`), read and inspected.
+    ///
+    /// Shared by `DotfilesAutoSync` and the commit path of every git-synced
+    /// store that holds captain-authored text (tasks, runbooks, the notebook,
+    /// the reading list, the sticky board, code snippets). Code Preview is a
+    /// paste target by design, so a pasted `.env` or kubeconfig was a commit
+    /// and a push within three seconds with no step where anyone looked.
+    ///
+    /// A directory is walked rather than read: `git status --short` without
+    /// `--untracked-files=all` lists a new folder as one line, and a folder
+    /// read as a file is unreadable - so a new folder of files would otherwise
+    /// pass as a single entry nobody scanned.
+    static func scan(statusLines: [String], in workingTree: URL) -> [Finding] {
+        statusLines.flatMap { line -> [Finding] in
+            guard let path = BootstrapController.statusLinePath(line) else {
+                // A status line this cannot parse is not a reason to push it.
+                return [Finding(path: line, reason: "its git status line could not be parsed, so it was not scanned")]
+            }
+            let url = workingTree.appendingPathComponent(path)
+            var isDirectory: ObjCBool = false
+            // A deletion has no file to read, and deleting a secret is the
+            // one change to one that should never be held back.
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return [] }
+            guard isDirectory.boolValue else { return inspectFile(at: url, path: path).map { [$0] } ?? [] }
+            let files = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.isRegularFileKey])?
+                .compactMap { $0 as? URL }
+                .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true } ?? []
+            let prefix = path.hasSuffix("/") ? path : path + "/"
+            return files.compactMap { file in
+                let relative = file.path.hasPrefix(url.path + "/")
+                    ? prefix + String(file.path.dropFirst(url.path.count + 1)) : file.lastPathComponent
+                return inspectFile(at: file, path: relative)
+            }
+        }
+    }
+
+    private static func inspectFile(at url: URL, path: String) -> Finding? {
+        let data = try? FileHandle(forReadingFrom: url).read(upToCount: bytesInspected)
+        let text = data.flatMap { String(data: $0, encoding: .utf8) }
+        return inspect(path: path, contents: text)
+    }
+
+    /// The status a synced store shows when its commit is held back.
+    static func syncHeldMessage(store: String, _ findings: [Finding]) -> String {
+        let named = findings.prefix(3).map { "\($0.path) (\($0.reason))" }.joined(separator: ", ")
+        let more = findings.count > 3 ? " and \(findings.count - 3) more" : ""
+        return "\(store) sync was held back: \(named)\(more). Nothing was committed or pushed. "
+            + "Remove the secret from it, or commit it by hand if you meant to publish it."
+    }
+
     /// The sentence the captain is shown when a pass is held back.
     static func refusalMessage(_ findings: [Finding]) -> String {
         let named = findings.prefix(3).map { "\($0.path) (\($0.reason))" }.joined(separator: ", ")

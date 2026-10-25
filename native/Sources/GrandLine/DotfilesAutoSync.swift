@@ -568,20 +568,7 @@ final class DotfilesAutoSync {
     /// that actually broke here is a *reading* mistake, not a matching one
     /// (`statusLinePath`'s own doc comment is about exactly that).
     func scanForSecrets(_ statusLines: [String]) -> [DotfilesSecretScan.Finding] {
-        statusLines.compactMap { line in
-            guard let path = BootstrapController.statusLinePath(line) else {
-                // A status line this cannot parse is not a reason to push it.
-                return DotfilesSecretScan.Finding(
-                    path: line, reason: "its git status line could not be parsed, so it was not scanned")
-            }
-            let url = workingTree.appendingPathComponent(path)
-            // A deletion has no file to read, and deleting a secret is the
-            // one change to one that should never be held back.
-            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-            let data = try? FileHandle(forReadingFrom: url).read(upToCount: DotfilesSecretScan.bytesInspected)
-            let text = data.flatMap { String(data: $0, encoding: .utf8) }
-            return DotfilesSecretScan.inspect(path: path, contents: text)
-        }
+        DotfilesSecretScan.scan(statusLines: statusLines, in: workingTree)
     }
 
     // MARK: Git reads

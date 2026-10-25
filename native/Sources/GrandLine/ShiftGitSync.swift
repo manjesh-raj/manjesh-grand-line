@@ -703,6 +703,16 @@ final class ShiftGitSync {
             // trying to push in case an earlier commit never made it out.
             return pushOnly()
         }
+        // R2-SEC-04: the dotfiles sync's secret scan, before anything is
+        // staged. A held commit says which file and why, and stays held until
+        // the file changes. See `DotfilesSecretScan.scan`.
+        let findings = DotfilesSecretScan.scan(statusLines: dirty, in: workingTree)
+        guard findings.isEmpty else {
+            let reason = DotfilesSecretScan.syncHeldMessage(store: "Tasks", findings)
+            AppLog.gitSync.error("synced store commit held back: \(reason, privacy: .private)")
+            setStatus(.failed(reason))
+            return false
+        }
         setStatus(.syncing)
         let add = runGit(["add", "-A", "--", Self.shiftSubpath], cwd: workingTree, authenticated: false)
         guard add.status == 0 else {

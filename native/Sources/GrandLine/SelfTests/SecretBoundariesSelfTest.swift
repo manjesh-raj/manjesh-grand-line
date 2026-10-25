@@ -37,6 +37,7 @@ enum SecretBoundariesSelfTest {
             return false
         }
         checkEveryPasteboardReadAsksIsConcealedFirst(sources, &ok)
+        checkEverySyncedCommitIsScanned(sources, &ok)
         print(ok ? "SecretBoundariesSelfTest: all checks passed" : "SecretBoundariesSelfTest: FAILED")
         return ok
     }
@@ -81,6 +82,41 @@ enum SecretBoundariesSelfTest {
         }
         check(readers >= 6, "fixture: found only \(readers) pasteboard readers - the scan is not seeing the app", &ok)
         if ok { print("  OK   \(readers) readers, each asks isConcealed before reading") }
+    }
+}
+
+extension SecretBoundariesSelfTest {
+
+    // MARK: R2-SEC-04 - every synced commit is scanned
+
+    /// Synced stores whose commit path is not scanned, each with the reason.
+    static let unscannedSyncedStores: [String: String] = [
+        // The vault file is AES-GCM ciphertext: there is nothing readable to
+        // scan, and a chance `AKIA`-shaped run in the base64 would hold the
+        // vault's sync for no reason.
+        "CredentialVaultSync.swift": "sealed ciphertext",
+    ]
+
+    /// Every `commitAndPushNow` runs `DotfilesSecretScan.scan` over its dirty
+    /// files before `git add`, as the dotfiles sync already did.
+    static func checkEverySyncedCommitIsScanned(_ sources: ProductionSources, _ ok: inout Bool) {
+        print("\n-- R2-SEC-04: every synced store scans its dirty files before git add --")
+        var scanned = 0
+        for file in sources.files where unscannedSyncedStores[file.name] == nil {
+            let lines = file.codeLines
+            guard let start = lines.firstIndex(where: { $0.contains("func commitAndPushNow()") }) else { continue }
+            guard let add = lines[start...].firstIndex(where: { $0.contains("\"add\", \"-A\"") }) else {
+                fail("\(file.name): commitAndPushNow has no git add - the guard cannot place the scan", &ok)
+                continue
+            }
+            let scan = lines[start..<add].firstIndex(where: { $0.contains("DotfilesSecretScan.scan(") })
+            check(scan != nil, "R2-SEC-04: \(file.name)'s commitAndPushNow stages files before scanning them", &ok)
+            scanned += 1
+        }
+        check(scanned >= 6, "fixture: found \(scanned) synced stores - the scan is not seeing the app", &ok)
+        check(!sources.files.contains { $0.text.contains("func containsLikelySecret") },
+              "R2-SEC-04: LogRedactor.containsLikelySecret is back with no caller", &ok)
+        if ok { print("  OK   \(scanned) synced stores scan before staging") }
     }
 }
 

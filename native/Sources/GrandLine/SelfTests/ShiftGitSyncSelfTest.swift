@@ -368,6 +368,41 @@ enum ShiftGitSyncSelfTest {
                   "raced-destination migration: the remote itself must not carry a nested folder either")
         }
 
+        // MARK: R2-SEC-04 - a secret in a task file, or in a new folder,
+        // holds the commit back with a visible status; removing it lets the
+        // same pass through. The fake token is shaped to the scanner's own
+        // marker and is not a real credential.
+
+        do {
+            let remote = makeBareRemote(name: "remote-secret-scan")
+            seedRemote(remote)
+            let wt = scratch.appendingPathComponent("wt-secret-scan", isDirectory: true)
+            let sync = ShiftGitSync(workingTree: wt, remoteURL: remote.path, debounceInterval: 0.2, periodicPullInterval: 999_999)
+            check(sync.ensureWorkingTreeNow(), "secret scan: clone should succeed")
+            let before = commitCount(wt)
+            let taskFile = sync.dataRoot.appendingPathComponent("tasks/active.yaml")
+            writeTaskFile("tasks:\n  - id: leak\n    notes: \"key sk-ant-api03-not-a-real-key-000000\"\n", to: taskFile)
+            check(!sync.commitAndPushNow(), "R2-SEC-04: a task file holding a token was committed")
+            if case .failed(let reason) = sync.status {
+                check(reason.contains("held back") && reason.contains("active.yaml"),
+                      "R2-SEC-04: the held status does not say which file and why: \(reason)")
+            } else {
+                check(false, "R2-SEC-04: a held commit left the status at \(sync.status), not a visible failure")
+            }
+            check(commitCount(wt) == before, "R2-SEC-04: something was committed while the scan held the pass")
+
+            // A new folder is one `git status --short` line; its files are
+            // still read.
+            writeTaskFile("tasks: []\n", to: taskFile)
+            writeTaskFile("API_TOKEN=abcdefghijklmnop1234\n", to: sync.dataRoot.appendingPathComponent("imports/new/settings.txt"))
+            check(!sync.commitAndPushNow(), "R2-SEC-04: a secret inside a new untracked folder was committed")
+            check(commitCount(wt) == before, "R2-SEC-04: the new folder's secret reached a commit")
+
+            try? fm.removeItem(at: sync.dataRoot.appendingPathComponent("imports"))
+            check(sync.commitAndPushNow(), "secret scan: once the secret is gone the same pass must commit and push")
+            check(commitCount(wt) == before + 1, "secret scan: the clean pass should land exactly one commit")
+        }
+
         // MARK: Real binary attachment file reaches a real disposable remote
         // (grandline-shift-task-image-attachments) - `commitAndPushNow`'s
         // `git add -A -- shiftSubpath` needs no special-casing for a new
