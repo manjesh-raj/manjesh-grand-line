@@ -830,7 +830,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.ShiftController` | ShiftController controls | `addExampleTaskTapped`, `detailBackClicked`, `detailSaveClicked`, `followUpsJumpClicked`, `newTaskClicked`, `openFailedFile`, `projectPopupChanged`, `sortChanged`, `syncPillClicked`, `tableCheckClicked` | Tasks (the filter row's Follow-ups button and project menu, and the List table's check, are the sidebar layout's) |  |
 | `action.ShiftImageAttachmentWell` | ShiftImageAttachmentWell controls | `removeClicked` | Tasks (task editor attachments) |  |
 | `action.ShiftListViews` | ShiftListViews controls | `checkboxClicked`, `deleteClicked`, `doneClicked`, `editClicked`, `focusClicked`, `openClicked`, `pushClicked`, `reopenClicked`, `snooze30`, `snoozeCustom`, `snoozeHour`, `snoozeNextWeek`, `snoozeTomorrow`, `stopFocusClicked` | Tasks › List |  |
-| `action.ShiftMenuBar` | ShiftMenuBar controls | `iconClicked`, `quickAddSubmitted` | Menu bar extra (Tasks, unchanged) |  |
+| `action.ShiftMenuBar` | ShiftMenuBar controls | `iconClicked`, `quickAddSubmitted` | Menu bar extra (Tasks: the icon and the quick-add field are unchanged; the popover's own actions are `action.TasksBridgeView`) |  |
 | `action.ShiftProjectDetailView` | ShiftProjectDetailView controls | `checkboxClicked`, `chevronClicked` | Tasks (the project page, unchanged) |  |
 | `action.ShiftProjectViews` | ShiftProjectViews controls | `openClicked`, `statusButtonClicked`, `statusItemSelected` | Tasks (the projects panel under the view, unchanged) |  |
 | `action.ShiftQuickCapture` | ShiftQuickCapture controls | `askTheCrew`, `clicked` | System (⌥Space quick capture panel, unchanged) |  |
@@ -1191,7 +1191,7 @@ The checks that stand between the captain and an irreversible or secret-revealin
 | `tabkey.reconnect` | ⌘R reconnects the tab | Console | Console (unchanged) | `TabKeyboardShortcuts.swift` `case "r": return .reconnect` |
 | `tabkey.rename` | Rename the tab from the keyboard | Console and Tools | Console (unchanged) | `TabKeyboardShortcuts.swift` `case .rename: target.renameCurrentTab()` |
 | `tabkey.select` | ⌘1-⌘9 select a tab while a tab-bearing page shows | Console and Tools | Console (unchanged; elsewhere ⌘1-⌘6 select sidebar modules) | `TabKeyboardShortcuts.swift` `case .select(let index): target.selectTab(atIndex: index)` |
-| `extra.tasks` | Tasks menu bar extra | Menu bar | Menu bar extra (unchanged) | `ShiftMenuBar.swift` `final class ShiftMenuBarController` |
+| `extra.tasks` | Tasks menu bar extra | Menu bar | Menu bar extra (the popover is the Tasks popover in the Bridge shape: Today with done today and the streak, a pin, the Now card, Up next with follow-ups, the backlog to claim, the quick-add field, and Open Tasks and Settings) | `ShiftMenuBar.swift` `final class ShiftMenuBarController` |
 | `extra.poneglyph` | Poneglyph menu bar extra with copy and TOTP | Menu bar | Menu bar extra (unchanged) | `PoneglyphMenuBar.swift` `final class PoneglyphMenuBarController` |
 | `extra.strawHat` | Straw Hat menu bar extra | Menu bar | Menu bar extra (unchanged) | `StrawHatMenuBar.swift` `final class StrawHatMenuBarController` |
 | `extra.compactMode` | Compact mode: the app lives in the menu bar with a four-tab popover | Menu bar | Menu bar extra (unchanged) | `CompactMode.swift` `final class CompactModeController` |

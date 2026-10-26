@@ -614,6 +614,7 @@ final class TasksBridgeTimelineRow: HoverHighlightView {
     private let titleLabel = NSTextField(wrappingLabelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
     private let checkButton = HelmButton(title: "", variant: .quiet, size: .small, symbol: "checkmark")
+    private let text = NSStackView()
     private var timeWidth: NSLayoutConstraint?
     private(set) var model: TasksBridgeDigest.TimelineRow
     private var theme: HelmTheme = ThemeManager.shared.theme
@@ -639,7 +640,7 @@ final class TasksBridgeTimelineRow: HoverHighlightView {
         checkButton.action = #selector(checkTapped)
         checkButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let text = NSStackView(views: [titleLabel, detailLabel])
+        text.setViews([titleLabel, detailLabel], in: .leading)
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = HelmMetrics.s0
@@ -683,13 +684,11 @@ final class TasksBridgeTimelineRow: HoverHighlightView {
         return ceil(widest) + 2
     }
 
-    /// Gotcha (22): the row's own width minus its rigid siblings, never the
-    /// label's own width.
+    /// Gotcha (22): the text column's width, which its two pinned edges
+    /// decide (the time column and the check), never the label's own.
     override func layout() {
         super.layout()
-        let rigid = (timeWidth?.constant ?? 0) + checkButton.fittingSize.width
-            + HelmMetrics.s1 + 2 + HelmMetrics.s1 + 2 * HelmMetrics.s2
-        let width = max(40, floor(bounds.width - rigid))
+        let width = max(40, floor(text.frame.width))
         if titleLabel.preferredMaxLayoutWidth != width {
             titleLabel.preferredMaxLayoutWidth = width
             super.layout()
@@ -750,6 +749,7 @@ final class TasksBridgeBacklogRow: HoverHighlightView {
     private let claimButton = HelmButton(title: "Claim", variant: .primary, size: .small)
     private let claimedLabel = NSTextField(labelWithString: "In progress")
     private let trailing = NSStackView()
+    private let text = NSStackView()
     private(set) var model: TasksBridgeDigest.BacklogRow
     private var theme: HelmTheme = ThemeManager.shared.theme
     private static let dotSize: CGFloat = 6
@@ -785,7 +785,7 @@ final class TasksBridgeBacklogRow: HoverHighlightView {
         trailing.setHuggingPriority(.required, for: .horizontal)
         trailing.setClippingResistancePriority(.required, for: .horizontal)
 
-        let text = NSStackView(views: [titleLabel, detailLabel])
+        text.setViews([titleLabel, detailLabel], in: .leading)
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = HelmMetrics.s0
@@ -820,9 +820,7 @@ final class TasksBridgeBacklogRow: HoverHighlightView {
     /// Gotcha (22), as on the timeline row.
     override func layout() {
         super.layout()
-        let rigid = Self.dotSize + HelmMetrics.s2 + HelmMetrics.s2 + 2 + HelmMetrics.s2 + HelmMetrics.s1
-            + trailing.fittingSize.width
-        let width = max(40, floor(bounds.width - rigid))
+        let width = max(40, floor(text.frame.width))
         if titleLabel.preferredMaxLayoutWidth != width {
             titleLabel.preferredMaxLayoutWidth = width
             super.layout()
@@ -861,6 +859,8 @@ final class TasksBridgeBacklogRow: HoverHighlightView {
     var debugClaimButton: HelmButton { claimButton }
     var debugClaimedIsShowing: Bool { !claimedLabel.isHidden }
     var debugClaimedColor: NSColor { claimedLabel.textColor ?? .clear }
+    var debugTitleLabel: NSTextField { titleLabel }
+    var debugTextColumnWidth: CGFloat { text.frame.width }
     func debugClick() { openTapped() }
     #endif
 }

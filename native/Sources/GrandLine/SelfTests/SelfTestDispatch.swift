@@ -958,6 +958,12 @@ enum SelfTestDispatch {
             exit(StatusMenuSelfTest.run() ? 0 : 1)
         }
 
+        // The Tasks menu-bar item in the Bridge shape the captain approved for
+        // the Tasks popover. Pure logic. See TasksMenuBarSelfTest.swift's header.
+        if ProcessInfo.processInfo.environment["FM_RUN_TASKS_MENU_BAR_TESTS"] == "1" {
+            exit(TasksMenuBarSelfTest.run() ? 0 : 1)
+        }
+
         // P5 of the same report: keyboard parity for hand-built lists, bar panels
         // and form sheets. Window-backed. See KeyboardParitySelfTest.swift's header.
         if ProcessInfo.processInfo.environment["FM_RUN_KEYBOARD_PARITY_TESTS"] == "1" {

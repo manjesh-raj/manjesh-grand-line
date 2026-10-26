@@ -736,6 +736,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // `NSStatusItem` actually appears at launch rather than only the
         // first time something else happens to reference the property.
         _ = shiftMenuBar
+        // The Tasks popover's Bridge shape navigates into the window and
+        // starts the window's one focus timer; the item itself only knows the
+        // store, so these come from here.
+        shiftMenuBar.onStartFocus = { [weak self] task in self?.appShell.workspace.focusTimer.start(task: task) }
+        shiftMenuBar.onOpenTasks = { [weak self] in self?.revealInFullWindow(.shift) }
+        shiftMenuBar.onOpenTask = { [weak self] id in
+            self?.revealInFullWindow(.shift)
+            self?.appShell.workspace.navigator.openShiftTask(id: id)
+        }
+        shiftMenuBar.onOpenFollowUp = { [weak self] id in
+            self?.revealInFullWindow(.shift)
+            self?.appShell.workspace.navigator.openShiftFollowUp(id: id)
+        }
+        shiftMenuBar.onOpenSettings = { [weak self] in
+            self?.revealInFullWindow(.settings)
+            self?.appShell.workspace.settings.select(.menuBar)
+        }
 
         // `fm/straw-hat-menubar-quick-chat-popover`: same reason, same
         // pattern. `onAsk` forwards into `AppShellController.
