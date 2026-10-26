@@ -60,6 +60,7 @@ enum NotificationActionsSelfTest {
         checkRoutingTable(check)
         checkPayloadRoundTrip(check)
         checkCategories(check)
+        checkBannersSpeakTheBridgePanelsWords(check)
         checkMergeReachesTheRealExecutor(check)
         checkLockGate(check)
         checkSnoozeUsesTheRealStore(check)
@@ -260,6 +261,7 @@ enum NotificationActionsSelfTest {
         let subjectForCategory: [String: NotificationPayload.Subject] = [
             NotificationCategory.prReady: .prReady,
             NotificationCategory.fleetTask: .fleetTask,
+            NotificationCategory.fleetDecision: .fleetTask,
             NotificationCategory.shiftTask: .shiftTask,
             NotificationCategory.shiftFollowUp: .shiftFollowUp,
         ]
@@ -276,6 +278,71 @@ enum NotificationActionsSelfTest {
                       "\(category.identifier)'s \"\(action.title)\" button resolves to nothing")
             }
         }
+    }
+
+    // MARK: Banners speak the Bridge panel's words
+
+    /// macOS draws the banner, so what the Bridge redesign can match is the
+    /// words: the subtitle names the same source the panel names, and each
+    /// button carries the panel's own action name.
+    private static func checkBannersSpeakTheBridgePanelsWords(_ check: (Bool, String) -> Void) {
+        let categories = NotificationActionRouting.categories()
+        func titles(_ id: String) -> [String] {
+            categories.first { $0.identifier == id }?.actions.map(\.title) ?? []
+        }
+        check(titles(NotificationCategory.prReady) == ["Merge", "Open PR", "Review"],
+              "the PR banner's buttons are \(titles(NotificationCategory.prReady))")
+        let fleetPlace = "Open \(PlaceName.of(.overview))"
+        check(titles(NotificationCategory.fleetDecision) == ["Answer", fleetPlace],
+              "the decision banner's buttons are \(titles(NotificationCategory.fleetDecision))")
+        check(titles(NotificationCategory.fleetTask) == ["Open task", fleetPlace],
+              "the finished-task banner's buttons are \(titles(NotificationCategory.fleetTask))")
+        check(titles(NotificationCategory.shiftTask) == ["Open task", "Open Tasks"],
+              "the Shift task banner's buttons are \(titles(NotificationCategory.shiftTask))")
+        check(titles(NotificationCategory.shiftFollowUp) == ["Snooze 1 hour", "Open follow-up"],
+              "the follow-up banner's buttons are \(titles(NotificationCategory.shiftFollowUp))")
+        check(categories.first { $0.identifier == NotificationCategory.fleetDecision }?.actions.map(\.identifier)
+                == [NotificationAction.openFleetTask, NotificationAction.showInApp],
+              "Answer must route exactly as Open task does")
+
+        // The subtitle is the source the panel names for the same entry.
+        let center = GrandLineNotificationCenter.shared
+        center.resetForTesting()
+        defer { center.resetForTesting() }
+        NotificationSources.setFleetDecisions(count: 1, navigate: {})
+        NotificationSources.setPRReady(count: 1, navigate: {})
+        NotificationSources.setShiftDue(taskCount: 1, followUpCount: 0, navigate: {})
+        NotificationSources.setToolUpdates(count: 1, navigate: {})
+        func source(_ id: String) -> String? { center.entries.first { $0.id == id }?.source }
+        check(source(NotificationSources.fleetDecisionsID) == NotificationBannerCopy.source(for: .fleetTask),
+              "the Fleet banner's subtitle does not match the panel's source name")
+        check(source(NotificationSources.prReadyID) == NotificationBannerCopy.source(for: .prReady),
+              "the PR banner's subtitle does not match the panel's source name")
+        check(source(NotificationSources.shiftDueID) == NotificationBannerCopy.source(for: .shiftTask)
+              && NotificationBannerCopy.source(for: .shiftFollowUp) == NotificationBannerCopy.source(for: .shiftTask),
+              "the Tasks banners' subtitle does not match the panel's source name")
+        check(source(NotificationSources.toolUpdatesID) == NotificationBannerCopy.updatesSource,
+              "the Updates banner's subtitle does not match the panel's source name")
+
+        // The posts themselves cannot run here (no bundle, no notification
+        // center), so a source guard proves each one sets the subtitle and
+        // that a decision posts under the decision category.
+        guard let dir = SelfTestSources.appSourceDirectory() else {
+            print("  SKIP: app sources not found - the banner source guards did not run")
+            return
+        }
+        func text(_ file: String) -> String {
+            (try? String(contentsOf: dir.appendingPathComponent(file), encoding: .utf8)) ?? ""
+        }
+        let fleet = text("FleetNotifier.swift")
+        check(fleet.components(separatedBy: "content.subtitle = NotificationBannerCopy.source(").count - 1 == 3,
+              "every FleetNotifier banner (decision, finished, PR ready) must set the source subtitle")
+        check(fleet.contains("content.categoryIdentifier = NotificationCategory.fleetDecision"),
+              "a decision banner must post under the Answer category")
+        check(text("ShiftNotifications.swift").contains("content.subtitle = NotificationBannerCopy.source(for: payload.subject)"),
+              "the Shift banners must set the source subtitle")
+        check(text("UpdatesController.swift").contains("content.subtitle = NotificationBannerCopy.updatesSource"),
+              "the Updates banner must set the source subtitle")
     }
 
     // MARK: Performing reaches the real merge function

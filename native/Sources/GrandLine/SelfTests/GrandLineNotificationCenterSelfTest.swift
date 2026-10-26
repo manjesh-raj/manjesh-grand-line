@@ -176,6 +176,118 @@ enum GrandLineNotificationCenterSelfTest {
         for id in ["s1", "m1", "m2", "m3"] { center.set(nil, id: id) }
         center.clock = { Date() }
 
+        // MARK: a mute survives a relaunch (Bridge extra)
+
+        // The mute used to be session-scoped. It is a setting now, written to
+        // `AppDefaults.store` (this process's own suite domain under a test,
+        // never the captain's), and read back on launch.
+        center.set(note("p1", subtext: "one", kind: .informational, source: "GitHub Sync"), id: "p1")
+        center.mute(source: "GitHub Sync")
+        check("the mute is written to AppDefaults.store",
+              AppDefaults.store.stringArray(forKey: "fm.notifications.mutedSources") == ["GitHub Sync"])
+        center.debugReloadPersistedMutes()
+        check("a muted source is still muted after a relaunch", center.isMuted(source: "GitHub Sync"))
+        check("a muted source's entry is still hidden after a relaunch",
+              !center.entries.contains { $0.id == "p1" })
+        center.setMuted(false, source: "GitHub Sync")
+        center.debugReloadPersistedMutes()
+        check("an unmute is persisted too", !center.isMuted(source: "GitHub Sync")
+              && AppDefaults.store.object(forKey: "fm.notifications.mutedSources") == nil)
+        // Settings mutes a source that has nothing published today.
+        center.setMuted(true, source: "Vault")
+        center.debugReloadPersistedMutes()
+        check("Settings can mute a source with no live entry", center.isMuted(source: "Vault"))
+        center.restoreHidden()
+        center.debugReloadPersistedMutes()
+        check("restoreHidden clears the persisted mutes as well", center.mutedSourceNames.isEmpty)
+        center.set(nil, id: "p1")
+
+        // MARK: quiet while a focus session runs (Bridge extra)
+
+        var quietNow = Date(timeIntervalSince1970: 1_800_000_000)
+        center.clock = { quietNow }
+        center.set(AppNotification(id: "q-before", title: "Before", subtext: "x", kind: .informational,
+                                   tint: .info, date: quietNow.addingTimeInterval(-60), navigate: {}),
+                   id: "q-before")
+        center.setFocusSessionActive(true)
+        check("a focus session turns quiet on", center.isFocusQuietActive)
+        quietNow = quietNow.addingTimeInterval(30)
+        center.set(AppNotification(id: "q-info", title: "FYI", subtext: "x", kind: .informational,
+                                   tint: .info, date: quietNow, navigate: {}), id: "q-info")
+        center.set(AppNotification(id: "q-act", title: "Needs you", subtext: "x", kind: .actionNeeded,
+                                   tint: .warn, date: quietNow, navigate: {}), id: "q-act")
+        check("an informational entry arriving mid-session is held",
+              !center.entries.contains { $0.id == "q-info" } && center.heldCount == 1)
+        check("an action-needed entry still shows mid-session", center.entries.contains { $0.id == "q-act" })
+        check("what was already listed when the session started stays",
+              center.entries.contains { $0.id == "q-before" })
+        check("the badge does not count a held entry", center.badgeCount == 2)
+        check("a held entry is not counted as snoozed", center.snoozedCount == 0)
+        center.restoreHidden()
+        check("Restore does not release a held entry", center.heldCount == 1)
+        center.setFocusSessionActive(false)
+        check("ending the session releases what was held",
+              center.entries.contains { $0.id == "q-info" } && center.heldCount == 0)
+        center.setQuietWhileFocusing(false, sessionRunning: false)
+        check("the setting is written to AppDefaults.store",
+              AppDefaults.store.object(forKey: "fm.notifications.quietWhileFocusing") as? Bool == false)
+        center.setFocusSessionActive(true)
+        quietNow = quietNow.addingTimeInterval(30)
+        center.set(AppNotification(id: "q-info2", title: "FYI 2", subtext: "x", kind: .informational,
+                                   tint: .info, date: quietNow, navigate: {}), id: "q-info2")
+        check("with the setting off, nothing is held", center.entries.contains { $0.id == "q-info2" }
+              && !center.isFocusQuietActive)
+        center.setQuietWhileFocusing(true, sessionRunning: true)
+        check("turning the setting on mid-session starts holding", center.isFocusQuietActive)
+        center.setFocusSessionActive(false)
+        for id in ["q-before", "q-info", "q-act", "q-info2"] { center.set(nil, id: id) }
+        center.clock = { Date() }
+
+        // MARK: the Bridge panel's sections (pure half of NotificationBridgePanelSelfTest)
+
+        let sectionBase = Date(timeIntervalSince1970: 1_750_000_000)
+        func dated(_ id: String, _ kind: AppNotificationKind, _ offset: TimeInterval, warning: Bool = false) -> AppNotification {
+            AppNotification(id: id, title: id, subtext: "", kind: kind, tint: .info,
+                            date: sectionBase.addingTimeInterval(offset), isWarning: warning, navigate: {})
+        }
+        let sections = NotificationBridgeSections([
+            dated("info-old", .informational, -500), dated("act-new", .actionNeeded, -10),
+            dated("act-old", .actionNeeded, -900), dated("act-overdue", .actionNeeded, -5, warning: true),
+            dated("info-new", .informational, -20),
+        ])
+        check("Now is the overdue entry even though it is the newest", sections.now?.id == "act-overdue")
+        check("Up next is the rest of the action-needed entries, oldest first",
+              sections.upNext.map(\.id) == ["act-old", "act-new"])
+        check("When you have a minute is the informational entries, newest first",
+              sections.later.map(\.id) == ["info-new", "info-old"])
+        check("the drawn order is Now, Up next, then later",
+              sections.ordered.map(\.id) == ["act-overdue", "act-old", "act-new", "info-new", "info-old"])
+        let onlyInfo = NotificationBridgeSections([dated("i", .informational, 0)])
+        check("with nothing action-needed there is no Now card", onlyInfo.now == nil && !onlyInfo.isEmpty)
+        check("an empty store is empty", NotificationBridgeSections([]).isEmpty)
+
+        // MARK: the inline snooze presets (Bridge extra)
+
+        // Local noon on a known Monday (26 Oct 2026), in the calendar
+        // production passes - see AGENTS.md on day-string fixtures.
+        let cal = Calendar.current
+        func local(_ day: Int, _ hour: Int, _ minute: Int = 0, month: Int = 10) -> Date {
+            cal.date(from: DateComponents(year: 2026, month: month, day: day, hour: hour, minute: minute))!
+        }
+        let monday = local(26, 12)
+        check("1 hour is an hour", NotificationSnoozePreset.oneHour.date(from: monday, calendar: cal) == local(26, 13))
+        check("Tonight is 18:00 today", NotificationSnoozePreset.tonight.date(from: monday, calendar: cal) == local(26, 18))
+        check("Tomorrow is 09:00 tomorrow", NotificationSnoozePreset.tomorrow.date(from: monday, calendar: cal) == local(27, 9))
+        check("Next week is 09:00 next Monday",
+              NotificationSnoozePreset.nextWeek.date(from: monday, calendar: cal) == local(2, 9, month: 11))
+        check("Next week on a Monday morning is not an hour away",
+              NotificationSnoozePreset.nextWeek.date(from: local(26, 8), calendar: cal) == local(2, 9, month: 11))
+        check("Next week on a Sunday is the next morning",
+              NotificationSnoozePreset.nextWeek.date(from: local(1, 12, month: 11), calendar: cal) == local(2, 9, month: 11))
+        check("all four are offered at noon", NotificationSnoozePreset.offered(at: monday, calendar: cal).count == 4)
+        check("Tonight is not offered within an hour of it",
+              !NotificationSnoozePreset.offered(at: local(26, 17, 30), calendar: cal).contains(.tonight))
+
         // MARK: a resolved entry starts genuinely fresh
 
         center.set(note("f1", subtext: "x", kind: .informational), id: "f1")

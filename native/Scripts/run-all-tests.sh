@@ -327,6 +327,11 @@ NEEDS_SESSION=(
   # deliberately NOT here - that is FM_RUN_NOTIFICATION_CENTER_TESTS.
   "FM_RUN_NOTIFICATION_CENTER_REDESIGN_TESTS"
   "FM_RUN_NOTIFICATION_ROW_INTERACTION_TESTS"
+  # The sidebar layout's Bridge notification panel: wrapped titles, buttons
+  # visible at rest and painted colours in every theme are frames and layers in
+  # a real window. Its pure half (`NotificationBridgeSections`) is in
+  # FM_RUN_NOTIFICATION_CENTER_TESTS.
+  "FM_RUN_NOTIFICATION_BRIDGE_TESTS"
   # The six new theme families: a real Settings page mounted in a real window,
   # painted with `cacheDisplay`, and sampled once per palette. Its pure half
   # (`FM_RUN_THEME_FAMILY_TESTS` - the family pairing and the palette shape) is

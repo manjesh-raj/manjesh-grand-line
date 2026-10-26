@@ -24,7 +24,13 @@
 // state (the blue dot), snooze (hidden until a date, then back on its own)
 // and per-source mute (hidden for the session) are all *views* of the
 // published list - `stored` holds everything a source has published, and
-// `entries` derives what is visible. That is deliberate: a snooze expiring
+// `entries` derives what is visible. (Mute started session-scoped and is a
+// setting now: it is read from and written to `AppSettings`, so it survives
+// a relaunch and Settings > Notifications can list it.) A fourth view joined
+// them with the Bridge redesign: while a focus session runs, an
+// `.informational` entry that arrives is *held* - published and kept, just not
+// shown or counted - until the session ends. `.actionNeeded` entries always
+// show. That is deliberate: a snooze expiring
 // has to bring a row back with no source involved, which only works if
 // visibility is recomputed rather than remembered. Read state follows
 // `dismissedDetail`'s own precedent and is keyed by the exact subtext, so a
@@ -242,10 +248,23 @@ final class GrandLineNotificationCenter {
     /// still published, still true, and reappears on its own.
     private var snoozedUntil: [String: Date] = [:]
 
-    /// Sources the captain has muted from the row's context menu. Session-
-    /// scoped, like a snooze - a mute that outlived a relaunch would be a
-    /// setting, and this app has a Settings page for settings.
-    private var mutedSources: Set<String> = []
+    /// Sources the captain has muted. This used to be session-scoped, on the
+    /// reasoning that a mute which outlived a relaunch would be a setting. It
+    /// is one now: the Bridge redesign's approved extras made it persistent,
+    /// so it lives in `AppSettings` (and through it `AppDefaults.store`, never
+    /// `UserDefaults.standard`), and Settings > Notifications lists it. This
+    /// copy is the in-memory mirror every visibility check reads; every write
+    /// goes through `persistMutes()`.
+    private var mutedSources: Set<String> = AppSettings.shared.notificationMutedSources
+
+    /// When the running focus session started, or `nil` when none is running
+    /// (or quiet-while-focusing is off). Set by `FocusTimerController` through
+    /// `setFocusSessionActive(_:)`.
+    private var quietSince: Date?
+
+    /// Settings > Notifications' "Quiet while focusing", mirrored here so a
+    /// visibility check never reads `UserDefaults`.
+    private(set) var quietWhileFocusing: Bool = AppSettings.shared.notificationQuietWhileFocusing
 
     private var observers: [(token: NotificationCenterObservation, fn: () -> Void)] = []
 
@@ -254,9 +273,16 @@ final class GrandLineNotificationCenter {
     /// not list.
     var badgeCount: Int { entries.count }
 
-    /// How many published entries are hidden right now, by either mechanism -
-    /// what the footer's "N snoozed" offers to bring back.
-    var snoozedCount: Int { stored.count - entries.count }
+    /// How many published entries are hidden right now by a snooze or a mute -
+    /// what the footer's "N snoozed" offers to bring back. A held entry is not
+    /// counted here: Restore cannot release it, only the session ending can.
+    var snoozedCount: Int { stored.filter { hiddenBy($0) == .snoozedOrMuted }.count }
+
+    /// How many entries a running focus session is holding back.
+    var heldCount: Int { stored.filter { hiddenBy($0) == .focusQuiet }.count }
+
+    /// Whether a focus session is holding informational entries right now.
+    var isFocusQuietActive: Bool { quietSince != nil }
 
     /// The clock every snooze is measured against, injectable so a suite can
     /// drive a snooze expiring without sleeping (the same shape
@@ -265,11 +291,22 @@ final class GrandLineNotificationCenter {
 
     private init() {}
 
-    private func isVisible(_ entry: AppNotification) -> Bool {
-        if mutedSources.contains(entry.source), !entry.source.isEmpty { return false }
-        if let until = snoozedUntil[entry.id], until > clock() { return false }
-        return true
+    private enum HiddenReason { case snoozedOrMuted, focusQuiet }
+
+    /// Why an entry is out of the visible list, if it is. A mute or a snooze
+    /// wins over a hold, so an entry the captain hid on purpose stays counted
+    /// where Restore can reach it.
+    private func hiddenBy(_ entry: AppNotification) -> HiddenReason? {
+        if mutedSources.contains(entry.source), !entry.source.isEmpty { return .snoozedOrMuted }
+        if let until = snoozedUntil[entry.id], until > clock() { return .snoozedOrMuted }
+        // Held: informational, and first seen (or changed, which re-dates it -
+        // see `AppNotification`'s note on `date`) after the session started.
+        // What was already on the list when the captain pressed Start stays.
+        if let quietSince, entry.kind == .informational, entry.date >= quietSince { return .focusQuiet }
+        return nil
     }
+
+    private func isVisible(_ entry: AppNotification) -> Bool { hiddenBy(entry) == nil }
 
     @discardableResult
     func observe(_ fn: @escaping () -> Void) -> NotificationCenterObservation {
@@ -435,16 +472,60 @@ final class GrandLineNotificationCenter {
         guard !source.isEmpty, !mutedSources.contains(source) else { return }
         guard stored.contains(where: { $0.source == source }) else { return }
         mutedSources.insert(source)
+        persistMutes()
+        notifyObservers()
+    }
+
+    /// Mute or unmute a source whether or not it has anything published right
+    /// now - Settings > Notifications offers every known source, and muting
+    /// one that is quiet today is exactly what that page is for. `mute(source:)`
+    /// keeps its "only what is in the list" guard because it is the row's
+    /// own menu item.
+    func setMuted(_ muted: Bool, source: String) {
+        guard !source.isEmpty, mutedSources.contains(source) != muted else { return }
+        if muted { mutedSources.insert(source) } else { mutedSources.remove(source) }
+        persistMutes()
         notifyObservers()
     }
 
     func isMuted(source: String) -> Bool { mutedSources.contains(source) }
+
+    // MARK: - Quiet while focusing
+
+    /// Called by `FocusTimerController` on every state change. Idempotent, so
+    /// its once-a-second tick costs a comparison and nothing else.
+    func setFocusSessionActive(_ active: Bool) {
+        let quiet = active && quietWhileFocusing
+        guard quiet != (quietSince != nil) else { return }
+        quietSince = quiet ? clock() : nil
+        notifyObservers()
+    }
+
+    /// Settings > Notifications' toggle. Turning it off mid-session releases
+    /// whatever is held at once; turning it on mid-session holds only what
+    /// arrives from then on.
+    func setQuietWhileFocusing(_ on: Bool, sessionRunning: Bool) {
+        guard on != quietWhileFocusing else { return }
+        quietWhileFocusing = on
+        AppSettings.shared.notificationQuietWhileFocusing = on
+        let quiet = on && sessionRunning
+        if quiet != (quietSince != nil) { quietSince = quiet ? clock() : nil }
+        notifyObservers()
+    }
+
+    /// Every muted source, sorted - what Settings lists.
+    var mutedSourceNames: [String] { mutedSources.sorted() }
+
+    private func persistMutes() {
+        AppSettings.shared.notificationMutedSources = mutedSources
+    }
 
     /// The footer's "N snoozed" - un-snooze and un-mute everything in one go.
     func restoreHidden() {
         guard !snoozedUntil.isEmpty || !mutedSources.isEmpty else { return }
         snoozedUntil.removeAll()
         mutedSources.removeAll()
+        persistMutes()
         notifyObservers()
     }
 
@@ -470,6 +551,18 @@ final class GrandLineNotificationCenter {
         readDetail.removeAll()
         snoozedUntil.removeAll()
         mutedSources.removeAll()
+        persistMutes()
+        quietSince = nil
+        quietWhileFocusing = true
+        AppSettings.shared.notificationQuietWhileFocusing = true
         clock = { Date() }
     }
+
+    #if FM_SELFTESTS
+    /// Re-reads what a relaunch would read, so a suite can prove a mute
+    /// survives one without starting a second process.
+    func debugReloadPersistedMutes() {
+        mutedSources = AppSettings.shared.notificationMutedSources
+    }
+    #endif
 }

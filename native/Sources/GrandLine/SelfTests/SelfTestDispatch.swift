@@ -1846,6 +1846,14 @@ enum SelfTestDispatch {
             exit(NotificationCenterRedesignSelfTest.run() ? 0 : 1)
         }
 
+        // `fm/grandline-notification-bridge`: window-backed - the Bridge panel the
+        // sidebar layout's bell opens, mounted in a real `OffScreenProbe` window,
+        // because wrapping, buttons at rest and per-theme paint are rendered facts.
+        // Listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh` accordingly.
+        if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_BRIDGE_TESTS"] == "1" {
+            exit(NotificationBridgePanelSelfTest.run() ? 0 : 1)
+        }
+
         // `fm/grandline-notification-ambient-expand-fix`: pure logic - it drives the
         // poller's own ambient pass and reads the published entry back, with no window
         // anywhere. Deliberately *not* in `NEEDS_SESSION`: whether a row has children

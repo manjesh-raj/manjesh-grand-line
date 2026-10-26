@@ -48,6 +48,7 @@ enum FocusTimerSelfTest {
         checkSwitchingTasksLogsTheFirstOne(&ok)
         checkSleepEarnsNoFocusTime(&ok)
         checkACaptainsPauseSurvivesASleep(&ok)
+        checkASessionQuietsTheBell(&ok)
 
         if ok { print("[FocusTimerSelfTest] all checks passed") }
         return ok
@@ -273,6 +274,32 @@ enum FocusTimerSelfTest {
                   "the second task is the one now running", &ok)
             check(timer.session?.elapsed(at: at(1200)) == 0,
                   "and it started from zero", &ok)
+        }
+    }
+
+    /// The Bridge redesign's "quiet while focusing": the timer itself tells
+    /// the bell when a session starts and stops. Driven through the real
+    /// `start`/`stop`, so deleting the call in `notify()` fails here by name.
+    private static func checkASessionQuietsTheBell(_ ok: inout Bool) {
+        withScratchStore { store in
+            let center = GrandLineNotificationCenter.shared
+            center.resetForTesting()
+            defer { center.resetForTesting() }
+            var task = ShiftTask.fresh()
+            task.title = "Rotate the staging certificate"
+            store.addTask(task)
+            let timer = FocusTimerController(store: store)
+            check(!center.isFocusQuietActive, "the bell is not quiet before a session starts", &ok)
+            timer.start(task: task, minutes: 25)
+            check(center.isFocusQuietActive, "starting a focus session must quiet the bell", &ok)
+            center.set(AppNotification(id: "focus-quiet-probe", title: "3 tools have updates", subtext: "x",
+                                       kind: .informational, tint: .info,
+                                       date: Date().addingTimeInterval(5), navigate: {}),
+                       id: "focus-quiet-probe")
+            check(center.heldCount == 1, "an update arriving mid-session must be held, got \(center.heldCount)", &ok)
+            timer.stop()
+            check(!center.isFocusQuietActive && center.heldCount == 0,
+                  "stopping the session must release what the bell held", &ok)
         }
     }
 

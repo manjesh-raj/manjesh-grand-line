@@ -249,6 +249,8 @@ final class ShiftNotificationScheduler {
         guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
         content.title = title
+        // The Bridge panel's source name for the same entry.
+        content.subtitle = NotificationBannerCopy.source(for: payload.subject)
         content.body = body
         content.sound = .default
         // F4: which buttons this post carries, and what they act on. The

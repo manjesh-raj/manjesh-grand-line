@@ -295,7 +295,12 @@ final class NotificationCenterController: NSObject {
     /// registration and dismissal; this controller keeps what it always
     /// had - the bell, its badge count, and the panel content.
     private let panel: HelmBarPanel
-    private let content = NotificationPanelViewController()
+    /// Which panel this controller shows. The floating bar builds the classic
+    /// one and the sidebar shell the Bridge one (`NotificationBridgePanel.swift`);
+    /// both read the one store, so the badge and the read state agree.
+    let style: NotificationPanelStyle
+    private let content: NotificationPanelViewController
+    private let bridgeContent: NotificationBridgePanelViewController
     /// What the badge last showed, so a *rise* can be told from a fall.
     private var lastBadgeCount = 0
     private var themeObservation: ThemeObservation?
@@ -308,8 +313,16 @@ final class NotificationCenterController: NSObject {
         didSet { onBadgeCountChanged?(lastBadgeCount) }
     }
 
-    override init() {
-        panel = HelmBarPanel(content: content)
+    /// The Bridge panel's footer action. Ignored by the classic panel.
+    var onOpenHome: (() -> Void)? {
+        didSet { bridgeContent.onOpenHome = onOpenHome }
+    }
+
+    init(style: NotificationPanelStyle = .classic) {
+        self.style = style
+        content = NotificationPanelViewController()
+        bridgeContent = NotificationBridgePanelViewController()
+        panel = HelmBarPanel(content: style == .bridge ? bridgeContent : content)
         super.init()
         bell.target = self
         bell.action = #selector(bellClicked)
@@ -319,8 +332,15 @@ final class NotificationCenterController: NSObject {
         content.onRequestClose = { [weak self] in
             self?.panel.close()
         }
+        bridgeContent.onSizeChanged = { [weak self] size in
+            self?.panel.setContentSize(size)
+        }
+        bridgeContent.onRequestClose = { [weak self] in
+            self?.panel.close()
+        }
         themeObservation = ThemeManager.shared.observe { [weak self] theme in
-            self?.content.applyTheme(theme)
+            guard let self else { return }
+            if self.style == .bridge { self.bridgeContent.applyTheme(theme) } else { self.content.applyTheme(theme) }
         }
         // Fires immediately on registration too, so the bell's badge is
         // correct before the captain ever opens the panel - every source's
@@ -338,7 +358,7 @@ final class NotificationCenterController: NSObject {
             self.bell.setBadgeCount(count)
             self.onBadgeCountChanged?(count)
             if arrived { self.bell.playArrivalBounce() }
-            if self.panel.isShown { self.content.reload() }
+            if self.panel.isShown { self.reloadContent() }
         }
     }
 
@@ -354,15 +374,21 @@ final class NotificationCenterController: NSObject {
         if panel.isShown {
             panel.close()
         } else {
-            content.reload()
+            reloadContent()
             panel.show(under: anchor)
         }
+    }
+
+    private func reloadContent() {
+        if style == .bridge { bridgeContent.reload() } else { content.reload() }
     }
 
     #if FM_SELFTESTS
     /// The panel content itself, so a suite can drive the real header action
     /// and the real rows without having to put a real window on screen.
-    var debugPanelController: NSViewController { content }
+    var debugPanelController: NSViewController { style == .bridge ? bridgeContent : content }
+    /// The Bridge panel, typed - what the sidebar shell's bell opens.
+    var debugBridgeContent: NotificationBridgePanelViewController { bridgeContent }
     /// The real panel content, typed - so a check can read the grouping it
     /// actually built rather than re-deriving it from the store.
     var debugPanelContent: NotificationPanelViewController { content }
@@ -1323,7 +1349,11 @@ final class NotificationChildrenView: NSView {
     private var childRows: [NotificationChildRowView] = []
     private let clears: NSTextField
 
-    init(entry: AppNotification, theme: HelmTheme, onAction: @escaping (String) -> Void) {
+    /// `leadingInset` defaults to the classic row's text column; the Bridge
+    /// panel nests the block inside its own text column and passes 0.
+    init(entry: AppNotification, theme: HelmTheme,
+         leadingInset: CGFloat = NotificationRowMetrics.textColumn, trailingInset: CGFloat = 14,
+         onAction: @escaping (String) -> Void) {
         clears = NSTextField(wrappingLabelWithString: entry.clearCondition)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -1361,8 +1391,8 @@ final class NotificationChildrenView: NSView {
 
         addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: NotificationRowMetrics.textColumn),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: leadingInset),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -trailingInset),
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 2),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
         ])
@@ -1380,6 +1410,10 @@ final class NotificationChildrenView: NSView {
         clears.font = HelmType.captionSmall()
         clears.textColor = HelmTheme.mutedInk(theme)
     }
+
+    #if FM_SELFTESTS
+    var debugChildRows: [NotificationChildRowView] { childRows }
+    #endif
 }
 
 final class NotificationRowView: HoverHighlightView {
@@ -1782,7 +1816,7 @@ final class NotificationChildRowView: NSView {
 /// id this mapping doesn't recognize, so a future signal added without a
 /// matching case here still renders sensibly rather than crashing or
 /// showing nothing.
-private struct NotificationRowPresentation {
+struct NotificationRowPresentation {
     let icon: String
     let kicker: String
 

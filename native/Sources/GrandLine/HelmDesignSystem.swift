@@ -1089,6 +1089,22 @@ final class HelmButton: NSButton {
         didSet { if domainHue != oldValue { restyle() } }
     }
 
+    /// Opt-in: scale the label with the interface text size (GL-32's
+    /// `HelmType.scaled`) rather than keeping the fixed 11/12pt every other
+    /// button wears. Off by default, so no existing layout moves. The Bridge
+    /// notification panel turns it on because its buttons sit inline with
+    /// scaled text, and an action that stays at 11pt beside a 17pt title at
+    /// the Larger scale reads as a different control.
+    var followsTextScale = false {
+        didSet { if followsTextScale != oldValue { invalidateIntrinsicContentSize(); restyle() } }
+    }
+
+    /// What VoiceOver says instead of the visible title, for a button whose
+    /// title is short because its row already names the subject ("Answer",
+    /// "Snooze") but whose spoken name must not be ambiguous among a dozen
+    /// identical ones. `nil` keeps the title.
+    var accessibilityLabelOverride: String?
+
     /// §6.10's "primary Save (domain gradient capsule)" - paint a `.primary`
     /// button's fill as its `domainHue`'s gradient instead of a flat colour.
     ///
@@ -1280,7 +1296,8 @@ final class HelmButton: NSButton {
     override var intrinsicContentSize: NSSize {
         var s = super.intrinsicContentSize
         s.width += 2 * hInset
-        s.height = max(s.height + 2 * size.vInset, size.minHeight)
+        s.height = max(s.height + 2 * size.vInset,
+                       followsTextScale ? HelmType.scaledRowHeight(size.minHeight) : size.minHeight)
         // An icon-only button reads as a square tap target, not a sliver.
         if plainTitle.isEmpty { s.width = max(s.width, s.height) }
         return s
@@ -1810,8 +1827,12 @@ final class HelmButton: NSButton {
         // before (`fm/grandline-sidebar-nav-polish`).
         paragraph.alignment = .center
         paragraph.lineBreakMode = .byTruncatingTail
+        let labelFont = size.font(for: theme)
         super.attributedTitle = NSAttributedString(string: plainTitle, attributes: [
-            .font: size.font(for: theme),
+            .font: followsTextScale
+                ? NSFont.systemFont(ofSize: HelmType.scaled(labelFont.pointSize),
+                                    weight: theme.isDaylight ? .bold : .semibold)
+                : labelFont,
             .foregroundColor: labelColor,
             .paragraphStyle: paragraph,
         ])
@@ -1840,6 +1861,7 @@ final class HelmButton: NSButton {
     /// hover and is the right words by construction, so it wins; the symbol
     /// name is never announced.
     override func accessibilityLabel() -> String? {
+        if let accessibilityLabelOverride, !accessibilityLabelOverride.isEmpty { return accessibilityLabelOverride }
         if !plainTitle.isEmpty { return plainTitle }
         if let toolTip, !toolTip.isEmpty { return toolTip }
         return super.accessibilityLabel()
