@@ -16,13 +16,10 @@
 //     field, its four-state reply area and its "Open Straw Hat Pirates" are
 //     unchanged.
 //   * **Today** and **Notes** are new panes, and the Notes one is the third
-//     popover the report says did not exist. Today is *not* a reuse of
-//     `ShiftMenuBarPopoverController`, and that is deliberate rather than
-//     laziness: that controller renders two stat rows ("Tasks today: 3") plus
-//     the next follow-up, and the mockup's Today tab is a different surface -
-//     a list of the actual due tasks, each with a checkbox that completes it,
-//     colour-coded by urgency. Reusing the stat rows would have meant
-//     shipping the stat rows, which is not what was reviewed.
+//     popover the report says did not exist. Today is the Tasks popover in
+//     the Bridge shape the captain approved (`TasksBridgeView.swift`): the
+//     same `TasksBridgePane` the Tasks menu-bar item shows, so the two doors
+//     to the captain's day are one surface rather than two lookalikes.
 //
 // Everything either pane displays is derived by `CompactModeDigest` from an
 // injected clock, so nothing here computes a date or reads `Date()`.
@@ -105,18 +102,24 @@ final class CompactModePopoverController: NSViewController {
     /// document: its footer and its tab strip have to stay where the hand
     /// left them.
     ///
-    /// 360 is the mockup's own proportion at this width (its card is 588px
-    /// tall against 540 wide, so 1.089 x 330 = 359), and it clears the
-    /// tallest natural tab with room to spare. A tab whose content is taller
-    /// than the region scrolls inside it - `bodyScroll` - which is the case
-    /// the old "size to the content" shape handled by growing the whole card
-    /// instead.
-    static let height: CGFloat = 360
+    /// It was 360, the F22 mockup's own proportion at this width. The Today
+    /// tab's Bridge shape (the captain's approved Tasks popover) moved it to
+    /// 520: measured in the tour lab, 360 left room for the Now card alone,
+    /// with Up next and the backlog entirely below the fold, which defeats a
+    /// layout whose point is "now, then next" at one glance. 520 shows the
+    /// Now card and three Up next rows on Dusk and Daylight at the default
+    /// text size. It is still one size on every tab, and a tab whose content
+    /// is taller than the region scrolls inside it - `bodyScroll` - rather
+    /// than growing the card.
+    static let height: CGFloat = 520
 
     // MARK: Wiring (all of it supplied by `AppDelegate`)
 
-    /// The Today tab's rows and chips.
+    /// The due tasks as the flat rows the right-click status menu lists, and
+    /// the overdue count behind the badge.
     var todayProvider: (() -> CompactTodayDigest)?
+    /// The Today tab itself, in the Bridge shape (`TasksBridge.digest`).
+    var bridgeProvider: (() -> TasksBridgeDigest)?
     /// The Notes tab's rows.
     var notesProvider: (() -> [CompactNoteRow])?
     /// The Vault tab's rows, and whether the vault itself is unlocked.
@@ -131,6 +134,22 @@ final class CompactModePopoverController: NSViewController {
     var vaultUnlockedProvider: (() -> Bool)?
     /// Complete or un-complete one task from its checkbox.
     var onSetTaskCompleted: ((String, Bool) -> Void)?
+    /// Claim a backlog task: set it to the existing In progress status.
+    var onClaimTask: ((String) -> Void)?
+    /// Mark one follow-up done from its Up next row.
+    var onSetFollowUpDone: ((String) -> Void)?
+    /// Start the focus timer on a task. Nil hides the Now card's Start focus.
+    var onStartFocus: ((String) -> Void)? {
+        didSet {
+            todayPane.onStartFocus = onStartFocus == nil ? nil : { [weak self] id in
+                self?.onStartFocus?(id)
+                self?.renderPane()
+            }
+        }
+    }
+    /// Open the full window on one task or one follow-up.
+    var onOpenTask: ((String) -> Void)?
+    var onOpenFollowUp: ((String) -> Void)?
     /// Open the full window on Tasks, with nothing selected.
     var onOpenTasks: (() -> Void)?
     /// Open the full window on the Sticky Board, revealing one note.
@@ -449,8 +468,24 @@ final class CompactModePopoverController: NSViewController {
             self?.onSetTaskCompleted?(id, done)
             // Re-derive rather than mutate the row in place: the store is the
             // truth, and completing a task can change what the *other* rows
-            // say (a capped list gains the sixth task).
+            // say (the next task becomes Now, a capped list gains a row).
             self?.renderPane()
+        }
+        todayPane.onClaimTask = { [weak self] id in
+            self?.onClaimTask?(id)
+            self?.renderPane()
+        }
+        todayPane.onSetFollowUpDone = { [weak self] id in
+            self?.onSetFollowUpDone?(id)
+            self?.renderPane()
+        }
+        todayPane.onOpenTask = { [weak self] id in
+            self?.onOpenTask?(id)
+            self?.onDismiss?()
+        }
+        todayPane.onOpenFollowUp = { [weak self] id in
+            self?.onOpenFollowUp?(id)
+            self?.onDismiss?()
         }
         notesPane.onRevealNote = { [weak self] id in
             self?.onRevealNote?(id)
@@ -628,7 +663,7 @@ final class CompactModePopoverController: NSViewController {
         _ = view
         switch selected {
         case .today:
-            todayPane.present(todayProvider?() ?? .empty, theme: theme)
+            todayPane.present(bridgeProvider?() ?? .empty, theme: theme)
         case .notes:
             notesPane.present(notesProvider?() ?? [], theme: theme)
         case .vault:
@@ -789,139 +824,75 @@ final class CompactModePopoverController: NSViewController {
 
 // MARK: - The Today pane
 
-/// The mockup's Today tab: up to `CompactModeDigest.maxRows` due tasks, each
-/// with a real checkbox, then the focus and follow-up chips.
+/// The Today tab, in the Bridge shape the captain approved for the Tasks
+/// popover: the shared `TasksBridgePane` (Today and the date, done today and
+/// the streak, the Now card, Up next and the backlog), then the footer's
+/// Open Tasks.
+///
+/// It used to be a flat list of due tasks with a checkbox each. Everything
+/// that list did is still here: the due tasks are the Now card and Up next,
+/// each with a visible check, overdue still reads red and says "Overdue" in
+/// words, and the focus and follow-up chips sit under the list as before.
 final class CompactTodayPane: NSView {
     var onSetTaskCompleted: ((String, Bool) -> Void)?
     var onOpenTasks: (() -> Void)?
+    var onClaimTask: ((String) -> Void)?
+    var onOpenTask: ((String) -> Void)?
+    var onSetFollowUpDone: ((String) -> Void)?
+    var onOpenFollowUp: ((String) -> Void)?
+    /// Nil hides the Now card's Start focus.
+    var onStartFocus: ((String) -> Void)? {
+        didSet {
+            bridge.onStartFocus = onStartFocus == nil ? nil : { [weak self] id in self?.onStartFocus?(id) }
+        }
+    }
 
-    private let rowsStack = NSStackView()
-    private let chipsRow = NSStackView()
-    private let chipsDivider = NSView()
-    private let focusChip = CompactChip()
-    private let followUpChip = CompactChip()
-    private let emptyState = HelmEmptyState(
-        symbol: "checkmark.circle",
-        body: "Nothing is due. Capture something below, or open Tasks for the whole list.",
-        size: .compact)
-    private let openTasksButton = HelmButton(title: "Open Tasks \u{2192}", variant: .quiet, size: .small)
-    private let column = NSStackView()
-
-    private var rows: [CompactTaskRowView] = []
-    private lazy var rowRows = HelmKeyedRows(stack: rowsStack)
+    private let bridge = TasksBridgePane(showsPin: false)
+    private let footer = TasksBridgeFooter(showsSettings: false)
     private var theme: HelmTheme = ThemeManager.shared.theme
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
 
-        rowsStack.orientation = .vertical
-        rowsStack.alignment = .leading
-        rowsStack.spacing = 2
-        rowsStack.translatesAutoresizingMaskIntoConstraints = false
+        bridge.onCheckOffTask = { [weak self] id in self?.onSetTaskCompleted?(id, true) }
+        bridge.onClaimTask = { [weak self] id in self?.onClaimTask?(id) }
+        bridge.onOpenTask = { [weak self] id in self?.onOpenTask?(id) }
+        bridge.onCompleteFollowUp = { [weak self] id in self?.onSetFollowUpDone?(id) }
+        bridge.onOpenFollowUp = { [weak self] id in self?.onOpenFollowUp?(id) }
+        footer.onOpenTasks = { [weak self] in self?.onOpenTasks?() }
 
-        chipsDivider.wantsLayer = true
-        chipsDivider.translatesAutoresizingMaskIntoConstraints = false
-        chipsDivider.heightAnchor.constraint(equalToConstant: 1).isActive = true
-
-        let chipSpacer = NSView()
-        chipSpacer.translatesAutoresizingMaskIntoConstraints = false
-        let collapsed = chipSpacer.widthAnchor.constraint(equalToConstant: 0)
-        collapsed.priority = .defaultLow
-        collapsed.isActive = true
-        chipsRow.setViews([focusChip, followUpChip, chipSpacer], in: .leading)
-        chipsRow.orientation = .horizontal
-        chipsRow.alignment = .centerY
-        chipsRow.distribution = .fill
-        chipsRow.spacing = HelmMetrics.s1 + 2
-        chipsRow.translatesAutoresizingMaskIntoConstraints = false
-
-        emptyState.translatesAutoresizingMaskIntoConstraints = false
-        openTasksButton.target = self
-        openTasksButton.action = #selector(openTasksTapped)
-        openTasksButton.translatesAutoresizingMaskIntoConstraints = false
-
-        column.setViews([rowsStack, emptyState, chipsDivider, chipsRow, openTasksButton], in: .leading)
-        column.orientation = .vertical
-        column.alignment = .leading
-        column.spacing = HelmMetrics.s2
-        column.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(column)
+        addSubview(bridge)
+        addSubview(footer)
         NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s3),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s3),
-            column.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -HelmMetrics.s2),
+            bridge.leadingAnchor.constraint(equalTo: leadingAnchor),
+            bridge.trailingAnchor.constraint(equalTo: trailingAnchor),
+            bridge.topAnchor.constraint(equalTo: topAnchor),
+            footer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s3),
+            footer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s3),
+            footer.topAnchor.constraint(equalTo: bridge.bottomAnchor, constant: HelmMetrics.s1),
+            footer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -HelmMetrics.s2),
         ])
-        for child in column.arrangedSubviews {
-            child.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
-        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    func present(_ digest: CompactTodayDigest, theme: HelmTheme) {
+    func present(_ digest: TasksBridgeDigest, theme: HelmTheme) {
         self.theme = theme
-        // `autoreleasepool` around a repeated AppKit construct/teardown loop
-        // in a process that may have no run loop turning - AGENTS.md's own
-        // mandatory rule for a headless suite, and this is the loop a suite
-        // drives hardest.
-        autoreleasepool {
-            // P2: keyed by task id, so a refresh updates the rows in place
-            // rather than rebuilding them under the captain's pointer.
-            rowRows.reconcile(digest.rows, key: \.id, make: { model in
-                let row = CompactTaskRowView(model: model)
-                let id = model.id
-                row.onToggle = { [weak self] in self?.onSetTaskCompleted?(id, true) }
-                return row
-            }, update: { view, model in
-                (view as? CompactTaskRowView)?.configure(model)
-            })
-            rows = rowRows.orderedRows.compactMap { $0 as? CompactTaskRowView }
-        }
-
-        rowsStack.isHidden = digest.isEmpty
-        emptyState.isHidden = !digest.isEmpty
-
-        focusChip.isHidden = digest.focusChip == nil
-        followUpChip.isHidden = digest.followUpChip == nil
-        if let focus = digest.focusChip { focusChip.configure(symbol: "clock", text: focus) }
-        if let followUp = digest.followUpChip { followUpChip.configure(symbol: "bell", text: followUp) }
-        // The divider belongs to the chips, so it goes when they do rather
-        // than leaving a rule under nothing.
-        let hasChips = digest.focusChip != nil || digest.followUpChip != nil
-        chipsRow.isHidden = !hasChips
-        chipsDivider.isHidden = !hasChips
-
-        applyTheme(theme)
+        bridge.present(digest, theme: theme)
     }
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
-        chipsDivider.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
-            .withAlphaComponent(HelmCard.dividerAlpha).cgColor
-        emptyState.applyTheme(theme)
-        // The focus chip carries the accent as identity; the follow-up chip
-        // deliberately does not. AGENTS.md: `HelmTint.neutral` washed as a
-        // *tinted surface* resolves to `chromeInkHex` and produces a
-        // near-black chip, so a no-identity chip wants `HelmField.fill` plus
-        // ink text instead - which is what `CompactChip.neutral` paints.
-        focusChip.applyTheme(theme, tint: .accent)
-        followUpChip.applyTheme(theme, tint: nil)
-        for row in rows { row.applyTheme(theme) }
+        bridge.applyTheme(theme)
     }
-
-    @objc private func openTasksTapped() { onOpenTasks?() }
 
     #if FM_SELFTESTS
-    var debugRowTitles: [String] { rows.map { $0.debugTitle } }
-    var debugRowCheckboxColors: [NSColor] { rows.map { $0.debugCheckboxBorderColor } }
-    var debugRows: [CompactTaskRowView] { rows }
-    var debugEmptyStateIsHidden: Bool { emptyState.isHidden }
-    var debugChipsAreHidden: Bool { chipsRow.isHidden }
-    var debugChipTexts: [String] {
-        [focusChip, followUpChip].filter { !$0.isHidden }.map { $0.debugText }
-    }
+    var debugBridge: TasksBridgePane { bridge }
+    var debugFooter: TasksBridgeFooter { footer }
+    var debugRowTitles: [String] { bridge.debugTimelineRows.map { $0.debugTitle } }
+    var debugChipsAreHidden: Bool { bridge.debugChipsAreHidden }
+    var debugChipTexts: [String] { bridge.debugChipTexts }
     #endif
 }
 
@@ -1161,136 +1132,6 @@ final class CompactLockPane: NSView {
 }
 
 // MARK: - Rows
-
-/// One task row: a checkbox, a title and its urgency caption.
-///
-/// A `HoverHighlightView` because it is a clickable row, which per GL-16 is
-/// what supplies the role, the label, the focus ring and the keyboard press -
-/// there is no hand-rolled hover fill or tracking area here.
-final class CompactTaskRowView: HoverHighlightView {
-    var onToggle: (() -> Void)?
-
-    private let checkbox = NSView()
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let detailLabel = NSTextField(labelWithString: "")
-    private var model: CompactTaskRow
-
-    init(model: CompactTaskRow) {
-        self.model = model
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        cornerRadius = HelmMetrics.rChip + 1
-        accessibilityRoleOverride = .checkBox
-        accessibilityValueOverride = "not done"
-        onAccessibilityPress = { [weak self] in self?.onToggle?() }
-        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clicked)))
-
-        checkbox.wantsLayer = true
-        checkbox.translatesAutoresizingMaskIntoConstraints = false
-        checkbox.layer?.cornerRadius = 4
-        checkbox.layer?.borderWidth = 1.6
-
-        titleLabel.font = .systemFont(ofSize: HelmType.scaled(12.5), weight: .semibold)
-        titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailLabel.font = HelmType.captionSmall()
-        detailLabel.lineBreakMode = .byTruncatingTail
-        detailLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let text = NSStackView(views: [titleLabel, detailLabel])
-        text.orientation = .vertical
-        text.alignment = .leading
-        text.spacing = 1
-        text.translatesAutoresizingMaskIntoConstraints = false
-
-        addSubview(checkbox)
-        addSubview(text)
-        NSLayoutConstraint.activate([
-            checkbox.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
-            checkbox.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            checkbox.widthAnchor.constraint(equalToConstant: 14),
-            checkbox.heightAnchor.constraint(equalToConstant: 14),
-            text.leadingAnchor.constraint(equalTo: checkbox.trailingAnchor, constant: HelmMetrics.s2),
-            text.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
-            text.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            text.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
-        ])
-        // Only the text may compress. Gotcha (5): with every subview left at
-        // AppKit's equal default, a long title squeezes the checkbox too.
-        checkbox.setContentCompressionResistancePriority(.required, for: .horizontal)
-        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        configure(model)
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    /// The row's text from its model, for a new row and a kept one (P2)
-    /// alike. The urgency colours follow on the next `applyTheme`, which the
-    /// pane runs after every refresh.
-    func configure(_ model: CompactTaskRow) {
-        self.model = model
-        titleLabel.stringValue = model.title
-        detailLabel.stringValue = model.detail
-        accessibilityLabelOverride = "\(model.title) - \(model.detail)"
-    }
-
-    @objc private func clicked() { onToggle?() }
-
-    func applyTheme(_ theme: HelmTheme) {
-        normalColor = .clear
-        hoverColor = HelmTheme.nsColor(theme.chromeInkHex).withAlphaComponent(0.06)
-        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        // The urgency is carried by both the caption's colour and the
-        // checkbox's border, never by colour alone - GL-16's own posture, and
-        // the detail string already says "overdue" in words.
-        let accent = urgencyColor(theme)
-        detailLabel.textColor = accent
-        checkbox.layer?.borderColor = checkboxBorderColor(theme).cgColor
-    }
-
-    /// A tinted *caption* is text, so it goes through `HelmContrast` rather
-    /// than taking the raw hue - AGENTS.md's "a `HelmTint` hue is safe as a
-    /// fill and is NOT automatically safe as text".
-    private func urgencyColor(_ theme: HelmTheme) -> NSColor {
-        switch model.urgency {
-        case .overdue:
-            return HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme),
-                                                  over: HelmTheme.nsColor(theme.chromeBackgroundHex),
-                                                  theme: theme)
-        case .today, .later:
-            return HelmTheme.mutedInk(theme)
-        }
-    }
-
-    /// A 14pt square's border is a non-text UI component, so the honest floor
-    /// is 3:1 rather than 4.5:1 - and it is the same resolved hue the caption
-    /// uses for the overdue case, so the two cannot drift apart.
-    private func checkboxBorderColor(_ theme: HelmTheme) -> NSColor {
-        switch model.urgency {
-        case .overdue:
-            return urgencyColor(theme)
-        case .today:
-            return HelmContrast.legibleTintedText(tintHex: HelmTint.warn.hex(in: theme),
-                                                  over: HelmTheme.nsColor(theme.chromeBackgroundHex),
-                                                  theme: theme)
-        case .later:
-            return HelmTheme.nsColor(theme.chromeLineHex)
-        }
-    }
-
-    #if FM_SELFTESTS
-    var debugTitle: String { titleLabel.stringValue }
-    var debugDetail: String { detailLabel.stringValue }
-    var debugUrgency: CompactTaskRow.Urgency { model.urgency }
-    var debugCheckboxBorderColor: NSColor {
-        guard let cg = checkbox.layer?.borderColor else { return .clear }
-        return NSColor(cgColor: cg) ?? .clear
-    }
-    var debugDetailColor: NSColor { detailLabel.textColor ?? .clear }
-    func debugClick() { clicked() }
-    #endif
-}
 
 /// One sticky-note row: the note's own paper colour as a swatch, its title
 /// and its detail.

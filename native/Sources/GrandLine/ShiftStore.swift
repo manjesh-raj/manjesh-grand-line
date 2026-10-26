@@ -723,6 +723,16 @@ final class ShiftStore {
         notify()
     }
 
+    /// Claims a backlog task from the Tasks popover's "claim to start": the
+    /// existing In progress status, written through `updateTask` exactly as a
+    /// Kanban drag into In progress writes it. A task that is not `todo`
+    /// (already claimed, or gone) is left alone.
+    func claimTask(id: String, now: Date = Date()) {
+        guard var task = activeTasks.first(where: { $0.id == id }), task.status == .todo else { return }
+        task.status = .inProgress
+        updateTask(task, now: now)
+    }
+
     /// Appends a brand-new follow-up to `follow-ups.yaml` and persists
     /// immediately.
     func addFollowUp(_ followUp: ShiftFollowUp) {

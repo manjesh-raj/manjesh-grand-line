@@ -72,6 +72,34 @@ enum CompactModeViewSelfTest {
         focusChip: "17:24 focus",
         followUpChip: "2 follow-ups")
 
+    /// The Today tab's Bridge shape: a late Now card, an overdue row, a row
+    /// due today, a follow-up and one due later, and a backlog with one row
+    /// still to claim and one already claimed.
+    private static let bridgeFixture = TasksBridgeDigest(
+        dateText: "Mon 26 Oct",
+        progress: .init(done: 2, total: 6),
+        streakDays: 4,
+        now: .init(id: "now", title: "Rotate the staging certificate",
+                   whenText: "11:00 \u{00B7} 25m late", isLate: true,
+                   checklistText: "3 of 5 checked", detail: "3 of 5 checked \u{00B7} Infra"),
+        nothingDueCaption: TasksBridge.nothingScheduledCaption,
+        upNext: [
+            .init(id: "overdue", kind: .task, timeText: "16 Sep", title: "Renew wildcard TLS certificate",
+                  detail: "Overdue", urgency: .overdue),
+            .init(id: "today", kind: .task, timeText: "13:00", title: "Rotate the prod bastion SSH keys",
+                  detail: "Ops \u{00B7} High", urgency: .today),
+            .init(id: "vendor", kind: .followUp, timeText: "15:30", title: "Vendor SSO ticket",
+                  detail: "Follow-up", urgency: .today),
+            .init(id: "later", kind: .task, timeText: "Tmrw", title: "Review OTel collector Helm values",
+                  detail: "", urgency: .later),
+        ],
+        backlog: [
+            .init(id: "b1", title: "Clean up stale kube contexts", detail: "No due date", isClaimed: false),
+            .init(id: "b2", title: "Migrate the docs site", detail: "No due date", isClaimed: true),
+        ],
+        focusChip: "17:24 focus",
+        followUpChip: "2 follow-ups")
+
     private static let notesFixture = [
         CompactNoteRow(id: "n1", title: "Ask about the invoice fee", detail: "call the bank",
                        color: .yellow),
@@ -134,6 +162,7 @@ enum CompactModeViewSelfTest {
             let current = ThemeManager.shared.theme
             let controller = CompactModePopoverController()
             controller.todayProvider = { todayFixture }
+            controller.bridgeProvider = { bridgeFixture }
             controller.notesProvider = { notesFixture }
             controller.vaultCodesProvider = { [] }
             controller.vaultUnlockedProvider = { false }
@@ -457,19 +486,21 @@ enum CompactModeViewSelfTest {
     /// the old "size to the content" shape handled by growing the card, so it
     /// is the one a fixed size could have broken by clipping instead.
     private static func checkATallTabScrollsRatherThanGrows(_ check: (Bool, String) -> Void) {
-        let crowded = CompactTodayDigest(
-            rows: (0..<CompactModeDigest.maxRows).map {
-                CompactTaskRow(id: "t\($0)",
-                               title: "A task with a title long enough to wrap onto a second line "
-                                   + "in a 330pt popover, number \($0)",
-                               detail: "overdue \u{00B7} 16 Sep", urgency: .overdue)
+        let crowded = TasksBridgeDigest(
+            dateText: bridgeFixture.dateText, progress: bridgeFixture.progress, streakDays: 4,
+            now: bridgeFixture.now, nothingDueCaption: bridgeFixture.nothingDueCaption,
+            upNext: (0..<TasksBridge.upNextMaxRows).map {
+                .init(id: "t\($0)", kind: .task, timeText: "16 Sep",
+                      title: "A task with a title long enough to wrap onto a second line "
+                          + "in a 330pt popover, number \($0)",
+                      detail: "Overdue", urgency: .overdue)
             },
-            overdueCount: CompactModeDigest.maxRows,
+            backlog: bridgeFixture.backlog,
             focusChip: "17:24 focus",
             followUpChip: "2 follow-ups")
 
         mounted { controller, _ in
-            controller.todayProvider = { crowded }
+            controller.bridgeProvider = { crowded }
             controller.select(.notes)
             controller.select(.today)
             controller.debugRenderPane()
@@ -490,48 +521,51 @@ enum CompactModeViewSelfTest {
         }
     }
 
+    /// The Bridge shape keeps the old Today tab's rule: overdue is painted
+    /// differently from due today and from later, and also said in words.
+    /// It now lives in the Up next row's time column and the Now card's pill.
     private static func checkUrgencyIsPaintedNotJustStated(_ check: (Bool, String) -> Void) {
         for theme in [lightTheme(), darkTheme()] {
             mounted(theme: theme) { controller, _ in
                 controller.select(.today)
                 controller.view.layoutSubtreeIfNeeded()
-                let rows = controller.debugTodayPane.debugRows
-                check(rows.count == todayFixture.rows.count,
-                      "\(theme.name): the Today pane renders one row per task - got \(rows.count)")
-                guard rows.count == 3 else { return }
+                let rows = controller.debugTodayPane.debugBridge.debugTimelineRows
+                check(rows.count == bridgeFixture.upNext.count,
+                      "\(theme.name): Up next renders one row per entry - got \(rows.count)")
+                guard rows.count == 4 else { return }
                 let overdue = rows[0]
                 let dueToday = rows[1]
-                let later = rows[2]
-                check(overdue.debugUrgency == .overdue && later.debugUrgency == .later,
+                check(overdue.model.urgency == .overdue && dueToday.model.urgency == .today,
                       "\(theme.name): the fixture must really carry different urgencies, or the "
                           + "colour comparison below cannot fail")
 
                 // Element-wise components, never `HelmContrast.ratio(a, b) <
-                // 1.01` - that compares relative *luminance*, so two
-                // different hues of similar brightness pass it as "equal"
-                // (AGENTS.md's own note).
-                let a = HelmContrast.components(overdue.debugCheckboxBorderColor)
-                let b = HelmContrast.components(later.debugCheckboxBorderColor)
-                let c = HelmContrast.components(dueToday.debugCheckboxBorderColor)
+                // 1.01` - that compares relative *luminance* (AGENTS.md).
+                let a = HelmContrast.components(overdue.debugTimeColor)
+                let b = HelmContrast.components(dueToday.debugTimeColor)
                 check(!componentsMatch(a, b),
-                      "\(theme.name): an overdue row's checkbox must not be painted the same "
-                          + "colour as one due later - the urgency is the whole point of the row. "
-                          + "Got \(a) vs \(b)")
-                check(!componentsMatch(c, b),
-                      "\(theme.name): nor a row due today - got \(c) vs \(b)")
-                check(!componentsMatch(a, c),
-                      "\(theme.name): overdue and due-today are different states and read "
-                          + "differently (GL-14) - got \(a) vs \(c)")
+                      "\(theme.name): an overdue row's time must not be painted the same colour as "
+                          + "one due today - got \(a) vs \(b)")
+                check(overdue.debugDetail.contains("Overdue"),
+                      "\(theme.name): and the overdue row says so in words (GL-16) - got "
+                          + "\(overdue.debugDetail)")
+                let ground = HelmTheme.nsColor(theme.chromeBackgroundHex)
+                for row in rows {
+                    let ratio = HelmContrast.ratio(HelmContrast.components(row.debugTimeColor),
+                                                   HelmContrast.components(ground))
+                    check(ratio >= HelmContrast.textTarget - 0.01,
+                          "\(theme.name): the time \"\(row.debugTimeText)\" is text in a hue, so it "
+                              + "clears \(HelmContrast.textTarget):1 - got " + String(format: "%.2f", ratio))
+                }
 
-                // GL-16: never colour alone. The caption says it in words too.
-                check(overdue.debugDetail.contains("overdue"),
-                      "\(theme.name): and the overdue row says so in words, so the state survives "
-                          + "for anyone who cannot see the hue - got \(overdue.debugDetail)")
-
-                let ink = HelmTheme.nsColor(theme.chromeInkHex)
-                check(componentsMatch(HelmContrast.components(overdue.debugCheckboxBorderColor),
-                                      HelmContrast.components(ink)) == false,
-                      "\(theme.name): the overdue border is a real hue, not page ink")
+                let card = controller.debugTodayPane.debugBridge.debugNowCard
+                check(card.debugPillText == bridgeFixture.now?.whenText,
+                      "\(theme.name): the Now card's pill says how late, in words - got "
+                          + "\(card.debugPillText ?? "nil")")
+                let late = HelmContrast.components(card.debugPill.debugTextColor)
+                let calm = HelmContrast.components(dueToday.debugTimeColor)
+                check(!componentsMatch(late, calm),
+                      "\(theme.name): a late pill is painted in the late hue, not the calm accent")
             }
         }
     }
@@ -541,16 +575,22 @@ enum CompactModeViewSelfTest {
             mounted(theme: theme) { controller, _ in
                 controller.select(.today)
                 controller.view.layoutSubtreeIfNeeded()
-                check(!controller.debugTodayPane.debugChipsAreHidden,
+                let pane = controller.debugTodayPane
+                check(!pane.debugChipsAreHidden,
                       "\(theme.name): the fixture supplies both chips, so they must be showing - "
                           + "otherwise the contrast check below is vacuous")
-                check(controller.debugTodayPane.debugChipTexts == ["17:24 focus", "2 follow-ups"],
+                check(pane.debugChipTexts == ["17:24 focus", "2 follow-ups"],
                       "\(theme.name): both chips render what they were handed - got "
-                          + "\(controller.debugTodayPane.debugChipTexts)")
-                let chips = allSubviews(of: controller.debugTodayPane).compactMap { $0 as? CompactChip }
-                    .filter { !$0.isHidden }
-                check(chips.count == 2,
-                      "\(theme.name): two chips - got \(chips.count)")
+                          + "\(pane.debugChipTexts)")
+                let header = pane.debugBridge.header
+                check(header.debugProgressText == "2/6" && header.debugStreakText == "4",
+                      "\(theme.name): the header shows done today and the streak - got "
+                          + "\(header.debugProgressText ?? "nil") and \(header.debugStreakText ?? "nil")")
+                let chips = pane.debugBridge.debugChips + header.debugChips
+                    + [pane.debugBridge.debugNowCard.debugPill]
+                check(chips.count == 5,
+                      "\(theme.name): two chips under the list, two in the header and the pill - got "
+                          + "\(chips.count)")
                 for chip in chips {
                     let ratio = HelmContrast.ratio(HelmContrast.components(chip.debugTextColor),
                                                    HelmContrast.components(chip.debugFillColor))
@@ -560,6 +600,14 @@ enum CompactModeViewSelfTest {
                               + "as a fill and is NOT automatically safe as text. Got "
                               + String(format: "%.2f", ratio))
                 }
+                let card = pane.debugBridge.debugNowCard
+                for (name, color) in [("title", card.debugTitleColor), ("caption", card.debugDetailColor)] {
+                    let ratio = HelmContrast.ratio(HelmContrast.components(color),
+                                                   HelmContrast.components(card.debugFillColor))
+                    check(ratio >= HelmContrast.textTarget - 0.01,
+                          "\(theme.name): the Now card's \(name) sits on an accent wash and still "
+                              + "clears \(HelmContrast.textTarget):1 - got " + String(format: "%.2f", ratio))
+                }
             }
         }
     }
@@ -568,6 +616,7 @@ enum CompactModeViewSelfTest {
         autoreleasepool {
             let controller = CompactModePopoverController()
             controller.todayProvider = { .empty }
+            controller.bridgeProvider = { .empty }
             controller.notesProvider = { [] }
             controller.vaultCodesProvider = { [] }
             controller.vaultUnlockedProvider = { false }
@@ -578,10 +627,17 @@ enum CompactModeViewSelfTest {
             controller.prepareToShow()
             controller.view.layoutSubtreeIfNeeded()
 
-            check(!controller.debugTodayPane.debugEmptyStateIsHidden,
-                  "nothing due shows a real empty state, not an empty stack")
-            check(controller.debugTodayPane.debugRowTitles.isEmpty,
-                  "and no rows")
+            let card = controller.debugTodayPane.debugBridge.debugNowCard
+            check(card.debugTitle == "Nothing due right now"
+                      && card.debugDetail == TasksBridge.nothingScheduledCaption,
+                  "nothing due shows a real empty state in the Now card, not a blank card - got "
+                      + "\(card.debugTitle) / \(card.debugDetail)")
+            check(card.debugActionsAreHidden,
+                  "and offers no Check off for a task that does not exist")
+            check(controller.debugTodayPane.debugRowTitles.isEmpty
+                      && controller.debugTodayPane.debugBridge.debugUpNextIsHidden
+                      && controller.debugTodayPane.debugBridge.debugBacklogIsHidden,
+                  "and no rows, and no section headers over nothing")
             check(controller.debugTodayPane.debugChipsAreHidden,
                   "and no chips - the divider under them would otherwise be a rule under nothing")
 
@@ -595,21 +651,58 @@ enum CompactModeViewSelfTest {
         }
     }
 
+    /// Every inline action on the Today tab reaches the store through the
+    /// real button's target/action (`performClick`), never the handler alone.
     private static func checkClickingARowReachesTheStore(_ check: (Bool, String) -> Void) {
         mounted { controller, _ in
             var completed: [(String, Bool)] = []
+            var followUpsDone: [String] = []
+            var claimed: [String] = []
+            var focused: [String] = []
+            var openedTasks: [String] = []
             var revealed: [String] = []
             var dismissals = 0
             controller.onSetTaskCompleted = { completed.append(($0, $1)) }
+            controller.onSetFollowUpDone = { followUpsDone.append($0) }
+            controller.onClaimTask = { claimed.append($0) }
+            controller.onStartFocus = { focused.append($0) }
+            controller.onOpenTask = { openedTasks.append($0) }
             controller.onRevealNote = { revealed.append($0) }
             controller.onDismiss = { dismissals += 1 }
 
             controller.select(.today)
             controller.view.layoutSubtreeIfNeeded()
-            controller.debugTodayPane.debugRows.first?.debugClick()
-            check(completed.count == 1 && completed.first?.0 == "overdue" && completed.first?.1 == true,
-                  "clicking a task row's checkbox completes that task through the shared store - "
-                      + "got \(completed)")
+            let pane = controller.debugTodayPane.debugBridge
+            let card = pane.debugNowCard
+            check(!card.debugFocusButton.isHidden,
+                  "Start focus shows once a focus timer is wired")
+            card.debugCheckOffButton.performClick(nil)
+            check(completed.count == 1 && completed.first?.0 == "now" && completed.first?.1 == true,
+                  "the Now card's Check off completes that task through the shared store - got \(completed)")
+            card.debugFocusButton.performClick(nil)
+            check(focused == ["now"], "Start focus starts the timer on the Now task - got \(focused)")
+
+            let rows = pane.debugTimelineRows
+            rows.first { $0.model.id == "today" }?.debugCheckButton.performClick(nil)
+            check(completed.last?.0 == "today",
+                  "an Up next task row's check completes that task - got \(completed)")
+            rows.first { $0.model.id == "vendor" }?.debugCheckButton.performClick(nil)
+            check(followUpsDone == ["vendor"],
+                  "an Up next follow-up row's check marks the follow-up done, not a task - got "
+                      + "\(followUpsDone)")
+
+            let backlog = pane.debugBacklogRows
+            check(backlog.count == 2 && !backlog[0].debugClaimButton.isHidden
+                      && backlog[1].debugClaimButton.isHidden && backlog[1].debugClaimedIsShowing,
+                  "an unclaimed backlog row offers Claim and a claimed one says In progress instead")
+            backlog.first?.debugClaimButton.performClick(nil)
+            check(claimed == ["b1"], "Claim claims that backlog task - got \(claimed)")
+
+            let before = dismissals
+            rows.first?.debugClick()
+            check(openedTasks == ["overdue"] && dismissals == before + 1,
+                  "clicking an Up next row opens its task in the window and closes the popover - got "
+                      + "\(openedTasks)")
 
             controller.select(.notes)
             controller.view.layoutSubtreeIfNeeded()
@@ -617,17 +710,17 @@ enum CompactModeViewSelfTest {
             check(revealed == ["n1"],
                   "clicking a note row opens the board on that note rather than just on the board - "
                       + "got \(revealed)")
-            check(dismissals >= 1,
-                  "and closes the popover, since the window it just navigated is now the surface")
 
-            // GL-16: the row is a `HoverHighlightView`, so the role, label,
+            // GL-16: every row is a `HoverHighlightView`, so the role, label,
             // focus ring and keyboard press all come from that one component.
-            let rows = controller.debugNotesPane.debugRows
-            check(rows.allSatisfy { $0.isActivatable },
+            let all: [HoverHighlightView] = controller.debugNotesPane.debugRows + rows + backlog
+            check(all.allSatisfy { $0.isActivatable },
                   "every row announces itself as activatable, which is what gives it a focus ring "
                       + "and a keyboard press")
-            check(rows.allSatisfy { ($0.accessibilityLabel() ?? "").isEmpty == false },
+            check(all.allSatisfy { ($0.accessibilityLabel() ?? "").isEmpty == false },
                   "and carries a real accessibility label")
+            check(rows.allSatisfy { ($0.debugCheckButton.accessibilityLabel() ?? "").contains($0.model.title) },
+                  "and each check button names the task it checks off for VoiceOver")
         }
     }
 

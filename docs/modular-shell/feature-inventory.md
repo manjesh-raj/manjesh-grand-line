@@ -542,7 +542,7 @@ Every `HelmSegmentedTabs` built from literal titles, plus the Hosts column, the 
 |---|---|---|---|---|
 | `tab.CompactModeTab.crew` | Compact popover tab: crew | menu-bar compact mode popover | Menu bar extra (compact mode popover, unchanged) |  |
 | `tab.CompactModeTab.notes` | Compact popover tab: notes | menu-bar compact mode popover | Menu bar extra (compact mode popover, unchanged) |  |
-| `tab.CompactModeTab.today` | Compact popover tab: today | menu-bar compact mode popover | Menu bar extra (compact mode popover, unchanged) |  |
+| `tab.CompactModeTab.today` | Compact popover tab: today | menu-bar compact mode popover | Menu bar extra (compact mode popover; the Today tab is the Tasks popover in the Bridge shape - Now card, Up next with follow-ups, backlog to claim, done today and the streak - with the focus and follow-up chips kept) |  |
 | `tab.CompactModeTab.vault` | Compact popover tab: vault | menu-bar compact mode popover | Menu bar extra (compact mode popover, unchanged) |  |
 | `tab.HostsTab.hosts` | Hosts page column: Hosts | Hosts page's own sidebar column | Connections › Hosts |  |
 | `tab.HostsTab.keys` | Hosts page column: SSH Keys | Hosts page's own sidebar column | Connections › Keys |  |
@@ -741,7 +741,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.CommandLibraryAIPopover` | CommandLibraryAIPopover controls | `askClicked`, `copyClicked`, `saveTemplateClicked` | Connections › Commands |  |
 | `action.CommandLibraryViews` | CommandLibraryViews controls | `addCommandClicked`, `aiActionPicked`, `aiClicked`, `appendToExistingRunbook`, `categoryCommandRowClicked`, `categoryRowClicked`, `copyClicked`, `createNewWorkflowRunbook`, `duplicateClicked`, `editClicked`, `favoriteClicked`, `favoriteRowClicked`, `paramValueChanged`, `recentRowClicked`, `searchResultRowClicked`, `sendToHostsClicked`, `sendToTerminalClicked`, `workflowClicked` | Connections › Commands |  |
 | `action.CompactMode` | CompactMode controls | `iconClicked` | Menu bar extra (compact mode, unchanged) |  |
-| `action.CompactModePopover` | CompactModePopover controls | `captureSubmitted`, `clicked`, `openBoardTapped`, `openTasksTapped`, `openWindowTapped`, `settingsTapped`, `submitTapped` | Menu bar extra (compact mode, unchanged) |  |
+| `action.CompactModePopover` | CompactModePopover controls | `captureSubmitted`, `clicked`, `openBoardTapped`, `openWindowTapped`, `settingsTapped`, `submitTapped` | Menu bar extra (compact mode; the Today tab's Open Tasks moved into the Bridge-shaped Tasks pane, `action.TasksBridgeView`) |  |
 | `action.CompactModeStatusMenu` | CompactModeStatusMenu controls | `fire` | Menu bar extra (compact mode, unchanged) |  |
 | `action.ConsoleComposerPopover` | ConsoleComposerPopover controls | `copyClicked`, `exampleClicked`, `generateClicked`, `runClicked` | Console (Compose popover) |  |
 | `action.ConsoleController+SRELead` | ConsoleController+SRELead controls | `generatePostmortemClicked`, `startSRELeadForCurrentTabClicked` | Console (SRE Lead) |  |
@@ -847,6 +847,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.StrawHatMenuBar` | StrawHatMenuBar controls | `iconClicked`, `openFullChatTapped`, `submit` | Menu bar extra (Straw Hat, unchanged) |  |
 | `action.StrawHatRosterView` | StrawHatRosterView controls | `closeClicked` | Crew › Ask the crew |  |
 | `action.TabChipView` | TabChipView controls | `closeClicked`, `duplicateFromMenu`, `reconnectFromMenu`, `renameFromMenu`, `toggleForwardDragsFromMenu` | Console (tab strip) |  |
+| `action.TasksBridgeView` | The Tasks popover in the Bridge shape: Now card, Up next, backlog and footer | `checkTapped`, `claimTapped`, `openTapped`, `openTasksTapped`, `pinTapped`, `settingsTapped` | Menu bar extra (the compact popover's Today tab and the Tasks menu bar item: Check off, Start focus and Open on the Now card, a check on each Up next row, Claim on a backlog row, the header's pin, and the footer's Open Tasks and Settings) |  |
 | `action.Toast` | Toast controls | `UndoSlot.undoClicked` | Window (toast) |  |
 | `action.ToolInstance` | ToolInstance controls | `base64CopyClicked`, `base64DecodeClicked`, `base64EncodeClicked`, `certCopyClicked`, `certInspectClicked`, `cpuCoresCopyClicked`, `cpuMillicoresCopyClicked`, `cpuToCoresClicked`, `cpuToMillicoresClicked`, `cronCopyClicked`, `cronExplainClicked`, `cronRandomClicked`, `diffCompareClicked`, `diffShowOnlyDifferencesToggled`, `epochToHumanClicked`, `humanToEpochClicked`, `jsonBeautifyClicked`, `jsonCopyClicked`, `jsonValidateClicked`, `jwtCopyHeaderClicked`, `jwtCopyPayloadClicked`, `jwtDecodeClicked`, `memoryConvertClicked`, `memoryCopyClicked`, `nowClicked`, `scratchpadCopyAllClicked`, `tsCopyEpochClicked`, `tsCopyHumanClicked`, `yamlBeautifyClicked`, `yamlCopyClicked`, `yamlValidateClicked` | Tools |  |
 | `action.ToolsController` | ToolsController controls | `newShellTab`, `toolCardClicked` | Tools |  |

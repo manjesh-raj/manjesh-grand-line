@@ -411,39 +411,46 @@ enum KeyedRefreshSelfTest {
         ])
         window.orderFront(nil)
 
-        func digest(_ rows: [CompactTaskRow]) -> CompactTodayDigest {
-            CompactTodayDigest(rows: rows, overdueCount: rows.filter { $0.urgency == .overdue }.count,
-                               focusChip: nil, followUpChip: nil)
+        // The Today tab is the Bridge shape now, so its keyed rows are Up
+        // next's. The rule is unchanged: kept by id across a refresh.
+        func digest(_ rows: [TasksBridgeDigest.TimelineRow]) -> TasksBridgeDigest {
+            TasksBridgeDigest(dateText: "Mon 26 Oct", progress: nil, streakDays: 0, now: nil,
+                              nothingDueCaption: TasksBridge.nothingScheduledCaption, upNext: rows,
+                              backlog: [], focusChip: nil, followUpChip: nil)
         }
-        today.present(digest([CompactTaskRow(id: "t1", title: "Renew the cert", detail: "tomorrow", urgency: .later),
-                              CompactTaskRow(id: "t2", title: "Rotate the keys", detail: "due today", urgency: .today)]),
+        func row(_ id: String, _ title: String, _ time: String, _ detail: String,
+                 _ urgency: CompactTaskRow.Urgency) -> TasksBridgeDigest.TimelineRow {
+            .init(id: id, kind: .task, timeText: time, title: title, detail: detail, urgency: urgency)
+        }
+        today.present(digest([row("t1", "Renew the cert", "Tmrw", "", .later),
+                              row("t2", "Rotate the keys", "Today", "", .today)]),
                       theme: theme)
         notes.present([CompactNoteRow(id: "n1", title: "Invoice fee", detail: "call the bank", color: .yellow),
                        CompactNoteRow(id: "n2", title: "Trip", detail: "1 of 3 done", color: .pink)], theme: theme)
         host.layoutSubtreeIfNeeded()
-        let taskRows = today.debugRows
+        let taskRows = today.debugBridge.debugTimelineRows
         let noteRows = notes.debugRows
         check(taskRows.count == 2 && noteRows.count == 2,
               "the fixture shows \(taskRows.count) task and \(noteRows.count) note rows, expected 2 and 2", &ok)
         guard taskRows.count == 2, noteRows.count == 2 else { return }
-        let laterColor = taskRows[0].debugCheckboxBorderColor
+        let laterColor = taskRows[0].debugTimeColor
 
         // A day later: the first task is overdue, the second was done, a third
         // is new; a note's checklist moved on.
-        today.present(digest([CompactTaskRow(id: "t1", title: "Renew the cert", detail: "overdue", urgency: .overdue),
-                              CompactTaskRow(id: "t3", title: "Review the values", detail: "tomorrow", urgency: .later)]),
+        today.present(digest([row("t1", "Renew the cert", "16 Sep", "Overdue", .overdue),
+                              row("t3", "Review the values", "Tmrw", "", .later)]),
                       theme: theme)
         notes.present([CompactNoteRow(id: "n1", title: "Invoice fee", detail: "call the bank", color: .yellow),
                        CompactNoteRow(id: "n2", title: "Trip", detail: "2 of 3 done", color: .pink)], theme: theme)
         host.layoutSubtreeIfNeeded()
-        let tasksAfter = today.debugRows
+        let tasksAfter = today.debugBridge.debugTimelineRows
         check(tasksAfter.first === taskRows[0], "a refresh rebuilt the Today row whose task is still listed", &ok)
         check(tasksAfter.count == 2 && tasksAfter[1] !== taskRows[1] && tasksAfter[1].debugTitle == "Review the values",
               "the Today tab does not show the new task in a row of its own", &ok)
-        check(taskRows[0].debugDetail == "overdue" && taskRows[0].debugUrgency == .overdue,
+        check(taskRows[0].debugDetail == "Overdue" && taskRows[0].model.urgency == .overdue,
               "the kept Today row reads \(taskRows[0].debugDetail)", &ok)
-        check(!taskRows[0].debugCheckboxBorderColor.isEqual(laterColor),
-              "the kept row's checkbox was not repainted for its new urgency", &ok)
+        check(!taskRows[0].debugTimeColor.isEqual(laterColor),
+              "the kept row's time was not repainted for its new urgency", &ok)
         check(notes.debugRows.map(ObjectIdentifier.init) == noteRows.map(ObjectIdentifier.init),
               "a refresh rebuilt the Notes rows", &ok)
         check(noteRows[1].debugDetail == "2 of 3 done", "the kept note row reads \(noteRows[1].debugDetail)", &ok)
