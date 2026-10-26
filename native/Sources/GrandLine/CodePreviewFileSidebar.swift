@@ -591,6 +591,9 @@ final class CodePreviewFileRow: HoverHighlightView {
     private var unsaved = false
 
     static let closeSide: CGFloat = 18
+    /// The unsaved dot: `TabChipView`'s own accent-dot size, so a tab and its
+    /// row mark the same state with the same mark.
+    static let unsavedDotSide: CGFloat = TabChipView.accentDotSide
 
     init(entry: CodePreviewFileEntry) {
         self.entry = entry
@@ -642,7 +645,7 @@ final class CodePreviewFileRow: HoverHighlightView {
         closeHost.addSubview(closeButton)
 
         unsavedDot.wantsLayer = true
-        unsavedDot.layer?.cornerRadius = 3
+        unsavedDot.layer?.cornerRadius = Self.unsavedDotSide / 2
         unsavedDot.translatesAutoresizingMaskIntoConstraints = false
         unsavedDot.isHidden = true
         unsavedDot.setAccessibilityElement(false)
@@ -665,8 +668,8 @@ final class CodePreviewFileRow: HoverHighlightView {
             closeButton.widthAnchor.constraint(equalToConstant: Self.closeSide - insets.left - insets.right),
             unsavedDot.centerXAnchor.constraint(equalTo: closeHost.centerXAnchor),
             unsavedDot.centerYAnchor.constraint(equalTo: centerYAnchor),
-            unsavedDot.widthAnchor.constraint(equalToConstant: 6),
-            unsavedDot.heightAnchor.constraint(equalToConstant: 6),
+            unsavedDot.widthAnchor.constraint(equalToConstant: Self.unsavedDotSide),
+            unsavedDot.heightAnchor.constraint(equalToConstant: Self.unsavedDotSide),
             closeButton.heightAnchor.constraint(equalToConstant: Self.closeSide - insets.top - insets.bottom),
         ])
 

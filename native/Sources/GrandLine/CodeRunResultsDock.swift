@@ -551,7 +551,7 @@ final class CodeRunStreamTab: HoverHighlightView {
             : HelmType.captionSmall()
         titleLabel.textColor = selected ? ink : HelmContrast.legibleOn(fill: fill, preferring: HelmTheme.mutedInk(theme))
         countLabel.font = .systemFont(ofSize: HelmType.scaled(10), weight: .semibold)
-        countBadge.layer?.cornerRadius = 5
+        countBadge.layer?.cornerRadius = HelmMetrics.rChip
         countBadge.layer?.backgroundColor = (selected ? well : card).cgColor
         countLabel.textColor = HelmContrast.legibleOn(fill: selected ? well : card, preferring: HelmTheme.mutedInk(theme))
     }
