@@ -266,6 +266,28 @@ enum GrandLineNotificationCenterSelfTest {
         check("with nothing action-needed there is no Now card", onlyInfo.now == nil && !onlyInfo.isEmpty)
         check("an empty store is empty", NotificationBridgeSections([]).isEmpty)
 
+        // MARK: the inline snooze presets (Bridge extra)
+
+        // Local noon on a known Monday (26 Oct 2026), in the calendar
+        // production passes - see AGENTS.md on day-string fixtures.
+        let cal = Calendar.current
+        func local(_ day: Int, _ hour: Int, _ minute: Int = 0, month: Int = 10) -> Date {
+            cal.date(from: DateComponents(year: 2026, month: month, day: day, hour: hour, minute: minute))!
+        }
+        let monday = local(26, 12)
+        check("1 hour is an hour", NotificationSnoozePreset.oneHour.date(from: monday, calendar: cal) == local(26, 13))
+        check("Tonight is 18:00 today", NotificationSnoozePreset.tonight.date(from: monday, calendar: cal) == local(26, 18))
+        check("Tomorrow is 09:00 tomorrow", NotificationSnoozePreset.tomorrow.date(from: monday, calendar: cal) == local(27, 9))
+        check("Next week is 09:00 next Monday",
+              NotificationSnoozePreset.nextWeek.date(from: monday, calendar: cal) == local(2, 9, month: 11))
+        check("Next week on a Monday morning is not an hour away",
+              NotificationSnoozePreset.nextWeek.date(from: local(26, 8), calendar: cal) == local(2, 9, month: 11))
+        check("Next week on a Sunday is the next morning",
+              NotificationSnoozePreset.nextWeek.date(from: local(1, 12, month: 11), calendar: cal) == local(2, 9, month: 11))
+        check("all four are offered at noon", NotificationSnoozePreset.offered(at: monday, calendar: cal).count == 4)
+        check("Tonight is not offered within an hour of it",
+              !NotificationSnoozePreset.offered(at: local(26, 17, 30), calendar: cal).contains(.tonight))
+
         // MARK: a resolved entry starts genuinely fresh
 
         center.set(note("f1", subtext: "x", kind: .informational), id: "f1")

@@ -44,6 +44,7 @@ enum NotificationBridgePanelSelfTest {
                       checkVoiceOverLabels,
                       checkRowsNeverSwallowAButtonClick,
                       checkHeaderAndFooter,
+                      checkSnoozePresets,
                       checkEmptyState,
                       checkEveryThemeHoldsTheNowCard,
                       checkOnlyTheSidebarShowsBridge] {
@@ -354,6 +355,7 @@ enum NotificationBridgePanelSelfTest {
         check(performed.last == "home", "Open Home performed \(performed)", &ok)
         // Snooze from the Now card, then Restore from the footer.
         content.debugNowCard?.actions.snooze.performClick(nil)
+        content.debugNowCard?.actions.presetButtons.first?.performClick(nil)
         check(!GrandLineNotificationCenter.shared.entries.contains { $0.id == "shift-due" },
               "the Now card's snooze did not hide it", &ok)
         check(content.debugNowCard?.entryID == "fleet-decisions", "the next most urgent item takes the Now card", &ok)
@@ -362,6 +364,49 @@ enum NotificationBridgePanelSelfTest {
               "the footer offers Restore: \(content.debugFooterText) \(content.debugFooterButtons.map(\.title))", &ok)
         content.debugClickRestore()
         check(GrandLineNotificationCenter.shared.entries.contains { $0.id == "shift-due" }, "Restore brought it back", &ok)
+    }
+
+    // MARK: 8b. Inline snooze presets (Bridge extra)
+
+    private static func checkSnoozePresets(_ ok: inout Bool) {
+        print("\n-- an item's snooze opens presets inline, and each one snoozes until its time --")
+        seed()
+        let (content, _) = mount()
+        let center = GrandLineNotificationCenter.shared
+        guard let row = content.debugRows.first(where: { $0.entryID == "pr-ready" }) else {
+            fail("no PR row", &ok); return
+        }
+        check(row.actions.presetRow.isHidden, "presets are closed at rest", &ok)
+        check(!row.actions.snooze.isHidden, "every row offers snooze, not only the Now card", &ok)
+        row.actions.snooze.performClick(nil)
+        guard let open = content.debugRows.first(where: { $0.entryID == "pr-ready" }) else {
+            fail("the PR row vanished", &ok); return
+        }
+        let offered = NotificationSnoozePreset.offered(at: now).map(\.title)
+        check(!open.actions.presetRow.isHiddenOrHasHiddenAncestor
+              && open.actions.presetButtons.map(\.title) == offered,
+              "the snooze glyph opens \(open.actions.presetButtons.map(\.title)), want \(offered)", &ok)
+        check(open.actions.presetButtons.allSatisfy { $0.accessibilityLabel()?.hasPrefix("Snooze 1 PR ready to merge") == true },
+              "a preset's VoiceOver label must name the item and the time", &ok)
+        let tomorrow = NotificationSnoozePreset.tomorrow
+        open.actions.presetButtons.first { $0.title == tomorrow.title }?.performClick(nil)
+        check(!center.entries.contains { $0.id == "pr-ready" }, "Tomorrow did not snooze the PR", &ok)
+        check(content.debugFooterText == "Snoozed until tomorrow", "the footer said \(content.debugFooterText)", &ok)
+        center.clock = { tomorrow.date(from: now).addingTimeInterval(-60) }
+        check(!center.entries.contains { $0.id == "pr-ready" }, "the PR came back before tomorrow morning", &ok)
+        center.clock = { tomorrow.date(from: now).addingTimeInterval(60) }
+        check(center.entries.contains { $0.id == "pr-ready" }, "the PR did not come back tomorrow morning", &ok)
+        center.clock = { now }
+        // The keyboard: S opens the selected item's presets, 1 picks the first.
+        _ = content.debugSendKey(125)
+        _ = content.debugSendKey(1)
+        check(content.debugSnoozeOpenID == "shift-due", "S did not open the selected item's presets", &ok)
+        _ = content.debugSendKey(18)
+        check(!center.entries.contains { $0.id == "shift-due" } && content.debugSnoozeOpenID == nil,
+              "1 did not snooze the selected item with the first preset", &ok)
+        let menu = content.debugContextMenu(for: center.entries.first { $0.id == "fleet-decisions" }!)
+        check(menu.items.filter { $0.title.hasPrefix("Snooze") }.count == offered.count,
+              "the row menu offers the same presets", &ok)
     }
 
     // MARK: 9. Empty

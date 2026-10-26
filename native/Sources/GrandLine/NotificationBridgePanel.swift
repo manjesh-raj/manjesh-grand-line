@@ -98,6 +98,64 @@ enum NotificationBridgeTimeText {
     }
 }
 
+/// The inline snooze presets (a Bridge extra): each item's snooze opens these
+/// under its buttons rather than snoozing for a fixed hour. Pure, so the dates
+/// are asserted against a fixed instant rather than the wall clock.
+enum NotificationSnoozePreset: CaseIterable {
+    case oneHour
+    case tonight
+    case tomorrow
+    case nextWeek
+
+    var title: String {
+        switch self {
+        case .oneHour: return "1 hour"
+        case .tonight: return "Tonight"
+        case .tomorrow: return "Tomorrow"
+        case .nextWeek: return "Next week"
+        }
+    }
+
+    /// What the footer says afterwards, and the tail of the button's
+    /// VoiceOver label.
+    var phrase: String {
+        switch self {
+        case .oneHour: return "for 1 hour"
+        case .tonight: return "until tonight"
+        case .tomorrow: return "until tomorrow"
+        case .nextWeek: return "until next week"
+        }
+    }
+
+    /// When the entry comes back. Tonight is 18:00 today, tomorrow is 09:00
+    /// tomorrow, and next week is 09:00 on the next Monday that is at least a
+    /// day away - so "next week" on a Monday morning never means an hour.
+    func date(from now: Date, calendar: Calendar = .current) -> Date {
+        let startOfToday = calendar.startOfDay(for: now)
+        let startOfTomorrow = calendar.date(byAdding: .day, value: 1, to: startOfToday) ?? now.addingTimeInterval(86_400)
+        switch self {
+        case .oneHour:
+            return now.addingTimeInterval(60 * 60)
+        case .tonight:
+            return calendar.date(bySettingHour: 18, minute: 0, second: 0, of: now) ?? now.addingTimeInterval(60 * 60)
+        case .tomorrow:
+            return calendar.date(bySettingHour: 9, minute: 0, second: 0, of: startOfTomorrow) ?? startOfTomorrow
+        case .nextWeek:
+            return calendar.nextDate(after: startOfTomorrow,
+                                     matching: DateComponents(hour: 9, minute: 0, weekday: 2),
+                                     matchingPolicy: .nextTime) ?? startOfTomorrow.addingTimeInterval(7 * 86_400)
+        }
+    }
+
+    /// The presets worth offering now. "Tonight" goes once it is within an
+    /// hour of 18:00, where it would mean less than "1 hour" does.
+    static func offered(at now: Date, calendar: Calendar = .current) -> [NotificationSnoozePreset] {
+        allCases.filter { preset in
+            preset != .tonight || preset.date(from: now, calendar: calendar).timeIntervalSince(now) > 60 * 60
+        }
+    }
+}
+
 /// The geometry, named once because the wrapping labels' widths are computed
 /// from it rather than read back from their own frames (gotcha (22)).
 enum NotificationBridgeMetrics {
@@ -151,6 +209,8 @@ final class NotificationBridgePanelViewController: NSViewController {
 
     private var selectedID: String?
     private var expandedIDs: Set<String> = []
+    /// Which item's snooze presets are open - one at a time.
+    private var snoozeOpenID: String?
     private var toastTimer: Timer?
     private var undoAction: (() -> Void)?
     private var toastMessage: String?
@@ -327,7 +387,8 @@ final class NotificationBridgePanelViewController: NSViewController {
             "theme:\(theme.id)", "scale:\(ChromeTextScale.shared.scale)",
             "width:\(contentWidth)",
             "unread:\(center.unreadCount)", "snoozed:\(center.snoozedCount)", "held:\(center.heldCount)",
-            "selected:\(selectedID ?? "-")",
+            "selected:\(selectedID ?? "-")", "snoozeOpen:\(snoozeOpenID ?? "-")",
+            "presets:\(NotificationSnoozePreset.offered(at: clock()).map(\.title))",
             "day:\(NotificationBridgeTimeText.headerDate(clock()))",
         ]
         let now = clock()
@@ -352,6 +413,7 @@ final class NotificationBridgePanelViewController: NSViewController {
         let liveIDs = Set(sections.ordered.map(\.id))
         expandedIDs.formIntersection(liveIDs)
         if let selectedID, !liveIDs.contains(selectedID) { self.selectedID = nil }
+        if let snoozeOpenID, !liveIDs.contains(snoozeOpenID) { self.snoozeOpenID = nil }
 
         let signature = renderSignature(sections, center: center)
         if signature == lastRenderSignature { return }
@@ -382,6 +444,8 @@ final class NotificationBridgePanelViewController: NSViewController {
                                                  isRead: center.isRead(now),
                                                  isSelected: selectedID == now.id,
                                                  isExpanded: expandedIDs.contains(now.id),
+                                                 isSnoozeOpen: snoozeOpenID == now.id,
+                                                 presets: NotificationSnoozePreset.offered(at: clock()),
                                                  pillText: NotificationBridgeTimeText.nowPill(for: now, now: clock()))
             wire(card.actions, entry: now)
             add(card, inset: NotificationBridgeMetrics.nowCardMargin)
@@ -411,6 +475,8 @@ final class NotificationBridgePanelViewController: NSViewController {
                                             isRead: center.isRead(entry),
                                             isSelected: selectedID == entry.id,
                                             isExpanded: expandedIDs.contains(entry.id),
+                                            isSnoozeOpen: snoozeOpenID == entry.id,
+                                            presets: NotificationSnoozePreset.offered(at: clock()),
                                             timeText: timed
                                                 ? NotificationBridgeTimeText.leading(for: entry)
                                                 : (entry.timeText ?? NotificationTimeText.relative(entry.date, now: clock())))
@@ -427,9 +493,8 @@ final class NotificationBridgePanelViewController: NSViewController {
         let id = entry.id
         actions.onPrimary = { [weak self] in self?.performPrimaryAction(entry) }
         actions.onToggleExpanded = { [weak self] in self?.toggleExpanded(id) }
-        actions.onSnooze = { [weak self] in
-            self?.snooze(entry, by: 60 * 60, message: "Snoozed for 1 hour")
-        }
+        actions.onSnooze = { [weak self] in self?.toggleSnoozePresets(id) }
+        actions.onSnoozePreset = { [weak self] preset in self?.snooze(entry, preset: preset) }
         actions.onChildAction = { [weak self] childID in self?.performChildAction(childID: childID, ofEntryID: id) }
     }
 
@@ -448,6 +513,17 @@ final class NotificationBridgePanelViewController: NSViewController {
               let view = listStack.arrangedSubviews.first(where: { ($0 as? NotificationBridgeItemView)?.entryID == selectedID })
         else { return }
         view.scrollToVisible(view.bounds)
+    }
+
+    private func toggleSnoozePresets(_ id: String) {
+        snoozeOpenID = snoozeOpenID == id ? nil : id
+        selectedID = id
+        reload()
+    }
+
+    private func snooze(_ entry: AppNotification, preset: NotificationSnoozePreset) {
+        snoozeOpenID = nil
+        snooze(entry, until: preset.date(from: clock()), message: "Snoozed \(preset.phrase)")
     }
 
     private func toggleExpanded(_ id: String) {
@@ -484,9 +560,12 @@ final class NotificationBridgePanelViewController: NSViewController {
         reload()
         let center = GrandLineNotificationCenter.shared
         let menu = NSMenu()
-        menu.addItem(HelmMenuAction.item("Snooze for 1 hour") { [weak self] in
-            self?.snooze(entry, by: 60 * 60, message: "Snoozed for 1 hour")
-        })
+        // The same presets the item's own snooze offers.
+        for preset in NotificationSnoozePreset.offered(at: clock()) {
+            menu.addItem(HelmMenuAction.item("Snooze \(preset.phrase)") { [weak self] in
+                self?.snooze(entry, preset: preset)
+            })
+        }
         menu.addItem(.separator())
         let isRead = center.isRead(entry)
         menu.addItem(HelmMenuAction.item(isRead ? "Mark as unread" : "Mark as read") { [weak self] in
@@ -511,10 +590,6 @@ final class NotificationBridgePanelViewController: NSViewController {
             })
         }
         return menu
-    }
-
-    private func snooze(_ entry: AppNotification, by seconds: TimeInterval, message: String) {
-        snooze(entry, until: clock().addingTimeInterval(seconds), message: message)
     }
 
     private func snooze(_ entry: AppNotification, until date: Date, message: String) {
@@ -633,6 +708,15 @@ final class NotificationBridgePanelViewController: NSViewController {
         case 36, 76: // return, enter
             guard let index else { return false }
             performPrimaryAction(order[index])
+        case 1: // S - open or close the selected item's snooze presets
+            guard let index else { return false }
+            toggleSnoozePresets(order[index].id)
+        case 18, 19, 20, 21: // 1-4 - pick a preset while they are open
+            guard let index, snoozeOpenID == order[index].id else { return false }
+            let offered = NotificationSnoozePreset.offered(at: clock())
+            let pick = Int(event.keyCode) - 18
+            guard pick < offered.count else { return false }
+            snooze(order[index], preset: offered[pick])
         default:
             return false
         }
@@ -700,6 +784,7 @@ final class NotificationBridgePanelViewController: NSViewController {
     var debugEmptyState: NotificationBridgeEmptyView { emptyState }
     var debugSelectedID: String? { selectedID }
     var debugExpandedIDs: Set<String> { expandedIDs }
+    var debugSnoozeOpenID: String? { snoozeOpenID }
     var debugListDocument: NSView { listDocument }
     var debugListHeight: CGFloat { listHeight?.constant ?? 0 }
     func debugContextMenu(for entry: AppNotification) -> NSMenu { contextMenu(for: entry) }
@@ -714,7 +799,9 @@ final class NotificationBridgePanelViewController: NSViewController {
                                            timestamp: 0, windowNumber: 0, context: nil,
                                            characters: "", charactersIgnoringModifiers: "",
                                            isARepeat: false, keyCode: keyCode) else { return false }
-        return handleListKey(event)
+        // Through the list's own `keyDown`, the entry point AppKit calls.
+        listDocument.keyDown(with: event)
+        return true
     }
     #endif
 }
@@ -777,14 +864,21 @@ final class NotificationBridgeItemActions {
     let expand: HelmButton
     let snooze: HelmButton
     let row: NSStackView
+    /// The snooze presets, shown under the buttons while this item's snooze
+    /// is open.
+    let presetRow: NSStackView
+    let presetButtons: [HelmButton]
+    private let presets: [NotificationSnoozePreset]
 
     var onPrimary: (() -> Void)?
     var onToggleExpanded: (() -> Void)?
+    /// Opens or closes the presets.
     var onSnooze: (() -> Void)?
+    var onSnoozePreset: ((NotificationSnoozePreset) -> Void)?
     var onChildAction: ((String) -> Void)?
 
     init(entry: AppNotification, primaryVariant: HelmButton.Variant, size: HelmButton.Size,
-         isExpanded: Bool, showsSnooze: Bool) {
+         isExpanded: Bool, isSnoozeOpen: Bool, presets: [NotificationSnoozePreset]) {
         let label = entry.primaryAction?.label ?? "Open"
         primary = HelmButton(title: label, variant: primaryVariant, size: size)
         primary.accessibilityLabelOverride = "\(label) \(entry.title)"
@@ -796,9 +890,24 @@ final class NotificationBridgeItemActions {
         expand.setAccessibilityExpanded(isExpanded)
         expand.isHidden = entry.children.isEmpty
         snooze = HelmButton(symbol: "moon.zzz", variant: .quiet, size: size)
-        snooze.toolTip = "Snooze for 1 hour"
-        snooze.accessibilityLabelOverride = "Snooze \(entry.title) for 1 hour"
-        snooze.isHidden = !showsSnooze
+        snooze.toolTip = "Snooze"
+        snooze.accessibilityLabelOverride = "Snooze \(entry.title)"
+        snooze.setAccessibilityExpanded(isSnoozeOpen)
+        self.presets = presets
+        presetButtons = presets.map { preset in
+            let button = HelmButton(title: preset.title, variant: .secondary, size: .small)
+            button.accessibilityLabelOverride = "Snooze \(entry.title) \(preset.phrase)"
+            return button
+        }
+        presetRow = NSStackView(views: presetButtons)
+        presetRow.orientation = .horizontal
+        presetRow.alignment = .centerY
+        presetRow.spacing = HelmMetrics.s1
+        presetRow.translatesAutoresizingMaskIntoConstraints = false
+        presetRow.isHidden = !isSnoozeOpen
+        presetRow.setAccessibilityElement(true)
+        presetRow.setAccessibilityRole(.group)
+        presetRow.setAccessibilityLabel("Snooze until")
         row = NSStackView(views: [primary, expand, snooze])
         row.orientation = .horizontal
         row.alignment = .centerY
@@ -814,11 +923,23 @@ final class NotificationBridgeItemActions {
         primary.action = #selector(primaryClicked)
         expand.action = #selector(expandClicked)
         snooze.action = #selector(snoozeClicked)
+        for button in presetButtons {
+            button.followsTextScale = true
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.setContentHuggingPriority(.required, for: .horizontal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+            button.target = self
+            button.action = #selector(presetClicked(_:))
+        }
     }
 
     @objc private func primaryClicked() { onPrimary?() }
     @objc private func expandClicked() { onToggleExpanded?() }
     @objc private func snoozeClicked() { onSnooze?() }
+    @objc private func presetClicked(_ sender: HelmButton) {
+        guard let index = presetButtons.firstIndex(where: { $0 === sender }) else { return }
+        onSnoozePreset?(presets[index])
+    }
 }
 
 /// Builds the wrapping label every Bridge item uses. `wrappingLabelWithString`
@@ -853,7 +974,8 @@ final class NotificationBridgeNowCard: NSView, NotificationBridgeItemView {
     private let isSelected: Bool
 
     init(entry: AppNotification, theme: HelmTheme, contentWidth: CGFloat, isRead: Bool,
-         isSelected: Bool, isExpanded: Bool, pillText: String) {
+         isSelected: Bool, isExpanded: Bool, isSnoozeOpen: Bool = false,
+         presets: [NotificationSnoozePreset] = NotificationSnoozePreset.allCases, pillText: String) {
         self.entry = entry
         self.entryID = entry.id
         self.isRead = isRead
@@ -863,7 +985,7 @@ final class NotificationBridgeNowCard: NSView, NotificationBridgeItemView {
         detailLabel = bridgeWrappingLabel(entry.subtext, width: inner)
         detailLabel.isHidden = entry.subtext.isEmpty
         actions = NotificationBridgeItemActions(entry: entry, primaryVariant: .primary, size: .regular,
-                                                isExpanded: isExpanded, showsSnooze: true)
+                                                isExpanded: isExpanded, isSnoozeOpen: isSnoozeOpen, presets: presets)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -901,10 +1023,10 @@ final class NotificationBridgeNowCard: NSView, NotificationBridgeItemView {
         actions.row.addArrangedSubview(actions.snooze)
         actions.row.distribution = .fill
 
-        let stack = NSStackView(views: [top, titleLabel, detailLabel, actions.row])
+        let stack = NSStackView(views: [top, titleLabel, detailLabel, actions.row, actions.presetRow])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = HelmMetrics.s1
+        stack.spacing = HelmMetrics.s2
         stack.setCustomSpacing(10, after: top)
         stack.setCustomSpacing(12, after: detailLabel.isHidden ? titleLabel : detailLabel)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -1012,14 +1134,15 @@ final class NotificationBridgeRowView: HoverHighlightView, NotificationBridgeIte
     var onBuildMenu: (() -> NSMenu?)?
 
     init(entry: AppNotification, timed: Bool, theme: HelmTheme, contentWidth: CGFloat, isRead: Bool,
-         isSelected: Bool, isExpanded: Bool, timeText: String) {
+         isSelected: Bool, isExpanded: Bool, isSnoozeOpen: Bool = false,
+         presets: [NotificationSnoozePreset] = NotificationSnoozePreset.allCases, timeText: String) {
         self.entry = entry
         self.entryID = entry.id
         self.timed = timed
         self.isRead = isRead
         self.isSelected = isSelected
         actions = NotificationBridgeItemActions(entry: entry, primaryVariant: .secondary, size: .small,
-                                                isExpanded: isExpanded, showsSnooze: false)
+                                                isExpanded: isExpanded, isSnoozeOpen: isSnoozeOpen, presets: presets)
 
         // The text column's width, from quantities the labels do not decide:
         // the panel's content width, the insets, the leading column and the
@@ -1062,10 +1185,11 @@ final class NotificationBridgeRowView: HoverHighlightView, NotificationBridgeIte
         dot.layer?.cornerRadius = NotificationBridgeMetrics.dotSide / 2
         dot.isHidden = isRead
 
-        let text = NSStackView(views: [titleLabel, detailLabel, actions.row])
+        let text = NSStackView(views: [titleLabel, detailLabel, actions.row, actions.presetRow])
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = HelmMetrics.s0
+        text.setCustomSpacing(HelmMetrics.s2, after: actions.row)
         text.setCustomSpacing(8, after: detailLabel.isHidden ? titleLabel : detailLabel)
         text.translatesAutoresizingMaskIntoConstraints = false
         if isExpanded, !entry.children.isEmpty {
