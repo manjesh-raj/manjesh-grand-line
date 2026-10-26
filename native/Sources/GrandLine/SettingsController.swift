@@ -518,6 +518,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// The menu bar the Shortcuts page reads. Set before the view loads; a
     /// suite hands it a menu built without installing it.
     var shortcutsMainMenu: () -> NSMenu? = { NSApp?.mainMenu }
+    /// T2/T3: Settings > Terminal's keyword highlighting card, which owns its
+    /// own rows and state (`TerminalHighlightSettings.swift`).
+    private let keywordHighlighting = TerminalHighlightSettingsSections()
     private var captureShortcutRecorder: KeyChordRecorderView?
     private var resetCaptureShortcutButton: HelmButton?
     private var captureAccessibilityButton: HelmButton?
@@ -1715,6 +1718,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                             control: trimBackgroundSwitch),
             ]), foot: "A new depth applies to every open tab at once. Lowering it drops the oldest lines of any pane holding more, so you are asked first."),
         ]
+        sections.append(contentsOf: keywordHighlighting.sections())
 
         // T7: the nine tab, split and pane chords are recorded on Settings >
         // Shortcuts now, beside every other chord the app has, where a new
@@ -2743,6 +2747,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         refreshSystemPairPopUps()
         refreshCaptureControls()
         shortcutsPage.reload()
+        keywordHighlighting.refresh()
         syncDependentRows()
 
         rebuildAppearanceGrid()
@@ -2808,6 +2813,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         profileTabs?.applyTheme(theme)
         themeFilterTabs?.applyTheme(theme)
         windowLayoutTabs?.applyTheme(theme)
+        keywordHighlighting.applyTheme(theme)
         // The two popups are not in that loop: `HelmPopUpButton` observes the
         // theme itself, so a second push from here would be a duplicate.
 
@@ -2850,6 +2856,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         toolbar.convert(toolbar.bounds, to: view)
     }
     var debugSidebarEdge: NSView { sidebarEdge }
+    var debugKeywordHighlighting: TerminalHighlightSettingsSections { keywordHighlighting }
     var debugSearchField: HelmSearchField { searchField }
     var debugSelectedCategory: Category { selectedCategory }
     /// Which categories the sidebar currently offers, in its own order -

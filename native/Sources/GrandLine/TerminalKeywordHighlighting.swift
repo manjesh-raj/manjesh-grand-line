@@ -189,7 +189,10 @@ struct KeywordHighlightSettings: Codable, Equatable {
 
     subscript(cls: KeywordHighlightClass) -> KeywordHighlightClassSetting {
         get { classSettings[cls.rawValue] ?? KeywordHighlightClassSetting() }
-        set { classSettings[cls.rawValue] = newValue }
+        // A class put back to its default drops its entry, so "everything
+        // is default" compares equal to `.defaults` and Restore Defaults can
+        // tell.
+        set { classSettings[cls.rawValue] = newValue == KeywordHighlightClassSetting() ? nil : newValue }
     }
 
     private enum CodingKeys: String, CodingKey {

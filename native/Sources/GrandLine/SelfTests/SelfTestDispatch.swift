@@ -1409,6 +1409,10 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_KEYWORD_HIGHLIGHT_TESTS"] == "1" {
             exit(TerminalKeywordHighlightSelfTest.run() ? 0 : 1)
         }
+        // T2: Settings > Terminal's highlighting card, headless.
+        if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_HIGHLIGHT_SETTINGS_TESTS"] == "1" {
+            exit(TerminalHighlightSettingsSelfTest.run() ? 0 : 1)
+        }
         // Its performance gate, by hand only: `run-all-tests.sh` skips it (see
         // TerminalHighlightBenchmarkSelfTest.swift's header).
         if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_HIGHLIGHT_BENCHMARK"] == "1" {
