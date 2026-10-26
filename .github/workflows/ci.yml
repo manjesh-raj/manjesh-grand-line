@@ -25,6 +25,10 @@
 #           side by side (`test-windowed-shard`), and the `self-test suites
 #           (window-backed)` check passes only when every shard did and the
 #           shards between them ran each suite exactly once.
+#   infrastructure - R2-PROC-01 of the second full review: `CI infrastructure`
+#           goes red when a test job failed outside its suites (the binary
+#           download, checkout, the toolchain), so that kind of red is told
+#           apart from a suite failure. See the job's own comment.
 #   widget - P11 of the 2026-09-25 review: `build-widget-extension.sh --check`.
 #           The WidgetKit extension is not a SwiftPM target, so `swift build`
 #           never compiles it - and `WidgetSharedContract.swift` is compiled
@@ -268,7 +272,25 @@ jobs:
           fi
 
       # P2: built once in the `build` job above, not a fourth time here.
+      #
+      # R2-PROC-01: twice. The action already retries inside one attempt, and
+      # `main` still went red on "Artifact download failed after 5 retries"
+      # (run 39914224694, shard 2) with every suite untouched. A second attempt
+      # after a pause is the retry the action's own loop cannot give: its five
+      # tries are seconds apart, and a storage blip outlasts them. Only the
+      # download is retried - nothing here can re-run or excuse a suite.
       - name: Take the debug binary from the build job
+        id: binary
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: grandline-debug-binary
+          path: native/.build/debug
+      - name: Wait before retrying the download
+        if: ${{ steps.binary.outcome == 'failure' }}
+        run: sleep 30
+      - name: Take the debug binary from the build job (second attempt)
+        if: ${{ steps.binary.outcome == 'failure' }}
         uses: actions/download-artifact@v4
         with:
           name: grandline-debug-binary
@@ -278,29 +300,50 @@ jobs:
         # script refuses to start without it (`[ ! -x "$BIN" ]`).
         run: chmod +x .build/debug/GrandLine
 
-      # Every store in this app honours an `FM_*` override for where it reads
-      # and writes (see the README's env-var index). Pointing all of them at a
-      # scratch directory keeps a CI run from attempting a real clone of the
-      # private config repo, and makes the run reproducible instead of
-      # depending on whatever the runner's home directory happens to contain.
+      # R2-PROC-06: the per-suite history, kept between runs. The cache
+      # restores the newest history this branch can see (a pull request also
+      # sees `main`'s), the runner appends this run and writes the lane's
+      # flake summary into the job summary, and the file is saved for the
+      # next run and uploaded for reading. Diagnostic only: none of these
+      # steps can fail the job, and none changes what a suite failure does.
+      - name: Restore the suite history
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/suite-history.json
+          key: suite-history-headless-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: suite-history-headless-
+
+      # No store locations here any more (R2-PROC-02 of the second full
+      # review). This step used to point fifteen stores at one shared
+      # `ci-stores` folder, so every suite in a lane saw the stores the suites
+      # before it had seeded - PR #520 measured a demo vault from one suite
+      # leaving `CredentialVaultViewSelfTest` nothing to create. The runner now
+      # gives each suite an empty `FM_SCRATCH_ROOT` of its own, and
+      # `main.swift`'s redirect block points every store into it, so a CI run
+      # and a local run isolate the suites the same way and neither can reach
+      # the private config repo or the runner's home directory.
       - name: Run the headless-safe suites
-        env:
-          FM_HOSTS_FILE: ${{ runner.temp }}/ci-stores/hosts.json
-          FM_KEYS_FILE: ${{ runner.temp }}/ci-stores/keys.json
-          FM_SNIPPETS_FILE: ${{ runner.temp }}/ci-stores/snippets.json
-          FM_SCHEDULES_FILE: ${{ runner.temp }}/ci-stores/schedules.json
-          FM_SHIFT_DIR: ${{ runner.temp }}/ci-stores/tasks
-          FM_DICTATION_DIR: ${{ runner.temp }}/ci-stores/dictation
-          FM_DOCS_DIR: ${{ runner.temp }}/ci-stores/docs
-          FM_DOCS_RUNBOOKS_DIR: ${{ runner.temp }}/ci-stores/runbooks
-          FM_COMMAND_LIBRARY_DIR: ${{ runner.temp }}/ci-stores/commands
-          FM_LOG_ANALYZER_DIR: ${{ runner.temp }}/ci-stores/investigations
-          FM_FLEET_LOG_DIR: ${{ runner.temp }}/ci-stores/fleet-log
-          FM_INCIDENTS_DIR: ${{ runner.temp }}/ci-stores/incidents
-          FM_CREDENTIAL_VAULT_DIR: ${{ runner.temp }}/ci-stores/grand-line-vault
-          FM_WHISPER_MODEL_DIR: ${{ runner.temp }}/ci-stores/whisper
-          FM_INSTANCE_LOCK_FILE: ${{ runner.temp }}/ci-stores/instance.lock
-        run: ./Scripts/run-all-tests.sh --ci --no-build
+        # `--rerun-failed` names a suite that failed and then passed; the run
+        # still fails (R2-PROC-06). `--history` is described above.
+        run: ./Scripts/run-all-tests.sh --ci --no-build --rerun-failed --history="$RUNNER_TEMP/suite-history.json"
+
+      - name: Keep the suite history for the next run
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/suite-history.json
+          key: suite-history-headless-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Share the suite history
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-history-headless
+          path: ${{ runner.temp }}/suite-history.json
+          retention-days: 30
+          if-no-files-found: warn
 
   # The window-backed suites, in three shards that run side by side. As one
   # job they took a median 21.8 minutes over 20 runs, the longest stretch of
@@ -363,7 +406,19 @@ jobs:
           fi
 
       # P2: built once in the `build` job above, not a fourth time here.
+      # R2-PROC-01: with one retry, for the reason the `test` job gives.
       - name: Take the debug binary from the build job
+        id: binary
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: grandline-debug-binary
+          path: native/.build/debug
+      - name: Wait before retrying the download
+        if: ${{ steps.binary.outcome == 'failure' }}
+        run: sleep 30
+      - name: Take the debug binary from the build job (second attempt)
+        if: ${{ steps.binary.outcome == 'failure' }}
         uses: actions/download-artifact@v4
         with:
           name: grandline-debug-binary
@@ -373,36 +428,48 @@ jobs:
         # script refuses to start without it (`[ ! -x "$BIN" ]`).
         run: chmod +x .build/debug/GrandLine
 
-      # Deliberately identical to the `test` job's block above. GitHub Actions
-      # supports neither YAML anchors nor a workflow-level `env` that can see
-      # `runner.temp`, so this is duplicated rather than shared - keep the two
-      # in sync. (The app's own `main.swift` self-test redirect block is the
-      # real backstop: it points every store reachable from a bare production
-      # constructor at a scratch directory for any `FM_RUN_*` process, so a
-      # suite cannot reach real data even if a line here is ever missed.)
+      # R2-PROC-06: the per-suite history, kept between runs. The cache
+      # restores the newest history this branch can see (a pull request also
+      # sees `main`'s), the runner appends this run and writes the lane's
+      # flake summary into the job summary, and the file is saved for the
+      # next run and uploaded for reading. Diagnostic only: none of these
+      # steps can fail the job, and none changes what a suite failure does.
+      - name: Restore the suite history
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/suite-history.json
+          key: suite-history-windowed-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: suite-history-windowed-shard-${{ matrix.shard }}-
+
+      # Each suite gets its own scratch root from the runner, as in the `test`
+      # job above (R2-PROC-02).
       - name: Run the window-backed suites
-        env:
-          FM_HOSTS_FILE: ${{ runner.temp }}/ci-stores/hosts.json
-          FM_KEYS_FILE: ${{ runner.temp }}/ci-stores/keys.json
-          FM_SNIPPETS_FILE: ${{ runner.temp }}/ci-stores/snippets.json
-          FM_SCHEDULES_FILE: ${{ runner.temp }}/ci-stores/schedules.json
-          FM_SHIFT_DIR: ${{ runner.temp }}/ci-stores/tasks
-          FM_DICTATION_DIR: ${{ runner.temp }}/ci-stores/dictation
-          FM_DOCS_DIR: ${{ runner.temp }}/ci-stores/docs
-          FM_DOCS_RUNBOOKS_DIR: ${{ runner.temp }}/ci-stores/runbooks
-          FM_COMMAND_LIBRARY_DIR: ${{ runner.temp }}/ci-stores/commands
-          FM_LOG_ANALYZER_DIR: ${{ runner.temp }}/ci-stores/investigations
-          FM_FLEET_LOG_DIR: ${{ runner.temp }}/ci-stores/fleet-log
-          FM_INCIDENTS_DIR: ${{ runner.temp }}/ci-stores/incidents
-          FM_CREDENTIAL_VAULT_DIR: ${{ runner.temp }}/ci-stores/grand-line-vault
-          FM_WHISPER_MODEL_DIR: ${{ runner.temp }}/ci-stores/whisper
-          FM_INSTANCE_LOCK_FILE: ${{ runner.temp }}/ci-stores/instance.lock
         # `--ci` alongside `--session-only` is not a contradiction: the first
         # selects the window-backed suites, the second says this is a runner
         # and skips the handful that need the captain's own machine (see
         # CI_UNSUPPORTED in the script, where each entry carries its measured
         # reason).
-        run: ./Scripts/run-all-tests.sh --session-only --ci --no-build --shard=${{ matrix.shard }}/${{ matrix.of }}
+        run: >-
+          ./Scripts/run-all-tests.sh --session-only --ci --no-build --shard=${{ matrix.shard }}/${{ matrix.of }}
+          --rerun-failed --history="$RUNNER_TEMP/suite-history.json"
+
+      - name: Keep the suite history for the next run
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/suite-history.json
+          key: suite-history-windowed-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Share the suite history
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-history-windowed-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/suite-history.json
+          retention-days: 30
+          if-no-files-found: warn
 
       # What this shard was given, for the aggregate job to check the shards
       # against the whole selection. Written even when a suite failed.
@@ -461,6 +528,95 @@ jobs:
         run: |
           echo "shards: ${{ needs.test-windowed-shard.result }}"
           [ "${{ needs.test-windowed-shard.result }}" = success ]
+
+  # R2-PROC-01 of the second full review: a red test check used to mean either
+  # "a suite failed" or "the runner could not fetch the binary", and nothing on
+  # the check list told the two apart. `main` went red on the second kind
+  # (run 39914224694: shard 2 could not download the debug binary, no suite
+  # ran) and read exactly like the first.
+  #
+  # This check is the separate signal. It reads this attempt's own jobs from
+  # the API and classifies every failed test job by the step that failed:
+  #
+  #   * a step named "Run the ..." is the suites themselves - a suite failure.
+  #     That is the test checks' business, and this check stays green for it.
+  #   * any other step (checkout, toolchain, the binary download, a shard's
+  #     list upload) is infrastructure, and this check goes red, naming it.
+  #
+  # `swift build (debug)` counts as infrastructure only when its artifact
+  # upload failed; a compile failure is a build failure, not the runner's.
+  #
+  # It never changes what the other checks report. A shard that could not run
+  # its suites still fails `self-test suites (window-backed)`, because "every
+  # window-backed suite passed" was not shown. This check only says why.
+  # `.github/workflows/ci-rerun.yml` reads it to decide whether a failed `main`
+  # run is re-run.
+  #
+  # `ubuntu-latest` rather than the pinned macOS label: it builds nothing and
+  # runs no suite, only `gh api` and `jq`, so the runner image does not matter.
+  infrastructure:
+    name: CI infrastructure
+    needs: [build-debug, test, test-windowed-shard]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Tell an infrastructure failure from a suite failure
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" > jobs.json
+          # One line per failed job we classify: name, then its failed steps.
+          jq -r '
+            .jobs[]
+            | select(.name == "swift build (debug)"
+                     or .name == "self-test suites"
+                     or (.name | startswith("self-test suites (window-backed, shard")))
+            | select(.conclusion == "failure" or .conclusion == "timed_out")
+            | [.name, ([.steps[] | select(.conclusion == "failure" or .conclusion == "timed_out"
+                                          or .conclusion == "cancelled") | .name] | join("; "))]
+            | @tsv' jobs.json > failed.tsv
+
+          infra=0
+          {
+            echo "### CI infrastructure"
+            echo
+            if [ ! -s failed.tsv ]; then
+              echo "No test or debug-build job failed for an infrastructure reason in this attempt."
+            else
+              echo "| Job | Failed step | Kind |"
+              echo "| --- | --- | --- |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          while IFS=$'\t' read -r job steps; do
+            if [ "$job" = "swift build (debug)" ]; then
+              case "$steps" in
+                *"Share the debug binary"*) kind=infrastructure ;;
+                *) kind=build ;;
+              esac
+            else
+              case "$steps" in
+                *"Run the "*) kind=suite ;;
+                *) kind=infrastructure ;;
+              esac
+            fi
+            echo "| $job | ${steps:-(none recorded)} | $kind |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$kind" = infrastructure ]; then
+              infra=1
+              echo "::error title=CI infrastructure::$job failed in '${steps:-an unrecorded step}', before or after its suites - not a suite failure. Re-run the job."
+            else
+              echo "$job: a $kind failure, which its own check reports."
+            fi
+          done < failed.tsv
+          exit "$infra"
 
   generated:
     name: generated files match their inputs

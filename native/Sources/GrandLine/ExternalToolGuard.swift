@@ -49,13 +49,13 @@ import Foundation
 
 enum ExternalToolGuard {
 
-    /// Is this a self-test or tour process? The same predicate as
-    /// `main.swift`'s redirect block, so the two can never disagree about
-    /// which processes are isolated.
+    /// Is this a self-test or tour process? `ProcessMode`, the same predicate
+    /// `main.swift`'s redirect block and `AppPaths.dataRoot()` read, so none of
+    /// them can disagree about which processes are isolated.
     static var isActive: Bool {
         #if FM_SELFTESTS
         if let forced = activeOverrideForTests { return forced }
-        return isSelfTestOrTourProcess
+        return ProcessMode.current.isIsolated
         #else
         return false
         #endif
@@ -65,12 +65,6 @@ enum ExternalToolGuard {
     /// Lets `ExternalToolGuardSelfTest` measure the unguarded behaviour
     /// against its own stubs. Every user restores `nil`.
     static var activeOverrideForTests: Bool?
-
-    private static let isSelfTestOrTourProcess: Bool = {
-        let env = ProcessInfo.processInfo.environment
-        return env.keys.contains(where: { $0.hasPrefix("FM_RUN_") })
-            || !(env["FM_REVIEW_TOUR"] ?? "").isEmpty
-    }()
     #endif
 
     /// The captain's own tools. Each is here for a reason a test process must
@@ -99,8 +93,10 @@ enum ExternalToolGuard {
     /// Interpreters whose first path argument is the program actually run.
     private static let interpreters: Set<String> = ["bash", "sh", "zsh", "python3", "python", "node", "ruby", "perl"]
 
-    /// Why `executable` must not run here, or `nil` when it may.
-    static func refusal(executable: String, arguments: [String]) -> String? {
+    /// Why `executable` must not run here, or `nil` when it may. `cwd` is the
+    /// directory the child would start in, which is where a `git` command with
+    /// no `-C` finds its repository.
+    static func refusal(executable: String, arguments: [String], cwd: URL? = nil) -> String? {
         guard isActive else { return nil }
         var programs = [executable]
         if interpreters.contains((executable as NSString).lastPathComponent),
@@ -110,10 +106,148 @@ enum ExternalToolGuard {
         for program in programs {
             if let reason = refusal(forProgram: program) { return reason }
         }
-        if (executable as NSString).lastPathComponent == "git", gitSubcommand(arguments) == "credential" {
-            return "'git credential' reads the captain's stored git credentials"
+        if (executable as NSString).lastPathComponent == "git", let subcommand = gitSubcommand(arguments) {
+            if subcommand == "credential" {
+                return "'git credential' reads the captain's stored git credentials"
+            }
+            if gitRemoteSubcommands.contains(subcommand) {
+                return gitRemoteRefusal(subcommand, arguments: arguments, cwd: cwd)
+            }
         }
         return nil
+    }
+
+    // MARK: git that reaches a remote (R2-PROC-02)
+
+    /// The `git` subcommands that talk to a remote. PR #518 found a real
+    /// `git fetch` of the captain's dotfiles clone running from every tour,
+    /// fixed then by redirecting that one store. This is the general rule: in
+    /// a test process these run only against a local remote.
+    ///
+    /// Not refused outright, because the git-sync suites run real `fetch`,
+    /// `pull`, `push` and `clone` against local bare repositories, and that is
+    /// exactly the isolation this guard wants.
+    static let gitRemoteSubcommands: Set<String> = ["fetch", "pull", "push", "ls-remote", "clone"]
+
+    /// Why this remote-reaching `git` command must not run, or `nil` when every
+    /// remote it can reach is a local path.
+    ///
+    /// The remotes it names on its command line are checked. When it names
+    /// none (`git fetch`, `git pull --all`), every remote the repository has
+    /// is checked, because git picks one by its own rules. A command whose
+    /// remotes cannot be read is refused: a test process that cannot tell
+    /// where git is going does not let it go.
+    static func gitRemoteRefusal(_ subcommand: String, arguments: [String], cwd: URL?) -> String? {
+        let operands = gitOperands(arguments, after: subcommand)
+        // A URL or path written on the command line is classified as it is.
+        // `clone`'s first operand is always the source, never a remote name.
+        var named: [String] = []
+        var givenLocation = false
+        // `git push --repo=<location>` names its destination as an option.
+        let repoOption = arguments.filter { $0.hasPrefix("--repo=") }.map { String($0.dropFirst("--repo=".count)) }
+        for (index, operand) in (repoOption + operands).enumerated() {
+            let isSource = subcommand == "clone" && index == repoOption.count
+            if looksLikeGitLocation(operand) || isSource {
+                if !isLocalGitLocation(operand) {
+                    return "'git \(subcommand)' to a non-local remote would reach the network"
+                }
+                givenLocation = true
+            } else {
+                named.append(operand)
+            }
+        }
+        if subcommand == "clone" { return nil }
+
+        guard let remotes = configuredGitRemotes(arguments: arguments, cwd: cwd) else {
+            return "'git \(subcommand)' whose remotes could not be read might reach the network"
+        }
+        // The remotes this command names, if it names any. A command that names
+        // a location instead goes there and nowhere else. One that names
+        // neither goes wherever git's own defaults send it, so every remote
+        // counts.
+        let reached: [String: [String]]
+        if named.contains(where: { remotes[$0] != nil }) {
+            reached = remotes.filter { named.contains($0.key) }
+        } else if givenLocation {
+            reached = [:]
+        } else {
+            reached = remotes
+        }
+        for (name, urls) in reached where urls.contains(where: { !isLocalGitLocation($0) }) {
+            return "'git \(subcommand)' to the non-local remote '\(name)' would reach the network"
+        }
+        return nil
+    }
+
+    /// Whether a remote's URL or path is on this machine: an absolute or
+    /// relative path, or a `file://` URL. Anything with a scheme, and git's
+    /// `host:path` shorthand, is not.
+    static func isLocalGitLocation(_ location: String) -> Bool {
+        let value = location.trimmingCharacters(in: .whitespaces)
+        if value.isEmpty { return false }
+        if value.lowercased().hasPrefix("file://") { return true }
+        if value.contains("://") { return false }
+        if value.hasPrefix("/") || value.hasPrefix("./") || value.hasPrefix("../") || value.hasPrefix("~") {
+            return true
+        }
+        // `[user@]host:path`: a colon before the first slash. git reads that
+        // as ssh, so it is not local even though it has no scheme.
+        if let colon = value.firstIndex(of: ":") {
+            let slash = value.firstIndex(of: "/") ?? value.endIndex
+            if colon < slash { return false }
+        }
+        return true
+    }
+
+    /// An operand that is a location rather than a remote's name or a refspec.
+    private static func looksLikeGitLocation(_ operand: String) -> Bool {
+        operand.contains("://") || operand.hasPrefix("/") || operand.hasPrefix("./")
+            || operand.hasPrefix("../") || operand.hasPrefix("~")
+            || (operand.contains("@") && operand.contains(":"))
+    }
+
+    /// The operands after `subcommand`, without its options.
+    private static func gitOperands(_ arguments: [String], after subcommand: String) -> [String] {
+        guard let start = arguments.firstIndex(of: subcommand) else { return [] }
+        return arguments[arguments.index(after: start)...].filter { !$0.hasPrefix("-") }
+    }
+
+    /// Every remote the repository the command runs in has, with its fetch
+    /// and push URLs, read with `git config` (a local read the guard allows).
+    /// `nil` when the configuration could not be read at all.
+    private static func configuredGitRemotes(arguments: [String], cwd: URL?) -> [String: [String]]? {
+        // The global options that choose the repository, in the order given.
+        var location: [String] = []
+        var index = arguments.startIndex
+        while index < arguments.endIndex {
+            let argument = arguments[index]
+            if ["-C", "--git-dir", "--work-tree"].contains(argument), index + 1 < arguments.endIndex {
+                location += [argument, arguments[index + 1]]
+                index += 2
+                continue
+            }
+            if argument.hasPrefix("--git-dir=") || argument.hasPrefix("--work-tree=") { location.append(argument) }
+            if !argument.hasPrefix("-") { break }
+            index += 1
+        }
+        let read = Subprocess.run(executable: Subprocess.gitExecutable,
+                                  arguments: location + ["config", "--get-regexp", #"^remote\..*\.(url|pushurl)$"#],
+                                  cwd: cwd, timeout: 10, label: "git config (ExternalToolGuard)")
+        // 1 is git's "no such key": a repository with no remotes.
+        if read.outcome == .exited, read.status == 1 { return [:] }
+        guard read.ok else { return nil }
+        var remotes: [String: [String]] = [:]
+        for line in read.stdout.split(separator: "\n") {
+            let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            // `remote.<name>.url`: the name is everything between the first
+            // and the last dot, and may itself contain dots.
+            let key = parts[0]
+            guard let first = key.firstIndex(of: "."), let last = key.lastIndex(of: "."), first < last else { continue }
+            let name = String(key[key.index(after: first)..<last])
+            remotes[name, default: []].append(parts[1])
+        }
+        return remotes
     }
 
     /// R2-SEC-01: `git credential fill` hands back the captain's real token

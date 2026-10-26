@@ -74,10 +74,54 @@ enum SelfTestAssertions {
         print("\(passPrefix)\(message)")
     }
 
+    // MARK: Counting checks (TEST-09)
+
+    // Review #1's TEST-09, paired with R2-PROC-06: a suite's PASS line was its
+    // exit status and nothing else, so a suite whose cases had quietly stopped
+    // running read exactly like one that ran three hundred checks. Every check
+    // recorded through this type is counted, and the count is printed once as
+    // the process exits, for `run-all-tests.sh` to put on the PASS line.
+    //
+    // The count covers checks recorded here, which is every `check`/`fail`
+    // and every helper delegating to them. A suite that keeps its own failure
+    // list without recording through this type counts as zero, and the runner
+    // shows no count for it rather than a wrong one.
+
+    /// The line the runner reads. Changing it means changing the runner.
+    static let checkCountPrefix = "SelfTestAssertions: checks recorded "
+
+    private static let countLock = NSLock()
+    private static var checksRecorded = 0
+    private static var checksFailed = 0
+
+    private static func count(passed: Bool) {
+        countLock.lock()
+        checksRecorded += 1
+        if !passed { checksFailed += 1 }
+        countLock.unlock()
+    }
+
+    /// `(recorded, failed)` so far in this process.
+    static var checkCount: (recorded: Int, failed: Int) {
+        countLock.lock(); defer { countLock.unlock() }
+        return (checksRecorded, checksFailed)
+    }
+
+    /// Prints the count when the process exits, which every suite does by
+    /// `exit(...)` from `main.swift`. Armed once, from the redirect block.
+    static func armCheckCount() {
+        atexit {
+            let count = SelfTestAssertions.checkCount
+            print("\(SelfTestAssertions.checkCountPrefix)\(count.recorded) failed \(count.failed)")
+            fflush(stdout)
+        }
+    }
+
     // MARK: The `var ok = true` accumulator
 
     /// Records `condition`, printing and clearing `ok` when it does not hold.
     static func record(_ condition: Bool, _ message: String, _ ok: inout Bool) {
+        count(passed: condition)
         guard !condition else { return }
         reportFailure(message)
         ok = false
@@ -85,6 +129,7 @@ enum SelfTestAssertions {
 
     /// An unconditional failure - the `fail(...)` half of the pair.
     static func recordFailure(_ message: String, _ ok: inout Bool) {
+        count(passed: false)
         reportFailure(message)
         ok = false
     }
@@ -92,6 +137,7 @@ enum SelfTestAssertions {
     /// Records `condition` and narrates the pass as well as the failure, for a
     /// suite whose output is a per-check list rather than a verdict.
     static func recordNarrated(_ condition: Bool, _ message: String, _ ok: inout Bool) {
+        count(passed: condition)
         if condition {
             reportPass(message)
         } else {
@@ -105,6 +151,7 @@ enum SelfTestAssertions {
     /// Records `condition` into a failure list, which the caller prints or
     /// returns as a whole.
     static func record(_ condition: Bool, _ message: String, into failures: inout [String]) {
+        count(passed: condition)
         guard !condition else { return }
         failures.append(message)
     }
@@ -112,6 +159,7 @@ enum SelfTestAssertions {
     /// The same, narrating each check as it goes.
     static func recordNarrated(_ condition: Bool, _ message: String,
                                into failures: inout [String]) {
+        count(passed: condition)
         if condition {
             reportPass(message)
         } else {

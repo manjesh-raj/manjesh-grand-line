@@ -287,7 +287,7 @@ enum AppKitAuditSelfTest {
         // redirect block's own scratch path shape". This used to require the
         // literal substring "selftest-process-", which the block happens to
         // use - and CI caught the consequence: the workflow legitimately
-        // points `FM_SCHEDULES_FILE` at `${{ runner.temp }}/ci-stores/`, so
+        // pointed `FM_SCHEDULES_FILE` at `${{ runner.temp }}/ci-stores/`, so
         // this reported "the captain's real schedules.json is being read on
         // every test run" about a disposable runner directory. An alarming
         // claim, and a false one. A caller choosing its own scratch location

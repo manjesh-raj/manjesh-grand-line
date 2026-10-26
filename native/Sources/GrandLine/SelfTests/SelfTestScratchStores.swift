@@ -4,14 +4,16 @@
 // run. Moved out of `PageRedesignsSelfTest`, which found the reason, when the
 // polish stage's suite needed the same thing.
 //
-// CI points the stores at one `ci-stores` folder that every suite in a lane
-// shares, so a vault, hosts or runbooks seeded by one suite would still be
+// CI used to point the stores at one `ci-stores` folder that every suite in a
+// lane shared, so a vault, hosts or runbooks seeded by one suite were still
 // there for the next. Measured on CI: the page redesigns' demo vault left
 // `CredentialVaultViewSelfTest`'s own `createVault` nothing to create, and its
-// page read "Locked". So a suite points every store it seeds, and every one a
+// page read "Locked". R2-PROC-02 removed the shared folder (the runner gives
+// every suite its own `FM_SCRATCH_ROOT`), and this stays for the cases inside
+// one suite process: a suite points every store it seeds, and every one a
 // page it mounts can write, at its own folder, puts the caller's values back
 // after, and fingerprints the caller's stores either side so a run that writes
-// past the wrapper fails by name rather than in the next suite.
+// past the wrapper fails by name rather than in the next case.
 //
 // GL-27: compiled into debug builds only. Do not remove this guard -
 // `Phase3PolishSelfTest` asserts every file in this directory carries it.

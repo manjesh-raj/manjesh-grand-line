@@ -70,7 +70,7 @@ is vendored under `Vendor/`, so the build needs no network.
 
 | `Vendor/` | What, and the catch |
 |---|---|
-| `SwiftTerm` | Pinned to upstream 1.15.0 with **six local patches** - read `Vendor/SwiftTerm/README.md` before touching or re-syncing it |
+| `SwiftTerm` | Pinned to upstream 1.15.0 with **seven local patches** - read `Vendor/SwiftTerm/README.md` before touching or re-syncing it |
 | `whisper.cpp` | Local Whisper for dictation, CPU + Metal. The shader is a generated file; see `Scripts/build-whisper-metal-shader.py` |
 | `YamlSwift` | Patched for insertion order and quote preservation |
 | `Excalidraw`, `Monaco` | Committed, self-contained web bundles for the Whiteboard and Code Preview (the Notebook's source pane loads the same Monaco bundle - one integration, not two). Loaded from disk with no CDN and no runtime download; `swift build` never touches them |

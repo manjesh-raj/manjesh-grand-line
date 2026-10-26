@@ -27,6 +27,12 @@
 //      `runAsync`, `launchDetached` - and its stub records no launch.
 //   4. The switch is what does it: with the guard forced off, the same stub
 //      runs, so the zero in 1 and 3 is the guard's and not a broken fixture.
+//   5. R2-PROC-02: `git fetch`, `pull`, `push`, `ls-remote` and `clone` run
+//      only against a local remote. A recording `git` stub is refused for a
+//      remote on the network and allowed for a local bare repository, and the
+//      real `git` still clones, pushes to and fetches from a local bare
+//      repository with the guard armed - which is what the git-sync suites
+//      do.
 //
 // Run with:
 //   swift build && FM_RUN_EXTERNAL_TOOL_GUARD_TESTS=1 .build/debug/GrandLine; echo $?
@@ -48,6 +54,7 @@ enum ExternalToolGuardSelfTest {
         checkVaultSourceLaunchesNothing(&ok)
         checkTheBackstopsRule(&ok)
         checkEveryEntryPointRefuses(&ok)
+        checkGitReachesOnlyLocalRemotes(&ok)
         print(ok ? "ExternalToolGuardSelfTest: all checks passed" : "ExternalToolGuardSelfTest: FAILED")
         return ok
     }
@@ -114,6 +121,13 @@ enum ExternalToolGuardSelfTest {
             ("/usr/bin/git", ["-C", "/some/clone", "-c", "a=b", "credential", "fill"],
              "git credential behind global options (R2-SEC-01)"),
             ("/usr/local/bin/git-credential-osxkeychain", ["get"], "a git credential helper (R2-SEC-01)"),
+            ("/usr/bin/git", ["ls-remote", "https://github.com/manjesh-raj/manjesh-grand-line.git"],
+             "git ls-remote to GitHub (R2-PROC-02)"),
+            ("/usr/bin/git", ["-C", "/some/clone", "push", "git@github.com:manjesh-raj/manjesh-config.git", "main"],
+             "git push to an ssh remote (R2-PROC-02)"),
+            ("/usr/bin/git", ["clone", "--depth", "1", "https://bitbucket.org/team/repo.git", "/tmp/x"],
+             "git clone from Bitbucket (R2-PROC-02)"),
+            ("/usr/bin/git", ["push", "--repo=https://github.com/a/b.git"], "git push --repo to GitHub (R2-PROC-02)"),
         ]
         for (executable, arguments, what) in refused {
             check(ExternalToolGuard.refusal(executable: executable, arguments: arguments) != nil,
@@ -125,6 +139,8 @@ enum ExternalToolGuardSelfTest {
             ("/usr/bin/git", ["status"], "git"),
             ("/usr/bin/git", ["-C", "/some/clone", "commit", "-m", "credential"], "git commit that mentions credential"),
             ("/usr/bin/git", ["-C", "/some/clone", "remote", "get-url", "origin"], "a local git read"),
+            ("/usr/bin/git", ["clone", "-q", "/tmp/gl-bare.git", "/tmp/gl-clone"], "git clone from a local path"),
+            ("/usr/bin/git", ["ls-remote", "file:///tmp/gl-bare.git"], "git ls-remote of a file:// URL"),
             ("/bin/echo", ["hi"], "echo"),
             ("/bin/sh", ["-c", "true"], "an inline shell command"),
         ]
@@ -179,6 +195,108 @@ enum ExternalToolGuardSelfTest {
               "with the guard off the stub recorded \(stubs.launches()) - the fixture cannot see a launch, so the zero above proves nothing",
               &ok)
         if ok { print("  OK   four entry points refused, zero launches; with the guard off the same stub runs") }
+    }
+
+    // MARK: 5. git and its remotes (R2-PROC-02)
+
+    private static func checkGitReachesOnlyLocalRemotes(_ ok: inout Bool) {
+        print("\n-- R2-PROC-02: git reaches a remote only when the remote is local --")
+        let local = ["/tmp/x.git", "file:///tmp/x.git", "../x.git", "./x", "~/x.git", "bare.git", "a/b/c"]
+        let remote = ["https://github.com/a/b.git", "http://example.com/x", "ssh://host/x", "git://host/x",
+                      "git@github.com:a/b.git", "host:path/x"]
+        for value in local where !ExternalToolGuard.isLocalGitLocation(value) {
+            fail("\(value) is a local path and was classified as a network remote", &ok)
+        }
+        for value in remote where ExternalToolGuard.isLocalGitLocation(value) {
+            fail("\(value) reaches the network and was classified as local", &ok)
+        }
+
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("gl-git-guard-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        guard (try? fm.createDirectory(at: root, withIntermediateDirectories: true)) != nil else {
+            return fail("could not create the git fixture folder", &ok)
+        }
+        let git = Subprocess.gitExecutable
+        let bare = root.appendingPathComponent("origin.git").path
+        let work = root.appendingPathComponent("work").path
+        let mixed = root.appendingPathComponent("mixed").path
+        let setup: [[String]] = [
+            ["init", "-q", "--bare", bare],
+            ["init", "-q", work],
+            ["-C", work, "remote", "add", "local", bare],
+            ["init", "-q", mixed],
+            ["-C", mixed, "remote", "add", "local", bare],
+            ["-C", mixed, "remote", "add", "github", "https://github.com/manjesh-raj/manjesh-config.git"],
+        ]
+        for arguments in setup where !Subprocess.run(executable: git, arguments: arguments, timeout: 20).ok {
+            return fail("fixture step failed: git \(arguments.joined(separator: " "))", &ok)
+        }
+
+        // A recording stub named `git`, in a temp directory. The program
+        // itself is allowed there; the subcommand rule is what has to stop it.
+        let stubDir = root.appendingPathComponent("stub", isDirectory: true)
+        let record = root.appendingPathComponent("launches.txt")
+        let stub = stubDir.appendingPathComponent("git")
+        guard (try? fm.createDirectory(at: stubDir, withIntermediateDirectories: true)) != nil,
+              fm.createFile(atPath: record.path, contents: Data()),
+              (try? "#!/bin/sh\necho \"git $*\" >> '\(record.path)'\nexit 0\n".write(to: stub, atomically: true, encoding: .utf8)) != nil,
+              (try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)) != nil
+        else { return fail("could not write the git stub", &ok) }
+        let launches = { ((try? String(contentsOf: record, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init) }
+
+        let refused: [([String], String)] = [
+            (["-C", mixed, "fetch", "github"], "a fetch from a named GitHub remote"),
+            (["-C", mixed, "fetch"], "a fetch naming no remote, in a repository that has a GitHub one"),
+            (["-C", mixed, "pull", "--all"], "a pull of every remote"),
+            (["-C", mixed, "push", "github", "main"], "a push to a named GitHub remote"),
+            (["-C", work, "push", "https://github.com/manjesh-raj/manjesh-config.git", "main"], "a push to a URL"),
+            (["clone", "https://github.com/manjesh-raj/manjesh-config.git", root.appendingPathComponent("c1").path],
+             "a clone from GitHub"),
+        ]
+        for (arguments, what) in refused {
+            let result = Subprocess.run(executable: stub.path, arguments: arguments, timeout: 10)
+            check(!result.ok && result.stderr.contains("refused"), "the guard let through \(what): \(result.stderr)", &ok)
+        }
+        check(launches().isEmpty, "a git stub reached a network remote from a self-test process: \(launches())", &ok)
+
+        let allowed: [([String], String)] = [
+            (["-C", work, "fetch", "local"], "a fetch from a local bare repository"),
+            (["-C", work, "fetch"], "a fetch in a repository whose only remote is local"),
+            (["-C", mixed, "fetch", "local"], "a fetch naming the local remote of a repository that also has a GitHub one"),
+            (["clone", bare, root.appendingPathComponent("c2").path], "a clone from a local bare repository"),
+        ]
+        for (arguments, what) in allowed {
+            let result = Subprocess.run(executable: stub.path, arguments: arguments, timeout: 10)
+            check(result.ok, "the guard refused \(what), which the git-sync suites rely on: \(result.stderr)", &ok)
+        }
+        check(launches().count == allowed.count,
+              "expected \(allowed.count) local git launches, the stub recorded \(launches())", &ok)
+
+        // The switch: off, the refused network fetch reaches the stub - so the
+        // zero above is the guard's, not a stub that cannot record.
+        let before = launches().count
+        ExternalToolGuard.activeOverrideForTests = false
+        _ = Subprocess.run(executable: stub.path, arguments: ["-C", mixed, "fetch", "github"], timeout: 10)
+        ExternalToolGuard.activeOverrideForTests = nil
+        check(launches().count == before + 1,
+              "with the guard off the stub did not record the GitHub fetch - the zero above proves nothing", &ok)
+
+        // And the real thing, armed: what a git-sync suite does end to end.
+        let clone = root.appendingPathComponent("clone").path
+        let real: [[String]] = [
+            ["clone", "-q", bare, clone],
+            ["-C", clone, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q",
+             "--allow-empty", "-m", "seed"],
+            ["-C", clone, "push", "-q", "origin", "HEAD:refs/heads/main"],
+            ["-C", work, "fetch", "-q", "local"],
+            ["-C", clone, "pull", "-q", "origin", "main"],
+        ]
+        for arguments in real {
+            let result = Subprocess.run(executable: git, arguments: arguments, timeout: 30)
+            check(result.ok, "real git \(arguments.joined(separator: " ")) failed against a local bare repo: \(result.stderr)", &ok)
+        }
+        if ok { print("  OK   \(refused.count) network git commands refused, \(allowed.count) local ones run; real git round trip works") }
     }
 
     // MARK: Stubs

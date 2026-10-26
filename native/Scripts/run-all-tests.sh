@@ -50,6 +50,16 @@
 # The two flags are orthogonal - `--session-only` selects, `--ci` skips.
 #   ./Scripts/run-all-tests.sh FM_RUN_SHIFT_STORE_TESTS FM_RUN_BACKUP_TESTS
 #                                           # run only the named suites
+#   ./Scripts/run-all-tests.sh --rerun-failed
+#                                           # re-run each failed suite once at
+#                                           # the end, to name the flaky ones.
+#                                           # The run still fails either way.
+#   ./Scripts/run-all-tests.sh --history=.build/suite-history.json
+#                                           # append this run's per-suite
+#                                           # results to a JSON history and
+#                                           # print the lane's flake summary
+#                                           # (see Scripts/suite_history.py).
+#                                           # `--lane=NAME` names the lane.
 #
 # The suites are compiled into DEBUG builds only (GL-27): `Package.swift`
 # defines `FM_SELFTESTS` for the debug configuration, so `swift build` has every
@@ -91,6 +101,9 @@ DESCRIBE=0
 CI_MODE=0
 SESSION_ONLY=0
 SHARD=""
+RERUN_FAILED=0
+HISTORY=""
+LANE=""
 REQUESTED=()
 
 for arg in "$@"; do
@@ -101,6 +114,9 @@ for arg in "$@"; do
     --ci) CI_MODE=1 ;;
     --session-only) SESSION_ONLY=1 ;;
     --shard=*) SHARD="${arg#--shard=}" ;;
+    --rerun-failed) RERUN_FAILED=1 ;;
+    --history=*) HISTORY="${arg#--history=}" ;;
+    --lane=*) LANE="${arg#--lane=}" ;;
     -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     FM_RUN_*) REQUESTED+=("$arg") ;;
     *) echo "unknown argument: $arg (see --help)" >&2; exit 2 ;;
@@ -897,6 +913,24 @@ if [ ! -x "$BIN" ]; then
   exit 1
 fi
 
+# Every suite gets a scratch root of its own (R2-PROC-02 of the second full
+# review). CI used to point every store at one `ci-stores` folder that each
+# suite in a lane shared, so a demo vault seeded by one suite was still there
+# for the next and broke it (PR #520). Now each suite process starts with
+# `FM_SCRATCH_ROOT` naming an empty folder that nothing else uses, which every
+# store resolving through `AppPaths.dataRoot()` follows, and `main.swift`'s
+# redirect block nests its per-process stores inside it. The folder is removed
+# when the suite ends, so a run leaves nothing behind in the temporary
+# directory either.
+SUITE_SCRATCH_PARENT=""
+make_suite_scratch_parent() {
+  SUITE_SCRATCH_PARENT="$(mktemp -d "${TMPDIR:-/tmp}/grandline-suites.XXXXXX")" || {
+    echo "error: could not create a scratch folder for the suites" >&2
+    exit 1
+  }
+  trap 'rm -rf "$SUITE_SCRATCH_PARENT"' EXIT
+}
+
 # Run one suite, bounded. Writes its output to $2. Returns the suite's own exit
 # status, or 124 (the conventional timeout status) if it had to be killed.
 #
@@ -906,7 +940,10 @@ fi
 run_suite() {
   local flag="$1"
   local outfile="$2"
-  env "$flag=1" "$BIN" >"$outfile" 2>&1 &
+  local scratch="$SUITE_SCRATCH_PARENT/$flag"
+  rm -rf "$scratch"
+  mkdir -p "$scratch"
+  env "$flag=1" "FM_SCRATCH_ROOT=$scratch" "$BIN" >"$outfile" 2>&1 &
   local pid=$!
   # The poll interval is tenths, not whole seconds: it is also the floor on
   # every duration this script reports (P6 of full review #3), and at `sleep 1`
@@ -941,18 +978,33 @@ run_suite() {
       sleep 2
       kill -KILL "$pid" 2>/dev/null
       wait "$pid" 2>/dev/null
+      rm -rf "$scratch"
       return 124
     fi
     sleep 0.1
   done
   wait "$pid"
-  return $?
+  local status=$?
+  rm -rf "$scratch"
+  return "$status"
+}
+
+make_suite_scratch_parent
+
+# How many checks a suite recorded (TEST-09 of review #1): the number from
+# the line `SelfTestAssertions` prints as the process exits, or nothing when
+# the suite printed none. A PASS that ran zero checks through the shared
+# helpers then reads differently from one that ran three hundred.
+checks_in() {
+  printf '%s\n' "$1" | grep -E '^SelfTestAssertions: checks recorded [0-9]+' | tail -1 | awk '{print $4}'
 }
 
 PASSED=()
 FAILED=()
 SKIPPED=()
 TIMEDOUT=()
+# "<flag>\t<result>\t<ms>\t<checks>" per suite, for `--history`.
+RESULT_LINES=()
 # "<ms> <flag>" per suite, for the slowest-first tail below. A suite that
 # doubles its runtime shows up there; it does not show up in two hundred PASS
 # lines.
@@ -968,6 +1020,7 @@ for flag in "${FLAGS[@]}"; do
   if [ "$skip" -eq 1 ]; then
     printf 'SKIP  %s\n' "$flag"
     SKIPPED+=("$flag")
+    RESULT_LINES+=("$(printf '%s\t%s\t%s\t%s' "$flag" skip 0 -)")
     continue
   fi
 
@@ -983,19 +1036,61 @@ for flag in "${FLAGS[@]}"; do
   TOTAL_SUITE_MS=$((TOTAL_SUITE_MS + elapsed))
   output=$(cat "$suite_out")
   rm -f "$suite_out"
+  checks="$(checks_in "$output")"
+  checks_note=""
+  if [ -n "$checks" ] && [ "$checks" -gt 0 ]; then checks_note="  ($checks checks)"; fi
   if [ "$status" -eq 0 ]; then
-    printf 'PASS  %-52s %8s\n' "$flag" "$(fmt_ms "$elapsed")"
+    printf 'PASS  %-52s %8s%s\n' "$flag" "$(fmt_ms "$elapsed")" "$checks_note"
     PASSED+=("$flag")
+    result=pass
   elif [ "$status" -eq 124 ]; then
     printf 'TIMEOUT  %s (killed after %ss)\n' "$flag" "$(suite_timeout_for "$flag")"
     TIMEDOUT+=("$flag")
     echo "$output" | tail -20 | sed 's/^/      | /'
+    result=timeout
   else
-    printf 'FAIL  %-52s %8s (exit %s)\n' "$flag" "$(fmt_ms "$elapsed")" "$status"
+    printf 'FAIL  %-52s %8s (exit %s)%s\n' "$flag" "$(fmt_ms "$elapsed")" "$status" "$checks_note"
     FAILED+=("$flag")
     echo "$output" | sed 's/^/      | /'
+    result=fail
   fi
+  RESULT_LINES+=("$(printf '%s\t%s\t%s\t%s' "$flag" "$result" "$elapsed" "${checks:--}")")
 done
+
+# --- Re-running failures (R2-PROC-06) -------------------------------------
+#
+# With `--rerun-failed`, each suite that failed is run once more, after
+# everything else. **This never changes the verdict**: a suite that failed
+# stays in `failed:` and the run still exits 1, so a re-run can never turn a
+# real failure green. What it adds is a name for the difference between a
+# suite that fails every time (a defect) and one that failed and then passed
+# (probably a flake), which used to take a person re-running the job by hand
+# and reading two logs. A timed-out suite is not re-run: it already took its
+# whole bound once.
+FLAKY=()
+FAILED_TWICE=()
+if [ "$RERUN_FAILED" -eq 1 ] && [ ${#FAILED[@]} -gt 0 ]; then
+  echo ""
+  echo "re-running ${#FAILED[@]} failed suite(s) once, to tell a flake from a defect:"
+  for flag in "${FAILED[@]}"; do
+    rerun_out=$(mktemp)
+    run_suite "$flag" "$rerun_out"
+    rerun_status=$?
+    rm -f "$rerun_out"
+    if [ "$rerun_status" -eq 0 ]; then
+      printf 'RERUN PASS  %s - failed, then passed: likely flaky\n' "$flag"
+      FLAKY+=("$flag")
+      for i in "${!RESULT_LINES[@]}"; do
+        case "${RESULT_LINES[$i]}" in
+          "$flag	"*) RESULT_LINES[$i]="$(printf '%s' "${RESULT_LINES[$i]}" | awk -F '\t' -v OFS='\t' '{ $2 = "flaky"; print }')" ;;
+        esac
+      done
+    else
+      printf 'RERUN FAIL  %s - failed both times\n' "$flag"
+      FAILED_TWICE+=("$flag")
+    fi
+  done
+fi
 
 # --- Python suites -------------------------------------------------------
 #
@@ -1034,9 +1129,11 @@ if [ ${#REQUESTED[@]} -eq 0 ] && [ "$SESSION_ONLY" -eq 0 ] && [ "$SHARD_INDEX" -
         if [ "$py_status" -eq 0 ]; then
           printf 'PASS  %-52s %8s\n' "$suite (python)" "$(fmt_ms "$elapsed")"
           PY_PASSED+=("$suite")
+          RESULT_LINES+=("$(printf '%s\t%s\t%s\t%s' "python:$suite" pass "$elapsed" -)")
         else
           printf 'FAIL  %-52s %8s\n' "$suite (python)" "$(fmt_ms "$elapsed")"
           PY_FAILED+=("$suite")
+          RESULT_LINES+=("$(printf '%s\t%s\t%s\t%s' "python:$suite" fail "$elapsed" -)")
           sed 's/^/      | /' "$py_out"
         fi
         rm -f "$py_out"
@@ -1070,6 +1167,46 @@ if [ ${#SKIPPED[@]} -gt 0 ]; then
 fi
 if [ ${#TIMEDOUT[@]} -gt 0 ]; then
   printf 'timed out: %s\n' "${TIMEDOUT[*]}"
+fi
+if [ ${#FLAKY[@]} -gt 0 ]; then
+  printf 'failed, then passed on re-run (likely flaky - the run still fails): %s\n' "${FLAKY[*]}"
+fi
+if [ ${#FAILED_TWICE[@]} -gt 0 ]; then
+  printf 'failed again on re-run: %s\n' "${FAILED_TWICE[*]}"
+fi
+
+# --- History (R2-PROC-06) ---------------------------------------------------
+#
+# `--history=<file>` appends this run to a JSON file of per-suite results and
+# prints the lane's summary: the flaky suites of this run, every suite whose
+# recorded results disagree, and the suite count and lane time per run. CI
+# keeps the file between runs and uploads it; see `Scripts/suite_history.py`.
+# A history that cannot be written is reported and never changes the verdict.
+if [ -n "$HISTORY" ]; then
+  if [ -z "$LANE" ]; then
+    if [ "$SESSION_ONLY" -eq 1 ]; then LANE=windowed; elif [ "$CI_MODE" -eq 1 ]; then LANE=headless; else LANE=all; fi
+    if [ "$SHARD_COUNT" -gt 0 ]; then LANE="$LANE-shard-$SHARD_INDEX"; fi
+  fi
+  echo ""
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 not found - this run was not added to $HISTORY"
+  else
+    results_tsv=$(mktemp)
+    : > "$results_tsv"
+    if [ ${#RESULT_LINES[@]} -gt 0 ]; then printf '%s\n' "${RESULT_LINES[@]}" > "$results_tsv"; fi
+    run_name="${GITHUB_RUN_ID:+$GITHUB_RUN_ID-${GITHUB_RUN_ATTEMPT:-1}}"
+    run_name="${run_name:-local-$(date -u +%Y%m%dT%H%M%SZ)}"
+    if python3 Scripts/suite_history.py record --file "$HISTORY" --lane "$LANE" --run "$run_name" \
+         --results "$results_tsv"; then
+      history_md="$(python3 Scripts/suite_history.py summary --file "$HISTORY" --lane "$LANE")"
+      printf '%s\n' "$history_md"
+      if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$history_md" >> "$GITHUB_STEP_SUMMARY"; fi
+    else
+      echo "could not add this run to $HISTORY (see above) - the verdict below is unaffected"
+    fi
+    rm -f "$results_tsv"
+  fi
+  echo ""
 fi
 if [ ${#PY_PASSED[@]} -gt 0 ] || [ ${#PY_FAILED[@]} -gt 0 ] || [ ${#PY_SKIPPED[@]} -gt 0 ]; then
   printf 'python: %d passed, %d failed, %d skipped\n' \

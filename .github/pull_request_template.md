@@ -24,7 +24,35 @@ what you actually ran, and say what you did not.
 - Say which suites you ran. A cross-cutting change owes a full local
   `./Scripts/run-all-tests.sh`; a narrow one may name the suites it ran and why
   that was the whole relevant set.
-- State what was not verified. "Verified by `swift build` only", "not
-  reproducible in this sandbox" and "the live half is the captain's own check"
-  are all acceptable; implying a check that did not happen is not.
+- State what was not verified, in the "Not verified" section below.
+  "Verified by `swift build` only", "not reproducible in this sandbox" and
+  "the live half is the captain's own check" are all acceptable; implying a
+  check that did not happen is not.
 -->
+
+## Renders
+
+<!--
+For anything a person can see: before-and-after renders of each page the
+change touches, from the tour lab (`FM_REVIEW_TOUR`) where possible, so the
+second reader below can judge them without building the branch.
+Write "No visible change" when there is none.
+-->
+
+## Not verified
+
+<!--
+Everything you did not check, one item per line. The second reader reads this
+list and decides whether any of it has to be checked before merge.
+-->
+
+## Second reader
+
+<!--
+R2-PROC-03 of the second full review: a second reader looks at the renders
+and the "Not verified" list, not the diff. CONTRIBUTING.md says what that
+job is. For an agent-written PR, a separate agent in review-only mode counts.
+-->
+
+- [ ] A second reader looked at every render above.
+- [ ] A second reader read the "Not verified" list and either accepted it or asked for a check.

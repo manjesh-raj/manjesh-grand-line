@@ -105,12 +105,28 @@ enum NavigationCoherenceSelfTest {
             .joined(separator: "|")
         // A navigation word, then a destination's or a module's own name.
         // "copied from" and "came from" name where a clipboard entry came
-        // from, not a place to go, and are left alone.
-        let pattern = "\\b(?:in|on|to|Open|open|Go to|(?<!copied )(?<!came )from)\\s+(?:the\\s+)?(?:\(names))\\b"
+        // from, not a place to go, and are left alone. R2-PROC-07 added
+        // "Visit", "under" and "via", the three ways copy points somewhere
+        // that the original words missed ("go to", "switch to" and "jump to"
+        // already end in "to").
+        let pattern = "\\b(?:in|on|to|Open|open|Go to|Visit|visit|under|Under|via|Via|(?<!copied )(?<!came )from)"
+            + "\\s+(?:the\\s+)?(?:\(names))\\b"
         guard let navigation = try? NSRegularExpression(pattern: pattern),
               let literal = try? NSRegularExpression(pattern: #""(?:[^"\\]|\\.)*""#) else {
             fail("R2-BUG-06: the copy guard's patterns do not compile", &ok)
             return ok
+        }
+        // The pattern has to catch what it exists to catch, or the sweep
+        // below passes for nothing.
+        let matches = { (text: String) in
+            navigation.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+        }
+        for bad in ["Open Bootstrap", "set it again on Bootstrap", "Visit Hosts", "under Settings", "via the Fleet page",
+                    "switch to Setup"] where !matches(bad) {
+            fail("R2-PROC-07: the copy guard's pattern misses \"\(bad)\"", &ok)
+        }
+        for fine in ["copied from Hosts", "came from Fleet", "Bootstrap steps"] where matches(fine) {
+            fail("R2-PROC-07: the copy guard's pattern flags \"\(fine)\", which names no place to go", &ok)
         }
         var offenders: [String] = []
         var scanned = 0

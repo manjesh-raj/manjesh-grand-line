@@ -1,5 +1,7 @@
 # Grand Line
 
+[![CI on main](https://github.com/manjesh-raj/manjesh-grand-line/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/manjesh-raj/manjesh-grand-line/actions/workflows/ci.yml?query=branch%3Amain)
+
 A native macOS cockpit to **observe and lightly control** a [firstmate](https://github.com/kunchenguid/firstmate) fleet.
 
 You keep talking to your first mate as usual (in tmux); this gives you a live window onto the whole crew - who's working, what needs a decision, PRs ready to merge - plus a real terminal onto the first mate itself.
@@ -32,6 +34,44 @@ a signed bundle needs), and publishes a GitHub release with the artifact and its
 ```bash
 git tag -a v0.2.0 -m "…" && git push origin v0.2.0
 ```
+
+### Tagging at a stage boundary
+
+R2-PROC-04 of the second full review found one release tag (`v0.1.0`) in 291 commits, so "which build am I on" was a commit hash and there was no known-good build to roll back to.
+The procedure is to tag at each stage boundary, meaning the merge that finishes a stage of planned work (each modular-shell stage was one) or a review's fix set.
+Only the captain decides when a tag is cut. An agent creates or pushes one only on the captain's explicit word for that tag.
+
+1. Confirm `main` is green on the commit you mean to tag. The badge at the top of this file shows the latest run.
+2. Draft the notes from the pull requests merged since the last tag, and read them:
+
+   ```bash
+   python3 native/Scripts/draft_release_notes.py v0.1.0 main > "$TMPDIR/notes.md"
+   ```
+
+   The script reads local history only and prints Markdown. It never tags, writes a file or reaches the network.
+3. Pick the version.
+   A minor bump (`v0.2.0`) marks a stage boundary, and a patch bump (`v0.2.1`) marks a fix-only release between stages.
+4. Tag that exact commit with the stage in the message, then push the tag:
+
+   ```bash
+   git tag -a v0.2.0 -m "Sidebar layout stages 1-7" <commit>
+   git push origin v0.2.0
+   ```
+
+5. Right after pushing the tag, create the GitHub release with the reviewed draft as its notes:
+
+   ```bash
+   gh release create v0.2.0 --title v0.2.0 --notes-file "$TMPDIR/notes.md"
+   ```
+
+   `release.yml` builds the `.app` from the tag a few minutes later.
+   Because the release already exists, its own `gh release create` fails and it falls back to uploading the zip and checksum onto this release, so the drafted notes stay.
+
+**There is no CHANGELOG file.**
+The GitHub release notes are the changelog, so nobody adds, edits or generates a `CHANGELOG.md`.
+
+**The Updates page has no feed for Grand Line itself yet.**
+It updates the other tools on the machine, and it waits for signed builds (the Developer ID work below) before it offers Grand Line's own releases.
 
 **Releases are unsigned today.** Developer ID signing and notarization need a paid Apple
 Developer Program membership; the workflow's signing and notarization steps are written
@@ -67,9 +107,18 @@ itself, one entry per line with a reason, so CI and a local run can never disagr
 what "the tests" are - and a locally-passing suite that CI skips shows up as a `SKIP` line
 rather than silently disappearing.
 
-CI points every `FM_*` data-location override at a scratch directory, so a run never
-attempts a real clone of the private config repo and never depends on what the runner's
-home directory happens to contain.
+Every suite runs with an empty `FM_SCRATCH_ROOT` of its own, which the runner creates
+and removes, and `main.swift`'s redirect block points every store into it. So a run
+never attempts a real clone of the private config repo, never depends on what the
+runner's home directory happens to contain, and no suite sees the stores another suite
+seeded. CI and a local run isolate suites the same way.
+
+The badge at the top of this file is `main`'s latest CI run, so a red `main` is seen
+rather than found. A test job that fails outside its suites (checkout, the toolchain, the
+debug binary's download) also fails the separate `CI infrastructure` check, so that kind
+of red reads differently from a suite failure. A `main` run that failed only for that
+reason is re-run once by `.github/workflows/ci-rerun.yml`. A suite failure is never
+re-run automatically.
 
 ## Testing
 
@@ -139,7 +188,7 @@ These tables are **complete in both directions**, and that is a check rather tha
 
 | Variable | What it overrides |
 | --- | --- |
-| `FM_SCRATCH_ROOT` | **The one that moves everything.** Every file-backed store's *default* is `FM_SCRATCH_ROOT/<name>` instead of `~/Library/Application Support/GrandLine/<name>` (`AppPaths.dataRoot()`), so a probe, a lab build or a suite redirects the whole app with one variable rather than the list below. A narrow per-store variable still wins over it. Setting it also skips the rename migrations and the one-time Today/calendar cleanup, since neither is a path. A self-test guard fails the run on a store that resolves Application Support for itself and so drops off this |
+| `FM_SCRATCH_ROOT` | **The one that moves everything.** Every file-backed store's *default* is `FM_SCRATCH_ROOT/<name>` instead of `~/Library/Application Support/GrandLine/<name>` (`AppPaths.dataRoot()`), so a probe, a lab build or a suite redirects the whole app with one variable rather than the list below. `Scripts/run-all-tests.sh` gives every suite an empty one of its own, and a self-test or tour process that has none gets a per-process scratch folder rather than the real one (`ProcessMode`). A narrow per-store variable still wins over it. Setting it also skips the rename migrations and the one-time Today/calendar cleanup, since neither is a path. A self-test guard fails the run on a store that resolves Application Support for itself and so drops off this |
 | `FM_KEYCHAIN_SERVICE_PREFIX` | Prepended to every Keychain service name this app owns (`KeychainService.resolve`). **Debug builds only** - a prefix that reached a release build would orphan every saved SSH key. Set per process by `main.swift`'s self-test redirect block, and everything carrying it is deleted at exit, so a suite can no longer leave real items in the login Keychain |
 | `FM_HOME` / `FIRSTMATE_HOME` | The firstmate home the app reads fleet state from |
 | `FM_HOSTS_FILE` | `hosts.json` (saved SSH hosts) |
