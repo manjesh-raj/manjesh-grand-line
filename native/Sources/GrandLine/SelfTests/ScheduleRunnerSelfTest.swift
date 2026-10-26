@@ -1046,7 +1046,7 @@ enum ScheduleRunnerSelfTest {
     private static func checkTheQuitGuardIsWiredToEveryInstall(_ ok: inout Bool) {
         guard let dir = SelfTestSources.appSourceDirectory(),
               let updates = try? String(contentsOf: dir.appendingPathComponent("UpdatesController.swift"), encoding: .utf8),
-              let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8) else {
+              let main = SelfTestSources.appDelegateSource() else {
             fail("REL-05: could not read the app sources - these guards would silently pass", &ok)
             return
         }

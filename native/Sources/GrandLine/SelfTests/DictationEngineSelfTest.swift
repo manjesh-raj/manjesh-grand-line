@@ -447,13 +447,13 @@ enum DictationEngineSelfTest {
     /// The model-backed half below asserts the release itself does empty the
     /// context, which is the other half of the claim.
     private static func test_whisperReleasedOnTerminate() -> String? {
-        guard let dir = SelfTestSources.appSourceDirectory() else { return nil }
-        let path = dir.appendingPathComponent("main.swift")
-        guard let text = try? String(contentsOf: path, encoding: .utf8) else {
-            return "main.swift could not be read, so this guard checked nothing"
+        // R2-ARCH-02: the delegate is `AppComposition.swift` now.
+        guard SelfTestSources.appSourceDirectory() != nil else { return nil }
+        guard let text = SelfTestSources.appDelegateSource() else {
+            return "the app delegate could not be read, so this guard checked nothing"
         }
         guard let start = text.range(of: "func applicationWillTerminate(") else {
-            return "main.swift has no applicationWillTerminate - the flush point this depends on is gone"
+            return "the app delegate has no applicationWillTerminate - the flush point this depends on is gone"
         }
         // The body runs to the first line that closes it at the method's own
         // indentation, which in this file is four spaces.

@@ -916,10 +916,9 @@ enum CompactModeViewSelfTest {
     /// the host editor's identical line two hundred lines below cannot satisfy
     /// it.
     private static func checkTheMainWindowIsNotReleasedWhenClosed(_ check: (Bool, String) -> Void) {
-        guard let dir = SelfTestSources.appSourceDirectory(),
-              let text = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8)
+        guard let text = SelfTestSources.appDelegateSource()
         else {
-            check(false, "main.swift could not be read, so this guard checked nothing")
+            check(false, "the app delegate could not be read, so this guard checked nothing")
             return
         }
         guard let start = text.range(of: "window = NSWindow(") else {

@@ -1303,3 +1303,40 @@ With delivery always on main, that check would pass whatever thread the mutation
 `StoreObservableSelfTest` checks that two observers both hear a real change on each of the six, that unobserving one leaves the other, and that an off-main report is delivered on main.
 Going back to last-assignment-wins fails it on every store.
 
+### Test hooks out of the release binary (R2-ARCH-09)
+
+`nm` over the release binary, demangled, found thirteen test-only symbols of this app's own: four `debug*` accessors and nine `*ForTests` seams on the shell, Home, the snippet expander and the herdr theme sync.
+They sat outside `#if FM_SELFTESTS`, and most were kept out of the binary only by dead-stripping, which a production caller would undo.
+Each is guarded now, with the two herdr seams beside them, and production reads the seams through accessors that answer `nil` in a release build.
+`Scripts/check-release-symbols.sh` reads the release binary's symbol table and fails on any `debug<Upper>` or `*ForTests` symbol in the `GrandLine` module; CI's release job runs it.
+`E2ETestingPolicySelfTest` fails if one of the fifteen moves back outside the guard or the workflow stops running the script.
+
+### The system's parts in the toolbar and the inspector (R2-ARCH-06)
+
+On macOS 14 and later the inspector is `NSSplitViewItem(inspectorWithViewController:)`, which AppKit lays out full height and, on macOS 26, wraps in glass; the controller paints no column of its own there.
+Before macOS 14 the hand-drawn pane stays, and a suite forces it so both paths are covered on a machine that has the new one.
+An off-screen render draws the system's glass as a placeholder with none of the inspector's views in it (the same in a bare AppKit window), so the tour lab composites the inspector's own views over it, as it already did for the sidebar.
+The toolbar is customisable from a right click and Window > Customize Toolbar….
+Only the items that are always there are in the palette; the page's own items stay where `reconcileDynamicItems()` puts them.
+The result is saved to `AppSettings` and put back the first time the toolbar is in a window, with `autosavesConfiguration` still off.
+Two traps: AppKit keeps every live toolbar with the same identifier in step, so a suite's "next launch" toolbar needs an identifier of its own; and a palette item built around a live view would take that view out of the toolbar, so the palette gets copies.
+The bell keeps its hand-drawn badge: `NSToolbarItem.badge` is macOS 26 only, and CI's `macos-15` image builds with Swift 6.1.2 for `macosx15.0`, where it does not exist.
+
+### The shell forwards nothing (R2-ARCH-05)
+
+`WorkspaceShellController` carried about a hundred one-line forwards to the workspace's parts.
+The main menu targets `workspace.navigator` for its navigation verbs now, and the app delegate, the palette and the suites reach the navigator, the host sessions, the lock and the workspace directly.
+The call sites were rewritten from the compiler's own errors, about 500 of them.
+`buildMenu` takes optional `MenuTargets`, which lets `NavigationCoherenceSelfTest` build the menu headless with stand-in targets and check that every item targets an object answering its action, in both layouts.
+The same suite fails if the shell gains a member that only forwards a same-named member of the workspace.
+
+### main.swift is the entry point (R2-ARCH-02)
+
+`main.swift` was 4,900 lines: the composition root, the menu bar, session restore, the host editor and the self-test dispatch.
+It is about 100 now, and holds only what runs before the delegate exists, in the order it always ran.
+The rest moved verbatim, in four commits that each build and pass: `SelfTests/SelfTestDispatch.swift` (the 274 flags and the redirect block), `MainMenuBuilder.swift`, `SessionRestoreCoordinator.swift`, `HostEditorPresenter.swift` and `AppComposition.swift` (the `AppDelegate` class).
+The four delegate files are extensions of `AppDelegate`, not new types: each reads the delegate's own state and targets its own verbs, so a new type would have rewritten every reference, which is a rewrite rather than a split.
+`run-all-tests.sh` discovers suites from the dispatch file, and its `--list`, `--ci` and `--session-only` output is identical before and after.
+About thirty suites read `main.swift` as source; they read `SelfTestSources.selfTestDispatchSource()` or `SelfTestSources.appDelegateSource()` (the delegate's files in order, `main.swift` first) now, and the feature inventory reads the delegate's files as `main`, so no inventory id changed.
+`LaunchPathSelfTest.mainSwiftIsOnlyTheEntryPoint` caps `main.swift` at 150 lines, rejects a top-level type or function in it, and pins the launch order.
+

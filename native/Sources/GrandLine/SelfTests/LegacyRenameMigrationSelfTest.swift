@@ -605,15 +605,17 @@ enum LegacyRenameMigrationSelfTest {
         check(!body.contains("migrateKeychainIfNeeded") && !body.contains("migrateKeychain("),
               "runAtLaunch's own body never calls the Keychain migration - the launch path must never touch it", &ok)
 
-        guard let mainFile = files.first(where: { $0.lastPathComponent == "main.swift" }),
-              let mainText = try? String(contentsOf: mainFile, encoding: .utf8) else {
+        // R2-ARCH-02: the launch is `main.swift`, the delegate it starts is
+        // `AppComposition.swift`; the app delegate's source is both.
+        guard files.contains(where: { $0.lastPathComponent == "main.swift" }),
+              let mainText = SelfTestSources.appDelegateSource() else {
             fail("could not read main.swift", &ok)
             return
         }
         check(mainText.contains("LegacyNameMigration.runAtLaunch()"),
               "main.swift still runs the folder/defaults half synchronously at launch", &ok)
         guard let dispatchSite = mainText.range(of: "runKeychainMigrationInBackground()") else {
-            fail("main.swift no longer calls the Keychain migration from anywhere", &ok)
+            fail("the app delegate no longer calls the Keychain migration from anywhere", &ok)
             return
         }
         let precedingStart = mainText.index(dispatchSite.lowerBound, offsetBy: -400, limitedBy: mainText.startIndex) ?? mainText.startIndex

@@ -260,7 +260,7 @@ enum AppLockOptInSelfTest {
         func read(_ name: String) -> String {
             (try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)) ?? ""
         }
-        let main = read("main.swift")
+        let main = SelfTestSources.appDelegate(read: read) ?? ""
         if let settle = main.range(of: "AppSettings.shared.settleFirstLaunch("),
            let guardCall = main.range(of: "switch SingleInstanceGuard.acquire()") {
             check(settle.lowerBound < guardCall.lowerBound,

@@ -226,7 +226,7 @@ enum AmbientSignalChildrenSelfTest {
         func read(_ name: String) -> String {
             (try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)) ?? ""
         }
-        let main = read("main.swift")
+        let main = SelfTestSources.appDelegate(read: read) ?? ""
         check(main.contains("onUpdateTool = ") && main.contains("onSyncFork = "),
               "main.swift no longer wires the poller's per-tool/per-repo routing hooks, so every ambient child's button is dead", &ok)
 

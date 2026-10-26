@@ -129,14 +129,14 @@ enum WindowChromeFusionSelfTest {
         // Source guard: the app's own window literal has to carry the flag
         // too. A behavioural check cannot see this - `apply` would put it
         // back - and the literal is what a reader of `main.swift` believes.
-        let mainFile = SelfTestSources.appSourceDirectory()?.appendingPathComponent("main.swift")
-        if let mainFile, let mainSource = try? String(contentsOf: mainFile, encoding: .utf8) {
+        // R2-ARCH-02: the window is built in `AppComposition.swift` now.
+        if let mainSource = SelfTestSources.appDelegateSource() {
             let constructs = mainSource.contains("styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]")
             if !constructs {
-                return "main.swift's window no longer names .fullSizeContentView in its style mask"
+                return "the app delegate's window no longer names .fullSizeContentView in its style mask"
             }
             if !mainSource.contains("WindowChromeFusion.apply(to: window)") {
-                return "main.swift no longer calls WindowChromeFusion.apply"
+                return "the app delegate no longer calls WindowChromeFusion.apply"
             }
         } else {
             print("    NOTE could not read main.swift - the source half of A1 is unchecked in this run")

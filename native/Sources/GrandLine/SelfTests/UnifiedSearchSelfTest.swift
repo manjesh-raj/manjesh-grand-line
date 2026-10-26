@@ -493,7 +493,7 @@ enum UnifiedSearchSelfTest {
             check(gateDefinitions.count == 1,
                   "there must be exactly one CommandRiskConfirmation definition, found \(gateDefinitions)")
             // ...and the palette's own command action goes through it.
-            let mainText = (try? String(contentsOf: sources.appendingPathComponent("main.swift"), encoding: .utf8)) ?? ""
+            let mainText = (SelfTestSources.appDelegateSource() ?? "")
             check(mainText.contains("CommandRiskConfirmation.confirm"),
                   "the palette's command action must route through CommandRiskConfirmation - a palette "
                   + "must never be a way around a destructive command's confirmation")

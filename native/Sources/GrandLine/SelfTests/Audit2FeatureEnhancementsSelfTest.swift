@@ -321,7 +321,7 @@ enum Audit2FeatureEnhancementsSelfTest {
     }
 
     private static func test_codePreviewShutdownIsWired() -> String? {
-        guard let main = readCode(named: "main.swift") else { return "could not read main.swift" }
+        guard let main = SelfTestSources.appDelegate(read: { readCode(named: $0) }) else { return "could not read the app delegate" }
         // R2-ARCH-05: the shell forwards nothing now, so the app delegate
         // reaches the workspace, which owns the (private) destination.
         guard let workspace = readCode(named: "Workspace.swift") else {

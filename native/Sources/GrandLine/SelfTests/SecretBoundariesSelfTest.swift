@@ -200,7 +200,7 @@ extension SecretBoundariesSelfTest {
     /// names, never a URL that arrived as data. Per function, with the reason.
     static let fixedOpenTargets: [String: String] = [
         "DocsController.swift openLiveTapped": "the playbook's own live site, a constant",
-        "main.swift showManualChecks": "MANUAL-CHECKS.md beside this build's sources",
+        "AppComposition.swift showManualChecks": "MANUAL-CHECKS.md beside this build's sources",
         "SettingsController.swift openAccessibilitySettings": "a fixed System Settings pane",
         "ShiftController.swift openFailedFile": "the app's own store file that failed to read",
     ]

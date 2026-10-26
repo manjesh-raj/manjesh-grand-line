@@ -239,7 +239,7 @@ enum NavigationCoherenceSelfTest {
         // Analyzer > Open Log Analyzer"), and the feature inventory keys
         // those rows by exactly that title - they are commands, not
         // directions to a place.
-        let exempt: Set<String> = ["main.swift", "MainMenuBuilder.swift", "UnifiedSearchProviders.swift", "PlaceName.swift"]
+        let exempt: Set<String> = ["main.swift", "AppComposition.swift", "MainMenuBuilder.swift", "UnifiedSearchProviders.swift", "PlaceName.swift"]
         for file in files where file.pathExtension == "swift" && !exempt.contains(file.lastPathComponent) {
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             for (index, line) in text.components(separatedBy: "\n").enumerated() {
@@ -328,7 +328,7 @@ enum NavigationCoherenceSelfTest {
         for file in files where file.pathExtension == "swift" {
             // `MainMenuBuilder.swift` (R2-ARCH-02; `main.swift` before) builds
             // the menu bar, where a character key equivalent is exactly right.
-            guard file.lastPathComponent != "main.swift", file.lastPathComponent != "MainMenuBuilder.swift" else { continue }
+            guard !["main.swift", "AppComposition.swift", "MainMenuBuilder.swift"].contains(file.lastPathComponent) else { continue }
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             for (index, line) in text.components(separatedBy: "\n").enumerated() {
                 let code = line.trimmingCharacters(in: .whitespaces)
@@ -580,13 +580,8 @@ enum NavigationCoherenceSelfTest {
     /// covered above; what has no other witness is the wire.
     private static func checkTheMapIsActuallyReachable() -> Bool {
         var ok = true
-        guard let dir = SelfTestSources.appSourceDirectory() else {
-            fail("UX1: could not locate the app sources - this check would silently pass", &ok)
-            return ok
-        }
-        let mainPath = dir.appendingPathComponent("main.swift")
-        guard let main = try? String(contentsOf: mainPath, encoding: .utf8) else {
-            fail("UX1: could not read main.swift - this check would silently pass", &ok)
+        guard let main = SelfTestSources.appDelegateSource() else {
+            fail("UX1: could not read the app delegate - this check would silently pass", &ok)
             return ok
         }
         // The sentinel first: a grep that matches nothing because the file

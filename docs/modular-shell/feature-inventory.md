@@ -369,7 +369,7 @@ The Help menu's shortcut catalog: every menu chord, plus the configurable termin
 
 ## Command palette
 
-The ⌘K providers registered in `main.swift` and the action provider's verbs. "Switch to X" exists for every destination and is covered by the destination rows.
+The ⌘K providers registered in `AppComposition.swift` (the app delegate, `main.swift` until R2-ARCH-02) and the action provider's verbs. "Switch to X" exists for every destination and is covered by the destination rows.
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
@@ -995,7 +995,7 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 | `chrome.feedback` | One router between toast, bell entry and modal | Every page | Every module (unchanged) | `Feedback.swift` `enum Feedback` |
 | `chrome.clipboardHistory` | ⌘⇧V clipboard history panel | Drops from the bar beside Recents | Window (the same panel, anchored under the toolbar) | `ClipboardHistoryPicker.swift` `final class ClipboardHistoryController`; `WorkspaceToolbar.swift` `let clipboardAnchor = NSView()` |
 | `chrome.shortcutsSheet` | Keyboard Shortcuts sheet, generated from the menu | Help menu, ⇧⌘/ | Main menu › Help (unchanged) | `KeyboardShortcutsSheetController.swift` `final class KeyboardShortcutsSheetController` |
-| `chrome.manualChecks` | Manual checks list | Help menu | Main menu › Help (unchanged) | `main.swift` `func showManualChecks` |
+| `chrome.manualChecks` | Manual checks list | Help menu | Main menu › Help (unchanged) | `AppComposition.swift` `func showManualChecks` |
 | `chrome.welcome` | First-run welcome sheet and tour | First launch | Window (unchanged first-run sheet) | `WelcomeSheetController.swift` `final class WelcomeSheetController` |
 | `chrome.lockScreen` | App lock screen | Covers the window | Window (the lock overlay covers sidebar, toolbar, content and inspector) | `LockScreenController.swift` `final class LockScreenController`; `LockPresenter.swift` `func install(in parent: NSViewController, over root: NSView)`; `MainSplitShellController.swift` `window.toolbar?.isVisible = !lockOverlayIsShown` |
 | `chrome.inspector` | The selected item's details beside the page | Each page's own detail column (Hosts' Selected panel, Poneglyph's inspector) | Inspector (the shell's pane shows the selected host, key, snippet or credential, opens on a selection without growing the window, and closes from its button or the toolbar's) | `WorkspacePagePresentation.swift` `protocol WorkspaceInspectorSource`; `MainSplitShellController.swift` `private func reconcileInspector()`; `WorkspaceInspector.swift` `func setContent(` |

@@ -101,6 +101,14 @@ enum SelfTestSources {
     static let appDelegateFiles = ["main.swift", "AppComposition.swift", "MainMenuBuilder.swift",
                                    "SessionRestoreCoordinator.swift", "HostEditorPresenter.swift"]
 
+    /// The same, read through a suite's own reader - one that strips
+    /// comments, say - so a guard keeps reading code the way it always did.
+    /// `nil` when `main.swift` itself cannot be read.
+    static func appDelegate(read: (String) -> String?) -> String? {
+        guard let first = read(appDelegateFiles[0]) else { return nil }
+        return ([first] + appDelegateFiles.dropFirst().compactMap(read)).joined(separator: "\n")
+    }
+
     static func appDelegateSource() -> String? {
         guard let dir = appSourceDirectory() else { return nil }
         let texts = appDelegateFiles.compactMap {

@@ -34,6 +34,7 @@ enum LaunchPathSelfTest {
             ("theBackgroundFirstLoadLandsOffMain", test_theBackgroundFirstLoadLandsOffMain),
             ("aLockedWidgetPublishDoesNotReadTheBoard", test_aLockedWidgetPublishDoesNotReadTheBoard),
             ("sessionRestoreQueuesBackgroundHostPages", test_sessionRestoreQueuesBackgroundHostPages),
+            ("mainSwiftIsOnlyTheEntryPoint", test_mainSwiftIsOnlyTheEntryPoint),
         ]
         var failed = 0
         for (name, body) in cases {
@@ -347,6 +348,44 @@ enum LaunchPathSelfTest {
         }
         guard !body.contains("appShell.workspace.hosts.connectHost(") else {
             return "restoreSessionIfNeeded connects background host pages directly again"
+        }
+        return nil
+    }
+
+    // MARK: R2-ARCH-02 - main.swift is the entry point and nothing else
+
+    /// The most lines `main.swift` may hold. It was 4,900 before R2-ARCH-02
+    /// split it, and is about 100 now - the launch sequence below and the
+    /// comments that explain its order. 150 leaves room to explain one more
+    /// launch step, and none to grow a second concern back into it: a menu
+    /// item, a suite or a store belongs in the file that owns its kind.
+    static let mainSwiftLineCap = 150
+
+    /// `main.swift` stays small, holds no type, and runs the launch in the
+    /// order it always has: the self-test dispatch, the legacy-name
+    /// migration, the first-launch settings, the instance guard, the
+    /// diagnostics stamp, then the delegate.
+    private static func test_mainSwiftIsOnlyTheEntryPoint() -> String? {
+        guard let main = source("main.swift") else { return "could not read main.swift - the guard would silently pass" }
+        let lines = main.components(separatedBy: "\n").count
+        guard lines <= mainSwiftLineCap else {
+            return "main.swift is \(lines) lines, over its cap of \(mainSwiftLineCap) - move the new concern to its own file "
+                + "(AppComposition, MainMenuBuilder, SessionRestoreCoordinator, HostEditorPresenter, SelfTestDispatch)"
+        }
+        let code = main.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        for declaration in ["class ", "struct ", "enum ", "extension ", "func "] where code.contains("\n" + declaration) {
+            return "main.swift declares a top-level `\(declaration.trimmingCharacters(in: .whitespaces))` - it belongs in a file of its own"
+        }
+        let order = ["SelfTestDispatch.run()", "LegacyNameMigration.runAtLaunch()", "settleFirstLaunch(",
+                     "switch SingleInstanceGuard.acquire()", "DiagnosticsLog.shared.noteLaunch(",
+                     "let delegate = AppDelegate()", "app.run()"]
+        var cursor = code.startIndex
+        for step in order {
+            guard let found = code.range(of: step, range: cursor..<code.endIndex) else {
+                return "main.swift no longer runs `\(step)` after the step before it - the launch order changed"
+            }
+            cursor = found.upperBound
         }
         return nil
     }
