@@ -16,6 +16,10 @@
 //     the bolt and pencil on every card, the grid reflowing as the inspector
 //     opens at 1512, 1100 and 1100.5 on the pixel grid, the keyboard, the
 //     Larger text scale, and the recent row with "last connected".
+//   - The flat host grid: one run of cards with no group headers, hosts of
+//     different groups sharing a row, each card naming its group, the group
+//     filter narrowing the same grid, and the Grouped toggle bringing back
+//     one section per group.
 //   - K1, K3, K4 and K6: the keys as cards, key search, what a key card says,
 //     and Touch ID's chip in the Keys row.
 //   - H6, H10 and H11: a host is edited in the side panel - no pop-up - with
@@ -57,8 +61,8 @@ enum ConnectionsCardsSelfTest {
             defer { window.orderOut(nil) }
             ReviewTourLab.seedDemoHosts(shell.workspace)
             settle(shell)
-            for check in [checkTagMatch, checkTagOverflow, checkFindOrConnect, checkSplitButtons, checkKeyCards,
-                          checkHostCards, checkHostCardKeyboard, checkGridReflow, checkRecentHosts,
+            for check in [checkGroupedOnFirstShow, checkTagMatch, checkTagOverflow, checkFindOrConnect, checkSplitButtons, checkKeyCards,
+                          checkHostCards, checkFlatHostGrid, checkHostCardKeyboard, checkGridReflow, checkRecentHosts,
                           checkHostPanel, checkNewHostPanel, checkUnsavedChanges, checkKeyPanel, checkNewKeyPanel, checkSSHConfigImport] {
                 var ok = true
                 check(shell, window, &ok)
@@ -185,8 +189,9 @@ enum ConnectionsCardsSelfTest {
         check(keys.first == HostsController.firstmateRowKey, "H1: the Firstmate card is not first (\(keys.prefix(2)))", &ok)
         check(Set(keys.dropFirst()) == Set(shell.workspace.hostStore.hosts.map(\.id.uuidString)),
               "H1: the cards are not every saved host", &ok)
-        check(grid.debugSectionTitles == ["Observability", "Production", "Staging", "Ungrouped"],
-              "H1: the cards are grouped as \(grid.debugSectionTitles)", &ok)
+        // The captain's call: one flat run of cards, the way the Keys grid
+        // is, rather than a section (and a mostly empty row) per group.
+        check(grid.debugSectionTitles.isEmpty, "flat grid: the cards are under headers \(grid.debugSectionTitles)", &ok)
         guard let edge = shell.workspace.hostStore.hosts.first(where: { $0.label == "edge-proxy-01" }),
               let bastion = shell.workspace.hostStore.hosts.first(where: { $0.label == "bastion-stg" }),
               let edgeCard = grid.debugCardView(key: edge.id.uuidString),
@@ -253,6 +258,155 @@ enum ConnectionsCardsSelfTest {
         settle(shell)
         check(hosts.hostsTable.card.isHidden && !grid.isHidden && !AppSettings.shared.connectionsShowList,
               "H2: Grid did not come back", &ok)
+    }
+
+    // MARK: The flat grid
+
+    /// First, before any check edits a host: the hosts were seeded before
+    /// the page adopted the sidebar layout, which is the order a real launch
+    /// loads them in, and Grouped must be in the group filter's menu anyway.
+    private static func checkGroupedOnFirstShow(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let picker = showHosts(shell).groupPicker
+        let item = picker.menu?.items.first { $0.representedObject as? String == HostsController.groupedChoiceMarker }
+        check(item != nil && item?.isHidden == false,
+              "Grouped: the first show's group filter has no Grouped item (\(picker.itemTitles))", &ok)
+    }
+
+    private static func checkFlatHostGrid(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        shell.setInspectorShown(false)
+        settle(shell)
+        let grid = hosts.hostsGrid
+        let store = shell.workspace.hostStore
+        func groupOf(_ key: String) -> String? {
+            store.hosts.first { $0.id.uuidString == key }.flatMap(hosts.normalizedGroup)
+        }
+        check(!AppSettings.shared.hostsGrouped, "flat grid: Grouped is on by default", &ok)
+        check(grid.debugSectionTitles.isEmpty, "flat grid: the default view has headers \(grid.debugSectionTitles)", &ok)
+
+        // The empty-space report itself: hosts of different groups share
+        // the first row, beside Firstmate.
+        let placed = grid.debugPlaced
+        guard let firstRow = placed.first?.frame.minY else {
+            fail("flat grid: no cards were laid out", &ok)
+            return
+        }
+        let rowKeys = placed.filter { abs($0.frame.minY - firstRow) < 0.5 }.map(\.key)
+        let rowGroups = Set(rowKeys.compactMap(groupOf))
+        check(grid.columnCount >= 3 && rowKeys.count == grid.columnCount,
+              "flat grid: the first row holds \(rowKeys.count) of \(grid.columnCount) columns", &ok)
+        check(rowGroups.count >= 2, "flat grid: the first row holds one group's hosts (\(rowGroups))", &ok)
+        let order = placed.map(\.key).dropFirst().compactMap { key in store.hosts.first { $0.id.uuidString == key }?.label }
+        check(order == ["ci-runner-03", "grafana", "edge-proxy-01", "edge-proxy-02", "bastion-stg", "db-replica-eu", "lab-box"],
+              "flat grid: the order is \(order)", &ok)
+
+        // Each card names its group, quietly, with the whole of it a hover
+        // away and in what VoiceOver reads.
+        guard let edge = store.hosts.first(where: { $0.label == "edge-proxy-01" }),
+              let lab = store.hosts.first(where: { $0.label == "lab-box" }),
+              let edgeCard = grid.debugCardView(key: edge.id.uuidString),
+              let labCard = grid.debugCardView(key: lab.id.uuidString),
+              let firstmate = grid.debugCardView(key: HostsController.firstmateRowKey) else {
+            fail("flat grid: the demo hosts' cards are missing", &ok)
+            return
+        }
+        check(edgeCard.debugChip == "Production", "flat grid: edge-proxy-01's chip reads \(edgeCard.debugChip ?? "nothing")", &ok)
+        check(edgeCard.debugChipView.toolTip == "Group: Production"
+                && edgeCard.debugChipView.accessibilityLabel() == "Group: Production",
+              "flat grid: the chip's tooltip or label does not name the group", &ok)
+        check((edgeCard.accessibilityLabel() ?? "").contains("Production"), "flat grid: VoiceOver does not hear the group", &ok)
+        check(labCard.debugChip == nil && firstmate.debugChip == nil, "flat grid: a card with no group shows a chip", &ok)
+        // The chip takes no height of its own: the third line sits where a
+        // card without one has it (lab-box, the same address font), so a
+        // row of cards reads as one line.
+        let chipLine = edgeCard.convert(edgeCard.debugChipView.frame, from: edgeCard.debugChipView.superview).midY
+        check(abs(chipLine - edgeCard.debugBadgeRowFrame.midY) < 0.5
+                && abs(edgeCard.debugBadgeRowFrame.midY - labCard.debugBadgeRowFrame.midY) < 0.5,
+              "flat grid: the chip moved the third line (chip \(chipLine), badges \(edgeCard.debugBadgeRowFrame.midY), "
+                + "lab-box's \(labCard.debugBadgeRowFrame.midY))", &ok)
+        // The keys' cards are unchanged: no chip.
+        check(hosts.keysGrid.sections.flatMap(\.cards).allSatisfy { $0.chip == nil }, "flat grid: a key card carries a chip", &ok)
+
+        // A long group truncates inside the cap rather than taking the line.
+        let long = Host(label: "long-group-host", address: "long.example.test", group: "Customer acceptance environment west")
+        store.add(long)
+        settle(shell)
+        if let card = grid.debugCardView(key: long.id.uuidString) {
+            check(card.debugChipView.frame.width <= HelmGridCardView.chipMaximumWidth + 0.5,
+                  "flat grid: a long group's chip is \(card.debugChipView.frame.width)pt wide", &ok)
+            check(card.debugChipView.toolTip == "Group: Customer acceptance environment west",
+                  "flat grid: a truncated chip's tooltip is not the whole group", &ok)
+        } else {
+            fail("flat grid: the long-group host has no card", &ok)
+        }
+        store.delete(id: long.id)
+        settle(shell)
+
+        // The group filter narrows the same flat grid.
+        let picker = hosts.groupPicker
+        check(!picker.isHidden && picker.window != nil, "flat grid: the group filter is not showing", &ok)
+        picker.selectItem(withTitle: "Staging")
+        _ = picker.sendAction(picker.action, to: picker.target)
+        settle(shell)
+        let staging = grid.debugPlaced.map(\.key).dropFirst().compactMap(groupOf)
+        check(staging == ["Staging", "Staging"] && grid.debugSectionTitles.isEmpty,
+              "flat grid: the Staging filter shows \(staging) under \(grid.debugSectionTitles)", &ok)
+        picker.selectItem(withTitle: "All groups")
+        _ = picker.sendAction(picker.action, to: picker.target)
+        settle(shell)
+
+        // Grouped, at the foot of the filter's own menu: one section per
+        // group again, stored, and without chips (the header says it).
+        func groupedItem() -> NSMenuItem? {
+            picker.menu?.items.first { $0.representedObject as? String == HostsController.groupedChoiceMarker }
+        }
+        func pickGrouped() {
+            guard let item = groupedItem() else { return }
+            picker.select(item)
+            _ = picker.sendAction(picker.action, to: picker.target)
+            settle(shell)
+        }
+        guard let item = groupedItem(), let index = picker.menu?.items.firstIndex(of: item) else {
+            fail("Grouped: the group filter's menu has no Grouped item (\(picker.itemTitles))", &ok)
+            return
+        }
+        check(item.title == "Grouped" && !item.isHidden && item.state == .off
+                && picker.menu?.items[index - 1].isSeparatorItem == true,
+              "Grouped: the item is \(item.title), hidden \(item.isHidden), state \(item.state.rawValue), not under a separator", &ok)
+        // A pop-up is as wide as its widest item; Grouped must not be it, or
+        // the filter row grows and takes the window with it at 1100.
+        let font = picker.font ?? NSFont.menuFont(ofSize: 0)
+        func width(_ title: String) -> CGFloat { (title as NSString).size(withAttributes: [.font: font]).width }
+        check(width(item.title) <= width("All groups"), "Grouped: its title is wider than All groups", &ok)
+        pickGrouped()
+        check(AppSettings.shared.hostsGrouped, "Grouped: the choice was not stored", &ok)
+        check(grid.debugSectionTitles == ["Observability", "Production", "Staging", "Ungrouped"],
+              "Grouped: the sections are \(grid.debugSectionTitles)", &ok)
+        check(picker.titleOfSelectedItem == "All groups" && hosts.selectedGroup == nil,
+              "Grouped: the filter now reads \(picker.titleOfSelectedItem ?? "nothing")", &ok)
+        check(groupedItem()?.state == .on, "Grouped: the item is not ticked", &ok)
+        check(grid.debugCardView(key: edge.id.uuidString)?.debugChip == nil, "Grouped: a card under its header still has a chip", &ok)
+        // The filter still filters inside Grouped, and Grouped survives it.
+        picker.selectItem(withTitle: "Production")
+        _ = picker.sendAction(picker.action, to: picker.target)
+        settle(shell)
+        check(AppSettings.shared.hostsGrouped && groupedItem()?.state == .on && picker.titleOfSelectedItem == "Production",
+              "Grouped: filtering by a group lost the choice", &ok)
+        picker.selectItem(withTitle: "All groups")
+        _ = picker.sendAction(picker.action, to: picker.target)
+        settle(shell)
+        // List always groups, so the choice goes with the cards.
+        hosts.hostsViewModeControl.debugClickTab(id: HostsController.listModeID)
+        settle(shell)
+        check(groupedItem()?.isHidden == true, "Grouped: the item shows over the table", &ok)
+        hosts.hostsViewModeControl.debugClickTab(id: HostsController.gridModeID)
+        settle(shell)
+        check(groupedItem()?.isHidden == false && groupedItem()?.state == .on, "Grouped: the item did not come back ticked", &ok)
+        pickGrouped()
+        check(!AppSettings.shared.hostsGrouped && grid.debugSectionTitles.isEmpty && groupedItem()?.state == .off,
+              "Grouped: turning it off left \(grid.debugSectionTitles)", &ok)
     }
 
     private static func checkHostCardKeyboard(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {

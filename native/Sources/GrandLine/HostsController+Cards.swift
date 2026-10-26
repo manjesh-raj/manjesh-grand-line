@@ -3,13 +3,16 @@
 // Connections' Hosts as cards (H1, H2, H4, H5, H7 and X2 of the captain's
 // Termius-style plan), in the sidebar layout only.
 //
-// The hosts the filters leave are drawn by `HelmCardGrid`, grouped the way
-// the table groups them, under the built-in Firstmate card. Each card is the
-// host's own tile and accent, its name, `user@address[:port]`, and its live
-// state or when it was last connected. The bolt connects (or switches to the
-// live session) and the pencil opens the host's details ready to edit, both
-// always visible at low emphasis (C5). A double click connects, as Return
-// does.
+// The hosts the filters leave are drawn by `HelmCardGrid` as one flat run
+// of cards after the built-in Firstmate card, the way the Keys grid is - the
+// captain's call, because one section per group left a row per group and the
+// rest of the page empty. Each card names its group in a quiet chip, and
+// Grouped, at the foot of the group filter's menu, brings back one section
+// per group, the way the table groups them. Each card is the host's own tile
+// and accent, its name, `user@address[:port]`, and its live state or when it
+// was last connected. The bolt connects (or switches to the live session)
+// and the pencil opens the host's details ready to edit, both always visible
+// at low emphasis (C5). A double click connects, as Return does.
 //
 // The table (`HelmDataTable`) is still here, one click away on the Grid /
 // List switch (C4: Grid is the default). The two are one selection: picking
@@ -58,6 +61,12 @@ extension HostsController {
             hostsViewModeControl.setContentHuggingPriority(.required, for: .horizontal)
             hostsViewModeControl.setContentCompressionResistancePriority(.required, for: .horizontal)
             row.addArrangedSubview(hostsViewModeControl)
+            // The two lines above are no-ops on a view with no intrinsic size
+            // (gotcha (12)); the filter row's spacer is what must stretch, so
+            // the switch hugs above its collapse - see `onlineFilter`'s hug.
+            let hug = hostsViewModeControl.widthAnchor.constraint(equalToConstant: 0)
+            hug.priority = NSLayoutConstraint.Priority(252)
+            hug.isActive = true
         }
         applyConnectionsViewMode()
     }
@@ -77,6 +86,75 @@ extension HostsController {
         return tabs
     }
 
+    // MARK: Grouped
+
+    /// Grouped: one section per group in the host cards, off by default. It
+    /// is a checkable item at the foot of the group filter's own menu, and
+    /// the two places it could have gone instead were both measured out:
+    ///
+    /// - A third choice on Grid / List: that switch is one stored choice
+    ///   shared with the Keys tab, where "Grouped" would mean nothing.
+    /// - A toggle beside the filter: the filter row has no width to spare at
+    ///   1100 with the inspector open. A toggle there - with its title or
+    ///   with only its glyph - made `PageRedesignsSelfTest` watch the window
+    ///   grow from 1100 to 1457 and 1420pt.
+    ///
+    /// A menu item costs the row nothing, so long as its title is no wider
+    /// than "All groups": a pop-up sizes itself to its widest item.
+    static let groupedChoiceMarker = "\u{0000}grouped"
+    static let groupedChoiceTitle = "Grouped"
+
+    /// Append Grouped, under a separator, to the group filter's menu.
+    func addGroupedChoice(to menu: NSMenu) {
+        let separator = NSMenuItem.separator()
+        separator.identifier = NSUserInterfaceItemIdentifier("groupedSeparator")
+        menu.addItem(separator)
+        let item = NSMenuItem(title: Self.groupedChoiceTitle, action: nil, keyEquivalent: "")
+        item.representedObject = Self.groupedChoiceMarker
+        item.toolTip = "Show the host cards in one section per group"
+        item.setAccessibilityHelp("Show the host cards in one section per group")
+        menu.addItem(item)
+    }
+
+    /// The captain picked Grouped: flip it, and put the filter's own
+    /// selection back, so the pop-up keeps naming the group it filters by.
+    func groupedChoicePicked(restoring index: Int) {
+        groupPicker.selectItem(at: index)
+        setHostsGrouped(!AppSettings.shared.hostsGrouped)
+    }
+
+    /// The captain's Grouped choice, stored and drawn.
+    func setHostsGrouped(_ grouped: Bool) {
+        AppSettings.shared.hostsGrouped = grouped
+        refreshGroupedChoice()
+        applyHostFilter(searchField.stringValue)
+    }
+
+    /// Grouped's tick follows the stored choice, and it shows only where it
+    /// changes something: over the cards, since the table always groups.
+    /// A pop-up ticks its selected item itself, so this runs after every
+    /// change of selection.
+    ///
+    /// It also adds the item when the menu has none. The hosts load when the
+    /// page is built, before it adopts the sidebar layout, so the menu's
+    /// first build is the floating bar's - measured, a tour that seeded its
+    /// hosts first had no Grouped until a host changed.
+    func refreshGroupedChoice() {
+        guard drawsSidebarLayout, let menu = groupPicker.menu else { return }
+        if !menu.items.isEmpty, !menu.items.contains(where: { $0.representedObject as? String == Self.groupedChoiceMarker }) {
+            addGroupedChoice(to: menu)
+        }
+        let hidden = AppSettings.shared.connectionsShowList
+        for item in menu.items {
+            if item.representedObject as? String == Self.groupedChoiceMarker {
+                item.state = AppSettings.shared.hostsGrouped ? .on : .off
+                item.isHidden = hidden
+            } else if item.identifier?.rawValue == "groupedSeparator" {
+                item.isHidden = hidden
+            }
+        }
+    }
+
     /// The captain's Grid / List choice, stored and applied.
     func setConnectionsShowList(_ list: Bool) {
         AppSettings.shared.connectionsShowList = list
@@ -91,6 +169,7 @@ extension HostsController {
         hostsViewModeControl.select(list ? Self.listModeID : Self.gridModeID)
         hostsGrid.isHidden = list
         hostsTable.card.isHidden = !list
+        refreshGroupedChoice()
         applyKeysViewMode(list: list)
     }
 
@@ -128,12 +207,38 @@ extension HostsController {
 
     // MARK: Rendering
 
+    /// The order of the flat grid: by group in the order the table and the
+    /// grouped cards draw them (groups by name, then the ungrouped hosts),
+    /// then by name, then by the saved order - so a group's hosts still sit
+    /// together without a header between them, and the order never shifts
+    /// between two renders.
+    static func flatOrder(_ hosts: [Host], group: (Host) -> String?) -> [Host] {
+        hosts.enumerated().sorted { a, b in
+            let ga = group(a.element), gb = group(b.element)
+            if ga != gb {
+                switch (ga, gb) {
+                case let (x?, y?): return x < y
+                case (nil, _): return false
+                case (_, nil): return true
+                }
+            }
+            let byName = a.element.label.localizedStandardCompare(b.element.label)
+            if byName != .orderedSame { return byName == .orderedAscending }
+            return a.offset < b.offset
+        }.map(\.element)
+    }
+
     /// The cards for the hosts the filters leave: X2's recent row while
-    /// nothing is filtered, then Firstmate, then the hosts in their groups.
+    /// nothing is filtered, then Firstmate, then the hosts - one flat run,
+    /// or one section per group when the captain chose Grouped.
     func renderHostsGrid(_ hosts: [Host], query: String) {
         guard drawsSidebarLayout else { return }
         let filtering = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !selectedTags.isEmpty || onlineOnly || selectedGroup != nil
+        let grouped = AppSettings.shared.hostsGrouped
+        // In the flat grid the card names its group; under a group's header
+        // it would be the header again.
+        func hostCard(_ host: Host) -> HelmCardGrid.Card { self.hostCard(host, showsGroup: !grouped) }
         var sections: [HelmCardGrid.Section] = []
         let recent = filtering ? [] : Self.recentHosts(hostStore.hosts)
         if !recent.isEmpty {
@@ -142,7 +247,10 @@ extension HostsController {
             sections.append(section)
         }
         let groupKeys = Set(hosts.map { normalizedGroup($0) })
-        if groupKeys.count <= 1 {
+        if !grouped {
+            let ordered = Self.flatOrder(hosts) { normalizedGroup($0) }
+            sections.append(.init(title: recent.isEmpty ? nil : "All hosts", cards: [firstmateCard()] + ordered.map(hostCard)))
+        } else if groupKeys.count <= 1 {
             sections.append(.init(title: recent.isEmpty ? nil : "All hosts", cards: [firstmateCard()] + hosts.map(hostCard)))
         } else {
             sections.append(.init(title: nil, cards: [firstmateCard()]))
@@ -179,7 +287,7 @@ extension HostsController {
         return card
     }
 
-    private func hostCard(_ host: Host) -> HelmCardGrid.Card {
+    private func hostCard(_ host: Host, showsGroup: Bool) -> HelmCardGrid.Card {
         let session = liveSession?(host.id)
         let key = host.id.uuidString
         let primary: () -> Void = session != nil
@@ -189,6 +297,9 @@ extension HostsController {
                                      title: host.label, subtitle: host.subtitle,
                                      accessibilityLabel: Self.accessibilityLabel(for: host, session: session,
                                                                                  group: normalizedGroup(host)))
+        if showsGroup, let group = normalizedGroup(host) {
+            card.chip = (group, "Group: " + group)
+        }
         // The third line: the live state, else when it was last connected,
         // else what tells two similar hosts apart - its tags, or failing
         // those the credential it signs in with.

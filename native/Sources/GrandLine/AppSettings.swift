@@ -66,6 +66,7 @@ final class AppSettings {
         static let sidebarWidth = "fm.sidebarWidth"
         static let connectionsViewMode = "fm.connections.viewMode"
         static let hostTagMatchAll = "fm.connections.tagMatchAll"
+        static let hostsGrouped = "fm.connections.hostsGrouped"
         static let workspaceToolbarItems = "fm.workspaceToolbar.items"
         static let workspaceToolbarDisplayMode = "fm.workspaceToolbar.displayMode"
         static let appLockIdleSeconds = "fm.appLockIdleSeconds"
@@ -334,6 +335,15 @@ final class AppSettings {
     var connectionsShowList: Bool {
         get { defaults.string(forKey: Keys.connectionsViewMode) == "list" }
         set { defaults.set(newValue ? "list" : "grid", forKey: Keys.connectionsViewMode) }
+    }
+
+    /// Whether the Hosts card grid draws one section per group. Off by
+    /// default: the grid is one flat run of cards, the way the Keys grid is,
+    /// and each card names its group. An unset key reads as off, so nothing
+    /// a captain saved before this existed changes what they see.
+    var hostsGrouped: Bool {
+        get { defaults.bool(forKey: Keys.hostsGrouped) }
+        set { defaults.set(newValue, forKey: Keys.hostsGrouped) }
     }
 
     /// X4: the Hosts tag chips match a host carrying **all** of the selected

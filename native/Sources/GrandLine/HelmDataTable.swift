@@ -1195,7 +1195,10 @@ final class HelmTagChip: NSView {
         label.textColor = HelmTheme.mutedInk(theme)
     }
 
-    var text: String { label.stringValue }
+    var text: String {
+        get { label.stringValue }
+        set { label.stringValue = newValue }
+    }
 }
 
 /// Hosts a view the page owns, in a cell.
