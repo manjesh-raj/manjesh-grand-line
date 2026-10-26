@@ -1,0 +1,58 @@
+# R2-PROC-01 of the second full review: `main` went red twice in a row and
+# nothing re-ran it. One of the two was an infrastructure failure - shard 2
+# could not download the debug binary, and no suite ran at all (run
+# 39914224694) - so the one signal for "is `main` healthy" stayed red after a
+# merge that broke nothing.
+#
+# This workflow re-runs a failed `main` CI run once, and **only** when the
+# failure was infrastructure. The `CI infrastructure` check in `ci.yml` is
+# what decides that: it is red only when a test job failed outside its suites
+# (checkout, toolchain, the binary download, an artifact upload). A run whose
+# suites failed is never re-run from here, so a real suite failure can never
+# be turned green by a retry. It stays red until a person looks at it.
+#
+# Once per run (`run_attempt == 1`), so an infrastructure failure that keeps
+# happening is re-run once and then left red, rather than looping.
+#
+# `workflow_run` only fires for a workflow file on the default branch, so this
+# takes effect from the merge that adds it and cannot be exercised by the pull
+# request that adds it.
+
+name: Re-run main after an infrastructure failure
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  rerun:
+    name: re-run an infrastructure failure on main
+    if: >-
+      github.event.workflow_run.conclusion == 'failure'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Re-run the failed jobs when the failure was infrastructure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          verdict="$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/1/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name == "CI infrastructure") | .conclusion')"
+          echo "CI infrastructure: ${verdict:-not reported}"
+          if [ "$verdict" != failure ]; then
+            echo "Run $RUN_ID failed for a build or suite reason, not infrastructure. Not re-running it."
+            exit 0
+          fi
+          echo "Run $RUN_ID failed for an infrastructure reason. Re-running its failed jobs once."
+          gh run rerun "$RUN_ID" --failed --repo "$REPO"

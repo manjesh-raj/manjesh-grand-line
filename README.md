@@ -1,5 +1,7 @@
 # Grand Line
 
+[![CI on main](https://github.com/manjesh-raj/manjesh-grand-line/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/manjesh-raj/manjesh-grand-line/actions/workflows/ci.yml?query=branch%3Amain)
+
 A native macOS cockpit to **observe and lightly control** a [firstmate](https://github.com/kunchenguid/firstmate) fleet.
 
 You keep talking to your first mate as usual (in tmux); this gives you a live window onto the whole crew - who's working, what needs a decision, PRs ready to merge - plus a real terminal onto the first mate itself.
@@ -70,6 +72,13 @@ rather than silently disappearing.
 CI points every `FM_*` data-location override at a scratch directory, so a run never
 attempts a real clone of the private config repo and never depends on what the runner's
 home directory happens to contain.
+
+The badge at the top of this file is `main`'s latest CI run, so a red `main` is seen
+rather than found. A test job that fails outside its suites (checkout, the toolchain, the
+debug binary's download) also fails the separate `CI infrastructure` check, so that kind
+of red reads differently from a suite failure. A `main` run that failed only for that
+reason is re-run once by `.github/workflows/ci-rerun.yml`. A suite failure is never
+re-run automatically.
 
 ## Testing
 

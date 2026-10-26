@@ -25,6 +25,10 @@
 #           side by side (`test-windowed-shard`), and the `self-test suites
 #           (window-backed)` check passes only when every shard did and the
 #           shards between them ran each suite exactly once.
+#   infrastructure - R2-PROC-01 of the second full review: `CI infrastructure`
+#           goes red when a test job failed outside its suites (the binary
+#           download, checkout, the toolchain), so that kind of red is told
+#           apart from a suite failure. See the job's own comment.
 #   widget - P11 of the 2026-09-25 review: `build-widget-extension.sh --check`.
 #           The WidgetKit extension is not a SwiftPM target, so `swift build`
 #           never compiles it - and `WidgetSharedContract.swift` is compiled
@@ -268,7 +272,25 @@ jobs:
           fi
 
       # P2: built once in the `build` job above, not a fourth time here.
+      #
+      # R2-PROC-01: twice. The action already retries inside one attempt, and
+      # `main` still went red on "Artifact download failed after 5 retries"
+      # (run 39914224694, shard 2) with every suite untouched. A second attempt
+      # after a pause is the retry the action's own loop cannot give: its five
+      # tries are seconds apart, and a storage blip outlasts them. Only the
+      # download is retried - nothing here can re-run or excuse a suite.
       - name: Take the debug binary from the build job
+        id: binary
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: grandline-debug-binary
+          path: native/.build/debug
+      - name: Wait before retrying the download
+        if: ${{ steps.binary.outcome == 'failure' }}
+        run: sleep 30
+      - name: Take the debug binary from the build job (second attempt)
+        if: ${{ steps.binary.outcome == 'failure' }}
         uses: actions/download-artifact@v4
         with:
           name: grandline-debug-binary
@@ -363,7 +385,19 @@ jobs:
           fi
 
       # P2: built once in the `build` job above, not a fourth time here.
+      # R2-PROC-01: with one retry, for the reason the `test` job gives.
       - name: Take the debug binary from the build job
+        id: binary
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: grandline-debug-binary
+          path: native/.build/debug
+      - name: Wait before retrying the download
+        if: ${{ steps.binary.outcome == 'failure' }}
+        run: sleep 30
+      - name: Take the debug binary from the build job (second attempt)
+        if: ${{ steps.binary.outcome == 'failure' }}
         uses: actions/download-artifact@v4
         with:
           name: grandline-debug-binary
@@ -461,6 +495,95 @@ jobs:
         run: |
           echo "shards: ${{ needs.test-windowed-shard.result }}"
           [ "${{ needs.test-windowed-shard.result }}" = success ]
+
+  # R2-PROC-01 of the second full review: a red test check used to mean either
+  # "a suite failed" or "the runner could not fetch the binary", and nothing on
+  # the check list told the two apart. `main` went red on the second kind
+  # (run 39914224694: shard 2 could not download the debug binary, no suite
+  # ran) and read exactly like the first.
+  #
+  # This check is the separate signal. It reads this attempt's own jobs from
+  # the API and classifies every failed test job by the step that failed:
+  #
+  #   * a step named "Run the ..." is the suites themselves - a suite failure.
+  #     That is the test checks' business, and this check stays green for it.
+  #   * any other step (checkout, toolchain, the binary download, a shard's
+  #     list upload) is infrastructure, and this check goes red, naming it.
+  #
+  # `swift build (debug)` counts as infrastructure only when its artifact
+  # upload failed; a compile failure is a build failure, not the runner's.
+  #
+  # It never changes what the other checks report. A shard that could not run
+  # its suites still fails `self-test suites (window-backed)`, because "every
+  # window-backed suite passed" was not shown. This check only says why.
+  # `.github/workflows/ci-rerun.yml` reads it to decide whether a failed `main`
+  # run is re-run.
+  #
+  # `ubuntu-latest` rather than the pinned macOS label: it builds nothing and
+  # runs no suite, only `gh api` and `jq`, so the runner image does not matter.
+  infrastructure:
+    name: CI infrastructure
+    needs: [build-debug, test, test-windowed-shard]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Tell an infrastructure failure from a suite failure
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" > jobs.json
+          # One line per failed job we classify: name, then its failed steps.
+          jq -r '
+            .jobs[]
+            | select(.name == "swift build (debug)"
+                     or .name == "self-test suites"
+                     or (.name | startswith("self-test suites (window-backed, shard")))
+            | select(.conclusion == "failure" or .conclusion == "timed_out")
+            | [.name, ([.steps[] | select(.conclusion == "failure" or .conclusion == "timed_out"
+                                          or .conclusion == "cancelled") | .name] | join("; "))]
+            | @tsv' jobs.json > failed.tsv
+
+          infra=0
+          {
+            echo "### CI infrastructure"
+            echo
+            if [ ! -s failed.tsv ]; then
+              echo "No test or debug-build job failed for an infrastructure reason in this attempt."
+            else
+              echo "| Job | Failed step | Kind |"
+              echo "| --- | --- | --- |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          while IFS=$'\t' read -r job steps; do
+            if [ "$job" = "swift build (debug)" ]; then
+              case "$steps" in
+                *"Share the debug binary"*) kind=infrastructure ;;
+                *) kind=build ;;
+              esac
+            else
+              case "$steps" in
+                *"Run the "*) kind=suite ;;
+                *) kind=infrastructure ;;
+              esac
+            fi
+            echo "| $job | ${steps:-(none recorded)} | $kind |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$kind" = infrastructure ]; then
+              infra=1
+              echo "::error title=CI infrastructure::$job failed in '${steps:-an unrecorded step}', before or after its suites - not a suite failure. Re-run the job."
+            else
+              echo "$job: a $kind failure, which its own check reports."
+            fi
+          done < failed.tsv
+          exit "$infra"
 
   generated:
     name: generated files match their inputs
