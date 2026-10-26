@@ -71,19 +71,17 @@ final class MainSplitShellController: WorkspaceShellController {
     /// the sidebar narrows to what the window has, so a wider default does
     /// not lose the sidebar at any window width it used to show at.
     static let sidebarComfortWidth: CGFloat = 236
-    /// The narrowest the content column may be, which is the widest page's
-    /// own minimum: the 29 pages were laid out for the floating bar's
-    /// full-width body, and two of them hold more width than a column beside
-    /// the sidebar has at 1100pt - Log Analyzer 938pt and DevOps Commands
-    /// 929pt, measured as the width each pushed a 1100pt window to. A page
-    /// that is wider than its column does not shrink, it grows the window
-    /// (AGENTS.md gotcha (13)), so the column is never allowed to be
-    /// narrower than this. Below `contentMinimum` plus the sidebar the system
-    /// collapses the sidebar instead - the standard macOS behaviour - and
-    /// brings it back when the window is wide enough again.
+    /// The base of the column's floor while the inspector shows a page's
+    /// details (`inspectorColumnMinimum`): Hosts and Poneglyph, the two pages
+    /// that fill the inspector, are laid out to fit 940pt less the inspector.
     ///
-    /// Stage 4 lowers this as each module's page is reflowed for the column;
-    /// `MainSplitShellSelfTest` fails if a page outgrows it first.
+    /// It used to be every page's floor - the widest page's own minimum, set
+    /// by Log Analyzer and DevOps Commands - which collapsed the sidebar below
+    /// about 1180pt on every page. R2-UX-10 gave each page its own floor
+    /// (`ModuleDescriptor.minimumContentWidth`, read on navigation through
+    /// `contentMinimum(for:)`); below a page's floor plus the sidebar the
+    /// sidebar steps aside for that page only, and comes back when a narrower
+    /// page shows. `MainSplitShellSelfTest` fails if a page outgrows its floor.
     static let contentMinimumWithOverlayScrollers: CGFloat = 940
 
     /// `contentMinimumWithOverlayScrollers`, plus one scroller's track while
@@ -92,10 +90,35 @@ final class MainSplitShellController: WorkspaceShellController {
     /// exactly that. Measured on CI's runner, which shows them always: Log
     /// Analyzer and Kubernetes need 953pt there against about 938pt with
     /// overlay scrollers, and DevOps Commands 943pt against 929pt.
-    static var contentMinimum: CGFloat {
-        guard NSScroller.preferredScrollerStyle == .legacy else { return contentMinimumWithOverlayScrollers }
-        return contentMinimumWithOverlayScrollers + NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+    static var contentMinimum: CGFloat { withScrollerTrack(contentMinimumWithOverlayScrollers) }
+
+    /// R2-UX-10: the column floor while `route`'s page shows - its own
+    /// `ModuleDescriptor.minimumContentWidth`, plus a legacy scroller's track.
+    /// One floor for every page (`contentMinimum`, set by the two widest)
+    /// collapsed the sidebar below about 1180pt on every page, including the
+    /// sixteen that fit a much narrower column.
+    static func contentMinimum(for route: RailDestination, pageTab: String? = nil) -> CGFloat {
+        #if FM_SELFTESTS
+        if let override = routeFloorOverrideForTests { return withScrollerTrack(override) }
+        #endif
+        // Scaled with the chrome text: a page's widths grow with its type,
+        // and at 1.3 Settings measured 803pt against 635pt at 1.0. Linear is
+        // the safe side of that (gotcha (13)).
+        let floor = ModuleTable.minimumContentWidth(for: route, pageTab: pageTab)
+        return withScrollerTrack((floor * ChromeTextScale.shared.scale).rounded(.up))
     }
+
+    private static func withScrollerTrack(_ overlayFloor: CGFloat) -> CGFloat {
+        guard NSScroller.preferredScrollerStyle == .legacy else { return overlayFloor }
+        return overlayFloor + NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+    }
+
+    #if FM_SELFTESTS
+    /// One floor for every route, so a probe can lay a page out in a column
+    /// narrower than its own floor and measure how wide it really needs to be.
+    /// Every user restores `nil`.
+    static var routeFloorOverrideForTests: CGFloat?
+    #endif
 
     /// The column's floor while the inspector shows a page's details: the
     /// inspector takes its width out of the column rather than out of the
@@ -130,6 +153,10 @@ final class MainSplitShellController: WorkspaceShellController {
     /// drill header's second line (`chrome.drillTitle`, `chrome.drillSubtitle`).
     private(set) var currentModule: WorkspaceModule = .home
     private var currentRoute: RailDestination = .homeCanvas
+    /// The text scale the column's floor was last settled for.
+    private var floorScale = ChromeTextScale.shared.scale
+    /// The window width `fitPanesToWindow` last fitted the panes to.
+    private var lastFittedWindowWidth: CGFloat = .greatestFiniteMagnitude
     /// Console's dedicated host page is showing, which is not a route.
     private var showingHostPage = false
     private var hostPageLabel = ""
@@ -254,6 +281,11 @@ final class MainSplitShellController: WorkspaceShellController {
 
         themeToken = ThemeManager.shared.observe { [weak self] theme in
             self?.toolbar?.applyThemeSymbol(theme)
+            // R2-UX-10: a text scale change re-fires the theme, and the
+            // column's floor follows the scale.
+            guard let self, self.floorScale != ChromeTextScale.shared.scale else { return }
+            self.floorScale = ChromeTextScale.shared.scale
+            self.applyColumnFloor()
         }
         // Home's subtitle is the date, so it turns over at midnight.
         dayChangeObserver = NotificationCenter.default.addObserver(
@@ -308,7 +340,7 @@ final class MainSplitShellController: WorkspaceShellController {
         sidebarItem.holdingPriority = HelmSplitPage.sidebarHoldingPriority
 
         contentItem = NSSplitViewItem(viewController: contentPane)
-        contentItem.minimumThickness = Self.contentMinimum
+        contentItem.minimumThickness = Self.contentMinimum(for: currentRoute)
         contentItem.holdingPriority = NSLayoutConstraint.Priority(rawValue: 250)
         contentItem.titlebarSeparatorStyle = .automatic
         // The column's floor follows the scroll bar setting (`contentMinimum`).
@@ -319,11 +351,7 @@ final class MainSplitShellController: WorkspaceShellController {
         scrollerStyleObserver = NotificationCenter.default.addObserver(
             forName: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            let floor = self.columnFloor
-            if floor < self.contentItem.minimumThickness { self.contentItem.minimumThickness = floor }
-            self.fitPanesToWindow()
-            self.contentItem.minimumThickness = floor
+            self?.applyColumnFloor()
         }
 
         inspectorItem = NSSplitViewItem(viewController: inspector)
@@ -396,6 +424,7 @@ final class MainSplitShellController: WorkspaceShellController {
     private func buildToolbar() {
         toolbar = WorkspaceToolbar(splitView: splitController.splitView)
         toolbar.onToggleSidebar = { [weak self] in self?.toggleWorkspaceSidebar() }
+        toolbar.onShowLocation = { [weak self] in self?.revealDestinationMap() }
         toolbar.onBack = { [weak self] in self?.step(.back) }
         toolbar.onForward = { [weak self] in self?.step(.forward) }
         toolbar.onRecents = { [weak self] anchor in self?.recents.togglePanel(under: anchor) }
@@ -491,13 +520,23 @@ final class MainSplitShellController: WorkspaceShellController {
         let width = window.contentRect(forFrameRect: window.frame).width
         guard width > 0 else { return }
         toolbar.setCompact(width < WorkspaceToolbar.compactWidth)
+        defer { toolbar.setSidebarShown(!sidebarItem.isCollapsed) }
+        // R2-UX-10: a narrower window with the sidebar still showing - which
+        // the per-page floors made the usual case at laptop widths - needs
+        // the same one-turn pin as a narrower sidebar. Measured in the tour
+        // lab: Home shrunk from 1512 to 1100 left the sidebar at its 200pt
+        // minimum, because Home's grid still held the wider column's widths
+        // at 499, above the sidebar's 489, and the sidebar was already at
+        // the width it was asked for, so nothing pinned it.
+        let narrowed = width < lastFittedWindowWidth - 0.5
+        lastFittedWindowWidth = width
         let fit = sidebarFitWidth(windowWidth: width)
         if !sidebarItem.isCollapsed {
             if fit < sidebarStepsAsideBelow {
                 setSidebarCollapsed(true, animated: false)
                 sidebarCollapsedForRoom = true
             } else {
-                holdSidebar(at: fit)
+                holdSidebar(at: fit, evenIfUnchanged: narrowed)
             }
         } else if sidebarCollapsedForRoom, fit >= sidebarStepsAsideBelow {
             // Lay the panes out at the window's new width first, with the
@@ -519,9 +558,9 @@ final class MainSplitShellController: WorkspaceShellController {
     /// still holds the wider column's widths at `contentTie` (499), above the
     /// sidebar's 489, until it re-lays out on the next turn. So the width is
     /// pinned for that one turn, exactly as an expand pins it.
-    private func holdSidebar(at width: CGFloat) {
+    private func holdSidebar(at width: CGFloat, evenIfUnchanged: Bool = false) {
         guard didSettleInitialSidebarWidth, !sidebarItem.isCollapsed,
-              abs(sidebar.view.frame.width - width) > 0.5 else { return }
+              evenIfUnchanged || abs(sidebar.view.frame.width - width) > 0.5 else { return }
         sidebarItem.minimumThickness = width
         sidebarItem.maximumThickness = width
         splitController.splitView.layoutSubtreeIfNeeded()
@@ -543,6 +582,7 @@ final class MainSplitShellController: WorkspaceShellController {
     /// width anyone chose.
     private func setSidebarCollapsed(_ collapsed: Bool, animated: Bool) {
         guard sidebarItem.isCollapsed != collapsed else { return }
+        toolbar.setSidebarShown(!collapsed)
         let animate = animated && view.window != nil && !HelmMotion.isReduced
         #if FM_SELFTESTS
         lastPaneMotionForTests = (pane: "sidebar", collapsed: collapsed, duration: animate ? WorkspaceMotion.paneDuration : nil)
@@ -600,7 +640,7 @@ final class MainSplitShellController: WorkspaceShellController {
     private func makeRoom(sidebarShown: Bool, inspectorShown: Bool) {
         guard let window = view.window else { return }
         let floor = inspectorShown && inspectorSource?.inspectorContent != nil
-            ? Self.inspectorColumnMinimum : Self.contentMinimum
+            ? Self.inspectorColumnMinimum : routeFloor
         // U-03: room for the sidebar at its comfort width, which is where it
         // narrows to - not the captain's wider one.
         let needed = floor + (sidebarShown ? sidebarStepsAsideBelow + sidebarChrome : 0)
@@ -677,11 +717,14 @@ final class MainSplitShellController: WorkspaceShellController {
         let details = shown && inspectorSource?.inspectorContent != nil
         if shown {
             if details { contentItem.minimumThickness = Self.inspectorColumnMinimum }
-            // The inspector takes its room from the window, then from the
-            // sidebar if the window cannot grow enough - never from the
-            // column, which a page may need every point of.
-            makeRoom(sidebarShown: !sidebarItem.isCollapsed, inspectorShown: true)
-            let floor = details ? Self.inspectorColumnMinimum : Self.contentMinimum
+            // The inspector takes its room from the sidebar, then from the
+            // window if the column and the inspector alone do not fit - never
+            // from the column, which a page may need every point of.
+            // R2-UX-10: the sidebar now stays at laptop widths, so widening
+            // the window for the sidebar too would resize it on most clicks
+            // of this button; the review asked for that to be rare.
+            makeRoom(sidebarShown: false, inspectorShown: true)
+            let floor = details ? Self.inspectorColumnMinimum : routeFloor
             if let window = view.window, !sidebarItem.isCollapsed,
                window.contentRect(forFrameRect: window.frame).width - sidebarStepsAsideBelow - sidebarChrome
                 - WorkspaceInspectorController.width < floor {
@@ -726,7 +769,36 @@ final class MainSplitShellController: WorkspaceShellController {
     private var columnFloor: CGFloat { columnFloor(inspectorShown: !inspectorItem.isCollapsed) }
 
     private func columnFloor(inspectorShown: Bool) -> CGFloat {
-        inspectorShown && inspector.hostedContentView != nil ? Self.inspectorColumnMinimum : Self.contentMinimum
+        inspectorShown && inspector.hostedContentView != nil ? Self.inspectorColumnMinimum : routeFloor
+    }
+
+    /// R2-UX-10: the showing page's own floor. A host page is Console's.
+    private var routeFloor: CGFloat { routeFloor(pageTab: incomingPageTab) }
+
+    /// The page tab about to show, while its wider floor is applied ahead of
+    /// it (`open(_:)`).
+    private var incomingPageTab: String?
+
+    /// `pageTab` overrides the page's selected tab - the one it is about to
+    /// show.
+    private func routeFloor(pageTab: String?) -> CGFloat {
+        guard !showingHostPage else { return Self.contentMinimum(for: .console) }
+        let tab = pageTab ?? (currentRoute == currentModule.pageTabHost
+            ? (pageController as? ModuleTabHosting)?.selectedModuleTabName : nil)
+        return Self.contentMinimum(for: currentRoute, pageTab: tab)
+    }
+
+    /// Settle the column's floor for what shows now - a page change or a
+    /// scroll bar setting. A lower floor goes on before the panes are
+    /// fitted, so a sidebar that comes back is not held to the old one; a
+    /// higher floor after, so the sidebar steps aside before the column's
+    /// minimum can push the window wider (gotcha (13)).
+    private func applyColumnFloor() {
+        guard contentItem != nil else { return }
+        let floor = columnFloor
+        if floor < contentItem.minimumThickness { contentItem.minimumThickness = floor }
+        fitPanesToWindow()
+        contentItem.minimumThickness = floor
     }
 
     /// Match the inspector to the showing page and the captain's choice: the
@@ -749,6 +821,15 @@ final class MainSplitShellController: WorkspaceShellController {
                 // earlier request does not carry over to this page.
                 shown = false
                 inspectorPinnedOpen = false
+            } else if !sidebarItem.isCollapsed, inspectorItem.isCollapsed,
+                      width - sidebarStepsAsideBelow - sidebarChrome - WorkspaceInspectorController.width < floor {
+                // R2-UX-10: the sidebar now stays at widths where the column
+                // and the inspector fit only without it. The sidebar steps
+                // aside for the inspector, as it does for the captain's own
+                // request (`setInspectorShown`), and comes back once the
+                // inspector closes - never the window growing instead.
+                setSidebarCollapsed(true, animated: false)
+                sidebarCollapsedForRoom = true
             }
         }
         setInspectorCollapsed(!shown, animated: false)
@@ -861,7 +942,16 @@ final class MainSplitShellController: WorkspaceShellController {
             // It takes a navigation's motion instead (`WorkspaceMotion`).
             let switching = host.selectedModuleTabName != tab.name
             if switching { workspace.content.crossfadeOutgoingPage(unless: false) }
+            // R2-UX-10: a tab wider than its page (Tasks' Weekly review) gets
+            // its floor before it lays out, so the sidebar steps aside rather
+            // than the window growing; a narrower one after, below.
+            if routeFloor(pageTab: tab.name) > routeFloor {
+                incomingPageTab = tab.name
+                applyColumnFloor()
+                incomingPageTab = nil
+            }
             host.selectModuleTab(named: tab.name)
+            applyColumnFloor()
             if switching { playTabEntrance(towardsLater: from.map { isLater(tab, than: $0) } ?? true) }
         }
         refreshModuleChrome()
@@ -902,6 +992,8 @@ final class MainSplitShellController: WorkspaceShellController {
         host.setModuleTabControlHidden(true)
         host.onModuleTabChanged = { [weak self, weak host] in
             guard let self, let host, (self.pageController as? ModuleTabHosting) === host else { return }
+            // R2-UX-10: a page tab can need a wider column than its page.
+            self.applyColumnFloor()
             self.refreshModuleChrome()
         }
     }
@@ -1129,6 +1221,10 @@ final class MainSplitShellController: WorkspaceShellController {
         currentRoute = dest
         showingHostPage = false
         currentModule = ModuleTable.module(for: dest)
+        // R2-UX-10: before the page lays out in the column, so a wider page's
+        // floor collapses the sidebar rather than growing the window, and a
+        // narrower page's brings a sidebar that stepped aside back.
+        applyColumnFloor()
         // Adopted first, so a page whose sidebar presentation has its own
         // live subtitle (Crew, Settings - R2-UX-05) is read in that form.
         adoptPage(slot.controller)
@@ -1150,6 +1246,7 @@ final class MainSplitShellController: WorkspaceShellController {
         showingHostPage = true
         hostPageLabel = label
         currentModule = .console
+        applyColumnFloor()
         pageSubtitle = "Dedicated host page"
         inspectorSource = nil
         applyPageActions(controller)
@@ -1201,6 +1298,9 @@ final class MainSplitShellController: WorkspaceShellController {
     var debugSidebarIsCollapsed: Bool { sidebarItem.isCollapsed }
     var debugInspectorIsCollapsed: Bool { inspectorItem.isCollapsed }
     var debugColumnMinimum: CGFloat { contentItem.minimumThickness }
+    /// R2-UX-10: the narrowest window, in points of content width, that keeps
+    /// the sidebar beside the showing page's own floor.
+    var debugNarrowestWidthKeepingSidebar: CGFloat { columnFloor + sidebarStepsAsideBelow + sidebarChrome }
     var debugDividerThickness: CGFloat { splitController.splitView.dividerThickness }
     /// The inspector back at its launch state: wanted, not held open.
     func debugResetInspectorPreference() {

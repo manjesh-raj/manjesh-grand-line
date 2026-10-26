@@ -1418,6 +1418,12 @@ extension LogAnalyzerController: NSTextViewDelegate {
     /// no later code path has an unredacted copy to leak. Spec §14.
     @discardableResult
     private func addEvidence(raw: String, label: String, origin: LogEvidenceOrigin, sourceDetail: String? = nil) -> Bool {
+        // R2-SEC-12: the redaction sweep below runs on the main thread, so
+        // an uncapped paste was a beachball. Refused before anything reads it.
+        if let refusal = InputSizeLimit.refusal(forText: raw, what: label) {
+            Toast.show(in: view, message: refusal)
+            return false
+        }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         return addRedactedEvidence(LogRedactor.redact(raw), label: label, origin: origin, sourceDetail: sourceDetail)
@@ -1473,7 +1479,8 @@ extension LogAnalyzerController: NSTextViewDelegate {
         if !pending.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let label = importSourceLabel.map { "Terminal output - \($0)" } ?? "Pasted output"
             let origin: LogEvidenceOrigin = importSourceLabel == nil ? .pasted : .terminal
-            addEvidence(raw: pending, label: label, origin: origin, sourceDetail: importSourceLabel)
+            // A refusal (R2-SEC-12's size cap) leaves the text where it is.
+            guard addEvidence(raw: pending, label: label, origin: origin, sourceDetail: importSourceLabel) else { return }
             inputTextView.string = ""
         }
         runAnalysis()
@@ -1504,23 +1511,48 @@ extension LogAnalyzerController: NSTextViewDelegate {
     }
 
     @objc func analyzeClipboard() {
-        guard let text = NSPasteboard.general.string(forType: .string),
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            Toast.show(in: view, message: "Clipboard is empty")
-            return
-        }
+        guard let text = clipboardTextForEvidence() else { return }
         addEvidence(raw: text, label: "Clipboard", origin: .clipboard)
         runAnalysis()
     }
 
     @objc func addClipboardAsEvidence() {
-        guard let text = NSPasteboard.general.string(forType: .string),
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            Toast.show(in: view, message: "Clipboard is empty")
-            return
-        }
+        guard let text = clipboardTextForEvidence() else { return }
         addEvidence(raw: text, label: "Clipboard", origin: .clipboard)
         Toast.show(in: view, message: "Clipboard added as evidence")
+    }
+
+    /// The clipboard's text for the two clipboard actions, or `nil` after
+    /// saying why there is none.
+    ///
+    /// **R2-SEC-03: refuses a concealed pasteboard, asked before the string is
+    /// read.** Evidence is persisted by `LogAnalyzerStore.save` and sent to
+    /// `claude -p`, and `LogRedactor` catches token-shaped values rather than
+    /// an arbitrary password - so without this, one chord inside the vault's
+    /// clipboard window moved a copied credential to disk and off the Mac.
+    /// `CredentialVaultClipboard.isConcealed` is this app's one definition of
+    /// "a secret is on the pasteboard" (AGENTS.md's "Stores, subprocesses and
+    /// secrets").
+    private func clipboardTextForEvidence() -> String? {
+        guard !CredentialVaultClipboard.isConcealed(clipboard) else {
+            Toast.show(in: view, message: "That clipboard entry came from Poneglyph, so it was not read")
+            return nil
+        }
+        guard let text = clipboard.string(forType: .string),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            Toast.show(in: view, message: "Clipboard is empty")
+            return nil
+        }
+        return text
+    }
+
+    /// The general pasteboard, or a suite's own named board so a check never
+    /// writes the captain's clipboard.
+    private var clipboard: NSPasteboard {
+        #if FM_SELFTESTS
+        if let board = Self.debugPasteboard { return board }
+        #endif
+        return .general
     }
 
     @objc func addCurrentInputAsEvidence() {
@@ -1557,7 +1589,13 @@ extension LogAnalyzerController: NSTextViewDelegate {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var loaded: [(LogRedactionResult, URL)] = []
             var unreadable: [String] = []
+            var tooLarge: [String] = []
             for url in urls {
+                // R2-SEC-12: refused from its size on disk, before it is read.
+                if let refusal = InputSizeLimit.refusal(forFileAt: url, what: url.lastPathComponent) {
+                    tooLarge.append(refusal)
+                    continue
+                }
                 guard let text = try? String(contentsOf: url, encoding: .utf8) else {
                     unreadable.append(url.lastPathComponent)
                     continue
@@ -1568,6 +1606,9 @@ extension LogAnalyzerController: NSTextViewDelegate {
                 guard let self else { return }
                 for name in unreadable {
                     Toast.show(in: self.view, message: "Could not read \(name) as text")
+                }
+                for refusal in tooLarge {
+                    Toast.show(in: self.view, message: refusal)
                 }
                 var added = 0
                 for (result, url) in loaded
@@ -2975,7 +3016,7 @@ extension LogAnalyzerController: SidebarLayoutAdopting, WorkspacePrimaryActionPr
         // Analyze leaves the input row for the toolbar.
         inputControls.removeArrangedSubview(analyzeButton)
         analyzeButton.removeFromSuperview()
-        analyzeButton.toolTip = "Analyze (\u{2318}\u{21A9})"
+        analyzeButton.toolTip = "Analyze (\u{2318}\u{21A9}). " + AITransparency.willSendToClaude("the redacted evidence")
         inputHintLabel.isHidden = true
 
         // The input, once it is evidence: the redacted output, with Clear.
@@ -3116,6 +3157,10 @@ extension LogAnalyzerController {
         guard let tab = tabViews[id] else { return false }
         return !tab.isHidden && !tab.isHiddenOrHasHiddenAncestor
     }
+    /// R2-SEC-03: the pasteboard the clipboard actions read instead of the
+    /// general one. Every user restores `nil`.
+    static var debugPasteboard: NSPasteboard?
+    var debugEvidenceCount: Int { investigation.evidence.count }
     func debugSetInput(_ text: String) {
         _ = view
         inputTextView.string = text

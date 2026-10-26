@@ -80,7 +80,7 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     // untouched. `AppShellDrillHeaderTitleSelfTest` measures the result.
     private lazy var generateButton = HelmPageToolbar.labeledButton(
         symbol: "sparkles", title: "Generate",
-        tooltip: "Describe a diagram and have Claude draw it here",
+        tooltip: "Describe a diagram to draw here. " + AITransparency.willSendToClaude("your description"),
         target: self, action: #selector(generateTapped))
     private lazy var dslButton = HelmPageToolbar.labeledButton(
         symbol: "point.topleft.down.to.point.bottomright.curvepath", title: "From text",

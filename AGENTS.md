@@ -1369,11 +1369,13 @@ noted.
   `...TransientType`, `com.apple.is-sensitive`) are written by
   `writeConcealed`; **any one of them alone is enough to refuse**, because the
   nspasteboard.org convention exists to be honoured for other apps' writes too
-  and those carry one marker rather than this app's three. Four readers exist
-  today - the clipboard history's capture loop, ⌥Space's pasteboard chip,
-  the Reading List's paste/drop route (`ReadingListController.pasteTapped`,
-  `ReadingListDropRootView.acceptableURL`) and F12's `{{clipboard}}` placeholder
-  (`SnippetExpander.clipboardText`) - and a second hard-coded copy of
+  and those carry one marker rather than this app's three. The readers
+  today are the clipboard history's capture loop, ⌥Space's pasteboard chip
+  and its insert, the Reading List's paste/drop route
+  (`ReadingListController.pasteTapped`, `ReadingListDropRootView.acceptableURL`),
+  F12's `{{clipboard}}` placeholder (`SnippetExpander.clipboardText`), the
+  vault editor's 2FA paste and the Log Analyzer's two clipboard actions
+  (`LogAnalyzerController.clipboardTextForEvidence`) - and a second hard-coded copy of
   the marker strings is the one way this rule
   could silently stop matching, with no test failing. Check it **before**
   reading the string, so "a vault secret never reaches this store" is a

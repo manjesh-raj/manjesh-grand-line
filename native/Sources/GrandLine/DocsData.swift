@@ -264,7 +264,7 @@ enum DocsSyncSource {
     private static func syncFetch(_ request: URLRequest) -> Data? {
         let semaphore = DispatchSemaphore(value: 0)
         var result: Data?
-        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
+        let task = NetworkGate.shared.dataTask(with: request) { data, response, _ in
             if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
                 result = data
             }

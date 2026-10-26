@@ -602,7 +602,7 @@ final class ReadingListCardView: HoverHighlightView {
 
     @objc private func openExternallyTapped() {
         guard let url = URL(string: link.url) else { return }
-        NSWorkspace.shared.open(url)
+        WebNavigationPolicy.openExternally(url, from: "a reading-list card")
     }
 
     @objc private func copyLinkTapped() {

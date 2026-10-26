@@ -120,6 +120,17 @@ worker is inlined into the JS as source text: web/ has no other files and the
 page fetches nothing.
 INFO
 
+# R2-SEC-12: a SHA-256 of every shipped file. Nothing in CI rebuilds this
+# bundle, so a hand edit to the committed JavaScript would ship unnoticed;
+# CodePreviewSelfTest recomputes every digest below and fails on any difference, and on a
+# file in web/ that is not listed.
+{
+  echo "SHA-256 of every shipped file, asserted by CodePreviewSelfTest:"
+  (cd "$DEST" && find . -type f ! -name BUILD-INFO.txt | sed 's|^\./||' | LC_ALL=C sort | while IFS= read -r f; do
+    printf 'sha256 %s  %s\n' "$(shasum -a 256 "$f" | cut -d' ' -f1)" "$f"
+  done)
+} >> "$DEST/BUILD-INFO.txt"
+
 if [ "$CHECK_ONLY" -eq 1 ]; then
   if diff -r "$OUT" "$DEST" >/dev/null 2>&1; then
     echo ""

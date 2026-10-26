@@ -749,8 +749,85 @@ enum LogAnalyzerSelfTest {
         }
 
         checkTheInputPaneShowsWholeLines(check)
+        checkTheClipboardActionsRefuseAConcealedSecret(check)
 
         return finish(failures)
+    }
+
+    // MARK: R2-SEC-03 - the clipboard actions ask isConcealed first
+
+    /// Driven through the two real `@objc` actions the button, the ⋯ menu and
+    /// the app menu reach, against a named board so the captain's clipboard is
+    /// never written. The refused case comes first and uses `analyzeClipboard`,
+    /// which would start `claude -p` if it got past the check - it returns
+    /// before that, which is the point.
+    private static func checkTheClipboardActionsRefuseAConcealedSecret(_ check: (Bool, String) -> Void) {
+        let board = NSPasteboard(name: NSPasteboard.Name("fm-log-analyzer-concealed-\(UUID().uuidString)"))
+        LogAnalyzerController.debugPasteboard = board
+        defer {
+            LogAnalyzerController.debugPasteboard = nil
+            board.releaseGlobally()
+        }
+        autoreleasepool {
+            let controller = LogAnalyzerController(commandLibrary: CommandLibraryStore())
+            _ = controller.view
+            let secret = "vault-copied-passphrase-Tr0ub4dor"
+
+            board.clearContents()
+            board.setString(secret, forType: .string)
+            board.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+            check(CredentialVaultClipboard.isConcealed(board),
+                  "fixture: the board carries the concealed marker, or the refusal below proves nothing")
+            controller.analyzeClipboard()
+            controller.addClipboardAsEvidence()
+            check(controller.debugEvidenceCount == 0,
+                  "R2-SEC-03: a concealed clipboard became \(controller.debugEvidenceCount) evidence item(s)")
+
+            // The same text without the marker is read, so the zero above is
+            // the check's doing and not a board the page cannot see.
+            board.clearContents()
+            board.setString(secret, forType: .string)
+            controller.addClipboardAsEvidence()
+            check(controller.debugEvidenceCount == 1,
+                  "an ordinary clipboard was not added as evidence (\(controller.debugEvidenceCount) items)")
+
+            // R2-SEC-12: a clipboard over the size cap is refused before the
+            // main-thread redaction sweep runs over it. Driven at a 64 KB cap
+            // so a reverted cap fails here in a second rather than hanging
+            // in that very sweep; the real cap is pinned below.
+            check(InputSizeLimit.maxBytes == BackupArchiveLimits.maxBytesPerFile,
+                  "R2-SEC-12: the input cap is \(InputSizeLimit.maxBytes) bytes, not the backup bundle's per-file limit")
+            InputSizeLimit.maxBytesOverrideForTests = 64 * 1024
+            defer { InputSizeLimit.maxBytesOverrideForTests = nil }
+            board.clearContents()
+            board.setString(String(repeating: "x", count: InputSizeLimit.maxBytes + 1), forType: .string)
+            controller.addClipboardAsEvidence()
+            check(controller.debugEvidenceCount == 1,
+                  "R2-SEC-12: a clipboard over the size cap became evidence")
+
+            // ...and a dropped file over it, from its size on disk. A sparse
+            // file, so the fixture costs nothing to write.
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("log-analyzer-cap-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let huge = dir.appendingPathComponent("huge.log")
+            FileManager.default.createFile(atPath: huge.path, contents: Data())
+            if let handle = try? FileHandle(forWritingTo: huge) {
+                try? handle.truncate(atOffset: UInt64(InputSizeLimit.maxBytes + 1))
+                try? handle.close()
+            }
+            let small = dir.appendingPathComponent("small.log")
+            try? "2026-10-25T10:00:00Z ERROR worker crashed\n".write(to: small, atomically: true, encoding: .utf8)
+            controller.importFiles([huge, small])
+            let deadline = Date().addingTimeInterval(10)
+            while controller.debugEvidenceCount < 2, Date() < deadline {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            check(controller.debugEvidenceCount == 2,
+                  "R2-SEC-12: dropping a file over the cap beside a small one added \(controller.debugEvidenceCount - 1) item(s), not 1")
+        }
     }
 
     // MARK: R2-BUG-16 - the Input pane shows every line in full

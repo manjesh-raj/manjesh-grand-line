@@ -457,6 +457,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
             tileRow.addArrangedSubview(tile)
         }
 
+        crewButton.toolTip = AITransparency.willSendToClaude("what you captured")
         crewButton.target = self
         crewButton.action = #selector(askTheCrew)
         crewButton.translatesAutoresizingMaskIntoConstraints = false
@@ -624,8 +625,9 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
     }
 
     private func insertClipboardText() {
-        guard let raw = NSPasteboard.general.string(forType: .string),
-              !CredentialVaultClipboard.isConcealed(NSPasteboard.general) else { return }
+        // Asked before the string is read (R2-SEC-03's source guard).
+        guard !CredentialVaultClipboard.isConcealed(NSPasteboard.general),
+              let raw = NSPasteboard.general.string(forType: .string) else { return }
         let existing = inputField.stringValue
         inputField.stringValue = existing.isEmpty
             ? raw

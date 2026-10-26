@@ -340,6 +340,16 @@ final class DocsRunbookGitSync {
         }
         let dirty = uncommittedFiles()
         guard !dirty.isEmpty else { return pushOnly() }
+        // R2-SEC-04: the dotfiles sync's secret scan, before anything is
+        // staged. A held commit says which file and why, and stays held until
+        // the file changes. See `DotfilesSecretScan.scan`.
+        let findings = DotfilesSecretScan.scan(statusLines: dirty, in: workingTree)
+        guard findings.isEmpty else {
+            let reason = DotfilesSecretScan.syncHeldMessage(store: "Runbooks", findings)
+            AppLog.gitSync.error("synced store commit held back: \(reason, privacy: .private)")
+            setStatus(.failed(reason))
+            return false
+        }
         setStatus(.syncing)
         let add = runGit(["add", "-A", "--", Self.runbooksSubpath], cwd: workingTree, authenticated: false)
         guard add.status == 0 else {

@@ -153,6 +153,10 @@ enum CodePreviewSelfTest {
                   "the bundle is missing \(file)")
         }
         check(CodePreviewAssets.isAvailable, "isAvailable should agree with webDirectory()")
+        // R2-SEC-12: every shipped file matches the digest its build recorded.
+        for problem in VendoredBundleDigests.problems(in: dir) {
+            check(false, "R2-SEC-12: Monaco bundle: \(problem)")
+        }
         check(CodePreviewAssets.indexURL()?.lastPathComponent == "index.html",
               "indexURL should point at index.html")
 

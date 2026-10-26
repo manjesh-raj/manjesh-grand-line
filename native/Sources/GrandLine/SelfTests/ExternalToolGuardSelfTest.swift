@@ -109,6 +109,11 @@ enum ExternalToolGuardSelfTest {
             ("/usr/bin/open", ["-g", "-a", "Automic Vault"], "open, which launches the vault's approval service"),
             ("/bin/bash", ["\(home)/manjesh/firstmate/bin/fm-crew-state.sh", "task"], "a firstmate script via bash"),
             ("/bin/bash", ["/somewhere/else/bin/fm-pr-merge.sh"], "an fm-*.sh script wherever the home is"),
+            ("/opt/homebrew/bin/npm", ["view", "tasks-axi", "version"], "the real npm (R2-SEC-01)"),
+            ("/usr/bin/git", ["credential", "fill"], "git credential, which reads the real token (R2-SEC-01)"),
+            ("/usr/bin/git", ["-C", "/some/clone", "-c", "a=b", "credential", "fill"],
+             "git credential behind global options (R2-SEC-01)"),
+            ("/usr/local/bin/git-credential-osxkeychain", ["get"], "a git credential helper (R2-SEC-01)"),
         ]
         for (executable, arguments, what) in refused {
             check(ExternalToolGuard.refusal(executable: executable, arguments: arguments) != nil,
@@ -118,6 +123,8 @@ enum ExternalToolGuardSelfTest {
             ("\(temp)/av", ["list"], "a stub av in a temp directory"),
             ("/bin/bash", ["\(temp)/fm-send.sh"], "a stub fm-send.sh in a temp directory"),
             ("/usr/bin/git", ["status"], "git"),
+            ("/usr/bin/git", ["-C", "/some/clone", "commit", "-m", "credential"], "git commit that mentions credential"),
+            ("/usr/bin/git", ["-C", "/some/clone", "remote", "get-url", "origin"], "a local git read"),
             ("/bin/echo", ["hi"], "echo"),
             ("/bin/sh", ["-c", "true"], "an inline shell command"),
         ]

@@ -626,20 +626,29 @@ enum Subprocess {
             // log line is a breadcrumb, not a transcript. The full text is
             // already surfaced to the captain through the caller's own log
             // field.
+            //
+            // R2-SEC-10: redacted and `.private`. This runs for every tool, so
+            // a failed `claude -p` could echo prompt text (a dictation
+            // transcript) into the unified log, and an `av inject` failure
+            // prints a secret's name.
             log.error("""
                 \(name, privacy: .public) exited \(result.status) after \
                 \(result.duration, format: .fixed(precision: 2))s: \
-                \(Self.excerpt(result.failureSummary ?? ""), privacy: .public)
+                \(Self.excerpt(result.failureSummary ?? ""), privacy: .private)
                 """)
         case .timedOut:
             log.error("\(name, privacy: .public) timed out after \(result.duration, format: .fixed(precision: 2))s and was killed")
         case .launchFailed:
-            log.error("\(name, privacy: .public) failed to launch: \(Self.excerpt(result.stderr), privacy: .public)")
+            log.error("\(name, privacy: .public) failed to launch: \(Self.excerpt(result.stderr), privacy: .private)")
         }
     }
 
-    private static func excerpt(_ text: String, limit: Int = 400) -> String {
-        text.count <= limit ? text : String(text.prefix(limit)) + "…"
+    /// The first `limit` characters of a child's output, redacted
+    /// (R2-SEC-10). Cut first, so the redaction sweep runs over a bounded
+    /// slice rather than megabytes.
+    static func excerpt(_ text: String, limit: Int = 400) -> String {
+        let cut = text.count <= limit ? text : String(text.prefix(limit)) + "…"
+        return LogRedactor.redact(cut).text
     }
 
     // MARK: Detached

@@ -2958,7 +2958,7 @@ final class HomeCanvasController: NSViewController {
             let url = URL(string: pr.url)
             return HelmModulePeekRow(state: state, text: pr.displayTitle,
                                      value: pr.checks == "none" ? "No checks" : "Checks \(pr.checks)",
-                                     onOpen: url.map { url in { NSWorkspace.shared.open(url) } },
+                                     onOpen: url.map { url in { WebNavigationPolicy.openExternally(url, from: "Home's merge queue") } },
                                      openHelp: pr.number.map { "Open pull request #\($0)" } ?? "Open the pull request")
         }
         content.body = .peekRows(Array(rows))

@@ -250,6 +250,13 @@ struct ModuleDescriptor {
     /// The tab inside `module`, or `nil` when the destination is the module's
     /// whole page.
     let child: String?
+    /// R2-UX-10: the narrowest the sidebar layout's content column may be
+    /// while this page shows, with overlay scrollers (the shell adds a legacy
+    /// scroller's track itself). A page wider than its column grows the
+    /// window (gotcha (13)), so this is the page's own measured minimum;
+    /// below it plus the sidebar, the sidebar steps aside for this page only.
+    /// `MainSplitShellSelfTest` fails if a page outgrows its floor.
+    var minimumContentWidth: CGFloat = ModuleTable.defaultMinimumContentWidth
 }
 
 enum ModuleTable {
@@ -262,7 +269,9 @@ enum ModuleTable {
         ModuleDescriptor(route: .overview, title: "Fleet", symbol: "square.grid.2x2", hue: .blue,
                          slot: .overview, subtitle: "Dispatched crew, decisions and the morning briefing",
                          mountsEagerly: true, space: nil, homeCards: [.briefing, .fleet],
-                         newAction: .task, module: .crew, child: "In flight"),
+                         newAction: .task, module: .crew, child: "In flight",
+                         // R2-UX-10: the fleet table's columns, measured at 743pt.
+                         minimumContentWidth: 760),
         ModuleDescriptor(route: .strawHat, title: "Straw Hat Pirates", symbol: "person.3.fill", hue: .violet,
                          slot: .strawHat, subtitle: "Ask the crew - every write is yours to confirm",
                          mountsEagerly: false, space: .command, homeCards: [.strawHat],
@@ -286,7 +295,12 @@ enum ModuleTable {
         ModuleDescriptor(route: .logAnalyzer, title: "Log Analyzer", symbol: "text.magnifyingglass", hue: .teal,
                          slot: .logAnalyzer, subtitle: "Collect, analyse and explain captured output",
                          mountsEagerly: false, space: .operations, homeCards: [.logAnalyzer],
-                         newAction: .task, module: .logs, child: nil),
+                         newAction: .task, module: .logs, child: nil,
+                         // R2-UX-10: one of the two pages the old single floor
+                         // was set by, unreflowed. 940 held when the page was
+                         // shown at a narrow width; a window narrowed while it
+                         // shows needs 973 (measured), so it keeps 980.
+                         minimumContentWidth: 980),
         ModuleDescriptor(route: .kubernetes, title: "Kubernetes", symbol: "cube.transparent", hue: .teal,
                          slot: .kubernetes, subtitle: "Read-only cluster browsing and multi-pod log tailing",
                          mountsEagerly: false, space: .operations, homeCards: [.kubernetes],
@@ -311,7 +325,10 @@ enum ModuleTable {
         ModuleDescriptor(route: .commandLibrary, title: "DevOps Commands", symbol: "books.vertical", hue: .teal,
                          slot: .commandLibrary, subtitle: "Your saved shell commands, parameterised and ready to run",
                          mountsEagerly: false, space: .command, homeCards: [.commandLibrary],
-                         newAction: .command, module: .connections, child: "Commands"),
+                         newAction: .command, module: .connections, child: "Commands",
+                         // R2-UX-10: the other page that set the old floor;
+                         // 964 measured the same way as Log Analyzer's.
+                         minimumContentWidth: 980),
         ModuleDescriptor(route: .vault, title: "Vault", symbol: "lock.shield", hue: .violet,
                          slot: .vault, subtitle: "Secret names and tool hardening status from Automic Vault",
                          mountsEagerly: false, space: .stores, homeCards: [.vault],
@@ -377,6 +394,28 @@ enum ModuleTable {
     /// The row for `route`. Every case has exactly one, which
     /// `ModuleTableSelfTest` asserts, so the fallback is unreachable in a
     /// tested build.
+    /// R2-UX-10: the column floor of a page that names none. Measured with
+    /// every page laid out in a narrower column at the default text scale:
+    /// the widest of them (Settings 635pt, Updates 630pt, Schedules 623pt)
+    /// sit under this, which keeps the sidebar beside them down to about
+    /// 906pt. Scaled with the chrome text size by the shell.
+    static let defaultMinimumContentWidth: CGFloat = 660
+
+    /// R2-UX-10: a page tab wider than its page's floor. Tasks' Weekly
+    /// review measured 920pt against 517pt for its Board, List and Calendar,
+    /// so only that tab gives up the sidebar at a laptop width.
+    static let pageTabMinimumContentWidths: [RailDestination: [String: CGFloat]] = [
+        .shift: ["Weekly review": 940],
+    ]
+
+    /// The column floor `route`'s page needs (`ModuleDescriptor.minimumContentWidth`),
+    /// or its page tab's when that tab names a wider one.
+    static func minimumContentWidth(for route: RailDestination, pageTab: String? = nil) -> CGFloat {
+        let page = descriptor(for: route)?.minimumContentWidth ?? defaultMinimumContentWidth
+        guard let pageTab, let tab = pageTabMinimumContentWidths[route]?[pageTab] else { return page }
+        return max(page, tab)
+    }
+
     static func descriptor(for route: RailDestination) -> ModuleDescriptor? {
         rows.first { $0.route == route }
     }

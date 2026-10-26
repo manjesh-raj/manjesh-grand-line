@@ -661,6 +661,10 @@ enum WidgetSnapshotSelfTest {
         }
         check(loaded == snapshot,
               "the snapshot should survive the round trip byte-for-byte in value terms - one encoder, one decoder, one date strategy")
+        // R2-SEC-12: task titles and sticky bodies, readable by this account only.
+        let mode = (try? FileManager.default.attributesOfItem(atPath: publisher.snapshotURL.path)[.posixPermissions]) as? Int
+        check(mode == SensitiveFile.fileMode,
+              "R2-SEC-12: the widget snapshot was written at mode \(String(mode ?? -1, radix: 8)), not 0600")
 
         // A re-publish of identical content is dropped before the write, so
         // a noisy store observer costs a comparison rather than a write plus

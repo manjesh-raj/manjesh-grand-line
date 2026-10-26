@@ -377,7 +377,8 @@ enum ReviewTwoUXSelfTest {
         let inset = (shell.debugSidebarPane?.frame.width ?? 272) - shell.debugSidebarWidth
         // Short of room for 264 but not for 236: it narrows, and the window
         // keeps its width - the sidebar shows at every width it used to.
-        let narrow = (MainSplitShellController.contentMinimum + 236 + inset + 12).rounded()
+        // R2-UX-10: against the showing page's own floor.
+        let narrow = (shell.debugColumnMinimum + 236 + inset + 12).rounded()
         resize(window, width: narrow, shell)
         // What the window was measured against, so a runner that disagrees
         // says why (CI's 1x runner grew this window by 17pt once).
@@ -388,9 +389,10 @@ enum ReviewTwoUXSelfTest {
         check(abs(window.frame.width - narrow) < 0.5, "at \(Int(narrow))pt the window grew to \(Int(window.frame.width))pt (\(measured))", &ok)
         check(!shell.debugSidebarIsCollapsed && shell.debugSidebarWidth < 263 && shell.debugSidebarWidth >= 236,
               "at \(Int(narrow))pt the sidebar is \(shell.debugSidebarIsCollapsed ? "collapsed" : "\(shell.debugSidebarWidth)pt"), want it narrowed between 236 and 264", &ok)
-        // Below the old threshold it steps aside, as it always did.
-        resize(window, width: 1100, shell)
-        check(shell.debugSidebarIsCollapsed, "at 1100 the sidebar is still showing", &ok)
+        // Below this page's threshold it steps aside, as it always did.
+        let below = (shell.debugNarrowestWidthKeepingSidebar - 3).rounded(.down)
+        resize(window, width: below, shell)
+        check(shell.debugSidebarIsCollapsed, "at \(Int(below))pt the sidebar is still showing", &ok)
         // And it comes back out at its own width.
         resize(window, width: 1512, shell)
         check(!shell.debugSidebarIsCollapsed && abs(shell.debugSidebarWidth - 264) < 0.5,

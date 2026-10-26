@@ -11,3 +11,7 @@ monaco's full ~90.
 The codicon glyph font is inlined into the CSS as a data: URI, and the editor
 worker is inlined into the JS as source text: web/ has no other files and the
 page fetches nothing.
+SHA-256 of every shipped file, asserted by CodePreviewSelfTest:
+sha256 6d76722c3ce2a49800ef8b55d77aba76f6fa44de6f3c9a8582d338dc367850ae  code-preview.css
+sha256 48075d0f0c0300cc759ac95d67afd76e34de1ca8763bb1246788c541f70986f0  code-preview.js
+sha256 73f763dc6ea60f58d7204ddda8f6d4500c7525ee1068997756ca4c4cfb812122  index.html

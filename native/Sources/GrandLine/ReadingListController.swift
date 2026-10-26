@@ -666,7 +666,11 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         readerTitle.stringValue = link.displayTitle
         readerCard.isHidden = false
         gridScroll.isHidden = true
-        readerWebView.load(URLRequest(url: url))
+        // R2-SEC-01: WebKit fetches from its own process, where the network
+        // gate's URLProtocol cannot see, so a test or tour asks first.
+        if NetworkGate.allowsOutOfProcessLoad(url) {
+            readerWebView.load(URLRequest(url: url))
+        }
         if !link.isRead {
             store.setRead(id: id, read: true)
             refreshCard(id: id)
@@ -691,7 +695,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
 
     @objc private func readerOpenExternallyTapped() {
         guard let id = readingID, let link = store.link(id: id), let url = URL(string: link.url) else { return }
-        NSWorkspace.shared.open(url)
+        WebNavigationPolicy.openExternally(url, from: "the reading-list reader")
     }
 
     // MARK: Rendering
@@ -1024,7 +1028,7 @@ extension ReadingListController: WKNavigationDelegate {
             decisionHandler(.cancel)
         case .openExternally:
             decisionHandler(.cancel)
-            NSWorkspace.shared.open(url)
+            WebNavigationPolicy.openExternally(url, from: "the reading-list reader")
         }
     }
 

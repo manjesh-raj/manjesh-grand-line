@@ -1551,6 +1551,7 @@ final class HelmToggleRow: NSView {
     /// Review bug B11: the row's own title label, so a suite can compare what
     /// the text needs against what it got.
     var debugTitleLabel: NSTextField { titleLabel }
+    var debugSubtitle: String? { subtitleLabel?.stringValue }
     #endif
 
     /// Re-wrap the title against the width this row actually has.

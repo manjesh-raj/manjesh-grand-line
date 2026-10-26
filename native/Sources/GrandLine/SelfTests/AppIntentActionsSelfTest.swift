@@ -40,6 +40,7 @@
 
 import AppKit
 import Foundation
+import LocalAuthentication
 
 enum AppIntentActionsSelfTest {
 
@@ -65,6 +66,7 @@ enum AppIntentActionsSelfTest {
         checkCopyCredentialRefusesALockedVault(check)
         checkCopyCredentialUnlocksWithTouchID(check)
         checkCopyCredentialPerItemGate(check)
+        checkTheRevealGateFallsBackToTheLoginPassword(check)
         checkCopyCredentialNeverReturnsTheSecret(check)
         checkAskCrewValidatesItsInput(check)
         checkEveryActionIsLockGated(check)
@@ -408,6 +410,39 @@ enum AppIntentActionsSelfTest {
          VaultCredential(id: "cred-db", title: "Postgres replica", secret: "another-secret"),
          VaultCredential(id: "cred-gated", title: "Root password", secret: "root-secret",
                          requiresTouchIDToReveal: true)]
+    }
+
+    // MARK: R2-SEC-08 - the reveal gate never degrades to no gate
+
+    /// On a Mac without biometry, "Require Touch ID to reveal" revealed with
+    /// no gate on the vault page. Both the page and the Intent now take their
+    /// policy from `RevealAuthentication`, which falls back to the login
+    /// password and refuses only when the Mac cannot authenticate its owner.
+    private static func checkTheRevealGateFallsBackToTheLoginPassword(_ check: (Bool, String) -> Void) {
+        check(RevealAuthentication.policy(biometryAvailable: true, deviceOwnerAvailable: true)
+              == .deviceOwnerAuthenticationWithBiometrics, "R2-SEC-08: Touch ID is not used when the Mac has it")
+        check(RevealAuthentication.policy(biometryAvailable: false, deviceOwnerAvailable: true)
+              == .deviceOwnerAuthentication, "R2-SEC-08: a Mac without biometry does not fall back to the login password")
+        check(RevealAuthentication.policy(biometryAvailable: false, deviceOwnerAvailable: false) == nil,
+              "R2-SEC-08: a Mac that cannot authenticate its owner is given a policy anyway")
+
+        // Both call sites take the shared policy, and the page no longer has
+        // a path that reveals without evaluating it.
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let page = try? String(contentsOf: dir.appendingPathComponent("CredentialVaultController.swift"), encoding: .utf8),
+              let intents = try? String(contentsOf: dir.appendingPathComponent("GrandLineIntentActions.swift"), encoding: .utf8),
+              let gateStart = page.range(of: "private func gateForReveal("),
+              let gateEnd = page.range(of: "@objc private func clearClipboardNow()", range: gateStart.upperBound..<page.endIndex)
+        else {
+            check(false, "R2-SEC-08: could not read the reveal gate's sources - the guard would pass vacuously")
+            return
+        }
+        let gate = String(page[gateStart.lowerBound..<gateEnd.lowerBound])
+        check(gate.contains("RevealAuthentication.livePolicy"), "R2-SEC-08: the vault page's reveal gate does not use RevealAuthentication")
+        check(gate.components(separatedBy: "completion(true)").count == 2,
+              "R2-SEC-08: the reveal gate has a second path that reveals without evaluating a policy")
+        check(intents.contains("isAvailable: { RevealAuthentication.livePolicy != nil }"),
+              "R2-SEC-08: the Copy Credential Intent's challenge does not use RevealAuthentication")
     }
 
     // MARK: Copy Credential - the cases

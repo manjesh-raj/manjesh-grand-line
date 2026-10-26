@@ -158,8 +158,14 @@ enum LockScreenSelfTest {
                         fail(&ok, "\(tag): expected only the setup command well")
                     }
                 case .avUnavailable:
-                    if form || !av || waiting || setupWell {
-                        fail(&ok, "\(tag): expected only the install action")
+                    // R2-SEC-06: the install command in the copyable well,
+                    // beside the message - never a button that runs it.
+                    if form || !av || waiting || !setupWell {
+                        fail(&ok, "\(tag): expected the message and the install command well")
+                    }
+                    if controller.debugSetupCommand != VaultSource.installCommand
+                        || !VaultSource.installCommand.hasPrefix("brew install --cask ") {
+                        fail(&ok, "\(tag): R2-SEC-06: the well shows \(controller.debugSetupCommand), not the install command")
                     }
                 case .serviceNotRunning, .transientFailure:
                     if form || av || !waiting || setupWell {
@@ -253,8 +259,11 @@ enum LockScreenSelfTest {
             for (name, state) in allStates {
                 controller.apply(state)
                 controller.view.layoutSubtreeIfNeeded()
+                // `.avUnavailable` has no primary button since R2-SEC-06 (it
+                // shows the install command instead of running it), so its
+                // Copy button is the action measured there.
                 let button = state.hue == .amber && !controller.debugAvStack.isHidden
-                    ? controller.debugInstallButton
+                    ? controller.debugCopyButton
                     : controller.debugUnlockButton
                 guard let fill = button.layer?.backgroundColor.map({ NSColor(cgColor: $0) ?? .black }),
                       let label = button.attributedTitle.length > 0
@@ -268,8 +277,8 @@ enum LockScreenSelfTest {
 
             // §2.4's own headline case, stated as a measurement rather than a
             // comment: a white label on the RAW amber h1 fails, which is why
-            // `DaylightPalette.primaryButtonFill` exists and why the
-            // `.avUnavailable` install button must route through it.
+            // `DaylightPalette.primaryButtonFill` exists and why every amber
+            // primary button must route through it.
             if register.isDaylight {
                 let rawAmber = HelmDomainHue.amber.pair(in: register).h1
                 let rawRatioAmber = HelmContrast.ratio(.white, rawAmber)
@@ -576,6 +585,19 @@ enum LockScreenSelfTest {
         for banned in ["LAContext", "VaultSource.verifyAppPassword", "av inject", "Subprocess"] {
             if lock.contains(banned) && !lock.split(separator: "\n").filter({ $0.contains(banned) }).allSatisfy({ $0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }) {
                 fail(&ok, "\(banned) appears in executable code in LockScreenController - verification belongs to LockPresenter, and there is no biometric path on this screen")
+            }
+        }
+        // R2-SEC-06: nothing on or behind the lock screen installs anything.
+        // The screen that exists to require a credential offered a Homebrew
+        // install to whoever was at it.
+        for banned in ["updateInstall", "UpdatesSource.update", "brew install", "onInstallAutomicVault"] {
+            let inCode = { (text: String) in
+                text.split(separator: "\n").contains {
+                    $0.contains(banned) && !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//")
+                }
+            }
+            if inCode(lock) || inCode(shell) {
+                fail(&ok, "R2-SEC-06: \(banned) is back on the lock screen - it must show the install command, never run it")
             }
         }
         // And the shell must still be the one doing it, off the main thread.

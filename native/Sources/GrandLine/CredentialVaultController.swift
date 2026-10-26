@@ -926,17 +926,18 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
             completion(true)
             return
         }
-        guard CredentialVaultKeyStore.biometryAvailable else {
-            // The gate cannot be satisfied on this Mac. Refusing outright would
-            // make the item unreachable; saying so and proceeding is the honest
-            // behaviour, and the vault password has already been entered.
-            Toast.show(in: view, message: "No biometry on this Mac - revealing without it")
-            completion(true)
+        // R2-SEC-08: on a Mac with no biometry this used to reveal with no
+        // gate at all. It asks for the login password instead
+        // (`RevealAuthentication`), and refuses only on a Mac that cannot
+        // authenticate its owner in any way.
+        guard let policy = RevealAuthentication.livePolicy else {
+            Toast.show(in: view, message: "This Mac cannot confirm it is you, so the item stays hidden")
+            completion(false)
             return
         }
         let context = LAContextFactory.make(reason: "Reveal \u{201C}\(credential.title)\u{201D}")
         DispatchQueue.global(qos: .userInitiated).async {
-            let allowed = LAContextFactory.evaluate(context)
+            let allowed = LAContextFactory.evaluate(context, policy: policy)
             DispatchQueue.main.async { completion(allowed) }
         }
     }
@@ -1361,6 +1362,27 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
 /// *key* and is about unlocking the vault. This is a bare presence challenge on
 /// an already-unlocked vault - the report's phase-4 "per-item require Touch ID
 /// to reveal" - so there is nothing to read and nothing to store.
+/// R2-SEC-08: the LocalAuthentication policy behind "Require Touch ID to
+/// reveal", for the vault page and the Copy Credential App Intent alike.
+///
+/// Touch ID when this Mac has it, and otherwise the device owner's login
+/// password - never nothing. Before this, a Mac without biometry revealed the
+/// item with no gate (the page) or could never copy it (the Intent). `nil`
+/// only for a Mac that cannot authenticate its owner at all, where both paths
+/// refuse.
+enum RevealAuthentication {
+    static func policy(biometryAvailable: Bool, deviceOwnerAvailable: Bool) -> LAPolicy? {
+        if biometryAvailable { return .deviceOwnerAuthenticationWithBiometrics }
+        if deviceOwnerAvailable { return .deviceOwnerAuthentication }
+        return nil
+    }
+
+    static var livePolicy: LAPolicy? {
+        policy(biometryAvailable: CredentialVaultKeyStore.biometryAvailable,
+               deviceOwnerAvailable: LAContextFactory.deviceOwnerAuthAvailable)
+    }
+}
+
 enum LAContextFactory {
     static func make(reason: String) -> LAContext {
         let context = LAContext()

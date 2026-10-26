@@ -227,6 +227,13 @@ enum ReviewTourLab {
         /// render after its own first sweep (which a tour refuses) settles.
         /// Put it after `goto githubSync`.
         case demoForks
+        /// `demo bitbucket` (R2-SEC-01): a fake Bitbucket identity for Fleet's
+        /// open-PR scan, and the network tripwire behind the gate - so a tour
+        /// against a scratch firstmate home holding a Bitbucket clone drives
+        /// the real authenticated request, and the tour's last line says how
+        /// many requests the gate refused and how many got past it (the tour
+        /// fails on any). Never point it at a real firstmate home.
+        case demoBitbucket
         case comment
     }
 
@@ -311,6 +318,7 @@ enum ReviewTourLab {
             if argument == "setup" { return .success(.demoSetup) }
             if argument == "updates" { return .success(.demoUpdates) }
             if argument == "forks" { return .success(.demoForks) }
+            if argument == "bitbucket" { return .success(.demoBitbucket) }
             if argument == "focuslog" { return .success(.demoFocusLog) }
             if argument == "logs" { return .success(.demoLogs) }
             if argument == "health" { return .success(.demoHealth) }
@@ -646,6 +654,10 @@ enum ReviewTourLab {
                                      stderrData: Data("demo: offline".utf8), duration: 0)
                 }
                 log.append("demo updates (offline: npm fails, nothing else resolves)")
+            case .demoBitbucket:
+                // Applied before the shell mounted (`runTourFile`), because
+                // Fleet's first scan runs at mount.
+                log.append("demo bitbucket (fake identity, tripwire behind the network gate)")
             case .demoHealth:
                 seedDemoHealth(shell.workspace.health)
                 RunLoop.main.run(until: Date().addingTimeInterval(0.1))
@@ -1232,13 +1244,22 @@ enum ReviewTourLab {
             AppSettings.shared.workspaceLayout = chosen
         }
         let layout = AppSettings.shared.workspaceLayout
+        if steps.contains(.demoBitbucket) {
+            NetworkTripwire.install()
+            OpenPRsSource.debugSeedBitbucketIdentity((user: "tour-user", token: "tour-token-not-real"))
+        }
         let (window, shell) = makeOffScreenShell(layout: layout)
         var log = ["layout \(layout.rawValue)"]
         log += run(steps: steps, shell: shell, window: window, outputDirectory: outputDirectory)
+        // R2-SEC-01: what the network gate refused, and anything that got
+        // past it (counted only when `demo bitbucket` installed the tripwire).
+        let refused = LoopbackOnlyURLProtocol.refusals
+        let leaked = NetworkTripwire.seen
+        log.append("network: \(refused.count) refused at the gate \(refused), \(leaked.count) past it \(leaked)")
         for line in log { print(line) }
         try? log.joined(separator: "\n").write(to: outputDirectory.appendingPathComponent("tour.log"),
                                                 atomically: true, encoding: .utf8)
-        return true
+        return leaked.isEmpty
     }
 
     /// The same shell a window-backed suite mounts, in an `OffScreenProbe`

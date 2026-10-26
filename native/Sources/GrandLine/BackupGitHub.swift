@@ -215,7 +215,7 @@ enum GitHubBackupSource {
         var status = -1
         var result: Data?
         var transportError: Error?
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+        let task = NetworkGate.shared.dataTask(with: request) { data, response, error in
             if let http = response as? HTTPURLResponse {
                 status = http.statusCode
             }

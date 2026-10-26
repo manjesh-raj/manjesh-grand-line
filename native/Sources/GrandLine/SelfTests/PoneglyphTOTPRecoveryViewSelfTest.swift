@@ -529,6 +529,22 @@ enum PoneglyphTOTPRecoveryViewSelfTest {
 
         check(!sheet.debugImportButtonEnabled, "nothing to import before a file is chosen")
 
+        // R2-SEC-12: a file over the cap is refused from its size on disk,
+        // through the picker's own read path. A sparse file, so the fixture
+        // costs nothing; a small file through the same path still loads.
+        let huge = scratch.appendingPathComponent("huge-export.csv")
+        FileManager.default.createFile(atPath: huge.path, contents: Data())
+        if let handle = try? FileHandle(forWritingTo: huge) {
+            try? handle.truncate(atOffset: UInt64(InputSizeLimit.maxBytes + 1))
+            try? handle.close()
+        }
+        sheet.debugLoadFile(huge)
+        check(!sheet.debugHasLoadedCSV, "R2-SEC-12: a CSV over the size cap was read into the import sheet")
+        let small = scratch.appendingPathComponent("small-export.csv")
+        try? "Title,Url,Username,Password\nA,https://a.example,me,pw-0123456789\n".write(to: small, atomically: true, encoding: .utf8)
+        sheet.debugLoadFile(small)
+        check(sheet.debugHasLoadedCSV, "fixture: a small CSV through the same path did not load, so the refusal proves nothing")
+
         let csv = """
         Title,Url,Username,Password,OTPAuth,Tags,Notes
         Work Gmail,https://mail.google.com,me@example.com,\(importedPassword),otpauth://totp/G:me?secret=\(seed),work,

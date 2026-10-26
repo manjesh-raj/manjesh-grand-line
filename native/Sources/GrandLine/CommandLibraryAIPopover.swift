@@ -161,6 +161,7 @@ final class CommandLibraryAIViewController: NSViewController {
         buildTextArea(resultScroll, resultTextView, editable: false, height: Self.resultHeight)
 
         askButton.controlSize = .small
+        askButton.toolTip = AITransparency.willSendToClaude("the command and any error you paste, redacted,")
         askButton.target = self
         askButton.action = #selector(askClicked)
         askButton.keyEquivalent = "\r"

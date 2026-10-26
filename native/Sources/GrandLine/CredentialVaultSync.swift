@@ -245,6 +245,17 @@ final class CredentialVaultGitSync {
         return committed
     }
 
+    /// What this class stages: the vault's folder, minus the `.corrupt-<ts>`
+    /// copies `StoreLoadFailure.backUp` writes beside the vault file.
+    ///
+    /// R2-SEC-12: those copies are sealed, so not a disclosure, but staging
+    /// them published a corruption event and its time to the config repo.
+    /// They stay on this Mac, beside the file they preserve, where GL-01's
+    /// recovery story expects them.
+    static var syncedPathspec: [String] {
+        [vaultSubpath, ":(exclude)\(vaultSubpath)/*.corrupt-*"]
+    }
+
     @discardableResult
     func commitAndPushNow() -> Bool {
         guard FileManager.default.fileExists(atPath: workingTree.appendingPathComponent(".git").path) else {
@@ -254,7 +265,7 @@ final class CredentialVaultGitSync {
         let dirty = uncommittedFiles()
         guard !dirty.isEmpty else { return pushOnly() }
         setStatus(.syncing)
-        let add = runGit(["add", "-A", "--", Self.vaultSubpath], cwd: workingTree, authenticated: false)
+        let add = runGit(["add", "-A", "--"] + Self.syncedPathspec, cwd: workingTree, authenticated: false)
         guard add.status == 0 else {
             setStatus(.failed("git add failed: \(add.stderr)"))
             return false
@@ -294,7 +305,7 @@ final class CredentialVaultGitSync {
     }
 
     private func uncommittedFiles() -> [String] {
-        let result = runGit(["status", "--short", "--", Self.vaultSubpath], cwd: workingTree, authenticated: false)
+        let result = runGit(["status", "--short", "--"] + Self.syncedPathspec, cwd: workingTree, authenticated: false)
         return result.stdout.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
     }
 

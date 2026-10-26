@@ -2529,6 +2529,10 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     // Pids are reused, so a folder by this name can be an earlier process's.
     // See `SelfTestScratchRoot`.
     SelfTestScratchRoot.startEmpty(scratchRoot)
+    // R2-SEC-01: no request leaves this process for anywhere but loopback.
+    // `ExternalToolGuard` fences the programs a suite or tour may start; this
+    // fences what `URLSession` does. See `NetworkGate`'s header.
+    NetworkGate.arm()
     // P4 (full review #3): the sibling of every redirect below, for the one
     // piece of shared state that is NOT a file path.
     //
@@ -3872,6 +3876,21 @@ if ProcessInfo.processInfo.environment["FM_RUN_EXTERNAL_TOOL_GUARD_TESTS"] == "1
     exit(ExternalToolGuardSelfTest.run() ? 0 : 1)
 }
 
+// R2-SEC-01: a self-test or tour process sends no request anywhere but
+// loopback. A tripwire behind the gate counts anything that gets past it.
+// Pure logic. See NetworkGateSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_NETWORK_GATE_TESTS"] == "1" {
+    exit(NetworkGateSelfTest.run() ? 0 : 1)
+}
+
+// The second full review's security findings (R2-SEC-01 to R2-SEC-12): the
+// source guards that every pasteboard read, network session, AI call, log
+// line, synced commit and data-derived URL open takes its one shared path.
+// Pure logic. See SecretBoundariesSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SECRET_BOUNDARIES_TESTS"] == "1" {
+    exit(SecretBoundariesSelfTest.run() ? 0 : 1)
+}
+
 // GL-29 (Phase 3): `FleetDataSource`/`OpenPRsSource` - the pair behind Overview
 // and Review, including the merge action's argv. See
 // `FleetDataSelfTest.swift`'s header.
@@ -4748,9 +4767,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_HERDR_RESTART_BUTTON_TESTS"] == "
 // would report the typo as a pass. Measured while writing the modular-shell
 // inventory: the HelmKit guard's flag, misspelt with an extra word, "passed"
 // in 0.1s through `run-all-tests.sh` and ran nothing.
-let unknownSuiteFlags = ProcessInfo.processInfo.environment
-    .filter { $0.key.hasPrefix("FM_RUN_") && $0.key.hasSuffix("_TESTS") && $0.value == "1" }
-    .keys.sorted()
+//
+// R2-SEC-09: any key with the suite prefix at all, whatever its suffix or
+// value. The redirect block above arms on the prefix alone, so a flag missing
+// its `_TESTS` suffix, or set to `yes` instead of `1`, used to arm it, match
+// no suite, and fall through to `SingleInstanceGuard.acquire()` - which
+// activates the captain's running app and exits 0. (No flag is spelt out
+// here: `run-all-tests.sh` discovers suites by grepping this file.)
+let unknownSuiteFlags = SelfTestFlags.unknownSuiteFlags(in: ProcessInfo.processInfo.environment)
 if !unknownSuiteFlags.isEmpty {
     print("no suite answers to \(unknownSuiteFlags.joined(separator: ", ")) - "
           + "check the spelling against the flags this file dispatches")

@@ -121,10 +121,26 @@ enum MainSplitShellSelfTest {
             }
         }
         let crumb = [WorkspaceToolbar.ItemID.crumb]
+        // R2-UX-10: at 1100 the sidebar now stays beside Notebook, which
+        // leaves the toolbar about 250pt less. Its selection names the
+        // module, so the crumb is the item that yields - and it still runs
+        // from the overflow menu (it shows the place in the sidebar).
+        check(!shell.debugSidebarIsCollapsed, "R2-UX-10: at 1100 the sidebar is not beside Notebook", &ok)
         check(notebook.debugToolbarActionTitles == ["", ""],
               "R2-BUG-07: at 1100 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles), want icons", &ok)
-        check(shown(crumb) == crumb, "R2-BUG-07: at 1100 on Notebook the crumb is not on the toolbar", &ok)
         overflowRuns(1100)
+        // R2-BUG-07's own state, a full-width toolbar at 1100 with the
+        // sidebar put away: the crumb stays on the toolbar.
+        shell.toggleWorkspaceSidebar()
+        settle(shell)
+        check(shell.debugSidebarIsCollapsed, "the sidebar toggle did not put the sidebar away", &ok)
+        check(shown(crumb) == crumb, "R2-BUG-07: at 1100 on Notebook, sidebar away, the crumb is not on the toolbar", &ok)
+        overflowRuns(1100)
+        shell.toggleWorkspaceSidebar()
+        settle(shell)
+        check(abs(window.frame.width - 1100) < 0.5 || !shell.debugSidebarIsCollapsed,
+              "bringing the sidebar back at 1100 on Notebook left it away", &ok)
+        resize(window, width: 1100, shell)
         check(shell.toolbar.debugPageActionsMenuTitles == ["View", "Today's note", "More"],
               "Notebook's page actions overflow as \(shell.toolbar.debugPageActionsMenuTitles)", &ok)
         // At 1512 too, since U-02 and U-03 (`compactToolbarActionsBelow`).
@@ -231,33 +247,81 @@ enum MainSplitShellSelfTest {
     // MARK: 2 - the window keeps its size
 
     private static func checkNoPageGrowsTheWindow(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
-        // The narrowest width that keeps the sidebar: its pane plus the
-        // column's minimum.
-        resize(window, width: 1512, shell)
-        let pane = shell.debugSidebarPane?.frame.width ?? MainSplitShellController.sidebarWidth
-        let narrowest = (pane + MainSplitShellController.contentMinimum).rounded(.up) + 1
         let height = window.frame.height
-        for (width, sidebarShown) in [(narrowest, true), (CGFloat(1100), false)] {
-            resize(window, width: width, shell)
-            check(shell.debugSidebarIsCollapsed == !sidebarShown,
-                  "at \(Int(width))pt the sidebar is \(shell.debugSidebarIsCollapsed ? "collapsed" : "showing")", &ok)
-            for destination in RailDestination.allCases {
-                shell.show(destination)
+        func holds(_ width: CGFloat, _ what: String) {
+            check(abs(window.frame.width - width) < 0.5,
+                  "\(what) grew a \(Int(width))pt window to \(Int(window.frame.width))pt", &ok)
+            // The module's header takes height, so no page may push the
+            // window taller to make up for it either.
+            check(abs(window.frame.height - height) < 0.5,
+                  "\(what) grew the window's height to \(Int(window.frame.height))pt", &ok)
+            if abs(window.frame.width - width) >= 0.5 || abs(window.frame.height - height) >= 0.5 {
+                var frame = window.frame
+                frame.size = NSSize(width: width, height: height)
+                window.setFrame(frame, display: true)
                 settle(shell)
-                check(abs(window.frame.width - width) < 0.5,
-                      "\(destination.rawValue) grew a \(Int(width))pt window to \(Int(window.frame.width))pt", &ok)
-                // The module's header takes height, so no page may push the
-                // window taller to make up for it either.
-                check(abs(window.frame.height - height) < 0.5,
-                      "\(destination.rawValue) grew the window's height to \(Int(window.frame.height))pt", &ok)
-                if abs(window.frame.width - width) >= 0.5 || abs(window.frame.height - height) >= 0.5 {
-                    var frame = window.frame
-                    frame.size = NSSize(width: width, height: height)
-                    window.setFrame(frame, display: true)
-                    settle(shell)
-                }
             }
         }
+        // R2-UX-10: every page at the narrowest width that keeps the sidebar
+        // beside its own floor, and just under it, where the sidebar steps
+        // aside for that page only. A floor set too low fails here, because
+        // the page then grows the window (gotcha (13)).
+        for destination in RailDestination.allCases {
+            resize(window, width: 1512, shell)
+            shell.show(destination)
+            settle(shell)
+            let keep = shell.debugNarrowestWidthKeepingSidebar.rounded(.up) + 1
+            for (width, sidebarShown) in [(keep, true), (keep - 3, false)] {
+                resize(window, width: width, shell)
+                check(shell.debugSidebarIsCollapsed == !sidebarShown,
+                      "\(destination.rawValue) at \(Int(width))pt: the sidebar is \(shell.debugSidebarIsCollapsed ? "collapsed" : "showing")", &ok)
+                holds(width, destination.rawValue)
+            }
+        }
+
+        // What R2-UX-10 is for, in both palettes: at a laptop's 1100pt the
+        // sidebar stays beside every page except the two that keep the old
+        // floor, and at 1280 beside every page. Navigating there and back
+        // never grows the window either.
+        let wide: Set<RailDestination> = [.logAnalyzer, .commandLibrary]
+        let themeBefore = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(themeBefore) }
+        for palette in [HelmTheme.allThemes.first { $0.isDaylight }, HelmTheme.allThemes.first { $0.id == "dusk" }] {
+            guard let palette else { fail("a palette for the 1100/1280 sweep is missing", &ok); continue }
+            ThemeManager.shared.setTheme(palette)
+            for width: CGFloat in [1100, 1280] {
+                resize(window, width: width, shell)
+                var collapsedOn: [String] = []
+                for destination in RailDestination.allCases {
+                    shell.show(destination)
+                    settle(shell)
+                    holds(width, "\(destination.rawValue) in \(palette.id) at \(Int(width))")
+                    if shell.debugSidebarIsCollapsed { collapsedOn.append(destination.rawValue) }
+                }
+                let expected = width < 1200 ? wide.map(\.rawValue).sorted() : []
+                check(collapsedOn.sorted() == expected,
+                      "R2-UX-10: in \(palette.id) at \(Int(width))pt the sidebar stepped aside on \(collapsedOn.sorted()), want \(expected)", &ok)
+            }
+        }
+        // Tasks' Weekly review is the one tab wider than its page: at 1100
+        // it puts the sidebar away, and the other tabs bring it back.
+        resize(window, width: 1100, shell)
+        shell.show(.shift)
+        settle(shell)
+        clickTab("Board", shell)
+        settle(shell)
+        check(!shell.debugSidebarIsCollapsed, "R2-UX-10: at 1100 Tasks' Board has no sidebar beside it", &ok)
+        clickTab("Weekly review", shell)
+        settle(shell)
+        check(shell.debugSidebarIsCollapsed, "R2-UX-10: at 1100 Tasks' Weekly review kept the sidebar it has no room for", &ok)
+        holds(1100, "Tasks' Weekly review")
+        clickTab("List", shell)
+        settle(shell)
+        check(!shell.debugSidebarIsCollapsed, "R2-UX-10: leaving Weekly review at 1100 did not bring the sidebar back", &ok)
+        holds(1100, "Tasks' List after Weekly review")
+        clickTab("Board", shell)
+        settle(shell)
+
         // Wide again: the sidebar comes back at the width it opened at.
         resize(window, width: 1512, shell)
         check(!shell.debugSidebarIsCollapsed && abs(shell.debugSidebarWidth - MainSplitShellController.sidebarWidth) < 0.5,
@@ -265,10 +329,14 @@ enum MainSplitShellSelfTest {
         // The same round trip on Home, whose grid still holds the wider
         // column's widths (at 499, above the sidebar's 489) while the sidebar
         // comes back - measured: squeezed to its 200pt minimum when the
-        // sidebar's pin was released in the same turn.
-        shell.show(.homeCanvas)
+        // sidebar's pin was released in the same turn. Through Log Analyzer
+        // at 1100, so the sidebar really did step aside on the way.
+        shell.show(.logAnalyzer)
         settle(shell)
         resize(window, width: 1100, shell)
+        check(shell.debugSidebarIsCollapsed, "at 1100 on Log Analyzer the sidebar did not step aside", &ok)
+        shell.show(.homeCanvas)
+        settle(shell)
         resize(window, width: 1512, shell)
         check(!shell.debugSidebarIsCollapsed && abs(shell.debugSidebarWidth - MainSplitShellController.sidebarWidth) < 0.5,
               "a 1100-to-1512 round trip on Home brought the sidebar back at \(shell.debugSidebarWidth)pt", &ok)
@@ -283,7 +351,6 @@ enum MainSplitShellSelfTest {
     private static func checkAPageColumnNeverGrowsTheWindow(_ shell: MainSplitShellController, _ window: NSWindow,
                                                             _ ok: inout Bool) {
         resize(window, width: 1100, shell)
-        check(shell.debugSidebarIsCollapsed, "at 1100pt the sidebar did not step aside", &ok)
         // Stage 7: Tasks' column is its filter row in this layout, so no tab
         // brings a column out at all.
         shell.show(.shift)
@@ -303,6 +370,7 @@ enum MainSplitShellSelfTest {
         // Weekly review used before stage 7 - takes its room from the page.
         shell.show(.notebook)
         settle(shell)
+        let sidebarBefore = shell.debugSidebarIsCollapsed
         if let split = (shell.debugSlotController(.notebook) as? HelmSplitPageHosting)?.splitPage {
             let column = split.debugSidebarWidth
             check(!split.isSidebarCollapsed && column > 0, "Notebook opened without its Pages column", &ok)
@@ -315,7 +383,10 @@ enum MainSplitShellSelfTest {
                   "back again, Notebook's column is \(split.debugSidebarWidth)pt, it was \(column)pt", &ok)
             check(abs(window.frame.width - 1100) < 0.5,
                   "Notebook's column coming back grew a 1100pt window to \(Int(window.frame.width))pt", &ok)
-            check(shell.debugSidebarIsCollapsed, "Notebook's column coming back brought the sidebar out too", &ok)
+            // R2-UX-10: the window's sidebar shows beside Notebook at 1100 now;
+            // what matters is that the page's column leaves it as it was.
+            check(shell.debugSidebarIsCollapsed == sidebarBefore,
+                  "Notebook's column coming back changed the window's sidebar", &ok)
         } else {
             fail("Notebook has no column of its own", &ok)
         }
@@ -1002,6 +1073,12 @@ enum MainSplitShellSelfTest {
         resize(window, width: 1100, shell)
         shell.show(.console)
         settle(shell)
+        // Measured with the full-width toolbar this check was written for:
+        // R2-UX-10 keeps the sidebar beside Console at 1100, and the toolbar
+        // beside it is about 250pt narrower. Put away by the captain, it stays
+        // away for the rest of this check.
+        if !shell.debugSidebarIsCollapsed { shell.toggleWorkspaceSidebar(); settle(shell) }
+        defer { if shell.debugSidebarIsCollapsed { shell.toggleWorkspaceSidebar(); settle(shell) } }
         let actionsAlone = toolbar.debugPageActions.first?.window != nil
         var task = ShiftTask.fresh()
         task.title = "Rotate the staging certificate"

@@ -414,6 +414,22 @@ final class CredentialVaultStore {
     /// The real work behind `loadState()`. Separate so the memoization above
     /// reads as one decision rather than being threaded through this function's
     /// several exits.
+    /// R2-SEC-07: the reason a vault file did not decode, when that reason
+    /// is its key-derivation parameters (an unknown algorithm, or a round
+    /// count outside `KDFParameters.acceptedRounds`). `nil` for any other
+    /// failure, which keeps the generic message.
+    static func kdfRefusal(at url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        do {
+            _ = try JSONDecoder().decode(CredentialVaultFile.self, from: data)
+            return nil
+        } catch let error as CredentialVaultCryptoError {
+            return error.errorDescription
+        } catch {
+            return nil
+        }
+    }
+
     private func computeLoadState(at url: URL) -> VaultLoadState {
         var status = StoreLoadFailure.LoadStatus.clean
         guard let decoded = StoreLoadFailure.decodeJSON(CredentialVaultFile.self,
@@ -422,7 +438,7 @@ final class CredentialVaultStore {
                                                         sensitive: true,
                                                         status: &status) else {
             loadFailureBackupPath = status.backupPath
-            return .unreadable(reason: "The vault file could not be read.", backupPath: status.backupPath)
+            return .unreadable(reason: Self.kdfRefusal(at: url) ?? "The vault file could not be read.", backupPath: status.backupPath)
         }
         guard decoded.formatVersion <= CredentialVaultFile.currentFormatVersion else {
             // A *newer* build wrote it. Refusing is the only safe answer: this
@@ -559,7 +575,7 @@ final class CredentialVaultStore {
                                                        sensitive: true,
                                                        status: &status) else {
             loadFailureBackupPath = status.backupPath
-            completion(.unreadable("The vault file could not be read."))
+            completion(.unreadable(Self.kdfRefusal(at: fileURL) ?? "The vault file could not be read."))
             return
         }
         // A non-empty password is the caller's own precondition; deriving from
@@ -601,7 +617,7 @@ final class CredentialVaultStore {
                                                        sensitive: true,
                                                        status: &status) else {
             loadFailureBackupPath = status.backupPath
-            completion(.unreadable("The vault file could not be read."))
+            completion(.unreadable(Self.kdfRefusal(at: fileURL) ?? "The vault file could not be read."))
             return
         }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -1334,7 +1350,7 @@ final class CredentialVaultStore {
                                                        sensitive: true,
                                                        status: &status) else {
             loadFailureBackupPath = status.backupPath
-            completion(.unreadable("The vault file could not be read."))
+            completion(.unreadable(Self.kdfRefusal(at: fileURL) ?? "The vault file could not be read."))
             return
         }
         guard let wrap = onDisk.recovery else {

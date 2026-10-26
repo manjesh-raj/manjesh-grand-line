@@ -269,6 +269,7 @@ private final class ConsoleComposerViewController: NSViewController, NSTextViewD
 
         buildIntentField()
 
+        generateButton.toolTip = AITransparency.willSendToClaude("what you typed, with secrets redacted,")
         generateButton.target = self
         generateButton.action = #selector(generateClicked)
         generateButton.controlSize = .small

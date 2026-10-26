@@ -655,6 +655,16 @@ enum OpenPRsSource {
         shared.lastResult = nil
         shared.lock.unlock()
     }
+
+    /// R2-SEC-01: a fake Bitbucket identity, so `NetworkGateSelfTest` can drive
+    /// the real authenticated request into the network gate. `nil` clears it
+    /// and the cached candidates.
+    static func debugSeedBitbucketIdentity(_ identity: (user: String, token: String)?) {
+        bbCacheLock.lock()
+        _bbIdentity = identity
+        _bbCandidatesCache = nil
+        bbCacheLock.unlock()
+    }
     #endif
 
     static func fetchDetailed() -> FetchResult {
@@ -907,7 +917,7 @@ enum OpenPRsSource {
         req.timeoutInterval = 10
         let semaphore = DispatchSemaphore(value: 0)
         var result: [String: Any]?
-        let task = URLSession.shared.dataTask(with: req) { data, _, error in
+        let task = NetworkGate.shared.dataTask(with: req) { data, _, error in
             if let data, error == nil {
                 result = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             }

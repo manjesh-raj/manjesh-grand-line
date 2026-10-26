@@ -594,3 +594,36 @@ All three were already gated, and the PR records the evidence rather than adding
 A full 200-column pane measured about 52 MB.
 A tab out of sight for five minutes keeps 2,000 lines and gets its 10,000 back on select.
 SwiftTerm trims when it shrinks, so the grace period, the scrolled-back rule and the Kubernetes feed exemption are what keep the cost low; `native/README.md` states the figure and the trade.
+
+## The second review's security findings (R2-SEC-01 to R2-SEC-12)
+
+One branch, `fm/grandline-review2-security-ux10-1792844343`, closed every security finding of the second full review, one commit per id.
+Each fix was reverted once and failed a named check before it was restored.
+
+- **R2-SEC-01, the network.** `NetworkGate` is the one source of `URLSession` in production.
+  In an `FM_RUN_*` or `FM_REVIEW_TOUR` process `main.swift` arms `LoopbackOnlyURLProtocol`, which fails every request to a host that is not loopback before it leaves the process.
+  `NetworkGate.session(configuration:)` adds the protocol to a custom configuration, because a registered class only reaches `URLSession.shared`.
+  WebKit and LinkPresentation fetch from their own processes, so the Reading List's reader and metadata ask `NetworkGate.allowsOutOfProcessLoad` instead.
+  `ExternalToolGuard` also refuses `npm`, `git credential` and `git-credential-*` helpers.
+  A release build is unchanged: every refusal is under `#if FM_SELFTESTS`, and `NetworkGateSelfTest` asserts the release path as source text.
+  The proof is a recording `NetworkTripwire` behind the gate: with the gate unregistered, the tripwire catches what would have left, so nothing does.
+  A tour against a scratch firstmate home with a fake Bitbucket clone (`demo bitbucket`) recorded `GET api.bitbucket.org` and `GET api.github.com` (the Docs page's playbook check) at the gate and zero past it.
+  The same tour with the gate unregistered exited 1 with both caught by the tripwire.
+  One side effect: with `npm` refused, Setup's software check answers almost at once, which exposed Setup's header not following `SetupStepsReading` (fixed in the same branch).
+- **R2-SEC-02, Touch ID unlock.** The interim fix only: the toggle's description says the vault on this Mac is then protected by the login keychain rather than the master password, and the default stays off.
+  The real fix (hardened runtime, entitlements, `.biometryCurrentSet` on the key item) needs a Developer ID certificate and is still open.
+- **R2-SEC-03, the pasteboard.** The Log Analyzer's two clipboard actions ask `CredentialVaultClipboard.isConcealed` first.
+  `SecretBoundariesSelfTest` fails any production `.string(forType: .string)` read whose function does not ask it earlier, with the terminal's own paste as the one stated exemption.
+- **R2-SEC-04, synced commits.** `DotfilesSecretScan.scan` runs over the dirty files of every text store's `commitAndPushNow` before `git add` and holds the commit with a visible status.
+  It walks a directory, because `git status --short` lists a new folder as one line.
+  The vault's sync is exempt, because its file is ciphertext.
+- **R2-SEC-05, AI disclosure.** Every control that starts a `claude -p` call says what it sends through `AITransparency.willSendToClaude`, and `AITransparencySelfTest` maps every caller to its surface.
+  Dictation cleanup does not send a transcript the redactor changed, because the rewrite replaces what gets pasted; it takes the raw-transcript fallback instead.
+- **R2-SEC-06.** The lock screen shows the Homebrew install command and never runs it.
+- **R2-SEC-07.** A vault file or recovery wrap with a PBKDF2 round count outside 100,000 to 10,000,000 is refused at decode with `unsupportedKDF`. Every vault this app has written carries 600,000.
+- **R2-SEC-08.** "Require Touch ID to reveal" falls back to the login password on a Mac without biometry (`RevealAuthentication`), on the vault page and in the Copy Credential Intent.
+- **R2-SEC-09.** Any `FM_RUN_` key that reaches the end of the suite blocks exits 2, whatever its suffix or value.
+- **R2-SEC-10.** A failed subprocess's excerpt is redacted and logged `.private`, and the lock logs a window's class rather than its title.
+- **R2-SEC-11.** Of 16 `NSWorkspace.open` sites, 7 opened a URL that arrived as data with no scheme check. They go through `WebNavigationPolicy.openExternally` now.
+- **R2-SEC-12.** The two vendored web bundles record a SHA-256 of every shipped file in `BUILD-INFO.txt`, asserted by their suites. The vault's `.corrupt-*` copies are not staged. The widget snapshot is written at 0600. The vault's CSV import and the Log Analyzer's input are capped at the backup bundle's 8 MB per-file limit. Measured with the cap reverted, one 8 MB clipboard held the suite's main thread for over ten minutes.
+  The report's honesty-only items (notification previews, unzeroed Swift strings, the "not checked" list) were deliberately left as they are.

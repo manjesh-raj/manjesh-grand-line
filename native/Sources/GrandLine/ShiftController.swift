@@ -631,6 +631,12 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         contentStack.addArrangedSubview(weeklyReviewSection)
 
         content.addSubview(contentStack)
+        // R2-UX-10: held so it is active only while Weekly review shows. A
+        // hidden view keeps its constraints (gotcha (15)), and once rendered
+        // the review's rows hold about 920pt - so this tie made the whole
+        // page that wide on Board, List and Calendar too, and in the sidebar
+        // layout the window grew when the sidebar came back.
+        weeklyReviewWidthTie = weeklyReviewSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor)
         let contentLeading = contentStack.leadingAnchor.constraint(equalTo: content.leadingAnchor,
                                                                    constant: HelmMetrics.pageGutter)
         contentStackLeading = contentLeading
@@ -650,7 +656,6 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             // fills the whole page content width, matching `dashboardContainer`/
             // `statsRow`/`tasksRow` above it.
             projectsSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            weeklyReviewSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             boardSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             failedReadCard.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             calendarView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
@@ -1703,9 +1708,15 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     /// Held so `switchTopLevelView` can size it.
     private var topToolbar: NSStackView?
+    /// The review's width tie to the page, active only while it shows.
+    private var weeklyReviewWidthTie: NSLayoutConstraint?
 
     private func switchTopLevelView(_ view: ShiftTopLevelView) {
         topLevelView = view
+        // Tied before the review shows, released once it is hidden - and
+        // before `onModuleTabChanged` below, which is where the sidebar
+        // layout settles the column's floor for the new tab.
+        if view == .weeklyReview { weeklyReviewWidthTie?.isActive = true }
         // Keeps the active pill right when the view was changed from somewhere
         // other than a pill click - the Shift menu, the search palette,
         // `showWeeklyReview()`/`showDashboard()`. A no-op on a real pill click,
@@ -1713,6 +1724,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         viewTabs.select(view == .weeklyReview ? Self.reviewViewID : tasksView.rawValue)
         dashboardContainer.isHidden = view != .dashboard
         weeklyReviewContainer.isHidden = view != .weeklyReview
+        if view != .weeklyReview { weeklyReviewWidthTie?.isActive = false }
         sortPopup.isHidden = view != .dashboard
         doneWindowNote.isHidden = view != .dashboard
         // The column's rows are all about the task board, so it goes with it.

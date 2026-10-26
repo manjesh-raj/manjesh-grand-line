@@ -157,7 +157,7 @@ final class WhisperModelManager: NSObject {
         state = .downloading(progress: 0)
         notify()
         let config = URLSessionConfiguration.default
-        let session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+        let session = NetworkGate.session(configuration: config, delegate: self, delegateQueue: nil)
         self.session = session
         let task = session.downloadTask(with: Self.modelURL)
         activeTask = task

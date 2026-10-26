@@ -434,6 +434,14 @@ final class CredentialVaultRecoverySheetController: NSViewController {
         // Chrome one from a Windows profile sometimes is not, and failing
         // the whole import over one accented character would be a terrible
         // reason to lose the file.
+        //
+        // R2-SEC-12: refused from its size on disk before it is read - the
+        // parse runs on the main thread, and no password manager's export
+        // comes near the cap.
+        if let refusal = InputSizeLimit.refusal(forFileAt: url, what: url.lastPathComponent) {
+            Toast.show(in: view, message: refusal)
+            return
+        }
         let text: String
         if let utf8 = try? String(contentsOf: url, encoding: .utf8) {
             text = utf8
@@ -594,6 +602,9 @@ final class CredentialVaultRecoverySheetController: NSViewController {
     var debugMappingRowCount: Int { mappingStack.arrangedSubviews.count }
     var debugPrintedCode: String? { printedCode }
     func debugPrintNewKey() { enrol() }
+    /// The file picker's own read path, for R2-SEC-12's size cap.
+    func debugLoadFile(_ url: URL) { load(url) }
+    var debugHasLoadedCSV: Bool { csvText != nil }
     func debugLoadCSV(_ text: String, named name: String) {
         csvText = text
         chosenFileName = name

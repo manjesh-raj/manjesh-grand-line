@@ -265,12 +265,4 @@ enum LogRedactor {
         let tail = trimmed.suffix(2)
         return "\(head)…\(tail) (\(trimmed.count) chars)"
     }
-
-    /// A quick "does this text still look like it contains a credential"
-    /// check, used only to decide whether the review step needs to warn
-    /// harder. Cheap on already-redacted text since every rule's value group
-    /// now reads `[REDACTED]`, which every rule skips.
-    static func containsLikelySecret(_ text: String) -> Bool {
-        !redact(text).isEmpty
-    }
 }

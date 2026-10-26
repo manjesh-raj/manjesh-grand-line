@@ -471,7 +471,9 @@ final class AppLockGate {
     private func orderOutSecondaryWindows() {
         for registration in secondaryWindows {
             guard let window = registration.provider(), window.isVisible else { continue }
-            AppLog.lifecycle.info("lock: ordering out \(window.title, privacy: .public)")
+            // R2-SEC-10: the class, not the title - a host editor's title is
+            // derived from the host.
+            AppLog.lifecycle.info("lock: ordering out a \(String(describing: type(of: window)), privacy: .public)")
             window.orderOut(nil)
         }
     }

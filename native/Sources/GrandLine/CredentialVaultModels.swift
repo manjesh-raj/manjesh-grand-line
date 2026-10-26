@@ -447,9 +447,27 @@ struct VaultSettings: Codable, Equatable {
     static let autoLockChoices = [60, 300, 900, 0]
     static let clipboardChoices = [10, 20, 45, 60]
 
+    /// Off, and it must stay off (R2-SEC-02): the toggle trades the master
+    /// password for the login keychain's protection, so it is the captain's
+    /// choice to make, never a default.
     static let `default` = VaultSettings(autoLockSeconds: 300,
                                          clipboardClearSeconds: 20,
                                          touchIDUnlockEnabled: false)
+
+    /// What the Touch ID unlock toggle says in the vault's settings sheet.
+    ///
+    /// R2-SEC-02: the app is self-signed, with no hardened runtime and no
+    /// access-control flags on its Keychain items (`CredentialVaultKeyStore`'s
+    /// header says why), so the derived key is a plain generic password in the
+    /// login keychain. Turning this on therefore makes the vault on this Mac
+    /// only as safe as that keychain, and the description has to say so. The
+    /// real fix is the Developer ID item (`native/Widgets/README.md`):
+    /// `.biometryCurrentSet` access control on the key item.
+    static let touchIDUnlockDescription =
+        "Stores your derived key - never your password - in this Mac's login keychain, for this device only, "
+        + "so the first unlock on another machine is always your password. While this is on, the vault on this Mac "
+        + "is protected by your login keychain rather than by your master password: once your Mac account is "
+        + "unlocked, software running as you can reach the key. Off by default."
 
     init(autoLockSeconds: Int, clipboardClearSeconds: Int, touchIDUnlockEnabled: Bool) {
         self.autoLockSeconds = autoLockSeconds
@@ -504,6 +522,23 @@ struct CredentialVaultFile: Codable {
         var salt: Data
         var rounds: UInt32
 
+        /// R2-SEC-07: the round counts a vault file may carry.
+        ///
+        /// The count is read from a file that is git-synced, so whoever can
+        /// write the config repo chooses it. `UInt32.max` pinned a background
+        /// thread for hours on every unlock attempt. Every vault this app has
+        /// written carries `CredentialVaultCrypto.defaultRounds` (600,000),
+        /// which sits well inside the range, so no valid vault is refused.
+        static let acceptedRounds: ClosedRange<UInt32> = 100_000...10_000_000
+
+        /// Throws `unsupportedKDF` for a count outside `acceptedRounds`. Shared
+        /// by this type's and `CredentialVaultRecoveryWrap`'s decoders.
+        static func checkRounds(_ rounds: UInt32, algorithm: String) throws {
+            guard acceptedRounds.contains(rounds) else {
+                throw CredentialVaultCryptoError.unsupportedKDF("\(algorithm) with \(rounds) rounds")
+            }
+        }
+
         init(algorithm: String = CredentialVaultCrypto.pbkdf2Name,
              salt: Data,
              rounds: UInt32 = CredentialVaultCrypto.defaultRounds) {
@@ -522,6 +557,7 @@ struct CredentialVaultFile: Codable {
             algorithm = try c.decode(String.self, forKey: .algorithm)
             salt = try c.decode(Data.self, forKey: .salt)
             rounds = try c.decode(UInt32.self, forKey: .rounds)
+            try Self.checkRounds(rounds, algorithm: algorithm)
         }
     }
 
