@@ -2539,6 +2539,9 @@ if ProcessMode.current.isIsolated {
     if (ProcessInfo.processInfo.environment[AppPaths.scratchRootVariable] ?? "").isEmpty {
         setenv(AppPaths.scratchRootVariable, scratchRoot.path, 1)
     }
+    // TEST-09 (review #1), with R2-PROC-06: every suite reports how many
+    // checks it recorded, for the runner's PASS line.
+    SelfTestAssertions.armCheckCount()
     // R2-SEC-01: no request leaves this process for anywhere but loopback.
     // `ExternalToolGuard` fences the programs a suite or tour may start; this
     // fences what `URLSession` does. See `NetworkGate`'s header.

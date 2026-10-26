@@ -300,6 +300,20 @@ jobs:
         # script refuses to start without it (`[ ! -x "$BIN" ]`).
         run: chmod +x .build/debug/GrandLine
 
+      # R2-PROC-06: the per-suite history, kept between runs. The cache
+      # restores the newest history this branch can see (a pull request also
+      # sees `main`'s), the runner appends this run and writes the lane's
+      # flake summary into the job summary, and the file is saved for the
+      # next run and uploaded for reading. Diagnostic only: none of these
+      # steps can fail the job, and none changes what a suite failure does.
+      - name: Restore the suite history
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/suite-history.json
+          key: suite-history-headless-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: suite-history-headless-
+
       # No store locations here any more (R2-PROC-02 of the second full
       # review). This step used to point fifteen stores at one shared
       # `ci-stores` folder, so every suite in a lane saw the stores the suites
@@ -310,7 +324,26 @@ jobs:
       # and a local run isolate the suites the same way and neither can reach
       # the private config repo or the runner's home directory.
       - name: Run the headless-safe suites
-        run: ./Scripts/run-all-tests.sh --ci --no-build
+        # `--rerun-failed` names a suite that failed and then passed; the run
+        # still fails (R2-PROC-06). `--history` is described above.
+        run: ./Scripts/run-all-tests.sh --ci --no-build --rerun-failed --history="$RUNNER_TEMP/suite-history.json"
+
+      - name: Keep the suite history for the next run
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/suite-history.json
+          key: suite-history-headless-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Share the suite history
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-history-headless
+          path: ${{ runner.temp }}/suite-history.json
+          retention-days: 30
+          if-no-files-found: warn
 
   # The window-backed suites, in three shards that run side by side. As one
   # job they took a median 21.8 minutes over 20 runs, the longest stretch of
@@ -395,6 +428,20 @@ jobs:
         # script refuses to start without it (`[ ! -x "$BIN" ]`).
         run: chmod +x .build/debug/GrandLine
 
+      # R2-PROC-06: the per-suite history, kept between runs. The cache
+      # restores the newest history this branch can see (a pull request also
+      # sees `main`'s), the runner appends this run and writes the lane's
+      # flake summary into the job summary, and the file is saved for the
+      # next run and uploaded for reading. Diagnostic only: none of these
+      # steps can fail the job, and none changes what a suite failure does.
+      - name: Restore the suite history
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/suite-history.json
+          key: suite-history-windowed-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: suite-history-windowed-shard-${{ matrix.shard }}-
+
       # Each suite gets its own scratch root from the runner, as in the `test`
       # job above (R2-PROC-02).
       - name: Run the window-backed suites
@@ -403,7 +450,26 @@ jobs:
         # and skips the handful that need the captain's own machine (see
         # CI_UNSUPPORTED in the script, where each entry carries its measured
         # reason).
-        run: ./Scripts/run-all-tests.sh --session-only --ci --no-build --shard=${{ matrix.shard }}/${{ matrix.of }}
+        run: >-
+          ./Scripts/run-all-tests.sh --session-only --ci --no-build --shard=${{ matrix.shard }}/${{ matrix.of }}
+          --rerun-failed --history="$RUNNER_TEMP/suite-history.json"
+
+      - name: Keep the suite history for the next run
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/suite-history.json
+          key: suite-history-windowed-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Share the suite history
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-history-windowed-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/suite-history.json
+          retention-days: 30
+          if-no-files-found: warn
 
       # What this shard was given, for the aggregate job to check the shards
       # against the whole selection. Written even when a suite failed.

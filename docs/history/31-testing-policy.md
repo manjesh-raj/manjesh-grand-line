@@ -72,3 +72,57 @@ This matches the earlier audit above: the time is structure, not misfiled or unn
 - The first run on `main` after the merge, [39913816152](https://github.com/manjesh-raj/manjesh-grand-line/actions/runs/39913816152), had the runners to itself and took 12.8 minutes, all eleven checks green.
   The debug build was ready at 3.9 minutes, the release build finished at 7.9, the headless lane at 9.3, and the shards ran 6.9, 6.5 and 8.5 minutes, the last of them finishing at 12.5.
 - In both runs the aggregate printed "124 window-backed suites, each in exactly one shard": the same 120 suites ran and passed as before, and the 4 runner-unsupported ones were skipped as before.
+
+## Review #2's process findings (`fm/grandline-review2-process-1792983685`)
+
+Section 3.4 of the second full review listed eight process findings, R2-PROC-01 to R2-PROC-08.
+This entry records the ones that changed the test harness and CI.
+
+### R2-PROC-01: infrastructure failures read as their own kind of red
+
+`main` went red on two pushes in a row.
+One of them (run 39914224694) was shard 2 failing to download the debug binary, with no suite run at all, and the check list could not tell that apart from a suite failure.
+
+- Both test jobs now download the binary twice: one `continue-on-error` attempt, a 30-second pause, then a second attempt.
+  `download-artifact`'s own five retries are seconds apart, which a storage blip outlasts.
+- A new `CI infrastructure` check reads the attempt's jobs from the API.
+  It goes red only when a test job failed in a step other than its "Run the ..." step, or the debug build failed in its artifact upload.
+  A suite failure leaves it green, because the test checks already report that.
+- `.github/workflows/ci-rerun.yml` re-runs a failed `main` run once, and only when `CI infrastructure` failed.
+  A suite failure is never re-run automatically, so a retry can never turn a real failure green.
+- `fail-fast: false` was already set on the shard matrix.
+  The six existing check names report with the same meaning.
+
+### R2-PROC-02: isolation by construction
+
+`ProcessMode` is the one answer to "is this a self-test or tour process".
+`main.swift`'s redirect block, `ExternalToolGuard` (so `Subprocess` and `NetworkGate` too) and `AppPaths.dataRoot()` read it.
+An isolated process never resolves the real data root, even when nothing set `FM_SCRATCH_ROOT`.
+The runner starts every suite with an empty `FM_SCRATCH_ROOT` of its own and removes it afterwards, which replaced CI's shared `ci-stores` folder.
+`git fetch`, `pull`, `push`, `ls-remote` and `clone` are refused in a test process unless every remote they can reach is a local path, so the git-sync suites' local bare repositories keep working.
+`ProcessModeSelfTest` and a new case in `ExternalToolGuardSelfTest` hold both halves, and each was confirmed to fail with its half reverted.
+
+One limit: a `git` command run inside a `/bin/sh -c` string is not visible to the guard, which sees only the program and its arguments.
+
+### R2-PROC-06 and TEST-09: a flake detector and check counts
+
+- `--rerun-failed` re-runs each failed suite once after the rest.
+  The verdict does not change: the suite stays in `failed:` and the run exits 1.
+  The summary then names a suite that failed and then passed as likely flaky, and one that failed twice as failed twice.
+- `--history=<file>` appends the run to a JSON history through `Scripts/suite_history.py`.
+  It keeps the newest 50 runs.
+  Each run records every suite's result, time and check count, plus the run's suite count and lane time, so the window-backed lane's growth (R2-PROC-05) is a number per run rather than a recollection.
+  The script prints the lane's summary, which CI writes into the job summary.
+  That summary lists this run's flaky suites, every suite whose recorded results disagree, and the suite count and lane time of the last ten runs.
+- CI passes both flags to the headless job and to every shard.
+  It keeps the history between runs with `actions/cache` (a pull request also sees `main`'s) and uploads it as the `suite-history-*` artifacts.
+  None of those steps can fail a job.
+- TEST-09: `SelfTestAssertions` counts every check recorded through it and prints the count as the process exits, and the runner puts it on the PASS line (`PASS  FM_RUN_X  1.6s  (30 checks)`).
+  A suite that keeps its own failure list without recording through the shared helpers shows no count rather than a wrong one (`E2ETestingPolicySelfTest` is one).
+  Moving those onto the shared helpers is a mechanical change across many files and was left out of this one.
+
+### R2-PROC-05: still open
+
+The window-backed lane is 124 suites and growing.
+The fix the review names is review #1's TEST-01 and ARCH-07, moving models out of controllers so the next suite can be headless, and that is an architecture change of its own.
+What this branch adds is the measurement: every recorded run now carries the lane's suite count and time.
