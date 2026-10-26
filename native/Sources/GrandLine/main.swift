@@ -2395,6 +2395,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         windowMenu.addItem(withTitle: "Zoom", symbol: "arrow.up.left.and.arrow.down.right", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(NSMenuItem.separator())
         windowMenu.addItem(withTitle: "Bring All to Front", symbol: "square.stack", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        // R2-ARCH-06: the sidebar layout's toolbar is customisable. The
+        // system's own sheet, through the window's own action - a right
+        // click on the toolbar offers the same item. The floating bar has no
+        // window toolbar to customise.
+        if workspaceLayout == .sidebar {
+            windowMenu.addItem(NSMenuItem.separator())
+            windowMenu.addItem(withTitle: "Customize Toolbar\u{2026}", symbol: "slider.horizontal.3",
+                               action: #selector(NSWindow.runToolbarCustomizationPalette(_:)), keyEquivalent: "")
+        }
         if installing { NSApp.windowsMenu = windowMenu }
 
         // Help menu - UX3's "add Help -> 'Keyboard Shortcuts…' (generated from

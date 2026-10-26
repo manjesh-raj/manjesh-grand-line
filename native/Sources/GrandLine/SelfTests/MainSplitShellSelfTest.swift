@@ -68,6 +68,7 @@ enum MainSplitShellSelfTest {
                       checkTheSidebarDrawsNoPins, checkTheMapAndTheSidebarToggle, checkModuleTabsArePages,
                       checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
                       checkHomeIsTheCaptainsToArrange, checkBackAndForward, checkTheInspector,
+                      checkTheInspectorIsTheSystemsItem, checkTheToolbarIsCustomisable,
                       checkTheLockHidesTheToolbar, checkTheContentReachesTheFoot, checkTheFocusChipIsInTheToolbar,
                       checkTheFocusChipFitsTheNarrowToolbar, checkOnlyADividerDragIsAChosenWidth,
                       checkToastsLandInTheColumn,
@@ -911,6 +912,164 @@ enum MainSplitShellSelfTest {
               "R2-BUG-10: the closed-and-off inspector's tooltip reads \(item?.toolTip ?? "nothing")", &ok)
         check(WorkspaceToolbar.inspectorOnSymbol != WorkspaceToolbar.inspectorOffSymbol,
               "fixture: the two states draw two symbols", &ok)
+    }
+
+    /// R2-ARCH-06: on macOS 14 and later the inspector is the system's
+    /// inspector item, which draws the column and its edge, so the
+    /// controller paints nothing of its own; before that it is a plain pane
+    /// the controller paints. Both open and close through the same button,
+    /// keep the same 320pt width, and take it out of the content column
+    /// rather than out of the window. The fallback is built here too, by
+    /// forcing it, because no runner this app tests on is macOS 13.
+    private static func checkTheInspectorIsTheSystemsItem(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                         _ ok: inout Bool) {
+        func opensClosesAndKeepsItsWidth(_ shell: MainSplitShellController, _ window: NSWindow, _ label: String) {
+            resize(window, width: 1512, shell)
+            shell.show(.homeCanvas)
+            settle(shell)
+            if !shell.debugInspectorIsCollapsed { shell.setInspectorShown(false); settle(shell) }
+            let before = window.frame.width
+            shell.setInspectorShown(true)
+            settle(shell)
+            let pane = shell.inspector.view
+            let frame = pane.convert(pane.bounds, to: nil)
+            check(!shell.debugInspectorIsCollapsed, "\(label): the inspector did not open", &ok)
+            check(abs(frame.width - WorkspaceInspectorController.width) < 0.5,
+                  "\(label): the open inspector is \(frame.width)pt wide, want \(WorkspaceInspectorController.width)", &ok)
+            check(abs(frame.maxX - window.contentLayoutRect.maxX) < 0.5 || abs(frame.maxX - window.frame.width) < 0.5,
+                  "\(label): the inspector is not the window's trailing column (maxX \(frame.maxX))", &ok)
+            check(window.frame.width == before, "\(label): opening the inspector resized the window", &ok)
+            // A narrower window takes its room from the column, never from
+            // the inspector's fixed width.
+            resize(window, width: 1300, shell)
+            settle(shell)
+            let narrow = pane.convert(pane.bounds, to: nil)
+            check(!shell.debugInspectorIsCollapsed && abs(narrow.width - WorkspaceInspectorController.width) < 0.5,
+                  "\(label): at 1300 the inspector is \(narrow.width)pt or collapsed", &ok)
+            shell.inspector.debugCloseButton.performClick(nil)
+            settle(shell)
+            check(shell.debugInspectorIsCollapsed, "\(label): the close button did not close the inspector", &ok)
+            shell.debugResetInspectorPreference()
+            resize(window, width: 1512, shell)
+        }
+
+        let theme = ThemeManager.shared.theme
+        if #available(macOS 14, *) {
+            check(MainSplitShellController.usesSystemInspector && shell.debugInspectorItemBehavior == .inspector,
+                  "on macOS 14+ the inspector is not the system's inspector item (behavior \(shell.debugInspectorItemBehavior.rawValue))", &ok)
+            check(!shell.inspector.drawsOwnPane && shell.inspector.debugPanelLayer?.backgroundColor == nil
+                    && shell.inspector.view.layer?.backgroundColor == nil && shell.inspector.debugEdgeIsHidden,
+                  "the system's inspector is painted over by the controller's own column", &ok)
+            opensClosesAndKeepsItsWidth(shell, window, "system inspector")
+        }
+
+        // The hand-drawn pane a macOS 13 install gets.
+        MainSplitShellController.systemInspectorOverrideForTests = false
+        defer { MainSplitShellController.systemInspectorOverrideForTests = nil }
+        let (fallbackWindow, fallback) = ReviewTourLab.makeOffScreenSplitShell()
+        fallbackWindow.orderFront(nil)
+        defer { fallbackWindow.orderOut(nil) }
+        settle(fallback)
+        check(fallback.debugInspectorItemBehavior == .default,
+              "the fallback inspector is not a plain split pane (behavior \(fallback.debugInspectorItemBehavior.rawValue))", &ok)
+        let card = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        check(fallback.inspector.drawsOwnPane && fallback.inspector.debugPanelLayer?.backgroundColor == card
+                && !fallback.inspector.debugEdgeIsHidden,
+              "the fallback inspector does not paint its card-coloured column and its edge", &ok)
+        opensClosesAndKeepsItsWidth(fallback, fallbackWindow, "fallback pane")
+        if ok { print("  OK   the inspector is the system's item on macOS 14+, and the hand-drawn pane before") }
+    }
+
+    /// R2-ARCH-06: the captain can customise the toolbar, and the result is
+    /// saved to `AppSettings` (`AppDefaults.store`) rather than autosaved by
+    /// AppKit into `UserDefaults.standard`. A change the captain makes is
+    /// saved; a fresh toolbar puts it back; the default again clears it;
+    /// and nothing the toolbar does to its own items counts as one.
+    private static func checkTheToolbarIsCustomisable(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                      _ ok: inout Bool) {
+        let savedItems = AppSettings.shared.workspaceToolbarItems
+        let savedMode = AppSettings.shared.workspaceToolbarDisplayMode
+        defer {
+            AppSettings.shared.workspaceToolbarItems = savedItems
+            AppSettings.shared.workspaceToolbarDisplayMode = savedMode
+        }
+        AppSettings.shared.workspaceToolbarItems = nil
+        AppSettings.shared.workspaceToolbarDisplayMode = nil
+        func drain() { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+        func ids(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbar.items.map(\.itemIdentifier) }
+
+        let toolbar = shell.toolbar!
+        check(toolbar.toolbar.allowsUserCustomization && !toolbar.toolbar.autosavesConfiguration,
+              "the toolbar is not customisable, or AppKit autosaves it", &ok)
+        // The page's own items come and go without saving anything.
+        shell.show(.notebook)
+        settle(shell)
+        shell.show(.homeCanvas)
+        settle(shell)
+        drain()
+        check(AppSettings.shared.workspaceToolbarItems == nil,
+              "the toolbar's own placing of the page's items was saved as a customisation", &ok)
+
+        // The captain takes Recents off the toolbar.
+        guard let recents = toolbar.toolbar.items.firstIndex(where: { $0.itemIdentifier == WorkspaceToolbar.ItemID.recents }) else {
+            fail("the toolbar has no Recents to take off", &ok)
+            return
+        }
+        toolbar.toolbar.removeItem(at: recents)
+        drain()
+        let expected = WorkspaceToolbar.defaultCustomizedIdentifiers.filter { $0 != WorkspaceToolbar.ItemID.recents }
+        check(AppSettings.shared.workspaceToolbarItems == expected.map(\.rawValue),
+              "taking Recents off saved \(String(describing: AppSettings.shared.workspaceToolbarItems))", &ok)
+        check(UserDefaults.standard.object(forKey: "NSToolbar Configuration \(toolbar.toolbar.identifier)") == nil,
+              "the toolbar's configuration reached UserDefaults.standard", &ok)
+
+        // A toolbar built later - the next launch - puts it back, with the
+        // display mode the sheet chose.
+        AppSettings.shared.workspaceToolbarDisplayMode = Int(NSToolbar.DisplayMode.iconAndLabel.rawValue)
+        // Its own identifier: AppKit syncs live toolbars that share one, so
+        // the shell's toolbar would otherwise hand it its own items.
+        let next = WorkspaceToolbar(splitView: NSSplitView(), identifier: "workspace.toolbar.nextLaunch")
+        let nextWindow = OffScreenProbe.window(width: 1512, height: 400)
+        defer { nextWindow.close() }
+        nextWindow.toolbar = next.toolbar
+        next.reconcileDynamicItems()
+        drain()
+        check(!ids(next.toolbar).contains(WorkspaceToolbar.ItemID.recents)
+                && next.customizedIdentifiers == expected,
+              "a new toolbar did not put the saved items back: \(ids(next.toolbar).map(\.rawValue))", &ok)
+        check(Array(ids(next.toolbar).prefix(2)) == WorkspaceToolbar.fixedItems,
+              "the sidebar button no longer leads a customised toolbar: \(ids(next.toolbar).map(\.rawValue))", &ok)
+        check(next.toolbar.displayMode == .iconAndLabel, "the saved display mode did not come back", &ok)
+        // The page's items still go in around what the captain kept.
+        next.setTabs(["One", "Two"], selected: 0)
+        check(ids(next.toolbar).contains(WorkspaceToolbar.ItemID.tabs),
+              "a customised toolbar no longer shows the module's tabs", &ok)
+        next.setTabs([], selected: nil)
+        drain()
+        check(AppSettings.shared.workspaceToolbarItems == expected.map(\.rawValue),
+              "the toolbar placing its tabs changed the saved customisation", &ok)
+
+        // Recents back where it was is the default, which clears the setting.
+        let at = (toolbar.toolbar.items.firstIndex { $0.itemIdentifier == WorkspaceToolbar.ItemID.navigation } ?? 1) + 1
+        toolbar.toolbar.insertItem(withItemIdentifier: WorkspaceToolbar.ItemID.recents, at: at)
+        drain()
+        check(AppSettings.shared.workspaceToolbarItems == nil,
+              "the default toolbar again did not clear the setting: \(String(describing: AppSettings.shared.workspaceToolbarItems))", &ok)
+
+        // What another build saved cannot break this one.
+        check(WorkspaceToolbar.sanitized(["workspace.search", "workspace.search", "workspace.tabs", "bogus",
+                                          NSToolbarItem.Identifier.space.rawValue])
+                == [WorkspaceToolbar.ItemID.search, .space],
+              "a saved list with a duplicate, a page item or an unknown id is not cleaned", &ok)
+        // The palette's copies never take a live view out of the toolbar.
+        let liveSearch = toolbar.toolbar.items.first { $0.itemIdentifier == WorkspaceToolbar.ItemID.search }?.view
+        let paletteSearch = toolbar.toolbar(toolbar.toolbar, itemForItemIdentifier: WorkspaceToolbar.ItemID.search,
+                                            willBeInsertedIntoToolbar: false)
+        check(paletteSearch?.view == nil && liveSearch?.superview != nil,
+              "the palette's Search item took the live Search button", &ok)
+        check(!toolbar.toolbarAllowedItemIdentifiers(toolbar.toolbar).contains(where: WorkspaceToolbar.dynamicItems.contains),
+              "the customisation palette offers one of the page's own items", &ok)
+        if ok { print("  OK   the toolbar is customisable, saved to AppDefaults and put back on the next launch") }
     }
 
     // MARK: 8 - the lock

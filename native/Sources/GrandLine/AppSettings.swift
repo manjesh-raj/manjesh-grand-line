@@ -59,6 +59,8 @@ final class AppSettings {
         static let workspaceProfile = "fm.workspaceProfile"
         static let hiddenModules = "fm.hiddenModules"
         static let sidebarWidth = "fm.sidebarWidth"
+        static let workspaceToolbarItems = "fm.workspaceToolbar.items"
+        static let workspaceToolbarDisplayMode = "fm.workspaceToolbar.displayMode"
         static let appLockIdleSeconds = "fm.appLockIdleSeconds"
         static let appLockSessionSeconds = "fm.appLockSessionSeconds"
     }
@@ -665,6 +667,34 @@ final class AppSettings {
         set {
             if let newValue { defaults.set(Double(newValue), forKey: Keys.sidebarWidth) } else {
                 defaults.removeObject(forKey: Keys.sidebarWidth)
+            }
+        }
+    }
+
+    /// R2-ARCH-06: the sidebar layout's toolbar as the captain customised it -
+    /// the identifiers of its customisable items, in order - or `nil` for the
+    /// shipped default. Kept here, in `AppDefaults.store`, rather than by
+    /// `NSToolbar.autosavesConfiguration`, which writes `UserDefaults.standard`
+    /// under a key of its own. `WorkspaceToolbar` drops any identifier it
+    /// does not know when it reads this, so another build's items cannot
+    /// break the toolbar.
+    var workspaceToolbarItems: [String]? {
+        get { defaults.stringArray(forKey: Keys.workspaceToolbarItems) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Keys.workspaceToolbarItems) } else {
+                defaults.removeObject(forKey: Keys.workspaceToolbarItems)
+            }
+        }
+    }
+
+    /// R2-ARCH-06: the toolbar's display mode from the same customisation
+    /// sheet (`NSToolbar.DisplayMode`'s raw value), or `nil` for icons only.
+    var workspaceToolbarDisplayMode: Int? {
+        get { defaults.object(forKey: Keys.workspaceToolbarDisplayMode) == nil ? nil
+                : defaults.integer(forKey: Keys.workspaceToolbarDisplayMode) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Keys.workspaceToolbarDisplayMode) } else {
+                defaults.removeObject(forKey: Keys.workspaceToolbarDisplayMode)
             }
         }
     }

@@ -99,8 +99,9 @@ enum SidebarRedesignsModelSelfTest {
         // U-02 took the caption out: Console, then Hosts.
         check(ids == [WorkspaceToolbar.ItemID.quickConnectConsole, WorkspaceToolbar.ItemID.quickConnectHosts],
               "Quick Connect is not Console, then Hosts", &ok)
-        let allowed = toolbar.toolbarAllowedItemIdentifiers(toolbar.toolbar)
-        check(ids.allSatisfy(allowed.contains), "the toolbar cannot show Quick Connect's items", &ok)
+        // R2-ARCH-06: placed by the toolbar on every module, so they are
+        // its own items rather than the customisation palette's.
+        check(ids.allSatisfy(WorkspaceToolbar.dynamicItems.contains), "the toolbar cannot show Quick Connect's items", &ok)
         let item = { (id: NSToolbarItem.Identifier) in
             toolbar.toolbar(toolbar.toolbar, itemForItemIdentifier: id, willBeInsertedIntoToolbar: true)
         }

@@ -497,8 +497,14 @@ enum SplitShellModelSelfTest {
               "the light/dark toggle and the notifications button are no longer the trailing cluster: \(ids.map(\.rawValue))", &ok)
         check(ids.first == WorkspaceToolbar.ItemID.sidebar && ids.contains(.sidebarTrackingSeparator),
               "the sidebar button no longer sits over the sidebar", &ok)
-        check(!toolbar.toolbar.autosavesConfiguration && !toolbar.toolbar.allowsUserCustomization,
+        // R2-ARCH-06: customisable, and still never autosaved by AppKit -
+        // the toolbar saves its own items to `AppSettings`, which is
+        // `AppDefaults.store`. `MainSplitShellSelfTest
+        // .checkTheToolbarIsCustomisable` drives the round trip.
+        check(!toolbar.toolbar.autosavesConfiguration,
               "the toolbar autosaves its configuration, which writes UserDefaults.standard outside AppDefaults.store", &ok)
+        check(toolbar.toolbar.allowsUserCustomization,
+              "R2-ARCH-06: the sidebar layout's toolbar is not customisable", &ok)
     }
 
     // MARK: 5 - no status strip
@@ -534,8 +540,11 @@ enum SplitShellModelSelfTest {
         // of room it yields to the page's own actions, whose overflow form
         // does nothing, and keeps a menu form that opens its popover.
         let toolbar = WorkspaceToolbar(splitView: NSSplitView())
-        check(toolbar.toolbarAllowedItemIdentifiers(toolbar.toolbar).contains(WorkspaceToolbar.ItemID.focusTimer),
-              "the toolbar can no longer show the focus timer's chip", &ok)
+        // R2-ARCH-06: the chip is one of the items the toolbar places itself,
+        // so it is not in the customisation palette; it still builds.
+        check(WorkspaceToolbar.dynamicItems.contains(WorkspaceToolbar.ItemID.focusTimer)
+                && !toolbar.toolbarAllowedItemIdentifiers(toolbar.toolbar).contains(WorkspaceToolbar.ItemID.focusTimer),
+              "the focus timer's chip is not one of the toolbar's own placed items", &ok)
         let item = toolbar.toolbar(toolbar.toolbar, itemForItemIdentifier: WorkspaceToolbar.ItemID.focusTimer,
                                    willBeInsertedIntoToolbar: true)
         let priority = item?.visibilityPriority.rawValue ?? 0

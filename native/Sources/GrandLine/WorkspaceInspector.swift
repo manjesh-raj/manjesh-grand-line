@@ -15,14 +15,25 @@
 // and keeps filled; the pane hosts that view in a scroll view under its title
 // line, which names the selected item.
 //
-// It is an ordinary split pane under the toolbar, a card-coloured column with
-// a hairline on its leading edge - the prototype's shape - rather than the
-// system inspector item (`NSSplitViewItem(inspectorWithViewController:)`).
-// That item exists from macOS 11, so the deployment target is not the reason.
-// From macOS 14 it is drawn full height as glass the window server
-// composites, which this app's off-screen renders cannot capture, and every
-// layout check of this pane is one of those renders (R2-PROC-07 corrected an
-// earlier claim here that the item does not exist on macOS 13).
+// **Who paints the column (R2-ARCH-06).** On macOS 14 and later the shell
+// hosts this controller in the system's inspector item
+// (`NSSplitViewItem(inspectorWithViewController:)`), which AppKit lays out
+// full height beside the content column and, on macOS 26, wraps in glass -
+// the prototype's inspector, drawn by the system. There this controller
+// paints no column of its own: the root and the panel stay clear so the
+// system's surface shows, and the system draws the edge. Before macOS 14 the
+// item gives none of that, so the shell hosts this controller in an ordinary
+// split pane and it draws the column itself: a card-coloured panel under the
+// toolbar with a hairline on its leading edge (`drawsOwnPane`).
+//
+// Either way the title line, the close button, the content and the entrance
+// motion are the same views, so every check of what the inspector shows reads
+// the same controller. One thing an off-screen render cannot show is the
+// system's glass, which the window server composites: a render of the system
+// path draws the inspector's content over a clear column. R2-PROC-07
+// corrected an earlier claim here that the item does not exist on macOS 13;
+// it does (macOS 11), and macOS 14 is where it becomes the full-height
+// inspector, which is why that is the line.
 
 import AppKit
 
@@ -34,6 +45,13 @@ final class WorkspaceInspectorController: NSViewController {
     /// The close button's click, forwarded to the shell, which owns the
     /// split view item.
     var onClose: (() -> Void)?
+
+    /// Whether this controller paints its own column - the hand-drawn pane
+    /// the shell uses before macOS 14 - or leaves it to the system's
+    /// inspector item. Set by the shell before the view loads.
+    var drawsOwnPane = true {
+        didSet { if isViewLoaded { applyTheme(ThemeManager.shared.theme) } }
+    }
 
     private let panel = NSView()
     private let edge = NSView()
@@ -191,11 +209,15 @@ final class WorkspaceInspectorController: NSViewController {
     }
 
     private func applyTheme(_ theme: HelmTheme) {
-        view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
-        panel.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        // The system's inspector item draws the column and its edge itself,
+        // so a fill here would cover it (gotcha (8)'s reasoning, inverted:
+        // the system's surface is the right one in this case).
+        view.layer?.backgroundColor = drawsOwnPane ? HelmTheme.nsColor(theme.backgroundHex).cgColor : nil
+        panel.layer?.backgroundColor = drawsOwnPane ? HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor : nil
         let line = HelmDisplayAccessibility.strengthenedEdge(
             HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.borderAlpha), theme: theme)
         edge.layer?.backgroundColor = line.cgColor
+        edge.isHidden = !drawsOwnPane
         divider.layer?.backgroundColor = line.withAlphaComponent(line.alphaComponent * HelmCard.dividerAlpha).cgColor
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         closeButton.contentTintColor = HelmTheme.mutedInk(theme)
@@ -207,5 +229,6 @@ final class WorkspaceInspectorController: NSViewController {
     var debugEmptyState: HelmEmptyState { empty }
     var debugIsShowingContent: Bool { hostedView != nil }
     var debugPanelLayer: CALayer? { panel.layer }
+    var debugEdgeIsHidden: Bool { edge.isHidden }
     #endif
 }

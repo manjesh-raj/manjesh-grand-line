@@ -1465,6 +1465,28 @@ enum ReviewTourLab {
                          respectFlipped: false, hints: nil)
             }
         }
+        // R2-ARCH-06: the system's inspector item is glass the window server
+        // composites, and `cacheDisplay` draws it as a placeholder with none
+        // of the inspector's own views in it (measured, the same in a bare
+        // AppKit window). So the inspector is put back the way the sidebar
+        // is: the panel fill the glass approximates, then the controller's
+        // own views over it - below the toolbar only, which keeps its items.
+        let inspectorView = shell.inspector.view
+        if !shell.debugInspectorIsCollapsed, !shell.inspector.drawsOwnPane, inspectorView.bounds.width > 0 {
+            let top = inspectorView.safeAreaInsets.top
+            let bounds = inspectorView.bounds
+            let below = inspectorView.isFlipped
+                ? NSRect(x: 0, y: top, width: bounds.width, height: bounds.height - top)
+                : NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - top)
+            if below.height > 0, let rep = inspectorView.bitmapImageRepForCachingDisplay(in: below) {
+                inspectorView.cacheDisplay(in: below, to: rep)
+                let r = inspectorView.convert(below, to: nil)
+                let rect = NSRect(x: r.minX * scale, y: r.minY * scale, width: r.width * scale, height: r.height * scale)
+                HelmTheme.sidePanelFill(ThemeManager.shared.theme).setFill()
+                rect.fill()
+                rep.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
+            }
+        }
         // Light capsules render as near-white, which reads correctly; only a
         // dark render needs them repainted (and a light one cannot be: a
         // toolbar button's vibrant template image does not survive being
