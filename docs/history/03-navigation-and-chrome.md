@@ -1242,3 +1242,22 @@ The values were measured by laying every page and toolbar tab out in a narrower 
 Tasks' Weekly review is the one tab wider than its page (920pt), so it alone steps the sidebar aside, and its width tie is active only while it shows (gotcha (15)).
 The inspector takes its room from the sidebar before the window, and in the compact toolbar beside a showing sidebar the crumb yields first, with an overflow item that shows the place in the sidebar.
 At 1100 the sidebar now stays beside every page except Log Analyzer, Commands and Tasks' Weekly review, and at 1280 beside every page. `MainSplitShellSelfTest` asserts both, in both palettes.
+
+## The second full review's architecture findings (`fm/grandline-review2-architecture-1792988374`)
+
+### The floating bar is frozen (R2-ARCH-01)
+
+The review called this a decision rather than a fix: keep building every piece of chrome twice, freeze the floating bar, or set a date to retire it.
+The captain keeps both layouts, so this took the review's option (a).
+The floating bar is the classic layout, kept and maintenance only.
+Settings' Window layout row names it "Floating bar (classic)" and says in plain words that new features and page redesigns go to the sidebar (`WorkspaceLayout.maintenanceNote`).
+Nothing about the floating bar itself changed, and its regression checks stay.
+`docs/modular-shell/feature-inventory.md` records the freeze; AGENTS.md and CONTRIBUTING.md said nothing about building chrome twice, so there was no wrong statement to correct there.
+
+R2-UX-02 had already taken the floating bar's spaces out of the sidebar layout's Go menu and Home's toolbar.
+One reader was left: Home's Customize menu filed the cards it offers under the four spaces (Command, Operations, Stores, Engineering).
+It now files each card under the sidebar group of the module the card opens, which is where the captain finds that card's page.
+`ReviewTwoUXModelSelfTest.checkTheFloatingBarIsFrozenAndHomeHasNoSpaces` guards the label, the note and the menu.
+
+Not done: a retirement date (the review's option (b)), which is the captain's call and is asked separately.
+

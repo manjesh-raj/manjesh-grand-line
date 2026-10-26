@@ -7,7 +7,8 @@
 // adds a second shell beside the floating bar, so there are two layouts now:
 //
 //   - `AppShellController` - the floating bar, the space pills and the drill
-//     header. Unchanged, and still a choice in Settings > Appearance.
+//     header. Still a choice in Settings > Appearance, as the classic layout:
+//     frozen since R2-ARCH-01, so it gets fixes but no new features.
 //   - `MainSplitShellController` - a sidebar, a window toolbar, the content
 //     column, and an inspector. The default since PR #523.
 //
@@ -34,8 +35,10 @@ import AppKit
 /// Settings applies the next time the app opens - see
 /// `AppSettings.workspaceLayout`.
 enum WorkspaceLayout: String, CaseIterable {
-    /// The floating bar with its space pills and drill header. Still a
-    /// first-class choice in Settings, never removed.
+    /// The floating bar with its space pills and drill header - the classic
+    /// layout. Kept and still a choice in Settings, but frozen (R2-ARCH-01):
+    /// it receives no new features and no page redesigns, and Settings says
+    /// so in plain words (`maintenanceNote`).
     case floatingBar
     /// The sidebar, window toolbar, content column and inspector - the default.
     case sidebar
@@ -49,10 +52,17 @@ enum WorkspaceLayout: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .floatingBar: return "Floating bar"
+        case .floatingBar: return "Floating bar (classic)"
         case .sidebar: return "Sidebar"
         }
     }
+
+    /// R2-ARCH-01: what Settings says about the two layouts where the
+    /// captain chooses one - that the floating bar is kept for maintenance
+    /// only, and new work goes to the sidebar.
+    static let maintenanceNote = "The sidebar, with a window toolbar and an inspector, is where new features and page "
+        + "redesigns go. The classic floating bar keeps working, but it is maintenance only: it gets fixes, not "
+        + "new features. Takes effect the next time Grand Line opens."
 }
 
 class WorkspaceShellController: NSViewController, WorkspaceChrome {
