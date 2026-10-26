@@ -190,6 +190,10 @@ enum ReviewTourLab {
         /// with dummy failure text, then give Retry a no-op so the sidebar
         /// layout draws it without anything being re-run.
         case demoHealth
+        /// `demo rules`: two custom keyword-highlighting rules in this
+        /// process's own settings, and Settings > Terminal's rule editor open
+        /// on the first, so both the list and the editor can be rendered.
+        case demoRules
         /// `select <title>`: select the showing page's row with this title,
         /// through the page's own selection path - a host, a key, a snippet
         /// or a credential.
@@ -333,6 +337,7 @@ enum ReviewTourLab {
             if argument == "focuslog" { return .success(.demoFocusLog) }
             if argument == "logs" { return .success(.demoLogs) }
             if argument == "health" { return .success(.demoHealth) }
+            if argument == "rules" { return .success(.demoRules) }
             if argument.hasPrefix("loading ") {
                 let card = String(argument.dropFirst("loading ".count))
                 guard ["claude", "fleet", "merge"].contains(card) else { return .failure(.badArgument(argument)) }
@@ -688,6 +693,24 @@ enum ReviewTourLab {
                 RunLoop.main.run(until: Date().addingTimeInterval(0.1))
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo health")
+            case .demoRules:
+                guard let settings = shell.debugSlotController(.settings) as? SettingsController else {
+                    log.append("\(step) FAILED - Settings is not mounted; goto settings first")
+                    continue
+                }
+                var highlighting = AppSettings.shared.terminalHighlighting
+                highlighting.rules = [
+                    KeywordHighlightRule(kind: .words, text: "deploy, rollback, OOM", color: .ansi(13)),
+                    KeywordHighlightRule(kind: .pattern, text: #"\bE\d{4}\b"#, caseSensitive: true, color: .ansi(11)),
+                ]
+                AppSettings.shared.terminalHighlighting = highlighting
+                let card = settings.debugKeywordHighlighting
+                card.refresh()
+                if let edit = card.debugRuleButtons.first(where: { $0.accessibilityLabel()?.hasPrefix("Edit") == true }) {
+                    _ = (edit.target as? NSObject)?.perform(edit.action, with: edit)
+                }
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo rules")
             case .select(let title):
                 log.append(selectRow(titled: title, shell: shell))
                 shell.view.layoutSubtreeIfNeeded()

@@ -571,6 +571,8 @@ Every `HelmSegmentedTabs` built from literal titles, plus the Hosts column, the 
 | `tab.ShiftController.Calendar` | Tasks view: Calendar | Tasks page view tabs | Tasks › Calendar |  |
 | `tab.ShiftController.List` | Tasks view: List | Tasks page view tabs | Tasks › List |  |
 | `tab.ShiftController.Review` | Tasks view: Review | Tasks page view tabs | Tasks › Weekly review |  |
+| `tab.TerminalHighlightSettings.Pattern` | Custom rule editor: match a pattern | Settings › Terminal's Custom rules card, while a rule is being edited | Settings › Terminal (T3: the rule editor inside the Custom rules card) |  |
+| `tab.TerminalHighlightSettings.Words` | Custom rule editor: match words | Settings › Terminal's Custom rules card, while a rule is being edited | Settings › Terminal (T3: the rule editor inside the Custom rules card) |  |
 | `tab.ToolKind.base64` | Tool: base64 | Tools page tab | Tools (tool tab, unchanged) |  |
 | `tab.ToolKind.cert` | Tool: cert | Tools page tab | Tools (tool tab, unchanged) |  |
 | `tab.ToolKind.cron` | Tool: cron | Tools page tab | Tools (tool tab, unchanged) |  |
@@ -812,7 +814,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.SessionStripView` | SessionStripView controls | `addClicked`, `closeClicked`, `pillClicked` | Console (the Sessions strip; live sessions are also sidebar children of Console) |  |
 | `action.SettingsShortcutsPage` | SettingsShortcutsPage controls | `resetRowClicked`, `restoreAllDefaults` | Settings › Shortcuts (T6: a configurable row's own reset to its default, and Restore All Defaults, which asks first) |  |
 | `action.SettingsController` | SettingsController controls | `chooseShellCwd`, `disableSudoTouchIDClicked`, `enableSudoTouchIDClicked`, `exportBackupClicked`, `fontPresetClicked`, `goBack`, `goForward`, `importBackupClicked`, `lockThresholdPicked`, `openAccessibilitySettings`, `openShortcutsApp`, `openShortcutsPage`, `openVault`, `recheckSudoTouchIDClicked`, `relaunchTapped`, `resetQuickCaptureShortcut`, `textFieldChanged`, `themeDisclosureClicked`, `uiScaleClicked` | Settings (R2-UX-08: `goBack` and `goForward` are the floating bar's header arrows; in the sidebar layout the window's Back and Forward walk the categories instead. `relaunchTapped` is the Relaunch Grand Line button beside Window layout and Interface text size) |  |
-| `action.TerminalHighlightSettings` | Settings › Terminal's keyword highlighting card | `colorPicked`, `restoreDefaults` | Settings › Terminal (T2: a colour per highlight class and Restore Defaults, beside the card's switches) |  |
+| `action.TerminalHighlightSettings` | Settings › Terminal's keyword highlighting cards | `addRule`, `cancelRule`, `colorPicked`, `deleteRule`, `editRule`, `restoreDefaults`, `ruleColorPicked`, `saveRule` | Settings › Terminal (T2: a colour per highlight class and Restore Defaults, beside the card's switches; T3: Add Rule, and each custom rule's Edit and Delete, with Save, Cancel and the colour in the rule editor inside the Custom rules card) |  |
 | `action.SettingsThemeCard` | SettingsThemeCard controls | `cardClicked` | Settings › Appearance |  |
 | `action.ShiftBoardViews` | ShiftBoardViews controls | `addTapped`, `chipClicked`, `clearFilterTapped`, `menuDelete`, `menuFocus`, `menuMove`, `menuOpen`, `menuPush` | Tasks › Board |  |
 | `action.ShiftCalendarViews` | ShiftCalendarViews controls | `cellClicked`, `clicked`, `goNext`, `goPrevious`, `goToday` | Tasks › Calendar |  |

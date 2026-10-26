@@ -169,6 +169,108 @@ struct KeywordHighlightClassSetting: Codable, Equatable {
     }
 }
 
+/// One of the captain's own rules (T3): words or a pattern, and a colour.
+struct KeywordHighlightRule: Codable, Equatable {
+    enum Kind: String, Codable {
+        /// Comma- or newline-separated words, each matched whole.
+        case words
+        /// An ICU regular expression (`NSRegularExpression`).
+        case pattern
+    }
+
+    var id: String = UUID().uuidString
+    var kind: Kind = .words
+    var text: String = ""
+    var caseSensitive: Bool = false
+    var color: KeywordHighlightColor = .ansi(5)
+
+    /// How many rules a captain may keep. Each rule is a little more work on
+    /// every new row, and 32 is well past what a terminal can usefully show
+    /// in distinct colours anyway.
+    static let maximumCount = 32
+    static let maximumWordLength = 64
+    static let maximumPatternLength = 500
+
+    init(kind: Kind = .words, text: String = "", caseSensitive: Bool = false,
+         color: KeywordHighlightColor = .ansi(5)) {
+        self.kind = kind
+        self.text = text
+        self.caseSensitive = caseSensitive
+        self.color = color
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        kind = try c.decodeIfPresent(Kind.self, forKey: .kind) ?? .words
+        text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        caseSensitive = try c.decodeIfPresent(Bool.self, forKey: .caseSensitive) ?? false
+        color = try c.decodeIfPresent(KeywordHighlightColor.self, forKey: .color) ?? .ansi(5)
+    }
+
+    /// The words of a `.words` rule, trimmed, empties dropped.
+    var words: [String] {
+        text.split(whereSeparator: { $0 == "," || $0.isNewline })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Why this rule cannot be saved, or `nil` when it can. A bad pattern is
+    /// refused here, at save, rather than silently matching nothing later.
+    var validationError: String? {
+        switch kind {
+        case .words:
+            let list = words
+            if list.isEmpty { return "Enter at least one word." }
+            if let long = list.first(where: { $0.count > Self.maximumWordLength }) {
+                return "\u{201C}\(long.prefix(20))\u{2026}\u{201D} is longer than \(Self.maximumWordLength) characters."
+            }
+            return nil
+        case .pattern:
+            let pattern = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if pattern.isEmpty { return "Enter a pattern." }
+            if pattern.count > Self.maximumPatternLength {
+                return "A pattern can be at most \(Self.maximumPatternLength) characters."
+            }
+            let regex: NSRegularExpression
+            do {
+                regex = try NSRegularExpression(pattern: pattern, options: caseSensitive ? [] : [.caseInsensitive])
+            } catch {
+                return "That pattern does not compile. Check its brackets, parentheses and escapes."
+            }
+            // A pattern that matches empty text would "match" at every
+            // position and colour nothing, which reads as a broken feature.
+            if regex.firstMatch(in: "", range: NSRange(location: 0, length: 0)) != nil {
+                return "That pattern also matches empty text. Make at least one part of it required."
+            }
+            return nil
+        }
+    }
+
+    /// The compiled form, or `nil` if the rule is invalid or needs none.
+    func compiledPattern() -> NSRegularExpression? {
+        guard validationError == nil else { return nil }
+        let options: NSRegularExpression.Options = caseSensitive ? [] : [.caseInsensitive]
+        switch kind {
+        case .pattern:
+            return try? NSRegularExpression(pattern: text.trimmingCharacters(in: .whitespacesAndNewlines),
+                                            options: options)
+        case .words:
+            // The words the packed scan cannot see (spaces, punctuation, over
+            // 16 characters), as one escaped alternation. A word-character
+            // end gets a word boundary; any other end matches as written.
+            let pieces = words.filter { KeywordMatcher.pack($0) == nil }.map { word -> String in
+                let escaped = NSRegularExpression.escapedPattern(for: word)
+                let head = word.utf16.first.map(KeywordMatcher.isWordUnit) == true ? "(?<![\\w])" : ""
+                let tail = word.utf16.last.map(KeywordMatcher.isWordUnit) == true ? "(?![\\w])" : ""
+                return head + escaped + tail
+            }
+            guard !pieces.isEmpty else { return nil }
+            return try? NSRegularExpression(pattern: pieces.joined(separator: "|"), options: options)
+        }
+    }
+}
+
 /// Everything Settings > Terminal's highlighting card controls, stored as one
 /// JSON value in `AppSettings.terminalHighlighting` (choice C2: per Mac, the
 /// same shape as `fm.terminalShortcuts`).
@@ -182,8 +284,16 @@ struct KeywordHighlightSettings: Codable, Equatable {
     var enabled: Bool = true
     /// Keyed by `KeywordHighlightClass.rawValue`.
     private var classSettings: [String: KeywordHighlightClassSetting] = [:]
+    /// The captain's own rules (T3), checked before the built-in classes.
+    var rules: [KeywordHighlightRule] = []
 
     static let defaults = KeywordHighlightSettings()
+
+    /// Whether the master switch and every class are as shipped. Rules are
+    /// the captain's own content, so they do not count.
+    var classesAreDefault: Bool {
+        enabled == Self.defaults.enabled && classSettings.isEmpty
+    }
 
     init() {}
 
@@ -198,6 +308,14 @@ struct KeywordHighlightSettings: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case enabled
         case classSettings = "classes"
+        case rules
+    }
+
+    /// One rule that does not decode is dropped on its own rather than
+    /// taking every other rule with it.
+    private struct LossyRule: Decodable {
+        let rule: KeywordHighlightRule?
+        init(from decoder: Decoder) throws { rule = try? KeywordHighlightRule(from: decoder) }
     }
 
     init(from decoder: Decoder) throws {
@@ -205,6 +323,8 @@ struct KeywordHighlightSettings: Codable, Equatable {
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         classSettings = try c.decodeIfPresent([String: KeywordHighlightClassSetting].self,
                                               forKey: .classSettings) ?? [:]
+        rules = ((try? c.decodeIfPresent([LossyRule].self, forKey: .rules)) ?? nil)?
+            .compactMap(\.rule) ?? []
     }
 }
 
@@ -223,6 +343,8 @@ struct KeywordMatcher {
     /// What a match belongs to.
     enum Slot: Hashable {
         case builtIn(KeywordHighlightClass)
+        /// The captain's rule at this index in `KeywordHighlightSettings.rules`.
+        case rule(Int)
     }
 
     /// A lower-cased ASCII word of at most 16 bytes, packed into two words so
@@ -240,10 +362,16 @@ struct KeywordMatcher {
     static var debugAddressPatternRuns = 0
     #endif
 
+    /// Lower-cased words: the built-in classes and case-insensitive rules.
     private(set) var words: [PackedWord: Slot] = [:]
+    /// Case-sensitive rule words, packed as written. Looked up first.
+    private(set) var exactWords: [PackedWord: Slot] = [:]
+    /// Rules the packed scan cannot answer (patterns, and words with spaces
+    /// or punctuation), in rule order.
+    private(set) var patterns: [(regex: NSRegularExpression, slot: Slot)] = []
     private(set) var matchesAddresses = false
 
-    init(classes: Set<KeywordHighlightClass>) {
+    init(classes: Set<KeywordHighlightClass>, rules: [KeywordHighlightRule] = []) {
         for cls in KeywordHighlightClass.allCases where classes.contains(cls) {
             if cls == .address {
                 matchesAddresses = true
@@ -253,19 +381,34 @@ struct KeywordMatcher {
                 if let key = Self.pack(word) { words[key] = .builtIn(cls) }
             }
         }
+        // Rule words go in after the classes and last rule first, so where a
+        // rule and a class (or an earlier rule) name the same word, the rule
+        // earliest in the list owns it.
+        for (index, rule) in rules.enumerated().reversed() where rule.kind == .words && rule.validationError == nil {
+            for word in rule.words {
+                if rule.caseSensitive, let key = Self.pack(word, lowercasing: false) {
+                    exactWords[key] = .rule(index)
+                } else if !rule.caseSensitive, let key = Self.pack(word) {
+                    words[key] = .rule(index)
+                }
+            }
+        }
+        for (index, rule) in rules.enumerated() {
+            if let regex = rule.compiledPattern() { patterns.append((regex, .rule(index))) }
+        }
     }
 
-    var isEmpty: Bool { words.isEmpty && !matchesAddresses }
+    var isEmpty: Bool { words.isEmpty && exactWords.isEmpty && patterns.isEmpty && !matchesAddresses }
 
-    /// Packs an ASCII word, lower-cased, or `nil` if it is not one this scan
-    /// can see as a single word.
-    static func pack(_ word: String) -> PackedWord? {
+    /// Packs an ASCII word, lower-cased unless asked not to, or `nil` if it
+    /// is not one this scan can see as a single word.
+    static func pack(_ word: String, lowercasing: Bool = true) -> PackedWord? {
         let units = Array(word.utf16)
         guard !units.isEmpty, units.count <= maximumWordLength, units.allSatisfy(isWordUnit) else {
             return nil
         }
         var key = PackedWord()
-        for (i, unit) in units.enumerated() { key.add(lowercased(unit), at: i) }
+        for (i, unit) in units.enumerated() { key.add(lowercasing ? lowercased(unit) : unit, at: i) }
         return key
     }
 
@@ -306,10 +449,35 @@ struct KeywordMatcher {
         return try! NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
     }()
 
-    /// Every match in one row, in order, never overlapping.
+    /// Every match in one row, in order, never overlapping. The captain's
+    /// pattern rules claim text first, then words (rules before classes, see
+    /// `init`), then addresses.
     func matches(in units: [UInt16]) -> [Match] {
         var found: [Match] = []
         let n = units.count
+        var cachedText: NSString?
+        func text() -> NSString {
+            if let cachedText { return cachedText }
+            let made = units.withUnsafeBufferPointer { buffer in
+                NSString(characters: buffer.baseAddress!, length: n)
+            }
+            cachedText = made
+            return made
+        }
+        func claim(_ match: Match) {
+            if !found.contains(where: { $0.range.overlaps(match.range) }) { found.append(match) }
+        }
+
+        if !patterns.isEmpty, n > 0 {
+            let string = text() as String
+            for (regex, slot) in patterns {
+                regex.enumerateMatches(in: string, options: [], range: NSRange(location: 0, length: n)) { result, _, _ in
+                    guard let r = result?.range, r.length > 0 else { return }
+                    claim(Match(range: r.location..<(r.location + r.length), slot: slot))
+                }
+            }
+        }
+        let patternClaims = found.count
 
         // Separator counts for the address pre-check. Each counts a separator
         // with the right kind of character on both sides.
@@ -324,14 +492,20 @@ struct KeywordMatcher {
             if Self.isWordUnit(u) {
                 let start = i
                 var key = PackedWord()
+                var exact = PackedWord()
                 var length = 0
                 while i < n, Self.isWordUnit(units[i]) {
-                    if length < Self.maximumWordLength { key.add(Self.lowercased(units[i]), at: length) }
+                    if length < Self.maximumWordLength {
+                        key.add(Self.lowercased(units[i]), at: length)
+                        if !exactWords.isEmpty { exact.add(units[i], at: length) }
+                    }
                     length += 1
                     i += 1
                 }
-                if length <= Self.maximumWordLength, let slot = words[key] {
-                    found.append(Match(range: start..<i, slot: slot))
+                if length <= Self.maximumWordLength,
+                   let slot = (exactWords.isEmpty ? nil : exactWords[exact]) ?? words[key] {
+                    let match = Match(range: start..<i, slot: slot)
+                    if patternClaims == 0 { found.append(match) } else { claim(match) }
                 }
                 continue
             }
@@ -357,21 +531,24 @@ struct KeywordMatcher {
 
         let maybeAddress = matchesAddresses
             && (digitDots >= 3 || hexColons >= 5 || hexDashes >= 5 || doubleColon)
-        guard maybeAddress else { return found }
+        guard maybeAddress else {
+            if patternClaims > 0 { found.sort { $0.range.lowerBound < $1.range.lowerBound } }
+            return found
+        }
 
         #if FM_SELFTESTS
         Self.debugAddressPatternRuns += 1
         #endif
-        let text = units.withUnsafeBufferPointer { buffer in
-            NSString(characters: buffer.baseAddress!, length: n)
-        }
         var addresses: [Match] = []
-        Self.addressPattern.enumerateMatches(in: text as String, options: [],
+        Self.addressPattern.enumerateMatches(in: text() as String, options: [],
                                              range: NSRange(location: 0, length: n)) { result, _, _ in
             guard let r = result?.range, r.length > 0 else { return }
             addresses.append(Match(range: r.location..<(r.location + r.length), slot: .builtIn(.address)))
         }
-        guard !addresses.isEmpty else { return found }
+        guard !addresses.isEmpty else {
+            if patternClaims > 0 { found.sort { $0.range.lowerBound < $1.range.lowerBound } }
+            return found
+        }
         // Words are claimed first. An address never contains one of the
         // built-in words, but a merge that keeps the rule explicit is what
         // stops a later class from silently overlapping.
@@ -487,10 +664,13 @@ final class TerminalKeywordHighlighter: TerminalRowHighlighter {
 
     private func recompile() {
         let classes = Set(KeywordHighlightClass.allCases.filter { settings[$0].enabled })
-        matcher = KeywordMatcher(classes: classes)
+        matcher = KeywordMatcher(classes: classes, rules: settings.rules)
         var resolved: [KeywordMatcher.Slot: NSColor] = [:]
         for cls in KeywordHighlightClass.allCases {
             resolved[.builtIn(cls)] = Self.resolvedColor(for: cls, settings: settings, theme: theme)
+        }
+        for (index, rule) in settings.rules.enumerated() {
+            resolved[.rule(index)] = Self.resolvedColor(rule.color, fallbackANSIIndex: 5, theme: theme)
         }
         colors = resolved
         highlightVersion &+= 1

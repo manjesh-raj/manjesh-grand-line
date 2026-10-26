@@ -27,6 +27,8 @@ enum TerminalKeywordMatcherSelfTest {
         checkDisabledClasses(&ok)
         checkColoursInEveryPalette(&ok)
         checkSettingsDecoding(&ok)
+        checkCustomRules(&ok)
+        checkRuleValidation(&ok)
         print(ok ? "TerminalKeywordMatcherSelfTest: all checks passed"
                  : "TerminalKeywordMatcherSelfTest: FAILURES")
         return ok
@@ -41,6 +43,9 @@ enum TerminalKeywordMatcherSelfTest {
             let piece = String(utf16CodeUnits: Array(units[match.range]), count: match.range.count)
             switch match.slot {
             case .builtIn(let cls): return (piece, cls)
+            // Rule matches are asserted through `ruleMatches` below; here they
+            // read as no class at all.
+            case .rule: return (piece, .address)
             }
         }
     }
@@ -192,6 +197,90 @@ enum TerminalKeywordMatcherSelfTest {
         let corrected = TerminalKeywordHighlighter.resolvedColor(for: .error, settings: settings, theme: dusk)
         check(HelmContrast.ratio(corrected, TerminalKeywordHighlighter.terminalBackground(dusk)) >= HelmContrast.textTarget - 0.01,
               "a custom colour equal to the terminal background was not corrected for contrast", &ok)
+    }
+
+    // MARK: Custom rules (T3)
+
+    /// Matched text and its slot, for a matcher built with `rules`.
+    private static func ruleMatches(_ text: String, _ rules: [KeywordHighlightRule]) -> [(String, KeywordMatcher.Slot)] {
+        let matcher = KeywordMatcher(classes: Set(KeywordHighlightClass.allCases), rules: rules)
+        let units = Array(text.utf16)
+        return matcher.matches(in: units).map {
+            (String(utf16CodeUnits: Array(units[$0.range]), count: $0.range.count), $0.slot)
+        }
+    }
+
+    private static func describe(_ list: [(String, KeywordMatcher.Slot)]) -> String {
+        list.map { "\($0.0)=\($0.1)" }.joined(separator: ", ")
+    }
+
+    private static func checkCustomRules(_ ok: inout Bool) {
+        let words = KeywordHighlightRule(kind: .words, text: "deploy, rollback\nconnection refused")
+        let exact = KeywordHighlightRule(kind: .words, text: "OOM", caseSensitive: true)
+        let pattern = KeywordHighlightRule(kind: .pattern, text: #"\b5\d\d\b"#)
+        let owner = KeywordHighlightRule(kind: .words, text: "error")
+        let later = KeywordHighlightRule(kind: .words, text: "Deploy")
+        let rules = [words, exact, pattern, owner, later]
+
+        var got = ruleMatches("Deploy started; ROLLBACK queued", rules)
+        check(got.map(\.0) == ["Deploy", "ROLLBACK"] && got.allSatisfy { $0.1 == .rule(0) },
+              "a case-insensitive words rule matched [\(describe(got))]", &ok)
+
+        got = ruleMatches("OOM killer ran; oom is fine", rules)
+        check(got.map(\.0) == ["OOM"] && got.first?.1 == .rule(1),
+              "a case-sensitive rule matched [\(describe(got))]; only the exact OOM should match", &ok)
+
+        got = ruleMatches("upstream returned 503 after 1503ms", rules)
+        check(got.map(\.0) == ["503"] && got.first?.1 == .rule(2), "a pattern rule matched [\(describe(got))]", &ok)
+
+        got = ruleMatches("error: connection refused", rules)
+        check(got.map(\.0) == ["error", "connection refused"] && got.allSatisfy({ $0.1 == .rule(3) || $0.1 == .rule(0) }),
+              "rules did not take precedence over the built-in classes: [\(describe(got))]", &ok)
+        check(got.first?.1 == .rule(3), "a rule naming a built-in word (error) did not own it: [\(describe(got))]", &ok)
+
+        // Two rules naming one word: the earlier one owns it.
+        got = ruleMatches("deploy", rules)
+        check(got.first?.1 == .rule(0), "the later of two rules naming one word took it: [\(describe(got))]", &ok)
+
+        // A pattern claims its text before any word inside it is matched.
+        let job = KeywordHighlightRule(kind: .pattern, text: #"job \w+ failed"#)
+        got = ruleMatches("job 7f3a failed: retrying", [job])
+        check(got.map(\.0) == ["job 7f3a failed", "retrying"] && got.first?.1 == .rule(0),
+              "a pattern rule and the words inside it overlapped: [\(describe(got))]", &ok)
+
+        // An invalid rule is ignored rather than breaking the matcher.
+        got = ruleMatches("ERROR at (", [KeywordHighlightRule(kind: .pattern, text: "(")])
+        check(got.map(\.0) == ["ERROR"], "an invalid stored pattern changed matching: [\(describe(got))]", &ok)
+
+        // Storage: one rule that does not decode drops alone (GL-01).
+        let json = """
+            {"rules": [{"kind": "words", "text": "deploy", "color": {"ansiIndex": 2}},
+                       {"kind": "somethingNew", "text": "x"},
+                       {"kind": "pattern", "text": "5\\\\d\\\\d", "caseSensitive": true}]}
+            """
+        let decoded = try? JSONDecoder().decode(KeywordHighlightSettings.self, from: Data(json.utf8))
+        check(decoded?.rules.map(\.text) == ["deploy", #"5\d\d"#],
+              "a stored rule list with one unreadable rule decoded to \(decoded?.rules.map(\.text) ?? [])", &ok)
+        check(decoded?.rules.last?.caseSensitive == true && decoded?.rules.first?.color == .ansi(2),
+              "a stored rule lost its case sensitivity or colour", &ok)
+    }
+
+    private static func checkRuleValidation(_ ok: inout Bool) {
+        let refused: [(KeywordHighlightRule, String)] = [
+            (KeywordHighlightRule(kind: .pattern, text: "(unclosed"), "an unbalanced pattern"),
+            (KeywordHighlightRule(kind: .pattern, text: "a*"), "a pattern that matches empty text"),
+            (KeywordHighlightRule(kind: .pattern, text: "  "), "an empty pattern"),
+            (KeywordHighlightRule(kind: .words, text: " , \n "), "a words rule with no words"),
+            (KeywordHighlightRule(kind: .words, text: String(repeating: "x", count: 65)), "a 65-character word"),
+        ]
+        for (rule, what) in refused {
+            check(rule.validationError != nil, "\(what) was accepted", &ok)
+        }
+        for rule in [KeywordHighlightRule(kind: .pattern, text: #"\bE\d{4}\b"#),
+                     KeywordHighlightRule(kind: .words, text: "timeout, connection reset")] {
+            check(rule.validationError == nil,
+                  "a valid rule (\(rule.text)) was refused: \(rule.validationError ?? "")", &ok)
+        }
     }
 
     // MARK: Storage

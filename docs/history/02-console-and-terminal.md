@@ -131,3 +131,25 @@ This one is T4 to T7.
 - **`KeyChordRecorderView` became keyboard-reachable** (key view loop, focus ring, Space or Return to start, a VoiceOver button), because the page holds eleven of them.
 - **A `HelmKeyHint` has no intrinsic width**, so a `SettingsRow`'s content priorities are no-ops on it (gotcha (12)) and the first render drew the key caps against the caption.
   The page puts each pill in a fixed-width trailing column as wide as a recorder plus its reset button.
+
+## Keyword highlighting (T1-T3 of the Termius-style plan)
+
+Terminal output is coloured the way Termius colours a log: errors red, warnings yellow, OK green, info blue, debug magenta, IP and MAC addresses cyan, plus the captain's own rules.
+It is drawn, never written: the eighth vendored SwiftTerm patch (`Vendor/SwiftTerm/README.md`) asks `TerminalKeywordHighlighter` for colours while a visible row is built, and the buffer, copy, search and `getBufferAsData` never see them.
+Settings live in `fm.terminalHighlighting` (AppDefaults JSON, choice C2) and are edited in Settings › Terminal's Keyword highlighting and Custom rules cards.
+
+- **The first version put the colours in the row's attributed string, and measured 6.89% slower on the 100 MB benchmark against a 5% budget.**
+  A colour change there splits a CoreText run, and a `sample` of the optimised build showed what each extra run costs in `draw(_:)`: its own background fill (3x the fill time), two `CTRunGetAttributes` bridges to a Swift dictionary, and its own glyph draw.
+  Matching was only about 9 ms of the roughly 80 ms the highlighting added.
+  The shipped version keeps the colours on patch 7's cached row and applies them in the glyph pass, drawing a highlighted run in stretches of one colour, so CoreText runs and fills are exactly what they are with highlighting off.
+  It measured 1.81% (off 1.05 s, on 1.06 s, medians of three alternating runs).
+- **Once scrollback is full, patch 7's cache misses on every visible row every frame**, because a scroll rotates every `BufferLine` reference past its identity check.
+  That is why the highlight results are memoised by row text: a row that moved up one line is not scanned again.
+  `TerminalKeywordHighlightSelfTest` measures it (136 rebuilds, at most 16 scans over 8 frames), and removing the memo fails that case.
+- **A timestamp's colons would send every log line to the address pattern.**
+  The word scan counts digit-flanked dots and hex-flanked colons and dashes as it goes, and the precompiled IPv4/IPv6/MAC pattern runs only when a row could hold an address.
+- **Theme ANSI colours are not all legible on their own terminal background.**
+  With the contrast correction removed, 55 class colours across 14 palettes fall below 4.5:1 (Ayu Light's yellow at 2.16:1, Gruvbox Dark's red at 2.12:1).
+  Every highlight colour goes through `HelmContrast.legibleOn` against the terminal's real cell background, theme defaults included.
+- **Not done:** a keyword split across a soft wrap is not matched, because each visible row is matched on its own.
+  Underlined plain text is coloured but keeps its underline in the default ink.

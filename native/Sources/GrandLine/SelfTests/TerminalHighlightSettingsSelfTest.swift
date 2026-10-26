@@ -1,6 +1,6 @@
 // Grand Line - native macOS app.
 //
-// Settings > Terminal's keyword highlighting card (T2). Run with:
+// Settings > Terminal's keyword highlighting cards (T2 and T3). Run with:
 //
 //   swift build && FM_RUN_TERMINAL_HIGHLIGHT_SETTINGS_TESTS=1 .build/debug/GrandLine; echo $?
 //
@@ -23,6 +23,10 @@
 //   6. Restore Defaults puts back the shipped settings.
 //   7. Every control carries a VoiceOver label.
 //   8. A source guard: `SettingsController` builds, refreshes and themes it.
+//   9. T3's custom rules: a bad pattern is refused at save and says why, a
+//      fixed one is saved and coloured live, edit and Esc and delete (behind
+//      its confirm) work, Restore Defaults keeps rules, and the 33rd rule is
+//      refused.
 
 // GL-27: compiled into debug builds only.
 #if FM_SELFTESTS
@@ -52,6 +56,7 @@ enum TerminalHighlightSettingsSelfTest {
         checkEveryPalette(card, &ok)
         checkRestoreDefaults(card, store, &ok)
         checkAccessibilityLabels(card, &ok)
+        checkCustomRules(card, store, highlighter, &ok)
         checkSettingsControllerWiresTheCard(&ok)
 
         print(ok ? "TerminalHighlightSettingsSelfTest: all checks passed"
@@ -193,6 +198,131 @@ enum TerminalHighlightSettingsSelfTest {
                        "keywordHighlighting.applyTheme(theme)"] {
             check(source.contains(marker), "SettingsController.swift no longer calls \(marker)", &ok)
         }
+    }
+
+    // MARK: Custom rules (T3)
+
+    private static func press(_ button: NSControl?) {
+        guard let button else { return }
+        _ = (button.target as? NSObject)?.perform(button.action, with: button)
+    }
+
+    private static func checkCustomRules(_ card: TerminalHighlightSettingsSections, _ store: AppSettings,
+                                         _ highlighter: TerminalKeywordHighlighter, _ ok: inout Bool) {
+        store.terminalHighlighting = .defaults
+        highlighter.update(settings: .defaults)
+        card.refresh()
+        check(card.debugRuleRows.first?.titleLabel.stringValue == "No rules yet",
+              "with no rules the card does not show its empty state", &ok)
+        check(card.debugAddRuleButton?.isEnabled == true, "Add Rule is disabled with no rules", &ok)
+
+        // Add a pattern rule that does not compile: refused at save.
+        press(card.debugAddRuleButton)
+        check(card.debugEditorIsOpen, "Add Rule did not open the editor in the card", &ok)
+        card.debugEditorKindTabs?.debugClickTab(id: KeywordHighlightRule.Kind.pattern.rawValue)
+        card.debugEditorField?.stringValue = "(E[0-9"
+        press(card.debugEditorField)   // Return: the field's own action
+        check(store.terminalHighlighting.rules.isEmpty, "a pattern that does not compile was saved", &ok)
+        check(card.debugEditorMessage?.contains("does not compile") == true,
+              "the refusal does not say why (\(card.debugEditorMessage ?? "nil"))", &ok)
+        check(card.debugEditorIsOpen, "a refused save closed the editor and lost what was typed", &ok)
+
+        // Fix it and save.
+        card.debugEditorField?.stringValue = #"\bE\d{4}\b"#
+        press(card.debugEditorField)
+        let saved = store.terminalHighlighting.rules
+        check(saved.count == 1 && saved.first?.kind == .pattern && saved.first?.text == #"\bE\d{4}\b"#,
+              "the corrected pattern was not saved as a pattern rule: \(saved.map(\.text))", &ok)
+        check(!card.debugEditorIsOpen, "saving did not close the editor", &ok)
+        let units = Array("raised E1234 twice".utf16)
+        let runs = highlighter.highlights(forRow: units)
+        check(runs.count == 1 && runs.first?.range == 7..<12,
+              "the live highlighter does not colour the new rule's match: \(runs.map(\.range))", &ok)
+
+        // Edit: case-sensitive, a theme colour, then a custom one.
+        guard let edit = card.debugRuleButtons.first(where: { $0.accessibilityLabel()?.hasPrefix("Edit") == true }) else {
+            fail("the rule row has no Edit button", &ok)
+            return
+        }
+        press(edit)
+        check(card.debugEditorField?.stringValue == #"\bE\d{4}\b"#, "Edit did not load the rule into the editor", &ok)
+        _ = card.debugEditorCaseSwitch?.accessibilityPerformPress()
+        if let popUp = card.debugEditorColorPopUp,
+           let index = TerminalHighlightSettingsSections.ruleChoices.firstIndex(where: { $0.choice == .ansi(14) }) {
+            popUp.selectItem(at: index)
+            press(popUp)
+        }
+        check(store.terminalHighlighting.rules.first?.color == .ansi(5),
+              "a colour choice was saved before Save was pressed", &ok)
+        press(card.debugEditorField)
+        var rule = store.terminalHighlighting.rules.first
+        check(rule?.caseSensitive == true && rule?.color == .ansi(14),
+              "editing did not save case sensitivity and the colour: \(String(describing: rule))", &ok)
+
+        press(card.debugRuleButtons.first { $0.accessibilityLabel()?.hasPrefix("Edit") == true })
+        card.debugPickCustomRuleColor("336699")
+        press(card.debugEditorField)
+        rule = store.terminalHighlighting.rules.first
+        check(rule?.color == .custom("336699"), "a custom rule colour was not saved: \(String(describing: rule?.color))", &ok)
+
+        // Esc discards an edit.
+        press(card.debugRuleButtons.first { $0.accessibilityLabel()?.hasPrefix("Edit") == true })
+        card.debugEditorField?.stringValue = "something else"
+        if let field = card.debugEditorField {
+            _ = card.control(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+        }
+        check(!card.debugEditorIsOpen && store.terminalHighlighting.rules.first?.text == #"\bE\d{4}\b"#,
+              "Esc did not discard the edit", &ok)
+
+        // Restore Defaults keeps the captain's rules.
+        store.terminalHighlighting.enabled = false
+        card.refresh()
+        press(card.debugRestoreButton)
+        check(store.terminalHighlighting.enabled && store.terminalHighlighting.rules.count == 1,
+              "Restore Defaults did not keep the custom rules", &ok)
+
+        // Delete asks first, and a No keeps the rule.
+        card.confirmRuleDeletion = { _ in false }
+        press(card.debugRuleButtons.first { $0.accessibilityLabel()?.hasPrefix("Delete") == true })
+        check(store.terminalHighlighting.rules.count == 1, "a declined delete removed the rule", &ok)
+        var asked = false
+        card.confirmRuleDeletion = { _ in asked = true; return true }
+        press(card.debugRuleButtons.first { $0.accessibilityLabel()?.hasPrefix("Delete") == true })
+        check(asked && store.terminalHighlighting.rules.isEmpty, "a confirmed delete did not remove the rule", &ok)
+
+        // The cap: 32 rules, and a save that would make 33 is refused.
+        var settings = store.terminalHighlighting
+        settings.rules = (0..<31).map { KeywordHighlightRule(kind: .words, text: "word\($0)") }
+        store.terminalHighlighting = settings
+        card.refresh()
+        press(card.debugAddRuleButton)
+        settings.rules.append(KeywordHighlightRule(kind: .words, text: "late"))
+        store.terminalHighlighting = settings
+        card.debugEditorField?.stringValue = "one more"
+        press(card.debugEditorField)
+        check(store.terminalHighlighting.rules.count == KeywordHighlightRule.maximumCount,
+              "a 33rd rule was saved", &ok)
+        check(card.debugEditorMessage?.contains("already have 32") == true,
+              "the 33rd rule's refusal does not say why (\(card.debugEditorMessage ?? "nil"))", &ok)
+        if let field = card.debugEditorField {
+            _ = card.control(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+        }
+        check(card.debugAddRuleButton?.isEnabled == false, "Add Rule stays enabled at 32 rules", &ok)
+
+        // VoiceOver: every rule button and editor control has a label.
+        press(card.debugRuleButtons.first { $0.accessibilityLabel()?.hasPrefix("Edit") == true })
+        let editorControls: [NSView?] = [card.debugEditorField, card.debugEditorKindTabs, card.debugEditorCaseSwitch,
+                                         card.debugEditorColorPopUp]
+        for control in editorControls + card.debugRuleButtons.map({ $0 as NSView? }) {
+            if (control?.accessibilityLabel() ?? "").isEmpty {
+                fail("a rule control (\(control.map { "\(type(of: $0))" } ?? "missing")) has no VoiceOver label", &ok)
+            }
+        }
+        if let field = card.debugEditorField {
+            _ = card.control(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+        }
+        store.terminalHighlighting = .defaults
+        card.refresh()
     }
 
     // MARK: Helpers

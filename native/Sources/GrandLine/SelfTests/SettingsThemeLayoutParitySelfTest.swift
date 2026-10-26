@@ -427,9 +427,10 @@ enum SettingsThemeLayoutParitySelfTest {
         // Twenty-seven since T7 replaced the Terminal page's three shortcut
         // cards with one Keyboard shortcuts card that links to Shortcuts.
         // Twenty-nine since T2 added the Terminal page's Keyword highlighting
-        // card and its Preview card.
-        guard daylightFP.cardCount == 29 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 29")
+        // card and its Preview card, and thirty since T3 added its Custom
+        // rules card.
+        guard daylightFP.cardCount == 30 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 30")
             ok = false
             return
         }
