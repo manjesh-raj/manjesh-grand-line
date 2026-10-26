@@ -93,6 +93,22 @@ enum SelfTestSources {
         return try? String(contentsOf: dir.appendingPathComponent("SelfTests/SelfTestDispatch.swift"), encoding: .utf8)
     }
 
+    /// R2-ARCH-02: the app delegate's source, which `main.swift` held whole
+    /// until it was split - the entry point, the composition and the launch,
+    /// the menu bar, session restore and the host editor, in that order. A
+    /// suite guarding a line of the delegate's wiring reads this rather than
+    /// one file, so the guard follows the code wherever the split put it.
+    static let appDelegateFiles = ["main.swift", "AppComposition.swift", "MainMenuBuilder.swift",
+                                   "SessionRestoreCoordinator.swift", "HostEditorPresenter.swift"]
+
+    static func appDelegateSource() -> String? {
+        guard let dir = appSourceDirectory() else { return nil }
+        let texts = appDelegateFiles.compactMap {
+            try? String(contentsOf: dir.appendingPathComponent($0), encoding: .utf8)
+        }
+        return texts.isEmpty ? nil : texts.joined(separator: "\n")
+    }
+
     static func appSourceFiles() -> [URL]? {
         guard let dir = appSourceDirectory(),
               let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)

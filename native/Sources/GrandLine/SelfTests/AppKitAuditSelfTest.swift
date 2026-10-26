@@ -550,8 +550,9 @@ enum AppKitAuditSelfTest {
     /// collision when it cannot recover a modifier mask, which is the safe
     /// direction: it forces someone to look.
     private static func test_h3() -> String? {
-        guard let dir = SelfTestSources.appSourceDirectory(),
-              let source = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8) else {
+        // R2-ARCH-02: the menu is built in `MainMenuBuilder.swift` now; the
+        // app delegate's source is every file it was split into.
+        guard let source = SelfTestSources.appDelegateSource() else {
             return nil  // sources unreachable; nothing to assert
         }
         let lines = source.components(separatedBy: "\n")

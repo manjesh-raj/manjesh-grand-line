@@ -660,11 +660,23 @@ enum FeatureInventorySelfTest {
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
             return (url.deletingPathExtension().lastPathComponent, stripComments(text))
         }
-        let classic = Dictionary(files.filter { $0.0.hasSuffix("+Classic") }
-            .map { (String($0.0.dropLast("+Classic".count)), $0.1) }, uniquingKeysWith: { first, _ in first })
-        return files.filter { !$0.0.hasSuffix("+Classic") }.map { stem, text in
-            (stem, classic[stem].map { text + "\n" + $0 } ?? text)
+        // R2-ARCH-02 split `main.swift`'s app delegate into several files; they
+        // are read as `main`, so the menu's actions keep their `action.main` id.
+        let delegateParts = Set(SelfTestSources.appDelegateFiles.dropFirst().map { ($0 as NSString).deletingPathExtension })
+        func page(_ stem: String) -> String {
+            if delegateParts.contains(stem) { return "main" }
+            return stem.hasSuffix("+Classic") ? String(stem.dropLast("+Classic".count)) : stem
         }
+        var merged: [(String, String)] = []
+        for (stem, text) in files {
+            let key = page(stem)
+            if let index = merged.firstIndex(where: { $0.0 == key }) {
+                merged[index].1 += "\n" + text
+            } else {
+                merged.append((key, text))
+            }
+        }
+        return merged
     }()
 
     static func appSources() -> [(String, String)] { cachedSources }

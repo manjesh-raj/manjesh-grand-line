@@ -234,12 +234,12 @@ enum NavigationCoherenceSelfTest {
         var offenders: [String] = []
         var scanned = 0
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-        // The menu bar (`main.swift`) and the ⌘K verbs name a feature under
+        // The menu bar (`MainMenuBuilder.swift` since R2-ARCH-02) and the ⌘K verbs name a feature under
         // its own name inside a menu or palette group of that name ("Log
         // Analyzer > Open Log Analyzer"), and the feature inventory keys
         // those rows by exactly that title - they are commands, not
         // directions to a place.
-        let exempt: Set<String> = ["main.swift", "UnifiedSearchProviders.swift", "PlaceName.swift"]
+        let exempt: Set<String> = ["main.swift", "MainMenuBuilder.swift", "UnifiedSearchProviders.swift", "PlaceName.swift"]
         for file in files where file.pathExtension == "swift" && !exempt.contains(file.lastPathComponent) {
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             for (index, line) in text.components(separatedBy: "\n").enumerated() {
@@ -326,9 +326,9 @@ enum NavigationCoherenceSelfTest {
         let files = (try? FileManager.default.contentsOfDirectory(at: dir,
                                                                   includingPropertiesForKeys: nil)) ?? []
         for file in files where file.pathExtension == "swift" {
-            // `main.swift` builds the menu bar, where a character key
-            // equivalent is exactly right.
-            guard file.lastPathComponent != "main.swift" else { continue }
+            // `MainMenuBuilder.swift` (R2-ARCH-02; `main.swift` before) builds
+            // the menu bar, where a character key equivalent is exactly right.
+            guard file.lastPathComponent != "main.swift", file.lastPathComponent != "MainMenuBuilder.swift" else { continue }
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             for (index, line) in text.components(separatedBy: "\n").enumerated() {
                 let code = line.trimmingCharacters(in: .whitespaces)
@@ -343,7 +343,7 @@ enum NavigationCoherenceSelfTest {
         // Discriminating power: the exempt Return/Escape assignments still
         // spell the property, so a grep that stopped matching fails here.
         check(sawAny,
-              "guard: nothing outside main.swift sets `keyEquivalent` any more - either the "
+              "guard: nothing outside the menu builder sets `keyEquivalent` any more - either the "
               + "default-button convention was removed (then delete this guard) or the grep "
               + "is broken", &ok)
         check(offenders.isEmpty,

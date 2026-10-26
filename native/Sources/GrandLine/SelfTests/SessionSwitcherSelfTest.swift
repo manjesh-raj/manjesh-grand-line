@@ -708,8 +708,9 @@ enum SessionSwitcherSelfTest {
     /// nil and a runtime walk would pass vacuously. This reads `main.swift`'s
     /// real declarations instead.
     private static func test_sessionShortcutsDoNotCollide() -> String? {
-        guard let dir = SelfTestSources.appSourceDirectory(),
-              let text = try? String(contentsOf: dir.appendingPathComponent("main.swift")) else { return nil }
+        // R2-ARCH-02: the menu is `MainMenuBuilder.swift` now, part of the
+        // app delegate's source.
+        guard let text = SelfTestSources.appDelegateSource() else { return nil }
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
         // Every declared key equivalent, paired with the modifier mask set on
