@@ -549,6 +549,8 @@ Every `HelmSegmentedTabs` built from literal titles, plus the Hosts column, the 
 | `tab.HostsTab.snippets` | Hosts page column: Snippets | Hosts page's own sidebar column | Connections › Snippets |  |
 | `tab.HostsController.All` | Hosts filter: All | the sidebar layout's Hosts filter row | Connections › Hosts (All / Online over the hosts table, with each count; the floating bar keeps its Online toggle) |  |
 | `tab.HostsController.Online` | Hosts filter: Online | the sidebar layout's Hosts filter row | Connections › Hosts (All / Online over the hosts table, with each count; the floating bar keeps its Online toggle) |  |
+| `tab.HostsController.Any tag` | Hosts tag filter: match any selected tag | the sidebar layout's Hosts filter row, with two or more tags selected | Connections › Hosts (X4: the default, how the tag chips have always matched) |  |
+| `tab.HostsController.All tags` | Hosts tag filter: match all selected tags | the sidebar layout's Hosts filter row, with two or more tags selected | Connections › Hosts (X4: only hosts carrying every selected tag) |  |
 | `tab.KeyEditorController.Generate` | SSH key editor mode: Generate | New SSH Key sheet | Connections › Keys (key editor sheet, unchanged) |  |
 | `tab.KeyEditorController.Import` | SSH key editor mode: Import | New SSH Key sheet | Connections › Keys (key editor sheet, unchanged) |  |
 | `tab.KubernetesController.Cluster` | Kubernetes tab: Cluster | Kubernetes page tab | Kubernetes › Cluster |  |
@@ -775,7 +777,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.HomeCanvasController` | HomeCanvasController controls | `refreshTapped` | Home |  |
 | `action.HomeCardLayout` | HomeCardLayout controls | `WorkspaceSidebarMenuItem.fire`, `addClicked`, `doneClicked`, `earlierClicked`, `hideClicked`, `laterClicked`, `resetClicked`, `sizeClicked` | Home (Customize: the tray's Add a Card, Reset Layout and Done, and each card's size, earlier, later and hide) |  |
 | `action.HostEditorController` | HostEditorController controls | `deleteHost`, `editPortForwarding`, `pickColor`, `pickIcon`, `pillClicked` | Connections › Hosts (host editor) |  |
-| `action.HostsController` | HostsController controls | `groupPicked`, `newHost`, `newKey`, `newSnippet`, `onlineChipClicked`, `self.tagChipClicked` | Connections › Hosts |  |
+| `action.HostsController` | HostsController controls | `groupPicked`, `newHost`, `newKey`, `newSnippet`, `onlineChipClicked`, `self.tagChipClicked`, `tagOverflowClicked`, `tagOverflowItemPicked` | Connections › Hosts |  |
 | `action.HostsListSection` | HostsListSection controls | `emptyActionPressed`, `overflowClicked`, `overflowItemPicked`, `primaryClicked` | Connections › Hosts (the floating bar's lists; the sidebar layout draws them as tables) |  |
 | `action.HostsSidebar` | HostsSidebar controls | `logoutPicked`, `rowClicked`, `settingsPicked` | Connections › Hosts (the column becomes the module's tabs) |  |
 | `action.HostsSidePanels` | HostsSidePanels controls | `actionClicked`, `buttonClicked` | Inspector (a selected host, key or snippet's details and actions; the floating bar keeps its own column) |  |
@@ -942,6 +944,8 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.shift.taskSort` | Saved preference `fm.shift.taskSort` | declared in ShiftController | Tasks |  |
 | `state.fm.appLockIdleSeconds` | Saved preference `fm.appLockIdleSeconds` | declared in AppSettings | Settings › Security › Lock when idle (R2-UX-08: chosen from 5 minutes to 4 hours, one hour until then; `FM_APP_LOCK_IDLE_SECONDS` still wins) |  |
 | `state.fm.appLockSessionSeconds` | Saved preference `fm.appLockSessionSeconds` | declared in AppSettings | Settings › Security › Lock after a full session (R2-UX-08: chosen from 1 to 24 hours, 12 hours until then; `FM_APP_LOCK_SESSION_SECONDS` still wins) |  |
+| `state.fm.connections.tagMatchAll` | Saved preference `fm.connections.tagMatchAll` | declared in AppSettings | Connections › Hosts (X4: the tag filter's Any tag / All tags choice) |  |
+| `state.fm.connections.viewMode` | Saved preference `fm.connections.viewMode` | declared in AppSettings | Connections › Hosts (C4: Hosts and Keys as cards or as the table, cards by default) |  |
 | `state.fm.sidebarWidth` | Saved preference `fm.sidebarWidth` | declared in AppSettings | Sidebar (the width the captain last dragged it to, 200-360pt, opening at 264 until then - U-03) |  |
 | `state.fm.snippetExpansionEnabled` | Saved preference `fm.snippetExpansionEnabled` | declared in AppSettings | Settings › Capture |  |
 | `state.fm.systemDarkThemeID` | Saved preference `fm.systemDarkThemeID` | declared in AppSettings | Settings › Appearance |  |

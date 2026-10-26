@@ -1034,6 +1034,14 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_PAGE_REDESIGNS_TESTS"] == "1" {
             exit(PageRedesignsSelfTest.run() ? 0 : 1)
         }
+        // The Termius-style Hosts and Keys work: its pure logic, and the pages
+        // in a real sidebar shell.
+        if ProcessInfo.processInfo.environment["FM_RUN_CONNECTIONS_LOGIC_TESTS"] == "1" {
+            exit(ConnectionsLogicSelfTest.run() ? 0 : 1)
+        }
+        if ProcessInfo.processInfo.environment["FM_RUN_CONNECTIONS_CARDS_TESTS"] == "1" {
+            exit(ConnectionsCardsSelfTest.run() ? 0 : 1)
+        }
         // The polish stage: the sidebar layout's badges as pure logic (every honest
         // state, the words, the contrast, and the source guards that keep the
         // monitor a listener), then the badges and the motion in a real off-screen

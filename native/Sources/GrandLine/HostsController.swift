@@ -160,6 +160,37 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     private var tagButtons: [String: HelmButton] = [:]
     private var selectedTags: Set<String> = []
 
+    /// X4: the chips match a host carrying every selected tag, or any one of
+    /// them. Read once from `AppSettings` and written back on every change.
+    private var tagMatchAll = AppSettings.shared.hostTagMatchAll
+
+    /// X4's switch, in the sidebar layout's filter row. It only means
+    /// anything with two or more tags selected, so it shows only then.
+    private lazy var tagMatchControl: HelmSegmentedTabs = {
+        let tabs = HelmSegmentedTabs(items: [.init(id: Self.tagMatchAnyID, title: "Any tag"),
+                                            .init(id: Self.tagMatchAllID, title: "All tags")],
+                                     selected: tagMatchAll ? Self.tagMatchAllID : Self.tagMatchAnyID,
+                                     size: .compact)
+        tabs.onSelect = { [weak self] id in self?.setTagMatchAll(id == Self.tagMatchAllID) }
+        tabs.setAccessibilityLabel("Show hosts with any of the selected tags, or with all of them")
+        tabs.toolTip = "Match any selected tag, or all of them"
+        return tabs
+    }()
+    static let tagMatchAnyID = "any"
+    static let tagMatchAllID = "all"
+
+    /// H9: the tags that do not fit the filter row, behind one "+N" chip
+    /// rather than cut off at the row's edge. Sidebar layout only.
+    private lazy var tagOverflowChip: HelmButton = {
+        let b = HelmButton(title: "+0", variant: .secondary, size: .small,
+                           target: self, action: #selector(tagOverflowClicked(_:)))
+        b.toolTip = "More tags"
+        b.isHidden = true
+        return b
+    }()
+    /// How many of the sorted tag chips the row is showing (H9).
+    private var visibleTagChipCount = Int.max
+
     let hostsList = HostsListSection()
     let keysList = HostsListSection()
     let snippetsList = HostsListSection()
@@ -915,6 +946,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
             snippetsTable.applyTheme(theme)
             expansionStrip.applyTheme(theme)
             onlineFilter.applyTheme(theme)
+            tagMatchControl.applyTheme(theme)
             keysTouchID.applyTheme(theme)
         }
         sideStack.applyTheme(theme)
@@ -975,6 +1007,11 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         // Only the tag strip collapses when there are no tags - the "Online"
         // chip beside it is always meaningful.
         tagsScroll.isHidden = allTags.isEmpty
+        if drawsSidebarLayout {
+            visibleTagChipCount = Int.max
+            refreshTagMatchControl()
+            refitTagChips()
+        }
     }
 
     /// One row per distinct group across all hosts, plus "All groups" and -
@@ -1055,7 +1092,104 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         guard let tag = sender.identifier?.rawValue else { return }
         if sender.state == .on { selectedTags.insert(tag) } else { selectedTags.remove(tag) }
         (sender as? HelmButton)?.variant = sender.state == .on ? .primary : .secondary
+        refreshTagMatchControl()
         applyHostFilter(searchField.stringValue)
+    }
+
+    /// X4: switch between matching any selected tag and all of them.
+    private func setTagMatchAll(_ all: Bool) {
+        tagMatchAll = all
+        AppSettings.shared.hostTagMatchAll = all
+        tagMatchControl.select(all ? Self.tagMatchAllID : Self.tagMatchAnyID)
+        applyHostFilter(searchField.stringValue)
+    }
+
+    /// X4's switch shows only while it can change the result.
+    private func refreshTagMatchControl() {
+        guard drawsSidebarLayout else { return }
+        tagMatchControl.isHidden = selectedTags.count < 2
+        refreshTagOverflowChip()
+    }
+
+    // MARK: H9 - tag chips that do not fit
+
+    /// How many of `chipWidths` (in order) the row shows, given the tag
+    /// strip's current width and whether the "+N" chip is showing now.
+    ///
+    /// The overflow chip sits beside the strip, so showing it takes its own
+    /// width out of the strip's. Every chip fits when the strip would hold
+    /// them all with the overflow chip gone; otherwise the count is the most
+    /// that fit beside it. Never fewer than zero, and pure, so a suite can
+    /// assert the arithmetic at any width.
+    static func fittingTagCount(chipWidths: [CGFloat], spacing: CGFloat, stripWidth: CGFloat,
+                                overflowWidth: CGFloat, overflowShown: Bool) -> Int {
+        func span(_ count: Int) -> CGFloat {
+            guard count > 0 else { return 0 }
+            return chipWidths.prefix(count).reduce(0, +) + spacing * CGFloat(count - 1)
+        }
+        let withoutOverflow = overflowShown ? stripWidth + overflowWidth + spacing : stripWidth
+        if span(chipWidths.count) <= withoutOverflow + 0.5 { return chipWidths.count }
+        let besideOverflow = overflowShown ? stripWidth : stripWidth - overflowWidth - spacing
+        var count = 0
+        while count < chipWidths.count, span(count + 1) <= besideOverflow + 0.5 { count += 1 }
+        return count
+    }
+
+    /// Show the chips that fit the strip and put the rest behind "+N".
+    /// Runs whenever the strip changes width and whenever the chips change.
+    private func refitTagChips() {
+        guard drawsSidebarLayout, !tagsScroll.isHidden else { return }
+        let chips = tagsStack.arrangedSubviews
+        let widths = chips.map { $0.fittingSize.width }
+        let count = Self.fittingTagCount(chipWidths: widths, spacing: tagsStack.spacing,
+                                         stripWidth: tagsScroll.contentView.bounds.width,
+                                         overflowWidth: tagOverflowChip.fittingSize.width,
+                                         overflowShown: !tagOverflowChip.isHidden)
+        guard count != visibleTagChipCount || chips.enumerated().contains(where: { $0.element.isHidden != ($0.offset >= count) })
+        else { return }
+        visibleTagChipCount = count
+        for (index, chip) in chips.enumerated() { chip.isHidden = index >= count }
+        refreshTagOverflowChip()
+    }
+
+    /// "+N", filled while any tag behind it is selected - so a filter the
+    /// captain set is never hidden from them.
+    private func refreshTagOverflowChip() {
+        guard drawsSidebarLayout else { return }
+        let hidden = hiddenTags
+        tagOverflowChip.isHidden = hidden.isEmpty || tagsScroll.isHidden
+        tagOverflowChip.title = "+\(hidden.count)"
+        tagOverflowChip.variant = hidden.contains(where: selectedTags.contains) ? .primary : .secondary
+        tagOverflowChip.setAccessibilityLabel("\(hidden.count) more tags")
+    }
+
+    /// The tags whose chips the row is not showing, in chip order.
+    private var hiddenTags: [String] {
+        tagsStack.arrangedSubviews.filter(\.isHidden).compactMap { $0.identifier?.rawValue }
+    }
+
+    @objc private func tagOverflowClicked(_ sender: NSButton) {
+        makeTagOverflowMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + HelmMetrics.s1), in: sender)
+    }
+
+    /// "+N"'s menu: one item per hidden tag, ticked while it is selected.
+    private func makeTagOverflowMenu() -> NSMenu {
+        let menu = NSMenu()
+        for tag in hiddenTags {
+            let item = NSMenuItem(title: tag, action: #selector(tagOverflowItemPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = tag
+            item.state = selectedTags.contains(tag) ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    /// A tag picked from "+N" toggles exactly as its chip would.
+    @objc private func tagOverflowItemPicked(_ sender: NSMenuItem) {
+        guard let tag = sender.representedObject as? String, let chip = tagButtons[tag] else { return }
+        chip.state = chip.state == .on ? .off : .on
+        tagChipClicked(chip)
     }
 
     /// Text filter (label/address/username/tags) + the tag-chip filter,
@@ -1123,7 +1257,11 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
             }
         }
         if !selectedTags.isEmpty {
-            hosts = hosts.filter { !$0.tags.isEmpty && !selectedTags.isDisjoint(with: $0.tags) }
+            // X4: "all" narrows to hosts carrying every selected tag; "any",
+            // the default, is how the chips have always matched.
+            hosts = tagMatchAll
+                ? hosts.filter { selectedTags.isSubset(of: Set($0.tags)) }
+                : hosts.filter { !$0.tags.isEmpty && !selectedTags.isDisjoint(with: $0.tags) }
         }
         if onlineOnly {
             hosts = hosts.filter { liveSession?($0.id) != nil }
@@ -1500,6 +1638,28 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// The tag chips, in strip order - PERF-05's identity check.
     var debugTagChips: [NSView] { tagsStack.arrangedSubviews }
     var debugOnlineChip: HelmButton { onlineChip }
+    /// X4 and H9's controls, as the filter row holds them.
+    var debugTagMatchControl: HelmSegmentedTabs { tagMatchControl }
+    var debugTagOverflowChip: HelmButton { tagOverflowChip }
+    var debugTagStripWidth: CGFloat { tagsScroll.contentView.bounds.width }
+    /// The tag chips the row shows, by tag, in strip order.
+    var debugVisibleTags: [String] {
+        tagsStack.arrangedSubviews.filter { !$0.isHidden }.compactMap { $0.identifier?.rawValue }
+    }
+    var debugHiddenTags: [String] { hiddenTags }
+    func debugTagChip(_ tag: String) -> HelmButton? { tagButtons[tag] }
+    /// The overflow menu's own item for `tag`, fired through its target and
+    /// action - what picking it from "+N" does.
+    @discardableResult
+    func debugPickOverflowTag(_ tag: String) -> Bool {
+        guard let item = makeTagOverflowMenu().items.first(where: { $0.title == tag }),
+              let action = item.action, let target = item.target as? NSObject else { return false }
+        target.perform(action, with: item)
+        return true
+    }
+    var debugOverflowMenuTitles: [String] { makeTagOverflowMenu().items.map(\.title) }
+    /// The labels of the hosts the filters leave, in store order.
+    func debugFilteredHostLabels() -> [String] { filteredHosts(searchField.stringValue).map(\.label) }
     func debugSetOnlineOnly(_ on: Bool) {
         onlineChip.state = on ? .on : .off
         onlineChipClicked(onlineChip)
@@ -1607,6 +1767,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
         drawsSidebarLayout = true
         adoptSidebarFrame()
         adoptSidebarFilterRow()
+        rebuildTagChips()
         for (table, list, container) in [(hostsTable, hostsList, hostsTabView),
                                          (keysTable, keysList, keysTabView),
                                          (snippetsTable, snippetsList, snippetsTabView)] {
@@ -1708,7 +1869,25 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
         onlineFilter.setContentHuggingPriority(.required, for: .horizontal)
         onlineFilter.setContentCompressionResistancePriority(.required, for: .horizontal)
         row.setCustomSpacing(HelmMetrics.s3, after: searchField)
+        // X4 before the chips it qualifies, and H9's "+N" after them. Both
+        // are fixed-size chrome, so the strip stays what absorbs the slack.
+        if let index = row.arrangedSubviews.firstIndex(of: tagsScroll) {
+            row.insertArrangedSubview(tagMatchControl, at: index)
+            row.insertArrangedSubview(tagOverflowChip, at: index + 2)
+        }
+        for fixed in [tagMatchControl, tagOverflowChip] as [NSView] {
+            fixed.setContentHuggingPriority(.required, for: .horizontal)
+            fixed.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        tagMatchControl.isHidden = true
+        // H9: the strip refits its chips whenever its width changes.
+        tagsScroll.contentView.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(tagStripResized),
+                                               name: NSView.frameDidChangeNotification,
+                                               object: tagsScroll.contentView)
     }
+
+    @objc private func tagStripResized() { refitTagChips() }
 
     /// The prototype's search field width, and the least it is squeezed to.
     static let sidebarSearchWidth: CGFloat = 400
