@@ -102,7 +102,11 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
 
     // MARK: Shared fields
 
-    private let labelField = HelmTextField(placeholder: "Label (e.g. Prod bastion key)", style: .lead)
+    private lazy var labelField = HelmTextField(
+        placeholder: presentation == .panel ? "Name this key" : "Label (e.g. Prod bastion key)", style: .lead)
+    /// The form's sections, added before or after the mode controls by
+    /// `loadView` (see there).
+    private var pendingSections: (() -> Void)?
     private let heroIconTile = IconTileView(size: 46, cornerRadius: HelmMetrics.rPanel - 1)
     private let certificateView = HelmTextView(height: 60, monospaced: true)
     private let publicKeyView = HelmTextView(height: 56, monospaced: true)
@@ -235,7 +239,17 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         } else {
             stack = buildCreateLayout()
         }
-        form.addRow(stack)
+        // The sheet has always listed its sections before the mode controls;
+        // the panel puts what the captain does first (K8: generate, import
+        // or paste) above what it produces.
+        if panel {
+            form.addRow(stack)
+            pendingSections?()
+        } else {
+            pendingSections?()
+            form.addRow(stack)
+        }
+        pendingSections = nil
 
         if panel {
             labelField.delegate = self
@@ -335,14 +349,16 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         ])
         stack.setCustomSpacing(HelmMetrics.s2, after: modeSwitch)
 
-        form.addSection("Public Key", number: "01")
-        form.addRow(publicKeyBox)
-        form.addSection("Security", number: "02")
-        form.addInfoCard(text: "Private keys are stored only in the macOS Keychain. "
-            + "The host configuration references this key by id and never contains the private key material.")
-        form.addField("Fingerprint", buildFingerprintRow())
-        form.addSection("Certificate (optional)", number: "03")
-        form.addRow(certificateView)
+        pendingSections = { [unowned self] in
+            self.form.addSection("Public Key", number: "01")
+            self.form.addRow(publicKeyBox)
+            self.form.addSection("Security", number: "02")
+            self.form.addInfoCard(text: "Private keys are stored only in the macOS Keychain. "
+                + "The host configuration references this key by id and never contains the private key material.")
+            self.form.addField("Fingerprint", self.buildFingerprintRow())
+            self.form.addSection("Certificate (optional)", number: "03")
+            self.form.addRow(self.certificateView)
+        }
 
         updateSaveEnabled()
         return stack
@@ -475,14 +491,16 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
             statusLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
-        form.addSection("Public Key", number: "01")
-        form.addRow(publicKeyBox)
-        form.addSection("Security", number: "02")
-        form.addInfoCard(text: "Private keys are stored only in the macOS Keychain. "
-            + "The host configuration references this key by id and never contains the private key material.")
-        form.addField("Fingerprint", buildFingerprintRow())
-        form.addSection("Certificate (optional)", number: "03")
-        form.addRow(certificateView)
+        pendingSections = { [unowned self] in
+            self.form.addSection("Public Key", number: "01")
+            self.form.addRow(publicKeyBox)
+            self.form.addSection("Security", number: "02")
+            self.form.addInfoCard(text: "Private keys are stored only in the macOS Keychain. "
+                + "The host configuration references this key by id and never contains the private key material.")
+            self.form.addField("Fingerprint", self.buildFingerprintRow())
+            self.form.addSection("Certificate (optional)", number: "03")
+            self.form.addRow(self.certificateView)
+        }
 
         return stack
     }
