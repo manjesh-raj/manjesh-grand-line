@@ -1379,8 +1379,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// (`ConsoleController.connectSSHIfNeeded`); this method's only job is
     /// resolving the host's full `ssh` argv, which needs `hostStore.hosts`
     /// for jump-chain resolution (`Host.sshArguments(allHosts:)`).
-    func connectToHost(_ host: Host) {
+    ///
+    /// X2 and K5: an explicit connect also records when, on the host and on
+    /// the saved key it uses, for the Hosts page's recent row and the key
+    /// card's "last used". Session restore passes `recordsConnection: false`
+    /// - a page brought back at launch was not the captain choosing to
+    /// connect, and stamping it would put every restored host at the top of
+    /// "recent" on every launch.
+    func connectToHost(_ host: Host, recordsConnection: Bool = true) {
         appShell.workspace.hosts.connectHost(host, args: host.sshArguments(allHosts: hostStore.hosts))
+        guard recordsConnection else { return }
+        hostStore.recordConnection(id: host.id)
+        if let keyID = host.keyID { keyStore.recordUse(id: keyID) }
     }
 
     // MARK: Multi-host command execution (F9, v1)

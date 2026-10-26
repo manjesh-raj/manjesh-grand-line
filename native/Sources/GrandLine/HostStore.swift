@@ -101,6 +101,15 @@ final class HostStore {
         hosts.first { $0.id == id }
     }
 
+    /// X2: the captain connected to `id` just now. One field changes, so this
+    /// is an ordinary `update` of the record already in the store - nothing
+    /// else on it is rewritten from a stale copy.
+    func recordConnection(id: UUID, at date: Date = Date()) {
+        guard var host = host(id: id) else { return }
+        host.lastConnectedAt = date
+        update(host)
+    }
+
     // MARK: Disk
 
     /// The file exists but isn't valid `[Host]` JSON: it is backed up before

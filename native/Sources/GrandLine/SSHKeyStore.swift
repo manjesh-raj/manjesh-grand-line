@@ -90,6 +90,14 @@ final class SSHKeyStore: StoreObservable {
         keys.first { $0.id == id }
     }
 
+    /// K5: a host just connected with `id`. Metadata only - the Keychain is
+    /// not touched, so this never prompts.
+    func recordUse(id: UUID, at date: Date = Date()) {
+        guard var key = key(id: id) else { return }
+        key.lastUsedAt = date
+        update(key)
+    }
+
     // MARK: Disk
 
     /// GL-01: an undecodable `keys.json` is backed up *before* the next

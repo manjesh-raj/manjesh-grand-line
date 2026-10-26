@@ -89,13 +89,20 @@ struct SSHKey: Codable, Identifiable, Equatable {
     /// glyph without a Touch ID prompt just to draw a row.
     var hasPassphrase: Bool = false
 
+    /// When a host last connected with this key (K5 of the Termius-style
+    /// plan), for the key card's "last used". Stamped by
+    /// `SSHKeyStore.recordUse` alongside the host's own `lastConnectedAt`.
+    /// `nil` reads as "never", not as a date.
+    var lastUsedAt: Date?
+
     var subtitle: String {
         let short = fingerprint.count > 28 ? String(fingerprint.prefix(28)) + "…" : fingerprint
         return "\(type.displayName) · \(short)"
     }
 
     init(id: UUID = UUID(), label: String, type: SSHKeyType, publicKey: String,
-         fingerprint: String, certificate: String? = nil, hasPassphrase: Bool = false) {
+         fingerprint: String, certificate: String? = nil, hasPassphrase: Bool = false,
+         lastUsedAt: Date? = nil) {
         self.id = id
         self.label = label
         self.type = type
@@ -103,6 +110,7 @@ struct SSHKey: Codable, Identifiable, Equatable {
         self.fingerprint = fingerprint
         self.certificate = certificate
         self.hasPassphrase = hasPassphrase
+        self.lastUsedAt = lastUsedAt
     }
 
     /// **Hand-written on purpose - do not delete it back to the synthesised
@@ -133,5 +141,6 @@ struct SSHKey: Codable, Identifiable, Equatable {
         fingerprint = try c.decodeIfPresent(String.self, forKey: .fingerprint) ?? ""
         certificate = try c.decodeIfPresent(String.self, forKey: .certificate)
         hasPassphrase = try c.decodeIfPresent(Bool.self, forKey: .hasPassphrase) ?? false
+        lastUsedAt = try c.decodeIfPresent(Date.self, forKey: .lastUsedAt)
     }
 }

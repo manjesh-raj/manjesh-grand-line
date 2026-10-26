@@ -117,6 +117,14 @@ struct Host: Codable, Identifiable, Equatable {
     /// something this flag does automatically for every tab of the host.
     var kubeContextBadgeOptIn: Bool = false
 
+    /// When the captain last connected to this host from Grand Line (X2 of
+    /// the Termius-style plan): the Hosts page's recent row and a card's
+    /// "last connected" line. Stamped by `HostStore.recordConnection` on an
+    /// explicit connect only - a host page restored at launch was not the
+    /// captain choosing to connect. `nil` for a host never connected since
+    /// the field was added, which reads as "never" rather than as a date.
+    var lastConnectedAt: Date?
+
     /// Restores the compiler-synthesized memberwise initializer, which Swift
     /// suppresses once any custom `init` (here, `init(from:)`) is declared -
     /// every call site that builds a `Host` in Swift code (host editor save,
@@ -137,7 +145,8 @@ struct Host: Codable, Identifiable, Equatable {
         portForwards: [PortForwardRule] = [],
         startupSnippetID: UUID? = nil,
         blockViewOptIn: Bool = false,
-        kubeContextBadgeOptIn: Bool = false
+        kubeContextBadgeOptIn: Bool = false,
+        lastConnectedAt: Date? = nil
     ) {
         self.id = id
         self.label = label
@@ -155,12 +164,14 @@ struct Host: Codable, Identifiable, Equatable {
         self.startupSnippetID = startupSnippetID
         self.blockViewOptIn = blockViewOptIn
         self.kubeContextBadgeOptIn = kubeContextBadgeOptIn
+        self.lastConnectedAt = lastConnectedAt
     }
 
     /// Everything persisted.
     private enum CodingKeys: String, CodingKey {
         case id, label, address, port, username, keyID, iconSymbol, accentHex, group, tags,
-             agentForward, jumpVia, portForwards, startupSnippetID, blockViewOptIn, kubeContextBadgeOptIn
+             agentForward, jumpVia, portForwards, startupSnippetID, blockViewOptIn, kubeContextBadgeOptIn,
+             lastConnectedAt
     }
 
     /// Custom decode, deliberately NOT the compiler-synthesized one.
@@ -197,6 +208,7 @@ struct Host: Codable, Identifiable, Equatable {
         startupSnippetID = try c.decodeIfPresent(UUID.self, forKey: .startupSnippetID)
         blockViewOptIn = try c.decodeIfPresent(Bool.self, forKey: .blockViewOptIn) ?? false
         kubeContextBadgeOptIn = try c.decodeIfPresent(Bool.self, forKey: .kubeContextBadgeOptIn) ?? false
+        lastConnectedAt = try c.decodeIfPresent(Date.self, forKey: .lastConnectedAt)
     }
 
     /// The full `ssh` argument vector for this host, minus any identity file

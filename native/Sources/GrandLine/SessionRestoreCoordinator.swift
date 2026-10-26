@@ -61,7 +61,7 @@ extension AppDelegate {
         }
 
         if let showing = plan.showing, let host = byID[showing] {
-            connectToHost(host)
+            connectToHost(host, recordsConnection: false)
         } else {
             appShell.workspace.navigator.restoreDestination(from: state)
         }

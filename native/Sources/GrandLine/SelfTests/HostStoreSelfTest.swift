@@ -145,7 +145,90 @@ enum HostStoreSelfTest {
         check(malformedStore.loadFailureBackupPath != nil, "genuinely malformed JSON is still backed up as corrupt")
 
         unsetenv("FM_HOSTS_FILE")
+        checkLastConnectedAt(tmp: tmp, oldFormatJSON: oldFormatJSON, &ok)
+        checkKeyLastUsedAt(tmp: tmp, &ok)
+        checkConnectRecordsUse(&ok)
         return ok
+    }
+
+    // MARK: X2 and K5 - the two "when" fields (Termius-style plan)
+
+    /// `Host.lastConnectedAt` is new, so a file saved before it must still
+    /// decode (GL-01), and `recordConnection` must stamp exactly one host and
+    /// write it to disk.
+    private static func checkLastConnectedAt(tmp: URL, oldFormatJSON: String, _ ok: inout Bool) {
+        let decoded = try? JSONDecoder().decode([Host].self, from: Data(oldFormatJSON.utf8))
+        check(decoded?.count == 2 && decoded?.allSatisfy({ $0.lastConnectedAt == nil }) == true,
+              "X2: a hosts.json saved before lastConnectedAt decodes, with the field nil", &ok)
+
+        let url = tmp.appendingPathComponent("last-connected-hosts.json")
+        try? Data(oldFormatJSON.utf8).write(to: url)
+        setenv("FM_HOSTS_FILE", url.path, 1)
+        defer { unsetenv("FM_HOSTS_FILE") }
+        let store = HostStore()
+        guard store.hosts.count == 2 else {
+            fail("X2: the fixture store loads both hosts", &ok)
+            return
+        }
+        let target = store.hosts[1].id
+        let when = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        store.recordConnection(id: target, at: when)
+        check(store.host(id: target)?.lastConnectedAt == when, "X2: recordConnection stamps the host it names", &ok)
+        check(store.hosts[0].lastConnectedAt == nil, "X2: recordConnection leaves every other host alone", &ok)
+        let reread = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([Host].self, from: $0) }
+        check(reread?.first(where: { $0.id == target })?.lastConnectedAt == when,
+              "X2: the stamp reaches hosts.json and round-trips", &ok)
+        store.recordConnection(id: UUID(), at: when)
+        check(store.hosts.count == 2, "X2: recording a connection to an unknown id adds nothing", &ok)
+    }
+
+    /// `SSHKey.lastUsedAt` is new too: an old keys.json decodes, and
+    /// `recordUse` stamps and persists one key.
+    private static func checkKeyLastUsedAt(tmp: URL, _ ok: inout Bool) {
+        let oldKeysJSON = """
+        [{"id":"44444444-4444-4444-4444-444444444444","label":"Deploy key","type":"ed25519",
+          "publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnly fixture","fingerprint":"SHA256:fixture",
+          "hasPassphrase":false}]
+        """
+        let decoded = try? JSONDecoder().decode([SSHKey].self, from: Data(oldKeysJSON.utf8))
+        check(decoded?.count == 1 && decoded?.first?.lastUsedAt == nil,
+              "K5: a keys.json saved before lastUsedAt decodes, with the field nil", &ok)
+
+        let url = tmp.appendingPathComponent("last-used-keys.json")
+        try? Data(oldKeysJSON.utf8).write(to: url)
+        setenv("FM_KEYS_FILE", url.path, 1)
+        defer { unsetenv("FM_KEYS_FILE") }
+        let store = SSHKeyStore()
+        guard let id = store.keys.first?.id else {
+            fail("K5: the fixture key store loads its key", &ok)
+            return
+        }
+        let when = Date(timeIntervalSinceReferenceDate: 800_000_100)
+        store.recordUse(id: id, at: when)
+        check(store.key(id: id)?.lastUsedAt == when, "K5: recordUse stamps the key", &ok)
+        let reread = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([SSHKey].self, from: $0) }
+        check(reread?.first?.lastUsedAt == when, "K5: the stamp reaches keys.json and round-trips", &ok)
+    }
+
+    /// The one connect path stamps both, and session restore does not - a
+    /// source guard, because the app delegate's connect needs the whole app.
+    private static func checkConnectRecordsUse(_ ok: inout Bool) {
+        guard let source = SelfTestSources.appDelegateSource() else {
+            fail("X2/K5: the app delegate's sources could not be read", &ok)
+            return
+        }
+        guard let start = source.range(of: "func connectToHost(_ host: Host"),
+              let end = source.range(of: "\n    }\n", range: start.upperBound..<source.endIndex) else {
+            fail("X2/K5: connectToHost was not found", &ok)
+            return
+        }
+        let body = String(source[start.lowerBound..<end.upperBound])
+        check(body.contains("hostStore.recordConnection(id: host.id)"),
+              "X2: connectToHost records the connection on the host", &ok)
+        check(body.contains("keyStore.recordUse(id: keyID)"),
+              "K5: connectToHost records the use on the host's key", &ok)
+        check(source.contains("connectToHost(host, recordsConnection: false)"),
+              "X2: session restore connects without recording a use", &ok)
     }
 }
 

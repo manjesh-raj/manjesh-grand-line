@@ -1277,6 +1277,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         var copy = host
         copy.id = UUID()
         copy.label = host.label + " copy"
+        // A copy has never been connected to (X2).
+        copy.lastConnectedAt = nil
         hostStore.add(copy)
     }
 
