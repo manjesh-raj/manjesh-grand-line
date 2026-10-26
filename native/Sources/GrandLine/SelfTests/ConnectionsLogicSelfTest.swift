@@ -4,7 +4,9 @@
 // its pure-logic half. The arithmetic and parsing the pages rely on, asserted
 // without mounting a view, so it runs in CI's blocking headless lane.
 //
-//   - H9: how many tag chips fit the filter row beside the "+N" chip.
+//   - H9: how many tag chips fit the filter row beside the "+N" chip, and
+//     that the count settles rather than feeding back on "+N"'s own width.
+//   - The flat host grid: its order, and the Grouped choice's stored default.
 //   - H7: the card grid's column plan, and its pixel grid at 1x and 2x for a
 //     half-point column (the case CI's 1x runner hits and a 2x Mac cannot).
 //   - X2: "last connected" in words, and the recent row's order.
@@ -26,7 +28,8 @@ enum ConnectionsLogicSelfTest {
 
     static func run() -> Bool {
         var allOK = true
-        for check in [checkTagChipFit, checkGridPlan, checkLastConnected, checkKeyWords, checkSSHConfigParse] {
+        for check in [checkTagChipFit, checkTagStripSettles, checkFlatOrder, checkGroupedSetting,
+                      checkGridPlan, checkLastConnected, checkKeyWords, checkSSHConfigParse] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -177,6 +180,96 @@ enum ConnectionsLogicSelfTest {
         // The vacuity guard: the fixture's widths really do need the overflow
         // at 191 and not at 192.
         check(widths.reduce(0, +) + 12 == 192, "H9: the fixture's chips span 192pt", &ok)
+    }
+
+    /// The feedback loop a crowded filter row hit: the strip takes what the
+    /// row leaves it, so "+N"'s width moving with its label moves the strip.
+    /// Played forward a few layout passes from both ends, the count must
+    /// come to rest.
+    private static func checkTagStripSettles(_ ok: inout Bool) {
+        let chips: [CGFloat] = [37.5, 30, 30, 30, 30]
+        let gap: CGFloat = 4
+        // "+4" one point wider than "+5", as proportional digits can be.
+        func label(_ hidden: Int) -> CGFloat { hidden == 4 ? 30 : 29 }
+        // What the row gives the strip and "+N" between them: fixed.
+        let shared: CGFloat = 70.2
+        func strip(showing count: Int) -> CGFloat {
+            let hidden = chips.count - count
+            return hidden > 0 ? shared - label(hidden) - gap : shared
+        }
+        func passes(from start: Int, _ next: (CGFloat, Bool, CGFloat) -> Int) -> [Int] {
+            var counts = [start]
+            for _ in 0..<6 {
+                let count = counts.last!, hidden = chips.count - count
+                counts.append(next(strip(showing: count), hidden > 0, label(hidden)))
+            }
+            return counts
+        }
+        // The fixture's own discriminating power: read from "+N"'s current
+        // width, the count flips on every pass.
+        let before = passes(from: 0) { strip, shown, width in
+            HostsController.fittingTagCount(chipWidths: chips, spacing: gap, stripWidth: strip,
+                                            overflowWidth: width, overflowShown: shown)
+        }
+        check(Set(before.suffix(4)).count == 2, "H9: the fixture does not oscillate the old way (\(before))", &ok)
+        let widest = (1...chips.count).map(label).max()!
+        for start in [0, 1] {
+            let after = passes(from: start) { strip, shown, width in
+                HostsController.settledTagCount(chipWidths: chips, spacing: gap, stripWidth: strip, overflowShown: shown,
+                                                shownOverflowWidth: width, reservedOverflowWidth: widest)
+            }
+            check(Set(after.suffix(4)).count == 1, "H9: the tag count never settles from \(start) (\(after))", &ok)
+        }
+    }
+
+    /// The flat grid's order: by group as the table orders groups (by name,
+    /// the ungrouped last), then by name, then as saved.
+    private static func checkFlatOrder(_ ok: inout Bool) {
+        let hosts = [
+            Host(label: "Prod Bastion", address: "a.example.test", group: "PROD"),
+            Host(label: "lab-box", address: "b.example.test"),
+            Host(label: "web-10", address: "c.example.test", group: "DEV"),
+            Host(label: "web-9", address: "d.example.test", group: "DEV"),
+            Host(label: "DEV Bastion", address: "e.example.test", group: "DEV"),
+            Host(label: "dup", address: "first.example.test", group: "PROD"),
+            Host(label: "dup", address: "second.example.test", group: "PROD"),
+            Host(label: "home-nas", address: "f.example.test", group: "  "),
+        ]
+        let group: (Host) -> String? = {
+            let g = $0.group?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return g.isEmpty ? nil : g
+        }
+        let ordered = HostsController.flatOrder(hosts, group: group)
+        check(ordered.map(\.label) == ["DEV Bastion", "web-9", "web-10", "dup", "dup", "Prod Bastion", "home-nas", "lab-box"],
+              "flat grid: the order is \(ordered.map(\.label))", &ok)
+        check(ordered.filter { $0.label == "dup" }.map(\.address) == ["first.example.test", "second.example.test"],
+              "flat grid: two hosts with one name lost their saved order", &ok)
+        check(HostsController.flatOrder(hosts.shuffled(), group: group).map(\.label) == ordered.map(\.label),
+              "flat grid: the order depends on the order hosts were saved in", &ok)
+    }
+
+    /// The Grouped choice: off when nothing is stored - which is every
+    /// captain's preference domain from before it existed - and the Grid /
+    /// List value saved beside it still loads.
+    private static func checkGroupedSetting(_ ok: inout Bool) {
+        let suite = "fm.selftest.connectionslogic.grouped.\(ProcessInfo.processInfo.processIdentifier)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            fail("flat grid: no scratch defaults domain", &ok)
+            return
+        }
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        // An older build's domain: List chosen, no Grouped key at all.
+        defaults.set("list", forKey: "fm.connections.viewMode")
+        let settings = AppSettings(defaults: defaults)
+        check(!settings.hostsGrouped, "flat grid: an unset Grouped reads as on", &ok)
+        check(settings.connectionsShowList, "flat grid: a saved List no longer loads", &ok)
+        settings.hostsGrouped = true
+        check(AppSettings(defaults: defaults).hostsGrouped, "flat grid: Grouped was not stored", &ok)
+        check(defaults.object(forKey: "fm.connections.hostsGrouped") != nil,
+              "flat grid: Grouped is stored under another key", &ok)
+        settings.hostsGrouped = false
+        check(!AppSettings(defaults: defaults).hostsGrouped, "flat grid: turning Grouped off was not stored", &ok)
     }
 }
 

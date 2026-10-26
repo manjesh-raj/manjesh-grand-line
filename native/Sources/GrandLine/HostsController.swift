@@ -199,6 +199,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     }()
     /// How many of the sorted tag chips the row is showing (H9).
     private var visibleTagChipCount = Int.max
+    /// The widest "+N" can draw, by tag count and text scale - see
+    /// `reservedOverflowWidth`.
+    private var overflowWidthCache: [String: CGFloat] = [:]
 
     let hostsList = HostsListSection()
     let keysList = HostsListSection()
@@ -319,7 +322,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// exactly one group (so group is a single-select list). Drawing a
     /// single-select choice as a row of toggles would invite a captain to pick
     /// two and get nothing.
-    private lazy var groupPicker: HelmPopUpButton = {
+    private(set) lazy var groupPicker: HelmPopUpButton = {
         let picker = HelmPopUpButton()
         picker.target = self
         picker.action = #selector(groupPicked)
@@ -1135,9 +1138,15 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
             item.representedObject = Self.ungroupedMarker
             groupPicker.menu?.addItem(item)
         }
+        groupPicker.selectItem(at: groupFilterIndex)
+        // The host cards' Grouped choice - `HostsController+Cards.swift`.
+        refreshGroupedChoice()
+    }
+
+    /// The menu item naming the group filter as it stands.
+    private var groupFilterIndex: Int {
         let wanted = selectedGroup ?? Self.allGroupsMarker
-        let index = groupPicker.menu?.items.firstIndex { $0.representedObject as? String == wanted } ?? 0
-        groupPicker.selectItem(at: index)
+        return groupPicker.menu?.items.firstIndex { $0.representedObject as? String == wanted } ?? 0
     }
 
     /// The "has no group at all" bucket, matching the list's own "Ungrouped"
@@ -1147,6 +1156,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     @objc private func groupPicked() {
         let marker = groupPicker.selectedItem?.representedObject as? String
+        if marker == Self.groupedChoiceMarker {
+            groupedChoicePicked(restoring: groupFilterIndex)
+            return
+        }
         selectedGroup = (marker == Self.allGroupsMarker) ? nil : marker
         applyHostFilter(searchField.stringValue)
     }
@@ -1213,16 +1226,53 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         return count
     }
 
+    /// The count the strip settles on, from what the strip and "+N" hold
+    /// between them, with "+N" reserved at `reservedOverflowWidth` - the
+    /// widest its label can be - rather than at the width it has now.
+    ///
+    /// The strip takes whatever width the row leaves it, so it absorbs any
+    /// change in "+N"'s own width. Measured from "+N"'s *current* width the
+    /// count fed back on itself: hiding one more chip turned "+4" into "+5",
+    /// a point narrower, the strip grew by that point, the chip fitted again,
+    /// and round it went - 37pt, 38pt, 37pt - until AppKit threw "more Layout
+    /// Window passes than there are views in the window". It needed a strip
+    /// within a point of one chip, which a crowded filter row at 1100 with the
+    /// inspector open reached. What the two share does not move when the
+    /// label does, so a count read from it cannot flip.
+    static func settledTagCount(chipWidths: [CGFloat], spacing: CGFloat, stripWidth: CGFloat,
+                                overflowShown: Bool, shownOverflowWidth: CGFloat,
+                                reservedOverflowWidth: CGFloat) -> Int {
+        let shared = overflowShown ? stripWidth + shownOverflowWidth + spacing : stripWidth
+        return fittingTagCount(chipWidths: chipWidths, spacing: spacing, stripWidth: shared,
+                               overflowWidth: reservedOverflowWidth, overflowShown: false)
+    }
+
+    /// The widest "+1" ... "+`tagCount`" draws in the overflow chip's own
+    /// style, measured once per count and text scale.
+    private func reservedOverflowWidth(tagCount: Int) -> CGFloat {
+        let key = "\(tagCount)|\(ChromeTextScale.shared.scale)"
+        if let cached = overflowWidthCache[key] { return cached }
+        let probe = HelmButton(title: "+0", variant: .secondary, size: .small)
+        var widest: CGFloat = 0
+        for hidden in 1...max(1, tagCount) {
+            probe.title = "+\(hidden)"
+            widest = max(widest, probe.fittingSize.width)
+        }
+        overflowWidthCache[key] = widest
+        return widest
+    }
+
     /// Show the chips that fit the strip and put the rest behind "+N".
     /// Runs whenever the strip changes width and whenever the chips change.
     private func refitTagChips() {
         guard drawsSidebarLayout, !tagsScroll.isHidden else { return }
         let chips = tagsStack.arrangedSubviews
         let widths = chips.map { $0.fittingSize.width }
-        let count = Self.fittingTagCount(chipWidths: widths, spacing: tagsStack.spacing,
+        let count = Self.settledTagCount(chipWidths: widths, spacing: tagsStack.spacing,
                                          stripWidth: tagsScroll.contentView.bounds.width,
-                                         overflowWidth: tagOverflowChip.fittingSize.width,
-                                         overflowShown: !tagOverflowChip.isHidden)
+                                         overflowShown: !tagOverflowChip.isHidden,
+                                         shownOverflowWidth: tagOverflowChip.fittingSize.width,
+                                         reservedOverflowWidth: reservedOverflowWidth(tagCount: chips.count))
         guard count != visibleTagChipCount || chips.enumerated().contains(where: { $0.element.isHidden != ($0.offset >= count) })
         else { return }
         visibleTagChipCount = count
@@ -1276,7 +1326,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// a saved host. Group headers are skipped entirely when every visible
     /// host shares one group (the "I haven't set up groups yet" case), so a
     /// flat host list never gains visual noise.
-    private func applyHostFilter(_ query: String) {
+    func applyHostFilter(_ query: String) {
         let hosts = filteredHosts(query)
         var items: [HostsListSection.Item] = [pinnedItem()]
 
@@ -2051,6 +2101,15 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
         }
         onlineFilter.setContentHuggingPriority(.required, for: .horizontal)
         onlineFilter.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Those two are no-ops on a view with no intrinsic size (gotcha
+        // (12)), and its pills can stretch, so with no tag strip to take the
+        // row's slack (the captain's own hosts carry none) All / Online took
+        // it: measured 307pt wide, which pushed the group filter to the far
+        // end of the row. A real hug, just above the spacer's collapse
+        // (250), so the spacer is what stretches.
+        let hug = onlineFilter.widthAnchor.constraint(equalToConstant: 0)
+        hug.priority = NSLayoutConstraint.Priority(252)
+        hug.isActive = true
         row.setCustomSpacing(HelmMetrics.s3, after: findOrConnectButton)
         // X4 before the chips it qualifies, and H9's "+N" after them. Both
         // are fixed-size chrome, so the strip stays what absorbs the slack.

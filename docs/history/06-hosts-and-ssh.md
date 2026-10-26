@@ -83,3 +83,32 @@ Everything below is the sidebar layout only; the floating bar's page, window and
   A new key's save goes through `HostsController.newKeyWriterForTests`, and the import reads a fixture (`SSHConfigImport.configURLOverrideForTests`, and `FM_SSH_CONFIG_FILE` in the redirect block).
 - **Verified** by `ConnectionsCardsSelfTest` (window-backed, real mouse and key events) and `ConnectionsLogicSelfTest` (headless), each case confirmed to fail with its change reverted, plus the targeted existing suites and tour-lab renders in Dusk and Daylight at 1512 and 1100.
 
+
+## The host cards as one flat grid
+
+**`fm/grandline-hosts-flat-grid`: the Hosts cards are one flat grid by default, side by side like the Keys grid, instead of one section per group.**
+The captain's report: with three hosts in two groups, each group got its own header and its own row, so each row held a single card and the rest of the page was empty.
+
+- **The order** is Firstmate, then by group in the order the table draws groups (by name, the ungrouped last), then by name, then by the saved order.
+  So a group's hosts still sit together without a header between them (`HostsController.flatOrder`).
+- **Each card names its group** in a quiet `HelmTagChip` at the start of its third line, capped at 96pt (scaled) with the whole group in its tooltip and VoiceOver label.
+  The chip sits in a slot one text line tall, with its padding drawn past it.
+  Laid out at its own height it pushed the third line 2pt off the line of the card beside it.
+- **Grouped**, the old sectioned layout, is a checkable item at the foot of the All groups menu, stored as `fm.connections.hostsGrouped` and off by default.
+  Two other places were measured out.
+  A third choice on Grid / List would be one stored choice shared with Keys, where it means nothing.
+  A toggle beside the filter does not fit: the filter row has no width to spare at 1100 with the inspector open.
+  A titled toggle grew the window to 1457pt there, and an icon-only one to 1420pt (`PageRedesignsSelfTest`).
+  The item's title must stay no wider than "All groups", because a pop-up sizes itself to its widest item.
+- **The All / Online and Grid / List controls took the filter row's slack when no host has a tag**, which is the captain's own data.
+  Their hugging priorities are no-ops on a view with no intrinsic size (gotcha (12)), so All / Online measured 307pt and pushed the group filter to the far end of the row.
+  Each now has a `width == 0` hug at 252, just above the spacer's collapse.
+- **The tag strip could loop the window's layout until AppKit threw.**
+  `refitTagChips` read "+N" at its current width, and the strip absorbs any change in that width.
+  Hiding one more chip turned "+4" into "+5", which was a point narrower, so the strip grew a point, the chip fitted again, and round it went (37pt, 38pt, 37pt).
+  It ended in "more Layout Window passes than there are views in the window".
+  It needed a strip within a point of one chip, which a draft of this change (a toggle beside the filter) reached in 8 of 16 tour runs, against 0 of 24 on main.
+  The count is now read from the width the strip and "+N" share, with "+N" reserved at its widest label (`settledTagCount`), and that does not move when the label does.
+- **Verified** by `ConnectionsCardsSelfTest` and `ConnectionsLogicSelfTest`, each new case confirmed to fail with its change reverted.
+  Tour-lab renders cover three hosts, twelve hosts and the demo groups, in Dusk and Daylight, at 1512 and 1100, with the inspector open and closed, and at the Larger text scale.
+  The tour lab gained `demo hosts three`, `demo hosts many` and `grouped on|off` for them.

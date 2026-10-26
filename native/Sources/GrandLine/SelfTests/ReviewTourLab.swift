@@ -167,6 +167,14 @@ enum ReviewTourLab {
         /// hosts across groups and tags, two keys and three snippets, through
         /// each store's own API. Every address, key and command is dummy text.
         case demoHosts
+        /// `demo hosts three`: the captain's own three-host shape - DEV
+        /// Bastion in DEV and Prod Bastion in PROD beside Firstmate.
+        /// `demo hosts many`: twelve hosts over four groups and none, for a
+        /// page that wraps. Dummy addresses, through the store's own API.
+        case demoHostSet(String)
+        /// `grouped on|off`: the Hosts cards' Grouped choice, picked from the
+        /// group filter's menu through the pop-up's own target and action.
+        case hostsGrouped(Bool)
         /// Create a scratch Poneglyph vault with a dummy master password and
         /// fill it with credentials across the four categories, one with a
         /// 2FA code. Every value is dummy text, and the vault lives under the
@@ -275,7 +283,7 @@ enum ReviewTourLab {
             case .unknownVerb(let v):
                 return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, renderbar, menu, wait, "
                     + "demo, measure, measurewindow, orderfront, probe, tasks, bar, fleet, inspector, sidebar, "
-                    + "tab, customize, select, textscale, settings)"
+                    + "tab, customize, select, textscale, settings, grouped)"
             case .badArgument(let a): return "bad argument \"\(a)\""
             case .unknownDestination(let d): return "unknown destination \"\(d)\""
             case .unknownTheme(let t): return "unknown theme \"\(t)\""
@@ -331,6 +339,9 @@ enum ReviewTourLab {
             if argument == "decision" { return .success(.demoDecision) }
             if argument == "refresh" { return .success(.demoRefresh) }
             if argument == "hosts" { return .success(.demoHosts) }
+            if argument == "hosts three" || argument == "hosts many" {
+                return .success(.demoHostSet(String(argument.dropFirst("hosts ".count))))
+            }
             if argument == "vault" { return .success(.demoVault) }
             if argument == "knowledge" { return .success(.demoKnowledge) }
             if argument == "automic" { return .success(.demoAutomic) }
@@ -404,6 +415,11 @@ enum ReviewTourLab {
         case "tab":
             guard !argument.isEmpty else { return .failure(.missingArgument("tab")) }
             return .success(.moduleTab(argument))
+        case "grouped":
+            guard argument == "on" || argument == "off" else {
+                return .failure(argument.isEmpty ? .missingArgument(verb) : .badArgument(argument))
+            }
+            return .success(.hostsGrouped(argument == "on"))
         case "customize":
             guard argument == "on" || argument == "off" else {
                 return .failure(argument.isEmpty ? .missingArgument(verb) : .badArgument(argument))
@@ -632,6 +648,25 @@ enum ReviewTourLab {
                 seedDemoHosts(shell.workspace)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo hosts")
+            case .demoHostSet(let set):
+                seedDemoHostSet(set, shell.workspace)
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("demo hosts \(set) (\(shell.workspace.hostStore.hosts.count) hosts)")
+            case .hostsGrouped(let on):
+                let hosts = shell.workspace.hostsPanel
+                let picker = hosts.groupPicker
+                if AppSettings.shared.hostsGrouped != on,
+                   let index = picker.menu?.items.firstIndex(where: { $0.title == HostsController.groupedChoiceTitle }) {
+                    picker.selectItem(at: index)
+                    _ = picker.sendAction(picker.action, to: picker.target)
+                }
+                shell.view.layoutSubtreeIfNeeded()
+                let sections = hosts.hostsGrid.debugSectionTitles
+                if AppSettings.shared.hostsGrouped == on {
+                    log.append("grouped \(on ? "on" : "off") (sections \(sections))")
+                } else {
+                    log.append("grouped \(on ? "on" : "off") FAILED - the group filter has no Grouped item (\(picker.itemTitles))")
+                }
             case .demoVault:
                 log.append(seedDemoVault(shell.debugPoneglyphStore))
                 shell.view.layoutSubtreeIfNeeded()
@@ -996,6 +1031,28 @@ enum ReviewTourLab {
                  accentHex: "8B8677", group: "Observability", tags: ["ci"]),
             Host(label: "lab-box", address: "lab.example.test"),
         ]
+        for host in hosts { workspace.hostStore.add(host) }
+    }
+
+    /// `demo hosts three` and `demo hosts many` - see `Step.demoHostSet`.
+    static func seedDemoHostSet(_ set: String, _ workspace: Workspace) {
+        let hosts: [Host]
+        if set == "three" {
+            hosts = [
+                Host(label: "DEV Bastion", address: "bastion.dev.example.test", username: "ops", group: "DEV"),
+                Host(label: "Prod Bastion", address: "bastion.prod.example.test", username: "ops", group: "PROD"),
+            ]
+        } else {
+            let fleet: [(String, String, String?)] = [
+                ("DEV Bastion", "bastion.dev.example.test", "DEV"), ("dev-api-01", "192.0.2.11", "DEV"),
+                ("dev-worker-01", "192.0.2.12", "DEV"), ("stg-api-01", "192.0.2.21", "STAGING"),
+                ("stg-db-01", "192.0.2.22", "STAGING"), ("Prod Bastion", "bastion.prod.example.test", "PROD"),
+                ("prod-api-01", "198.51.100.31", "PROD"), ("prod-api-02", "198.51.100.32", "PROD"),
+                ("prod-db-primary", "198.51.100.33", "PROD"), ("grafana", "grafana.example.test", "Observability"),
+                ("home-nas", "nas.example.test", nil), ("lab-box", "lab.example.test", nil),
+            ]
+            hosts = fleet.map { Host(label: $0.0, address: $0.1, username: "ops", group: $0.2) }
+        }
         for host in hosts { workspace.hostStore.add(host) }
     }
 

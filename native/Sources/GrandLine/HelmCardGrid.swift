@@ -70,6 +70,10 @@ final class HelmCardGrid: NSView {
         /// A quiet third line when there is no status ("Last connected 2h ago").
         var detail: String?
         var badges: [Badge] = []
+        /// A short quiet chip at the start of the third line - a host's group
+        /// in a grid that draws no group headers. The tooltip carries the
+        /// whole of it, since the chip truncates.
+        var chip: (text: String, toolTip: String)?
         var actions: [IconAction] = []
         /// Double click and Return.
         var activate: (() -> Void)?
@@ -454,6 +458,15 @@ final class HelmGridCardView: HoverHighlightView {
     private let statusPill = HelmStatusPill(style: .dotWord)
     private let detailLabel = NSTextField(labelWithString: "")
     private let badgeRow = NSStackView()
+    private let chip = HelmTagChip(text: "", theme: ThemeManager.shared.theme)
+    /// The chip's place in the third line: a text line tall, with the chip's
+    /// own padding drawn past it, so a card with a chip keeps its third line
+    /// exactly where a card without one has it.
+    private let chipSlot = NSView()
+    private lazy var chipWidthCap = chip.widthAnchor.constraint(lessThanOrEqualToConstant: Self.chipMaximumWidth)
+    /// The third line: the chip, then whichever of the status, the detail
+    /// and the badges the card has.
+    private let metaRow = NSStackView()
     private let actionRow = NSStackView()
     private var actionButtons: [HelmButton] = []
     private var actionRuns: [() -> Void] = []
@@ -480,7 +493,26 @@ final class HelmGridCardView: HoverHighlightView {
         // keeps the badges together rather than spread over the card
         // (gotcha (12)).
         badgeRow.setHuggingPriority(.required, for: .horizontal)
-        let text = NSStackView(views: [titleLabel, subtitleLabel, statusPill, detailLabel, badgeRow])
+        chipSlot.isHidden = true
+        chipSlot.translatesAutoresizingMaskIntoConstraints = false
+        chipSlot.addSubview(chip)
+        chip.setAccessibilityElement(true)
+        chip.setAccessibilityRole(.staticText)
+        NSLayoutConstraint.activate([
+            chipWidthCap,
+            chip.leadingAnchor.constraint(equalTo: chipSlot.leadingAnchor),
+            chip.trailingAnchor.constraint(equalTo: chipSlot.trailingAnchor),
+            chip.centerYAnchor.constraint(equalTo: chipSlot.centerYAnchor),
+            chipSlot.heightAnchor.constraint(equalTo: chip.heightAnchor, constant: -2 * HelmMetrics.s0),
+        ])
+        for view in [chipSlot, statusPill, detailLabel, badgeRow] as [NSView] { metaRow.addArrangedSubview(view) }
+        metaRow.orientation = .horizontal
+        metaRow.spacing = HelmMetrics.s2
+        metaRow.alignment = .centerY
+        metaRow.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        // The badge row's own shape, one level out (gotcha (12)).
+        metaRow.setHuggingPriority(.required, for: .horizontal)
+        let text = NSStackView(views: [titleLabel, subtitleLabel, metaRow])
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = HelmMetrics.s0
@@ -505,6 +537,7 @@ final class HelmGridCardView: HoverHighlightView {
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: actionRow.leadingAnchor, constant: -HelmMetrics.s1),
             text.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -HelmMetrics.s3),
             subtitleLabel.widthAnchor.constraint(lessThanOrEqualTo: text.widthAnchor),
+            metaRow.widthAnchor.constraint(lessThanOrEqualTo: text.widthAnchor),
             actionRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s2),
             actionRow.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2),
         ])
@@ -539,6 +572,16 @@ final class HelmGridCardView: HoverHighlightView {
         detailLabel.stringValue = card.detail ?? ""
         detailLabel.font = HelmType.captionSmall()
         detailLabel.textColor = HelmTheme.mutedInk(theme)
+        if let content = card.chip {
+            chipSlot.isHidden = false
+            chip.text = content.text
+            chip.toolTip = content.toolTip
+            chip.setAccessibilityLabel(content.toolTip)
+            chip.applyTheme(theme)
+            chipWidthCap.constant = Self.chipMaximumWidth
+        } else {
+            chipSlot.isHidden = true
+        }
         rebuildBadges(card.badges)
         rebuildActions(card.actions)
         accessibilityLabelOverride = card.accessibilityLabel
@@ -600,6 +643,10 @@ final class HelmGridCardView: HoverHighlightView {
         guard sender.tag < actionRuns.count else { return }
         actionRuns[sender.tag]()
     }
+
+    /// The widest a chip may grow before it truncates, at the chrome text
+    /// scale, so a long group name leaves the rest of the line room.
+    static var chipMaximumWidth: CGFloat { HelmType.scaled(96) }
 
     /// C5: the icon buttons are always there at low emphasis (`.quiet`'s
     /// muted glyph) and at full strength (the same button in the accent, a
@@ -705,6 +752,10 @@ final class HelmGridCardView: HoverHighlightView {
     var debugSubtitleLabel: NSTextField { subtitleLabel }
     var debugStatus: String? { statusPill.isHidden ? nil : statusPill.label.stringValue }
     var debugDetail: String? { detailLabel.isHidden ? nil : detailLabel.stringValue }
+    var debugChip: String? { chipSlot.isHidden ? nil : chip.text }
+    /// The third line's badges, in the card's own coordinates.
+    var debugBadgeRowFrame: NSRect { convert(badgeRow.frame, from: badgeRow.superview) }
+    var debugChipView: NSView { chip }
     var debugBadgeTexts: [String] {
         badgeRow.arrangedSubviews.compactMap { $0.accessibilityLabel() }
     }
