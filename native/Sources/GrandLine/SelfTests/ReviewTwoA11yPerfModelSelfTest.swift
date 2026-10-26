@@ -19,6 +19,7 @@ enum ReviewTwoA11yPerfModelSelfTest {
         var ok = true
         checkTheLabelWords(&ok)
         checkTheHealthMarksInWords(&ok)
+        checkTheTourTakesATextScale(&ok)
         print(ok ? "ReviewTwoA11yPerfModelSelfTest: PASS" : "ReviewTwoA11yPerfModelSelfTest: FAIL")
         return ok
     }
@@ -105,6 +106,25 @@ enum ReviewTwoA11yPerfModelSelfTest {
             check(spoken == want, "\(name): the Health ring reads \"\(spoken)\", want \"\(want)\"", &ok)
         }
         if ok { print("  OK   runs and ring read as counts with their words: mixed, all passing, all failing, empty") }
+    }
+
+    // MARK: R2-A11Y-05
+
+    /// The Larger render is one tour line, by the names Settings offers.
+    private static func checkTheTourTakesATextScale(_ ok: inout Bool) {
+        print("\n-- R2-A11Y-05: the tour's textscale line --")
+        for (name, scale) in ChromeTextScale.steps {
+            let parsed = ReviewTourLab.parse(line: "textscale \(name.lowercased())")
+            check(parsed == .success(.textScale(scale)), "\"textscale \(name.lowercased())\" parsed as \(parsed)", &ok)
+        }
+        check(ReviewTourLab.parse(line: "textscale huge") == .failure(.badArgument("huge")),
+              "an unknown scale name was accepted", &ok)
+        check(ReviewTourLab.parse(line: "textscale") == .failure(.missingArgument("textscale")),
+              "a bare textscale was accepted", &ok)
+        let tour = ReviewTourLab.parse(tour: "textscale larger\ntheme dusk\nresize 1512x950\nrender home")
+        check(tour.errors.isEmpty && tour.steps.first == .textScale(1.3),
+              "a Larger tour parsed as \(tour.steps) with \(tour.errors)", &ok)
+        if ok { print("  OK   default, large and larger parse, a bad or missing name does not") }
     }
 }
 

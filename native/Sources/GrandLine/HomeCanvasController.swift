@@ -1543,6 +1543,12 @@ final class HomeCanvasController: NSViewController {
         // occupies changes.
         let width = Self.composedContentWidth(available: available, modules: modules, spans: cardSpan)
         contentWidthConstraint?.constant = width
+        // R2-A11Y-05: the full-width card is told its width as a column is,
+        // so its headline wraps to two lines and its single lines truncate.
+        // Told nothing, a long verdict stayed on one line and ran past the
+        // card and out of the window - measured in the tour lab at 1100 and
+        // 1512, and at the Larger text scale it hid Refresh as well.
+        attentionCard.setLayoutWidth(width)
 
         // `spanningRows(_:)`, not `rows(_:)`: the Morning briefing spans two
         // columns and every other module spans one (`DaylightModule.gridSpan`).
@@ -2157,6 +2163,7 @@ final class HomeCanvasController: NSViewController {
                 pin.constant = unit * CGFloat(span) + Self.gridSpacing * CGFloat(span - 1)
             }
             contentWidthConstraint?.constant = width
+            attentionCard.setLayoutWidth(width)
         }
         lastGridWidth = available
         lastGridHeight = height
@@ -3885,6 +3892,7 @@ final class HomeCanvasController: NSViewController {
     /// without seeding a Tasks store with dated tasks.
     /// P5: the attention card's rows, as its list holds them.
     var debugAttentionRows: [NSView] { attentionCard.debugRows }
+    var debugAttentionCard: NeedsAttentionCard { attentionCard }
     /// R2-UX-01 (c): the attention card's signal rows and closing notes, as
     /// this page composes them now.
     var debugSignalAttentionIDs: [String] { signalAttentionItems().map(\.id) }

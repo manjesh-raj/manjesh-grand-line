@@ -606,6 +606,13 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         return outlineView.rowView(atRow: row, makeIfNecessary: false) as? WorkspaceSidebarRowView
     }
     var debugHeaderRule: NSView { headerRule }
+    /// Draw the list's scroller as `style` - a legacy track narrows every
+    /// row, the way "Show scroll bars: Always" does (gotcha (4)).
+    func debugSetScrollerStyle(_ style: NSScroller.Style) {
+        scrollView.scrollerStyle = style
+        scrollView.tile()
+        view.layoutSubtreeIfNeeded()
+    }
     /// The account menu's items, as the header's click would show them.
     var debugAccountMenuTitles: [String] { accountMenu().items.filter { !$0.isSeparatorItem }.map(\.title) }
     /// Run an account-menu item by title, through its real target/action.

@@ -234,6 +234,12 @@ enum ReviewTourLab {
         /// many requests the gate refused and how many got past it (the tour
         /// fails on any). Never point it at a real firstmate home.
         case demoBitbucket
+        /// `textscale default|large|larger` (R2-A11Y-05): the chrome text
+        /// scale, by the names Settings offers. At the top of a tour it is the
+        /// scale the shell is built at, which is a launch at that size - what
+        /// the captain sees after the relaunch Settings offers. Anywhere else
+        /// it is a live change.
+        case textScale(CGFloat)
         case comment
     }
 
@@ -254,7 +260,7 @@ enum ReviewTourLab {
             case .unknownVerb(let v):
                 return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, renderbar, menu, wait, "
                     + "demo, measure, measurewindow, orderfront, probe, tasks, bar, fleet, inspector, sidebar, "
-                    + "tab, customize, select)"
+                    + "tab, customize, select, textscale)"
             case .badArgument(let a): return "bad argument \"\(a)\""
             case .unknownDestination(let d): return "unknown destination \"\(d)\""
             case .unknownTheme(let t): return "unknown theme \"\(t)\""
@@ -390,6 +396,12 @@ enum ReviewTourLab {
         case "select":
             guard !argument.isEmpty else { return .failure(.missingArgument("select")) }
             return .success(.select(argument))
+        case "textscale":
+            guard !argument.isEmpty else { return .failure(.missingArgument("textscale")) }
+            guard let step = ChromeTextScale.steps.first(where: { $0.title.lowercased() == argument.lowercased() }) else {
+                return .failure(.badArgument(argument))
+            }
+            return .success(.textScale(step.scale))
         default:
             return .failure(.unknownVerb(verb))
         }
@@ -441,6 +453,10 @@ enum ReviewTourLab {
                     ThemeManager.shared.setTheme(theme)
                     log.append("theme \(id)")
                 }
+            case .textScale(let scale):
+                ChromeTextScale.shared.setScale(scale)
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("textscale \(scale) (live)")
             case .resize(let width, let height):
                 var frame = window.frame
                 frame.size = NSSize(width: width, height: height)
@@ -1248,9 +1264,20 @@ enum ReviewTourLab {
             NetworkTripwire.install()
             OpenPRsSource.debugSeedBitbucketIdentity((user: "tour-user", token: "tour-token-not-real"))
         }
+        // R2-A11Y-05: a text scale named before anything else is the one the
+        // shell is built at. Stored as the captain's setting first, so a
+        // `ChromeTextScale` not yet read starts at it, as a relaunch would.
+        var tourSteps = steps
+        var launchLog: [String] = []
+        while case .textScale(let scale)? = tourSteps.first {
+            AppSettings.shared.uiTextScale = scale
+            ChromeTextScale.shared.setScale(scale)
+            tourSteps.removeFirst()
+            launchLog.append("textscale \(scale) at launch (launch scale \(ChromeTextScale.shared.launchScale))")
+        }
         let (window, shell) = makeOffScreenShell(layout: layout)
-        var log = ["layout \(layout.rawValue)"]
-        log += run(steps: steps, shell: shell, window: window, outputDirectory: outputDirectory)
+        var log = ["layout \(layout.rawValue)"] + launchLog
+        log += run(steps: tourSteps, shell: shell, window: window, outputDirectory: outputDirectory)
         // R2-SEC-01: what the network gate refused, and anything that got
         // past it (counted only when `demo bitbucket` installed the tripwire).
         let refused = LoopbackOnlyURLProtocol.refusals
