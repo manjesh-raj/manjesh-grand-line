@@ -175,6 +175,9 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// The modules the captain's profile leaves out (R2-UX-01 (b)).
     private var hidden: Set<WorkspaceModule> = AppSettings.shared.hiddenModules
     private var hiddenObserver: NSObjectProtocol?
+    /// The chrome text scale the rows were built at. A change of it is the
+    /// one theme re-fire that rebuilds them (R2-PERF-02).
+    private var builtTextScale = ChromeTextScale.shared.scale
 
     // MARK: Build
 
@@ -529,10 +532,21 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         headerRule.layer?.backgroundColor = HelmDisplayAccessibility.strengthenedEdge(
             HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.dividerAlpha), theme: theme).cgColor
         guard isViewLoaded else { return }
-        // GL-32: the row heights follow the chrome text scale.
+        // R2-PERF-02: a theme change repaints the rows it can see, in place,
+        // the way `setSignals` repaints a badge. It used to reload the list -
+        // twenty cells rebuilt, the hovered row's fill dropped and the list
+        // scrolled back to the lit row - on every ⌘-toggle and every sunset
+        // under Follow system. GL-24: a theme observer repaints.
+        let scale = ChromeTextScale.shared.scale
+        guard scale != builtTextScale else {
+            repaintRows(theme)
+            return
+        }
+        builtTextScale = scale
+        // GL-32: a text-scale change re-fires the theme too, and that one
+        // does rebuild: the row heights and every font follow the scale, and
+        // a cell sets its fonts and sizes once, when it is built.
         outlineView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<outlineView.numberOfRows))
-        // A theme observer repaints - it never fetches (GL-24). Every cell
-        // reads the theme when it is built, so a reload is the repaint.
         isApplyingSelection = true
         outlineView.reloadData()
         for item in roots where item.isSection {
@@ -542,6 +556,29 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         }
         isApplyingSelection = false
         applySelection()
+    }
+
+    /// Every row the list has built, in its new colours. A row scrolled into
+    /// view later is built with them (`viewFor`), so nothing is missed.
+    private func repaintRows(_ theme: HelmTheme) {
+        let selected = outlineView.selectedRow
+        outlineView.enumerateAvailableRowViews { rowView, row in
+            (rowView as? WorkspaceSidebarRowView)?.themeDidChange()
+            guard let item = outlineView.item(atRow: row) as? WorkspaceSidebarItem else { return }
+            let cell = rowView.numberOfColumns > 0 ? rowView.view(atColumn: 0) : nil
+            switch item.entry {
+            case .section(let title):
+                (cell as? WorkspaceSidebarSectionCell)?.configure(title: title, theme: theme)
+            case .module(let module):
+                (cell as? WorkspaceSidebarPageCell)?.repaint(badge: signals.badge(for: module), lit: row == selected,
+                                                             theme: theme)
+            case .session(let hostID):
+                guard let cell = cell as? WorkspaceSidebarSessionCell,
+                      let session = sessions.first(where: { $0.hostID == hostID }) else { return }
+                cell.configure(session: session, shortcutIndex: shortcutIndexByHost[hostID], theme: theme)
+                cell.setLit(row == selected, theme: theme)
+            }
+        }
     }
 
     #if FM_SELFTESTS
@@ -665,6 +702,12 @@ final class WorkspaceSidebarOutlineView: NSOutlineView {
     #if FM_SELFTESTS
     var debugClickedRow: Int?
     override var clickedRow: Int { debugClickedRow ?? super.clickedRow }
+    /// How many times the list has been reloaded (R2-PERF-02).
+    private(set) var debugReloadCount = 0
+    override func reloadData() {
+        debugReloadCount += 1
+        super.reloadData()
+    }
     #endif
 }
 
@@ -752,9 +795,15 @@ final class WorkspaceSidebarRowView: NSTableRowView {
         paintFill()
     }
 
+    /// The palette changed: the same fill and ring in the new colours, at
+    /// once - a theme change is a repaint, not a state change to ease.
+    func themeDidChange() {
+        paintFill(animated: false)
+    }
+
     /// The lit row's wash, a hovered row's fill, or nothing. A section header
     /// takes no hover: it is a label, not a place.
-    private func paintFill() {
+    private func paintFill(animated: Bool = true) {
         let theme = ThemeManager.shared.theme
         let color: NSColor?
         if isSelected && selectionHighlightStyle != .none {
@@ -764,7 +813,7 @@ final class WorkspaceSidebarRowView: NSTableRowView {
         } else {
             color = nil
         }
-        fill.paint(color, cornerRadius: HelmMetrics.rChip + 1)
+        fill.paint(color, cornerRadius: HelmMetrics.rChip + 1, animated: animated)
         refreshFocus()
     }
 
@@ -780,6 +829,7 @@ final class WorkspaceSidebarRowView: NSTableRowView {
 
     #if FM_SELFTESTS
     var debugFill: HelmRowWash { fill }
+    var debugHovering: Bool { hovering }
     #endif
 
     /// The lit row's label: the accent, corrected until it clears the text
@@ -886,6 +936,14 @@ final class WorkspaceSidebarPageCell: NSTableCellView {
 
     func setLit(_ lit: Bool, theme: HelmTheme) {
         label.textColor = lit ? WorkspaceSidebarRowView.litInk(theme) : HelmTheme.nsColor(theme.chromeInkHex)
+    }
+
+    /// R2-PERF-02: the colours of a built row, for a theme change. The
+    /// symbol image and the title stay, and only what the palette decides moves.
+    func repaint(badge: WorkspaceBadge?, lit: Bool, theme: HelmTheme) {
+        icon.contentTintColor = HelmTheme.nsColor(theme.accentHex)
+        setLit(lit, theme: theme)
+        setBadge(badge, theme: theme)
     }
 
     #if FM_SELFTESTS

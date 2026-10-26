@@ -32,7 +32,8 @@ enum ReviewTwoA11yPerfSelfTest {
         window.orderFront(nil)
         defer { window.orderOut(nil) }
         settle(shell)
-        for check in [checkTheLabelsSayWhatTheControlsDo, checkHealthReadsInWords, checkTheSidebarFitsAtLarger] {
+        for check in [checkTheLabelsSayWhatTheControlsDo, checkHealthReadsInWords, checkTheSidebarFitsAtLarger,
+                          checkAThemeChangeRepaintsTheSidebarInPlace] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -315,6 +316,93 @@ enum ReviewTwoA11yPerfSelfTest {
                   "\(width): Refresh ends at \(inCard(refresh).maxX) in a \(card.bounds.width)pt card", &ok)
         }
         if ok { print("  OK   the full-width attention headline wraps inside its card at 1512 and 1100") }
+    }
+
+    // MARK: R2-PERF-02 - a theme change repaints the sidebar in place
+
+    private static func checkAThemeChangeRepaintsTheSidebarInPlace(_ shell: MainSplitShellController,
+                                                                   _ window: NSWindow, _ ok: inout Bool) {
+        print("\n-- R2-PERF-02: a theme change repaints the sidebar without reloading it --")
+        let savedFrame = window.frame
+        let savedTheme = ThemeManager.shared.theme
+        defer {
+            ThemeManager.shared.setTheme(savedTheme)
+            window.setFrame(savedFrame, display: true)
+            settle(shell)
+        }
+        guard let dusk = HelmTheme.theme(id: "dusk"), let daylight = HelmTheme.theme(id: "daylight") else {
+            fail("no Dusk or Daylight palette", &ok)
+            return
+        }
+        ThemeManager.shared.setTheme(dusk)
+        shell.workspace.navigator.show(.homeCanvas)
+        // Short enough that the list scrolls.
+        var frame = window.frame
+        frame.size.height = 480
+        window.setFrame(frame, display: true)
+        settle(shell)
+        let outline = shell.sidebar.outlineView
+        guard let clip = outline.enclosingScrollView?.contentView else {
+            fail("the sidebar's list has no scroll view", &ok)
+            return
+        }
+        check(outline.frame.height > clip.bounds.height + 80,
+              "the list (\(outline.frame.height)pt) does not overflow its \(clip.bounds.height)pt view - nothing to scroll", &ok)
+        clip.scroll(to: NSPoint(x: 0, y: 80))
+        outline.enclosingScrollView?.reflectScrolledClipView(clip)
+        settle(shell)
+        let scrolledTo = clip.bounds.origin.y
+
+        // A row under the pointer, through the row view's own tracking path.
+        let visible = outline.rows(in: clip.documentVisibleRect)
+        let hoveredRow = (visible.lowerBound..<visible.upperBound).first { row in
+            guard row != outline.selectedRow, let item = outline.item(atRow: row) as? WorkspaceSidebarItem,
+                  case .module = item.entry else { return false }
+            return true
+        }
+        guard let hoveredRow, let rowView = outline.rowView(atRow: hoveredRow, makeIfNecessary: false)
+                as? WorkspaceSidebarRowView,
+              let cell = outline.view(atColumn: 0, row: hoveredRow, makeIfNecessary: false) as? WorkspaceSidebarPageCell,
+              let enter = NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [],
+                                                 timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                                 eventNumber: 0, trackingNumber: 0, userData: nil) else {
+            fail("no visible module row to hover", &ok)
+            return
+        }
+        rowView.mouseEntered(with: enter)
+        check(rowView.debugHovering, "the row did not take the hover", &ok)
+        let reloads = outline.debugReloadCount
+
+        ThemeManager.shared.setTheme(daylight)
+        settle(shell)
+        check(outline.debugReloadCount == reloads,
+              "a theme change reloaded the list \(outline.debugReloadCount - reloads) time(s)", &ok)
+        check(abs(clip.bounds.origin.y - scrolledTo) < 0.5,
+              "a theme change scrolled the list from \(scrolledTo) to \(clip.bounds.origin.y)", &ok)
+        let sameRow = outline.rowView(atRow: hoveredRow, makeIfNecessary: false) === rowView
+        let sameCell = outline.view(atColumn: 0, row: hoveredRow, makeIfNecessary: false) === cell
+        check(sameRow && sameCell, "a theme change rebuilt the hovered row (row view \(sameRow), cell \(sameCell))", &ok)
+        check(rowView.debugHovering, "a theme change dropped the hover", &ok)
+        check(rowView.debugFill.debugFill.map { NSColor(cgColor: $0) == WorkspaceSidebarRowView.hover(daylight) } == true,
+              "the hovered row's fill is not Daylight's hover", &ok)
+        check(cell.debugLabelColor == HelmTheme.nsColor(daylight.chromeInkHex),
+              "the hovered row's title kept Dusk's ink", &ok)
+        check(cell.debugIconTint == HelmTheme.nsColor(daylight.accentHex), "the hovered row's icon kept Dusk's accent", &ok)
+        if let lit = shell.sidebar.debugCell(for: .module(.home)) as? WorkspaceSidebarPageCell {
+            check(lit.debugLabelColor == WorkspaceSidebarRowView.litInk(daylight),
+                  "the lit row's title is not Daylight's lit ink", &ok)
+        }
+        check(shell.sidebar.debugSelectedEntry == .module(.home), "a theme change moved the lit row", &ok)
+
+        // A text-scale change still rebuilds: the rows set their fonts once.
+        let savedScale = ChromeTextScale.shared.scale
+        let other = ChromeTextScale.steps.map(\.scale).first { $0 != savedScale } ?? ChromeTextScale.maxScale
+        ChromeTextScale.shared.setScale(other)
+        settle(shell)
+        check(outline.debugReloadCount > reloads, "a text-scale change did not rebuild the rows", &ok)
+        ChromeTextScale.shared.setScale(savedScale)
+        settle(shell)
+        if ok { print("  OK   no reload, no scroll, the hover and the lit row kept, the colours moved; a text scale reloads") }
     }
 
     static func textFields(in view: NSView) -> [NSTextField] {
