@@ -313,14 +313,17 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// Two or three summary rows. More than three is a table, and a
         /// table belongs on the drill page - `maxPeekRows` enforces it.
         case peekRows([HelmModulePeekRow])
-        /// A 66pt ring beside a short title and note.
-        case ring(value: Int, total: Int, title: String, note: String)
+        /// A 66pt ring beside a short title and note. `spoken` is what
+        /// VoiceOver reads for the ring. Without one it reads the title and
+        /// the count (R2-A11Y-04).
+        case ring(value: Int, total: Int, title: String, note: String, spoken: String? = nil)
         /// `.ring`, then one quiet line per item under it - a dot in the
         /// item's state colour, its name, and its state word. The hub's
         /// Health card when its page column has room
         /// (`fm/grandline-home-fit-implement`). The lines are readouts, not
         /// links: the card itself opens the Health page.
-        case ringWithLines(value: Int, total: Int, title: String, note: String, lines: [HelmModulePeekRow])
+        case ringWithLines(value: Int, total: Int, title: String, note: String, lines: [HelmModulePeekRow],
+                           spoken: String? = nil)
         /// A big numeral over a capsule progress bar.
         case progress(value: Int, total: Int, note: String)
         /// One wrapping line of copy.
@@ -1307,10 +1310,10 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             content = buildMetric(value: value, unit: unit, note: note)
         case let .peekRows(rows):
             content = buildPeekRows(Array(rows.prefix(peekRowLimit ?? Self.maxPeekRows)))
-        case let .ring(value, total, title, note):
-            content = buildRing(value: value, total: total, title: title, note: note)
-        case let .ringWithLines(value, total, title, note, lines):
-            let ring = buildRing(value: value, total: total, title: title, note: note)
+        case let .ring(value, total, title, note, spoken):
+            content = buildRing(value: value, total: total, title: title, note: note, spoken: spoken)
+        case let .ringWithLines(value, total, title, note, lines, spoken):
+            let ring = buildRing(value: value, total: total, title: title, note: note, spoken: spoken)
             content = verticalStack([ring, buildStatusLines(lines)], spacing: HelmMetrics.s3)
         case let .progress(value, total, note):
             content = buildProgress(value: value, total: total, note: note)
@@ -1984,9 +1987,10 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         return column
     }
 
-    private func buildRing(value: Int, total: Int, title: String, note: String) -> NSView {
+    private func buildRing(value: Int, total: Int, title: String, note: String, spoken: String?) -> NSView {
         let ring = HelmRingGauge()
         ring.configure(value: value, total: total)
+        ring.setSpokenLabel(spoken ?? (total > 0 ? "\(title), \(value) of \(total)" : title))
         ringGauge = ring
 
         let titleField = NSTextField(labelWithString: title)
@@ -2197,6 +2201,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// The card's inner activatable view, so the accessibility suite can
     /// assert the role/label/press contract on the thing that carries it.
     var debugCardHitView: HoverHighlightView { card }
+
+    /// The `.ring` body's gauge, or nil for any other body.
+    var debugRingGauge: HelmRingGauge? { ringGauge }
     #endif
 
     // MARK: Layout and theme
@@ -2879,6 +2886,15 @@ final class HelmRingGauge: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// R2-A11Y-04: the ring as one element with words, rather than its arc
+    /// (which says nothing to VoiceOver) and a "4/5" read as a fraction.
+    func setSpokenLabel(_ text: String) {
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel(text)
+        label.setAccessibilityElement(false)
+    }
 
     func configure(value current: Int, total: Int) {
         fraction = total > 0 ? min(1, max(0, Double(current) / Double(total))) : 0

@@ -1269,6 +1269,26 @@ enum SelfTestDispatch {
             exit(ReviewTwoUXSelfTest.run() ? 0 : 1)
         }
 
+        // R2-PERF-01: the launch path's signposts, timed in process - the real
+        // app delegate, its shell per layout and a first display, against this
+        // process's scratch stores. Window-backed.
+        if ProcessInfo.processInfo.environment["FM_RUN_LAUNCH_TIMING_TESTS"] == "1" {
+            exit(LaunchTimingSelfTest.run() ? 0 : 1)
+        }
+
+        // The second full review's accessibility and performance findings
+        // (R2-A11Y-03 to 05, R2-PERF-01 to 06): the pure half - the label words,
+        // the Updates check record and the attention card's staleness check.
+        if ProcessInfo.processInfo.environment["FM_RUN_REVIEW2_A11Y_PERF_MODEL_TESTS"] == "1" {
+            exit(ReviewTwoA11yPerfModelSelfTest.run() ? 0 : 1)
+        }
+
+        // ...and the window-backed half: a real sidebar shell, its toolbar and
+        // its outline view (`ReviewTwoA11yPerfSelfTest`, in `NEEDS_SESSION`).
+        if ProcessInfo.processInfo.environment["FM_RUN_REVIEW2_A11Y_PERF_TESTS"] == "1" {
+            exit(ReviewTwoA11yPerfSelfTest.run() ? 0 : 1)
+        }
+
         // R2-UX-01 (a): the app lock as an opt-in - the first launch's settlement, the
         // lock screen settling an undecided install, and Check again. Pure logic.
         if ProcessInfo.processInfo.environment["FM_RUN_APP_LOCK_OPT_IN_TESTS"] == "1" {

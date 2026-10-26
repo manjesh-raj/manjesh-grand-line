@@ -176,7 +176,7 @@ final class HealthCardView: NSObject {
                               tint: tint, tintHex: nil),
             "status": .status(chip, tint: tint),
             "lastRun": lastRun,
-            "runs": ticks.isEmpty ? .none : .code(ticks),
+            "runs": .marks(ticks, spoken: Self.runTicksSpoken(state)),
         ]
         let needsAttention = state.verdict == .degraded || state.verdict == .failing
         if needsAttention, let retry = retryActions[service] {
@@ -385,6 +385,19 @@ final class HealthCardView: NSObject {
         var ticks = String(repeating: "\u{2715}", count: failures)
         if state.lastSuccess != nil, failures < maxRunTicks { ticks += "\u{2713}" }
         return ticks
+    }
+
+    /// R2-A11Y-04: the marks `runTicks` draws, in words - "3 failures,
+    /// 1 success" - in the order they are drawn. A cross and a tick were the
+    /// only carriers, and VoiceOver read them as "multiplication x, check
+    /// mark".
+    static func runTicksSpoken(_ state: ServiceHealthState) -> String {
+        guard state.hasReported else { return "No runs yet" }
+        let failures = min(state.consecutiveFailures, maxRunTicks)
+        var parts: [String] = []
+        if failures > 0 { parts.append(failures == 1 ? "1 failure" : "\(failures) failures") }
+        if state.lastSuccess != nil, failures < maxRunTicks { parts.append("1 success") }
+        return parts.joined(separator: ", ")
     }
 
     /// A streak longer than this is reported as a count in the row's own copy

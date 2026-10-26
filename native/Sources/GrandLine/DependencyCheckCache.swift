@@ -74,7 +74,11 @@ import Foundation
 /// between cases.
 final class DependencyCheckCache {
 
-    static let shared = DependencyCheckCache()
+    static let shared = DependencyCheckCache(records: DependencyCheckRecords())
+
+    /// R2-PERF-05: where every real check is kept across launches. `nil`
+    /// for a suite's own disposable instance, which keeps nothing.
+    let records: DependencyCheckRecords?
 
     static let defaultTTL: TimeInterval = 15 * 60
 
@@ -104,7 +108,9 @@ final class DependencyCheckCache {
     /// fix.
     private var inFlight: [String: DispatchGroup] = [:]
 
-    init() {}
+    init(records: DependencyCheckRecords? = nil) {
+        self.records = records
+    }
 
     /// A cached, still-fresh outcome for `item`, with no subprocess work at
     /// all. `nil` when there is no entry yet or it has aged past `maxAge`.
@@ -117,6 +123,24 @@ final class DependencyCheckCache {
         lock.lock(); defer { lock.unlock() }
         guard let entry = entries[item.id], Date().timeIntervalSince(entry.checkedAt) < maxAge else { return nil }
         return entry.outcome
+    }
+
+    /// R2-PERF-05: an answer for `item` no older than `maxAge`, with when it
+    /// was gathered, and no subprocess at all - this session's own entry or
+    /// the record an earlier launch kept, whichever is newer. `nil` when
+    /// neither is fresh enough.
+    func recentOutcome(for item: DependencyItem, maxAge: TimeInterval,
+                       now: Date = Date()) -> (outcome: CheckOutcome, gatheredAt: Date)? {
+        lock.lock()
+        let entry = entries[item.id]
+        lock.unlock()
+        var best = entry.map { (outcome: $0.outcome, gatheredAt: $0.checkedAt) }
+        if let kept = records?.recent(for: item.id, maxAge: maxAge, now: now),
+           best == nil || kept.gatheredAt > best!.gatheredAt {
+            best = kept
+        }
+        guard let best, now.timeIntervalSince(best.gatheredAt) < maxAge else { return nil }
+        return best
     }
 
     /// Synchronous and blocking, exactly like the `UpdatesSource.check(_:)`
@@ -198,6 +222,7 @@ final class DependencyCheckCache {
             let outcome = runner(item)
 
             let gatheredAt = Date()
+            records?.record(outcome, for: item.id, at: gatheredAt)
             lock.lock()
             entries[item.id] = Entry(outcome: outcome, checkedAt: gatheredAt)
             // Identity-checked: only the runner that registered clears it.
@@ -230,4 +255,92 @@ final class DependencyCheckCache {
     /// REL-28: a suite shortens the wait so a hung check costs it a moment.
     static func debugSetInFlightWaitTimeout(_ seconds: TimeInterval) { inFlightWaitTimeout = seconds }
     #endif
+}
+
+/// R2-PERF-05: the last real check of each tool, kept across launches.
+///
+/// The Updates page used to run its whole sweep - five `npm view`s, the
+/// `brew` checks and the git ones, each a subprocess and most a network round
+/// trip - on its first visit of every launch, because `DependencyCheckCache`
+/// lives in memory. A visit now shows the kept answer and when it was taken
+/// ("checked 2 h ago") while it is younger than
+/// `UpdatesController.visitFreshness`, and Check for updates still runs the
+/// real thing.
+///
+/// What is kept is the status, the two version labels and the one-line
+/// detail - what the row draws. The raw command output is not: it is tool
+/// output, which has no business in a preference file, and the row says so.
+/// Only an answer is kept. A row mid-check or mid-update is not one.
+///
+/// Through `AppDefaults.store`, so a suite or a tour keeps its own and the
+/// captain's preference domain never sees a test's records.
+final class DependencyCheckRecords {
+
+    static let defaultsKey = "fm.updatesLastChecks"
+
+    /// What the row shows in place of the output an earlier launch's check
+    /// printed.
+    static let keptLog = "This answer is from an earlier check, and its output is not kept between launches. "
+        + "Check for updates to run the check again and see what it prints."
+
+    struct Record: Codable, Equatable {
+        var status: String
+        var installed: String
+        var latest: String?
+        var detail: String
+        var checkedAt: Date
+    }
+
+    private let defaults: UserDefaults
+    private let lock = NSLock()
+
+    init(defaults: UserDefaults = AppDefaults.store) {
+        self.defaults = defaults
+    }
+
+    func record(_ outcome: CheckOutcome, for itemID: String, at date: Date) {
+        guard let status = Self.storedName(outcome.status) else { return }
+        lock.lock(); defer { lock.unlock() }
+        var all = loadLocked()
+        all[itemID] = Record(status: status, installed: outcome.installedLabel, latest: outcome.latestLabel,
+                             detail: outcome.detail, checkedAt: date)
+        guard let data = try? JSONEncoder().encode(all) else {
+            AppLog.poller.error("dependency check records: could not encode \(all.count, privacy: .public) records")
+            return
+        }
+        defaults.set(data, forKey: Self.defaultsKey)
+    }
+
+    func recent(for itemID: String, maxAge: TimeInterval, now: Date = Date()) -> (outcome: CheckOutcome, gatheredAt: Date)? {
+        lock.lock()
+        let record = loadLocked()[itemID]
+        lock.unlock()
+        guard let record, now.timeIntervalSince(record.checkedAt) < maxAge,
+              let status = Self.status(named: record.status) else { return nil }
+        let outcome = CheckOutcome(installedLabel: record.installed, latestLabel: record.latest, status: status,
+                                   detail: record.detail, log: Self.keptLog)
+        return (outcome, record.checkedAt)
+    }
+
+    private func loadLocked() -> [String: Record] {
+        guard let data = defaults.data(forKey: Self.defaultsKey) else { return [:] }
+        // A record this build cannot read is no record: the page checks.
+        return (try? JSONDecoder().decode([String: Record].self, from: data)) ?? [:]
+    }
+
+    /// The answers worth keeping, by a name that does not move if the enum
+    /// gains a case.
+    static func storedName(_ status: DependencyStatus) -> String? {
+        switch status {
+        case .upToDate: return "upToDate"
+        case .updateAvailable: return "updateAvailable"
+        case .notInstalled: return "notInstalled"
+        case .checkFailed: return "checkFailed"
+        case .unknown, .checking, .updating, .updateFailed: return nil
+        }
+    }
+
+    static func status(named name: String) -> DependencyStatus? {
+        [DependencyStatus.upToDate, .updateAvailable, .notInstalled, .checkFailed].first { storedName($0) == name }
+    }
 }

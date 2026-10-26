@@ -170,6 +170,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     private var themeItem: NSToolbarItem?
     private var notificationsItem: NSToolbarItem?
     private var inspectorItem: NSToolbarItem?
+    private var sidebarItem: NSToolbarItem?
 
     /// What the dynamic items should show. Reconciled against the toolbar's
     /// real items rather than cached as "done": a navigation before the
@@ -326,8 +327,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         sidebarButton.imagePosition = .imageOnly
         sidebarButton.target = self
         sidebarButton.action = #selector(sidebarClicked)
-        sidebarButton.toolTip = "Show or hide the sidebar"
-        sidebarButton.setAccessibilityLabel("Sidebar")
+        applySidebarButtonState()
 
         navigation.segmentCount = 2
         navigation.trackingMode = .momentary
@@ -525,7 +525,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             guard let splitView else { return nil }
             return NSTrackingSeparatorToolbarItem(identifier: identifier, splitView: splitView, dividerIndex: 0)
         case ItemID.sidebar:
-            return viewItem(identifier, view: sidebarButton, label: "Sidebar")
+            let item = viewItem(identifier, view: sidebarButton, label: Self.sidebarButtonLabel(shown: sidebarShown))
+            item.paletteLabel = "Sidebar"
+            sidebarItem = item
+            return item
         case ItemID.navigation:
             let item = viewItem(identifier, view: navigation, label: "Back/Forward")
             item.isNavigational = true
@@ -597,8 +600,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             notificationsItem = item
             return item
         case ItemID.inspector:
-            let item = imageItem(identifier, symbol: Self.inspectorOnSymbol, label: "Inspector",
-                                 help: "Show or hide the inspector", action: #selector(inspectorClicked))
+            let item = imageItem(identifier, symbol: inspectorSymbolName, label: inspectorLabel,
+                                 help: inspectorHelp, action: #selector(inspectorClicked))
+            item.paletteLabel = "Inspector"
             inspectorItem = item
             return item
         case ItemID.search:
@@ -946,7 +950,22 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         guard shown != sidebarShown else { return }
         sidebarShown = shown
         toolbar.items.first { $0.itemIdentifier == ItemID.crumb }?.visibilityPriority = crumbPriorityNow
+        applySidebarButtonState()
     }
+
+    /// R2-A11Y-03: the sidebar button says what a click will do, in its
+    /// label and its tooltip alike. It used to be "Sidebar" to VoiceOver
+    /// whichever way it went, with only the tooltip saying "Show or hide".
+    /// The item's label is what the overflow menu and the Icon and Text mode
+    /// show, so it follows too. The customisation palette keeps "Sidebar".
+    private func applySidebarButtonState() {
+        let label = Self.sidebarButtonLabel(shown: sidebarShown)
+        sidebarButton.toolTip = sidebarShown ? "Hide the sidebar" : "Show the sidebar"
+        sidebarButton.setAccessibilityLabel(label)
+        sidebarItem?.label = label
+    }
+
+    static func sidebarButtonLabel(shown: Bool) -> String { shown ? "Hide Sidebar" : "Show Sidebar" }
 
     static let badgeHeight: CGFloat = 15
 
@@ -978,22 +997,36 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     static let inspectorOnSymbol = "inset.filled.rightthird.rectangle"
     static let inspectorOffSymbol = "sidebar.right"
     private var inspectorSymbolName = WorkspaceToolbar.inspectorOnSymbol
+    /// The pane starts closed and wanted (`MainSplitShellController`).
+    private var inspectorLabel = WorkspaceToolbar.inspectorLabel(shown: false)
+    private var inspectorHelp = "Show the inspector"
 
     /// R2-BUG-10: whether the pane is showing, and whether the captain's
     /// standing choice still opens it on a selection. Closing the inspector
     /// turns that choice off for the session, and nothing on screen used to
     /// say so: a credential selected an hour later simply showed nothing.
     /// The button now draws the choice, and its tooltip names it.
+    ///
+    /// R2-A11Y-03: the label flips with the tooltip. For an image item it is
+    /// the label VoiceOver reads (measured: the item's viewer is the
+    /// accessibility button and takes the item's `label`), so a fixed
+    /// "Inspector" said nothing about what a press would do.
     func setInspectorState(shown: Bool, wanted: Bool) {
         inspectorSymbolName = wanted ? Self.inspectorOnSymbol : Self.inspectorOffSymbol
-        inspectorItem?.image = symbol(inspectorSymbolName)
-        inspectorItem?.toolTip = shown ? "Hide the inspector"
+        inspectorLabel = Self.inspectorLabel(shown: shown)
+        inspectorHelp = shown ? "Hide the inspector"
             : wanted ? "Show the inspector"
             : "The inspector is off, so selecting an item does not open it. Click to turn it back on."
+        inspectorItem?.image = symbol(inspectorSymbolName)
+        inspectorItem?.label = inspectorLabel
+        inspectorItem?.toolTip = inspectorHelp
     }
+
+    static func inspectorLabel(shown: Bool) -> String { shown ? "Hide Inspector" : "Show Inspector" }
 
     #if FM_SELFTESTS
     var debugInspectorItem: NSToolbarItem? { inspectorItem }
+    var debugSidebarItem: NSToolbarItem? { sidebarItem }
     var debugInspectorSymbolName: String { inspectorSymbolName }
     #endif
 

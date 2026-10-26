@@ -54,6 +54,10 @@ final class UpdateRow {
     var terminalCommand: String?
     var isLogExpanded = false
     var isBusy = false
+    /// When the answer this row shows was gathered - a real check's own
+    /// time, which for a kept or shared answer is earlier than when it was
+    /// shown (R2-PERF-05).
+    var checkedAt: Date?
 
     let iconTile = IconTileView()
     let nameLabel = NSTextField(labelWithString: "")
@@ -425,20 +429,47 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     // below) - it passes `forceRefresh: false` (the default).
     @objc private func checkAllTapped() { checkAll(forceRefresh: true) }
 
+    /// R2-PERF-05: how old a kept answer may be and still stand in for a
+    /// visit's sweep. Twelve hours covers relaunching through a working day
+    /// - the cost the review measured was every launch that opened Setup
+    /// paying five `npm view`s and the rest again. An update published since
+    /// is not missed for long: `BackgroundSignalsPoller` still runs its own
+    /// sweep on its 15-minute cadence for the bell, with its own shorter
+    /// limit, and Check for updates always runs the real thing.
+    static let visitFreshness: TimeInterval = 12 * 60 * 60
+
     private func checkAll(forceRefresh: Bool = false) {
         guard !isCheckingAll else { return }
+        // A visit shows each kept answer young enough to stand, and checks
+        // only the rest.
+        var toCheck = rows
+        if !forceRefresh {
+            toCheck = rows.filter { row in
+                guard !row.isBusy,
+                      let kept = DependencyCheckCache.shared.recentOutcome(for: row.item, maxAge: Self.visitFreshness)
+                else { return true }
+                apply(kept.outcome, gatheredAt: kept.gatheredAt, to: row)
+                return false
+            }
+            guard !toCheck.isEmpty else {
+                lastCheckedAt = rows.compactMap(\.checkedAt).min()
+                renderStats()
+                runPendingNotificationUpdates()
+                return
+            }
+        }
         isCheckingAll = true
         checkAllPill.isHidden = true
         checkForUpdatesButton.isEnabled = false
         checkAllProgressBar.isHidden = false
         checkAllProgressLabel.isHidden = false
 
-        let total = rows.count
+        let total = toCheck.count
         checkAllProgressBar.configure(fraction: 0)
         checkAllProgressLabel.stringValue = "Checking\u{2026} (0/\(total))"
 
         var completed = 0
-        for row in rows {
+        for row in toCheck {
             check(row, forceRefresh: forceRefresh) { [weak self] in
                 guard let self else { return }
                 completed += 1
@@ -457,7 +488,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         checkForUpdatesButton.isEnabled = true
         checkAllProgressBar.isHidden = true
         checkAllProgressLabel.isHidden = true
-        lastCheckedAt = Date()
+        // The oldest answer on the page, which is what "checked 2 h ago"
+        // has to be true of.
+        lastCheckedAt = rows.compactMap(\.checkedAt).min() ?? Date()
         renderStats()
 
         // R2-BUG-03: "updates available" counts updates, and the rest is
@@ -588,10 +621,15 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         let children = NotificationSignalChildren.tools(
             rows.map { .init(id: $0.item.id, name: $0.item.name, status: $0.status, detail: $0.detail) },
             perform: { [weak self] id in self?.requestUpdateFromNotification(toolID: id) })
+        // R2-PERF-05: stamped with the newest answer on the page. A visit
+        // that showed only answers kept from an earlier launch must not pass
+        // for a fresh reading and displace the poller's newer one (PR #395's
+        // rule). A row just checked or updated is now, as it always was.
         BackgroundSignalsPoller.shared.publishToolStatuses(
             rows.map { $0.status },
             children: children,
-            updateAll: pending.isEmpty ? nil : { [weak self] in self?.updateAllPending() }
+            updateAll: pending.isEmpty ? nil : { [weak self] in self?.updateAllPending() },
+            gatheredAt: rows.compactMap(\.checkedAt).max() ?? Date()
         )
     }
 
@@ -707,23 +745,29 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         row.checkButton.isEnabled = false
         render(row)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let outcome = DependencyCheckCache.shared.check(row.item, forceRefresh: forceRefresh)
+            let checked = DependencyCheckCache.shared.checkDated(row.item, forceRefresh: forceRefresh)
             DispatchQueue.main.async {
-                guard self != nil else {
+                guard let self else {
                     completion?()
                     return
                 }
-                row.status = outcome.status
-                row.latestLabel = outcome.latestLabel
-                row.installedLabel = outcome.installedLabel
-                row.detail = outcome.detail
-                row.log = outcome.log
-                row.terminalCommand = nil
-                row.checkButton.isEnabled = true
-                self?.render(row)
+                self.apply(checked.outcome, gatheredAt: checked.gatheredAt, to: row)
                 completion?()
             }
         }
+    }
+
+    /// One check's answer on its row.
+    private func apply(_ outcome: CheckOutcome, gatheredAt: Date, to row: UpdateRow) {
+        row.status = outcome.status
+        row.latestLabel = outcome.latestLabel
+        row.installedLabel = outcome.installedLabel
+        row.detail = outcome.detail
+        row.log = outcome.log
+        row.terminalCommand = nil
+        row.checkedAt = gatheredAt
+        row.checkButton.isEnabled = true
+        render(row)
     }
 
     // MARK: Update
@@ -827,6 +871,8 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// Where every finished update lands, success or not.
     private func apply(_ outcome: UpdateOutcome, to row: UpdateRow) {
         row.isBusy = false
+        // What the row now says was just learned.
+        row.checkedAt = Date()
         row.log = outcome.log
         row.terminalCommand = outcome.terminalCommand
         if outcome.ok {
@@ -1357,6 +1403,12 @@ extension UpdatesController {
     /// The filter row's two controls, driven through their own paths.
     func debugSetFilter(needsAttention: Bool) {
         filterTabs.debugClickTab(id: needsAttention ? "needsAttention" : "all")
+    }
+    /// "2h ago" - the Last checked figure, as the page draws it.
+    var debugLastCheckedText: String { relativeLastChecked() }
+    var debugIsCheckingAll: Bool { isCheckingAll }
+    var debugRowStatuses: [String: DependencyStatus] {
+        Dictionary(rows.map { ($0.item.id, $0.status) }, uniquingKeysWith: { first, _ in first })
     }
     func debugSetQuery(_ query: String) {
         searchField.stringValue = query

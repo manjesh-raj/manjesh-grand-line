@@ -71,6 +71,11 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
         case muted(String)
         /// Monospaced muted text, for an address, a fingerprint or a command.
         case code(String)
+        /// A run of marks (Health's ✕✕✓) and the words VoiceOver reads for
+        /// them, because a glyph run read aloud is "multiplication x,
+        /// multiplication x, check mark" (R2-A11Y-04). Empty marks draw the
+        /// em dash `.none` draws, still with their words.
+        case marks(String, spoken: String)
         /// The leading cell: a tile, a bold title and an optional second line.
         /// `tintHex` is for a colour the captain chose (a saved host's own
         /// accent), the same carve-out `HelmAccentRow.Content.tintHex` makes.
@@ -657,6 +662,11 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
                 let cell = reuse(HelmDataTableTextCell.self, tableView)
                 cell.configure(text: text, style: .code, leading: leading, theme: theme)
                 return cell
+            case .marks(let marks, let spoken):
+                let cell = reuse(HelmDataTableTextCell.self, tableView)
+                cell.configure(text: marks.isEmpty ? "\u{2014}" : marks, style: marks.isEmpty ? .muted : .code,
+                               leading: leading, theme: theme, spoken: spoken)
+                return cell
             case .none:
                 let cell = reuse(HelmDataTableTextCell.self, tableView)
                 cell.configure(text: "\u{2014}", style: .muted, leading: leading, theme: theme)
@@ -980,8 +990,11 @@ private final class HelmDataTableTextCell: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func configure(text: String, style: Style, leading: CGFloat, theme: HelmTheme) {
+    /// `spoken` replaces what VoiceOver reads for the text. A reused cell
+    /// handed none goes back to reading its text.
+    func configure(text: String, style: Style, leading: CGFloat, theme: HelmTheme, spoken: String? = nil) {
         label.stringValue = text
+        label.setAccessibilityLabel(spoken)
         label.toolTip = text.count > 24 ? text : nil
         leadingConstraint.constant = leading
         switch style {

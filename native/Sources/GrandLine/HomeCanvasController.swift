@@ -1038,6 +1038,8 @@ final class HomeCanvasController: NSViewController {
         // The tour lab's and the fit suite's fabricated rows - see
         // `debugAttentionOverride`.
         if let override = debugAttentionOverride {
+            // What the card shows is no longer what was last composed.
+            lastAttention = nil
             attentionCard.sublineProvider = nil
             attentionCard.render(override, subline: debugAttentionSubline, theme: ThemeManager.shared.theme)
             return
@@ -1061,14 +1063,38 @@ final class HomeCanvasController: NSViewController {
             inputs.projectNames = names
         }
 
-        let digest = DailyReviewComposer.digest(from: inputs)
+        // R2-PERF-06: a service-health tick (every 30 and 60 seconds, from
+        // two pollers) re-rendered this card, re-running the composer over
+        // every active task and follow-up. When nothing it reads has moved
+        // and the clock has not reached the digest's next change, the card
+        // only takes its freshness line - GL-20's cheap check before the
+        // expensive half.
         let extra = signalAttentionItems()
+        let clear = clearNotes()
+        var unclocked = inputs
+        unclocked.now = .distantPast
+        if let last = lastAttention, last.inputs == unclocked, last.extra == extra, last.clear == clear,
+           inputs.now < last.validUntil {
+            let header = hubHeader(hasItems: last.hasItems)
+            if header.title == last.headerTitle {
+                attentionCard.setSubline(header.detail)
+                return
+            }
+        }
+
+        #if FM_SELFTESTS
+        debugDigestCount += 1
+        #endif
+        let digest = DailyReviewComposer.digest(from: inputs)
         // Whether the card will draw a list, which is what decides both of
         // the header's strings - see `hubHeader`. Derived from the digest
         // rather than from the built summary so the header can be handed to
         // the composer in the same call that builds it.
         let hasItems = !digest.dueTasks.isEmpty || !digest.followUps.isEmpty || !extra.isEmpty
         let header = hubHeader(hasItems: hasItems)
+        lastAttention = AttentionComposed(inputs: unclocked, extra: extra, clear: clear, hasItems: hasItems,
+                                          headerTitle: header.title,
+                                          validUntil: DailyReviewComposer.nextChange(for: inputs))
         // UI-13: the card re-reads the freshness phrase once a minute while it
         // is on screen, so "Fleet read 4 min ago" stays true. The card owns
         // that tick; this controller keeps its no-timer refresh model.
@@ -1077,7 +1103,7 @@ final class HomeCanvasController: NSViewController {
         }
         attentionCard.render(NeedsAttentionComposer.summary(from: digest,
                                                             extra: extra,
-                                                            clear: clearNotes(),
+                                                            clear: clear,
                                                             allClearHeadline: header.title),
                              // The **fleet freshness** line now, not the
                              // digest's own "as of".
@@ -1097,6 +1123,19 @@ final class HomeCanvasController: NSViewController {
                              subline: header.detail,
                              theme: ThemeManager.shared.theme)
     }
+
+    /// What the attention card was last composed from, and until when that
+    /// composition holds (R2-PERF-06). The inputs carry no clock: the clock
+    /// is `validUntil`.
+    private struct AttentionComposed {
+        let inputs: DailyReviewInputs
+        let extra: [NeedsAttentionItem]
+        let clear: [String]
+        let hasItems: Bool
+        let headerTitle: String
+        let validUntil: Date
+    }
+    private var lastAttention: AttentionComposed?
 
     // MARK: The three non-to-do attention rows
 
@@ -1543,6 +1582,12 @@ final class HomeCanvasController: NSViewController {
         // occupies changes.
         let width = Self.composedContentWidth(available: available, modules: modules, spans: cardSpan)
         contentWidthConstraint?.constant = width
+        // R2-A11Y-05: the full-width card is told its width as a column is,
+        // so its headline wraps to two lines and its single lines truncate.
+        // Told nothing, a long verdict stayed on one line and ran past the
+        // card and out of the window - measured in the tour lab at 1100 and
+        // 1512, and at the Larger text scale it hid Refresh as well.
+        attentionCard.setLayoutWidth(width)
 
         // `spanningRows(_:)`, not `rows(_:)`: the Morning briefing spans two
         // columns and every other module spans one (`DaylightModule.gridSpan`).
@@ -2157,6 +2202,7 @@ final class HomeCanvasController: NSViewController {
                 pin.constant = unit * CGFloat(span) + Self.gridSpacing * CGFloat(span - 1)
             }
             contentWidthConstraint?.constant = width
+            attentionCard.setLayoutWidth(width)
         }
         lastGridWidth = available
         lastGridHeight = height
@@ -3136,11 +3182,27 @@ final class HomeCanvasController: NSViewController {
         if failingCount > 0 { content.chip = .bad("\(failingCount) failing") }
         let summary = Self.healthRingSummary(readings)
         let lines = Self.healthServiceLines(readings)
+        let spoken = Self.healthRingSpoken(readings)
         content.body = healthListsServices && !lines.isEmpty
             ? .ringWithLines(value: summary.value, total: summary.total,
-                             title: summary.title, note: summary.note, lines: lines)
+                             title: summary.title, note: summary.note, lines: lines, spoken: spoken)
             : .ring(value: summary.value, total: summary.total,
-                    title: summary.title, note: summary.note)
+                    title: summary.title, note: summary.note, spoken: spoken)
+    }
+
+    /// R2-A11Y-04: the Health ring in words - "4 healthy, 1 failing" - one
+    /// count per verdict, in the order the Health page's own summary lists
+    /// them. The arc's sweep was the only carrier of how many were well.
+    static func healthRingSpoken(_ services: [HealthServiceReading]) -> String {
+        guard !services.isEmpty else { return "No background service has reported yet" }
+        let order: [(ServiceHealthState.Verdict, String)] = [
+            (.healthy, "healthy"), (.failing, "failing"), (.degraded, "recent failure"),
+            (.running, "checking"), (.unknown, "not run yet"),
+        ]
+        return order.compactMap { verdict, word -> String? in
+            let count = services.filter { $0.verdict == verdict }.count
+            return count > 0 ? "\(count) \(word)" : nil
+        }.joined(separator: ", ")
     }
 
     /// One line per service for the hub's Health list, in the registry's
@@ -3869,6 +3931,9 @@ final class HomeCanvasController: NSViewController {
     /// without seeding a Tasks store with dated tasks.
     /// P5: the attention card's rows, as its list holds them.
     var debugAttentionRows: [NSView] { attentionCard.debugRows }
+    /// How many times the attention card's digest has been composed.
+    private(set) var debugDigestCount = 0
+    var debugAttentionCard: NeedsAttentionCard { attentionCard }
     /// R2-UX-01 (c): the attention card's signal rows and closing notes, as
     /// this page composes them now.
     var debugSignalAttentionIDs: [String] { signalAttentionItems().map(\.id) }

@@ -175,6 +175,9 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// The modules the captain's profile leaves out (R2-UX-01 (b)).
     private var hidden: Set<WorkspaceModule> = AppSettings.shared.hiddenModules
     private var hiddenObserver: NSObjectProtocol?
+    /// The chrome text scale the rows were built at. A change of it is the
+    /// one theme re-fire that rebuilds them (R2-PERF-02).
+    private var builtTextScale = ChromeTextScale.shared.scale
 
     // MARK: Build
 
@@ -206,6 +209,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         outlineView.dataSource = self
         outlineView.delegate = self
         outlineView.setAccessibilityLabel("Sidebar")
+        outlineView.onReturnKey = { [weak self] in self?.activateSelectionNow() }
         let menu = NSMenu()
         menu.delegate = self
         outlineView.menu = menu
@@ -418,9 +422,43 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         }
     }
 
+    /// R2-PERF-03: how long a selection the arrow keys made rests before it
+    /// navigates - the Finder's own wait before it previews. Holding ↓ from
+    /// Home to Settings used to open, and so build, every page on the way.
+    static let keyboardSettle: TimeInterval = 0.12
+    private var pendingKeyboardActivation: DispatchWorkItem?
+
     func outlineViewSelectionDidChange(_ notification: Notification) {
         paintLitRow()
         guard !isApplyingSelection else { return }
+        pendingKeyboardActivation?.cancel()
+        pendingKeyboardActivation = nil
+        let row = outlineView.selectedRow
+        guard row >= 0, let item = outlineView.item(atRow: row) as? WorkspaceSidebarItem else { return }
+        // A click, VoiceOver's press and every other pick navigate at once.
+        guard outlineView.isHandlingKeyDown else {
+            activate(item)
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingKeyboardActivation = nil
+            // The shell may have lit another row meanwhile. Only the row the
+            // keys left selected navigates.
+            guard self.outlineView.selectedRow >= 0,
+                  self.outlineView.item(atRow: self.outlineView.selectedRow) as? WorkspaceSidebarItem === item else { return }
+            self.activate(item)
+        }
+        pendingKeyboardActivation = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.keyboardSettle, execute: work)
+    }
+
+    /// Return in the list: open the selected row now rather than after the
+    /// settle.
+    private func activateSelectionNow() {
+        guard let pending = pendingKeyboardActivation else { return }
+        pending.cancel()
+        pendingKeyboardActivation = nil
         let row = outlineView.selectedRow
         guard row >= 0, let item = outlineView.item(atRow: row) as? WorkspaceSidebarItem else { return }
         activate(item)
@@ -529,10 +567,21 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         headerRule.layer?.backgroundColor = HelmDisplayAccessibility.strengthenedEdge(
             HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.dividerAlpha), theme: theme).cgColor
         guard isViewLoaded else { return }
-        // GL-32: the row heights follow the chrome text scale.
+        // R2-PERF-02: a theme change repaints the rows it can see, in place,
+        // the way `setSignals` repaints a badge. It used to reload the list -
+        // twenty cells rebuilt, the hovered row's fill dropped and the list
+        // scrolled back to the lit row - on every ⌘-toggle and every sunset
+        // under Follow system. GL-24: a theme observer repaints.
+        let scale = ChromeTextScale.shared.scale
+        guard scale != builtTextScale else {
+            repaintRows(theme)
+            return
+        }
+        builtTextScale = scale
+        // GL-32: a text-scale change re-fires the theme too, and that one
+        // does rebuild: the row heights and every font follow the scale, and
+        // a cell sets its fonts and sizes once, when it is built.
         outlineView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<outlineView.numberOfRows))
-        // A theme observer repaints - it never fetches (GL-24). Every cell
-        // reads the theme when it is built, so a reload is the repaint.
         isApplyingSelection = true
         outlineView.reloadData()
         for item in roots where item.isSection {
@@ -542,6 +591,29 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         }
         isApplyingSelection = false
         applySelection()
+    }
+
+    /// Every row the list has built, in its new colours. A row scrolled into
+    /// view later is built with them (`viewFor`), so nothing is missed.
+    private func repaintRows(_ theme: HelmTheme) {
+        let selected = outlineView.selectedRow
+        outlineView.enumerateAvailableRowViews { rowView, row in
+            (rowView as? WorkspaceSidebarRowView)?.themeDidChange()
+            guard let item = outlineView.item(atRow: row) as? WorkspaceSidebarItem else { return }
+            let cell = rowView.numberOfColumns > 0 ? rowView.view(atColumn: 0) : nil
+            switch item.entry {
+            case .section(let title):
+                (cell as? WorkspaceSidebarSectionCell)?.configure(title: title, theme: theme)
+            case .module(let module):
+                (cell as? WorkspaceSidebarPageCell)?.repaint(badge: signals.badge(for: module), lit: row == selected,
+                                                             theme: theme)
+            case .session(let hostID):
+                guard let cell = cell as? WorkspaceSidebarSessionCell,
+                      let session = sessions.first(where: { $0.hostID == hostID }) else { return }
+                cell.configure(session: session, shortcutIndex: shortcutIndexByHost[hostID], theme: theme)
+                cell.setLit(row == selected, theme: theme)
+            }
+        }
     }
 
     #if FM_SELFTESTS
@@ -606,6 +678,13 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         return outlineView.rowView(atRow: row, makeIfNecessary: false) as? WorkspaceSidebarRowView
     }
     var debugHeaderRule: NSView { headerRule }
+    /// Draw the list's scroller as `style` - a legacy track narrows every
+    /// row, the way "Show scroll bars: Always" does (gotcha (4)).
+    func debugSetScrollerStyle(_ style: NSScroller.Style) {
+        scrollView.scrollerStyle = style
+        scrollView.tile()
+        view.layoutSubtreeIfNeeded()
+    }
     /// The account menu's items, as the header's click would show them.
     var debugAccountMenuTitles: [String] { accountMenu().items.filter { !$0.isSeparatorItem }.map(\.title) }
     /// Run an account-menu item by title, through its real target/action.
@@ -650,14 +729,32 @@ final class WorkspaceSidebarOutlineView: NSOutlineView {
         return resigned
     }
 
+    /// R2-PERF-03: true while a key event is being handled, so the
+    /// controller can tell a selection the arrow keys made from a click.
+    private(set) var isHandlingKeyDown = false
+    /// Return or Enter, which open the selected row at once.
+    var onReturnKey: (() -> Void)?
+
     override func keyDown(with event: NSEvent) {
         if window?.firstResponder === self { showsKeyboardFocus = true }
+        if event.keyCode == 36 || event.keyCode == 76, let onReturnKey {
+            onReturnKey()
+            return
+        }
+        isHandlingKeyDown = true
+        defer { isHandlingKeyDown = false }
         super.keyDown(with: event)
     }
 
     #if FM_SELFTESTS
     var debugClickedRow: Int?
     override var clickedRow: Int { debugClickedRow ?? super.clickedRow }
+    /// How many times the list has been reloaded (R2-PERF-02).
+    private(set) var debugReloadCount = 0
+    override func reloadData() {
+        debugReloadCount += 1
+        super.reloadData()
+    }
     #endif
 }
 
@@ -745,9 +842,15 @@ final class WorkspaceSidebarRowView: NSTableRowView {
         paintFill()
     }
 
+    /// The palette changed: the same fill and ring in the new colours, at
+    /// once - a theme change is a repaint, not a state change to ease.
+    func themeDidChange() {
+        paintFill(animated: false)
+    }
+
     /// The lit row's wash, a hovered row's fill, or nothing. A section header
     /// takes no hover: it is a label, not a place.
-    private func paintFill() {
+    private func paintFill(animated: Bool = true) {
         let theme = ThemeManager.shared.theme
         let color: NSColor?
         if isSelected && selectionHighlightStyle != .none {
@@ -757,7 +860,7 @@ final class WorkspaceSidebarRowView: NSTableRowView {
         } else {
             color = nil
         }
-        fill.paint(color, cornerRadius: HelmMetrics.rChip + 1)
+        fill.paint(color, cornerRadius: HelmMetrics.rChip + 1, animated: animated)
         refreshFocus()
     }
 
@@ -773,6 +876,7 @@ final class WorkspaceSidebarRowView: NSTableRowView {
 
     #if FM_SELFTESTS
     var debugFill: HelmRowWash { fill }
+    var debugHovering: Bool { hovering }
     #endif
 
     /// The lit row's label: the accent, corrected until it clears the text
@@ -879,6 +983,14 @@ final class WorkspaceSidebarPageCell: NSTableCellView {
 
     func setLit(_ lit: Bool, theme: HelmTheme) {
         label.textColor = lit ? WorkspaceSidebarRowView.litInk(theme) : HelmTheme.nsColor(theme.chromeInkHex)
+    }
+
+    /// R2-PERF-02: the colours of a built row, for a theme change. The
+    /// symbol image and the title stay, and only what the palette decides moves.
+    func repaint(badge: WorkspaceBadge?, lit: Bool, theme: HelmTheme) {
+        icon.contentTintColor = HelmTheme.nsColor(theme.accentHex)
+        setLit(lit, theme: theme)
+        setBadge(badge, theme: theme)
     }
 
     #if FM_SELFTESTS
@@ -1106,8 +1218,12 @@ final class WorkspaceSidebarHeader: HoverHighlightView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         cornerRadius = HelmMetrics.rChip + 3
+        // R2-A11Y-03: it opens a menu, so it is a menu button, and the menu
+        // holds Log Out and nothing else, so the label names that rather
+        // than promising an account menu. The app's name stays first because
+        // it is the text on screen.
         accessibilityRoleOverride = .menuButton
-        accessibilityLabelOverride = "\(AppPaths.displayName) account menu"
+        accessibilityLabelOverride = Self.accessibilityLabel
         toolTip = "Log Out"
 
         tile.configure(symbol: "sailboat.fill", hue: .blue)
@@ -1148,6 +1264,9 @@ final class WorkspaceSidebarHeader: HoverHighlightView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     static let height: CGFloat = 46
+
+    /// What VoiceOver reads before "menu button".
+    static let accessibilityLabel = "\(AppPaths.displayName), Log Out"
 
     @objc private func clicked() { onClick?() }
 

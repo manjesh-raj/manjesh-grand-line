@@ -418,6 +418,30 @@ so that measurement is one table rather than a call tree.
       [`docs/history/26-production-readiness.md`](../docs/history/26-production-readiness.md),
       so the next change to the launch path has a baseline to compare against.
 
+### The in-process numbers (not the real-data baseline)
+
+The real-data Instruments pass above is still the captain's, and nothing below replaces it.
+R2-PERF-01 of the second full review asked for the closest measurement a worktree can take without launching the app.
+`FM_RUN_LAUNCH_TIMING_TESTS` (`LaunchTimingSelfTest`) builds the real `AppDelegate`, its shell and an off-screen window in a self-test process, and times every launch interval through `LaunchSignposts` plus one display pass.
+It does not see process start, the window is never composited, and the stores are the suite's own empty scratch stores.
+Read its numbers as a floor and a trend, never as what the captain's launch costs.
+
+Recorded 2026-10-26 on an Apple M5 Pro, macOS 26.7, debug build, `main` plus the R2-A11Y and R2-PERF branch.
+Five processes per layout, the first one cold and the other four warm:
+
+| Layout | First frame, cold | First frame, warm (median of 4) | `WorkspaceShellController.init` | `loadView` | Slowest store `init` |
+| --- | --- | --- | --- | --- | --- |
+| Sidebar | 605.8 ms | 592.6 ms | 20.8 to 23.0 ms | 125.5 to 130.4 ms | `ShiftStore.init`, 1.79 ms |
+| Floating bar | 611.4 ms | 609.3 ms | 21.0 to 21.9 ms | 214.6 to 217.9 ms | `ShiftStore.init`, 1.63 ms |
+
+- Every store `init` passed the 10 ms target, by a wide margin. The thirteen together take under 5 ms.
+- The first frame **did not** pass the 400 ms target in this debug build, in either layout.
+  Where it goes, per warm sidebar launch: building `appShell` about 160 ms, of which `WorkspaceShellController.init` is only about 21 ms.
+  Assigning `contentViewController` takes about 190 ms, of which `loadView` is about 128 ms.
+  Setting the default frame takes about 125 ms, `orderFront` about 43 ms, and the display pass about 61 ms.
+  The 140 ms of `appShell` outside the init interval, and the frame's own layout pass, are the follow-up.
+  Both need a release-build measurement first, which this suite cannot take, because `FM_RUN_*` suites exist only in debug builds.
+
 ---
 
 ## When something here fails
