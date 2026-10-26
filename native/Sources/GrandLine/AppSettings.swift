@@ -28,6 +28,7 @@ final class AppSettings {
         static let defaultShellCwd = "fm.defaultShellCwd"
         static let autoReconnect = "fm.autoReconnect"
         static let notifyOnNeedsDecision = "fm.notifyOnNeedsDecision"
+        static let notificationMutedSources = "fm.notifications.mutedSources"
         static let fmHome = "fm.fmHome"
         static let dictationShortcut = "fm.dictationShortcut"
         static let quickCaptureShortcut = "fm.quickCaptureShortcut"
@@ -143,6 +144,22 @@ final class AppSettings {
     var notifyOnNeedsDecision: Bool {
         get { defaults.bool(forKey: Keys.notifyOnNeedsDecision) }
         set { defaults.set(newValue, forKey: Keys.notifyOnNeedsDecision) }
+    }
+
+    /// The notification sources the captain has muted, by
+    /// `AppNotification.source` ("Updates", "GitHub Sync"). The bell's
+    /// "Mute ..." used to last for the session only; it is a setting now, so
+    /// it survives a relaunch and Settings > Notifications can list and undo
+    /// it. Sorted on write so the stored value does not churn with set order.
+    var notificationMutedSources: Set<String> {
+        get { Set(defaults.stringArray(forKey: Keys.notificationMutedSources) ?? []) }
+        set {
+            if newValue.isEmpty {
+                defaults.removeObject(forKey: Keys.notificationMutedSources)
+            } else {
+                defaults.set(newValue.sorted(), forKey: Keys.notificationMutedSources)
+            }
+        }
     }
 
     /// Bootstrap page's "Firstmate home" card - checked by

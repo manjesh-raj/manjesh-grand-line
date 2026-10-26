@@ -176,6 +176,32 @@ enum GrandLineNotificationCenterSelfTest {
         for id in ["s1", "m1", "m2", "m3"] { center.set(nil, id: id) }
         center.clock = { Date() }
 
+        // MARK: a mute survives a relaunch (Bridge extra)
+
+        // The mute used to be session-scoped. It is a setting now, written to
+        // `AppDefaults.store` (this process's own suite domain under a test,
+        // never the captain's), and read back on launch.
+        center.set(note("p1", subtext: "one", kind: .informational, source: "GitHub Sync"), id: "p1")
+        center.mute(source: "GitHub Sync")
+        check("the mute is written to AppDefaults.store",
+              AppDefaults.store.stringArray(forKey: "fm.notifications.mutedSources") == ["GitHub Sync"])
+        center.debugReloadPersistedMutes()
+        check("a muted source is still muted after a relaunch", center.isMuted(source: "GitHub Sync"))
+        check("a muted source's entry is still hidden after a relaunch",
+              !center.entries.contains { $0.id == "p1" })
+        center.setMuted(false, source: "GitHub Sync")
+        center.debugReloadPersistedMutes()
+        check("an unmute is persisted too", !center.isMuted(source: "GitHub Sync")
+              && AppDefaults.store.object(forKey: "fm.notifications.mutedSources") == nil)
+        // Settings mutes a source that has nothing published today.
+        center.setMuted(true, source: "Vault")
+        center.debugReloadPersistedMutes()
+        check("Settings can mute a source with no live entry", center.isMuted(source: "Vault"))
+        center.restoreHidden()
+        center.debugReloadPersistedMutes()
+        check("restoreHidden clears the persisted mutes as well", center.mutedSourceNames.isEmpty)
+        center.set(nil, id: "p1")
+
         // MARK: a resolved entry starts genuinely fresh
 
         center.set(note("f1", subtext: "x", kind: .informational), id: "f1")
