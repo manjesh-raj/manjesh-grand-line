@@ -256,8 +256,7 @@ enum OverlaysModernizationSelfTest {
 
         // And the real menus carry them. A source sweep, because building the
         // whole main menu needs a real `AppDelegate`.
-        if let dir = SelfTestSources.appSourceDirectory(),
-           let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8) {
+        if let main = SelfTestSources.appDelegateSource() {
             let annotated = main.components(separatedBy: ".withSymbol(").count - 1
                 + main.components(separatedBy: ", symbol: \"").count - 1
             if annotated < 20 {

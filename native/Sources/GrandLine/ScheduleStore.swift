@@ -105,7 +105,7 @@ enum ScheduleDueCalculator {
 
 // MARK: - Store
 
-final class ScheduleStore {
+final class ScheduleStore: StoreObservable {
 
     private(set) var schedules: [AutomationSchedule] = []
 
@@ -117,8 +117,10 @@ final class ScheduleStore {
     /// Set when `load()` backed up an undecodable `schedules.json` (GL-01).
     var loadFailureBackupPath: String? { loadStatus.backupPath }
 
-    /// Fired after any mutation, so the Automation card can re-render.
-    var onChange: (() -> Void)?
+    /// Told after any mutation, so the Automation card can re-render.
+    /// R2-ARCH-08: any number of readers, through `observe(_:)`, rather than
+    /// one `onChange` the last assignment owned.
+    let observers = StoreObservers()
 
     private let fileURL: URL
     private let calendar: Calendar
@@ -296,7 +298,7 @@ final class ScheduleStore {
 
     private func persist() {
         if StoreLoadFailure.refusesWrite(loadStatus, what: "schedules", url: fileURL) {
-            onChange?()
+            observers.notify()
             return
         }
         do {
@@ -312,6 +314,6 @@ final class ScheduleStore {
         } catch {
             PersistenceFailureReporter.report(what: "schedules", path: fileURL.path, error: error)
         }
-        onChange?()
+        observers.notify()
     }
 }

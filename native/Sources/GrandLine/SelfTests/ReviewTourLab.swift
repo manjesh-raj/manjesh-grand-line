@@ -448,7 +448,7 @@ enum ReviewTourLab {
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("resize \(Int(width))x\(Int(height))")
             case .goto(let dest):
-                shell.show(dest)
+                shell.workspace.navigator.show(dest)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("goto \(dest.rawValue)")
             case .menu:
@@ -458,7 +458,7 @@ enum ReviewTourLab {
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("wait \(milliseconds)ms")
             case .demoTasks:
-                seedDemoTasks(shell.shiftStore)
+                seedDemoTasks(shell.workspace.shiftStore)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo tasks")
             case .demoHome:
@@ -580,7 +580,7 @@ enum ReviewTourLab {
             case .demoFocus:
                 var task = ShiftTask.fresh()
                 task.title = "Rotate the staging certificate"
-                shell.focusTimer.start(task: task)
+                shell.workspace.focusTimer.start(task: task)
                 RunLoop.main.run(until: Date().addingTimeInterval(0.1))
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo focus (\(task.title))")
@@ -615,7 +615,7 @@ enum ReviewTourLab {
                 RunLoop.main.run(until: Date().addingTimeInterval(0.1))
                 shell.view.layoutSubtreeIfNeeded()
             case .demoFocusLog:
-                let store = shell.shiftStore
+                let store = shell.workspace.shiftStore
                 let tasks = Array(store.activeTasks.prefix(4))
                 let calendar = Calendar.current
                 let minutes = [[95, 40], [180, 65], [120], [150, 90, 30], [70]]
@@ -932,7 +932,7 @@ enum ReviewTourLab {
             session: QuotaWindow(kind: .session, percentUsed: 62,
                                  resetsAt: Date().addingTimeInterval(2 * 3600), pace: .onPace),
             weekly: nil, fable: nil, extraUsage: nil, latency: 1.2, log: "")))
-        shell.sessions.register(hostID: UUID(), label: "DEV Bastion", accentHex: nil, state: .connected)
+        shell.workspace.hosts.sessions.register(hostID: UUID(), label: "DEV Bastion", accentHex: nil, state: .connected)
         var locked = ""
         if GrandLineServices.shared.hasBuiltVault, GrandLineServices.shared.vault.isUnlocked {
             GrandLineServices.shared.vault.lock(reason: "tour demo")
@@ -1463,6 +1463,28 @@ enum ReviewTourLab {
                 view.cacheDisplay(in: view.bounds, to: rep)
                 rep.draw(in: pixels(view), from: .zero, operation: .sourceOver, fraction: 1,
                          respectFlipped: false, hints: nil)
+            }
+        }
+        // R2-ARCH-06: the system's inspector item is glass the window server
+        // composites, and `cacheDisplay` draws it as a placeholder with none
+        // of the inspector's own views in it (measured, the same in a bare
+        // AppKit window). So the inspector is put back the way the sidebar
+        // is: the panel fill the glass approximates, then the controller's
+        // own views over it - below the toolbar only, which keeps its items.
+        let inspectorView = shell.inspector.view
+        if !shell.debugInspectorIsCollapsed, !shell.inspector.drawsOwnPane, inspectorView.bounds.width > 0 {
+            let top = inspectorView.safeAreaInsets.top
+            let bounds = inspectorView.bounds
+            let below = inspectorView.isFlipped
+                ? NSRect(x: 0, y: top, width: bounds.width, height: bounds.height - top)
+                : NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - top)
+            if below.height > 0, let rep = inspectorView.bitmapImageRepForCachingDisplay(in: below) {
+                inspectorView.cacheDisplay(in: below, to: rep)
+                let r = inspectorView.convert(below, to: nil)
+                let rect = NSRect(x: r.minX * scale, y: r.minY * scale, width: r.width * scale, height: r.height * scale)
+                HelmTheme.sidePanelFill(ThemeManager.shared.theme).setFill()
+                rect.fill()
+                rep.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
             }
         }
         // Light capsules render as near-white, which reads correctly; only a

@@ -464,13 +464,15 @@ enum FeatureInventorySelfTest {
     /// categories and their buttons, the App Intents, and the widgets.
     static func deepLinkIDs() -> [String: String] {
         var out: [String: String] = [:]
-        // The shell's own API and the navigator it forwards to since stage 2
-        // of the modular-shell migration: a route kept on either still
-        // counts, and one dropped from all of them fails. Since stage 3 the
-        // API is the base class both window layouts extend, and each layout
-        // may answer a route of its own.
+        // The shell's own API and the workspace's parts it used to forward
+        // to: a route kept on any of them still counts, and one dropped from
+        // all of them fails. Since stage 3 the shell API is the base class
+        // both window layouts extend, and each layout may answer a route of
+        // its own. Since R2-ARCH-05 the shell forwards nothing, so the routes
+        // are read where they live - the navigator, the host sessions and
+        // the lock.
         for file in ["WorkspaceShellController.swift", "AppShellController.swift", "MainSplitShellController.swift",
-                     "Navigator.swift"] {
+                     "Navigator.swift", "HostSessionCoordinator.swift", "LockPresenter.swift"] {
             guard let text = source(file) else { continue }
             let pattern = #"(?m)^\s*(?:@objc\s+)?func\s+((?:open|show|select|switchTo|reveal|new)[A-Za-z]*)\("#
             for name in matches(pattern, in: text) { out["link.route.\(name)"] = name }
@@ -648,11 +650,39 @@ enum FeatureInventorySelfTest {
     // MARK: - Source helpers
 
     /// The app's sources, comments stripped, keyed by file stem.
+    ///
+    /// R2-ARCH-04: a page's floating-bar presentation is an extension of the
+    /// same type in `<Page>+Classic.swift`, so its text is read as part of
+    /// `<Page>` - its rows, its actions and its evidence tokens are still that
+    /// page's, under the ids they always had.
     private static let cachedSources: [(String, String)] = {
-        (SelfTestSources.appSourceFiles() ?? []).compactMap { url in
+        let files: [(String, String)] = (SelfTestSources.appSourceFiles() ?? []).compactMap { url in
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
             return (url.deletingPathExtension().lastPathComponent, stripComments(text))
         }
+        // R2-ARCH-02 split `main.swift`'s app delegate into several files; they
+        // are read as `main`, so the menu's actions keep their `action.main` id.
+        let delegateParts = Set(SelfTestSources.appDelegateFiles.dropFirst().map { ($0 as NSString).deletingPathExtension })
+        func page(_ stem: String) -> String {
+            if delegateParts.contains(stem) { return "main" }
+            return stem.hasSuffix("+Classic") ? String(stem.dropLast("+Classic".count)) : stem
+        }
+        // `main.swift` first, then the delegate's parts in their own order, so
+        // a guard reading positions inside `main` reads them as they ran.
+        let order = SelfTestSources.appDelegateFiles.map { ($0 as NSString).deletingPathExtension }
+        let sorted = files.sorted { lhs, rhs in
+            (order.firstIndex(of: lhs.0) ?? order.count) < (order.firstIndex(of: rhs.0) ?? order.count)
+        }
+        var merged: [(String, String)] = []
+        for (stem, text) in sorted {
+            let key = page(stem)
+            if let index = merged.firstIndex(where: { $0.0 == key }) {
+                merged[index].1 += "\n" + text
+            } else {
+                merged.append((key, text))
+            }
+        }
+        return merged
     }()
 
     static func appSources() -> [(String, String)] { cachedSources }

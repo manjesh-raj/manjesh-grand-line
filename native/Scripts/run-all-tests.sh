@@ -13,7 +13,8 @@
 # and "50+" - none of which matched the tree by the 2026-09-25 review (P6).
 # `--list` is the answer, and it prints the total.
 #
-# The suite list is discovered from `main.swift` rather than hardcoded here, so
+# The suite list is discovered from `SelfTests/SelfTestDispatch.swift` (it was
+# `main.swift` until R2-ARCH-02 split that file) rather than hardcoded here, so
 # adding a new suite makes it part of this run automatically and this script
 # cannot silently drift out of date.
 #
@@ -69,7 +70,7 @@
 # release binary silently runs zero suites and exits 0, which would look exactly
 # like a clean run.
 #
-# The suite list is still discovered by grepping `main.swift` for the flags,
+# The suite list is still discovered by grepping the dispatch file for the flags,
 # which works either way: the flags remain plain source text inside the
 # `#if FM_SELFTESTS` block.
 #
@@ -80,7 +81,7 @@
 # and `test_luffy_stores_mcp.py`'s write-refusal proof - the two most
 # security-relevant assertions in this repo - were never once run by CI. They
 # are part of this run now, discovered by glob for the same reason the Swift
-# list is discovered from `main.swift`: a new one joins automatically. They
+# list is discovered from the dispatch file: a new one joins automatically. They
 # need no window, so they run in the default and `--ci` selections and not in
 # `--session-only`'s windowed subset, and they are skipped with a note rather
 # than failing when `python3` is absent.
@@ -139,7 +140,7 @@ if [ -n "$SHARD" ]; then
 fi
 
 BIN=".build/debug/GrandLine"
-MAIN="Sources/GrandLine/main.swift"
+DISPATCH="Sources/GrandLine/SelfTests/SelfTestDispatch.swift"
 
 # Per-suite wall-clock bound, in seconds.
 #
@@ -770,12 +771,12 @@ if [ "$CI_MODE" -eq 1 ]; then
   fi
 fi
 
-if [ ! -f "$MAIN" ]; then
-  echo "error: $MAIN not found - run this from the repo's native/ directory (or via its own path)." >&2
+if [ ! -f "$DISPATCH" ]; then
+  echo "error: $DISPATCH not found - run this from the repo's native/ directory (or via its own path)." >&2
   exit 1
 fi
 
-# Every flag main.swift actually dispatches on, in source order.
+# Every flag the dispatch file actually dispatches on, in source order.
 # `while read` rather than `mapfile`: macOS ships bash 3.2, which has no
 # `mapfile`, and CI runners are not guaranteed a newer one on PATH.
 # `+=` rather than re-expanding the array: under `set -u`, bash 3.2 (what macOS
@@ -785,10 +786,10 @@ fi
 ALL_FLAGS=()
 while IFS= read -r flag; do
   ALL_FLAGS+=("$flag")
-done < <(grep -oE 'FM_RUN_[A-Z0-9_]+' "$MAIN" | awk '!seen[$0]++')
+done < <(grep -oE 'FM_RUN_[A-Z0-9_]+' "$DISPATCH" | awk '!seen[$0]++')
 
 if [ ${#ALL_FLAGS[@]} -eq 0 ]; then
-  echo "error: found no FM_RUN_* flags in $MAIN - has the convention changed?" >&2
+  echo "error: found no FM_RUN_* flags in $DISPATCH - has the convention changed?" >&2
   exit 1
 fi
 
@@ -807,7 +808,7 @@ for want in "${NEEDS_SESSION[@]}"; do
   [ "$found" -eq 0 ] && STALE+=("$want")
 done
 if [ ${#STALE[@]} -gt 0 ]; then
-  echo "error: NEEDS_SESSION names ${#STALE[@]} suite(s) that no longer exist in $MAIN:" >&2
+  echo "error: NEEDS_SESSION names ${#STALE[@]} suite(s) that no longer exist in $DISPATCH:" >&2
   printf '  %s\n' "${STALE[@]}" >&2
   echo "Remove them from the list, or fix the rename." >&2
   exit 1
@@ -816,7 +817,7 @@ fi
 if [ ${#REQUESTED[@]} -gt 0 ]; then
   FLAGS=("${REQUESTED[@]}")
 elif [ "$SESSION_ONLY" -eq 1 ]; then
-  # Preserve main.swift's source order rather than the list's own, so the
+  # Preserve the dispatch file's source order rather than the list's own, so the
   # windowed job's output reads the same way a full local run does.
   FLAGS=()
   for have in "${ALL_FLAGS[@]}"; do
@@ -830,7 +831,7 @@ fi
 
 # `--shard=K/N`: this run's part of the selection above. Longest first onto
 # the least-loaded shard, ties to the lowest-numbered one, then back into
-# main.swift's order - a pure function of the selection and SHARD_WEIGHTS,
+# the dispatch file's order - a pure function of the selection and SHARD_WEIGHTS,
 # so the N shards of one checkout always split it the same way, once.
 if [ "$SHARD_COUNT" -gt 0 ]; then
   SHARDED=()
@@ -866,13 +867,13 @@ fi
 
 # The first paragraph of a suite's own header comment - which is where the
 # author already wrote down what it is about. The enum name comes from the
-# `XSelfTest.run()` main.swift dispatches to for this flag, so this cannot
+# `XSelfTest.run()` the dispatch file sends this flag to, so this cannot
 # drift from the flag the way a second hand-maintained table would.
 describe_suite() {
   local flag="$1"
   local enum_name
-  enum_name="$(grep -A3 "\"$flag\"" "$MAIN" | grep -oE '[A-Za-z0-9_]+SelfTest\.run\(\)' | head -1 | sed 's/\.run()//')"
-  if [ -z "$enum_name" ]; then echo "    (no suite type found in $MAIN)"; return; fi
+  enum_name="$(grep -A3 "\"$flag\"" "$DISPATCH" | grep -oE '[A-Za-z0-9_]+SelfTest\.run\(\)' | head -1 | sed 's/\.run()//')"
+  if [ -z "$enum_name" ]; then echo "    (no suite type found in $DISPATCH)"; return; fi
   local file="Sources/GrandLine/SelfTests/$enum_name.swift"
   if [ ! -f "$file" ]; then echo "    ($file not found)"; return; fi
   # Skip the one-line product banner and the blank comment after it, then take
@@ -892,9 +893,9 @@ if [ "$LIST_ONLY" -eq 1 ]; then
   done
   echo ""
   if [ "$SHARD_COUNT" -gt 0 ]; then
-    echo "${#FLAGS[@]} suite(s) in shard $SHARD of the selection discovered in $MAIN."
+    echo "${#FLAGS[@]} suite(s) in shard $SHARD of the selection discovered in $DISPATCH."
   else
-    echo "${#FLAGS[@]} suite(s) discovered in $MAIN."
+    echo "${#FLAGS[@]} suite(s) discovered in $DISPATCH."
   fi
   exit 0
 fi
@@ -918,7 +919,7 @@ fi
 # suite in a lane shared, so a demo vault seeded by one suite was still there
 # for the next and broke it (PR #520). Now each suite process starts with
 # `FM_SCRATCH_ROOT` naming an empty folder that nothing else uses, which every
-# store resolving through `AppPaths.dataRoot()` follows, and `main.swift`'s
+# store resolving through `AppPaths.dataRoot()` follows, and the dispatch file's
 # redirect block nests its per-process stores inside it. The folder is removed
 # when the suite ends, so a run leaves nothing behind in the temporary
 # directory either.

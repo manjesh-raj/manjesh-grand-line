@@ -74,7 +74,7 @@ enum SnippetExpansionSelfTest {
         func text(_ name: String) -> String? {
             try? String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
         }
-        guard let expander = text("SnippetExpander.swift"), let main = text("main.swift") else {
+        guard let expander = text("SnippetExpander.swift"), let main = SelfTestSources.appDelegate(read: text) else {
             check(false, "could not read SnippetExpander.swift / main.swift", &ok)
             return
         }

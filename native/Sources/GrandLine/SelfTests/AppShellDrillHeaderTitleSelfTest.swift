@@ -203,7 +203,7 @@ enum AppShellDrillHeaderTitleSelfTest {
             for width in [1512.0, 1220.0] as [CGFloat] {
                 let (window, shell) = makeMountedShell()
                 window.setFrame(NSRect(x: 0, y: 0, width: width, height: 950), display: true)
-                shell.show(.whiteboard)
+                shell.workspace.navigator.show(.whiteboard)
                 window.displayIfNeeded()
                 shell.view.layoutSubtreeIfNeeded()
                 if let failure = titleFitsFailure(shell.drillHeaderForTests,
@@ -241,7 +241,7 @@ enum AppShellDrillHeaderTitleSelfTest {
         withScratchEnv {
             let (window, shell) = makeMountedShell()
             window.setFrame(NSRect(x: 0, y: 0, width: 1220, height: 720), display: true)
-            shell.show(.console)
+            shell.workspace.navigator.show(.console)
             window.displayIfNeeded()
             return titleFitsFailure(shell.drillHeaderForTests, context: ".console after a plain switch")
         }
@@ -328,9 +328,9 @@ enum AppShellDrillHeaderTitleSelfTest {
 
             var failures: [String] = []
             for dest in RailDestination.allCases {
-                shell.show(dest)
+                shell.workspace.navigator.show(dest)
                 window.displayIfNeeded()
-                shell.show(.console)
+                shell.workspace.navigator.show(.console)
                 window.displayIfNeeded()
                 if let failure = titleFitsFailure(shell.drillHeaderForTests, context: "\(dest) -> .console") {
                     failures.append(failure)
@@ -353,9 +353,9 @@ enum AppShellDrillHeaderTitleSelfTest {
 
             var failures: [String] = []
             for i in 0..<12 {
-                shell.show(.logAnalyzer)
+                shell.workspace.navigator.show(.logAnalyzer)
                 window.displayIfNeeded()
-                shell.show(.console)
+                shell.workspace.navigator.show(.console)
                 window.displayIfNeeded()
                 if let failure = titleFitsFailure(shell.drillHeaderForTests, context: "revisit \(i): .logAnalyzer -> .console") {
                     failures.append(failure)

@@ -83,7 +83,7 @@ enum SplitSidebarSelfTest {
         let (window, shell) = mount(width: 960, height: 620)
         defer { window.orderOut(nil) }
         for (dest, expected) in pages {
-            shell.show(dest)
+            shell.workspace.navigator.show(dest)
             settle(shell)
             guard let split = split(shell, dest) else {
                 fail("\(dest.rawValue) has no split-view sidebar", &ok)
@@ -103,7 +103,7 @@ enum SplitSidebarSelfTest {
         let (window, shell) = mount(width: 1300, height: 800)
         defer { window.orderOut(nil) }
         for (dest, expected) in pages {
-            shell.show(dest)
+            shell.workspace.navigator.show(dest)
             settle(shell)
             guard let split = split(shell, dest) else { continue }
             let contentBefore = split.contentPane.frame.width
@@ -126,7 +126,7 @@ enum SplitSidebarSelfTest {
         print("\n-- P9: a dragged divider holds through a window resize --")
         let (window, shell) = mount(width: 1300, height: 800)
         defer { window.orderOut(nil) }
-        shell.show(.schedules)
+        shell.workspace.navigator.show(.schedules)
         settle(shell)
         guard let split = split(shell, .schedules) else { return fail("Schedules has no split", &ok) }
         // Where a drag ends: the split view's own positioning call.
@@ -150,7 +150,7 @@ enum SplitSidebarSelfTest {
         print("\n-- P9: Tasks' column belongs to its board, and keeps the captain's own choice --")
         let (window, shell) = mount(width: 1300, height: 800)
         defer { window.orderOut(nil) }
-        shell.show(.shift)
+        shell.workspace.navigator.show(.shift)
         settle(shell)
         guard let split = split(shell, .shift) else { return fail("Tasks has no split", &ok) }
         let tasks = shell.debugShift
@@ -180,9 +180,9 @@ enum SplitSidebarSelfTest {
         print("\n-- P9: Toggle Sidebar does nothing on a page without one --")
         let (window, shell) = mount(width: 1300, height: 800)
         defer { window.orderOut(nil) }
-        shell.show(.schedules)
+        shell.workspace.navigator.show(.schedules)
         settle(shell)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         shell.toggleSidebarFromMenu()
         settle(shell)

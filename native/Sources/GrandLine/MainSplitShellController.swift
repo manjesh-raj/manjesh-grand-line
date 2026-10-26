@@ -118,7 +118,25 @@ final class MainSplitShellController: WorkspaceShellController {
     /// narrower than its own floor and measure how wide it really needs to be.
     /// Every user restores `nil`.
     static var routeFloorOverrideForTests: CGFloat?
+
+    /// R2-ARCH-06: `false` builds the hand-drawn inspector pane even on a
+    /// macOS that has the system's, so a suite on this machine also covers
+    /// the fallback a macOS 13 install gets. Read once, when a shell builds
+    /// its split view. Every user restores `nil`.
+    static var systemInspectorOverrideForTests: Bool?
     #endif
+
+    /// R2-ARCH-06: whether the inspector is the system's inspector item -
+    /// on macOS 14 and later, where AppKit draws it full height (as glass on
+    /// macOS 26) beside the content column - or the hand-drawn pane before
+    /// that. See `WorkspaceInspectorController`'s header.
+    static var usesSystemInspector: Bool {
+        #if FM_SELFTESTS
+        if let override = systemInspectorOverrideForTests { return override }
+        #endif
+        if #available(macOS 14, *) { return true }
+        return false
+    }
 
     /// The column's floor while the inspector shows a page's details: the
     /// inspector takes its width out of the column rather than out of the
@@ -354,7 +372,15 @@ final class MainSplitShellController: WorkspaceShellController {
             self?.applyColumnFloor()
         }
 
-        inspectorItem = NSSplitViewItem(viewController: inspector)
+        // R2-ARCH-06: the system's inspector item where it draws the
+        // prototype's full-height inspector, and the hand-drawn pane before
+        // that. Both are the same controller with the same fixed width and
+        // the same collapse rules; only who paints the column differs.
+        let systemInspector = Self.usesSystemInspector
+        inspector.drawsOwnPane = !systemInspector
+        inspectorItem = systemInspector
+            ? NSSplitViewItem(inspectorWithViewController: inspector)
+            : NSSplitViewItem(viewController: inspector)
         inspectorItem.minimumThickness = WorkspaceInspectorController.width
         inspectorItem.maximumThickness = WorkspaceInspectorController.width
         inspectorItem.canCollapse = true
@@ -431,7 +457,7 @@ final class MainSplitShellController: WorkspaceShellController {
         toolbar.onSelectTab = { [weak self] index in self?.tabClicked(index) }
         toolbar.onModuleAction = { [weak self] in self?.moduleActionClicked() }
         toolbar.onQuickConnectConsole = { [weak self] in self?.quickConnectConsole() }
-        toolbar.onQuickConnectHosts = { [weak self] in self?.revealHostsQuickConnect() }
+        toolbar.onQuickConnectHosts = { [weak self] in self?.workspace.navigator.revealHostsQuickConnect() }
         toolbar.onToggleTheme = { ThemeManager.shared.toggle() }
         toolbar.onNotifications = { [weak self] anchor in self?.notificationCenter.togglePanel(under: anchor) }
         toolbar.onToggleInspector = { [weak self] in
@@ -1004,7 +1030,7 @@ final class MainSplitShellController: WorkspaceShellController {
     private func moduleActionClicked() {
         switch currentModule {
         case .home: setHomeCustomizing(!workspace.homeCanvas.isCustomizing)
-        case .connections: openFleetLog()
+        case .connections: workspace.navigator.openFleetLog()
         default: break
         }
     }
@@ -1292,6 +1318,9 @@ final class MainSplitShellController: WorkspaceShellController {
     var debugFocusPopoverIsShown: Bool { focusPopover?.isShown ?? false }
     var debugSignalsMonitor: WorkspaceSignalsMonitor { signalsMonitor }
     var debugInspector: WorkspaceInspectorController { inspector }
+    /// R2-ARCH-06: which split item the inspector is - `.inspector` for the
+    /// system's, `.default` for the hand-drawn pane.
+    var debugInspectorItemBehavior: NSSplitViewItem.Behavior { inspectorItem.behavior }
     var debugContentPane: NSView { contentPane.view }
     var debugContentPaneHeader: WorkspaceModuleHeader { contentPane.header }
     var debugBodyContainer: NSView { workspace.content.bodyContainer }

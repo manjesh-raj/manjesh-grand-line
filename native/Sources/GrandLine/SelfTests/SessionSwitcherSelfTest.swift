@@ -399,7 +399,7 @@ enum SessionSwitcherSelfTest {
             guard abs(collapsedInset - DaylightBarController.reservedTopHeight) < 0.5 else {
                 return "collapsed body inset \(collapsedInset), expected \(DaylightBarController.reservedTopHeight)"
             }
-            shell.sessions.register(hostID: UUID(), label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
+            shell.workspace.hosts.sessions.register(hostID: UUID(), label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
             shell.view.layoutSubtreeIfNeeded()
             guard !shell.sessionStripIsHiddenForTests else { return "strip stayed hidden with a live session" }
             // The height half matters as much as `isHidden`: an ordinary
@@ -423,8 +423,8 @@ enum SessionSwitcherSelfTest {
         withScratchEnv {
             let (_, shell, _) = makeMountedShell()
             let dev = UUID(), prod = UUID()
-            shell.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
-            shell.sessions.register(hostID: prod, label: "Prod Bastion", accentHex: "#22b3a6", state: .connected)
+            shell.workspace.hosts.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
+            shell.workspace.hosts.sessions.register(hostID: prod, label: "Prod Bastion", accentHex: "#22b3a6", state: .connected)
             shell.view.layoutSubtreeIfNeeded()
             let strip = shell.sessionStripForTests
             guard strip.debugPillHostIDs() == [dev, prod] else {
@@ -462,9 +462,9 @@ enum SessionSwitcherSelfTest {
         withScratchEnv {
             let (_, shell, _) = makeMountedShell()
             let dev = UUID(), prod = UUID()
-            shell.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: nil, state: .connected)
-            shell.sessions.register(hostID: prod, label: "Prod Bastion", accentHex: nil, state: .connected)
-            shell.sessions.setActive(dev)
+            shell.workspace.hosts.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: nil, state: .connected)
+            shell.workspace.hosts.sessions.register(hostID: prod, label: "Prod Bastion", accentHex: nil, state: .connected)
+            shell.workspace.hosts.sessions.setActive(dev)
             shell.view.layoutSubtreeIfNeeded()
             let strip = shell.sessionStripForTests
             guard strip.debugActiveHostID() == dev else { return "the active pill is not the active session" }
@@ -484,8 +484,8 @@ enum SessionSwitcherSelfTest {
         withScratchEnv {
             let (_, shell, _) = makeMountedShell()
             let dev = UUID()
-            shell.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: nil, state: .connected)
-            shell.sessions.setActive(dev)
+            shell.workspace.hosts.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: nil, state: .connected)
+            shell.workspace.hosts.sessions.setActive(dev)
             shell.view.layoutSubtreeIfNeeded()
             let strip = shell.sessionStripForTests
             guard let pill = strip.debugPillView(dev) else { return "no pill built" }
@@ -652,14 +652,14 @@ enum SessionSwitcherSelfTest {
             // out from under a ⌘K row: every caller fires against a possibly
             // stale id, so this must be a no-op rather than a crash or a blank
             // page.
-            shell.switchToSession(hostID: UUID())
+            shell.workspace.hosts.switchToSession(hostID: UUID())
             guard shell.activeHostIDForTests == nil else { return "an unknown id became the active host page" }
             // Registered but with no console behind it (the registry's writer
             // is `connectHost`, which builds the console first) - still a
             // no-op, never a reveal of nothing.
             let orphan = UUID()
-            shell.sessions.register(hostID: orphan, label: "Orphan", accentHex: nil, state: .connected)
-            shell.switchToSession(hostID: orphan)
+            shell.workspace.hosts.sessions.register(hostID: orphan, label: "Orphan", accentHex: nil, state: .connected)
+            shell.workspace.hosts.switchToSession(hostID: orphan)
             guard shell.activeHostIDForTests == nil else { return "revealed a session with no console" }
             return nil
         }
@@ -708,8 +708,9 @@ enum SessionSwitcherSelfTest {
     /// nil and a runtime walk would pass vacuously. This reads `main.swift`'s
     /// real declarations instead.
     private static func test_sessionShortcutsDoNotCollide() -> String? {
-        guard let dir = SelfTestSources.appSourceDirectory(),
-              let text = try? String(contentsOf: dir.appendingPathComponent("main.swift")) else { return nil }
+        // R2-ARCH-02: the menu is `MainMenuBuilder.swift` now, part of the
+        // app delegate's source.
+        guard let text = SelfTestSources.appDelegateSource() else { return nil }
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
         // Every declared key equivalent, paired with the modifier mask set on
@@ -749,13 +750,15 @@ enum SessionSwitcherSelfTest {
         guard controlDigitClaims.count == 1 else {
             return "⌘⌃<digit> is claimed \(controlDigitClaims.count) times (\(controlDigitClaims)) - expected only the Session N loop"
         }
-        // And the session items really are wired to the shell's own action -
-        // declared on `WorkspaceShellController` since stage 3 of the
-        // modular-shell migration, so either window layout answers them.
-        guard text.contains("WorkspaceShellController.selectSessionByShortcut"),
-              text.contains("WorkspaceShellController.nextSession"),
-              text.contains("WorkspaceShellController.previousSession") else {
-            return "the session menu items are not wired to the shell's session actions"
+        // And the session items really are wired to the session actions -
+        // declared on the workspace's `Navigator` since R2-ARCH-05 (the shell
+        // forwarded them before), so either window layout answers them.
+        // `NavigationCoherenceSelfTest.checkTheMenuTargetsTheNavigator`
+        // checks the items target the navigator itself.
+        guard text.contains("Navigator.selectSessionByShortcut"),
+              text.contains("Navigator.nextSession"),
+              text.contains("Navigator.previousSession") else {
+            return "the session menu items are not wired to the navigator's session actions"
         }
         return nil
     }

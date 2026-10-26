@@ -145,8 +145,8 @@ enum ProcessModeSelfTest {
             FeatureInventorySelfTest.stripComments(
                 (try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)) ?? "")
         }
-        check(read("main.swift").contains("if ProcessMode.current.isIsolated {"),
-              "main.swift's redirect block no longer arms on ProcessMode", &ok)
+        check(read("SelfTests/SelfTestDispatch.swift").contains("if ProcessMode.current.isIsolated {"),
+              "SelfTestDispatch.swift's redirect block no longer arms on ProcessMode", &ok)
         check(read("ExternalToolGuard.swift").contains("return ProcessMode.current.isIsolated"),
               "ExternalToolGuard.isActive no longer reads ProcessMode", &ok)
         check(read("AppPaths.swift").contains("ProcessMode.of(environment).isIsolated"),

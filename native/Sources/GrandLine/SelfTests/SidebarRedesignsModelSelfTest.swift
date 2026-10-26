@@ -99,8 +99,9 @@ enum SidebarRedesignsModelSelfTest {
         // U-02 took the caption out: Console, then Hosts.
         check(ids == [WorkspaceToolbar.ItemID.quickConnectConsole, WorkspaceToolbar.ItemID.quickConnectHosts],
               "Quick Connect is not Console, then Hosts", &ok)
-        let allowed = toolbar.toolbarAllowedItemIdentifiers(toolbar.toolbar)
-        check(ids.allSatisfy(allowed.contains), "the toolbar cannot show Quick Connect's items", &ok)
+        // R2-ARCH-06: placed by the toolbar on every module, so they are
+        // its own items rather than the customisation palette's.
+        check(ids.allSatisfy(WorkspaceToolbar.dynamicItems.contains), "the toolbar cannot show Quick Connect's items", &ok)
         let item = { (id: NSToolbarItem.Identifier) in
             toolbar.toolbar(toolbar.toolbar, itemForItemIdentifier: id, willBeInsertedIntoToolbar: true)
         }
@@ -140,7 +141,7 @@ enum SidebarRedesignsModelSelfTest {
               "the shell draws Quick Connect as one button again", &ok)
         check(shell.contains("toolbar.setQuickConnect(console: !hidden.contains(.console), hosts: !hidden.contains(.connections))"),
               "the shell no longer shows Quick Connect on every module (U-02)", &ok)
-        check(shell.contains("toolbar.onQuickConnectHosts = { [weak self] in self?.revealHostsQuickConnect() }"),
+        check(shell.contains("toolbar.onQuickConnectHosts = { [weak self] in self?.workspace.navigator.revealHostsQuickConnect() }"),
               "the Hosts icon no longer opens the quick-connect host picker", &ok)
         let consoleBody = shell.range(of: "private func quickConnectConsole()").map {
             FeatureInventorySelfTest.braceBody(shell, from: shell.index(after: shell[$0.upperBound...].firstIndex(of: "{")!))

@@ -606,7 +606,7 @@ fails unless its entry carries a trailing marker.
   comparison (a tolerance, a numeric expectation) is fine - only its
   *reporting* has to go through the shared prefixes.
 - Never touch real captain data. Point every store at a scratch path; the
-  `#if FM_SELFTESTS` block in `main.swift` is the backstop that covers a store
+  redirect block in `SelfTests/SelfTestDispatch.swift` is the backstop that covers a store
   reachable from a bare production constructor, and a new such store needs an
   entry there **before** its first suite.
 - A suite that greps the app's own sources must resolve its root through
@@ -1062,7 +1062,7 @@ each; the full reasoning, measurement and the fix that established it are in
 | GL-16 | Accessibility: a clickable row is a `HoverHighlightView` (which supplies the role, the label, the focus ring and the keyboard press), every focusable view draws a real `.exterior` ring, and every looping animation is gated on Reduce Motion through `HelmMotion`. |
 | GL-17 | The App menu carries the standard system-visibility trio (Hide / Hide Others / Show All) and Services. |
 | GL-18 | The version comes from `git describe`, never a constant. A release is cut by tagging. |
-| GL-19 | `run-all-tests.sh` discovers its suite list from `main.swift`, so a new suite joins automatically and the script cannot drift. |
+| GL-19 | `run-all-tests.sh` discovers its suite list from `SelfTests/SelfTestDispatch.swift`, so a new suite joins automatically and the script cannot drift. |
 | GL-20 | A global resize handler does a cheap staleness check first and only then pays for a layout pass - not a debounce, which breaks the synchronous guarantee the repair exists for. |
 | GL-21 | "The directory could not be enumerated" is not "the directory is empty". A seeder that conflates them overwrites real data. |
 | GL-22 | `ConfigRepoPrivacy` asserts the config repo is private before any push. `.unknown` never blocks; only a confirmed public repo refuses. |
@@ -1242,14 +1242,14 @@ noted.
   must ask `AppPaths.isScratchRedirected()` instead. **That alone covers the
   probe and nothing else**, because a suite or a tour does not set
   `FM_SCRATCH_ROOT`: such a store also needs its own narrow override, set in
-  `main.swift`'s redirect block. `DotfilesSource.dotfilesLocation` is the
+  the redirect block in `SelfTests/SelfTestDispatch.swift`. `DotfilesSource.dotfilesLocation` is the
   worked example, and missing it ran a real `git fetch` of the captain's
   dotfiles clone from every tour.
 - **Every store also honours its own narrow `FM_*` override**, which wins over
   the root; the repo-root README has the complete index. A store nested under
   Shift's data root must honour `FM_SHIFT_DIR` as a fallback, not only its own
-  narrow variable - and it needs an entry in `main.swift`'s `#if FM_SELFTESTS`
-  redirect block, which is the backstop for a store reachable from a bare
+  narrow variable - and it needs an entry in the redirect block in
+  `SelfTests/SelfTestDispatch.swift`, which is the backstop for a store reachable from a bare
   constructor.
 - **A Keychain service name comes through `KeychainService.resolve`**, which
   applies `FM_KEYCHAIN_SERVICE_PREFIX` in a debug build and is the identity in

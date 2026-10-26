@@ -1366,7 +1366,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         let layoutRow = SettingsRow(
             title: "Window layout",
-            description: "A sidebar with a window toolbar and an inspector, or the floating bar. Takes effect the next time Grand Line opens.",
+            description: WorkspaceLayout.maintenanceNote,
             control: Self.controlWithRelaunch(windowLayoutTabs, layoutRelaunchButton))
 
         return [

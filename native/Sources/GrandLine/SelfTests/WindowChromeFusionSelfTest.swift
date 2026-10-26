@@ -129,14 +129,14 @@ enum WindowChromeFusionSelfTest {
         // Source guard: the app's own window literal has to carry the flag
         // too. A behavioural check cannot see this - `apply` would put it
         // back - and the literal is what a reader of `main.swift` believes.
-        let mainFile = SelfTestSources.appSourceDirectory()?.appendingPathComponent("main.swift")
-        if let mainFile, let mainSource = try? String(contentsOf: mainFile, encoding: .utf8) {
+        // R2-ARCH-02: the window is built in `AppComposition.swift` now.
+        if let mainSource = SelfTestSources.appDelegateSource() {
             let constructs = mainSource.contains("styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]")
             if !constructs {
-                return "main.swift's window no longer names .fullSizeContentView in its style mask"
+                return "the app delegate's window no longer names .fullSizeContentView in its style mask"
             }
             if !mainSource.contains("WindowChromeFusion.apply(to: window)") {
-                return "main.swift no longer calls WindowChromeFusion.apply"
+                return "the app delegate no longer calls WindowChromeFusion.apply"
             }
         } else {
             print("    NOTE could not read main.swift - the source half of A1 is unchecked in this run")
@@ -296,7 +296,7 @@ enum WindowChromeFusionSelfTest {
             window.setFrame(NSRect(x: -20_000, y: 0, width: 1440, height: 900), display: true)
 
             for dest in [RailDestination.homeCanvas, .review] {
-                shell.show(dest)
+                shell.workspace.navigator.show(dest)
                 window.contentView?.layoutSubtreeIfNeeded()
                 guard let span = WindowChromeFusion.trafficLightSpanForTests(in: window) else {
                     return "\(dest): no traffic lights to measure"
@@ -378,13 +378,13 @@ enum WindowChromeFusionSelfTest {
             defer { window.close() }
             window.setFrame(NSRect(x: -20_000, y: 0, width: 1440, height: 900), display: true)
 
-            shell.show(.homeCanvas)
+            shell.workspace.navigator.show(.homeCanvas)
             window.contentView?.layoutSubtreeIfNeeded()
             if !shell.drillHeaderIsHiddenForTests { return "the canvas shows a drill cluster" }
             if shell.bar.wordmarkIsHiddenForTests { return "the canvas hides the wordmark" }
             if shell.bar.pillsAreHiddenForTests { return "the canvas hides the space pills" }
 
-            shell.show(.review)
+            shell.workspace.navigator.show(.review)
             window.contentView?.layoutSubtreeIfNeeded()
             if shell.drillHeaderIsHiddenForTests { return "a drill page shows no drill cluster" }
             if !shell.bar.wordmarkIsHiddenForTests { return "a drill page shows the wordmark too" }
@@ -418,7 +418,7 @@ enum WindowChromeFusionSelfTest {
                 return "the body starts \(inset)pt down, expected \(DaylightBarController.reservedTopHeight)"
             }
             for dest in [RailDestination.review, .settings, .homeCanvas] {
-                shell.show(dest)
+                shell.workspace.navigator.show(dest)
                 window.contentView?.layoutSubtreeIfNeeded()
                 guard let page = shell.destinationViewIfMountedForTests(dest.slot) else {
                     return "\(dest) did not mount"
@@ -447,7 +447,7 @@ enum WindowChromeFusionSelfTest {
             defer { window.close() }
             window.setFrame(NSRect(x: -20_000, y: 0, width: 1440, height: 900), display: true)
 
-            shell.show(.review)
+            shell.workspace.navigator.show(.review)
             window.contentView?.layoutSubtreeIfNeeded()
             guard let review = shell.destinationViewIfMountedForTests(RailDestination.review.slot)?
                 .findController(ofType: ReviewController.self) ?? nil else {
@@ -471,7 +471,7 @@ enum WindowChromeFusionSelfTest {
 
             // Navigating to a page with no actions has to clear them, or the
             // previous page's buttons stay up.
-            shell.show(.homeCanvas)
+            shell.workspace.navigator.show(.homeCanvas)
             window.contentView?.layoutSubtreeIfNeeded()
             guard shell.drillActionsForTests.isEmpty else {
                 return "the canvas kept \(shell.drillActionsForTests.count) action view(s) from Review"
@@ -494,7 +494,7 @@ enum WindowChromeFusionSelfTest {
             guard let daylight = HelmTheme.theme(id: "daylight") else { return "no daylight theme" }
             for theme in [daylight, HelmTheme.dark] {
                 ThemeManager.shared.setTheme(theme)
-                shell.show(.review)
+                shell.workspace.navigator.show(.review)
                 window.contentView?.layoutSubtreeIfNeeded()
                 window.displayIfNeeded()
                 RunLoop.main.run(until: Date().addingTimeInterval(0.05))
@@ -637,7 +637,7 @@ enum WindowChromeFusionSelfTest {
             // picked originally: its scroll view is pinned to `root.topAnchor`
             // and its provisioning stepper is reliably taller than 600pt with
             // no data loaded and nothing fetched.
-            shell.show(.bootstrap)
+            shell.workspace.navigator.show(.bootstrap)
             window.contentView?.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
 
@@ -673,7 +673,7 @@ enum WindowChromeFusionSelfTest {
             scroll.contentView.scroll(to: offset)
             scroll.reflectScrolledClipView(scroll.contentView)
             RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-            shell.show(.console)
+            shell.workspace.navigator.show(.console)
             window.contentView?.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.05))
             if shell.scrollEdgeActiveForTests {

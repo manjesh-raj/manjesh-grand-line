@@ -68,7 +68,7 @@ enum HomeFitSelfTest {
             let (window, shell) = ReviewTourLab.makeOffScreenShell()
             defer { window.orderOut(nil) }
             window.orderFront(nil)
-            shell.show(.homeCanvas)
+            shell.workspace.navigator.show(.homeCanvas)
             ReviewTourLab.seedDemoHome(shell.debugHomeCanvas)
             ReviewTourLab.seedDemoBriefing()
             checkThePageFits(shell: shell, window: window, &ok)
@@ -143,13 +143,13 @@ enum HomeFitSelfTest {
               "\(label): the grid's right edge at the start size (\(startReach)) is within 50pt of the end size's - this proves nothing",
               &ok)
 
-        shell.show(.settings)
+        shell.workspace.navigator.show(.settings)
         shell.view.layoutSubtreeIfNeeded()
         var frame = window.frame
         frame.size = end
         window.setFrame(frame, display: false)
         shell.view.layoutSubtreeIfNeeded()
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         shell.view.layoutSubtreeIfNeeded()
 
         let contentWidth = window.contentLayoutRect.width

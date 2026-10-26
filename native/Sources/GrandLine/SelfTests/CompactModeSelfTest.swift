@@ -247,8 +247,7 @@ enum CompactModeSelfTest {
               "REL-07: with a window already showing, AppKit's default reopen is left alone")
         check(!policy(false, false, false).reopensFullWindow(hasVisibleWindows: false),
               "REL-07: outside compact mode AppKit's default reopen is left alone")
-        guard let dir = SelfTestSources.appSourceDirectory(),
-              let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8),
+        guard let main = SelfTestSources.appDelegateSource(),
               let start = main.range(of: "func applicationShouldHandleReopen(") else {
             check(false, "REL-07: AppDelegate implements applicationShouldHandleReopen")
             return

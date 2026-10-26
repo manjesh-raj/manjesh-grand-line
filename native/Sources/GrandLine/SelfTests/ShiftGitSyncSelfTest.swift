@@ -656,32 +656,30 @@ enum ShiftGitSyncSelfTest {
 
         // The quit path computes that deadline once, before the first flush,
         // and hands it to every one of them.
-        if let dir = SelfTestSources.appSourceDirectory(),
-           let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8),
+        if let main = SelfTestSources.appDelegateSource(),
            let start = main.range(of: "func applicationWillTerminate(") {
             let body = String(main[start.lowerBound...].prefix(9000))
             let deadlineAt = body.range(of: "let gitFlushDeadline")?.lowerBound
-            let firstFlushAt = body.range(of: "appShell.shutdownStickyBoard(")?.lowerBound
+            let firstFlushAt = body.range(of: "appShell.workspace.shutdownStickyBoard(")?.lowerBound
             check(deadlineAt != nil && firstFlushAt != nil && deadlineAt! < firstFlushAt!,
                   "R2-BUG-04: applicationWillTerminate computes one git flush deadline before the first flush")
-            for call in ["appShell.shutdownStickyBoard(deadline: gitFlushDeadline)",
-                         "appShell.shutdownCodePreview(deadline: gitFlushDeadline)",
-                         "appShell.shutdownNotebook(deadline: gitFlushDeadline)",
-                         "appShell.shutdownCredentialVault(deadline: gitFlushDeadline)",
-                         "appShell.shutdownReadingList(deadline: gitFlushDeadline)",
+            for call in ["appShell.workspace.shutdownStickyBoard(deadline: gitFlushDeadline)",
+                         "appShell.workspace.shutdownCodePreview(deadline: gitFlushDeadline)",
+                         "appShell.workspace.shutdownNotebook(deadline: gitFlushDeadline)",
+                         "appShell.workspace.shutdownCredentialVault(deadline: gitFlushDeadline)",
+                         "appShell.workspace.shutdownReadingList(deadline: gitFlushDeadline)",
                          "ShiftGitSync.shared.flushForTerminationNow(deadline: gitFlushDeadline)",
                          "DocsRunbookGitSync.shared.flushForTerminationNow(deadline: gitFlushDeadline)"] {
                 check(body.contains(call), "R2-BUG-04: the quit path passes the shared deadline: \(call)")
             }
         } else {
-            check(false, "R2-BUG-04: could not read main.swift - the shared-deadline guard would silently pass")
+            check(false, "R2-BUG-04: could not read the app delegate - the shared-deadline guard would silently pass")
         }
 
         // The terminate path calls both flushes on the shared queue. A source
         // guard rather than a behaviour check, because `applicationWillTerminate`
         // cannot run inside a suite; the behaviour is the case above.
-        if let dir = SelfTestSources.appSourceDirectory(),
-           let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8),
+        if let main = SelfTestSources.appDelegateSource(),
            let start = main.range(of: "func applicationWillTerminate(") {
             let body = String(main[start.lowerBound...].prefix(9000))
             check(body.contains("ShiftGitSync.shared.flushForTerminationNow("),
@@ -689,7 +687,7 @@ enum ShiftGitSyncSelfTest {
             check(body.contains("DocsRunbookGitSync.shared.flushForTerminationNow("),
                   "REL-23: applicationWillTerminate flushes the runbooks' pending commit")
         } else {
-            check(false, "REL-23: could not read main.swift - the terminate-path guard would silently pass")
+            check(false, "REL-23: could not read the app delegate - the terminate-path guard would silently pass")
         }
 
         if !failures.isEmpty {

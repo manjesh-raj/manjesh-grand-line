@@ -233,6 +233,14 @@ jobs:
           fi
           echo "release binary: no FM_RUN_* flags, $(stat -f%z "$BIN") bytes"
 
+      # R2-ARCH-09: the same promise for the `debug*` hooks and `*ForTests`
+      # seams production files expose to the suites. Read off the symbol
+      # table, because a hook left outside `#if FM_SELFTESTS` is usually
+      # dead-stripped from this binary and the strings check above cannot see
+      # it - and dead-stripping is not a guard. See the script's header.
+      - name: Prove the release binary carries no test-only symbols
+        run: Scripts/check-release-symbols.sh .build/release/GrandLine
+
   # `swift build`, the check this workflow has always reported: green only
   # when the debug build (warning-clean) and the release build both are. Same
   # name and same meaning as the single job it replaces, so nothing that

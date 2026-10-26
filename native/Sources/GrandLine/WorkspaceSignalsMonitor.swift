@@ -13,8 +13,11 @@
 //
 // The Fleet page's crew reading is a single closure Home already holds, so it
 // arrives through the workspace's chrome hook (`workspaceCrewDidRead`) rather
-// than a second subscription. The vault's lock comes from the store's own lock observers,
-// never from `onChange`, which is Poneglyph's (ARCH-04).
+// than a second subscription. The vault's lock comes from the store's lock
+// observers (`observeLock`), which fire only when the vault locks or unlocks.
+// The store's general observers (`StoreObservable`, R2-ARCH-08) would also
+// reach this, but they fire on every content change, which the badge does not
+// need.
 
 import Foundation
 

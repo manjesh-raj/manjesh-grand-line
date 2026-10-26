@@ -35,10 +35,24 @@
 //     prototype draws it (stage 6, `WorkspacePrimaryActionProviding`).
 //
 // The toolbar draws state and forwards clicks; the shell decides what they
-// mean. Nothing is customisable and nothing is autosaved: the configuration
-// would otherwise be written to `UserDefaults.standard`, outside
-// `AppDefaults.store`, which is the one thing this app's preferences must not
-// do.
+// mean.
+//
+// **The captain can customise it (R2-ARCH-06).** View > Customize Toolbar…
+// (or a right click on the toolbar) moves, removes and adds back the items
+// that are always there - Back and Forward, Recents, the crumb, the
+// light/dark toggle, the bell, the inspector button and Search - plus spaces,
+// and picks the display mode. The items that come and go with the showing
+// page - its tabs, its actions, the module's action, Quick Connect, the focus
+// chip and the primary action - are not in the palette and cannot be dragged:
+// `reconcileDynamicItems()` places them, and a palette-placed copy would
+// fight it. The sidebar button and its tracking separator stay over the
+// sidebar for the same reason.
+//
+// Nothing is autosaved by AppKit: `autosavesConfiguration` writes
+// `UserDefaults.standard`, outside `AppDefaults.store`, which is the one thing
+// this app's preferences must not do. The toolbar saves the customised items
+// itself, to `AppSettings.workspaceToolbarItems`, and puts them back the
+// first time it is in a window.
 
 import AppKit
 
@@ -82,7 +96,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         static let hostsHelp = "Quick Connect to a host: pick a saved host, or type ssh user@host"
     }
 
-    let toolbar = NSToolbar(identifier: "workspace.toolbar")
+    /// AppKit keeps every live toolbar with the same identifier in step -
+    /// items and display mode alike - so a suite that stands a second one up
+    /// beside the shell's (a "next launch") gives it an identifier of its own.
+    static let identifier = "workspace.toolbar"
+    let toolbar: NSToolbar
 
     // Forwarded, never owned.
     var onToggleSidebar: (() -> Void)?
@@ -137,7 +155,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     private let bellButton = NSButton()
     /// The unread count on the bell's corner. Drawn here rather than with
     /// `NSToolbarItem.badge`, which is macOS 26 only and absent from the SDK
-    /// CI builds against.
+    /// CI builds against. R2-ARCH-06 re-measured that: CI's `macos-15` image
+    /// builds with Swift 6.1.2 for `arm64-apple-macosx15.0`, where the symbol
+    /// does not exist, so `#available(macOS 26, *)` around it would not
+    /// compile there. Revisit when CI's toolchain moves to the macOS 26 SDK.
     private let bellBadge = NSView()
     private let bellBadgeLabel = NSTextField(labelWithString: "")
     private let searchButton = NSButton()
@@ -174,15 +195,128 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// button's `isHidden` rather than only the list it was handed.
     private var actionVisibilityObservations: [NSKeyValueObservation] = []
 
-    init(splitView: NSSplitView) {
+    init(splitView: NSSplitView, identifier: String = WorkspaceToolbar.identifier) {
         self.splitView = splitView
+        toolbar = NSToolbar(identifier: identifier)
         super.init()
         toolbar.delegate = self
-        toolbar.displayMode = .iconOnly
-        toolbar.allowsUserCustomization = false
+        toolbar.displayMode = AppSettings.shared.workspaceToolbarDisplayMode
+            .flatMap { NSToolbar.DisplayMode(rawValue: UInt(clamping: $0)) } ?? .iconOnly
+        toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = false
         toolbar.centeredItemIdentifier = ItemID.tabs
         buildControls()
+        // The customisation sheet ends: put the page's items back where
+        // they belong (Use Default Set drops them) and save what it left.
+        sheetObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didEndSheetNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self, (note.object as? NSWindow)?.toolbar === self.toolbar else { return }
+            self.reconcileDynamicItems()
+            self.saveConfiguration()
+        }
+    }
+
+    deinit {
+        if let sheetObserver { NotificationCenter.default.removeObserver(sheetObserver) }
+    }
+
+    // MARK: Customisation (R2-ARCH-06)
+
+    /// The items the captain can move, remove and add back. Always present
+    /// by default, and each one's own view or image.
+    static let customizableItems: [NSToolbarItem.Identifier] = [
+        ItemID.navigation, ItemID.recents, ItemID.crumb, ItemID.theme, ItemID.notifications, ItemID.inspector,
+        ItemID.search,
+    ]
+
+    /// The items the page and the module bring and take away. Placed only by
+    /// `reconcileDynamicItems()`, so they are neither in the palette nor
+    /// movable.
+    static let dynamicItems: [NSToolbarItem.Identifier] = [
+        ItemID.tabs, ItemID.pageActions, ItemID.moduleAction, ItemID.primaryAction, ItemID.focusTimer,
+    ] + ItemID.quickConnect
+
+    /// The two that sit over the sidebar and nowhere else.
+    static let fixedItems: [NSToolbarItem.Identifier] = [ItemID.sidebar, .sidebarTrackingSeparator]
+
+    private var sheetObserver: NSObjectProtocol?
+    /// Set while this toolbar changes its own items, so only the captain's
+    /// changes are saved.
+    private var isArrangingItems = false
+    /// Whether the saved items have been put back. Until then a change is
+    /// the toolbar loading its default items, which must not overwrite them.
+    private var savedConfigurationApplied = false
+
+    /// The customisable items and spaces as they stand, in order - what is
+    /// saved. The space `reconcileDynamicItems()` puts after Quick Connect
+    /// is the toolbar's, not the captain's, so it is left out.
+    var customizedIdentifiers: [NSToolbarItem.Identifier] {
+        let ownSpace = quickConnectSpaceIndex
+        return toolbar.items.enumerated().compactMap { index, item in
+            let id = item.itemIdentifier
+            guard index != ownSpace else { return nil }
+            return Self.customizableItems.contains(id) || id == .space || id == .flexibleSpace ? id : nil
+        }
+    }
+
+    /// The same list for the shipped default.
+    static var defaultCustomizedIdentifiers: [NSToolbarItem.Identifier] {
+        WorkspaceToolbar.defaultIdentifiers.filter { !fixedItems.contains($0) }
+    }
+
+    /// `saved`, with anything this build does not know dropped and no
+    /// customisable item twice - `NSToolbar` raises on a duplicate item.
+    static func sanitized(_ saved: [String]) -> [NSToolbarItem.Identifier] {
+        var seen = Set<NSToolbarItem.Identifier>()
+        var kept: [NSToolbarItem.Identifier] = []
+        for raw in saved {
+            let id = NSToolbarItem.Identifier(raw)
+            if id == .space || id == .flexibleSpace {
+                kept.append(id)
+            } else if customizableItems.contains(id), seen.insert(id).inserted {
+                kept.append(id)
+            }
+        }
+        return kept
+    }
+
+    /// Save the customised items to `AppSettings`, or clear the setting when
+    /// they are the default again.
+    func saveConfiguration() {
+        guard savedConfigurationApplied, !isArrangingItems else { return }
+        let ids = customizedIdentifiers
+        let customised: [String]? = ids == Self.defaultCustomizedIdentifiers ? nil : ids.map { $0.rawValue }
+        AppSettings.shared.workspaceToolbarItems = customised
+        AppSettings.shared.workspaceToolbarDisplayMode = toolbar.displayMode == .iconOnly ? nil
+            : Int(toolbar.displayMode.rawValue)
+    }
+
+    /// Put the saved items back, once, the first time the toolbar has its
+    /// default items. The page's items are placed after this by
+    /// `reconcileDynamicItems()`, around whatever the captain kept.
+    private func applySavedConfiguration() {
+        guard !savedConfigurationApplied else { return }
+        defer { savedConfigurationApplied = true }
+        guard let saved = AppSettings.shared.workspaceToolbarItems else { return }
+        let wanted = Self.sanitized(saved)
+        isArrangingItems = true
+        defer { isArrangingItems = false }
+        for index in toolbar.items.indices.reversed() where !Self.fixedItems.contains(toolbar.items[index].itemIdentifier) {
+            toolbar.removeItem(at: index)
+        }
+        for identifier in wanted { toolbar.insertItem(withItemIdentifier: identifier, at: toolbar.items.count) }
+    }
+
+    func toolbarWillAddItem(_ notification: Notification) { captainChangedItems() }
+    func toolbarDidRemoveItem(_ notification: Notification) { captainChangedItems() }
+
+    /// A change this toolbar did not make is the captain's: from the
+    /// customisation sheet, or a ⌘-drag on the toolbar itself. Saved once it
+    /// has landed.
+    private func captainChangedItems() {
+        guard savedConfigurationApplied, !isArrangingItems else { return }
+        DispatchQueue.main.async { [weak self] in self?.saveConfiguration() }
     }
 
     // MARK: Build
@@ -326,20 +460,34 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
 
     // MARK: NSToolbarDelegate
 
+    /// Two flexible spaces, so the tabs - inserted between them - sit in the
+    /// middle rather than against the trailing cluster.
+    static let defaultIdentifiers: [NSToolbarItem.Identifier] = [
+        ItemID.sidebar, .sidebarTrackingSeparator, ItemID.navigation, ItemID.recents, ItemID.crumb, .flexibleSpace,
+        .flexibleSpace, ItemID.theme, ItemID.notifications, ItemID.inspector, ItemID.search,
+    ]
+
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        // Two flexible spaces, so the tabs - inserted between them - sit in
-        // the middle rather than against the trailing cluster.
-        [ItemID.sidebar, .sidebarTrackingSeparator, ItemID.navigation, ItemID.recents, ItemID.crumb, .flexibleSpace,
-         .flexibleSpace, ItemID.theme, ItemID.notifications, ItemID.inspector, ItemID.search]
+        Self.defaultIdentifiers
     }
 
+    /// What the customisation palette offers. The page's own items are not
+    /// here: `NSToolbar` inserts an identifier from code whether or not it is
+    /// allowed (measured), so `reconcileDynamicItems()` still places them.
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar) + [ItemID.tabs, ItemID.pageActions, ItemID.moduleAction, ItemID.primaryAction,
-                                                  ItemID.focusTimer, .space] + ItemID.quickConnect
+        Self.defaultIdentifiers + [.space]
+    }
+
+    func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
+        Set(Self.fixedItems + Self.dynamicItems)
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        // The palette's copy of an item. Several items are a view this
+        // toolbar owns, and an `NSView` has one superview, so a palette item
+        // built around the live view would take it out of the toolbar.
+        guard flag else { return paletteItem(identifier) }
         let item = makeItem(identifier)
         // When the toolbar runs out of room AppKit moves items into its
         // overflow menu, lowest priority first. The crumb (the module's
@@ -467,6 +615,27 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         default:
             return nil
         }
+    }
+
+    /// What the customisation palette draws for `identifier`: its symbol
+    /// and its label, and nothing live.
+    private func paletteItem(_ identifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
+        let symbols: [NSToolbarItem.Identifier: (String, String)] = [
+            ItemID.sidebar: ("sidebar.left", "Sidebar"),
+            ItemID.navigation: ("chevron.left.chevron.right", "Back/Forward"),
+            ItemID.recents: ("clock.arrow.circlepath", "Recents"),
+            ItemID.crumb: ("signpost.right", "Location"),
+            ItemID.theme: (DaylightThemeToggleButton.lightSymbol, "Appearance"),
+            ItemID.notifications: ("bell", "Notifications"),
+            ItemID.inspector: (Self.inspectorOnSymbol, "Inspector"),
+            ItemID.search: ("magnifyingglass", "Search"),
+        ]
+        guard let (name, label) = symbols[identifier] else { return nil }
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.image = symbol(name)
+        item.label = label
+        item.paletteLabel = label
+        return item
     }
 
     private func imageItem(_ identifier: NSToolbarItem.Identifier, symbol name: String, label: String,
@@ -633,6 +802,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// its default items, which it gets once it is in a window.
     func reconcileDynamicItems() {
         guard !toolbar.items.isEmpty else { return }
+        applySavedConfiguration()
+        isArrangingItems = true
+        defer { isArrangingItems = false }
         let hasTabs = toolbar.items.contains { $0.itemIdentifier == ItemID.tabs }
         if wantsTabs, !hasTabs {
             // After the first flexible space, so the system centres it.

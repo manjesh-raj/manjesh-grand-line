@@ -10,7 +10,7 @@
 
 import Foundation
 
-final class SSHKeyStore {
+final class SSHKeyStore: StoreObservable {
 
     private(set) var keys: [SSHKey] = []
 
@@ -24,8 +24,10 @@ final class SSHKeyStore {
     /// can warn about this the same way it already warns about hosts.
     var loadFailureBackupPath: String? { loadStatus.backupPath }
 
-    /// Fired after any mutation so the keys list can reload.
-    var onChange: (() -> Void)?
+    /// Told after any mutation so the keys list can reload.
+    /// R2-ARCH-08: any number of readers, through `observe(_:)`, rather than
+    /// one `onChange` the last assignment owned.
+    let observers = StoreObservers()
 
     private let fileURL: URL
 
@@ -104,7 +106,7 @@ final class SSHKeyStore {
 
     private func persist() {
         if StoreLoadFailure.refusesWrite(loadStatus, what: "SSH key metadata", url: fileURL) {
-            onChange?()
+            observers.notify()
             return
         }
         do {
@@ -120,6 +122,6 @@ final class SSHKeyStore {
         } catch {
             PersistenceFailureReporter.report(what: "SSH key metadata", path: fileURL.path, error: error)
         }
-        onChange?()
+        observers.notify()
     }
 }

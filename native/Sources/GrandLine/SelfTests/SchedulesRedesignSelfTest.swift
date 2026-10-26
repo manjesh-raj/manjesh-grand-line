@@ -768,7 +768,7 @@ extension SchedulesRedesignSelfTest {
         var frame = window.frame
         frame.size = NSSize(width: 960, height: 620)
         window.setFrame(frame, display: true)
-        shell.show(.schedules)
+        shell.workspace.navigator.show(.schedules)
         shell.view.layoutSubtreeIfNeeded()
         // AppKit re-derives a window's frame from its content on a pass of
         // the run loop, not inside `layoutSubtreeIfNeeded` - the tour lab saw

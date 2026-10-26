@@ -283,7 +283,8 @@ enum FormsModernizationSelfTest {
         // stock titlebar would pass every geometry read above. Source, because
         // the window is built inside a method that opens and focuses a real
         // window, which a headless suite must not drive.
-        if let main = source("main.swift") {
+        // R2-ARCH-02: `HostEditorPresenter.swift` holds it now.
+        if let main = SelfTestSources.appDelegateSource() {
             let body = main.components(separatedBy: "func presentHostEditor(")
             if body.count < 2 {
                 problems.append("presentHostEditor is gone - re-point this check")

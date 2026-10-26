@@ -1003,7 +1003,10 @@ enum CredentialVaultSelfTest {
     private static func checkVaultCreationStaysOnMain(scratch: URL, _ check: (Bool, String) -> Void) {
         let store = CredentialVaultStore(root: scratch.appendingPathComponent("create-threading", isDirectory: true))
         var onChangeThreads: [Bool] = []
-        store.onChange = { onChangeThreads.append(Thread.isMainThread) }
+        // R2-ARCH-08: the thread the store reported the change on, before
+        // `StoreObservers` hops anything to main - so this still measures the
+        // mutation's thread, which a delivery-thread check no longer would.
+        store.observers.notifyThreadForTests = { onChangeThreads.append($0) }
         var completionOnMain: Bool?
         var result: Result<Void, Error>?
         waitFor(timeout: 30) { done in
@@ -1016,7 +1019,7 @@ enum CredentialVaultSelfTest {
             // been mutated yet, so the page cannot render a half-made vault.
             check(!store.isUnlocked, "REL-20: the create must not be unlocked before the derivation hops back")
         }
-        store.onChange = nil
+        store.observers.notifyThreadForTests = nil
         guard case .success = result else {
             check(false, "REL-20: the create should have succeeded, got \(String(describing: result))")
             return
@@ -1080,7 +1083,10 @@ enum CredentialVaultSelfTest {
 
         // ---- 1. Everything observable happens on main ----
         var onChangeThreads: [Bool] = []
-        store.onChange = { onChangeThreads.append(Thread.isMainThread) }
+        // R2-ARCH-08: the thread the store reported the change on, before
+        // `StoreObservers` hops anything to main - so this still measures the
+        // mutation's thread, which a delivery-thread check no longer would.
+        store.observers.notifyThreadForTests = { onChangeThreads.append($0) }
         var completionOnMain: Bool?
         var result: Result<Void, Error>?
         waitFor(timeout: 30) { done in
@@ -1091,7 +1097,7 @@ enum CredentialVaultSelfTest {
                 done()
             }
         }
-        store.onChange = nil
+        store.observers.notifyThreadForTests = nil
         guard case .success = result else {
             check(false, "the change should have succeeded, got \(String(describing: result))")
             return
@@ -1107,7 +1113,7 @@ enum CredentialVaultSelfTest {
         let (racy, racyRoot) = makeVault(scratch, name: "pwchange-race", password: "race-password")
         _ = racy.add(VaultCredential(title: "Kept", secret: "kept-value"))
         var racyThreads: [Bool] = []
-        racy.onChange = { racyThreads.append(Thread.isMainThread) }
+        racy.observers.notifyThreadForTests = { racyThreads.append($0) }
         var racyResult: Result<Void, Error>?
         waitFor(timeout: 30) { done in
             racy.changeMasterPassword(currentPassword: "race-password",
@@ -1119,7 +1125,7 @@ enum CredentialVaultSelfTest {
             // derivations are still running on the background queue.
             racy.lock(reason: "test: auto-lock during a password change")
         }
-        racy.onChange = nil
+        racy.observers.notifyThreadForTests = nil
         if case .success = racyResult {
             check(false, "a change whose vault locked under it must not report success")
         }

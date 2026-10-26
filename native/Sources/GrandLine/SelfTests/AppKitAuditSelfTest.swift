@@ -499,7 +499,7 @@ enum AppKitAuditSelfTest {
     // MARK: M1 - the space pill on the way back to the canvas
 
     /// M1: `DaylightModule.space(forDestination:)` returns nil for the canvas
-    /// itself, and both the drill-header back button and `showHomeCanvas()`
+    /// itself, and both the drill-header back button and `show(.homeCanvas)`
     /// route through `show(_:)` rather than `selectSpace` - so B5's fix left
     /// the pill asserting the drill page's space while the canvas rendered the
     /// space the captain last chose.
@@ -550,8 +550,9 @@ enum AppKitAuditSelfTest {
     /// collision when it cannot recover a modifier mask, which is the safe
     /// direction: it forces someone to look.
     private static func test_h3() -> String? {
-        guard let dir = SelfTestSources.appSourceDirectory(),
-              let source = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8) else {
+        // R2-ARCH-02: the menu is built in `MainMenuBuilder.swift` now; the
+        // app delegate's source is every file it was split into.
+        guard let source = SelfTestSources.appDelegateSource() else {
             return nil  // sources unreachable; nothing to assert
         }
         let lines = source.components(separatedBy: "\n")

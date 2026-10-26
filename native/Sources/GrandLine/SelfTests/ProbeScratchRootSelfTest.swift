@@ -266,19 +266,19 @@ enum ProbeScratchRootSelfTest {
               "a scratch root holding an earlier process's store was not emptied", &ok)
 
         guard let dir = SelfTestSources.appSourceDirectory(),
-              let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8) else {
-            print("  SKIP: main.swift not next to this binary")
+              let main = try? String(contentsOf: dir.appendingPathComponent("SelfTests/SelfTestDispatch.swift"), encoding: .utf8) else {
+            print("  SKIP: SelfTestDispatch.swift not next to this binary")
             return ok
         }
         let code = FeatureInventorySelfTest.stripComments(main)
         let emptied = code.range(of: "SelfTestScratchRoot.startEmpty(scratchRoot)")
         let firstStore = code.range(of: "scratchRoot.appendingPathComponent(")
-        check(firstStore != nil, "main.swift no longer points a store into the per-process scratch root", &ok)
+        check(firstStore != nil, "SelfTestDispatch.swift no longer points a store into the per-process scratch root", &ok)
         if let emptied, let firstStore {
             check(emptied.lowerBound < firstStore.lowerBound,
-                  "main.swift empties the per-process scratch root only after pointing a store into it", &ok)
+                  "SelfTestDispatch.swift empties the per-process scratch root only after pointing a store into it", &ok)
         } else {
-            fail("main.swift does not empty the per-process scratch root before using it", &ok)
+            fail("SelfTestDispatch.swift does not empty the per-process scratch root before using it", &ok)
         }
         return ok
     }
@@ -331,10 +331,10 @@ enum ProbeScratchRootSelfTest {
         // And `main.swift` sweeps the temporary directory before any store
         // is pointed anywhere.
         if let dir = SelfTestSources.appSourceDirectory(),
-           let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8) {
+           let main = try? String(contentsOf: dir.appendingPathComponent("SelfTests/SelfTestDispatch.swift"), encoding: .utf8) {
             let code = FeatureInventorySelfTest.stripComments(main)
             check(code.contains("SelfTestScratchRoot.sweepStale(in: FileManager.default.temporaryDirectory)"),
-                  "main.swift's redirect block no longer sweeps stale scratch folders", &ok)
+                  "SelfTestDispatch.swift's redirect block no longer sweeps stale scratch folders", &ok)
         }
         return ok
     }

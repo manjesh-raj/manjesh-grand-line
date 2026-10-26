@@ -53,6 +53,7 @@ enum E2ETestingPolicySelfTest {
         checkThisProcessCannotReachTheCaptainsRealData(&ok)
         checkEveryGrandLineDocsStoreHonoursShiftDir(&ok)
         checkTheReadmeEnvTableIsComplete(&ok)
+        checkTestHooksStayOutOfTheReleaseBinary(&ok)
         print(ok ? "E2ETestingPolicySelfTest: all checks passed"
                  : "E2ETestingPolicySelfTest: FAILED")
         return ok
@@ -87,10 +88,9 @@ enum E2ETestingPolicySelfTest {
             .appendingPathComponent("README.md")
     }
 
+    /// R2-ARCH-02: the dispatch that used to be the larger half of `main.swift`.
     private static var mainSwift: URL {
-        selfTestsDirectory
-            .deletingLastPathComponent()
-            .appendingPathComponent("main.swift")
+        selfTestsDirectory.appendingPathComponent("SelfTestDispatch.swift")
     }
 
     // MARK: Parsing
@@ -416,7 +416,7 @@ enum E2ETestingPolicySelfTest {
         var enumByFlag: [String: String] = [:]
         for (enumName, flag) in flagsByEnumName(in: mainSource) { enumByFlag[flag] = enumName }
         guard enumByFlag.count >= 90 else {
-            fail("mapped only \(enumByFlag.count) flags to suite enums in main.swift - has the dispatch shape changed?", &ok)
+            fail("mapped only \(enumByFlag.count) flags to suite enums in SelfTestDispatch.swift - has the dispatch shape changed?", &ok)
             return
         }
 
@@ -490,7 +490,7 @@ enum E2ETestingPolicySelfTest {
         }
         let byEnum = flagsByEnumName(in: mainSource)
         guard byEnum.count >= 90 else {
-            fail("mapped only \(byEnum.count) suite enums to flags in main.swift - has the dispatch shape changed?", &ok)
+            fail("mapped only \(byEnum.count) suite enums to flags in SelfTestDispatch.swift - has the dispatch shape changed?", &ok)
             return
         }
 
@@ -538,7 +538,7 @@ enum E2ETestingPolicySelfTest {
         }
 
         if !unmapped.isEmpty {
-            fail("\(unmapped.count) window-backed suite(s) have no FM_RUN_* flag in main.swift: \(unmapped.joined(separator: ", "))", &ok)
+            fail("\(unmapped.count) window-backed suite(s) have no FM_RUN_* flag in SelfTestDispatch.swift: \(unmapped.joined(separator: ", "))", &ok)
         }
         if !missing.isEmpty {
             let listed = missing.map { "      - " + $0 }.joined(separator: "\n")
@@ -603,7 +603,7 @@ enum E2ETestingPolicySelfTest {
 
         for key in required {
             guard let value = env[key], !value.isEmpty else {
-                fail("\(key) is unset in a self-test process - main.swift's redirect block must set it, "
+                fail("\(key) is unset in a self-test process - SelfTestDispatch.swift's redirect block must set it, "
                      + "or a store reached from a bare init() writes to the captain's real data", &ok)
                 continue
             }
@@ -872,6 +872,96 @@ enum E2ETestingPolicySelfTest {
         }
         if collecting && current.count > 3 { out.insert(current) }
         return out.filter { $0.hasPrefix("FM_") }
+    }
+
+    // MARK: GL-27 - test hooks stay out of the release binary (R2-ARCH-09)
+
+    /// The hooks R2-ARCH-09 found in the release binary, by the file that
+    /// declares each and the declaration's own text. Every one used to sit
+    /// outside `#if FM_SELFTESTS` and reach the shipped app (`nm`, demangled),
+    /// kept out of it only where dead-stripping happened to remove it.
+    static let guardedHooks: [(file: String, declaration: String)] = [
+        ("HomeCanvasController.swift", "var debugInputsPinned"),
+        ("WorkspaceShellController.swift", "func debugConnectedHostIDs("),
+        ("WorkspaceShellController.swift", "func debugNavigateToRecent("),
+        ("WorkspaceShellController.swift", "func debugHostConsole("),
+        ("WorkspaceShellController.swift", "var activeHostIDForTests"),
+        ("WorkspaceShellController.swift", "var bodyContainerForTests"),
+        ("WorkspaceShellController.swift", "var bodyContainerFrameForTests"),
+        ("WorkspaceShellController.swift", "var destinationLayoutAttachmentForTests"),
+        ("WorkspaceShellController.swift", "func destinationViewIfMountedForTests("),
+        ("WorkspaceShellController.swift", "var mountedDestinationSlotsForTests"),
+        ("SnippetExpander.swift", "var injectionSinkForTests"),
+        ("SnippetExpander.swift", "var contextOverrideForTests"),
+        ("HerdrThemeSync.swift", "static var configPathOverrideForTests"),
+        ("HerdrThemeSync.swift", "static var herdrInstalledOverrideForTests"),
+        ("HerdrThemeSync.swift", "static var herdrExecutablePathOverrideForTests"),
+    ]
+
+    /// Which lines of `source` sit inside an `#if FM_SELFTESTS` region, one
+    /// flag per line. Nested conditionals are tracked as a stack, and an
+    /// `#else` or `#elseif` branch never counts, so a hook in the `#else` of
+    /// the guard is not taken for a guarded one.
+    static func selfTestGuardedLines(_ source: String) -> [Bool] {
+        var stack: [Bool] = []
+        var flags: [Bool] = []
+        for line in source.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("#if ") {
+                stack.append(trimmed == "#if FM_SELFTESTS")
+            } else if trimmed.hasPrefix("#else"), stack.popLast() != nil {
+                // The other branch of any condition is never the guard.
+                stack.append(false)
+            } else if trimmed.hasPrefix("#endif") {
+                _ = stack.popLast()
+            }
+            flags.append(stack.contains(true))
+        }
+        return flags
+    }
+
+    /// Two halves, because each catches what the other cannot. The source
+    /// guard fails the moment one of R2-ARCH-09's hooks moves back outside
+    /// `#if FM_SELFTESTS`, without a release build. The workflow guard keeps
+    /// CI's release job reading the symbol table itself, which catches a
+    /// hook nobody has named yet.
+    private static func checkTestHooksStayOutOfTheReleaseBinary(_ ok: inout Bool) {
+        let appSources = selfTestsDirectory.deletingLastPathComponent()
+        var unguarded: [String] = []
+        for hook in guardedHooks {
+            guard let text = try? String(contentsOf: appSources.appendingPathComponent(hook.file), encoding: .utf8) else {
+                fail("could not read \(hook.file) - the GL-27 guard cannot run", &ok)
+                continue
+            }
+            let lines = text.components(separatedBy: "\n")
+            let guarded = selfTestGuardedLines(text)
+            guard let index = lines.firstIndex(where: { $0.contains(hook.declaration) }) else {
+                fail("\(hook.file) no longer declares `\(hook.declaration)` - update this list", &ok)
+                continue
+            }
+            if !guarded[index] { unguarded.append("\(hook.file): \(hook.declaration)") }
+        }
+        check(unguarded.isEmpty,
+              "\(unguarded.count) test hook(s) sit outside #if FM_SELFTESTS and would ship in the release binary: "
+                + unguarded.joined(separator: "; "), &ok)
+
+        let ci = selfTestsDirectory
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".github/workflows/ci.yml")
+        let script = runnerScript.deletingLastPathComponent().appendingPathComponent("check-release-symbols.sh")
+        guard let workflow = try? String(contentsOf: ci, encoding: .utf8),
+              let checker = try? String(contentsOf: script, encoding: .utf8) else {
+            fail("ci.yml or Scripts/check-release-symbols.sh is not readable - the guard cannot run", &ok)
+            return
+        }
+        let code = workflow.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+            .joined(separator: "\n")
+        check(code.contains("run: Scripts/check-release-symbols.sh .build/release/GrandLine"),
+              "ci.yml's release job no longer runs check-release-symbols.sh on the release binary", &ok)
+        check(checker.contains("ForTests") && checker.contains("debug[A-Z]") && checker.contains("swift-demangle"),
+              "check-release-symbols.sh no longer reads the demangled symbol table for debug* and *ForTests", &ok)
+        if ok { print("  OK   \(guardedHooks.count) test hooks are guarded and CI's release job checks the symbol table") }
     }
 
     private static func checkTheScriptStillOffersBothModes(_ ok: inout Bool) {

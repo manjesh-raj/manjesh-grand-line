@@ -357,7 +357,7 @@ enum AppShellBodyWidthSelfTest {
             // Visit several destinations so more than one is mounted - the
             // whole finding is about what mounting *accumulates*.
             for dest in [RailDestination.overview, .console, .hosts, .settings] {
-                shell.show(dest)
+                shell.workspace.navigator.show(dest)
             }
             shell.view.layoutSubtreeIfNeeded()
 
@@ -386,11 +386,11 @@ enum AppShellBodyWidthSelfTest {
     private static func test_revisitingReattachesTheDestination() -> String? {
         withScratchEnv {
             let (window, shell) = makeMountedShell()
-            shell.show(.hosts)
-            shell.show(.settings)
+            shell.workspace.navigator.show(.hosts)
+            shell.workspace.navigator.show(.settings)
             shell.view.layoutSubtreeIfNeeded()
             // Back to the one that is now detached.
-            shell.show(.hosts)
+            shell.workspace.navigator.show(.hosts)
             shell.view.layoutSubtreeIfNeeded()
 
             let state = shell.destinationLayoutAttachmentForTests
@@ -588,7 +588,7 @@ enum AppShellBodyWidthSelfTest {
             guard let content = window.contentView else { return "setup failed: window has no content view" }
             // A page with a real preferred width of its own, which is where
             // the reported 973.5 came from.
-            shell.show(.logAnalyzer)
+            shell.workspace.navigator.show(.logAnalyzer)
             content.needsLayout = true
             content.layoutSubtreeIfNeeded()
 
@@ -892,7 +892,7 @@ enum AppShellBodyWidthSelfTest {
 
             let (window, shell) = makeMountedShell(seedHosts: [dev, prod, plain])
             var failures: [String] = []
-            shell.show(.hosts)
+            shell.workspace.navigator.show(.hosts)
             for width in [CGFloat(1016), 1100, 1220, 1512, 2000, 1100] {
                 window.setFrame(NSRect(x: 0, y: 0, width: width, height: 900), display: true)
                 let actual = shell.bodyContainerFrameForTests.width
@@ -903,8 +903,8 @@ enum AppShellBodyWidthSelfTest {
             // And the shape the brief's own "switch away and back" asks for:
             // a destination visited in between must not leave a floor behind.
             for other in [RailDestination.console, .overview, .settings] {
-                shell.show(other)
-                shell.show(.hosts)
+                shell.workspace.navigator.show(other)
+                shell.workspace.navigator.show(.hosts)
                 window.setFrame(NSRect(x: 0, y: 0, width: 1016, height: 900), display: true)
                 let actual = shell.bodyContainerFrameForTests.width
                 if abs(actual - 1016) >= 0.5 {
@@ -926,7 +926,7 @@ enum AppShellBodyWidthSelfTest {
             // driven re-layout (like `ToolsController.rebuildGrid()`) at a
             // wide size before it gets hidden again.
             for dest in RailDestination.allCases {
-                shell.show(dest)
+                shell.workspace.navigator.show(dest)
                 for width in [CGFloat(1100), 1512, 2000] {
                     window.setFrame(NSRect(x: 0, y: 0, width: width, height: 900), display: true)
                     let actual = shell.bodyContainerFrameForTests.width
@@ -943,7 +943,7 @@ enum AppShellBodyWidthSelfTest {
             // only shows up once a *different*, later-visited destination is
             // shown at a width below the stale floor.
             for dest in RailDestination.allCases {
-                shell.show(dest)
+                shell.workspace.navigator.show(dest)
                 window.setFrame(NSRect(x: 0, y: 0, width: 1100, height: 900), display: true)
                 let actual = shell.bodyContainerFrameForTests.width
                 let expected = CGFloat(1100)
@@ -983,7 +983,7 @@ enum AppShellBodyWidthSelfTest {
             // visible at all. A tall window satisfies the floor by accident.
             for height in [CGFloat(750), 900] {
                 for dest in RailDestination.allCases {
-                    shell.show(dest)
+                    shell.workspace.navigator.show(dest)
                     window.setFrame(NSRect(x: 0, y: 0, width: 1512, height: height), display: true)
                     guard let content = window.contentView else {
                         failures.append("\(dest): the window lost its content view")
@@ -1523,7 +1523,7 @@ enum AppShellBodyWidthSelfTest {
                     let (window, shell) = makeMountedShell()
                     defer { window.close() }
                     window.setContentSize(NSSize(width: 1512, height: 950))
-                    shell.show(.settings)
+                    shell.workspace.navigator.show(.settings)
                     window.layoutIfNeeded()
                     shell.view.layoutSubtreeIfNeeded()
 

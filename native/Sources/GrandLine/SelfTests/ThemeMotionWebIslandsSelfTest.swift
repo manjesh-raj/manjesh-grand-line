@@ -354,7 +354,7 @@ enum ThemeMotionWebIslandsSelfTest {
     /// a window-backed suite that mounts a real shell and re-themes it is
     /// never measuring through a transient snapshot overlay.
     private static func checkCrossfadeWiringSource(_ ok: inout Bool) {
-        guard let main = sourceFile("main.swift") else { return }
+        guard let main = SelfTestSources.appDelegate(read: sourceFile) else { return }
         if !main.contains("ThemeManager.shared.transitionCoordinator = ThemeTransitionCoordinator(window: window)") {
             print("  FAIL the coordinator is not installed at launch - K3 would never run in the real app")
             ok = false

@@ -960,10 +960,10 @@ enum StrawHatSelfTest {
         // `Workspace` owns the crew page since stage 2 of the modular-shell
         // migration; the shell's `shutdownStrawHatCrew` forwards to it.
         let shell = (try? String(contentsOf: sources.appendingPathComponent("Workspace.swift"), encoding: .utf8)) ?? ""
-        let main = (try? String(contentsOf: sources.appendingPathComponent("main.swift"), encoding: .utf8)) ?? ""
+        let main = (SelfTestSources.appDelegateSource() ?? "")
         check(shell.contains("strawHat.shutdown()"),
               "the workspace must forward the quit teardown to the crew page", &ok)
-        check(main.contains("appShell.shutdownStrawHatCrew()"),
+        check(main.contains("appShell.workspace.shutdownStrawHatCrew()"),
               "applicationWillTerminate must call that forward - an unwired shutdown is invisible", &ok)
     }
 

@@ -96,7 +96,7 @@ There is no XCTest target. The app carries a permanent self-test suite per
 and its total, which is the only place that count is not stale. Each sits
 behind its own `FM_RUN_*_TESTS=1` variable and each is handled **before**
 `NSApplication` is ever touched - so they run headless and are safe alongside
-the real app. The runner discovers its list from `main.swift`, so a new suite
+the real app. The runner discovers its list from `SelfTests/SelfTestDispatch.swift`, so a new suite
 joins automatically.
 
 **Always test `.build/debug/GrandLine`.** The suites are compiled into

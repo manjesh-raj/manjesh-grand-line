@@ -200,15 +200,15 @@ enum BarActiveStateSelfTest {
                             + "shape this case exists for (row \(onRow.map(\.rawValue)))", &ok)
             }
 
-            shell.show(.homeCanvas)
+            shell.workspace.navigator.show(.homeCanvas)
             expectNoneLit(in: shell, route: "\(themeID) home", &ok)
             for destination in pinned {
-                shell.show(destination)
+                shell.workspace.navigator.show(destination)
                 expectLit(destination, in: shell, route: "\(themeID) show", &ok)
             }
             // A page with no square clears the bar rather than leaving the
             // last one asserting it is current.
-            shell.show(.settings)
+            shell.workspace.navigator.show(.settings)
             expectNoneLit(in: shell, route: "\(themeID) settings", &ok)
         }
     }
@@ -221,7 +221,7 @@ enum BarActiveStateSelfTest {
         let bar = shell.bar
 
         // Recents' own click handler.
-        shell.show(.console)
+        shell.workspace.navigator.show(.console)
         shell.debugNavigateToRecent(.rail(.hosts))
         expectLit(.hosts, in: shell, route: "recents", &ok)
 
@@ -246,14 +246,14 @@ enum BarActiveStateSelfTest {
         let snippetStore = SnippetStore()
         shell.debugSeedHostConsole(ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
                                                      isFirstmateConsole: false), hostID: hostID)
-        shell.sessions.register(hostID: hostID, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
-        shell.switchToSession(hostID: hostID)
+        shell.workspace.hosts.sessions.register(hostID: hostID, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
+        shell.workspace.hosts.switchToSession(hostID: hostID)
         check(shell.activeHostIDForTests == hostID, "switchToSession did not reveal the seeded host page", &ok)
         expectNoneLit(in: shell, route: "host page", &ok)
 
         // A pin change rebuilds every shortcut as a new view. Unpinning
         // Sticky Board brings Hosts onto the row, where it must stay lit.
-        shell.show(.hosts)
+        shell.workspace.navigator.show(.hosts)
         shell.toggleQuickAccessPin(.stickyBoard)
         check(bar.debugDestinationButtons().contains { $0.destination == .hosts },
               "unpinning Sticky Board should bring Hosts onto the row", &ok)
@@ -263,7 +263,7 @@ enum BarActiveStateSelfTest {
 
         // Narrower than `quickAccessCollapseWidth`, the whole row folds into
         // the overflow control, which then holds the open page.
-        shell.show(.console)
+        shell.workspace.navigator.show(.console)
         var frame = window.frame
         frame.size.width = DaylightBarController.quickAccessCollapseWidth - 100
         window.setFrame(frame, display: true)
@@ -389,7 +389,7 @@ enum BarActiveStateSelfTest {
             window.close()
         }
         // Never made key or ordered front - see `pressAndRelease`.
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         let bar = shell.bar
 
         var pressedFill: [ObjectIdentifier: NSColor] = [:]
@@ -481,7 +481,7 @@ enum BarActiveStateSelfTest {
 
             // An action, never a page.
             for destination in QuickAccessConfiguration.defaultPinned {
-                shell.show(destination)
+                shell.workspace.navigator.show(destination)
                 if toggle.isActiveDestination {
                     fail("\(theme.id): the toggle lit with \(destination.rawValue) open", &ok)
                     break

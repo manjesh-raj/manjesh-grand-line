@@ -81,7 +81,7 @@ enum SidebarRedesignsSelfTest {
                 window.orderFront(nil)
                 defer { window.orderOut(nil) }
                 resize(window, width: 1512, shell)
-                ReviewTourLab.seedDemoTasks(shell.shiftStore)
+                ReviewTourLab.seedDemoTasks(shell.workspace.shiftStore)
                 settle(shell)
                 for check in [checkTheSidebar, checkQuickConnect, checkTasksBoard, checkTasksList, checkTasksCalendarAndReview,
                               checkUpdates, checkGitHubSync, checkSetupSteps, checkAutomation, checkTheSummaryRow] {
@@ -127,7 +127,7 @@ enum SidebarRedesignsSelfTest {
     // MARK: 1 - The sidebar
 
     private static func checkTheSidebar(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         // The column's width is its own, not the window's: 236pt unless the
         // captain drags it, down to 200pt at the least. (A window too narrow
@@ -205,7 +205,7 @@ enum SidebarRedesignsSelfTest {
 
     private static func checkQuickConnect(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         let ids = WorkspaceToolbar.ItemID.quickConnect
-        shell.show(.console)
+        shell.workspace.navigator.show(.console)
         settle(shell)
         let toolbarIDs = shell.toolbar.debugItemIdentifiers
         let positions = ids.compactMap { toolbarIDs.firstIndex(of: $0) }
@@ -229,7 +229,7 @@ enum SidebarRedesignsSelfTest {
         // tour lab's console opens nothing of its own as it loads (the real
         // app's shared console always has its Firstmate shell), so the first
         // click is the open half and the second the focus half.
-        shell.show(.console)
+        shell.workspace.navigator.show(.console)
         settle(shell)
         let console = shell.workspace.console
         check(console.tabs.isEmpty, "Console starts with a session - the open half would pass vacuously", &ok)
@@ -266,7 +266,7 @@ enum SidebarRedesignsSelfTest {
 
         // U-02: Quick Connect is on every module now, the same two icons in
         // the same place - `ReviewTwoUXSelfTest` walks every module.
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         check(ids.allSatisfy(shell.toolbar.debugItemIdentifiers.contains),
               "Quick Connect is missing on Home: \(shell.toolbar.debugItemIdentifiers.map(\.rawValue))", &ok)
@@ -276,7 +276,7 @@ enum SidebarRedesignsSelfTest {
 
     private static func checkTasksBoard(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         let tasks = shell.workspace.shift
-        shell.show(.shift)
+        shell.workspace.navigator.show(.shift)
         settle(shell)
         clickTab("Board", shell)
         check(tasks.drawsSidebarLayout, "Tasks did not adopt its sidebar presentation", &ok)
@@ -304,14 +304,14 @@ enum SidebarRedesignsSelfTest {
         settle(shell)
 
         // The project filter, through the popup's own action.
-        guard let project = shell.shiftStore.projects.first else {
+        guard let project = shell.workspace.shiftStore.projects.first else {
             fail("the demo tasks have no project", &ok)
             return
         }
         tasks.debugPickProject(id: project.id)
         settle(shell)
         let inProject = tasks.debugVisibleTaskIDs(.backlog) + tasks.debugVisibleTaskIDs(.inProgress)
-        let projectOf = Dictionary(shell.shiftStore.activeTasks.map { ($0.id, $0.projectID) }, uniquingKeysWith: { a, _ in a })
+        let projectOf = Dictionary(shell.workspace.shiftStore.activeTasks.map { ($0.id, $0.projectID) }, uniquingKeysWith: { a, _ in a })
         check(tasks.debugProjectFilter == project.id && !inProject.isEmpty && inProject.allSatisfy { projectOf[$0] == project.id },
               "picking \(project.name) did not filter the board to it", &ok)
         tasks.debugPickProject(id: nil)
@@ -343,7 +343,7 @@ enum SidebarRedesignsSelfTest {
         let table = tasks.debugTasksTable
         check(!table.card.isHidden && table.card.window != nil, "the List tab draws no table", &ok)
         let records = table.debugRows.filter(\.isRecord)
-        let store = shell.shiftStore
+        let store = shell.workspace.shiftStore
         check(records.count >= store.activeTasks.count, "the table lists \(records.count) tasks of \(store.activeTasks.count)", &ok)
         check(table.debugHeaderTitles.contains("Task") && table.debugHeaderTitles.contains("Due"),
               "the table's columns are \(table.debugHeaderTitles)", &ok)
@@ -384,7 +384,7 @@ enum SidebarRedesignsSelfTest {
         check(cards.map(\.debugCaption) == ["Completed this week", "Focus time", "Overdue", "Follow-ups open",
                                             "Coming up next week"],
               "Weekly review's cards are \(cards.map(\.debugCaption))", &ok)
-        let summary = shell.shiftStore.weeklySummary()
+        let summary = shell.workspace.shiftStore.weeklySummary()
         check(cards[0].debugValue == "\(summary.completedCount)" && cards[0].debugDetail?.isEmpty == false,
               "Completed this week reads \(cards[0].debugValue), want \(summary.completedCount) and a comparison", &ok)
         check(cards[2].debugValue == "\(tasks.counts().overdue)", "Overdue reads \(cards[2].debugValue)", &ok)
@@ -395,8 +395,8 @@ enum SidebarRedesignsSelfTest {
                   + "want \(summary.pushedBack.count)", &ok)
         // Focus time is the focus log's: none, then what was logged.
         check(cards[1].debugValue == "None yet", "Focus time with no sessions reads \(cards[1].debugValue)", &ok)
-        if let task = shell.shiftStore.activeTasks.first {
-            shell.shiftStore.logFocusSession(taskID: task.id, taskTitle: task.title, seconds: 3000)
+        if let task = shell.workspace.shiftStore.activeTasks.first {
+            shell.workspace.shiftStore.logFocusSession(taskID: task.id, taskTitle: task.title, seconds: 3000)
             clickTab("Board", shell)
             clickTab("Weekly review", shell)
             check(cards[1].debugValue == FocusTimerFormat.total(3000) && cards[1].debugDetail?.contains("1 task") == true,
@@ -412,7 +412,7 @@ enum SidebarRedesignsSelfTest {
 
     private static func checkUpdates(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         let updates = shell.workspace.updates
-        shell.show(.updates)
+        shell.workspace.navigator.show(.updates)
         settle(shell)
         _ = waitUntil(timeout: 10) {
             updates.debugToolsTable.debugRows.filter(\.isRecord).count == DependencyCatalog.items.count
@@ -479,7 +479,7 @@ enum SidebarRedesignsSelfTest {
     private static func checkGitHubSync(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         let github = shell.workspace.githubSync
         ConfigRepoPrivacy.debugReset()
-        shell.show(.githubSync)
+        shell.workspace.navigator.show(.githubSync)
         settle(shell)
         _ = waitUntil(timeout: 15) { !github.debugIsCheckingAll }
         check(github.debugDrawsSidebarLayout && !github.debugReposCardShown, "GitHub sync still draws its Repos card", &ok)
@@ -527,7 +527,7 @@ enum SidebarRedesignsSelfTest {
 
     private static func checkSetupSteps(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         let steps = shell.workspace.bootstrap
-        shell.show(.bootstrap)
+        shell.workspace.navigator.show(.bootstrap)
         settle(shell)
         check(steps.debugDrawsSidebarLayout && !steps.debugFullSetupCardShown, "Setup steps still draws its own run card", &ok)
         check(shell.toolbar.debugPrimaryAction === steps.debugRunFullSetupButton, "Run full setup is not the far-right button", &ok)
@@ -557,7 +557,7 @@ enum SidebarRedesignsSelfTest {
         store.add(schedule)
         defer { store.delete(id: schedule.id) }
         let automation = shell.workspace.automation
-        shell.show(.automation)
+        shell.workspace.navigator.show(.automation)
         settle(shell)
         check(automation.debugDrawsSidebarLayout && !automation.debugRunCardShown, "Automation still draws its run card", &ok)
         check(shell.toolbar.debugPrimaryAction === automation.debugRunButton, "Run Automation is not the far-right button", &ok)
@@ -624,10 +624,10 @@ enum SidebarRedesignsSelfTest {
         let (window, shell) = ReviewTourLab.makeOffScreenShell()
         window.orderFront(nil)
         defer { window.orderOut(nil) }
-        ReviewTourLab.seedDemoTasks(shell.shiftStore)
+        ReviewTourLab.seedDemoTasks(shell.workspace.shiftStore)
         settle(shell)
         let tasks = shell.workspace.shift
-        shell.show(.shift)
+        shell.workspace.navigator.show(.shift)
         settle(shell)
         check(!tasks.drawsSidebarLayout && tasks.debugSidebarIsVisible && !tasks.debugViewTabs.isHidden
                 && tasks.workspacePrimaryAction == nil,
@@ -636,7 +636,7 @@ enum SidebarRedesignsSelfTest {
               "the floating bar's board takes the sidebar layout's lanes", &ok)
         check(tasks.debugPushedBackCount == nil, "the floating bar's review draws the sidebar layout's count", &ok)
         for route in [RailDestination.updates, .bootstrap, .automation, .githubSync] {
-            shell.show(route)
+            shell.workspace.navigator.show(route)
             settle(shell)
         }
         let updates = shell.workspace.updates
@@ -653,7 +653,7 @@ enum SidebarRedesignsSelfTest {
         check(!(github.drillHeaderSubtitle ?? "").contains("all in sync"),
               "the floating bar's GitHub sync still says all in sync over failed checks", &ok)
         let notebook = shell.workspace.notebook
-        shell.show(.notebook)
+        shell.workspace.navigator.show(.notebook)
         settle(shell)
         check(notebook.splitPage?.pageForcesCollapse == false, "the floating bar's Notebook lost its page column", &ok)
     }

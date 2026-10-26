@@ -111,7 +111,7 @@ enum LockGateCoverageSelfTest {
                   + "`CockpitTerminalView`'s above: a decorative reaction to input, not a "
                   + "path to any of the captain's data."),
         .init(file: "DictationHotkey.swift",
-              gate: (file: "main.swift", needle: "allows(.dictation)"),
+              gate: (file: "AppComposition.swift", needle: "allows(.dictation)"),
               reason: "the monitor only reports the hold/release transition; the gate is at "
                   + "the consumer, where the recording actually starts. Deliberate: "
                   + "`onUp` must stay ungated so a recording begun before the lock can "

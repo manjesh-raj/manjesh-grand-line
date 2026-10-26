@@ -58,8 +58,8 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
 
     // MARK: State
 
-    private let store: CredentialVaultStore
-    private let list = CredentialVaultListSection()
+    let store: CredentialVaultStore
+    let list = CredentialVaultListSection()
     private let unlockView = CredentialVaultUnlockView()
     private let searchField = HelmSearchField(placeholder: "Search titles, accounts and tags")
     private let sidebar = CredentialVaultSidebar()
@@ -104,7 +104,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     /// The credential the inspector is showing, if any. Survives a re-render
     /// (a store change, a theme change, a search) so the panel does not empty
     /// itself under the captain while they are reading it.
-    private var selectedID: String?
+    var selectedID: String?
     private var themeObservation: ThemeObservation?
 
     private var query = ""
@@ -229,7 +229,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         recoveryButton.action = #selector(recoveryTapped)
         recoveryButton.toolTip = "Recovery key and CSV import"
 
-        store.onChange = { [weak self] in self?.render() }
+        store.observe { [weak self] in self?.render() }
         CredentialVaultClipboard.shared.onCountdown = { [weak self] remaining in
             self?.renderClipboardCountdown(remaining)
         }
@@ -504,44 +504,13 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         inspector.show(credential, auditEvents: store.auditLog.filter { $0.itemID == selectedID })
     }
 
-    private func filteredCredentials() -> [VaultCredential] {
+    func filteredCredentials() -> [VaultCredential] {
         store.credentials.filter { credential in
             collectionFilter.includes(credential) && credential.matches(query)
         }
     }
 
-    private func renderList() {
-        let matching = filteredCredentials()
-        guard !matching.isEmpty else {
-            let hasAny = !store.credentials.isEmpty
-            list.setItems([.empty(
-                symbol: hasAny ? "magnifyingglass" : "lock.shield",
-                title: hasAny ? "No matches" : "Your vault is empty",
-                body: hasAny
-                    ? "Nothing here matches that search or category. Try a different one."
-                    : "Add your first credential and it will be encrypted, backed up to your private config repo, and one click from your clipboard."
-            )])
-            return
-        }
-
-        // Grouped by category, in the enum's own order - which is the mockup's
-        // order, and stable regardless of what the captain has stored.
-        // Within a group, `VaultCredential.displayOrder` - the captain's own
-        // manual position, not alphabetical - is the default: "I should be
-        // able to sort anything irrespective of whether it's created first or
-        // last."
-        var items: [CredentialVaultListSection.Item] = []
-        for category in CredentialCategory.allCases {
-            let inCategory = matching.filter { $0.category == category }
-                .sorted(by: VaultCredential.displayOrder)
-            guard !inCategory.isEmpty else { continue }
-            items.append(.group("\(category.title) \u{00B7} \(inCategory.count)"))
-            items.append(contentsOf: inCategory.map(row(for:)))
-        }
-        list.setItems(items, selecting: selectedID)
-    }
-
-    private func row(for credential: VaultCredential) -> CredentialVaultListSection.Item {
+    func row(for credential: VaultCredential) -> CredentialVaultListSection.Item {
         let revealed = revealedIDs.contains(credential.id)
         // No kicker: every row sits directly under a group header that already
         // names its category, so repeating it per row spent a whole text line

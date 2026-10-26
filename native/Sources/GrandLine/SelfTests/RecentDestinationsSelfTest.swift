@@ -271,11 +271,11 @@ enum RecentDestinationsSelfTest {
             // prefix is what makes this assertion honest about what my own
             // sequence produced without needing to know or care which one the
             // launch landed on.
-            shell.show(.console)
-            shell.show(.updates)
-            shell.show(.stickyBoard)
-            shell.show(.vault)
-            let titles = shell.recentDestinations.entries.map(\.kind.title)
+            shell.workspace.navigator.show(.console)
+            shell.workspace.navigator.show(.updates)
+            shell.workspace.navigator.show(.stickyBoard)
+            shell.workspace.navigator.show(.vault)
+            let titles = shell.workspace.navigator.recentDestinations.entries.map(\.kind.title)
             guard Array(titles.prefix(3)) == ["Sticky Board", "Updates", "Console"] else {
                 return "expected [Sticky Board, Updates, Console, ...] while on Vault, got \(titles)"
             }
@@ -289,12 +289,12 @@ enum RecentDestinationsSelfTest {
     private static func test_revisitingADestinationMovesItToTopWithNoDuplicate() -> String? {
         withScratchEnv {
             let (_, shell, _, _) = makeMountedShell()
-            shell.show(.console)
-            shell.show(.updates)
-            shell.show(.stickyBoard)
-            shell.show(.vault)
-            shell.show(.updates)
-            let titles = shell.recentDestinations.entries.map(\.kind.title)
+            shell.workspace.navigator.show(.console)
+            shell.workspace.navigator.show(.updates)
+            shell.workspace.navigator.show(.stickyBoard)
+            shell.workspace.navigator.show(.vault)
+            shell.workspace.navigator.show(.updates)
+            let titles = shell.workspace.navigator.recentDestinations.entries.map(\.kind.title)
             guard Array(titles.prefix(3)) == ["Vault", "Sticky Board", "Console"] else {
                 return "expected [Vault, Sticky Board, Console, ...] while back on Updates, got \(titles)"
             }
@@ -303,8 +303,8 @@ enum RecentDestinationsSelfTest {
             }
             // A stray re-click on the destination already showing must not
             // add or move anything.
-            shell.show(.updates)
-            let titlesAfterReshow = shell.recentDestinations.entries.map(\.kind.title)
+            shell.workspace.navigator.show(.updates)
+            let titlesAfterReshow = shell.workspace.navigator.recentDestinations.entries.map(\.kind.title)
             guard titlesAfterReshow == titles else {
                 return "re-showing the current destination changed Recents: \(titlesAfterReshow)"
             }
@@ -315,35 +315,35 @@ enum RecentDestinationsSelfTest {
     private static func test_hostPageNavigationIsTracked() -> String? {
         withScratchEnv {
             let (_, shell, keyStore, snippetStore) = makeMountedShell()
-            shell.show(.console)
+            shell.workspace.navigator.show(.console)
 
             let hostID = UUID()
             let hostConsole = ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false)
             shell.debugSeedHostConsole(hostConsole, hostID: hostID)
-            shell.sessions.register(hostID: hostID, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
-            shell.switchToSession(hostID: hostID)
+            shell.workspace.hosts.sessions.register(hostID: hostID, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
+            shell.workspace.hosts.switchToSession(hostID: hostID)
             guard shell.activeHostIDForTests == hostID else { return "switchToSession did not reveal the seeded host page" }
 
             // Console must now be recorded first (it was left for the host
             // page) - a real launch navigation (Home/Bootstrap) may trail it,
             // per `test_shellNavigationBuildsRecentsExcludingCurrent`'s own
             // note on why this only checks the leading entry.
-            guard shell.recentDestinations.entries.first?.kind.title == "Console" else {
-                return "leaving Console for a host page did not record it: \(shell.recentDestinations.entries.map(\.kind.title))"
+            guard shell.workspace.navigator.recentDestinations.entries.first?.kind.title == "Console" else {
+                return "leaving Console for a host page did not record it: \(shell.workspace.navigator.recentDestinations.entries.map(\.kind.title))"
             }
 
             // Leaving the host page for a rail destination records the host
             // page by its label, under a `host:<uuid>` identity.
-            shell.show(.docs)
-            guard let hostEntry = shell.recentDestinations.entries.first(where: { $0.kind.title == "DEV Bastion" }) else {
-                return "the host page was not recorded after leaving it: \(shell.recentDestinations.entries.map(\.kind.title))"
+            shell.workspace.navigator.show(.docs)
+            guard let hostEntry = shell.workspace.navigator.recentDestinations.entries.first(where: { $0.kind.title == "DEV Bastion" }) else {
+                return "the host page was not recorded after leaving it: \(shell.workspace.navigator.recentDestinations.entries.map(\.kind.title))"
             }
             guard hostEntry.kind.identityKey == "host:\(hostID.uuidString)" else {
                 return "host entry identity is wrong: \(hostEntry.kind.identityKey)"
             }
             guard hostEntry.kind.kicker == "Hosts" else { return "host entry kicker is \(hostEntry.kind.kicker), expected Hosts" }
             // Docs (now current) must not appear in its own list.
-            guard !shell.recentDestinations.entries.contains(where: { $0.kind.title == "Docs" }) else {
+            guard !shell.workspace.navigator.recentDestinations.entries.contains(where: { $0.kind.title == "Docs" }) else {
                 return "the currently-showing destination (Docs) appeared in Recents"
             }
             return nil
@@ -366,28 +366,28 @@ enum RecentDestinationsSelfTest {
     private static func test_endedSessionRowReconnectsInsteadOfDoingNothing() -> String? {
         withScratchEnv {
             let (_, shell, keyStore, snippetStore) = makeMountedShell()
-            shell.show(.console)
+            shell.workspace.navigator.show(.console)
 
             let hostID = UUID()
             let hostConsole = ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false)
             shell.debugSeedHostConsole(hostConsole, hostID: hostID)
-            shell.sessions.register(hostID: hostID, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
-            shell.switchToSession(hostID: hostID)
-            shell.show(.docs)   // leave it, so it lands in Recents
+            shell.workspace.hosts.sessions.register(hostID: hostID, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
+            shell.workspace.hosts.switchToSession(hostID: hostID)
+            shell.workspace.navigator.show(.docs)   // leave it, so it lands in Recents
 
-            guard shell.recentDestinations.entries.contains(where: { $0.kind.title == "DEV Bastion" }) else {
+            guard shell.workspace.navigator.recentDestinations.entries.contains(where: { $0.kind.title == "DEV Bastion" }) else {
                 return "setup: the host page was never recorded in Recents"
             }
 
             // The captain ends the session (the strip's ✕ / "End session" /
             // a host delete all reach the same teardown).
-            shell.removeHostConsole(id: hostID)
-            guard shell.sessions.session(for: hostID) == nil else {
+            shell.workspace.hosts.removeHostConsole(id: hostID)
+            guard shell.workspace.hosts.sessions.session(for: hostID) == nil else {
                 return "setup: the session should be gone after removeHostConsole"
             }
             // The row deliberately stays - that is this store's documented
             // behaviour and is not what the finding is about.
-            guard shell.recentDestinations.entries.contains(where: { $0.kind.title == "DEV Bastion" }) else {
+            guard shell.workspace.navigator.recentDestinations.entries.contains(where: { $0.kind.title == "DEV Bastion" }) else {
                 return "the Recents row should still be listed after the session ended"
             }
 
@@ -397,11 +397,11 @@ enum RecentDestinationsSelfTest {
             // itself is what is driven here - the same boundary
             // `SessionSwitcherSelfTest` draws for the same reason.
             var reconnectRequests: [UUID] = []
-            shell.onReconnectHost = { id in
+            shell.workspace.navigator.onReconnectHost = { id in
                 reconnectRequests.append(id)
                 return true    // the host is still saved
             }
-            shell.show(.console)   // somewhere other than the host page
+            shell.workspace.navigator.show(.console)   // somewhere other than the host page
             shell.debugNavigateToRecent(.host(id: hostID, label: "DEV Bastion"))
 
             guard reconnectRequests == [hostID] else {
@@ -409,7 +409,7 @@ enum RecentDestinationsSelfTest {
                     + "reconnect request for \(hostID), got \(reconnectRequests)"
             }
             // A host that is still saved keeps its row: it is reachable again.
-            guard shell.recentDestinations.entries.contains(where: { $0.kind.title == "DEV Bastion" }) else {
+            guard shell.workspace.navigator.recentDestinations.entries.contains(where: { $0.kind.title == "DEV Bastion" }) else {
                 return "a reconnectable host's row should not be dropped"
             }
 
@@ -418,8 +418,8 @@ enum RecentDestinationsSelfTest {
             let liveID = UUID()
             let liveConsole = ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false)
             shell.debugSeedHostConsole(liveConsole, hostID: liveID)
-            shell.sessions.register(hostID: liveID, label: "Prod Bastion", accentHex: "#22b3a6", state: .connected)
-            shell.show(.docs)
+            shell.workspace.hosts.sessions.register(hostID: liveID, label: "Prod Bastion", accentHex: "#22b3a6", state: .connected)
+            shell.workspace.navigator.show(.docs)
             shell.debugNavigateToRecent(.host(id: liveID, label: "Prod Bastion"))
             guard reconnectRequests.isEmpty else {
                 return "a live session must switch, not reconnect - got \(reconnectRequests)"
@@ -437,35 +437,35 @@ enum RecentDestinationsSelfTest {
     private static func test_deletedHostRowIsDroppedRatherThanLeftDead() -> String? {
         withScratchEnv {
             let (_, shell, keyStore, snippetStore) = makeMountedShell()
-            shell.show(.console)
+            shell.workspace.navigator.show(.console)
 
             let hostID = UUID()
             let hostConsole = ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false)
             shell.debugSeedHostConsole(hostConsole, hostID: hostID)
-            shell.sessions.register(hostID: hostID, label: "Gone Bastion", accentHex: nil, state: .connected)
-            shell.switchToSession(hostID: hostID)
-            shell.show(.docs)
-            shell.removeHostConsole(id: hostID)
+            shell.workspace.hosts.sessions.register(hostID: hostID, label: "Gone Bastion", accentHex: nil, state: .connected)
+            shell.workspace.hosts.switchToSession(hostID: hostID)
+            shell.workspace.navigator.show(.docs)
+            shell.workspace.hosts.removeHostConsole(id: hostID)
 
             // The app delegate's own host-delete diffing calls this; nothing
             // else does, deliberately - `removeHostConsole` is also what "End
             // session" calls, and an ended session's row must stay.
-            shell.forgetRecentHost(id: hostID)
-            guard !shell.recentDestinations.entries.contains(where: { $0.kind.title == "Gone Bastion" }) else {
-                return "a deleted host's row is still listed: \(shell.recentDestinations.entries.map(\.kind.title))"
+            shell.workspace.navigator.forgetRecentHost(id: hostID)
+            guard !shell.workspace.navigator.recentDestinations.entries.contains(where: { $0.kind.title == "Gone Bastion" }) else {
+                return "a deleted host's row is still listed: \(shell.workspace.navigator.recentDestinations.entries.map(\.kind.title))"
             }
 
             // And a click on a row for a host that is gone (one that outlived
             // the prune, e.g. deleted while the app was not diffing) drops it
             // rather than doing nothing forever.
-            shell.recentDestinations.recordNavigation(leaving: .host(id: hostID, label: "Gone Bastion"),
+            shell.workspace.navigator.recentDestinations.recordNavigation(leaving: .host(id: hostID, label: "Gone Bastion"),
                                                       arriving: .rail(.docs))
-            guard shell.recentDestinations.entries.contains(where: { $0.kind.title == "Gone Bastion" }) else {
+            guard shell.workspace.navigator.recentDestinations.entries.contains(where: { $0.kind.title == "Gone Bastion" }) else {
                 return "setup: could not re-seed the stale row"
             }
-            shell.onReconnectHost = { _ in false }   // no such host any more
+            shell.workspace.navigator.onReconnectHost = { _ in false }   // no such host any more
             shell.debugNavigateToRecent(.host(id: hostID, label: "Gone Bastion"))
-            guard !shell.recentDestinations.entries.contains(where: { $0.kind.title == "Gone Bastion" }) else {
+            guard !shell.workspace.navigator.recentDestinations.entries.contains(where: { $0.kind.title == "Gone Bastion" }) else {
                 return "clicking an unreachable host's row left it listed - it can only ever do nothing"
             }
             return nil

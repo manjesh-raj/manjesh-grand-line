@@ -172,7 +172,7 @@ final class HomeCustomizeTray: NSView {
 
     private let titleLabel = NSTextField(labelWithString: "Arrange Home")
     private let hintLabel = NSTextField(wrappingLabelWithString:
-        "Pick a size for each card, move it earlier or later, or hide it. Every card from the other spaces can be added here.")
+        "Pick a size for each card, move it earlier or later, or hide it. Any card Home is not showing can be added here.")
     private let addButton = HelmButton(title: "Add a Card", variant: .secondary, size: .small, symbol: "plus")
     private let resetButton = HelmButton(title: "Reset Layout", variant: .quiet, size: .small)
     private let doneButton = HelmButton(title: "Done", variant: .primary, size: .small)
@@ -239,12 +239,20 @@ final class HomeCustomizeTray: NSView {
         hintLabel.font = HelmType.body()
     }
 
-    /// The Add menu: the hidden cards under the space each one belongs to, so
-    /// a captain who knew a card from Command or Stores finds it there.
+    /// The Add menu: the hidden cards under the sidebar group of the module
+    /// each one opens - Home, then Work, Observe, Workbench and Machine -
+    /// so the captain finds a card where its page is in the sidebar.
+    ///
+    /// R2-ARCH-01: it was grouped by the floating bar's spaces (Command,
+    /// Operations, Stores, Engineering), a second map of the app in the
+    /// layout that has none (R2-UX-02's two taxonomies). This file is the
+    /// sidebar layout's own, so it reads only the module table.
     func addMenu() -> NSMenu {
         let menu = NSMenu()
-        let groups: [(title: String, cards: [DaylightModule])] = DaylightSpace.allCases.map { space in
-            (space.title, hiddenCards.filter { ($0.space ?? .overview) == space })
+        let sections: [(title: String, group: WorkspaceGroup?)] = [("Home", nil)]
+            + WorkspaceGroup.allCases.map { ($0.title, $0) }
+        let groups: [(title: String, cards: [DaylightModule])] = sections.map { section in
+            (section.title, hiddenCards.filter { ModuleTable.module(for: $0.opens).group == section.group })
         }
         for group in groups where !group.cards.isEmpty {
             if !menu.items.isEmpty { menu.addItem(.separator()) }

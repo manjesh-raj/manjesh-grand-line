@@ -62,15 +62,16 @@ struct TerminalBlock: Identifiable, Equatable {
 /// that tab - toggling block view on/off never restarts anything, and a
 /// manual refresh always reflects the tracker's full history regardless of
 /// how long it's been since the tab was last looked at.
-final class TerminalBlockTracker {
+final class TerminalBlockTracker: StoreObservable {
     private(set) var blocks: [TerminalBlock] = []
 
-    /// Fired whenever `blocks` changes (a marker opened/closed a block, or
+    /// Told whenever `blocks` changes (a marker opened/closed a block, or
     /// `reset()` ran). Stage 0 does not use this to drive automatic
     /// rendering - `ConsoleController`'s manual Refresh action reads
     /// `blocks` directly instead - but it's real signal a self-test can
-    /// assert against without needing a live view.
-    var onChange: (() -> Void)?
+    /// assert against without needing a live view. R2-ARCH-08: any number of
+    /// readers, through `observe(_:)`, rather than one `onChange`.
+    let observers = StoreObservers()
 
     /// Blocks beyond this count are dropped from the front, oldest first, so
     /// a long-lived session's block list doesn't grow without bound.
@@ -189,7 +190,7 @@ final class TerminalBlockTracker {
         trimIfNeeded()
         openBlockID = block.id
         openBlockStartSnapshot = Self.bufferLines(terminal)
-        onChange?()
+        observers.notify()
     }
 
     /// Closes the currently-open block, unless `isReal` is false, in which
@@ -222,7 +223,7 @@ final class TerminalBlockTracker {
 
         guard isReal else {
             blocks.remove(at: idx)
-            onChange?()
+            observers.notify()
             return
         }
 
@@ -236,7 +237,7 @@ final class TerminalBlockTracker {
         // PF15: the size cap has to run where the *output* lands, not only
         // where a block is opened - a single enormous block arrives here.
         trimIfNeeded()
-        onChange?()
+        observers.notify()
     }
 
     /// Clears block history. Stage 0's one, simplest-correct-by-construction
@@ -253,7 +254,7 @@ final class TerminalBlockTracker {
         blocks = []
         openBlockID = nil
         openBlockStartSnapshot = nil
-        onChange?()
+        observers.notify()
     }
 
     private func trimIfNeeded() {

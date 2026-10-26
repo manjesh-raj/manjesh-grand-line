@@ -85,6 +85,38 @@ enum SelfTestSources {
     /// Every `.swift` file directly in the app's source root, sorted. Not
     /// recursive: `SelfTests/` is a child of that root and must stay out of
     /// every source guard's view (see above), and nothing else nests today.
+    /// R2-ARCH-02: the self-test dispatch and the redirect block before it,
+    /// which lived in `main.swift` until that file was split. The suites that
+    /// guard the dispatch - its flags, its redirects, its order - read it here.
+    static func selfTestDispatchSource() -> String? {
+        guard let dir = appSourceDirectory() else { return nil }
+        return try? String(contentsOf: dir.appendingPathComponent("SelfTests/SelfTestDispatch.swift"), encoding: .utf8)
+    }
+
+    /// R2-ARCH-02: the app delegate's source, which `main.swift` held whole
+    /// until it was split - the entry point, the composition and the launch,
+    /// the menu bar, session restore and the host editor, in that order. A
+    /// suite guarding a line of the delegate's wiring reads this rather than
+    /// one file, so the guard follows the code wherever the split put it.
+    static let appDelegateFiles = ["main.swift", "AppComposition.swift", "MainMenuBuilder.swift",
+                                   "SessionRestoreCoordinator.swift", "HostEditorPresenter.swift"]
+
+    /// The same, read through a suite's own reader - one that strips
+    /// comments, say - so a guard keeps reading code the way it always did.
+    /// `nil` when `main.swift` itself cannot be read.
+    static func appDelegate(read: (String) -> String?) -> String? {
+        guard let first = read(appDelegateFiles[0]) else { return nil }
+        return ([first] + appDelegateFiles.dropFirst().compactMap(read)).joined(separator: "\n")
+    }
+
+    static func appDelegateSource() -> String? {
+        guard let dir = appSourceDirectory() else { return nil }
+        let texts = appDelegateFiles.compactMap {
+            try? String(contentsOf: dir.appendingPathComponent($0), encoding: .utf8)
+        }
+        return texts.isEmpty ? nil : texts.joined(separator: "\n")
+    }
+
     static func appSourceFiles() -> [URL]? {
         guard let dir = appSourceDirectory(),
               let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)

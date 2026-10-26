@@ -314,17 +314,17 @@ enum PageLoadOffMainSelfTest {
         frame.size = NSSize(width: 960, height: 620)
         window.setFrame(frame, display: false)
         window.orderFront(nil)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         shell.view.layoutSubtreeIfNeeded()
         for visit in ["first visit", "revisit"] {
-            shell.show(.notebook)
+            shell.workspace.navigator.show(.notebook)
             shell.view.layoutSubtreeIfNeeded()
             // Let the background read land and the page settle.
             pump(timeout: 1.0) { false }
             shell.view.layoutSubtreeIfNeeded()
             check(window.frame.width <= 960.5,
                   "Notebook's \(visit) at the 960pt minimum widened the window to \(window.frame.width)pt", &ok)
-            shell.show(.homeCanvas)
+            shell.workspace.navigator.show(.homeCanvas)
             shell.view.layoutSubtreeIfNeeded()
         }
         if ok { print("  OK   the window stayed 960pt across a first visit and a revisit") }

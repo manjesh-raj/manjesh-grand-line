@@ -86,7 +86,7 @@ enum VaultLoadState: Equatable {
 
 // MARK: - Store
 
-final class CredentialVaultStore {
+final class CredentialVaultStore: StoreObservable {
 
     // MARK: Location
 
@@ -126,10 +126,13 @@ final class CredentialVaultStore {
     /// the main thread, each time it flips - and only then, never for a
     /// content change. The sidebar layout's Secrets badge reads it.
     ///
-    /// A list rather than a second `onChange`: that closure is Poneglyph's
-    /// own (ARCH-04), and assigning it anywhere else would take the page's
-    /// re-render away. It carries a Bool and nothing else - no title, no
-    /// count, nothing a locked vault would not already show.
+    /// Kept beside the store's own `observe(_:)` (R2-ARCH-08) because it is a
+    /// different signal, not a second channel for the same one: it fires
+    /// only on a lock or an unlock, never for a content change, and it
+    /// carries a Bool and nothing else - no title, no count, nothing a locked
+    /// vault would not already show. It was added as a list when `onChange`
+    /// was single-subscriber and Poneglyph's; that reason is gone, this one
+    /// is not.
     @discardableResult
     func observeLock(_ fn: @escaping (Bool) -> Void) -> LockObservation {
         let token = LockObservation()
@@ -210,9 +213,11 @@ final class CredentialVaultStore {
 
     var isUnlocked: Bool { vaultKey != nil }
 
-    /// Fired whenever the unlocked contents change, so the page re-renders
-    /// without polling. Also fired on lock, with an empty model.
-    var onChange: (() -> Void)?
+    /// Told whenever the unlocked contents change, so the page re-renders
+    /// without polling. Also told on lock, with an empty model.
+    /// R2-ARCH-08: any number of readers, through `observe(_:)`, rather than
+    /// one `onChange` the last assignment owned.
+    let observers = StoreObservers()
 
     /// GL-01: set when the file on disk failed to decode, so the page can say
     /// so - and never offer to create a new vault over it.
@@ -458,7 +463,7 @@ final class CredentialVaultStore {
     /// **The same split `changeMasterPassword` uses, for the same defect**
     /// (REL-20 of the 2026-10 end-to-end review). The controller used to run
     /// a synchronous `createVault` whole on `DispatchQueue.global`, so the
-    /// state mutation, `persist()`, the `loadState()` memo and `onChange?()`
+    /// state mutation, `persist()`, the `loadState()` memo and `observers.notify()`
     /// - which is `CredentialVaultController.render()`, a full AppKit view
     /// rebuild - all ran on a background thread, racing the auto-lock timer
     /// that mutates the same fields on main. Only the derivation and the
@@ -522,7 +527,7 @@ final class CredentialVaultStore {
     }
 
     /// The main-thread half of a create: every mutation, the write and
-    /// `onChange`. Re-checks that the vault is still absent, because a
+    /// `observers.notify()`. Re-checks that the vault is still absent, because a
     /// restore or a git pull can land a vault file during the derivation.
     private func finishCreateVault(_ derived: Result<DerivedNewVault, Error>) -> Result<Void, Error> {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -545,7 +550,7 @@ final class CredentialVaultStore {
             throttledUntil = nil
             append(.init(kind: .unlocked, detail: "new vault created"))
             try persist()
-            onChange?()
+            observers.notify()
             return .success(())
         } catch {
             vaultKey = nil
@@ -731,7 +736,7 @@ final class CredentialVaultStore {
                 // own.
                 normalizeSortOrderIfNeeded()
                 persistAuditOnly("unlock record")
-                onChange?()
+                observers.notify()
                 return .unlocked
             } catch {
                 return .unreadable(error.localizedDescription)
@@ -795,7 +800,7 @@ final class CredentialVaultStore {
         // stop disclosing secrets - made the clipboard *less* safe than not
         // locking at all.
         CredentialVaultClipboard.shared.clearNow()
-        onChange?()
+        observers.notify()
     }
 
     // MARK: CRUD
@@ -960,7 +965,7 @@ final class CredentialVaultStore {
         // survived while the window stayed open would not be one - just
         // batched, and never by itself a reason to commit. `lock()` flushes
         // whatever is still pending, and a lock always follows a use.
-        onChange?()
+        observers.notify()
         scheduleAuditFlush()
     }
 
@@ -1029,8 +1034,8 @@ final class CredentialVaultStore {
     /// ran *whole* on `DispatchQueue.global` (two PBKDF2 derivations at
     /// 600k rounds each are genuinely too slow for the main thread). But every
     /// line after the derivations - `vaultKey = newKey`, `file = ...`, the
-    /// audit `append`, `persist()`, the Keychain removal and `onChange?()` -
-    /// ran inline on that background thread, and `onChange` is
+    /// audit `append`, `persist()`, the Keychain removal and `observers.notify()` -
+    /// ran inline on that background thread, and the page's observer is
     /// `CredentialVaultController.render()`: **a full AppKit view rebuild off
     /// the main thread**, which is undefined behaviour. Worse, the auto-lock
     /// `Timer` runs in `.common` mode (so it fires even while the modal
@@ -1044,7 +1049,7 @@ final class CredentialVaultStore {
     /// contract intact: **only the two derivations and the new verifier's seal
     /// happen off-main** (all three are pure functions of their inputs and
     /// touch none of this object's state), and every state mutation, the
-    /// verifier check, `persist()`, the Keychain removal and `onChange?()`
+    /// verifier check, `persist()`, the Keychain removal and `observers.notify()`
     /// happen back on main in `finishPasswordChange`.
     ///
     /// The completion is always delivered on the main thread.
@@ -1204,7 +1209,7 @@ final class CredentialVaultStore {
             return .failure(error)
         }
         gitSync?.markDirty()
-        onChange?()
+        observers.notify()
         return .success(())
     }
 
@@ -1301,7 +1306,7 @@ final class CredentialVaultStore {
                 return .failure(error)
             }
             gitSync?.markDirty()
-            onChange?()
+            observers.notify()
             return .success(code)
         } catch {
             return .failure(error)
@@ -1326,7 +1331,7 @@ final class CredentialVaultStore {
             return .failure(error)
         }
         gitSync?.markDirty()
-        onChange?()
+        observers.notify()
         return .success(())
     }
 
@@ -1813,11 +1818,11 @@ final class CredentialVaultStore {
             try persist()
             PersistenceFailureReporter.reportSuccess()
             gitSync?.markDirty()
-            onChange?()
+            observers.notify()
             return .success(value)
         } catch {
             PersistenceFailureReporter.report(what: "the credential vault", path: fileURL.path, error: error)
-            onChange?()
+            observers.notify()
             return .failure(error)
         }
     }

@@ -130,7 +130,7 @@ enum ReviewTwoUXSelfTest {
         check(shell.debugHomeCanvas.cardLayout == .standard(for: .personal),
               "a Personal Home still shows \(shell.debugHomeCanvas.cardLayout?.shown.map(\.rawValue) ?? [])", &ok)
         // A hidden module's page still opens from a link.
-        shell.show(.kubernetes)
+        shell.workspace.navigator.show(.kubernetes)
         settle(shell)
         check(shell.debugCurrentDestination == .kubernetes, "a hidden module's page no longer opens from a link", &ok)
         AppSettings.shared.setProfile(.operator)
@@ -138,7 +138,7 @@ enum ReviewTwoUXSelfTest {
         check(sidebarModules(shell) == WorkspaceSidebarModel.listedModules(),
               "after choosing Operator the sidebar lists \(sidebarModules(shell).map(\.rawValue))", &ok)
         check(shell.debugHomeCanvas.cardLayout == .standard, "an Operator Home does not show the hub's own cards", &ok)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
     }
 
@@ -213,7 +213,7 @@ enum ReviewTwoUXSelfTest {
     private static func checkHomeSpeaksForTheVisibleModules(_ shell: MainSplitShellController,
                                                            _ window: NSWindow, _ ok: inout Bool) {
         AppSettings.shared.hiddenModules = []
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         let canvas = shell.debugHomeCanvas
         // The review's own first screen: no firstmate home, so the fleet's
@@ -254,7 +254,7 @@ enum ReviewTwoUXSelfTest {
     /// ⌘3 through a real key event, the way the menu bar resolves it.
     private static func checkAChordReachesAModule(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         AppSettings.shared.hiddenModules = []
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         let menu = NSMenu(title: "Go")
         WorkspaceGoMenu.populate(menu, target: shell)
@@ -279,12 +279,12 @@ enum ReviewTwoUXSelfTest {
         check(press(3) && shell.currentModule == .knowledge, "with Crew hidden \u{2318}3 opened \(shell.currentModule.title), want Knowledge", &ok)
         AppSettings.shared.hiddenModules = []
         settle(shell)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
     }
 
     private static func checkTheTabChords(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
-        shell.show(.notebook)
+        shell.workspace.navigator.show(.notebook)
         settle(shell)
         shell.selectNextModuleTab(nil)
         settle(shell)
@@ -295,14 +295,14 @@ enum ReviewTwoUXSelfTest {
         check(shell.debugCurrentTab?.name == "Reading list",
               "\u{2318}\u{21E7}[ from Notebook did not wrap to the last tab (\(shell.debugCurrentTab?.name ?? "nothing"))", &ok)
         // A page's own tab, through the page: Tasks' board to its list.
-        shell.show(.shift)
+        shell.workspace.navigator.show(.shift)
         settle(shell)
         let before = shell.debugCurrentTab?.name
         shell.selectNextModuleTab(nil)
         settle(shell)
         check(before == "Board" && shell.debugCurrentTab?.name == "List",
               "\u{2318}\u{21E7}] on Tasks went from \(before ?? "nothing") to \(shell.debugCurrentTab?.name ?? "nothing")", &ok)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
     }
 
@@ -310,7 +310,7 @@ enum ReviewTwoUXSelfTest {
 
     private static func checkTheSidebarShowsKeyboardFocus(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         defer { HelmFocusVisibility.overrideForTests = nil }
-        shell.show(.shift)
+        shell.workspace.navigator.show(.shift)
         settle(shell)
         let outline = shell.sidebar.outlineView
         guard let row = shell.sidebar.debugRowView(for: .module(.tasks)) else {
@@ -360,7 +360,7 @@ enum ReviewTwoUXSelfTest {
         window.makeFirstResponder(nil)
         settle(shell)
         check(!row.showsFocusRing, "the ring stayed after the keyboard left the sidebar", &ok)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
     }
 
@@ -441,12 +441,12 @@ enum ReviewTwoUXSelfTest {
                   "\(module.title)'s toolbar still carries Quick Connect's caption", &ok)
         }
         // Both icons do what they did, from any module.
-        shell.show(.notebook)
+        shell.workspace.navigator.show(.notebook)
         settle(shell)
         check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.quickConnectHosts), "Quick Connect's Hosts icon has no action on Notebook", &ok)
         settle(shell)
         check(shell.debugCurrentDestination == .hosts, "the Hosts icon on Notebook opened \(String(describing: shell.debugCurrentDestination))", &ok)
-        shell.show(.notebook)
+        shell.workspace.navigator.show(.notebook)
         settle(shell)
         check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.quickConnectConsole), "Quick Connect's Console icon has no action on Notebook", &ok)
         settle(shell)
@@ -454,7 +454,7 @@ enum ReviewTwoUXSelfTest {
         // A profile that hides the module an icon opens leaves that icon out.
         AppSettings.shared.setProfile(.personal)
         settle(shell)
-        shell.show(.notebook)
+        shell.workspace.navigator.show(.notebook)
         settle(shell)
         check(!shell.toolbar.debugItemIdentifiers.contains { ids.contains($0) || $0 == .space },
               "a Personal toolbar still offers Quick Connect to modules it hides: \(shell.toolbar.debugItemIdentifiers.map(\.rawValue))", &ok)
@@ -469,7 +469,7 @@ enum ReviewTwoUXSelfTest {
         // either they are on the toolbar, or in its overflow menu, which
         // lists an image item by its label and runs its action.
         resize(window, width: 1100, shell)
-        shell.show(.notebook)
+        shell.workspace.navigator.show(.notebook)
         settle(shell)
         for id in ids {
             let item = window.toolbar?.items.first { $0.itemIdentifier == id }
@@ -477,7 +477,7 @@ enum ReviewTwoUXSelfTest {
                   "at 1100 on Notebook \(id.rawValue) has no working overflow form", &ok)
         }
         resize(window, width: 1512, shell)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
     }
 
@@ -492,7 +492,7 @@ enum ReviewTwoUXSelfTest {
         let restore = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(restore) }
         resize(window, width: 1512, shell)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         check(window.titlebarAppearsTransparent, "the title bar is opaque, so macOS draws its own material under the toolbar", &ok)
         var worst: (theme: String, delta: CGFloat) = ("", 0)
@@ -570,7 +570,7 @@ enum ReviewTwoUXSelfTest {
     private static func checkOneNamePerLevel(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         resize(window, width: 1512, shell)
         for destination in [RailDestination.homeCanvas, .shift, .overview, .notebook, .health, .settings] {
-            shell.show(destination)
+            shell.workspace.navigator.show(destination)
             settle(shell)
             let module = ModuleTable.module(for: destination)
             check(shell.toolbar.debugCrumb.contains(module.title), "\(module.title)'s crumb does not name it: \(shell.toolbar.debugCrumb)", &ok)
@@ -578,14 +578,14 @@ enum ReviewTwoUXSelfTest {
                   "\(module.title)'s content header still draws its name under the crumb", &ok)
         }
         // Crew: no greeting, and its live line is the module line.
-        shell.show(.overview)
+        shell.workspace.navigator.show(.overview)
         settle(shell)
         let fleet = shell.workspace.overview
         check(!fleet.debugGreetingIsShown, "Crew still opens with its greeting", &ok)
         check(shell.debugHeader?.subtitle == fleet.drillHeaderSubtitle && !(fleet.drillHeaderSubtitle ?? "").isEmpty,
               "Crew's module line is \(shell.debugHeader?.subtitle ?? "nothing"), not its live line \(fleet.drillHeaderSubtitle ?? "nothing")", &ok)
         // Settings: no hero, and the category's description is the line.
-        shell.show(.settings)
+        shell.workspace.navigator.show(.settings)
         settle(shell)
         if let settings = shell.debugSlotController(.settings) as? SettingsController {
             check(!settings.debugAnyHeroIsShown, "Settings still draws a hero in the sidebar layout", &ok)
@@ -595,7 +595,7 @@ enum ReviewTwoUXSelfTest {
         } else {
             fail("Settings did not mount", &ok)
         }
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
     }
 
@@ -604,7 +604,7 @@ enum ReviewTwoUXSelfTest {
     private static func checkOnePrimaryActionRule(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         resize(window, width: 1512, shell)
         for destination in RailDestination.allCases {
-            shell.show(destination)
+            shell.workspace.navigator.show(destination)
             settle(shell)
             let actions = shell.toolbar.debugPageActions.compactMap { $0 as? HelmButton }
             let filled = actions.filter { $0.variant == .primary }
@@ -633,7 +633,7 @@ enum ReviewTwoUXSelfTest {
             .health: "Copy diagnostics", .updates: "Check for updates",
         ]
         for (destination, title) in wanted {
-            shell.show(destination)
+            shell.workspace.navigator.show(destination)
             settle(shell)
             let primary = shell.toolbar.debugPrimaryAction as? HelmButton
             // Notebook's draws as its icon below 1600pt (R2-BUG-07, U-02), so
@@ -644,18 +644,18 @@ enum ReviewTwoUXSelfTest {
                   "\(destination.rawValue)'s primary is \(primary?.title ?? "nothing"), want \(title)", &ok)
         }
         // Crew's two buttons left the page: Refresh is a page action.
-        shell.show(.overview)
+        shell.workspace.navigator.show(.overview)
         settle(shell)
         check(shell.toolbar.debugPageActions.contains { ($0 as? HelmButton)?.title == "Refresh" },
               "Crew's Refresh is not in the toolbar", &ok)
         // Nothing lives in a card header: Add Secret is not in the Secrets card.
-        shell.show(.vault)
+        shell.workspace.navigator.show(.vault)
         settle(shell)
         if let add = shell.toolbar.debugPrimaryAction {
             check(add.isDescendant(of: shell.debugContentPane) == false,
                   "Add Secret is still inside the page", &ok)
         }
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
     }
 
@@ -667,7 +667,7 @@ enum ReviewTwoUXSelfTest {
         func inPage(_ view: NSView) -> Bool { view.isDescendant(of: shell.debugContentPane) }
         // Console: its whole action cluster is the window toolbar's; its tab
         // strip stays in the page.
-        shell.show(.console)
+        shell.workspace.navigator.show(.console)
         settle(shell)
         let console = shell.workspace.console
         let consoleActions = shell.toolbar.debugPageActions
@@ -677,13 +677,13 @@ enum ReviewTwoUXSelfTest {
         check(console.pageToolViews.contains { $0 === console.findButton } && console.pageToolViews.contains { $0 === console.zoomStepper },
               "Console's Find or text-size stepper is missing from the toolbar", &ok)
         // Code: the same, with its snippet tabs left in the page.
-        shell.show(.codePreview)
+        shell.workspace.navigator.show(.codePreview)
         settle(shell)
         let codeActions = shell.toolbar.debugPageActions
         check(codeActions.count == 8 && !codeActions.contains(where: inPage),
               "Code's toolbar carries \(codeActions.count) of its 8 actions, or some are still in the page", &ok)
         // Notebook: no page row at all; its controls are up here.
-        shell.show(.notebook)
+        shell.workspace.navigator.show(.notebook)
         settle(shell)
         let notebook = shell.workspace.notebook
         check(!notebook.debugPageToolbarIsShown, "Notebook still draws its own toolbar row", &ok)
@@ -708,7 +708,7 @@ enum ReviewTwoUXSelfTest {
         }
         notebook.debugSetMode(.split)
         settle(shell)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
     }
 
@@ -755,7 +755,7 @@ enum ReviewTwoUXSelfTest {
             settle(shell)
         }
         // Tasks with nothing in it: one invitation, not three empty states.
-        shell.show(.shift)
+        shell.workspace.navigator.show(.shift)
         settle(shell)
         guard let shift = shell.debugSlotController(.shift) as? ShiftController else {
             fail("Tasks did not mount", &ok)
@@ -775,7 +775,7 @@ enum ReviewTwoUXSelfTest {
             fail("the suite's Tasks store is not empty, so the start-here check measures nothing", &ok)
         }
         // Schedules with nothing: one invitation, not three cards of zeros.
-        shell.show(.schedules)
+        shell.workspace.navigator.show(.schedules)
         settle(shell)
         if let schedules = shell.debugSlotController(.schedules) as? SchedulesController {
             check(!schedules.debugPageEmptyState.isHiddenOrHasHiddenAncestor && schedules.debugEmptyReplacesHidden.allSatisfy { $0 },
@@ -787,7 +787,7 @@ enum ReviewTwoUXSelfTest {
         // Knowledge's tabs: the same look - a watermark, not a tile or an
         // outline of their own - and Docs' state is not inside a card.
         for destination in [RailDestination.notebook, .runbooks, .postmortems, .docs, .readingList] {
-            shell.show(destination)
+            shell.workspace.navigator.show(destination)
             settle(shell)
             RunLoop.main.run(until: Date().addingTimeInterval(0.3))
             settle(shell)
@@ -807,7 +807,7 @@ enum ReviewTwoUXSelfTest {
             postmortems.debugRefreshEmptyCopy()
             check(postmortems.debugOpenLogsButtonIsShown, "an Operator Postmortems page lost Open Logs", &ok)
         }
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
     }
 
@@ -820,9 +820,9 @@ enum ReviewTwoUXSelfTest {
     /// once.
     private static func checkSettingsHousekeeping(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         resize(window, width: 1512, shell)
-        shell.show(.shift)
+        shell.workspace.navigator.show(.shift)
         settle(shell)
-        shell.show(.settings)
+        shell.workspace.navigator.show(.settings)
         settle(shell)
         guard let settings = shell.debugSlotController(.settings) as? SettingsController else {
             fail("Settings did not mount", &ok)
@@ -946,7 +946,7 @@ enum ReviewTwoUXSelfTest {
               "choosing 15 minutes and 4 hours stored \(String(describing: AppSettings.shared.appLockIdleSeconds)) and \(String(describing: AppSettings.shared.appLockSessionSeconds))", &ok)
         check(lock.idleThreshold == 15 * 60 && lock.sessionThreshold == 4 * 3600,
               "the running lock still uses \(lock.idleThreshold)s and \(lock.sessionThreshold)s", &ok)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
     }
 }

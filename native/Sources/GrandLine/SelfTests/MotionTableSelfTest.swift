@@ -74,7 +74,7 @@ enum MotionTableSelfTest {
             ("HelmButton.stateChangeDuration", HelmButton.stateChangeDuration),
             ("HelmAccentRow.actionRevealDuration", HelmAccentRow.actionRevealDuration),
             ("HelmModuleCard.hoverDuration", HelmModuleCard.hoverDuration),
-            ("AppShellController.destinationTransitionDuration", AppShellController.destinationTransitionDuration),
+            ("WorkspaceContent.destinationTransitionDuration", WorkspaceContent.destinationTransitionDuration),
             ("HelmScrollEdgeHairline.fadeDuration", HelmScrollEdgeHairline.fadeDuration),
             ("HelmRowEntrance.duration", HelmRowEntrance.duration),
             ("HelmInputSurface.focusTransitionDuration", HelmInputSurface.focusTransitionDuration),

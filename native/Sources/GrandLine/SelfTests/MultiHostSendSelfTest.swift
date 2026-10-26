@@ -281,9 +281,9 @@ enum MultiHostSendSelfTest {
             let definitions = texts.filter { $0.1.contains("enum CommandRiskConfirmation") }.map(\.0)
             check(definitions.count == 1,
                   "there must be exactly one CommandRiskConfirmation definition, found \(definitions)")
-            let mainText = texts.first { $0.0 == "main.swift" }?.1 ?? ""
+            let mainText = SelfTestSources.appDelegateSource() ?? ""
             check(mainText.contains("presentMultiHostSend"),
-                  "the multi-host send should be wired from main.swift, where the host store lives")
+                  "the multi-host send should be wired from the app delegate, where the host store lives")
             // The gate call has to be inside the multi-host wiring, not merely
             // somewhere else in the same (large) file.
             if let start = mainText.range(of: "private func presentMultiHostSend") {

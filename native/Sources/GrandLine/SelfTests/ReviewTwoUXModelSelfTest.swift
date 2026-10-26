@@ -20,6 +20,7 @@ enum ReviewTwoUXModelSelfTest {
         checkTheGoMenuIsTheSidebarsMap(&ok)
         checkTheGoMenuPerLayout(&ok)
         checkHomeDrawsNoSpaces(&ok)
+        checkTheFloatingBarIsFrozenAndHomeHasNoSpaces(&ok)
         checkTheProfiles(&ok)
         checkTheFirstLaunchProfile(&ok)
         checkTheHiddenModulesReachEveryReader(&ok)
@@ -123,6 +124,47 @@ enum ReviewTwoUXModelSelfTest {
               "the floating bar's Go menu lost its spaces (\(floatingSpaces.count) rows)", &ok)
         check(!floating.items.contains { $0.action == #selector(WorkspaceShellController.selectModuleFromMenu(_:)) },
               "the floating bar's Go menu lists the sidebar's modules", &ok)
+    }
+
+    /// R2-ARCH-01, option (a): the floating bar is the classic layout,
+    /// frozen. Settings says so where the layout is chosen, and the sidebar
+    /// layout's Home no longer reads the floating bar's spaces - its
+    /// Customize menu files each card under the sidebar group of the module
+    /// it opens. The floating bar itself is not touched: its own Go menu and
+    /// spaces are `checkTheGoMenuPerLayout`'s, and stay.
+    private static func checkTheFloatingBarIsFrozenAndHomeHasNoSpaces(_ ok: inout Bool) {
+        check(WorkspaceLayout.floatingBar.title.localizedCaseInsensitiveContains("classic"),
+              "R2-ARCH-01: Settings does not label the floating bar as the classic layout (\(WorkspaceLayout.floatingBar.title))", &ok)
+        check(WorkspaceLayout.maintenanceNote.contains("maintenance only")
+                && WorkspaceLayout.maintenanceNote.contains("not new features"),
+              "R2-ARCH-01: the layout note no longer says the floating bar is maintenance only", &ok)
+        check(source("SettingsController.swift")?.contains("description: WorkspaceLayout.maintenanceNote") == true,
+              "R2-ARCH-01: Settings' Window layout row does not show the maintenance note", &ok)
+        check(WorkspaceLayout.allCases.contains(.floatingBar) && WorkspaceLayout.floatingBar.shellType == AppShellController.self,
+              "R2-ARCH-01: the floating bar is no longer a layout the captain can choose", &ok)
+
+        // Home's Customize menu, with every card hidden so every card is offered.
+        let tray = HomeCustomizeTray()
+        tray.hiddenCards = DaylightModule.allCases
+        var header: String?
+        var filed: [DaylightModule: String] = [:]
+        for item in tray.addMenu().items where !item.isSeparatorItem {
+            if !item.isEnabled && item.action == nil { header = item.title; continue }
+            if let card = DaylightModule.allCases.first(where: { $0.title == item.title }) { filed[card] = header }
+        }
+        let headers = Set(filed.values)
+        let spaces = Set(DaylightSpace.allCases.filter { $0 != .overview }.map(\.title))
+        check(headers.isDisjoint(with: spaces),
+              "R2-ARCH-01: Home's Customize menu still files cards under the floating bar's spaces: \(headers.intersection(spaces).sorted())", &ok)
+        check(filed.count == DaylightModule.allCases.count,
+              "Home's Customize menu offered \(filed.count) of \(DaylightModule.allCases.count) hidden cards", &ok)
+        for (card, title) in filed {
+            let expected = ModuleTable.module(for: card.opens).group?.title ?? "Home"
+            check(title == expected, "Home's Customize menu files \(card.title) under \(title), not its sidebar group \(expected)", &ok)
+        }
+        check(source("HomeCardLayout.swift").map { !$0.contains("DaylightSpace") } == true,
+              "R2-ARCH-01: the sidebar layout's Home card set reads the floating bar's spaces again", &ok)
+        if ok { print("  OK   R2-ARCH-01: the floating bar is labelled classic, and Home's Customize uses the sidebar's groups") }
     }
 
     /// Source guard: the sidebar shell hands Home no tabs.

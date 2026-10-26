@@ -1242,3 +1242,101 @@ The values were measured by laying every page and toolbar tab out in a narrower 
 Tasks' Weekly review is the one tab wider than its page (920pt), so it alone steps the sidebar aside, and its width tie is active only while it shows (gotcha (15)).
 The inspector takes its room from the sidebar before the window, and in the compact toolbar beside a showing sidebar the crumb yields first, with an overflow item that shows the place in the sidebar.
 At 1100 the sidebar now stays beside every page except Log Analyzer, Commands and Tasks' Weekly review, and at 1280 beside every page. `MainSplitShellSelfTest` asserts both, in both palettes.
+
+## The second full review's architecture findings (`fm/grandline-review2-architecture-1792988374`)
+
+### The floating bar is frozen (R2-ARCH-01)
+
+The review called this a decision rather than a fix: keep building every piece of chrome twice, freeze the floating bar, or set a date to retire it.
+The captain keeps both layouts, so this took the review's option (a).
+The floating bar is the classic layout, kept and maintenance only.
+Settings' Window layout row names it "Floating bar (classic)" and says in plain words that new features and page redesigns go to the sidebar (`WorkspaceLayout.maintenanceNote`).
+Nothing about the floating bar itself changed, and its regression checks stay.
+`docs/modular-shell/feature-inventory.md` records the freeze; AGENTS.md and CONTRIBUTING.md said nothing about building chrome twice, so there was no wrong statement to correct there.
+
+R2-UX-02 had already taken the floating bar's spaces out of the sidebar layout's Go menu and Home's toolbar.
+One reader was left: Home's Customize menu filed the cards it offers under the four spaces (Command, Operations, Stores, Engineering).
+It now files each card under the sidebar group of the module the card opens, which is where the captain finds that card's page.
+`ReviewTwoUXModelSelfTest.checkTheFloatingBarIsFrozenAndHomeHasNoSpaces` guards the label, the note and the menu.
+
+Not done: a retirement date (the review's option (b)), which is the captain's call and is asked separately.
+
+### The floating bar's presentation in its own file (R2-ARCH-04)
+
+Under the freeze, the members only the floating bar's presentation uses moved out of each page's main file into an extension, `<Page>+Classic.swift`.
+The main file then carries what the sidebar layout draws.
+It is a move, not a rewrite, and it was checked as one: every moved block occurs line for line in the original file, and the original with those blocks cut out is the main file now, ignoring only access modifiers (`verify_move.py` in the task's data folder, run on all seven).
+Swift's `private` is file-scoped, so the members the two files share lost `private` (103 declarations across seven pages).
+One trap made that more than a compile check: with a page's `private func check(_:)` out of sight, the moved `check(row, forceRefresh: true)` resolved to the suites' global `check(_:_:_:)` instead, and GitHub Sync's `sync(row)` to another `sync()`.
+Both were compile errors here, but a quieter overload would not have been, so every name that was private and is used by moved code was checked to be visible to it.
+
+Seven pages moved code: Hosts (the page column, the side panels, the list rows), Poneglyph (the grouped list), Automic Vault (the keyed rows inside its two cards), Notebook (its own toolbar row), Tasks (its own column), Updates (the stats strip and the category cards with their row buttons) and GitHub Sync (the repo rows).
+Five did not, and could not without a rewrite: Fleet, Bootstrap and Automation build their classic header or run card in the same method that wires the button the sidebar layout's toolbar shows, and Log Analyzer and Health draw the sidebar layout by re-parenting the same views.
+`ClassicPresentationSelfTest` (pure logic) pins the structure, and `FeatureInventorySelfTest` reads a `+Classic.swift` file as part of its page, so no inventory id changed.
+
+### The module table is the source (R2-ARCH-03)
+
+Step 0 had restated six tables in `ModuleTable.rows` and checked the restatement against them, so adding a destination still meant editing every old table as well.
+`RailDestination.title`, `.symbol`, `.domainHue` and `.drillSubtitle`, and `DaylightModule.space(forDestination:)`, now read the destination's row, and their switches are gone.
+`WorkspaceModule`'s six switches (title, group, children, symbol, tab host, header) became a second table, `ModuleTable.modules`.
+The per-case comments that explained a glyph, a hue or a line moved with their values, beside each row.
+What the table does not own stays where it was and is still checked against it: the body slot, the eager-mount flag, the Home cards that open a page, ⌘N, the floating bar's grouping and its cards' spaces.
+
+The agreement test could not keep comparing the table with values now derived from it.
+So `ModuleTableSelfTest` asserts three things: the rows agree with what stays elsewhere and every symbol resolves, a typed-out fixture pins every destination's and every module's name, glyph, hue, line, space, module and tab, and the workspace has its planned shape.
+The fixture was captured from the old switches and passed against them before any switch was deleted, which is the proof that nothing was renamed or moved.
+Renaming Console or changing Hosts' glyph in the table fails it by name.
+
+### One way to watch a store (R2-ARCH-08)
+
+Six types exposed a single `var onChange: (() -> Void)?`: `CredentialVaultStore`, `SnippetStore`, `SSHKeyStore`, `ScheduleStore`, `ClipboardHistoryStore` and `TerminalBlockTracker`.
+The last assignment won silently, so every new reader needed a channel of its own: the vault grew `observeLock` for the Secrets badge, and `SnippetStore` had already grown a second, additive list for the snippet expander.
+All six now conform to `StoreObservable` and keep one `StoreObservers` list: any number of readers, each with a token to unobserve, delivered on the main thread.
+A change reported on main is delivered at once, as `onChange` was; one reported from a background queue is hopped to main first.
+The protocol is not named `Observable`, which is the Observation framework's type and would be ambiguous in any file importing SwiftUI.
+No `onChange` shim was kept, because nothing needed one: the five readers (Poneglyph, Hosts' keys and snippets, Schedules, the clipboard picker) observe instead, and the picker drops its token when it goes.
+The vault's `observeLock` stays, as a different signal rather than a workaround: it fires only on a lock or an unlock and carries a Bool.
+
+One trap: the vault's threading suites asserted the thread `onChange` ran on as a stand-in for the mutation's thread.
+With delivery always on main, that check would pass whatever thread the mutation ran on.
+`StoreObservers.notifyThreadForTests` (debug builds only) reports the thread a change was reported from, before the hop, and those suites read it instead.
+`StoreObservableSelfTest` checks that two observers both hear a real change on each of the six, that unobserving one leaves the other, and that an off-main report is delivered on main.
+Going back to last-assignment-wins fails it on every store.
+
+### Test hooks out of the release binary (R2-ARCH-09)
+
+`nm` over the release binary, demangled, found thirteen test-only symbols of this app's own: four `debug*` accessors and nine `*ForTests` seams on the shell, Home, the snippet expander and the herdr theme sync.
+They sat outside `#if FM_SELFTESTS`, and most were kept out of the binary only by dead-stripping, which a production caller would undo.
+Each is guarded now, with the two herdr seams beside them, and production reads the seams through accessors that answer `nil` in a release build.
+`Scripts/check-release-symbols.sh` reads the release binary's symbol table and fails on any `debug<Upper>` or `*ForTests` symbol in the `GrandLine` module; CI's release job runs it.
+`E2ETestingPolicySelfTest` fails if one of the fifteen moves back outside the guard or the workflow stops running the script.
+
+### The system's parts in the toolbar and the inspector (R2-ARCH-06)
+
+On macOS 14 and later the inspector is `NSSplitViewItem(inspectorWithViewController:)`, which AppKit lays out full height and, on macOS 26, wraps in glass; the controller paints no column of its own there.
+Before macOS 14 the hand-drawn pane stays, and a suite forces it so both paths are covered on a machine that has the new one.
+An off-screen render draws the system's glass as a placeholder with none of the inspector's views in it (the same in a bare AppKit window), so the tour lab composites the inspector's own views over it, as it already did for the sidebar.
+The toolbar is customisable from a right click and Window > Customize Toolbar….
+Only the items that are always there are in the palette; the page's own items stay where `reconcileDynamicItems()` puts them.
+The result is saved to `AppSettings` and put back the first time the toolbar is in a window, with `autosavesConfiguration` still off.
+Two traps: AppKit keeps every live toolbar with the same identifier in step, so a suite's "next launch" toolbar needs an identifier of its own; and a palette item built around a live view would take that view out of the toolbar, so the palette gets copies.
+The bell keeps its hand-drawn badge: `NSToolbarItem.badge` is macOS 26 only, and CI's `macos-15` image builds with Swift 6.1.2 for `macosx15.0`, where it does not exist.
+
+### The shell forwards nothing (R2-ARCH-05)
+
+`WorkspaceShellController` carried about a hundred one-line forwards to the workspace's parts.
+The main menu targets `workspace.navigator` for its navigation verbs now, and the app delegate, the palette and the suites reach the navigator, the host sessions, the lock and the workspace directly.
+The call sites were rewritten from the compiler's own errors, about 500 of them.
+`buildMenu` takes optional `MenuTargets`, which lets `NavigationCoherenceSelfTest` build the menu headless with stand-in targets and check that every item targets an object answering its action, in both layouts.
+The same suite fails if the shell gains a member that only forwards a same-named member of the workspace.
+
+### main.swift is the entry point (R2-ARCH-02)
+
+`main.swift` was 4,900 lines: the composition root, the menu bar, session restore, the host editor and the self-test dispatch.
+It is about 100 now, and holds only what runs before the delegate exists, in the order it always ran.
+The rest moved verbatim, in four commits that each build and pass: `SelfTests/SelfTestDispatch.swift` (the 274 flags and the redirect block), `MainMenuBuilder.swift`, `SessionRestoreCoordinator.swift`, `HostEditorPresenter.swift` and `AppComposition.swift` (the `AppDelegate` class).
+The four delegate files are extensions of `AppDelegate`, not new types: each reads the delegate's own state and targets its own verbs, so a new type would have rewritten every reference, which is a rewrite rather than a split.
+`run-all-tests.sh` discovers suites from the dispatch file, and its `--list`, `--ci` and `--session-only` output is identical before and after.
+About thirty suites read `main.swift` as source; they read `SelfTestSources.selfTestDispatchSource()` or `SelfTestSources.appDelegateSource()` (the delegate's files in order, `main.swift` first) now, and the feature inventory reads the delegate's files as `main`, so no inventory id changed.
+`LaunchPathSelfTest.mainSwiftIsOnlyTheEntryPoint` caps `main.swift` at 150 lines, rejects a top-level type or function in it, and pins the launch order.
+

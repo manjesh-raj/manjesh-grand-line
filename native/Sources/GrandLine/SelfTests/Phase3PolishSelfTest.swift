@@ -192,19 +192,25 @@ enum Phase3PolishSelfTest {
 
         // The dispatch chain has to be guarded too - the flags themselves are
         // what pull every suite's symbols in.
+        // R2-ARCH-02: the chain is `SelfTests/SelfTestDispatch.swift`, called
+        // from `main.swift` - both halves have to be compiled out.
         guard let main = SelfTestSources.appSourceDirectory()?.appendingPathComponent("main.swift"),
-              let mainText = try? String(contentsOf: main, encoding: .utf8) else {
+              let entryText = try? String(contentsOf: main, encoding: .utf8),
+              let mainText = SelfTestSources.selfTestDispatchSource() else {
             print("  SKIP - app sources not next to this binary")
             return
         }
         if !mainText.contains("#if FM_SELFTESTS") {
-            fail("main.swift's FM_RUN_* dispatch chain is not compiled out of release", &ok)
+            fail("SelfTestDispatch.swift's FM_RUN_* dispatch chain is not compiled out of release", &ok)
         }
-        // The flags must still be greppable text in main.swift, because that
-        // is where `Scripts/run-all-tests.sh` discovers the suite list.
+        if !entryText.contains("#if FM_SELFTESTS\nSelfTestDispatch.run()\n#endif") {
+            fail("main.swift calls the self-test dispatch outside #if FM_SELFTESTS", &ok)
+        }
+        // The flags must still be greppable text in the dispatch file, because
+        // that is where `Scripts/run-all-tests.sh` discovers the suite list.
         let flagCount = mainText.components(separatedBy: "FM_RUN_").count - 1
         if flagCount < suites.count - 5 {
-            fail("main.swift mentions \(flagCount) FM_RUN_ flags for \(suites.count) suite files - a suite may be undispatched", &ok)
+            fail("SelfTestDispatch.swift mentions \(flagCount) FM_RUN_ flags for \(suites.count) suite files - a suite may be undispatched", &ok)
         }
         print("  OK - \(suites.count) files guarded, dispatch guarded, \(flagCount) flags still discoverable")
     }
@@ -421,14 +427,11 @@ enum Phase3PolishSelfTest {
                  + " - this is exactly the leak AppDefaults exists to stop", &ok)
         }
 
-        // And `main.swift` has to actually arm both halves. A redirect that
-        // works and is never armed is indistinguishable from the bug.
-        let mainSwift = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("main.swift")
-        guard let source = try? String(contentsOf: mainSwift, encoding: .utf8) else {
-            fail("could not read main.swift - this half would silently pass", &ok)
+        // And the redirect block (`SelfTestDispatch.swift` since R2-ARCH-02)
+        // has to actually arm both halves. A redirect that works and is never
+        // armed is indistinguishable from the bug.
+        guard let source = SelfTestSources.selfTestDispatchSource() else {
+            fail("could not read SelfTestDispatch.swift - this half would silently pass", &ok)
             return
         }
         let lines = source
@@ -437,9 +440,9 @@ enum Phase3PolishSelfTest {
             .filter { !$0.hasPrefix("//") }
         for call in ["SelfTestDefaultsGuard.arm()", "AppDefaultsSweep.arm()"] {
             if lines.contains(where: { $0.contains(call) }) {
-                print("  OK   main.swift calls \(call)")
+                print("  OK   SelfTestDispatch.swift calls \(call)")
             } else {
-                fail("main.swift never calls \(call) - the redirect above can never run", &ok)
+                fail("SelfTestDispatch.swift never calls \(call) - the redirect above can never run", &ok)
             }
         }
         // The suite name has to be set before anything resolves the store,
@@ -449,7 +452,7 @@ enum Phase3PolishSelfTest {
             if setIndex < armIndex {
                 print("  OK   the suite name is set before the sweep is armed")
             } else {
-                fail("main.swift arms AppDefaultsSweep before setting AppDefaults.suiteVariable", &ok)
+                fail("SelfTestDispatch.swift arms AppDefaultsSweep before setting AppDefaults.suiteVariable", &ok)
             }
         }
     }

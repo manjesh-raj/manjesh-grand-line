@@ -147,7 +147,7 @@ enum SidebarPolishSelfTest {
                                         _ ok: inout Bool) {
         print("\n-- the sidebar and the inspector move on the motion table --")
         resize(window, width: 1512, shell)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         let toggle = shell.toolbar.debugSidebarButton
 
@@ -204,7 +204,7 @@ enum SidebarPolishSelfTest {
                                                _ ok: inout Bool) {
         print("\n-- the inspector slides in --")
         resize(window, width: 1512, shell)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         if !shell.debugInspectorIsCollapsed { shell.setInspectorShown(false) }
         settle(shell)
@@ -231,7 +231,7 @@ enum SidebarPolishSelfTest {
         // Open, and another page's details arrive: the panel comes in again.
         // A second selection on the same page swaps in place.
         ReviewTourLab.seedDemoHosts(shell.workspace)
-        shell.show(.hosts)
+        shell.workspace.navigator.show(.hosts)
         settle(shell)
         panel.removeAllAnimations()
         _ = ReviewTourLab.selectRow(titled: "edge-proxy-01", shell: shell)
@@ -256,7 +256,7 @@ enum SidebarPolishSelfTest {
         check(CATransform3DIsIdentity(panel.transform) && panel.opacity == 1, "Reduce Motion: the panel is not in place", &ok)
         shell.setInspectorShown(false)
         shell.debugResetInspectorPreference()
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         if ok { print("  OK   the pane eases, the panel slides 16pt in, again for another page, and nothing under Reduce Motion") }
     }
@@ -266,7 +266,7 @@ enum SidebarPolishSelfTest {
     private static func checkTabMotion(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
                                        _ ok: inout Bool) {
         print("\n-- a tab switch moves like a navigation --")
-        shell.show(.shift)
+        shell.workspace.navigator.show(.shift)
         settle(shell)
         clickTab("Board", shell)
         guard let page = shell.destinationViewIfMountedForTests(RailDestination.shift.slot) else {
@@ -277,7 +277,7 @@ enum SidebarPolishSelfTest {
         HelmMotion.reducedOverrideForTests = false
         // A navigation to the page already showing records a skipped
         // entrance: the sentinel a tab switch must replace.
-        shell.show(.shift)
+        shell.workspace.navigator.show(.shift)
         check(content.lastTransitionForTests?.skipped == true, "the sentinel navigation was not skipped", &ok)
         page.layer?.removeAllAnimations()
         clickTab("List", shell)
@@ -291,19 +291,19 @@ enum SidebarPolishSelfTest {
         check(t?.skipped == false && t?.direction == .back && t?.entryOffset == -WorkspaceContent.destinationTransitionOffset,
               "an earlier tab did not come in from the leading side: \(String(describing: t))", &ok)
         // The tab already showing is not a switch.
-        shell.show(.shift)
+        shell.workspace.navigator.show(.shift)
         clickTab("Board", shell)
         check(content.lastTransitionForTests?.skipped == true, "clicking the showing tab moved the page", &ok)
 
         // Home's spaces took the same entrance until R2-UX-02 retired them
         // in this layout: Home draws no tabs to switch between now.
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         check(shell.toolbar.debugTabNames.isEmpty, "Home shows tabs \(shell.toolbar.debugTabNames) (R2-UX-02)", &ok)
 
         // Reduce Motion: the switch happens, the page does not move.
         HelmMotion.reducedOverrideForTests = true
-        shell.show(.shift)
+        shell.workspace.navigator.show(.shift)
         settle(shell)
         page.layer?.removeAllAnimations()
         clickTab("List", shell)
@@ -312,7 +312,7 @@ enum SidebarPolishSelfTest {
         check(page.layer?.animation(forKey: "transform") == nil, "Reduce Motion: Tasks' page still moved", &ok)
         check(page.alphaValue == 1, "Reduce Motion: the page is not fully shown", &ok)
         clickTab("Board", shell)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         if ok { print("  OK   a later tab from the trailing side, an earlier one from the leading side, Home's spaces, none under Reduce Motion") }
     }
@@ -322,7 +322,7 @@ enum SidebarPolishSelfTest {
     private static func checkSidebarRowMotion(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
                                               _ ok: inout Bool) {
         print("\n-- a sidebar row eases its hover and its selection --")
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         let theme = ThemeManager.shared.theme
         guard let row = shell.sidebar.debugRowView(for: .module(.tasks)),
@@ -355,13 +355,13 @@ enum SidebarPolishSelfTest {
         // A navigation: the lit wash eases across.
         row.debugFill.layer?.removeAllAnimations()
         home.debugFill.layer?.removeAllAnimations()
-        shell.show(.shift)
+        shell.workspace.navigator.show(.shift)
         check(row.debugFill.debugIsEasing && home.debugFill.debugIsEasing,
               "a navigation did not ease the lit wash from Home to Tasks", &ok)
         check(same(row.debugFill.debugFill, WorkspaceSidebarRowView.wash(theme)), "the lit row is not the accent wash", &ok)
 
         // A rebuild (a session coming or going) paints at once.
-        shell.sidebar.reload(sessions: shell.sessions)
+        shell.sidebar.reload(sessions: shell.workspace.hosts.sessions)
         settle(shell)
         if let rebuilt = shell.sidebar.debugRowView(for: .module(.tasks)) {
             check(!rebuilt.debugFill.debugIsEasing, "a rebuild faded the lit row in rather than painting it", &ok)
@@ -378,7 +378,7 @@ enum SidebarPolishSelfTest {
         check(!still.debugFill.debugIsEasing && same(still.debugFill.debugFill, WorkspaceSidebarRowView.hover(theme)),
               "Reduce Motion: the hover fill eased, or did not land", &ok)
         still.mouseExited(with: event(.mouseExited))
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         if ok { print("  OK   hover in and out, the lit wash across a navigation, a rebuild at once, Reduce Motion at once") }
     }
@@ -540,11 +540,11 @@ enum SidebarPolishSelfTest {
                                                _ ok: inout Bool) {
         print("\n-- Console's count and Claude usage --")
         let live = UUID()
-        shell.sessions.register(hostID: live, label: "DEV Bastion", accentHex: nil, state: .connected)
+        shell.workspace.hosts.sessions.register(hostID: live, label: "DEV Bastion", accentHex: nil, state: .connected)
         settle(shell)
         check(badge(.console, shell) == WorkspaceBadge(mark: .count("1"), tone: .neutral, description: "1 connected"),
               "one live session drew \(String(describing: badge(.console, shell)))", &ok)
-        shell.sessions.unregister(hostID: live)
+        shell.workspace.hosts.sessions.unregister(hostID: live)
         settle(shell)
         check(badge(.console, shell) == nil, "no live sessions left a count", &ok)
 
@@ -555,7 +555,7 @@ enum SidebarPolishSelfTest {
                                     session: QuotaWindow(kind: .session, percentUsed: 62, resetsAt: nil, pace: .onPace),
                                     weekly: nil, fable: nil, extraUsage: nil, latency: 1, log: "")
         shell.workspace.overview.onQuotaChanged?(.success(reading))
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         let home = shell.workspace.homeCanvas
         check(home.cardForTests(.claudeStatus) != nil, "the sidebar layout's Home draws no Claude card", &ok)

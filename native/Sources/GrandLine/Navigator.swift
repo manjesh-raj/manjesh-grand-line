@@ -694,6 +694,14 @@ final class Navigator: NSObject {
     /// The Shift menu's "Search Shift…" (⌘⇧P) and the search palette's own
     /// entry point - selects the Shift destination so a result's editor
     /// sheet (below) has somewhere to present over.
+    // MARK: The session switcher's menu verbs
+
+    /// ⌘⌃1-9 in the Hosts menu: the session at that position. The menu
+    /// carries the 1-based index in its tag.
+    @objc func selectSessionByShortcut(_ sender: NSMenuItem) { hosts.selectSession(atShortcutIndex: sender.tag) }
+    @objc func nextSession() { hosts.nextSession() }
+    @objc func previousSession() { hosts.previousSession() }
+
     func showShiftDestination() { show(.shift) }
 
     /// The ⌘⇧P search palette's "Weekly Review" navigation, and the Shift

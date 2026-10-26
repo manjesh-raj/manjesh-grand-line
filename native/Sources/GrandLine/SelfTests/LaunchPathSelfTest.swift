@@ -34,6 +34,7 @@ enum LaunchPathSelfTest {
             ("theBackgroundFirstLoadLandsOffMain", test_theBackgroundFirstLoadLandsOffMain),
             ("aLockedWidgetPublishDoesNotReadTheBoard", test_aLockedWidgetPublishDoesNotReadTheBoard),
             ("sessionRestoreQueuesBackgroundHostPages", test_sessionRestoreQueuesBackgroundHostPages),
+            ("mainSwiftIsOnlyTheEntryPoint", test_mainSwiftIsOnlyTheEntryPoint),
         ]
         var failed = 0
         for (name, body) in cases {
@@ -334,17 +335,57 @@ enum LaunchPathSelfTest {
     /// turn; this proves the launch path uses it. `applicationDidFinishLaunching`
     /// cannot run in a suite, so it is a source guard on the function body.
     private static func test_sessionRestoreQueuesBackgroundHostPages() -> String? {
-        guard let main = source("main.swift"),
-              let start = main.range(of: "private func restoreSessionIfNeeded(") else {
-            return "could not find restoreSessionIfNeeded in main.swift - the guard would silently pass"
+        // R2-ARCH-02: `SessionRestoreCoordinator.swift` holds it now, part of
+        // the app delegate's source.
+        guard let main = SelfTestSources.appDelegateSource(),
+              let start = main.range(of: "func restoreSessionIfNeeded(") else {
+            return "could not find restoreSessionIfNeeded in the app delegate - the guard would silently pass"
         }
         let rest = main[start.upperBound...]
         let body = String(rest.prefix(upTo: rest.range(of: "\n    }\n")?.lowerBound ?? rest.endIndex))
-        guard body.contains("appShell.queueRestoredHostConsoles(") else {
+        guard body.contains("appShell.workspace.hosts.queueRestoredHostConsoles(") else {
             return "restoreSessionIfNeeded no longer queues the background host pages"
         }
-        guard !body.contains("appShell.connectHost(") else {
+        guard !body.contains("appShell.workspace.hosts.connectHost(") else {
             return "restoreSessionIfNeeded connects background host pages directly again"
+        }
+        return nil
+    }
+
+    // MARK: R2-ARCH-02 - main.swift is the entry point and nothing else
+
+    /// The most lines `main.swift` may hold. It was 4,900 before R2-ARCH-02
+    /// split it, and is about 100 now - the launch sequence below and the
+    /// comments that explain its order. 150 leaves room to explain one more
+    /// launch step, and none to grow a second concern back into it: a menu
+    /// item, a suite or a store belongs in the file that owns its kind.
+    static let mainSwiftLineCap = 150
+
+    /// `main.swift` stays small, holds no type, and runs the launch in the
+    /// order it always has: the self-test dispatch, the legacy-name
+    /// migration, the first-launch settings, the instance guard, the
+    /// diagnostics stamp, then the delegate.
+    private static func test_mainSwiftIsOnlyTheEntryPoint() -> String? {
+        guard let main = source("main.swift") else { return "could not read main.swift - the guard would silently pass" }
+        let lines = main.components(separatedBy: "\n").count
+        guard lines <= mainSwiftLineCap else {
+            return "main.swift is \(lines) lines, over its cap of \(mainSwiftLineCap) - move the new concern to its own file "
+                + "(AppComposition, MainMenuBuilder, SessionRestoreCoordinator, HostEditorPresenter, SelfTestDispatch)"
+        }
+        let code = main.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        for declaration in ["class ", "struct ", "enum ", "extension ", "func "] where code.contains("\n" + declaration) {
+            return "main.swift declares a top-level `\(declaration.trimmingCharacters(in: .whitespaces))` - it belongs in a file of its own"
+        }
+        let order = ["SelfTestDispatch.run()", "LegacyNameMigration.runAtLaunch()", "settleFirstLaunch(",
+                     "switch SingleInstanceGuard.acquire()", "DiagnosticsLog.shared.noteLaunch(",
+                     "let delegate = AppDelegate()", "app.run()"]
+        var cursor = code.startIndex
+        for step in order {
+            guard let found = code.range(of: step, range: cursor..<code.endIndex) else {
+                return "main.swift no longer runs `\(step)` after the step before it - the launch order changed"
+            }
+            cursor = found.upperBound
         }
         return nil
     }
@@ -357,7 +398,7 @@ enum LaunchPathSelfTest {
     private static func test_theLaunchPathCarriesItsSignposts() -> String? {
         // Stage 3 of the modular-shell migration: the shell's `init` is the
         // base class's, and each window layout has a `loadView` of its own.
-        guard let shell = source("WorkspaceShellController.swift"), let main = source("main.swift"),
+        guard let shell = source("WorkspaceShellController.swift"), let main = SelfTestSources.appDelegateSource(),
               let classic = source("AppShellController.swift"), let split = source("MainSplitShellController.swift") else {
             return "could not read the app's sources - the guard would silently pass"
         }
@@ -370,7 +411,7 @@ enum LaunchPathSelfTest {
             }
         }
         guard main.contains("LaunchSignposts.begin(\"restoreSessionIfNeeded\")") else {
-            return "main.swift has no restoreSessionIfNeeded interval"
+            return "the app delegate has no restoreSessionIfNeeded interval"
         }
         for store in ["HostStore", "SSHKeyStore", "SnippetStore", "ShiftStore", "DictationStore",
                       "CommandLibraryStore", "ScheduleStore", "DocsRunbookStore"] {

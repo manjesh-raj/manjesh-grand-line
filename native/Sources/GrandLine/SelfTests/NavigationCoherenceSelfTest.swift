@@ -57,6 +57,109 @@ enum NavigationCoherenceSelfTest {
         ok = checkNoControlOwnsACharacterChord() && ok
         ok = checkTheFeatureInventoryStaysWired() && ok
         ok = checkCopyNamesPlacesThroughPlaceName() && ok
+        ok = checkTheMenuTargetsTheNavigator() && ok
+        ok = checkTheShellHasNoForwards() && ok
+        return ok
+    }
+
+    // MARK: R2-ARCH-05 - the menu reaches the navigator, and the shell forwards nothing
+
+    /// Every main-menu item with a target must target an object that answers
+    /// its action, in both layouts. The navigation verbs target the
+    /// workspace's navigator and the layout's own verbs the shell - so a
+    /// navigation item left on the shell after its forward was deleted would
+    /// be a dead menu item, which is what this would catch. Built headless
+    /// with stand-in targets (`MenuTargets`): a target is told apart by which
+    /// stand-in it is, and its action is checked against the class it stands
+    /// in for.
+    private static func checkTheMenuTargetsTheNavigator() -> Bool {
+        var ok = true
+        let stored = AppDefaults.store.string(forKey: "fm.workspaceLayout")
+        defer {
+            if let stored { AppDefaults.store.set(stored, forKey: "fm.workspaceLayout") } else {
+                AppDefaults.store.removeObject(forKey: "fm.workspaceLayout")
+            }
+        }
+        for layout in WorkspaceLayout.allCases {
+            AppSettings.shared.workspaceLayout = layout
+            let shellMark = NSObject()
+            let navigatorMark = NSObject()
+            let menu = AppDelegate().buildMenu(installing: false,
+                                               targets: MenuTargets(shell: shellMark, navigator: navigatorMark))
+            var toNavigator = 0
+            func walk(_ menu: NSMenu) {
+                for item in menu.items {
+                    if let sub = item.submenu { walk(sub) }
+                    guard let action = item.action else { continue }
+                    let navigatorAnswers = Navigator.instancesRespond(to: action)
+                    let shellAnswers = layout.shellType.instancesRespond(to: action)
+                    if item.target === navigatorMark {
+                        toNavigator += 1
+                        check(navigatorAnswers, "\(layout): \(item.title) targets the navigator, which has no \(action)", &ok)
+                    } else if item.target === shellMark {
+                        check(shellAnswers, "\(layout): \(item.title) targets the shell, which has no \(action) - a dead menu item", &ok)
+                    } else if navigatorAnswers && !shellAnswers {
+                        fail("\(layout): \(item.title) runs the navigator's \(action) but does not target it", &ok)
+                    }
+                }
+            }
+            walk(menu)
+            // The fixture's own power: the menu really routes its navigation
+            // verbs to the navigator, so a menu built with no targets at all
+            // cannot pass.
+            check(toNavigator >= 25, "\(layout): only \(toNavigator) menu items target the navigator", &ok)
+        }
+        if ok { print("  OK   R2-ARCH-05: every menu item targets an object that answers it, the navigator for navigation") }
+        return ok
+    }
+
+    /// The shell used to carry about a hundred one-line forwards to the
+    /// workspace's parts (`func openRunbook(id:) { workspace.navigator
+    /// .openRunbook(id: id) }`). A member of the shell whose body only calls
+    /// the same-named member on `workspace` or one of its parts is that
+    /// shape again. A verb a layout overrides is the shell's own, whatever
+    /// its base body is, so it is exempt. Debug-only test hooks are not
+    /// production surface and are skipped.
+    private static func checkTheShellHasNoForwards() -> Bool {
+        var ok = true
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let shell = try? String(contentsOf: dir.appendingPathComponent("WorkspaceShellController.swift"), encoding: .utf8),
+              let split = try? String(contentsOf: dir.appendingPathComponent("MainSplitShellController.swift"), encoding: .utf8),
+              let classic = try? String(contentsOf: dir.appendingPathComponent("AppShellController.swift"), encoding: .utf8)
+        else {
+            fail("R2-ARCH-05: could not read the shells' sources - this check would silently pass", &ok)
+            return ok
+        }
+        let guarded = E2ETestingPolicySelfTest.selfTestGuardedLines(shell)
+        let production = zip(shell.components(separatedBy: "\n"), guarded).filter { !$0.1 }.map(\.0)
+            .joined(separator: "\n")
+        let declaration = #"(?m)^\s*(?:@objc\s+)?(?:@discardableResult\s+)?(?:static\s+)?(?:func|var)\s+([A-Za-z]+)"#
+        guard let regex = try? NSRegularExpression(pattern: declaration) else { return false }
+        let range = NSRange(production.startIndex..., in: production)
+        var forwards: [String] = []
+        var declared = 0
+        for match in regex.matches(in: production, range: range) {
+            guard let nameRange = Range(match.range(at: 1), in: production),
+                  let whole = Range(match.range, in: production) else { continue }
+            declared += 1
+            let name = String(production[nameRange])
+            guard let open = production[whole.upperBound...].firstIndex(of: "{") else { continue }
+            let body = FeatureInventorySelfTest.braceBody(production, from: production.index(after: open))
+            let statements = body.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty && !$0.hasPrefix("//") }
+            let forwardsByName = statements.count <= 2 && statements.allSatisfy { line in
+                line.range(of: #"^(get \{ |set \{ |return )?workspace(\.(navigator|hosts|lock|content))?\.\#(name)\b"#,
+                           options: .regularExpression) != nil
+            }
+            let overridden = split.contains("override func \(name)") || classic.contains("override func \(name)")
+                || split.contains("override var \(name)") || classic.contains("override var \(name)")
+            if forwardsByName && !overridden { forwards.append(name) }
+        }
+        // The parse's own power: the shell still declares members for it to
+        // read, so a file that moved or a broken pattern cannot pass empty.
+        check(declared >= 20, "R2-ARCH-05: read only \(declared) declarations from the shell - the guard has lost its bearings", &ok)
+        check(forwards.isEmpty, "R2-ARCH-05: the shell forwards to the workspace again: \(forwards.joined(separator: ", "))", &ok)
+        if ok { print("  OK   R2-ARCH-05: the shell carries no one-line forwards to the workspace (\(declared) members read)") }
         return ok
     }
 
@@ -131,12 +234,12 @@ enum NavigationCoherenceSelfTest {
         var offenders: [String] = []
         var scanned = 0
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-        // The menu bar (`main.swift`) and the ⌘K verbs name a feature under
+        // The menu bar (`MainMenuBuilder.swift` since R2-ARCH-02) and the ⌘K verbs name a feature under
         // its own name inside a menu or palette group of that name ("Log
         // Analyzer > Open Log Analyzer"), and the feature inventory keys
         // those rows by exactly that title - they are commands, not
         // directions to a place.
-        let exempt: Set<String> = ["main.swift", "UnifiedSearchProviders.swift", "PlaceName.swift"]
+        let exempt: Set<String> = ["main.swift", "AppComposition.swift", "MainMenuBuilder.swift", "UnifiedSearchProviders.swift", "PlaceName.swift"]
         for file in files where file.pathExtension == "swift" && !exempt.contains(file.lastPathComponent) {
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             for (index, line) in text.components(separatedBy: "\n").enumerated() {
@@ -165,21 +268,20 @@ enum NavigationCoherenceSelfTest {
 
     /// Stage 1 of the modular-shell migration made the feature inventory the
     /// guard against losing a feature, and that guard is only as good as its
-    /// wiring: a suite whose `FM_RUN_*` block is deleted from `main.swift`
+    /// wiring: a suite whose `FM_RUN_*` block is deleted from the dispatch
     /// still compiles and simply never runs (the runner discovers suites from
     /// that file), and an inventory that is moved fails every row at once
     /// rather than catching anything. This keeps both ends attached from a
     /// suite that already guards navigation.
     private static func checkTheFeatureInventoryStaysWired() -> Bool {
         var ok = true
-        guard let dir = SelfTestSources.appSourceDirectory(),
-              let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8) else {
-            fail("modular shell: could not read main.swift - the inventory wiring check cannot run", &ok)
+        guard let main = SelfTestSources.selfTestDispatchSource() else {
+            fail("modular shell: could not read SelfTestDispatch.swift - the inventory wiring check cannot run", &ok)
             return ok
         }
         for flag in ["FM_RUN_FEATURE_INVENTORY_TESTS", "FM_RUN_MODULE_TABLE_TESTS"] {
             check(main.contains("environment[\"\(flag)\"]"),
-                  "modular shell: main.swift no longer dispatches \(flag), so the feature inventory is never checked", &ok)
+                  "modular shell: SelfTestDispatch.swift no longer dispatches \(flag), so the feature inventory is never checked", &ok)
         }
         let rows = FeatureInventorySelfTest.loadInventory() ?? []
         check(rows.count > 300, "modular shell: docs/modular-shell/feature-inventory.md is missing or nearly empty "
@@ -224,9 +326,9 @@ enum NavigationCoherenceSelfTest {
         let files = (try? FileManager.default.contentsOfDirectory(at: dir,
                                                                   includingPropertiesForKeys: nil)) ?? []
         for file in files where file.pathExtension == "swift" {
-            // `main.swift` builds the menu bar, where a character key
-            // equivalent is exactly right.
-            guard file.lastPathComponent != "main.swift" else { continue }
+            // `MainMenuBuilder.swift` (R2-ARCH-02; `main.swift` before) builds
+            // the menu bar, where a character key equivalent is exactly right.
+            guard !["main.swift", "AppComposition.swift", "MainMenuBuilder.swift"].contains(file.lastPathComponent) else { continue }
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             for (index, line) in text.components(separatedBy: "\n").enumerated() {
                 let code = line.trimmingCharacters(in: .whitespaces)
@@ -241,7 +343,7 @@ enum NavigationCoherenceSelfTest {
         // Discriminating power: the exempt Return/Escape assignments still
         // spell the property, so a grep that stopped matching fails here.
         check(sawAny,
-              "guard: nothing outside main.swift sets `keyEquivalent` any more - either the "
+              "guard: nothing outside the menu builder sets `keyEquivalent` any more - either the "
               + "default-button convention was removed (then delete this guard) or the grep "
               + "is broken", &ok)
         check(offenders.isEmpty,
@@ -478,19 +580,14 @@ enum NavigationCoherenceSelfTest {
     /// covered above; what has no other witness is the wire.
     private static func checkTheMapIsActuallyReachable() -> Bool {
         var ok = true
-        guard let dir = SelfTestSources.appSourceDirectory() else {
-            fail("UX1: could not locate the app sources - this check would silently pass", &ok)
-            return ok
-        }
-        let mainPath = dir.appendingPathComponent("main.swift")
-        guard let main = try? String(contentsOf: mainPath, encoding: .utf8) else {
-            fail("UX1: could not read main.swift - this check would silently pass", &ok)
+        guard let main = SelfTestSources.appDelegateSource() else {
+            fail("UX1: could not read the app delegate - this check would silently pass", &ok)
             return ok
         }
         // The sentinel first: a grep that matches nothing because the file
         // moved passes just as happily as one that matches because the wire
         // is there.
-        check(main.contains("appShell.onSearchTapped ="),
+        check(main.contains("appShell.workspace.onSearchTapped ="),
               "UX1: main.swift no longer wires `onSearchTapped` either - this check has lost "
               + "its bearings and would pass vacuously", &ok)
         check(main.contains("appShell.onShowAllDestinations ="),

@@ -2,6 +2,15 @@
 //
 // The window's root content view controller.
 //
+// **The floating bar is the classic layout, frozen (R2-ARCH-01).** The
+// captain keeps both window layouts, and the sidebar is the default. This one
+// is kept working and kept protected - its regression checks stay - but it
+// receives no new features and no page redesigns: new chrome is built for the
+// sidebar layout only, and Settings says so where the layout is chosen
+// ("Floating bar (classic)", maintenance only). The freeze is recorded in
+// `docs/modular-shell/feature-inventory.md`. A fix to something this layout
+// already does still belongs here.
+//
 // **Read the Daylight Phase 2 note below first** - it describes the shell as
 // it is now (a floating bar plus a body container). The paragraphs
 // immediately following this one describe the *rail-and-top-bar* shell that
@@ -1006,7 +1015,7 @@ final class AppShellController: WorkspaceShellController {
             bar.setSelectedSpace(space)
         } else if dest == .homeCanvas {
             // M1: `space(forDestination:)` returns nil for the canvas itself,
-            // and both the drill-header back button and `showHomeCanvas()`
+            // and both the drill-header back button and `show(.homeCanvas)`
             // reach it through `show(_:)` rather than `selectSpace`. Without
             // this the pill kept asserting the drill page's space while the
             // canvas rendered the space the captain last chose - B5's own

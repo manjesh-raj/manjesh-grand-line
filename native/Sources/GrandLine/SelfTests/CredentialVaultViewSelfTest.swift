@@ -309,21 +309,20 @@ enum CredentialVaultViewSelfTest {
         gate.debugFieldsChanged()
         check(gate.debugPrimaryButton.isEnabled, "REL-20: the fixture enables Create")
 
+        // R2-ARCH-08: the page's render is one of the store's observers now,
+        // and observers are delivered on main whatever thread a change is
+        // reported from. So the thread is read where the store reports it,
+        // before that hop - which is the create's own mutation thread.
         var renderThreads: [Bool] = []
-        let render = store.onChange
-        store.onChange = {
-            renderThreads.append(Thread.isMainThread)
-            // Never call into AppKit off the main thread, even to prove it.
-            if Thread.isMainThread { render?() }
-        }
+        store.observers.notifyThreadForTests = { renderThreads.append($0) }
         gate.debugPrimaryButton.performClick(nil)
         let deadline = Date().addingTimeInterval(30)
         while !store.isUnlocked, Date() < deadline {
             RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
         }
-        store.onChange = render
+        store.observers.notifyThreadForTests = nil
         check(store.isUnlocked, "REL-20: clicking Create creates the vault")
-        check(!renderThreads.isEmpty, "REL-20: the create fires the controller's render")
+        check(!renderThreads.isEmpty, "REL-20: the create reports a change to the page's observer")
         check(renderThreads.allSatisfy { $0 },
               "REL-20: every render the create fires is on the main thread, got \(renderThreads)")
         controller.debugRender()
@@ -669,7 +668,7 @@ enum CredentialVaultViewSelfTest {
         //
         // Worth asserting because it is the *reason* a panel is safer than the
         // sheet it replaced, and it is not obvious from any one call site: the
-        // page renders off `store.onChange`, and `render()` clears the panel
+        // page renders off the store's observer, and `render()` clears the panel
         // whenever the store is locked - so a bare `store.lock` empties it
         // without any lock path having to remember to. The sheet had no
         // equivalent; it was a separate window holding its own copy, which is
@@ -1304,7 +1303,7 @@ enum CredentialVaultViewSelfTest {
         AppLockGate.shared.setLocked(false)
         defer { AppLockGate.shared.setLocked(wasLocked) }
 
-        shell.show(.poneglyph)
+        shell.workspace.navigator.show(.poneglyph)
         window.displayIfNeeded()
         shell.view.layoutSubtreeIfNeeded()
 
@@ -1597,7 +1596,7 @@ enum CredentialVaultViewSelfTest {
         // LIST also has to actually render that order (`renderList` sorting
         // by `VaultCredential.displayOrder` rather than falling back to
         // alphabetical), or a captain's drag would persist invisibly while
-        // the row he was looking at snapped straight back. `store.onChange`
+        // the row he was looking at snapped straight back. the store's observer
         // already re-rendered the page on the reorder above; read the rows
         // back rather than assuming it.
         let renderedOrder = (0..<list.debugRowCount).compactMap { row -> String? in

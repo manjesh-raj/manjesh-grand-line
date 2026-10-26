@@ -668,84 +668,9 @@ extension RailDestination {
     /// The four Setup sub-pages all take amber, because §2.2 gives the hue to
     /// "Setup" as one area rather than to each page inside it.
     var domainHue: HelmDomainHue {
-        switch self {
-        // The hub itself carries the app's own identity hue.
-        case .homeCanvas: return .blue
-        case .overview: return .blue          // Fleet
-        // `fm/polish-straw-hat-overview-card-and-voice-c8d3`: violet is this
-        // app's own "AI feature" hue - the composer popovers' tinted tile,
-        // Dictation's clean-up card, the Whiteboard's Claude-generated
-        // diagrams - and the crew chat is the largest AI surface in the app.
-        // It is only the tile's *fallback* hue in practice (both tiles render
-        // the Jolly Roger artwork), but it is what the page's focus ring and
-        // primary button take, so it has to be a real choice.
-        case .strawHat: return .violet
-        case .console: return .teal
-        case .hosts: return .teal
-        case .logAnalyzer: return .teal
-        // `fm/grandline-k8s-cluster-tail`: the Operations space's own hue,
-        // shared with Hosts/Console/Log Analyzer for the same reason the four
-        // Setup pages share amber - the hue belongs to the *area*, and this
-        // page is the running systems seen from a different angle.
-        case .kubernetes: return .teal
-        case .shift: return .rose             // Tasks
-        case .dictation: return .rose
-        case .review: return .green           // Merge queue
-        case .health: return .green
-        case .vault: return .violet
-        case .schedules: return .violet
-        case .docs: return .blue
-        // `fm/grandline-feature-f1-notebook`: blue is §2.2's "reading
-        // material" hue - Docs, Runbooks, the Fleet overview - and the
-        // notebook is the general form of the two markdown destinations that
-        // already carry it. It is also the hue the reviewed F1 mockup draws
-        // the page's icon tile and primary button in, so the shipped page and
-        // the mockup the captain approved agree.
-        case .notebook: return .blue
-        // `fm/grandline-feature-f4-reading-list`: green, which is the hue the
-        // reviewed F4 mockup draws the page's icon tile, its primary button
-        // and its summarised card's accent rule in - so the shipped page and
-        // the mockup the captain approved agree. It is also the one hue in
-        // §2.2's set not already spoken for on the Stores shelf.
-        case .readingList: return .green
-        // `fm/grandline-docs-split-runbooks-postmortems`: the same two hues
-        // the runbook/postmortem plate cards already used before the split
-        // (`HelmDomainHue(tint:)` maps `.info` -> `.blue`, `.warn` -> `.amber`
-        // - the exact `HelmTint` each `DocGridItem` carried), so a card and
-        // the destination it opens can never disagree about a hue.
-        case .runbooks: return .blue
-        case .postmortems: return .amber
-        case .updates, .bootstrap, .automation, .githubSync, .poneglyph: return .amber  // Setup
-        case .settings: return .slate
-        case .tools: return .slate
-        // `fm/grand-line-whiteboard-excalidraw`: violet is this app's own "AI
-        // feature" hue (the composer popovers' tinted tile, Dictation's
-        // clean-up card), and the Whiteboard's headline capability is the
-        // Claude-generated diagram.
-        case .whiteboard: return .violet
-        // `fm/grandline-sticky-board`: amber - the warm, paper-note-adjacent
-        // hue this app has not yet given a Stores-space destination of its
-        // own, distinct from Whiteboard's AI-feature violet (Sticky Board has
-        // no AI in it at all).
-        case .stickyBoard: return .amber
-        // `fm/grandline-tasks-kanban-devops-split`: teal is the "running
-        // systems" hue this app already gives Console, Hosts, Log Analyzer
-        // and Kubernetes, and a library of saved shell commands is what gets
-        // typed into exactly those. Deliberately not the blue its then-Stores
-        // neighbours carry (reading material) - these are things you *run*.
-        // `fm/grandline-devops-space-and-diagram-tool` then moved the module
-        // itself into the Command space on the captain's own correction, which
-        // needed no change here: the hue was already Console's, and sharing it
-        // with a space sibling is exactly what §2.2's "the hue belongs to the
-        // area" rule asks for.
-        case .commandLibrary: return .teal
-        // `fm/grandline-monaco-code-preview`: blue is the "reading material"
-        // hue in §2.2's table (Docs, Runbooks, the Fleet overview), and a
-        // panel whose whole job is reading a snippet properly belongs there.
-        // Deliberately not the Whiteboard's violet - that is this app's AI
-        // hue, and there is no AI anywhere in this destination.
-        case .codePreview: return .blue
-        }
+        // R2-ARCH-03: read from `ModuleTable.rows`; the reason for each
+        // destination's hue is beside its row there.
+        ModuleTable.descriptor(for: self)?.hue ?? .slate
     }
 }
 

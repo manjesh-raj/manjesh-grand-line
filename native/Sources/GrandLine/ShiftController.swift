@@ -21,7 +21,7 @@ import AppKit
 
 final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPageHosting {
 
-    private let store: ShiftStore
+    let store: ShiftStore
 
     private let scroll = NSScrollView()
     private let contentStack = NSStackView()
@@ -48,7 +48,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     private let followUpScroll = NSScrollView()
     private let followUpsHeader = NSTextField(labelWithString: "")
     private let followUpsCountBadge = NSTextField(labelWithString: "")
-    private let followUpPanel = HelmCard()
+    let followUpPanel = HelmCard()
 
     private let projectsHeader = NSTextField(labelWithString: "")
     private let projectsCountBadge = NSTextField(labelWithString: "")
@@ -94,8 +94,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// `String`-backed so it can be the id `HelmSegmentedTabs` hands back -
     /// the shared component deals in caller-owned ids rather than indices, so a
     /// page keeps its own enum.
-    private enum ShiftTopLevelView: String { case dashboard, weeklyReview }
-    private var topLevelView: ShiftTopLevelView = .dashboard
+    enum ShiftTopLevelView: String { case dashboard, weeklyReview }
+    var topLevelView: ShiftTopLevelView = .dashboard
     private let dashboardContainer = NSStackView()
     private let weeklyReviewContainer = NSStackView()
 
@@ -198,7 +198,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// column already uses - so "recent" means one thing on this page.
     private static let recentlyUpdatedWindowDays = 7
 
-    private var taskScope: ShiftTaskScope = .all
+    var taskScope: ShiftTaskScope = .all
 
     /// The toolbar's sort, remembered per machine. Due date is the default
     /// because it is what the page always sorted by.
@@ -208,7 +208,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// The page's own left nav column - `HelmPageSidebar`, the component
     /// Schedules and Poneglyph already share (see its header for why a
     /// page-scoped column is not the deleted app-wide rail coming back).
-    private let sidebar = HelmPageSidebar()
+    let sidebar = HelmPageSidebar()
 
     /// The hairline between the nav column and the page - the reference's own
     /// `border-right` on its `aside`, and the one thing that makes the column
@@ -240,24 +240,24 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     /// Action rows: these scroll to a panel rather than filtering anything, so
     /// they are `.action` rows and never take the selection.
-    private static let followUpsRowID = "jump.followUps"
+    static let followUpsRowID = "jump.followUps"
 
     /// The sidebar's Projects group. A row there selects independently of the
     /// Workspace/Smart-views rows, because "which slice" and "which project"
     /// are two orthogonal questions - picking a project must not un-pick
     /// "All tasks".
-    private static let projectGroup = "projects"
-    private static let projectRowPrefix = "project."
-    private static func projectRowID(_ id: String) -> String { projectRowPrefix + id }
+    static let projectGroup = "projects"
+    static let projectRowPrefix = "project."
+    static func projectRowID(_ id: String) -> String { projectRowPrefix + id }
 
-    private static let settingsRowID = "footer.settings"
-    private static let shortcutsRowID = "footer.shortcuts"
+    static let settingsRowID = "footer.settings"
+    static let shortcutsRowID = "footer.shortcuts"
 
     /// What the Projects section was last built from, so a re-render only
     /// rebuilds the column when the project set genuinely changed - a rebuild
     /// on every render would churn the column on every keystroke elsewhere on
     /// the page (the same guard `KubernetesController.renderPodPicker` keeps).
-    private var sidebarProjectSignature: String?
+    var sidebarProjectSignature: String?
 
     /// Forwarded rather than owned - this controller knows nothing about the
     /// shell (`AppShellController.onSearchTapped`'s own convention).
@@ -291,7 +291,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// control that sets it - the chip row that repeated the sidebar above the
     /// board is gone, which also fixes the List and Calendar views applying a
     /// filter no control on screen showed.
-    private var projectFilter: String?
+    var projectFilter: String?
 
     /// How far back the Done column looks.
     ///
@@ -1360,100 +1360,14 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     // MARK: The sidebar
 
-    private func buildSidebar() {
-        rebuildSidebarSections(projects: store.projects)
-        sidebar.setFooter(links: [
-            .init(id: Self.settingsRowID, title: "Settings"),
-            .init(id: Self.shortcutsRowID, title: "Shortcuts"),
-        ])
-
-        // The column's one badge: Follow-ups, while any are waiting.
-        sidebar.attentionCountRowIDs = [Self.followUpsRowID]
-        sidebar.onSelect = { [weak self] id in
-            guard let self else { return }
-            if let scope = ShiftTaskScope(rawValue: id) {
-                self.taskScope = scope
-                self.render()
-                return
-            }
-            if id.hasPrefix(Self.projectRowPrefix) {
-                self.pickProjectFromSidebar(String(id.dropFirst(Self.projectRowPrefix.count)))
-                return
-            }
-            switch id {
-            case Self.settingsRowID:
-                self.onNavigateToDestination?(.settings)
-                return
-            case Self.shortcutsRowID:
-                self.onOpenCommandPalette?()
-                return
-            default:
-                break
-            }
-            // An action row from Weekly Review has to take the captain back to
-            // the board first - the panel it scrolls to is not on that view.
-            if self.topLevelView != .dashboard { self.switchTopLevelView(.dashboard) }
-            switch id {
-            case Self.followUpsRowID: self.scrollToPanel(self.followUpPanel)
-            default: break
-            }
-        }
-    }
-
-    /// The column's three groups, rebuilt from the live project list.
-    ///
-    /// **The Projects group is the whole point of this column's redesign.**
-    /// Before it the sidebar collapsed every project into one "Projects 5"
-    /// count row, so the one place a captain would look to see *which*
-    /// projects exist showed a number instead - the projects were already
-    /// modelled (`ShiftStore.projects`) and already listed individually by the
-    /// board's own filter chips; nothing iterated them into nav rows.
-    ///
-    /// Each row's dot takes `ShiftProjectPalette.tint(forProjectID:)`, the
-    /// same stable per-project hue the board cards' accent bars and the filter
-    /// chips already paint, so one project is one colour everywhere.
-    private func rebuildSidebarSections(projects: [ShiftProject]) {
-        sidebar.setSections([
-            .init(header: "Workspace", rows:
-                ShiftTaskScope.workspaceCases.map {
-                    .init(id: $0.rawValue, indicator: .symbol($0.symbol), title: $0.title)
-                }
-                // Follow-ups scrolls to a panel rather than filtering, so it is
-                // an `.action` row and never takes the selection.
-                + [.init(id: Self.followUpsRowID, indicator: .symbol("bell"),
-                         title: "Follow-ups", kind: .action)]),
-            .init(header: "Projects", rows: projects.map { project in
-                .init(id: Self.projectRowID(project.id),
-                      indicator: .dot(ShiftProjectPalette.tint(forProjectID: project.id)),
-                      title: project.name.isEmpty ? "Untitled project" : project.name,
-                      group: Self.projectGroup,
-                      showsCount: false)
-            }),
-            .init(header: "Smart views", rows: ShiftTaskScope.smartViewCases.map {
-                .init(id: $0.rawValue, indicator: .symbol($0.symbol), title: $0.title,
-                      showsCount: false)
-            }),
-        ])
-        sidebarProjectSignature = Self.projectSignature(projects)
-    }
-
-    private static func projectSignature(_ projects: [ShiftProject]) -> String {
+    static func projectSignature(_ projects: [ShiftProject]) -> String {
         projects.map { "\($0.id)\u{1}\($0.name)" }.joined(separator: "\u{2}")
-    }
-
-    /// One filter, two controls. Clicking the already-selected project clears
-    /// it, matching the chip row's own toggle, and the chip row is moved to
-    /// match rather than being left showing something else.
-    private func pickProjectFromSidebar(_ projectID: String) {
-        projectFilter = projectFilter == projectID ? nil : projectID
-        if topLevelView != .dashboard { switchTopLevelView(.dashboard) }
-        render()
     }
 
     /// Scrolls the page so a panel sits just under the top edge. The document
     /// view is a `FlippedView`, so y grows downward and `minY` is the panel's
     /// own top.
-    private func scrollToPanel(_ panel: NSView) {
+    func scrollToPanel(_ panel: NSView) {
         view.layoutSubtreeIfNeeded()
         guard let document = scroll.documentView, panel.superview != nil else { return }
         let top = panel.convert(panel.bounds, to: document).minY
@@ -1711,7 +1625,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// The review's width tie to the page, active only while it shows.
     private var weeklyReviewWidthTie: NSLayoutConstraint?
 
-    private func switchTopLevelView(_ view: ShiftTopLevelView) {
+    func switchTopLevelView(_ view: ShiftTopLevelView) {
         topLevelView = view
         // Tied before the review shows, released once it is hidden - and
         // before `onModuleTabChanged` below, which is where the sidebar
@@ -1944,7 +1858,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         }
     }
 
-    private func render() {
+    func render() {
         renderPendingForStoreChange = false
         // §6.4: the greeting and the date line this used to write are gone
         // with the in-page hero - the drill header carries the destination's
