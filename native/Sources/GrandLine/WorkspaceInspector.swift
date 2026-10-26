@@ -16,10 +16,13 @@
 // line, which names the selected item.
 //
 // It is an ordinary split pane under the toolbar, a card-coloured column with
-// a hairline on its leading edge - the prototype's shape - rather than
-// macOS 14's full-height inspector item: that one is drawn as glass the
-// window server composites, which this app's off-screen renders cannot
-// capture, and it does not exist on macOS 13, which this app still supports.
+// a hairline on its leading edge - the prototype's shape - rather than the
+// system inspector item (`NSSplitViewItem(inspectorWithViewController:)`).
+// That item exists from macOS 11, so the deployment target is not the reason.
+// From macOS 14 it is drawn full height as glass the window server
+// composites, which this app's off-screen renders cannot capture, and every
+// layout check of this pane is one of those renders (R2-PROC-07 corrected an
+// earlier claim here that the item does not exist on macOS 13).
 
 import AppKit
 

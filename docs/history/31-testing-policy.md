@@ -130,7 +130,7 @@ A process that took the pid over writes into the folder at once, so its folder i
 A run through the runner leaves nothing to sweep, because the runner removes each suite's root.
 
 Measured on the development machine: the first suite run with the sweep removed 4,145 such folders.
-Seven of the 11 left belong to live test processes.
+Seven of the 11 left name pids that are running, so they stay.
 The other four name pids that root processes now hold, which `kill(pid, 0)` reports as `EPERM`, so the sweep counts them as in use and leaves them.
 That is the conservative answer, and they go once those pids are free.
 
