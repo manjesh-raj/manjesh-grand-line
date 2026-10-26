@@ -328,7 +328,7 @@ enum Subprocess {
         // B4: a self-test or tour process never starts the captain's own
         // tools. Refused as a launch failure, which every caller already
         // handles as "not available". See `ExternalToolGuard`.
-        if let reason = ExternalToolGuard.refusal(executable: executable, arguments: arguments) {
+        if let reason = ExternalToolGuard.refusal(executable: executable, arguments: arguments, cwd: cwd) {
             ExternalToolGuard.report(reason, executable: executable, argumentCount: arguments.count)
             log.error("\(name, privacy: .public) refused in a self-test or tour process")
             return .launchFailure("refused in a self-test or tour process: \(reason)")

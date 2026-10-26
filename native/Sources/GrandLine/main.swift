@@ -2521,14 +2521,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 // does, so it needs every redirect below for the same reason - and it is not
 // an `FM_RUN_*` flag, deliberately (see `ReviewTourLab.variable`), so it has
 // to be named here rather than caught by the prefix.
-if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_RUN_") })
-    || !(ProcessInfo.processInfo.environment["FM_REVIEW_TOUR"] ?? "").isEmpty {
-    let scratchRoot = FileManager.default.temporaryDirectory
-        .appendingPathComponent("selftest-process-\(ProcessInfo.processInfo.processIdentifier)",
-                                isDirectory: true)
+//
+// R2-PROC-02: the predicate is `ProcessMode`, the one `ExternalToolGuard`,
+// `NetworkGate` and `AppPaths.dataRoot()` read too.
+if ProcessMode.current.isIsolated {
+    // `selftest-process-<pid>`, in the runner's per-suite `FM_SCRATCH_ROOT`
+    // when it gave one and in the temporary directory otherwise.
+    let scratchRoot = ProcessMode.isolatedScratchRoot()
     // Pids are reused, so a folder by this name can be an earlier process's.
     // See `SelfTestScratchRoot`.
     SelfTestScratchRoot.startEmpty(scratchRoot)
+    // R2-PROC-02: every store that resolves through `AppPaths.dataRoot()`
+    // follows this one variable, so a store with no narrow entry below still
+    // lands in scratch. `dataRoot()` answers the same folder on its own in an
+    // isolated process; setting it here also moves the widget snapshot, which
+    // cannot import `AppPaths` and reads the variable itself.
+    if (ProcessInfo.processInfo.environment[AppPaths.scratchRootVariable] ?? "").isEmpty {
+        setenv(AppPaths.scratchRootVariable, scratchRoot.path, 1)
+    }
     // R2-SEC-01: no request leaves this process for anywhere but loopback.
     // `ExternalToolGuard` fences the programs a suite or tour may start; this
     // fences what `URLSession` does. See `NetworkGate`'s header.
@@ -3881,6 +3891,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_EXTERNAL_TOOL_GUARD_TESTS"] == "1
 // Pure logic. See NetworkGateSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_NETWORK_GATE_TESTS"] == "1" {
     exit(NetworkGateSelfTest.run() ? 0 : 1)
+}
+
+// R2-PROC-02: one `ProcessMode` decides what a test process is, an isolated
+// process never resolves the real data root, and every suite runs in a scratch
+// root of its own. Pure logic plus source guards over the runner and ci.yml.
+// See ProcessModeSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_PROCESS_MODE_TESTS"] == "1" {
+    exit(ProcessModeSelfTest.run() ? 0 : 1)
 }
 
 // The second full review's security findings (R2-SEC-01 to R2-SEC-12): the

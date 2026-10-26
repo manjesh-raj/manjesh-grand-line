@@ -897,6 +897,24 @@ if [ ! -x "$BIN" ]; then
   exit 1
 fi
 
+# Every suite gets a scratch root of its own (R2-PROC-02 of the second full
+# review). CI used to point every store at one `ci-stores` folder that each
+# suite in a lane shared, so a demo vault seeded by one suite was still there
+# for the next and broke it (PR #520). Now each suite process starts with
+# `FM_SCRATCH_ROOT` naming an empty folder that nothing else uses, which every
+# store resolving through `AppPaths.dataRoot()` follows, and `main.swift`'s
+# redirect block nests its per-process stores inside it. The folder is removed
+# when the suite ends, so a run leaves nothing behind in the temporary
+# directory either.
+SUITE_SCRATCH_PARENT=""
+make_suite_scratch_parent() {
+  SUITE_SCRATCH_PARENT="$(mktemp -d "${TMPDIR:-/tmp}/grandline-suites.XXXXXX")" || {
+    echo "error: could not create a scratch folder for the suites" >&2
+    exit 1
+  }
+  trap 'rm -rf "$SUITE_SCRATCH_PARENT"' EXIT
+}
+
 # Run one suite, bounded. Writes its output to $2. Returns the suite's own exit
 # status, or 124 (the conventional timeout status) if it had to be killed.
 #
@@ -906,7 +924,10 @@ fi
 run_suite() {
   local flag="$1"
   local outfile="$2"
-  env "$flag=1" "$BIN" >"$outfile" 2>&1 &
+  local scratch="$SUITE_SCRATCH_PARENT/$flag"
+  rm -rf "$scratch"
+  mkdir -p "$scratch"
+  env "$flag=1" "FM_SCRATCH_ROOT=$scratch" "$BIN" >"$outfile" 2>&1 &
   local pid=$!
   # The poll interval is tenths, not whole seconds: it is also the floor on
   # every duration this script reports (P6 of full review #3), and at `sleep 1`
@@ -941,13 +962,18 @@ run_suite() {
       sleep 2
       kill -KILL "$pid" 2>/dev/null
       wait "$pid" 2>/dev/null
+      rm -rf "$scratch"
       return 124
     fi
     sleep 0.1
   done
   wait "$pid"
-  return $?
+  local status=$?
+  rm -rf "$scratch"
+  return "$status"
 }
+
+make_suite_scratch_parent
 
 PASSED=()
 FAILED=()

@@ -95,12 +95,20 @@ enum AppPaths {
     /// Note this is the *whole* root, not the base above: a caller that used
     /// to write `base.appendingPathComponent(applicationSupportFolderName)`
     /// writes `dataRoot()` instead, and gains the redirect for free.
+    ///
+    /// R2-PROC-02: a self-test or tour process (`ProcessMode`) never gets the
+    /// real folder, even with no `FM_SCRATCH_ROOT` set. It gets its own
+    /// per-process scratch folder instead, so isolation does not depend on
+    /// `main.swift` having set the variable before the first store resolved.
     static func dataRoot(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
     ) -> URL {
         if let override = environment[scratchRootVariable], !override.isEmpty {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
+        }
+        if ProcessMode.of(environment).isIsolated {
+            return ProcessMode.isolatedScratchRoot(environment: environment)
         }
         return applicationSupportBase(fileManager)
             .appendingPathComponent(applicationSupportFolderName, isDirectory: true)
@@ -160,9 +168,12 @@ enum AppPaths {
     /// cannot simply nest under `dataRoot()`, so they ask this instead and
     /// pick a scratch path of their own. Nothing else should branch on it:
     /// a store with an Application Support default wants `dataRoot()`.
+    ///
+    /// A self-test or tour process counts as redirected whether or not the
+    /// variable is set, for the reason `dataRoot()` gives (R2-PROC-02).
     static func isScratchRedirected(
         _ environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool {
-        !(environment[scratchRootVariable] ?? "").isEmpty
+        !(environment[scratchRootVariable] ?? "").isEmpty || ProcessMode.of(environment).isIsolated
     }
 }

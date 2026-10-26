@@ -69,9 +69,11 @@ itself, one entry per line with a reason, so CI and a local run can never disagr
 what "the tests" are - and a locally-passing suite that CI skips shows up as a `SKIP` line
 rather than silently disappearing.
 
-CI points every `FM_*` data-location override at a scratch directory, so a run never
-attempts a real clone of the private config repo and never depends on what the runner's
-home directory happens to contain.
+Every suite runs with an empty `FM_SCRATCH_ROOT` of its own, which the runner creates
+and removes, and `main.swift`'s redirect block points every store into it. So a run
+never attempts a real clone of the private config repo, never depends on what the
+runner's home directory happens to contain, and no suite sees the stores another suite
+seeded. CI and a local run isolate suites the same way.
 
 The badge at the top of this file is `main`'s latest CI run, so a red `main` is seen
 rather than found. A test job that fails outside its suites (checkout, the toolchain, the
@@ -148,7 +150,7 @@ These tables are **complete in both directions**, and that is a check rather tha
 
 | Variable | What it overrides |
 | --- | --- |
-| `FM_SCRATCH_ROOT` | **The one that moves everything.** Every file-backed store's *default* is `FM_SCRATCH_ROOT/<name>` instead of `~/Library/Application Support/GrandLine/<name>` (`AppPaths.dataRoot()`), so a probe, a lab build or a suite redirects the whole app with one variable rather than the list below. A narrow per-store variable still wins over it. Setting it also skips the rename migrations and the one-time Today/calendar cleanup, since neither is a path. A self-test guard fails the run on a store that resolves Application Support for itself and so drops off this |
+| `FM_SCRATCH_ROOT` | **The one that moves everything.** Every file-backed store's *default* is `FM_SCRATCH_ROOT/<name>` instead of `~/Library/Application Support/GrandLine/<name>` (`AppPaths.dataRoot()`), so a probe, a lab build or a suite redirects the whole app with one variable rather than the list below. `Scripts/run-all-tests.sh` gives every suite an empty one of its own, and a self-test or tour process that has none gets a per-process scratch folder rather than the real one (`ProcessMode`). A narrow per-store variable still wins over it. Setting it also skips the rename migrations and the one-time Today/calendar cleanup, since neither is a path. A self-test guard fails the run on a store that resolves Application Support for itself and so drops off this |
 | `FM_KEYCHAIN_SERVICE_PREFIX` | Prepended to every Keychain service name this app owns (`KeychainService.resolve`). **Debug builds only** - a prefix that reached a release build would orphan every saved SSH key. Set per process by `main.swift`'s self-test redirect block, and everything carrying it is deleted at exit, so a suite can no longer leave real items in the login Keychain |
 | `FM_HOME` / `FIRSTMATE_HOME` | The firstmate home the app reads fleet state from |
 | `FM_HOSTS_FILE` | `hosts.json` (saved SSH hosts) |
