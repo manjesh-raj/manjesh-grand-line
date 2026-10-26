@@ -258,9 +258,9 @@ is worth running before a push regardless - it is a second CI gate, it catches a
 
 Everything under `native/Vendor/` is committed source, not a remote package -
 there are no remote SPM dependencies and no `Package.resolved`. `SwiftTerm`
-carries **seven local patches** - six because the thing each fixes has no
+carries **eight local patches** - seven because the thing each fixes has no
 `public`/`open` seam upstream, and one because a warning emitted inside a
-vendored file can only be silenced inside it. A re-sync is therefore a seven-patch
+vendored file can only be silenced inside it. A re-sync is therefore an eight-patch
 re-apply, and the realistic failure is a hunk lost in a merge rather than a
 deliberate removal. Every one of those then fails *silently*, in a way this
 project has already paid for once each.
@@ -274,7 +274,7 @@ project has already paid for once each.
   days, tracked in `native/MANUAL-CHECKS.md`). A newer tag on its own is not a
   reason to bump; an upstream security fix, or a patch's root cause being fixed
   or gaining a hook upstream, is.
-- `FM_RUN_VENDORED_PATCHES_TESTS` asserts all seven patches are still present, so
+- `FM_RUN_VENDORED_PATCHES_TESTS` asserts all eight patches are still present, so
   a sync that drops one fails by name. It matches its markers with comments
   stripped, because a merge that drops the code under a doc comment leaves the
   comment - and the comment names the symbol.
@@ -1440,7 +1440,7 @@ can correct an earlier one - and several do.
 
 | Read | When you are touching |
 |---|---|
-| [`01-foundations.md`](docs/history/01-foundations.md) | The runtime, `swift build`, the vendored SwiftTerm and its seven local patches |
+| [`01-foundations.md`](docs/history/01-foundations.md) | The runtime, `swift build`, the vendored SwiftTerm and its eight local patches |
 | [`02-console-and-terminal.md`](docs/history/02-console-and-terminal.md) | Console tabs, `CockpitTerminalView`, scrollback, text selection and drag routing, split panes, configurable shortcuts, the Claude-usage popover |
 | [`03-navigation-and-chrome.md`](docs/history/03-navigation-and-chrome.md) | The icon rail (removed), the Daylight bar, the menu bar, window chrome fusion, the session switcher, Recents, the canvas, the sidebar layout and its toolbar (modular shell) |
 | [`04-design-system.md`](docs/history/04-design-system.md) | `Helm*` components, the seven-phase UI audit rollout, contrast enforcement, themes, toasts, the later UI-modernization slices |

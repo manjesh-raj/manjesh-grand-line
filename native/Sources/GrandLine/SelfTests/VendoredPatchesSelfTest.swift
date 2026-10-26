@@ -1,6 +1,6 @@
 // Grand Line - native macOS app.
 //
-// Permanent guard on the seven local patches carried in
+// Permanent guard on the eight local patches carried in
 // `native/Vendor/SwiftTerm` (P9 of full review #3), and on the three carried
 // in `native/Vendor/YamlSwift`. Run with:
 //
@@ -9,17 +9,18 @@
 // **What this exists for, and what it deliberately does not do.**
 //
 // The review's finding about the pin is that "every sync is a five-patch
-// re-apply"; it is a seven-patch re-apply now. The hazard in that sentence is
+// re-apply"; it is an eight-patch re-apply now. The hazard in that sentence is
 // not the pin being old - a stale pin is a decision, recorded and re-taken on a
 // schedule in that directory's own README - it is a *re-apply that silently
-// drops one of them*. Five of the seven live in two files upstream rewrites
+// drops one of them*. Six of the eight live in two files upstream rewrites
 // heavily (measured at v1.20.0:
 // `Apple/AppleTerminalView.swift` +813/-157, `Mac/MacTerminalView.swift`
 // +647/-54), so the realistic failure is a hunk lost in a merge, not a
 // deliberate removal - and every one of them then fails silently, in a way this
 // project has already paid for once each: illegible dim text on a light theme,
 // a duplicated character at a wrap boundary, 6-16% CPU while backgrounded, a
-// corrupt `kubectl` table row, and ~25ms of CoreText work per background frame.
+// corrupt `kubectl` table row, ~25ms of CoreText work per background frame, and
+// terminal keyword highlighting that silently stops colouring anything.
 //
 // So this asserts *presence*, by the narrowest marker each patch cannot exist
 // without. It is not a behavioural test: each patch already has one (see the
@@ -94,6 +95,15 @@ enum VendoredPatchesSelfTest {
             ("Sources/SwiftTerm/Apple/AppleTerminalView.swift", "func preparedLineRender"),
             ("Sources/SwiftTerm/Apple/AppleTerminalView.swift", "func invalidateLineRenderCache"),
             ("Sources/SwiftTerm/Apple/AppleTerminalView.swift", "preparedLineRender(row:"),
+        ]),
+        (8, "row highlighting hook", [
+            ("Sources/SwiftTerm/Apple/RowHighlighting.swift", "public protocol TerminalRowHighlighter"),
+            ("Sources/SwiftTerm/Apple/RowHighlighting.swift", "func rowHighlightColors"),
+            ("Sources/SwiftTerm/Mac/MacTerminalView.swift", "public var rowHighlighter"),
+            ("Sources/SwiftTerm/iOS/iOSTerminalView.swift", "public var rowHighlighter"),
+            ("Sources/SwiftTerm/Apple/AppleTerminalView.swift", "cached.highlightVersion == highlightVersion"),
+            ("Sources/SwiftTerm/Apple/AppleTerminalView.swift", "rowHighlightColors(line: line, cols: cols)"),
+            ("Sources/SwiftTerm/Apple/AppleTerminalView.swift", "cachedRender.highlightColors"),
         ]),
     ]
 

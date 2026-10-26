@@ -83,6 +83,25 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public internal(set) var lineRenderCacheHits: Int = 0
     public internal(set) var lineRenderCacheMisses: Int = 0
 
+    // MARK: - Grand Line patch 8: row highlighting storage
+    //
+    // The hook and the memo's logic live in `Apple/RowHighlighting.swift`
+    // (see `Vendor/SwiftTerm/README.md`'s "Eighth patch"); only the storage
+    // has to be declared on the concrete view class, as patch 7's is.
+    /// What colours keywords in visible rows. `nil` (the default) is exactly
+    /// the stock rendering. Setting it drops every cached row render.
+    public var rowHighlighter: TerminalRowHighlighter? {
+        didSet {
+            invalidateLineRenderCache()
+            rowHighlightMemo.removeAll()
+        }
+    }
+    var rowHighlightMemo: [[UInt16]: [TerminalRowHighlight]] = [:]
+    var rowHighlightMemoVersion: UInt64 = 0
+    /// How many rows were handed to the highlighter, as opposed to answered
+    /// from the memo. A suite reads it to prove the memo and the skips work.
+    public internal(set) var rowHighlightScans: Int = 0
+
     public func applyMinimumColumnsIfNeeded() {
         guard cellDimension != nil, frame.width > 0, frame.height > 0 else { return }
         _ = processSizeChange(newSize: frame.size)

@@ -109,7 +109,9 @@ enum DaylightDrillPageSlice6SelfTest {
     /// bar, so none of the menu's sections. Twenty-seven since T7 replaced
     /// the Terminal page's three shortcut cards (Tabs, Split the terminal,
     /// Split panes) with one Keyboard shortcuts card that links to Shortcuts.
-    private static let expectedCardCount = 27
+    /// Thirty since T2 and T3 added the Terminal page's Keyword highlighting,
+    /// Custom rules and Preview cards.
+    private static let expectedCardCount = 30
 
 
     static func run() -> Bool {

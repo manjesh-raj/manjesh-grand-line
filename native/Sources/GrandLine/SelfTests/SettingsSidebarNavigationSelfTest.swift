@@ -74,7 +74,10 @@ enum SettingsSidebarNavigationSelfTest {
     /// bar, so none of the menu's sections. Twenty-seven since T7 replaced
     /// the Terminal page's three shortcut cards (Tabs, Split the terminal,
     /// Split panes) with one Keyboard shortcuts card that links to Shortcuts.
-    private static let expectedCardCount = 27
+    /// Twenty-nine since T2 added the Terminal page's Keyword highlighting
+    /// card and its Preview card, and thirty since T3 added its Custom rules
+    /// card.
+    private static let expectedCardCount = 30
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see

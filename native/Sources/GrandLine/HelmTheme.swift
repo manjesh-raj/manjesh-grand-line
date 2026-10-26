@@ -132,6 +132,9 @@ struct HelmTheme {
         // output. A solid fill keeps the contrast guarantee exact.
         view.selectedTextBackgroundColor = Self.nsColor(selectionHex)
         view.selectedTextForegroundColor = Self.nsColor(selectionTextHex)
+        // T1: keyword highlight colours are this theme's own ANSI colours, so
+        // the highlighter follows the palette the cells were just given.
+        (view.rowHighlighter as? TerminalKeywordHighlighter)?.update(theme: self)
         view.needsDisplay = true
     }
 

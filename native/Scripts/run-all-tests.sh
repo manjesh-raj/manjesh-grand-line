@@ -276,6 +276,11 @@ SKIP_FLAGS=(
   # FM_WHISPER_TEST_AUDIO_PATH pointing at it. FM_RUN_WHISPER_ENGINE_TESTS
   # covers the model-free half and does run below.
   "FM_RUN_WHISPER_METAL_FALLBACK_ONLY_TEST"
+  # T1's keyword-highlighting throughput benchmark: several minutes of a quiet
+  # machine pushing 100 MB through a terminal, and a wall-clock ratio a shared
+  # runner cannot measure. Run by hand before changing the engine; the
+  # deterministic halves of its budget run in FM_RUN_TERMINAL_KEYWORD_*_TESTS.
+  "FM_RUN_TERMINAL_HIGHLIGHT_BENCHMARK"
 )
 
 # Suites that need something a CI runner does not have. Skipped only with
@@ -544,6 +549,11 @@ NEEDS_SESSION=(
   # Same reason: PF1's row render cache is only exercised by a real `draw(_:)`
   # pass, which a never-ordered-front SwiftTerm view never makes.
   "FM_RUN_TERMINAL_ROW_RENDER_CACHE_TESTS"
+  # T1's keyword highlighting is applied inside `draw(_:)`, and the suite
+  # reads the colour back from real rendered pixels.
+  "FM_RUN_TERMINAL_KEYWORD_HIGHLIGHT_TESTS"
+  # The benchmark feeds a real terminal in a real window (and is skipped).
+  "FM_RUN_TERMINAL_HIGHLIGHT_BENCHMARK"
   # Mounts a real WKWebView loading the vendored Excalidraw bundle and measures
   # whether WebKit stops animating it while hidden - needs a window server and a
   # live web content process. FM_RUN_WHITEBOARD_TESTS covers the logic half and
