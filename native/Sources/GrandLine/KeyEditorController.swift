@@ -59,6 +59,18 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
     /// inline "+ New Key…", Fix 5) revert it.
     var onCancel: (() -> Void)?
 
+    /// K2: which of New Key's ways in opened this editor. Generate with a
+    /// type, an imported file (the file chooser opens at once), a pasted key
+    /// (the paste field takes focus), or - for an existing key - its
+    /// certificate. `nil` is the plain editor.
+    enum Preset: Equatable {
+        case generate(SSHKeyType)
+        case importFile
+        case paste
+        case certificate
+    }
+    var preset: Preset?
+
     // MARK: Shared fields
 
     private let labelField = HelmTextField(placeholder: "Label (e.g. Prod bastion key)", style: .lead)
@@ -200,13 +212,40 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         updateSaveEnabled()
 
         form.setSubtitle("Private key material never leaves the Keychain.")
+        applyPresetMode()
         form.refreshTheme()
         form.sizeToFitContent()
     }
 
     override func viewDidAppear() {
         super.viewDidAppear()
-        view.window?.makeFirstResponder(labelField)
+        switch preset {
+        case .paste?: view.window?.makeFirstResponder(importTextView.textView)
+        case .certificate?: view.window?.makeFirstResponder(certificateView.textView)
+        case .importFile?:
+            view.window?.makeFirstResponder(labelField)
+            // After the sheet is up, so the chooser is not stacked on a
+            // half-presented sheet.
+            DispatchQueue.main.async { [weak self] in self?.chooseImportFile() }
+        default: view.window?.makeFirstResponder(labelField)
+        }
+    }
+
+    /// K2: put the create form in the mode its preset names. Moves the two
+    /// switches without firing them, then runs the same `modeChanged` a
+    /// click does.
+    private func applyPresetMode() {
+        guard editing == nil, let preset else { return }
+        switch preset {
+        case .generate(let type):
+            modeSwitch.select("generate")
+            typeSwitch.select(type.rawValue)
+        case .importFile, .paste:
+            modeSwitch.select("import")
+        case .certificate:
+            return
+        }
+        modeChanged()
     }
 
     /// "Used by N hosts" - real data, computed by the caller (`usedByHostCount`,
@@ -576,6 +615,12 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
             }
         }
     }
+
+    #if FM_SELFTESTS
+    /// K2: what the create form is showing, read off the real switches.
+    var debugMode: String { modeSwitch.selected }
+    var debugType: String { typeSwitch.selected }
+    #endif
 
     @objc private func copyPublicKey() {
         let pasteboard = NSPasteboard.general

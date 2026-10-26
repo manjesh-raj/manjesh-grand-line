@@ -9,6 +9,8 @@
 //     behind a "+N" chip whose menu toggles the same filter.
 //   - H3: the find-or-connect bar - its words, and a Connect button that
 //     lights up for one host or a typed user@host and runs what Return runs.
+//   - H8 and K2: Add Host and New Key are `HelmSplitButton`s in the toolbar,
+//     each menu item opening the form it names.
 //
 // Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
 // The arithmetic is asserted headless in `ConnectionsLogicSelfTest`.
@@ -40,7 +42,7 @@ enum ConnectionsCardsSelfTest {
             defer { window.orderOut(nil) }
             ReviewTourLab.seedDemoHosts(shell.workspace)
             settle(shell)
-            for check in [checkTagMatch, checkTagOverflow, checkFindOrConnect] {
+            for check in [checkTagMatch, checkTagOverflow, checkFindOrConnect, checkSplitButtons] {
                 var ok = true
                 check(shell, window, &ok)
                 allOK = allOK && ok
@@ -169,6 +171,88 @@ enum ConnectionsCardsSelfTest {
         check(last?.id == nil && last?.args.contains("2200") == true && last?.args.last == "deploy@new.example.test",
               "H3: the ad-hoc connect ran \(String(describing: last?.args))", &ok)
         check(connects.count == 2, "H3: \(connects.count) connects for two clicks", &ok)
+    }
+
+    // MARK: H8 and K2
+
+    private static func checkSplitButtons(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        let hostSplit = hosts.debugAddHostSplit
+        check(shell.toolbar.debugPrimaryAction === hostSplit, "H8: the toolbar's primary action on Hosts is not Add Host's split button", &ok)
+        check(hostSplit.window != nil, "H8: the split button is not in the window", &ok)
+        check(shell.toolbar.debugPageActions.isEmpty,
+              "H8: the toolbar carries \(shell.toolbar.debugPageActions.count) page actions beside the split - a second Add Host", &ok)
+        // Two real buttons, each keyboard reachable (reachable by Tab under
+        // Full Keyboard Access, which is the system's rule for every button)
+        // and named, joined: only
+        // the outer corners round.
+        let main = hostSplit.mainButton, chevron = hostSplit.menuButton
+        check(main.title == "Add Host" && !main.refusesFirstResponder && !chevron.refusesFirstResponder && main.isEnabled && chevron.isEnabled,
+              "H8: the halves are not both keyboard-reachable buttons", &ok)
+        check(chevron.accessibilityLabel() == "More ways to add a host", "H8: the chevron reads \(chevron.accessibilityLabel() ?? "nothing")", &ok)
+        check(main.layer?.maskedCorners == [.layerMinXMinYCorner, .layerMinXMaxYCorner]
+                && chevron.layer?.maskedCorners == [.layerMaxXMinYCorner, .layerMaxXMaxYCorner],
+              "H8: the halves round every corner, so they read as two buttons", &ok)
+        check(abs(chevron.frame.minX - main.frame.maxX - HelmSplitButton.dividerWidth) < 0.5,
+              "H8: the halves are \(chevron.frame.minX - main.frame.maxX)pt apart", &ok)
+        check(hostSplit.debugMenuTitles == ["New Host\u{2026}", "Quick Connect"], "H8: Add Host's menu is \(hostSplit.debugMenuTitles)", &ok)
+
+        var opened: [Host?] = []
+        let savedOpen = hosts.onAddOrEdit
+        hosts.onAddOrEdit = { opened.append($0) }
+        defer { hosts.onAddOrEdit = savedOpen }
+        main.performClick(nil)
+        check(opened.count == 1, "H8: Add Host's main half did not open a new host", &ok)
+        hostSplit.debugPick("New Host\u{2026}")
+        check(opened.count == 2, "H8: New Host from the menu did not open a new host", &ok)
+        hostSplit.debugPick("Quick Connect")
+        settle(shell)
+        let editor = window.firstResponder as? NSView
+        check(editor?.isDescendant(of: hosts.debugSearchField) == true || (editor as? NSText)?.delegate.map { ($0 as? NSView)?.isDescendant(of: hosts.debugSearchField) == true } == true,
+              "H8: Quick Connect did not focus the find-or-connect field (\(String(describing: window.firstResponder)))", &ok)
+        let overflow = hostSplit.workspaceToolbarMenuItems().map { $0.isSeparatorItem ? "-" : $0.title }
+        check(overflow == ["Add Host", "New Host\u{2026}", "Quick Connect"], "H8: the overflow menu form is \(overflow)", &ok)
+
+        // K2: New Key, on the Keys tab.
+        hosts.selectModuleTab(named: "Keys")
+        settle(shell)
+        let keySplit = hosts.debugAddKeySplit
+        check(shell.toolbar.debugPrimaryAction === keySplit, "K2: the toolbar's primary action on Keys is not New Key's split button", &ok)
+        check(keySplit.debugMenuTitles == ["Generate Ed25519 Key\u{2026}", "Generate RSA 3072 Key\u{2026}", "-",
+                                           "Import Key File\u{2026}", "Paste a Key\u{2026}", "-",
+                                           "Attach Certificate to Selected Key\u{2026}"],
+              "K2: New Key's menu is \(keySplit.debugMenuTitles)", &ok)
+        HostsController.suppressesKeyEditorPresentationForTests = true
+        defer { HostsController.suppressesKeyEditorPresentationForTests = false }
+        func opens(_ title: String) -> KeyEditorController? {
+            hosts.lastKeyEditorForTests = nil
+            keySplit.debugPick(title)
+            let editor = hosts.lastKeyEditorForTests
+            _ = editor?.view
+            return editor
+        }
+        let rsa = opens("Generate RSA 3072 Key\u{2026}")
+        check(rsa?.preset == .generate(.rsa) && rsa?.debugMode == "generate" && rsa?.debugType == SSHKeyType.rsa.rawValue,
+              "K2: Generate RSA opened \(String(describing: rsa?.preset)) in \(rsa?.debugMode ?? "-")/\(rsa?.debugType ?? "-")", &ok)
+        let ed = opens("Generate Ed25519 Key\u{2026}")
+        check(ed?.debugType == SSHKeyType.ed25519.rawValue, "K2: Generate Ed25519 opened type \(ed?.debugType ?? "-")", &ok)
+        let paste = opens("Paste a Key\u{2026}")
+        check(paste?.debugMode == "import", "K2: Paste a Key opened in \(paste?.debugMode ?? "-") mode", &ok)
+        check(keySplit.debugIsEnabled("Attach Certificate to Selected Key\u{2026}") == false,
+              "K2: Attach Certificate is offered with no key selected", &ok)
+        guard let ops = shell.workspace.keyStore.keys.first(where: { $0.label == "ops-ed25519" }) else {
+            fail("K2: the demo key ops-ed25519 is missing", &ok)
+            return
+        }
+        hosts.debugKeysTable.debugSelect(key: ops.id.uuidString)
+        check(keySplit.debugIsEnabled("Attach Certificate to Selected Key\u{2026}") == true,
+              "K2: Attach Certificate is not offered with a key selected", &ok)
+        let cert = opens("Attach Certificate to Selected Key\u{2026}")
+        check(cert?.preset == .certificate, "K2: Attach Certificate opened \(String(describing: cert?.preset))", &ok)
+        hosts.debugKeysTable.debugSelect(key: nil)
+        hosts.selectModuleTab(named: "Hosts")
+        settle(shell)
     }
 
     // MARK: H9

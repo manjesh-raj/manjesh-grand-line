@@ -362,6 +362,36 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         b.toolTip = "New Key (⌘⇧N)"
         return b
     }()
+    /// H8: the sidebar layout's Add Host - the main action, and a menu of
+    /// the other ways to add a host. The floating bar keeps `addHostButton`.
+    private lazy var addHostSplit = HelmSplitButton(
+        title: "Add Host", symbol: "plus", menuLabel: "More ways to add a host",
+        items: [
+            .init("New Host\u{2026}", symbol: "plus") { [weak self] in self?.newHost() },
+            .init("Quick Connect", symbol: "bolt") { [weak self] in self?.focusQuickConnect() },
+        ]) { [weak self] in self?.newHost() }
+
+    /// K2: New Key's ways in, each straight to the right form.
+    private lazy var addKeySplit = HelmSplitButton(
+        title: "New Key", symbol: "plus", menuLabel: "More ways to add a key",
+        items: [
+            .init("Generate Ed25519 Key\u{2026}", symbol: "wand.and.stars") { [weak self] in
+                self?.openNewKey(preset: .generate(.ed25519))
+            },
+            .init("Generate RSA 3072 Key\u{2026}", symbol: "wand.and.stars") { [weak self] in
+                self?.openNewKey(preset: .generate(.rsa))
+            },
+            .separator,
+            .init("Import Key File\u{2026}", symbol: "doc.badge.plus") { [weak self] in self?.openNewKey(preset: .importFile) },
+            .init("Paste a Key\u{2026}", symbol: "doc.on.clipboard") { [weak self] in self?.openNewKey(preset: .paste) },
+            .separator,
+            .init("Attach Certificate to Selected Key\u{2026}", symbol: "checkmark.seal",
+                  isEnabled: { [weak self] in self?.selectedSSHKey != nil }) { [weak self] in
+                guard let self, let key = self.selectedSSHKey else { return }
+                self.presentKeyEditor(for: key, preset: .certificate)
+            },
+        ]) { [weak self] in self?.newKey() }
+
     private lazy var addSnippetButton: HelmButton = {
         let b = HelmButton(title: "New Snippet", variant: .primary, size: .small,
                            symbol: "plus", target: self, action: #selector(newSnippet))
@@ -892,6 +922,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// instances - with the tooltips and targets this page set on them - move
     /// in and out of the header.
     var drillHeaderActions: [NSView] {
+        // The sidebar layout's add actions are H8's and K2's split buttons.
+        // Handing the shell the floating bar's plain button as well would put
+        // a second Add Host among the toolbar's page actions.
+        if drawsSidebarLayout { return [workspacePrimaryAction].compactMap { $0 } }
         switch activeTab {
         case .hosts: return [addHostButton]
         case .keys: return [addKeyButton]
@@ -1529,13 +1563,29 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     /// ⌘⇧N / the card header's "New Key".
     @objc func newKey() {
-        select(tab: .keys)
-        presentKeyEditor(for: nil)
+        openNewKey(preset: nil)
     }
 
-    func presentKeyEditor(for key: SSHKey?) {
+    /// K2: New Key, opened in the mode one of its menu items names.
+    func openNewKey(preset: KeyEditorController.Preset?) {
+        select(tab: .keys)
+        presentKeyEditor(for: nil, preset: preset)
+    }
+
+    /// The key the Keys tab has selected, if any.
+    var selectedSSHKey: SSHKey? {
+        guard drawsSidebarLayout, let key = keysTable.selectedKey, let id = UUID(uuidString: key) else { return nil }
+        return keyStore.key(id: id)
+    }
+
+    func presentKeyEditor(for key: SSHKey?, preset: KeyEditorController.Preset? = nil) {
         let usedByHostCount = key.map { targetKey in hostStore.hosts.filter { $0.keyID == targetKey.id }.count } ?? 0
         let editor = KeyEditorController(key: key, usedByHostCount: usedByHostCount)
+        editor.preset = preset
+        #if FM_SELFTESTS
+        lastKeyEditorForTests = editor
+        if Self.suppressesKeyEditorPresentationForTests { return }
+        #endif
         editor.onSave = { [weak self] newKey, privateKeyData, passphrase in
             self?.persistNewKey(newKey, privateKeyData: privateKeyData, passphrase: passphrase)
         }
@@ -1694,6 +1744,12 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// The tag chips, in strip order - PERF-05's identity check.
     var debugTagChips: [NSView] { tagsStack.arrangedSubviews }
     var debugOnlineChip: HelmButton { onlineChip }
+    var debugAddHostSplit: HelmSplitButton { addHostSplit }
+    var debugAddKeySplit: HelmSplitButton { addKeySplit }
+    /// The last key editor this page built, and a switch that builds it
+    /// without presenting it, so a suite can read what a menu item opened.
+    var lastKeyEditorForTests: KeyEditorController?
+    static var suppressesKeyEditorPresentationForTests = false
     /// X4 and H9's controls, as the filter row holds them.
     var debugTagMatchControl: HelmSegmentedTabs { tagMatchControl }
     var debugTagOverflowChip: HelmButton { tagOverflowChip }
@@ -1976,9 +2032,15 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
                               tint: available ? .good : .warn)
     }
 
-    /// The showing tab's add action, at the toolbar's far right.
+    /// The showing tab's add action, at the toolbar's far right: H8's and
+    /// K2's split buttons for Hosts and Keys.
     var workspacePrimaryAction: NSView? {
-        drawsSidebarLayout ? drillHeaderActions.first : nil
+        guard drawsSidebarLayout else { return nil }
+        switch activeTab {
+        case .hosts: return addHostSplit
+        case .keys: return addKeySplit
+        case .snippets: return addSnippetButton
+        }
     }
 
     var inspectorContent: WorkspaceInspectorContent? {

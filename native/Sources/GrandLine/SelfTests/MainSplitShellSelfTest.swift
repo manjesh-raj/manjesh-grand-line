@@ -613,8 +613,13 @@ enum MainSplitShellSelfTest {
         settle(shell)
         // Stage 6: Hosts' one action is its primary one, the page's own
         // button at the toolbar's far right rather than among the others.
-        let hostsActions = (shell.debugSlotController(.hosts) as? DaylightDrillActions)?.drillHeaderActions ?? []
-        check(hostsActions.count == 1, "the Hosts page offers \(hostsActions.count) actions - this check assumes its one add button", &ok)
+        // H8 of the Termius-style plan: in this layout that action is the
+        // page's `workspacePrimaryAction`, Add Host's split button, rather
+        // than the floating bar's drill-header button.
+        let drillActions = (shell.debugSlotController(.hosts) as? DaylightDrillActions)?.drillHeaderActions ?? []
+        check(drillActions.count == 1, "the Hosts page offers \(drillActions.count) actions - this check assumes its one add button", &ok)
+        let hostsActions = [(shell.debugSlotController(.hosts) as? WorkspacePrimaryActionProviding)?.workspacePrimaryAction]
+            .compactMap { $0 }
         check(shell.toolbar.debugPrimaryAction === hostsActions.first && shell.toolbar.debugPageActions.isEmpty,
               "the toolbar is not carrying Hosts' own action as its primary one", &ok)
         // A hidden primary button leaves no empty capsule, and comes back.
