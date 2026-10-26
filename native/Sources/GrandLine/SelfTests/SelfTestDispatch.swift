@@ -2225,6 +2225,13 @@ enum SelfTestDispatch {
             exit(TerminalShortcutsSelfTest.run() ? 0 : 1)
         }
 
+        // PR 2 of the Termius-style plan (T4-T7): Settings > Terminal's
+        // scrollback row and the Shortcuts page, driven through their real
+        // controls in a real window. See SettingsTerminalShortcutsSelfTest.swift.
+        if ProcessInfo.processInfo.environment["FM_RUN_SETTINGS_TERMINAL_SHORTCUTS_TESTS"] == "1" {
+            exit(SettingsTerminalShortcutsSelfTest.run() ? 0 : 1)
+        }
+
         // See TabKeyboardShortcutsSelfTest.swift's header.
         if ProcessInfo.processInfo.environment["FM_RUN_TAB_KEYBOARD_SHORTCUTS_TESTS"] == "1" {
             exit(TabKeyboardShortcutsSelfTest.run() ? 0 : 1)
