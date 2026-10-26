@@ -88,6 +88,13 @@ enum CompactModeSelfTest {
         checkTodayChipsDistinguishNoneFromZero(check)
         checkNotesAreNewestFirstAndNeverBlank(check)
         checkNotesDetailPrefersTheChecklistProgress(check)
+        checkBridgeNowIsTheTaskDueNow(check)
+        checkBridgeNowSaysHowLateInWords(check)
+        checkBridgeUpNextMergesFollowUpsInTimeOrder(check)
+        checkBridgeNothingDueIsNeverABlankCard(check)
+        checkBridgeBacklogIsUndatedWithClaimedFirst(check)
+        checkBridgeProgressCountsDoneTodayFromCompletedAt(check)
+        checkBridgeStreakCountsConsecutiveDays(check)
 
         print(ok ? "CompactModeSelfTest: OK" : "CompactModeSelfTest: FAILURES")
         return ok
@@ -112,6 +119,32 @@ enum CompactModeSelfTest {
         task.status = status
         task.dueDate = dueOffsetDays.map(day)
         return task
+    }
+
+    /// A task due today at `time` ("HH:MM"), for the Bridge's time-ordered
+    /// cases.
+    private static func timed(_ id: String, _ title: String, at time: String,
+                              dueOffsetDays: Int = 0) -> ShiftTask {
+        var task = task(id, title, dueOffsetDays: dueOffsetDays)
+        task.dueTime = time
+        return task
+    }
+
+    /// A task finished `daysAgo` days before the fixture's noon, as
+    /// `ShiftStore.setTaskCompleted` would have stamped it.
+    private static func finished(_ id: String, daysAgo: Int, hour: Int = 10) -> ShiftTask {
+        var task = task(id, "Finished \(id)", dueOffsetDays: nil, status: .completed)
+        let day = calendar.date(byAdding: .day, value: -daysAgo, to: now) ?? now
+        let stamp = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: day) ?? day
+        task.completedAt = ShiftStore.iso8601(stamp)
+        return task
+    }
+
+    private static func bridge(tasks: [ShiftTask] = [], completed: [ShiftTask] = [],
+                               followUps: [ShiftFollowUp] = [],
+                               projects: [ShiftProject] = []) -> TasksBridgeDigest {
+        TasksBridge.digest(tasks: tasks, completed: completed, followUps: followUps,
+                           projects: projects, focusSecondsToday: 0, now: now, calendar: calendar)
     }
 
     private static func note(_ id: String,
@@ -506,6 +539,181 @@ enum CompactModeSelfTest {
               "an untitled checklist note falls back through its items rather than reading "
                   + "\"Untitled note\" - got \(emptyTitleList.first?.title ?? "nil")")
     }
+
+    // MARK: The Tasks popover's Bridge shape
+
+    /// The Now card is the task due now: overdue first, then the first one
+    /// due today. A task due tomorrow is never "now", and a follow-up never
+    /// takes the card (its buttons are Check off and Start focus).
+    private static func checkBridgeNowIsTheTaskDueNow(_ check: (Bool, String) -> Void) {
+        var cert = task("cert", "Rotate the staging certificate", dueOffsetDays: -2)
+        cert.subtasks = (1...5).map { ShiftSubtask(id: "s\($0)", title: "step \($0)", done: $0 <= 3) }
+        var infra = ShiftProject.fresh(now: now)
+        infra.id = "infra"
+        infra.name = "Infra"
+        cert.projectID = "infra"
+        var vendor = ShiftFollowUp.fresh()
+        vendor.id = "vendor"
+        vendor.title = "Vendor SSO ticket"
+        vendor.followUpAt = day(-5)
+
+        let digest = bridge(tasks: [timed("rota", "Review Q4 on-call rota", at: "13:00"),
+                                    cert,
+                                    task("tomorrow", "Draft the upgrade plan", dueOffsetDays: 1)],
+                            followUps: [vendor], projects: [infra])
+        check(digest.now?.id == "cert",
+              "an overdue task is the Now card ahead of one due later today, and an older overdue "
+                  + "follow-up does not take the card - got \(digest.now?.id ?? "nil")")
+        check(digest.now?.checklistText == "3 of 5 checked",
+              "the Now card counts the task's subtasks - got \(digest.now?.checklistText ?? "nil")")
+        check(digest.now?.detail == "3 of 5 checked \u{00B7} Infra",
+              "and names its project by name, not by id - got \(digest.now?.detail ?? "nil")")
+        check(digest.now?.isLate == true && digest.now?.whenText.hasSuffix("overdue") == true,
+              "an overdue Now card is late and says so in words - got \(digest.now?.whenText ?? "nil")")
+        check(!digest.upNext.contains { $0.id == "cert" && $0.kind == .task },
+              "the Now task is not listed a second time under Up next")
+
+        let onlyLater = bridge(tasks: [task("tomorrow", "Draft the upgrade plan", dueOffsetDays: 1)])
+        check(onlyLater.now == nil,
+              "a task due tomorrow is not \"now\" - the card falls back to its empty state")
+    }
+
+    /// A task due earlier today at a set time is late by the clock, and the
+    /// pill says by how much. One later today is not late at all.
+    private static func checkBridgeNowSaysHowLateInWords(_ check: (Bool, String) -> Void) {
+        let late = bridge(tasks: [timed("standup", "Post the standup notes", at: "11:35"),
+                                  timed("rota", "Review Q4 on-call rota", at: "15:00")])
+        let clock = ShiftDateFormatting.clock("11:35")
+        check(late.now?.id == "standup",
+              "the earliest timed task today is now - got \(late.now?.id ?? "nil")")
+        check(late.now?.whenText == "\(clock) \u{00B7} 25m late",
+              "a task due at 11:35 read at 12:00 is 25 minutes late, against the injected clock - "
+                  + "got \(late.now?.whenText ?? "nil")")
+        check(late.now?.isLate == true, "and the pill is painted late")
+
+        let early = bridge(tasks: [timed("rota", "Review Q4 on-call rota", at: "15:00")])
+        check(early.now?.whenText == ShiftDateFormatting.clock("15:00") && early.now?.isLate == false,
+              "a task due later today shows its time and is not late - got "
+                  + "\(early.now?.whenText ?? "nil")")
+
+        let untimed = bridge(tasks: [task("today", "Renew the cert", dueOffsetDays: 0)])
+        check(untimed.now?.whenText == "Today" && untimed.now?.isLate == false,
+              "a task due today with no time is \"Today\", never late before the day ends - got "
+                  + "\(untimed.now?.whenText ?? "nil")")
+        check(TasksBridge.lateness(from: now.addingTimeInterval(-3 * 3600 - 60), to: now) == "3h",
+              "past an hour, lateness reads in hours")
+    }
+
+    /// Up next is one timeline: the rest of today's tasks and the pending
+    /// follow-ups, in the order they fall due, then what is due later.
+    private static func checkBridgeUpNextMergesFollowUpsInTimeOrder(_ check: (Bool, String) -> Void) {
+        var vendor = ShiftFollowUp.fresh()
+        vendor.id = "vendor"
+        vendor.title = "Vendor SSO ticket"
+        vendor.followUpAt = day(0)
+        vendor.followUpTime = "16:00"
+        var handled = vendor
+        handled.id = "handled"
+        handled.status = .done
+
+        let digest = bridge(tasks: [task("untimed", "Tidy the dashboards", dueOffsetDays: 0),
+                                    timed("now", "Post the standup notes", at: "11:00"),
+                                    timed("rota", "Review Q4 on-call rota", at: "13:00"),
+                                    timed("herdr", "Draft the Herdr upgrade plan", at: "17:00"),
+                                    task("later", "Audit the buckets", dueOffsetDays: 1)],
+                            followUps: [vendor, handled])
+        check(digest.now?.id == "now", "the fixture's Now card is the 11:00 task - got \(digest.now?.id ?? "nil")")
+        check(digest.upNext.map { $0.id } == ["rota", "vendor", "herdr", "untimed", "later"],
+              "times run in order with the follow-up between them, an untimed task follows the "
+                  + "timed ones, and tomorrow comes last - got \(digest.upNext.map { $0.id })")
+        let vendorRow = digest.upNext.first { $0.id == "vendor" }
+        check(vendorRow?.kind == .followUp && vendorRow?.detail.contains("Follow-up") == true,
+              "a follow-up row is a follow-up and says so - got \(vendorRow?.detail ?? "nil")")
+        check(digest.upNext.first { $0.id == "untimed" }?.timeText == "Today",
+              "an untimed row's time column says Today rather than a made-up 00:00")
+        check(digest.upNext.first { $0.id == "later" }?.timeText == "Tmrw",
+              "tomorrow is named against the injected clock")
+        check(!digest.upNext.contains { $0.id == "handled" },
+              "a follow-up that is done is not up next")
+
+        let many = bridge(tasks: (1...9).map { timed("t\($0)", "Task \($0)", at: String(format: "%02d:00", 12 + $0 % 10)) })
+        check(many.upNext.count == TasksBridge.upNextMaxRows,
+              "Up next stops at \(TasksBridge.upNextMaxRows) rows, with Open Tasks for the rest - got "
+                  + "\(many.upNext.count)")
+    }
+
+    private static func checkBridgeNothingDueIsNeverABlankCard(_ check: (Bool, String) -> Void) {
+        let next = bridge(tasks: [task("later", "Audit the buckets", dueOffsetDays: 1)])
+        check(next.nothingDueCaption == "Next: Audit the buckets \u{00B7} Tmrw",
+              "with nothing due, the card names what is next - got \(next.nothingDueCaption)")
+        let backlogOnly = bridge(tasks: [task("someday", "Rewrite the runbook", dueOffsetDays: nil)])
+        check(backlogOnly.nothingDueCaption == TasksBridge.claimFromBacklogCaption,
+              "with only backlog left, it points at the backlog - got \(backlogOnly.nothingDueCaption)")
+        let empty = bridge()
+        check(empty.nothingDueCaption == TasksBridge.nothingScheduledCaption && empty.isEmpty,
+              "and with nothing at all, it says so rather than drawing an empty card")
+    }
+
+    private static func checkBridgeBacklogIsUndatedWithClaimedFirst(_ check: (Bool, String) -> Void) {
+        var old = task("old", "Clean up stale kube contexts", dueOffsetDays: nil)
+        old.createdAt = ShiftStore.iso8601(calendar.date(byAdding: .day, value: -30, to: now) ?? now)
+        let digest = bridge(tasks: [
+            old,
+            task("high", "Write the backup restore runbook", dueOffsetDays: nil, priority: .high),
+            task("claimed", "Migrate the docs site", dueOffsetDays: nil, status: .inProgress),
+            task("dated", "Renew the cert", dueOffsetDays: 0),
+            task("cancelled", "Abandoned", dueOffsetDays: nil, status: .cancelled),
+            task("fourth", "One too many", dueOffsetDays: nil),
+        ])
+        check(digest.backlog.map { $0.id } == ["claimed", "high", "old"],
+              "the backlog is open tasks with no due date: claimed work first, then high priority, "
+                  + "then the one that has waited longest, capped at \(TasksBridge.backlogMaxRows) - got \(digest.backlog.map { $0.id })")
+        check(digest.backlog.first?.isClaimed == true && digest.backlog.dropFirst().allSatisfy { !$0.isClaimed },
+              "Claim maps to the existing In progress status, so a claimed row says so instead")
+        check(digest.backlog.first { $0.id == "high" }?.detail == "No due date \u{00B7} High",
+              "a backlog row names why it is here - got \(digest.backlog.first { $0.id == "high" }?.detail ?? "nil")")
+    }
+
+    private static func checkBridgeProgressCountsDoneTodayFromCompletedAt(_ check: (Bool, String) -> Void) {
+        let digest = bridge(tasks: [task("overdue", "Renew the cert", dueOffsetDays: -1),
+                                    timed("today", "Review the rota", at: "15:00"),
+                                    task("later", "Audit the buckets", dueOffsetDays: 2),
+                                    task("someday", "Rewrite the runbook", dueOffsetDays: nil)],
+                            completed: [finished("a", daysAgo: 0, hour: 9),
+                                        finished("b", daysAgo: 0, hour: 11),
+                                        finished("yesterday", daysAgo: 1)])
+        check(digest.progress == .init(done: 2, total: 4),
+              "two finished today out of the two finished plus the two still due today or earlier "
+                  + "(not the later or undated ones) - got \(String(describing: digest.progress))")
+        check(digest.progress?.shortText == "2/4" && digest.progress?.spokenText == "2 of 4 done today",
+              "the chip and VoiceOver say the same count")
+        check(bridge(tasks: [task("later", "Audit", dueOffsetDays: 3)]).progress == nil,
+              "GL-14: nothing due and nothing done is no progress at all, not 0/0")
+    }
+
+    /// The streak is a derivation over `completedAt`: consecutive days with
+    /// at least one task finished, still alive until today ends.
+    private static func checkBridgeStreakCountsConsecutiveDays(_ check: (Bool, String) -> Void) {
+        let run = [finished("t", daysAgo: 0), finished("y", daysAgo: 1), finished("y2", daysAgo: 1),
+                   finished("d2", daysAgo: 2), finished("gap", daysAgo: 4)]
+        check(TasksBridge.streak(completed: run, now: now, calendar: calendar) == 3,
+              "today, yesterday and the day before count once each, and the gap on day 3 ends it")
+
+        let notYetToday = [finished("y", daysAgo: 1), finished("d2", daysAgo: 2)]
+        check(TasksBridge.streak(completed: notYetToday, now: now, calendar: calendar) == 2,
+              "nothing finished yet today does not break the streak before the day is over")
+
+        let broken = [finished("d2", daysAgo: 2), finished("d3", daysAgo: 3)]
+        check(TasksBridge.streak(completed: broken, now: now, calendar: calendar) == 0,
+              "a whole day with nothing finished breaks it")
+
+        var reopened = finished("reopened", daysAgo: 0)
+        reopened.completedAt = nil
+        check(TasksBridge.streak(completed: [reopened], now: now, calendar: calendar) == 0,
+              "a reopened task has no completedAt and does not count")
+        check(bridge(completed: run).streakDays == 3, "the digest carries the same streak")
+    }
+
 }
 
 #endif

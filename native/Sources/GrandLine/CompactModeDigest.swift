@@ -165,7 +165,11 @@ enum CompactModeDigest {
 
     /// An open task's due day and how urgent it is, or nil for a task with
     /// no due date or one that is finished.
-    private static func dueDay(of task: ShiftTask, startOfToday: Date,
+    ///
+    /// Internal rather than private so the Tasks popover's Bridge shape
+    /// (`TasksBridge`) classifies a day by this exact rule rather than a
+    /// second copy of it.
+    static func dueDay(of task: ShiftTask, startOfToday: Date,
                                calendar: Calendar) -> (due: Date, urgency: CompactTaskRow.Urgency)? {
         guard task.status != .completed, task.status != .cancelled else { return nil }
         guard let dueDay = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return nil }

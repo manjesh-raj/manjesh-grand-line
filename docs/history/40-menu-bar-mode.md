@@ -627,3 +627,39 @@ The per-feature status items (outside compact mode) are unchanged.
 
 Confirmed by injection: no control-click route, no action-needed filter, and a menu that ignores the lock each fail by name.
 Not verified: the menu on a real menu bar, which needs a running app with a real status item. That live half is the captain's own check.
+
+## The Tasks popover in the Bridge shape (`fm/grandline-tasks-bridge-popover-1793030256`)
+
+The captain chose style A, Bridge, for the notification redesign, with every recommended extra.
+Part of that pick was the Tasks popover in the same shape, in the feel of the Tootask menu-bar popover the captain showed.
+Tootask itself is not integrated, and there is no Apple Reminders bridge: the feel is built natively on the tasks Grand Line already stores.
+The notification panel's own Bridge restyle was built in parallel on a separate branch, so this one touches neither the panel, its store nor its settings.
+
+### What shipped
+
+- `TasksBridge.digest` (`TasksBridgeDigest.swift`) derives the whole popover from the store, against an injected clock:
+  - the Now card is the task due now (overdue first, then the first due today), with its time pill, how late it is, and "3 of 5 checked";
+  - Up next merges the rest of the dated tasks with the pending follow-ups, in the order they fall due;
+  - the backlog is the open tasks with no due date, claimed work first;
+  - "2 of 6 done today" counts `completedAt`, and the streak is a derivation over `completedAt` with no stored field.
+- `TasksBridgeView.swift` renders it: the header with the pin, the Now card with Check off, Start focus and Open, the Up next and backlog rows, and the footer with Open Tasks and Settings.
+  It is local on purpose, so the notification panel can adopt the Now card later without taking anything else.
+- Both surfaces show the same pane: the compact popover's Today tab and the Tasks menu-bar item.
+  Claim is the existing In progress status, through `ShiftStore.claimTask`.
+- The compact popover's fixed height moved from 360 to 520.
+  At 360 only the Now card fit and Up next sat entirely below the fold.
+  It is still one size on every tab, so the Crew and Vault tabs carry more empty space than before.
+- The menu-bar popover is 330pt wide, sizes to its content and scrolls past a 560pt body.
+  The pin switches it to `.applicationDefined`, so it stays open on a click away until the icon, a navigating action or the lock closes it.
+  The count in the menu bar and the quick-add field are unchanged, and the old "Next follow-up" stat row is now an Up next row with its time.
+
+### Verified
+
+- `FM_RUN_COMPACT_MODE_TESTS` asserts the derivation: Now selection and lateness, the merged timeline order, the backlog order and cap, done today, and the streak across today, yesterday and a gap.
+  Confirmed by injection: a streak that dies at midnight, a follow-up taking the Now card, and done today counting earlier days each fail by name.
+- `FM_RUN_COMPACT_MODE_VIEW_TESTS` moved its urgency, contrast, empty-state and click-through checks onto the new pane, and `FM_RUN_KEYED_REFRESH_TESTS` keeps the Up next rows by id.
+  Confirmed by injection: an unwired Check off and an overdue time painted in the calm accent each fail by name.
+- `FM_RUN_TASKS_MENU_BAR_TESTS` (pure logic) drives the real menu-bar controller over a scratch store through each real button.
+  Confirmed by injection: an unwired Claim, a pin that does nothing and a locked pane that keeps its data each fail by name.
+
+Not verified: the popovers on a real menu bar, which needs a running app with a real status item. That live half is the captain's own check.

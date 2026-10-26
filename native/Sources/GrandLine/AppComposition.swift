@@ -736,6 +736,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // `NSStatusItem` actually appears at launch rather than only the
         // first time something else happens to reference the property.
         _ = shiftMenuBar
+        // The Tasks popover's Bridge shape navigates into the window and
+        // starts the window's one focus timer; the item itself only knows the
+        // store, so these come from here.
+        shiftMenuBar.onStartFocus = { [weak self] task in self?.appShell.workspace.focusTimer.start(task: task) }
+        shiftMenuBar.onOpenTasks = { [weak self] in self?.revealInFullWindow(.shift) }
+        shiftMenuBar.onOpenTask = { [weak self] id in
+            self?.revealInFullWindow(.shift)
+            self?.appShell.workspace.navigator.openShiftTask(id: id)
+        }
+        shiftMenuBar.onOpenFollowUp = { [weak self] id in
+            self?.revealInFullWindow(.shift)
+            self?.appShell.workspace.navigator.openShiftFollowUp(id: id)
+        }
+        shiftMenuBar.onOpenSettings = { [weak self] in
+            self?.revealInFullWindow(.settings)
+            self?.appShell.workspace.settings.select(.menuBar)
+        }
 
         // `fm/straw-hat-menubar-quick-chat-popover`: same reason, same
         // pattern. `onAsk` forwards into `AppShellController.
@@ -1102,7 +1119,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard AppLockGate.shared.allows(.compactModePopover) else { return }
             self?.shiftStore.setTaskCompleted(id: id, completed: completed)
         }
+        // The Today tab's Bridge shape. Every write takes the same lock check
+        // as the checkbox above, and each one is a store method the Tasks page
+        // already uses: Claim is the existing In progress status, a follow-up
+        // check is `setFollowUpStatus`, and Start focus is the window's own
+        // focus timer.
+        popover.bridgeProvider = { [weak self] in
+            guard let self else { return .empty }
+            return TasksBridge.digest(tasks: self.shiftStore.activeTasks,
+                                      completed: self.shiftStore.allCompletedTasks(),
+                                      followUps: self.shiftStore.followUps,
+                                      projects: self.shiftStore.projects,
+                                      focusSecondsToday: self.shiftStore.focusSecondsToday())
+        }
+        popover.onClaimTask = { [weak self] id in
+            guard AppLockGate.shared.allows(.compactModePopover) else { return }
+            self?.shiftStore.claimTask(id: id)
+        }
+        popover.onSetFollowUpDone = { [weak self] id in
+            guard AppLockGate.shared.allows(.compactModePopover) else { return }
+            self?.shiftStore.setFollowUpStatus(id: id, done: true)
+        }
+        popover.onStartFocus = { [weak self] id in
+            guard AppLockGate.shared.allows(.compactModePopover),
+                  let self, let task = self.shiftStore.activeTasks.first(where: { $0.id == id }) else { return }
+            self.appShell.workspace.focusTimer.start(task: task)
+        }
         popover.onOpenTasks = { [weak self] in self?.revealInFullWindow(.shift) }
+        popover.onOpenTask = { [weak self] id in
+            self?.revealInFullWindow(.shift)
+            self?.appShell.workspace.navigator.openShiftTask(id: id)
+        }
+        popover.onOpenFollowUp = { [weak self] id in
+            self?.revealInFullWindow(.shift)
+            self?.appShell.workspace.navigator.openShiftFollowUp(id: id)
+        }
 
         // Notes - the third popover, reading the one `StickyBoardStore` the
         // Sticky Board destination owns.

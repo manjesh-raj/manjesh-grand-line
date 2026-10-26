@@ -1,11 +1,18 @@
 // Grand Line - native macOS app.
 //
 // The Shift menu bar item (phase 5, cockpit-shift-power-features): a status
-// bar icon showing today's task count, with a popover (mockup's
-// `.mb-popover`) listing today's task count, the next follow-up, and a
-// quick-add field that creates a real task via `ShiftStore.addTask` - the
-// same store every other Shift entry point writes through, not a separate
-// write path.
+// bar icon showing today's task count, with a popover and a quick-add field
+// that creates a real task via `ShiftStore.addTask` - the same store every
+// other Shift entry point writes through, not a separate write path.
+//
+// The popover is the Tasks popover in the Bridge shape the captain approved
+// (`TasksBridgeView.swift`): Today with the date, the done-today count and
+// the streak, a Now card with Check off, Start focus and Open, Up next with
+// the follow-ups in time order, a backlog to claim from, and a footer whose
+// main action is Open Tasks. It is the same pane the compact popover's Today
+// tab shows. It used to be two stat rows ("Tasks today: 3", "Next follow-up")
+// and the quick-add field; the count still sits in the menu bar, the next
+// follow-up is an Up next row with its time, and the quick-add field stays.
 //
 // Kept independent of the main window's `ShiftController` (which only exists
 // once the window is built) so the menu bar item and its counts are correct
@@ -18,6 +25,18 @@ final class ShiftMenuBarController: NSObject, NSPopoverDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     private let contentController = ShiftMenuBarPopoverController()
+
+    /// Start the focus timer on a task. Wired by `AppDelegate` to the
+    /// window's one `FocusTimerController`; nil hides the Now card's button.
+    var onStartFocus: ((ShiftTask) -> Void)? {
+        didSet { contentController.showsStartFocus = onStartFocus != nil }
+    }
+    /// Raise the window on Tasks, on one task, on one follow-up, or on
+    /// Settings › Menu Bar. Every one of them closes the popover first.
+    var onOpenTasks: (() -> Void)?
+    var onOpenTask: ((String) -> Void)?
+    var onOpenFollowUp: ((String) -> Void)?
+    var onOpenSettings: (() -> Void)?
 
     init(store: ShiftStore) {
         self.store = store
@@ -58,6 +77,7 @@ final class ShiftMenuBarController: NSObject, NSPopoverDelegate {
         contentController.onQuickAdd = { [weak self] title in
             self?.createQuickTask(title: title)
         }
+        wirePane()
 
         store.observe { [weak self] in self?.refreshCounts() }
 
@@ -157,9 +177,66 @@ final class ShiftMenuBarController: NSObject, NSPopoverDelegate {
         contentController.applyTheme(theme)
     }
 
+    /// Every inline action on the pane. Each write takes the same lock check
+    /// `createQuickTask` does (GL-09: the popover cannot be open while locked,
+    /// but these are the writes), and each is a store method the Tasks page
+    /// already uses: Claim is the existing In progress status.
+    private func wirePane() {
+        contentController.onCheckOffTask = { [weak self] id in
+            guard AppLockGate.shared.allows(.menuBarPopover) else { return }
+            self?.store.setTaskCompleted(id: id, completed: true)
+        }
+        contentController.onClaimTask = { [weak self] id in
+            guard AppLockGate.shared.allows(.menuBarPopover) else { return }
+            self?.store.claimTask(id: id)
+        }
+        contentController.onCompleteFollowUp = { [weak self] id in
+            guard AppLockGate.shared.allows(.menuBarPopover) else { return }
+            self?.store.setFollowUpStatus(id: id, done: true)
+        }
+        contentController.onStartFocus = { [weak self] id in
+            guard AppLockGate.shared.allows(.menuBarPopover), let self,
+                  let task = self.store.activeTasks.first(where: { $0.id == id }) else { return }
+            self.onStartFocus?(task)
+        }
+        contentController.onOpenTask = { [weak self] id in
+            self?.closeThen { self?.onOpenTask?(id) }
+        }
+        contentController.onOpenFollowUp = { [weak self] id in
+            self?.closeThen { self?.onOpenFollowUp?(id) }
+        }
+        contentController.onOpenTasks = { [weak self] in
+            self?.closeThen { self?.onOpenTasks?() }
+        }
+        contentController.onOpenSettings = { [weak self] in
+            self?.closeThen { self?.onOpenSettings?() }
+        }
+        contentController.onTogglePin = { [weak self] pinned in self?.setPinned(pinned) }
+        contentController.onSizeChanged = { [weak self] size in self?.popover.contentSize = size }
+    }
+
+    /// Navigating to the window is the end of the popover's job, pinned or not.
+    private func closeThen(_ action: () -> Void) {
+        popover.performClose(nil)
+        action()
+    }
+
+    /// The header's pin: a pinned popover stays open when the captain clicks
+    /// into another app, the way Tootask's does. `.applicationDefined` is
+    /// AppKit's own "only closes when told to" behaviour, and the icon, the
+    /// lock (`registerLockDismissiblePopover`) and every navigating action
+    /// still close it. Not persisted: a pin is about this
+    /// sitting, and a popover that reopened pinned after a relaunch would
+    /// surprise.
+    private func setPinned(_ pinned: Bool) {
+        popover.behavior = pinned ? .applicationDefined : .transient
+    }
+
     #if FM_SELFTESTS
     var debugPopover: NSPopover { popover }
     func debugPrepareToShow() { prepareToShow() }
+    var debugContent: ShiftMenuBarPopoverController { contentController }
+    func debugRefresh() { refreshCounts() }
     #endif
 
     private func createQuickTask(title: String) {
@@ -193,7 +270,7 @@ final class ShiftMenuBarController: NSObject, NSPopoverDelegate {
         guard AppLockGate.shared.allows(.menuBarContent) else {
             statusItem.button?.title = ""
             statusItem.button?.toolTip = "Tasks - Grand Line is locked"
-            contentController.update(tasksToday: 0, nextFollowUp: nil, nextFollowUpDate: nil)
+            contentController.present(.empty)
             return
         }
         statusItem.button?.toolTip = "Tasks"
@@ -204,108 +281,152 @@ final class ShiftMenuBarController: NSObject, NSPopoverDelegate {
             return cal.isDate(due, inSameDayAs: today)
         }.count
 
-        let nextFollowUp = store.followUps
-            .filter { $0.status == .pending }
-            .compactMap { fu -> (ShiftFollowUp, Date)? in
-                guard let date = ShiftDateFormatting.dateTime(from: fu.followUpAt, time: fu.followUpTime) else { return nil }
-                return (fu, date)
-            }
-            .sorted { $0.1 < $1.1 }
-            .first
-
         statusItem.button?.title = " \(dueTodayCount)"
-        contentController.update(tasksToday: dueTodayCount, nextFollowUp: nextFollowUp?.0, nextFollowUpDate: nextFollowUp?.1)
+        contentController.present(TasksBridge.digest(tasks: store.activeTasks,
+                                                     completed: store.allCompletedTasks(),
+                                                     followUps: store.followUps,
+                                                     projects: store.projects,
+                                                     focusSecondsToday: store.focusSecondsToday(reference: today),
+                                                     now: today))
     }
 }
 
-/// The popover's content: two stat rows + the next follow-up's title + a
-/// quick-add field - built as a plain `NSViewController` rather than a shared
-/// destination controller, since a popover already gets its own vibrant
-/// background from AppKit and needs no `NSVisualEffectView` of its own.
+/// The popover's content: the Bridge-shaped `TasksBridgePane` in a scroll
+/// view, the quick-add field, and the footer with Open Tasks and Settings.
 ///
-/// That is where this file's own reasoning used to stop, and it was the bug:
-/// AppKit supplying the *material* says nothing about which side of
-/// light/dark it resolves against. The labels below are deliberately plain
-/// `.labelColor` system-semantic text, so they are correct only once the
-/// popover's appearance is forced to the active theme's mode - which
-/// `ShiftMenuBarController.prepareToShow()` now does on every open.
-private final class ShiftMenuBarPopoverController: NSViewController {
-    private let headerLabel = NSTextField(labelWithString: "Tasks")
-    private let tasksRow = ShiftMenuBarStatRow(label: "Tasks today")
-    private let followUpRow = ShiftMenuBarStatRow(label: "Next follow-up")
-    private let nextFollowUpTitle = NSTextField(labelWithString: "")
-    private let quickAddField = HelmTextField(placeholder: "Quick add a task, press \u{23CE}\u{2026}")
+/// `ShiftMenuBarController.prepareToShow()` forces the popover's appearance
+/// to the active theme on every open, and this view forces its own as well
+/// (`ThemeManager.swift`'s checklist item 2), so the field editor, the focus
+/// ring and every system-semantic colour follow the Helm theme rather than
+/// the OS.
+///
+/// The pane scrolls inside a capped height rather than growing the popover
+/// past `maxBodyHeight`: a captain with a long backlog gets a scroller, not a
+/// popover that runs off the bottom of the screen.
+final class ShiftMenuBarPopoverController: NSViewController {
+    static let width: CGFloat = CompactModePopoverController.width
+    /// Tall enough for the header, the Now card, the five Up next rows and
+    /// the backlog at the default text size, measured in the tour lab.
+    static let maxBodyHeight: CGFloat = 560
+
     var onQuickAdd: ((String) -> Void)?
+    var onCheckOffTask: ((String) -> Void)?
+    var onClaimTask: ((String) -> Void)?
+    var onCompleteFollowUp: ((String) -> Void)?
+    var onStartFocus: ((String) -> Void)?
+    var onOpenTask: ((String) -> Void)?
+    var onOpenFollowUp: ((String) -> Void)?
+    var onOpenTasks: (() -> Void)?
+    var onOpenSettings: (() -> Void)?
+    var onTogglePin: ((Bool) -> Void)?
+    /// Forwarded to `popover.contentSize` after every render.
+    var onSizeChanged: ((NSSize) -> Void)?
+    var showsStartFocus = false {
+        didSet {
+            pane.onStartFocus = showsStartFocus ? { [weak self] id in self?.onStartFocus?(id) } : nil
+        }
+    }
+
+    private let pane = TasksBridgePane(showsPin: true)
+    private let scroll = NSScrollView()
+    private let quickAddField = HelmTextField(placeholder: "Quick add a task, press \u{23CE}\u{2026}")
+    private let footer = TasksBridgeFooter(showsSettings: true)
+    private let divider = NSView()
+    private var scrollHeight: NSLayoutConstraint?
+    private var theme: HelmTheme = ThemeManager.shared.theme
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 230, height: 140))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 400))
+        root.wantsLayer = true
         view = root
 
-        headerLabel.setScaledFont(ofSize: 13, weight: .semibold)
+        pane.onCheckOffTask = { [weak self] id in self?.onCheckOffTask?(id) }
+        pane.onClaimTask = { [weak self] id in self?.onClaimTask?(id) }
+        pane.onCompleteFollowUp = { [weak self] id in self?.onCompleteFollowUp?(id) }
+        pane.onOpenTask = { [weak self] id in self?.onOpenTask?(id) }
+        pane.onOpenFollowUp = { [weak self] id in self?.onOpenFollowUp?(id) }
+        pane.header.onTogglePin = { [weak self] pinned in self?.onTogglePin?(pinned) }
+        footer.onOpenTasks = { [weak self] in self?.onOpenTasks?() }
+        footer.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
 
-        nextFollowUpTitle.setScaledFont(ofSize: 11)
-        // Re-derived from the active theme on every popover refresh (see
-        // `update(tasksToday:nextFollowUp:nextFollowUpDate:)`), not a fixed
-        // system grey - audit §5.3.
-        nextFollowUpTitle.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
-        nextFollowUpTitle.lineBreakMode = .byTruncatingTail
-        nextFollowUpTitle.maximumNumberOfLines = 2
+        // Flipped and pinned to the clip view: gotchas (9) and (4).
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = false
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        let document = FlippedView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(pane)
+        scroll.documentView = document
 
-        let divider = NSBox()
-        divider.boxType = .separator
-
+        divider.wantsLayer = true
+        divider.translatesAutoresizingMaskIntoConstraints = false
         quickAddField.target = self
         quickAddField.action = #selector(quickAddSubmitted)
+        quickAddField.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [
-            headerLabel, tasksRow, followUpRow, nextFollowUpTitle, divider, quickAddField,
-        ])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 6
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(stack)
+        for v in [scroll, divider, quickAddField, footer] as [NSView] { root.addSubview(v) }
+        let scrollHeight = scroll.heightAnchor.constraint(equalToConstant: 200)
+        self.scrollHeight = scrollHeight
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
-            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12),
-            tasksRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            followUpRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            divider.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            quickAddField.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            root.widthAnchor.constraint(equalToConstant: Self.width),
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            pane.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            pane.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            pane.topAnchor.constraint(equalTo: document.topAnchor),
+            pane.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+
+            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s1),
+            scrollHeight,
+            divider.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            divider.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: HelmMetrics.s1),
+            divider.heightAnchor.constraint(equalToConstant: 1),
+            quickAddField.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.s3),
+            quickAddField.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.s3),
+            quickAddField.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: HelmMetrics.s2),
+            footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.s3),
+            footer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.s3),
+            footer.topAnchor.constraint(equalTo: quickAddField.bottomAnchor, constant: HelmMetrics.s2),
+            footer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -HelmMetrics.s3),
         ])
+        applyTheme(theme)
     }
 
     /// This controller has no `ThemeManager` observation of its own - the menu
     /// bar item owns one and calls this, so there is a single place the
     /// popover's appearance and its content's colours move together.
     func applyTheme(_ theme: HelmTheme) {
-        nextFollowUpTitle.textColor = HelmTheme.mutedInk(theme)
+        self.theme = theme
+        _ = view
+        view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+        divider.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
+            .withAlphaComponent(HelmCard.dividerAlpha).cgColor
+        pane.applyTheme(theme)
     }
 
     /// GL-P3: this popover re-renders on every open and on every store change.
-    private static let followUpTimeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.setLocalizedDateFormatFromTemplate("jm")
-        return f
-    }()
-
-    func update(tasksToday: Int, nextFollowUp: ShiftFollowUp?, nextFollowUpDate: Date?) {
-        applyTheme(ThemeManager.shared.theme)
-        tasksRow.setValue("\(tasksToday)")
-        if let nextFollowUp, let nextFollowUpDate {
-            followUpRow.setValue(Self.followUpTimeFormatter.string(from: nextFollowUpDate))
-            nextFollowUpTitle.stringValue = nextFollowUp.title
-            nextFollowUpTitle.isHidden = false
-        } else {
-            followUpRow.setValue("\u{2014}")
-            nextFollowUpTitle.isHidden = true
-        }
+    func present(_ digest: TasksBridgeDigest) {
+        _ = view
+        pane.present(digest, theme: theme)
+        // The scroll region takes the pane's natural height up to the cap,
+        // so a short day is a short popover and a long one scrolls.
+        view.layoutSubtreeIfNeeded()
+        let natural = pane.fittingSize.height
+        scrollHeight?.constant = min(natural, Self.maxBodyHeight)
+        view.layoutSubtreeIfNeeded()
+        onSizeChanged?(NSSize(width: Self.width, height: view.fittingSize.height))
     }
 
     func focusQuickAdd() {
         quickAddField.stringValue = ""
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
         DispatchQueue.main.async { [weak self] in
             self?.view.window?.makeFirstResponder(self?.quickAddField)
         }
@@ -316,34 +437,15 @@ private final class ShiftMenuBarPopoverController: NSViewController {
         quickAddField.stringValue = ""
         onQuickAdd?(text)
     }
-}
 
-private final class ShiftMenuBarStatRow: NSView {
-    private let nameLabel = NSTextField(labelWithString: "")
-    private let valueLabel = NSTextField(labelWithString: "")
-
-    init(label: String) {
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.stringValue = label
-        nameLabel.setScaledFont(ofSize: 12)
-        valueLabel.setScaledFont(ofSize: 12, weight: .semibold)
-        valueLabel.alignment = .right
-
-        let row = NSStackView(views: [nameLabel, valueLabel])
-        row.orientation = .horizontal
-        row.distribution = .equalSpacing
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+    #if FM_SELFTESTS
+    var debugPane: TasksBridgePane { pane }
+    var debugFooter: TasksBridgeFooter { footer }
+    var debugScroll: NSScrollView { scroll }
+    var debugQuickAddField: HelmTextField { quickAddField }
+    func debugSubmitQuickAdd(_ text: String) {
+        quickAddField.stringValue = text
+        quickAddSubmitted()
     }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    func setValue(_ text: String) { valueLabel.stringValue = text }
+    #endif
 }

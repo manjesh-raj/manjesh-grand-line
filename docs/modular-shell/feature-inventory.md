@@ -542,7 +542,7 @@ Every `HelmSegmentedTabs` built from literal titles, plus the Hosts column, the 
 |---|---|---|---|---|
 | `tab.CompactModeTab.crew` | Compact popover tab: crew | menu-bar compact mode popover | Menu bar extra (compact mode popover, unchanged) |  |
 | `tab.CompactModeTab.notes` | Compact popover tab: notes | menu-bar compact mode popover | Menu bar extra (compact mode popover, unchanged) |  |
-| `tab.CompactModeTab.today` | Compact popover tab: today | menu-bar compact mode popover | Menu bar extra (compact mode popover, unchanged) |  |
+| `tab.CompactModeTab.today` | Compact popover tab: today | menu-bar compact mode popover | Menu bar extra (compact mode popover; the Today tab is the Tasks popover in the Bridge shape - Now card, Up next with follow-ups, backlog to claim, done today and the streak - with the focus and follow-up chips kept) |  |
 | `tab.CompactModeTab.vault` | Compact popover tab: vault | menu-bar compact mode popover | Menu bar extra (compact mode popover, unchanged) |  |
 | `tab.HostsTab.hosts` | Hosts page column: Hosts | Hosts page's own sidebar column | Connections › Hosts |  |
 | `tab.HostsTab.keys` | Hosts page column: SSH Keys | Hosts page's own sidebar column | Connections › Keys |  |
@@ -741,7 +741,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.CommandLibraryAIPopover` | CommandLibraryAIPopover controls | `askClicked`, `copyClicked`, `saveTemplateClicked` | Connections › Commands |  |
 | `action.CommandLibraryViews` | CommandLibraryViews controls | `addCommandClicked`, `aiActionPicked`, `aiClicked`, `appendToExistingRunbook`, `categoryCommandRowClicked`, `categoryRowClicked`, `copyClicked`, `createNewWorkflowRunbook`, `duplicateClicked`, `editClicked`, `favoriteClicked`, `favoriteRowClicked`, `paramValueChanged`, `recentRowClicked`, `searchResultRowClicked`, `sendToHostsClicked`, `sendToTerminalClicked`, `workflowClicked` | Connections › Commands |  |
 | `action.CompactMode` | CompactMode controls | `iconClicked` | Menu bar extra (compact mode, unchanged) |  |
-| `action.CompactModePopover` | CompactModePopover controls | `captureSubmitted`, `clicked`, `openBoardTapped`, `openTasksTapped`, `openWindowTapped`, `settingsTapped`, `submitTapped` | Menu bar extra (compact mode, unchanged) |  |
+| `action.CompactModePopover` | CompactModePopover controls | `captureSubmitted`, `clicked`, `openBoardTapped`, `openWindowTapped`, `settingsTapped`, `submitTapped` | Menu bar extra (compact mode; the Today tab's Open Tasks moved into the Bridge-shaped Tasks pane, `action.TasksBridgeView`) |  |
 | `action.CompactModeStatusMenu` | CompactModeStatusMenu controls | `fire` | Menu bar extra (compact mode, unchanged) |  |
 | `action.ConsoleComposerPopover` | ConsoleComposerPopover controls | `copyClicked`, `exampleClicked`, `generateClicked`, `runClicked` | Console (Compose popover) |  |
 | `action.ConsoleController+SRELead` | ConsoleController+SRELead controls | `generatePostmortemClicked`, `startSRELeadForCurrentTabClicked` | Console (SRE Lead) |  |
@@ -830,7 +830,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.ShiftController` | ShiftController controls | `addExampleTaskTapped`, `detailBackClicked`, `detailSaveClicked`, `followUpsJumpClicked`, `newTaskClicked`, `openFailedFile`, `projectPopupChanged`, `sortChanged`, `syncPillClicked`, `tableCheckClicked` | Tasks (the filter row's Follow-ups button and project menu, and the List table's check, are the sidebar layout's) |  |
 | `action.ShiftImageAttachmentWell` | ShiftImageAttachmentWell controls | `removeClicked` | Tasks (task editor attachments) |  |
 | `action.ShiftListViews` | ShiftListViews controls | `checkboxClicked`, `deleteClicked`, `doneClicked`, `editClicked`, `focusClicked`, `openClicked`, `pushClicked`, `reopenClicked`, `snooze30`, `snoozeCustom`, `snoozeHour`, `snoozeNextWeek`, `snoozeTomorrow`, `stopFocusClicked` | Tasks › List |  |
-| `action.ShiftMenuBar` | ShiftMenuBar controls | `iconClicked`, `quickAddSubmitted` | Menu bar extra (Tasks, unchanged) |  |
+| `action.ShiftMenuBar` | ShiftMenuBar controls | `iconClicked`, `quickAddSubmitted` | Menu bar extra (Tasks: the icon and the quick-add field are unchanged; the popover's own actions are `action.TasksBridgeView`) |  |
 | `action.ShiftProjectDetailView` | ShiftProjectDetailView controls | `checkboxClicked`, `chevronClicked` | Tasks (the project page, unchanged) |  |
 | `action.ShiftProjectViews` | ShiftProjectViews controls | `openClicked`, `statusButtonClicked`, `statusItemSelected` | Tasks (the projects panel under the view, unchanged) |  |
 | `action.ShiftQuickCapture` | ShiftQuickCapture controls | `askTheCrew`, `clicked` | System (⌥Space quick capture panel, unchanged) |  |
@@ -847,6 +847,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.StrawHatMenuBar` | StrawHatMenuBar controls | `iconClicked`, `openFullChatTapped`, `submit` | Menu bar extra (Straw Hat, unchanged) |  |
 | `action.StrawHatRosterView` | StrawHatRosterView controls | `closeClicked` | Crew › Ask the crew |  |
 | `action.TabChipView` | TabChipView controls | `closeClicked`, `duplicateFromMenu`, `reconnectFromMenu`, `renameFromMenu`, `toggleForwardDragsFromMenu` | Console (tab strip) |  |
+| `action.TasksBridgeView` | The Tasks popover in the Bridge shape: Now card, Up next, backlog and footer | `checkTapped`, `claimTapped`, `openTapped`, `openTasksTapped`, `pinTapped`, `settingsTapped` | Menu bar extra (the compact popover's Today tab and the Tasks menu bar item: Check off, Start focus and Open on the Now card, a check on each Up next row, Claim on a backlog row, the header's pin, and the footer's Open Tasks and Settings) |  |
 | `action.Toast` | Toast controls | `UndoSlot.undoClicked` | Window (toast) |  |
 | `action.ToolInstance` | ToolInstance controls | `base64CopyClicked`, `base64DecodeClicked`, `base64EncodeClicked`, `certCopyClicked`, `certInspectClicked`, `cpuCoresCopyClicked`, `cpuMillicoresCopyClicked`, `cpuToCoresClicked`, `cpuToMillicoresClicked`, `cronCopyClicked`, `cronExplainClicked`, `cronRandomClicked`, `diffCompareClicked`, `diffShowOnlyDifferencesToggled`, `epochToHumanClicked`, `humanToEpochClicked`, `jsonBeautifyClicked`, `jsonCopyClicked`, `jsonValidateClicked`, `jwtCopyHeaderClicked`, `jwtCopyPayloadClicked`, `jwtDecodeClicked`, `memoryConvertClicked`, `memoryCopyClicked`, `nowClicked`, `scratchpadCopyAllClicked`, `tsCopyEpochClicked`, `tsCopyHumanClicked`, `yamlBeautifyClicked`, `yamlCopyClicked`, `yamlValidateClicked` | Tools |  |
 | `action.ToolsController` | ToolsController controls | `newShellTab`, `toolCardClicked` | Tools |  |
@@ -1190,7 +1191,7 @@ The checks that stand between the captain and an irreversible or secret-revealin
 | `tabkey.reconnect` | ⌘R reconnects the tab | Console | Console (unchanged) | `TabKeyboardShortcuts.swift` `case "r": return .reconnect` |
 | `tabkey.rename` | Rename the tab from the keyboard | Console and Tools | Console (unchanged) | `TabKeyboardShortcuts.swift` `case .rename: target.renameCurrentTab()` |
 | `tabkey.select` | ⌘1-⌘9 select a tab while a tab-bearing page shows | Console and Tools | Console (unchanged; elsewhere ⌘1-⌘6 select sidebar modules) | `TabKeyboardShortcuts.swift` `case .select(let index): target.selectTab(atIndex: index)` |
-| `extra.tasks` | Tasks menu bar extra | Menu bar | Menu bar extra (unchanged) | `ShiftMenuBar.swift` `final class ShiftMenuBarController` |
+| `extra.tasks` | Tasks menu bar extra | Menu bar | Menu bar extra (the popover is the Tasks popover in the Bridge shape: Today with done today and the streak, a pin, the Now card, Up next with follow-ups, the backlog to claim, the quick-add field, and Open Tasks and Settings) | `ShiftMenuBar.swift` `final class ShiftMenuBarController` |
 | `extra.poneglyph` | Poneglyph menu bar extra with copy and TOTP | Menu bar | Menu bar extra (unchanged) | `PoneglyphMenuBar.swift` `final class PoneglyphMenuBarController` |
 | `extra.strawHat` | Straw Hat menu bar extra | Menu bar | Menu bar extra (unchanged) | `StrawHatMenuBar.swift` `final class StrawHatMenuBarController` |
 | `extra.compactMode` | Compact mode: the app lives in the menu bar with a four-tab popover | Menu bar | Menu bar extra (unchanged) | `CompactMode.swift` `final class CompactModeController` |
