@@ -369,6 +369,10 @@ NEEDS_SESSION=(
   # real sidebar shell. Its models and source guards
   # (`FM_RUN_REVIEW2_UX_MODEL_TESTS`) are deliberately NOT here.
   "FM_RUN_REVIEW2_UX_TESTS"  # session-not-window: builds its windows via ReviewTourLab.makeOffScreenSplitShell() and makeOffScreenShell()
+  # The second full review's accessibility and performance items in a real
+  # sidebar shell. Its words, caches and source guards
+  # (`FM_RUN_REVIEW2_A11Y_PERF_MODEL_TESTS`) are deliberately NOT here.
+  "FM_RUN_REVIEW2_A11Y_PERF_TESTS"  # session-not-window: builds its windows via ReviewTourLab.makeOffScreenSplitShell()
   "FM_RUN_HELM_KIT_VIEW_TESTS"
   # `fm/grandline-claude-widget-refresh-shift`: builds a real `HelmModuleCard`
   # and a real hub in real windows and reads resolved header frames back after

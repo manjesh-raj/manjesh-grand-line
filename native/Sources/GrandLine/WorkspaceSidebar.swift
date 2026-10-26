@@ -1106,8 +1106,12 @@ final class WorkspaceSidebarHeader: HoverHighlightView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         cornerRadius = HelmMetrics.rChip + 3
+        // R2-A11Y-03: it opens a menu, so it is a menu button, and the menu
+        // holds Log Out and nothing else, so the label names that rather
+        // than promising an account menu. The app's name stays first because
+        // it is the text on screen.
         accessibilityRoleOverride = .menuButton
-        accessibilityLabelOverride = "\(AppPaths.displayName) account menu"
+        accessibilityLabelOverride = Self.accessibilityLabel
         toolTip = "Log Out"
 
         tile.configure(symbol: "sailboat.fill", hue: .blue)
@@ -1148,6 +1152,9 @@ final class WorkspaceSidebarHeader: HoverHighlightView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     static let height: CGFloat = 46
+
+    /// What VoiceOver reads before "menu button".
+    static let accessibilityLabel = "\(AppPaths.displayName), Log Out"
 
     @objc private func clicked() { onClick?() }
 
