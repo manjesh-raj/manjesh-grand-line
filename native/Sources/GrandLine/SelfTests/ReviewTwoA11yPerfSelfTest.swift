@@ -32,7 +32,7 @@ enum ReviewTwoA11yPerfSelfTest {
         window.orderFront(nil)
         defer { window.orderOut(nil) }
         settle(shell)
-        for check in [checkTheLabelsSayWhatTheControlsDo] {
+        for check in [checkTheLabelsSayWhatTheControlsDo, checkHealthReadsInWords] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -142,6 +142,58 @@ enum ReviewTwoA11yPerfSelfTest {
         BackgroundSignalsPoller.shared.debugSetCounts(BackgroundSignalsPoller.SignalCounts())
         settle(shell)
         if ok { print("  OK   Log Out named, the sidebar and inspector buttons say which way, Setup's count has its unit") }
+    }
+
+    // MARK: R2-A11Y-04 - colour is not the only carrier
+
+    private static func checkHealthReadsInWords(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                _ ok: inout Bool) {
+        print("\n-- R2-A11Y-04: Health's runs and Home's ring in words --")
+        ReviewTourLab.seedDemoHealth(shell.workspace.health)
+        shell.workspace.navigator.show(.health)
+        settle(shell)
+        let registry = ServiceHealthRegistry.shared
+        let table = shell.workspace.health.debugHealthCard.debugServicesTable
+        let tableView = table.debugTable
+        let column = tableView.column(withIdentifier: NSUserInterfaceItemIdentifier("runs"))
+        check(column >= 0, "the services table shows no Recent runs column at 1512", &ok)
+        var read = 0
+        var mixedSeen = false
+        for (row, item) in table.debugRows.enumerated() where column >= 0 {
+            guard case .record(let key) = item.kind, let service = HealthService(rawValue: key) else { continue }
+            let want = HealthCardView.runTicksSpoken(registry.state(service))
+            guard let cell = tableView.view(atColumn: column, row: row, makeIfNecessary: true),
+                  let label = textFields(in: cell).first else {
+                fail("\(service.title): no Recent runs cell", &ok)
+                continue
+            }
+            read += 1
+            if want.contains("failure"), want.contains("success") { mixedSeen = true }
+            check(label.accessibilityLabel() == want,
+                  "\(service.title)'s runs (\"\(label.stringValue)\") read \"\(label.accessibilityLabel() ?? "")\", want \"\(want)\"",
+                  &ok)
+        }
+        check(read >= 5, "only \(read) Recent runs cells were read", &ok)
+        check(mixedSeen, "the fixture has no service with both a failure and a success", &ok)
+
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        settle(shell)
+        let readings = registry.knownServices().map { service -> HomeCanvasController.HealthServiceReading in
+            let state = registry.state(service)
+            return .init(title: service.title, verdict: state.verdict, hasReported: state.hasReported)
+        }
+        let want = HomeCanvasController.healthRingSpoken(readings)
+        let ring = shell.debugHomeCanvas.cardForTests(.health)?.debugRingGauge
+        check(ring != nil, "Home's Health card draws no ring", &ok)
+        check(ring?.isAccessibilityElement() == true && ring?.accessibilityLabel() == want,
+              "Home's Health ring reads \"\(ring?.accessibilityLabel() ?? "nil")\", want \"\(want)\"", &ok)
+        if ok { print("  OK   every Recent runs cell and Home's Health ring carry their counts in words") }
+    }
+
+    static func textFields(in view: NSView) -> [NSTextField] {
+        (view as? NSTextField).map { [$0] } ?? view.subviews.flatMap(textFields(in:))
     }
 }
 

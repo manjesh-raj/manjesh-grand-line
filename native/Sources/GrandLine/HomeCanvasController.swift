@@ -3136,11 +3136,27 @@ final class HomeCanvasController: NSViewController {
         if failingCount > 0 { content.chip = .bad("\(failingCount) failing") }
         let summary = Self.healthRingSummary(readings)
         let lines = Self.healthServiceLines(readings)
+        let spoken = Self.healthRingSpoken(readings)
         content.body = healthListsServices && !lines.isEmpty
             ? .ringWithLines(value: summary.value, total: summary.total,
-                             title: summary.title, note: summary.note, lines: lines)
+                             title: summary.title, note: summary.note, lines: lines, spoken: spoken)
             : .ring(value: summary.value, total: summary.total,
-                    title: summary.title, note: summary.note)
+                    title: summary.title, note: summary.note, spoken: spoken)
+    }
+
+    /// R2-A11Y-04: the Health ring in words - "4 healthy, 1 failing" - one
+    /// count per verdict, in the order the Health page's own summary lists
+    /// them. The arc's sweep was the only carrier of how many were well.
+    static func healthRingSpoken(_ services: [HealthServiceReading]) -> String {
+        guard !services.isEmpty else { return "No background service has reported yet" }
+        let order: [(ServiceHealthState.Verdict, String)] = [
+            (.healthy, "healthy"), (.failing, "failing"), (.degraded, "recent failure"),
+            (.running, "checking"), (.unknown, "not run yet"),
+        ]
+        return order.compactMap { verdict, word -> String? in
+            let count = services.filter { $0.verdict == verdict }.count
+            return count > 0 ? "\(count) \(word)" : nil
+        }.joined(separator: ", ")
     }
 
     /// One line per service for the hub's Health list, in the registry's
