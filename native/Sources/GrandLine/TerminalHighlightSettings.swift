@@ -123,7 +123,7 @@ final class TerminalHighlightSettingsSections: NSObject {
 
             let swatch = NSView()
             swatch.wantsLayer = true
-            swatch.layer?.cornerRadius = 4
+            swatch.layer?.cornerRadius = HelmMetrics.s1
             swatch.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 swatch.widthAnchor.constraint(equalToConstant: 14),
@@ -483,7 +483,7 @@ final class TerminalHighlightSettingsSections: NSObject {
     private func makeSwatch() -> NSView {
         let swatch = NSView()
         swatch.wantsLayer = true
-        swatch.layer?.cornerRadius = 4
+        swatch.layer?.cornerRadius = HelmMetrics.s1
         swatch.layer?.borderWidth = 1
         swatch.translatesAutoresizingMaskIntoConstraints = false
         swatch.setAccessibilityElement(false)
