@@ -32,7 +32,7 @@
 
 import AppKit
 
-private final class GitHubSyncRow {
+final class GitHubSyncRow {
     let repo: GitHubSyncRepoConfig
     var status: GitHubSyncStatus = .unknown
     var upstreamFullName: String?
@@ -77,7 +77,7 @@ private final class GitHubSyncRow {
 
 final class GitHubSyncController: NSViewController, DaylightDrillActions {
 
-    private var rows: [GitHubSyncRow] = GitHubSyncCatalog.repos.map(GitHubSyncRow.init)
+    var rows: [GitHubSyncRow] = GitHubSyncCatalog.repos.map(GitHubSyncRow.init)
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var scrollView: NSScrollView!
     private var cards: [HelmCard] = []
@@ -423,40 +423,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
 
     // MARK: Row building
 
-    private func buildRow(_ row: GitHubSyncRow) -> NSView {
-        row.syncButton.title = "Sync now"
-        row.syncButton.controlSize = .small
-        row.syncButton.target = self
-        row.syncButton.action = #selector(syncTapped(_:))
-        row.syncButton.identifier = NSUserInterfaceItemIdentifier(row.repo.fullName)
-
-        row.progressLabel.setScaledFont(ofSize: 11, weight: .medium)
-
-        let view = ToolRowLayout.build(
-            row.toolRowViews,
-            iconSymbol: "point.3.connected.trianglepath.dotted",
-            tint: .neutral,
-            name: row.repo.fullName,
-            statusViews: [row.pill, row.statusSkeleton, row.progressLabel],
-            trailingViews: [row.syncButton],
-            detailsTarget: self,
-            detailsAction: #selector(detailsTapped(_:)),
-            // UI-43: the page-wide rule. Eight repos is eight status lines,
-            // with "Sync now" on the row you are pointing at.
-            actionReveal: ToolRowLayout.actionReveal(forPageRowCount: rows.count),
-            identifier: row.repo.fullName
-        )
-        row.logContainer.isHidden = true
-        return view
-    }
-
-    @objc private func detailsTapped(_ sender: NSButton) {
-        guard let row = row(for: sender) else { return }
-        row.isLogExpanded.toggle()
-        ToolRowLayout.setLogExpanded(row.toolRowViews, expanded: row.isLogExpanded, log: row.log)
-    }
-
-    private func row(for sender: NSButton) -> GitHubSyncRow? {
+    func row(for sender: NSButton) -> GitHubSyncRow? {
         guard let raw = sender.identifier?.rawValue else { return nil }
         return rows.first { $0.repo.fullName == raw }
     }
@@ -545,11 +512,6 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         }
     }
 
-    @objc private func syncTapped(_ sender: NSButton) {
-        guard let row = row(for: sender) else { return }
-        sync(row)
-    }
-
     // MARK: Sync
 
     /// `completion(ok)` fires on the main queue once this row's sync settles;
@@ -558,7 +520,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     /// true, live state rather than the sync command's own self-report -
     /// mirrors `UpdatesController.update(_:)`'s identical "Check is the
     /// source of truth" contract.
-    private func sync(_ row: GitHubSyncRow, completion: ((Bool) -> Void)? = nil) {
+    func sync(_ row: GitHubSyncRow, completion: ((Bool) -> Void)? = nil) {
         guard !row.isBusy else {
             completion?(false)
             return

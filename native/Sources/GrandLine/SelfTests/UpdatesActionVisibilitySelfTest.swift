@@ -325,12 +325,17 @@ enum UpdatesActionVisibilitySelfTest {
     /// A source guard: the rule is the page-wide one, never the per-row
     /// `ReviewPRListView.actionReveal(row:of:)` that produced the split.
     private static func checkThePageDecidesTheRuleOnce(_ ok: inout Bool) {
-        let path = SelfTestSources.appSourceDirectory()?
-            .appendingPathComponent("UpdatesController.swift")
-        guard let path, let raw = try? String(contentsOf: path, encoding: .utf8) else {
-            print("UpdatesActionVisibility: could not read UpdatesController.swift - skipping source guard")
+        // R2-ARCH-04: the card rows are the floating bar's presentation, so
+        // they live in `UpdatesController+Classic.swift`; the page is both files.
+        let dir = SelfTestSources.appSourceDirectory()
+        let texts = ["UpdatesController.swift", "UpdatesController+Classic.swift"].map { name in
+            dir.flatMap { try? String(contentsOf: $0.appendingPathComponent(name), encoding: .utf8) }
+        }
+        guard let main = texts[0], let classic = texts[1] else {
+            print("UpdatesActionVisibility: could not read UpdatesController.swift and its +Classic file - skipping source guard")
             return
         }
+        let raw = main + "\n" + classic
         // Strip whole-line comments: this file names the old token on
         // purpose, in the note explaining why it no longer uses it.
         let code = raw.split(separator: "\n", omittingEmptySubsequences: false)

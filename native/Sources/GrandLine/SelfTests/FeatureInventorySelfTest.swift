@@ -650,10 +650,20 @@ enum FeatureInventorySelfTest {
     // MARK: - Source helpers
 
     /// The app's sources, comments stripped, keyed by file stem.
+    ///
+    /// R2-ARCH-04: a page's floating-bar presentation is an extension of the
+    /// same type in `<Page>+Classic.swift`, so its text is read as part of
+    /// `<Page>` - its rows, its actions and its evidence tokens are still that
+    /// page's, under the ids they always had.
     private static let cachedSources: [(String, String)] = {
-        (SelfTestSources.appSourceFiles() ?? []).compactMap { url in
+        let files: [(String, String)] = (SelfTestSources.appSourceFiles() ?? []).compactMap { url in
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
             return (url.deletingPathExtension().lastPathComponent, stripComments(text))
+        }
+        let classic = Dictionary(files.filter { $0.0.hasSuffix("+Classic") }
+            .map { (String($0.0.dropLast("+Classic".count)), $0.1) }, uniquingKeysWith: { first, _ in first })
+        return files.filter { !$0.0.hasSuffix("+Classic") }.map { stem, text in
+            (stem, classic[stem].map { text + "\n" + $0 } ?? text)
         }
     }()
 

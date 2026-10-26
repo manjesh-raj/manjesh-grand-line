@@ -1261,3 +1261,16 @@ It now files each card under the sidebar group of the module the card opens, whi
 
 Not done: a retirement date (the review's option (b)), which is the captain's call and is asked separately.
 
+### The floating bar's presentation in its own file (R2-ARCH-04)
+
+Under the freeze, the members only the floating bar's presentation uses moved out of each page's main file into an extension, `<Page>+Classic.swift`.
+The main file then carries what the sidebar layout draws.
+It is a move, not a rewrite, and it was checked as one: every moved block occurs line for line in the original file, and the original with those blocks cut out is the main file now, ignoring only access modifiers (`verify_move.py` in the task's data folder, run on all seven).
+Swift's `private` is file-scoped, so the members the two files share lost `private` (103 declarations across seven pages).
+One trap made that more than a compile check: with a page's `private func check(_:)` out of sight, the moved `check(row, forceRefresh: true)` resolved to the suites' global `check(_:_:_:)` instead, and GitHub Sync's `sync(row)` to another `sync()`.
+Both were compile errors here, but a quieter overload would not have been, so every name that was private and is used by moved code was checked to be visible to it.
+
+Seven pages moved code: Hosts (the page column, the side panels, the list rows), Poneglyph (the grouped list), Automic Vault (the keyed rows inside its two cards), Notebook (its own toolbar row), Tasks (its own column), Updates (the stats strip and the category cards with their row buttons) and GitHub Sync (the repo rows).
+Five did not, and could not without a rewrite: Fleet, Bootstrap and Automation build their classic header or run card in the same method that wires the button the sidebar layout's toolbar shows, and Log Analyzer and Health draw the sidebar layout by re-parenting the same views.
+`ClassicPresentationSelfTest` (pure logic) pins the structure, and `FeatureInventorySelfTest` reads a `+Classic.swift` file as part of its page, so no inventory id changed.
+

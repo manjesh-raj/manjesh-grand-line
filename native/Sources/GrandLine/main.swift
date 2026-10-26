@@ -3721,6 +3721,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_APP_LOCK_TESTS"] == "1" {
     exit(AppLockControllerSelfTest.run() ? 0 : 1)
 }
 
+// R2-ARCH-04: the floating bar's presentation of each page sits in a
+// `+Classic.swift` file of its own (`ClassicPresentationSelfTest`, pure logic).
+if ProcessInfo.processInfo.environment["FM_RUN_CLASSIC_PRESENTATION_TESTS"] == "1" {
+    exit(ClassicPresentationSelfTest.run() ? 0 : 1)
+}
+
 // The second full review's UX findings and the captain's three UI items: the
 // pure half - models, menus and source guards (`ReviewTwoUXModelSelfTest`).
 if ProcessInfo.processInfo.environment["FM_RUN_REVIEW2_UX_MODEL_TESTS"] == "1" {

@@ -94,11 +94,11 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     /// around 300pt, which is under the measure prose needs. So the shape is
     /// a switch with `.split` as the default, and the two single-pane modes
     /// exist for the width the captain actually has.
-    private var mode: ViewMode = .split
+    var mode: ViewMode = .split
 
     // MARK: Views
 
-    private let toolbar = HelmPageToolbar()
+    let toolbar = HelmPageToolbar()
     /// UI-45: one sidebar shape across the app - `HelmPageSidebar` on the
     /// plain surface with muted counts, the Tasks sidebar the revamp kept.
     /// A boxed panel around the nav was a second bordered surface beside the
@@ -106,16 +106,16 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     private let sidebar = HelmPageSidebar()
     /// P9: the page's split view, which holds `sidebar` as a real sidebar.
     private(set) var splitPage: HelmSplitPage?
-    private lazy var modeTabs = HelmSegmentedTabs(
+    lazy var modeTabs = HelmSegmentedTabs(
         items: ViewMode.allCases.map { .init(id: $0.rawValue, title: $0.title) },
         selected: mode.rawValue, size: .compact)
-    private lazy var findButton = HelmPageToolbar.iconButton(
+    lazy var findButton = HelmPageToolbar.iconButton(
         symbol: "magnifyingglass", tooltip: "Find in this page (\u{2318}F)",
         target: self, action: #selector(showFind))
-    private lazy var railButton = HelmPageToolbar.iconButton(
+    lazy var railButton = HelmPageToolbar.iconButton(
         symbol: "sidebar.right", tooltip: "Show or hide backlinks and page details",
         target: self, action: #selector(toggleRail))
-    private lazy var deleteButton = HelmPageToolbar.iconButton(
+    lazy var deleteButton = HelmPageToolbar.iconButton(
         symbol: "trash", tooltip: "Delete this page",
         target: self, action: #selector(deleteTapped))
 
@@ -452,27 +452,6 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
 
     // MARK: Building
 
-    private func buildToolbar(in root: NSView) {
-        root.addSubview(toolbar)
-        modeTabs.translatesAutoresizingMaskIntoConstraints = false
-        modeTabs.onSelect = { [weak self] id in
-            guard let self, let picked = ViewMode(rawValue: id) else { return }
-            self.mode = picked
-            self.applyMode()
-        }
-
-        // The sync line that sat beside the mode switch was the drill
-        // header's subtitle, word for word, one row above it.
-        toolbar.setLeading(HelmPageToolbar.group([modeTabs]))
-        toolbar.setTrailing(HelmPageToolbar.group([findButton, railButton, deleteButton]))
-
-        NSLayoutConstraint.activate([
-            toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            toolbar.topAnchor.constraint(equalTo: root.topAnchor),
-        ])
-    }
-
     private func buildActions() {
         todayButton.controlSize = .small
         todayButton.target = self
@@ -670,7 +649,7 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
 
     // MARK: Modes
 
-    private func applyMode() {
+    func applyMode() {
         // The toolbar's pop-up says the mode however it was chosen.
         if drawsSidebarLayout, let index = ViewMode.allCases.firstIndex(of: mode),
            toolbarModePopUp.indexOfSelectedItem != index {
