@@ -35,6 +35,34 @@ a signed bundle needs), and publishes a GitHub release with the artifact and its
 git tag -a v0.2.0 -m "…" && git push origin v0.2.0
 ```
 
+### Tagging at a stage boundary
+
+R2-PROC-04 of the second full review found one release tag (`v0.1.0`) in 291 commits, so "which build am I on" was a commit hash and there was no known-good build to roll back to.
+The procedure is to tag at each stage boundary, meaning the merge that finishes a stage of planned work (each modular-shell stage was one) or a review's fix set.
+Only the captain cuts a tag. An agent never creates or pushes one.
+
+1. Confirm `main` is green on the commit you mean to tag. The badge at the top of this file shows the latest run.
+2. Draft the notes from the pull requests merged since the last tag, and read them:
+
+   ```bash
+   python3 native/Scripts/draft_release_notes.py v0.1.0 main
+   ```
+
+   The script reads local history only and prints Markdown. It never tags, writes a file or reaches the network.
+3. Pick the version.
+   A minor bump (`v0.2.0`) marks a stage boundary, and a patch bump (`v0.2.1`) marks a fix-only release between stages.
+4. Tag that exact commit with the stage in the message, then push the tag:
+
+   ```bash
+   git tag -a v0.2.0 -m "Sidebar layout stages 1-7" <commit>
+   git push origin v0.2.0
+   ```
+
+5. `release.yml` builds and publishes the release.
+   Its notes are GitHub's generated list, and the draft from step 2 can replace them by hand.
+
+Whether to adopt a generated `CHANGELOG.md` and a release channel the Updates page reads is an open decision, and so is the Developer ID work a signed channel needs.
+
 **Releases are unsigned today.** Developer ID signing and notarization need a paid Apple
 Developer Program membership; the workflow's signing and notarization steps are written
 out in full and disabled behind `SIGNING_ENABLED`, and its header lists the exact secrets
