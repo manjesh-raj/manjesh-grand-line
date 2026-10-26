@@ -33,7 +33,8 @@ enum ReviewTwoA11yPerfSelfTest {
         defer { window.orderOut(nil) }
         settle(shell)
         for check in [checkTheLabelsSayWhatTheControlsDo, checkHealthReadsInWords, checkTheSidebarFitsAtLarger,
-                          checkAThemeChangeRepaintsTheSidebarInPlace, checkArrowKeysSettleBeforeNavigating] {
+                          checkAThemeChangeRepaintsTheSidebarInPlace, checkArrowKeysSettleBeforeNavigating,
+                          checkAHealthTickDoesNotRecomposeTheDigest] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -473,6 +474,62 @@ enum ReviewTwoA11yPerfSelfTest {
         check(opened.count == 1, "the settle opened the row a second time after Return: \(opened.map(\.title))", &ok)
         window.makeFirstResponder(nil)
         if ok { print("  OK   five ↓ presses opened one page, a click and Return open at once") }
+    }
+
+    // MARK: R2-PERF-06 - a registry tick with nothing new keeps the digest
+
+    private static func checkAHealthTickDoesNotRecomposeTheDigest(_ shell: MainSplitShellController,
+                                                                  _ window: NSWindow, _ ok: inout Bool) {
+        print("\n-- R2-PERF-06: a health tick with nothing new does not recompose the attention card --")
+        let canvas = shell.debugHomeCanvas
+        let registry = ServiceHealthRegistry.shared
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        // One tick to settle whatever the earlier cases left, then the one
+        // that is measured.
+        registry.recordSuccess(.fleetTasks)
+        pump(timeout: 1) { false }
+        let digests = canvas.debugDigestCount
+        let renders = canvas.debugApplyThemeCount
+        registry.markRunning(.fleetTasks)
+        registry.recordSuccess(.fleetTasks)
+        pump(timeout: 0.3) { false }
+        check(canvas.debugApplyThemeCount > renders, "the tick never reached Home's render, so this measures nothing", &ok)
+        check(canvas.debugDigestCount == digests,
+              "a tick with nothing new recomposed the digest \(canvas.debugDigestCount - digests) time(s)", &ok)
+
+        // A real change to what the digest reads: a task due today.
+        let store = shell.workspace.shiftStore
+        let parts = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        var task = ShiftTask.fresh()
+        task.title = "R2-PERF-06 fixture task"
+        task.dueDate = String(format: "%04d-%02d-%02d", parts.year ?? 2026, parts.month ?? 1, parts.day ?? 1)
+        store.addTask(task)
+        defer { _ = store.deleteTask(id: task.id) }
+        canvas.debugRenderNow()
+        settle(shell)
+        check(canvas.debugDigestCount == digests + 1, "a new task due today did not recompose the digest", &ok)
+        check(canvas.debugAttentionCard.debugListText.contains(task.title),
+              "the attention card does not list the new task: \(canvas.debugAttentionCard.debugListText)", &ok)
+
+        // A real change to what the card reads beside the digest: every
+        // service healthy (the clear strip says so), then one failing (it
+        // stops saying so).
+        for service in registry.knownServices() { registry.recordSuccess(service) }
+        pump(timeout: 1) { canvas.debugClearNotes.contains { $0.hasSuffix("services healthy") } }
+        settle(shell)
+        check(canvas.debugClearNotes.contains { $0.hasSuffix("services healthy") },
+              "with every service healthy the clear strip does not say so: \(canvas.debugClearNotes)", &ok)
+        let composed = canvas.debugDigestCount
+        for _ in 0..<ServiceHealthRegistry.failureThreshold {
+            registry.recordFailure(.docsSync, "R2-PERF-06 fixture failure")
+        }
+        pump(timeout: 1) { canvas.debugDigestCount > composed }
+        check(canvas.debugDigestCount > composed, "a service starting to fail did not recompose the card", &ok)
+        registry.recordSuccess(.docsSync)
+        NotificationSources.clearServiceFailing(.docsSync)
+        settle(shell)
+        if ok { print("  OK   a quiet tick repaints the subline only; a new task and a failing service recompose") }
     }
 
     static func textFields(in view: NSView) -> [NSTextField] {

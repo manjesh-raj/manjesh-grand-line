@@ -22,6 +22,7 @@ enum ReviewTwoA11yPerfModelSelfTest {
         checkTheTourTakesATextScale(&ok)
         checkTheUpdatesRecords(&ok)
         checkAVisitRunsNoCheckOnAFreshRecord(&ok)
+        checkTheDigestsNextChange(&ok)
         print(ok ? "ReviewTwoA11yPerfModelSelfTest: PASS" : "ReviewTwoA11yPerfModelSelfTest: FAIL")
         return ok
     }
@@ -248,6 +249,52 @@ enum ReviewTwoA11yPerfModelSelfTest {
         check(count() == items.count, "a visit with thirteen-hour-old records ran \(count()) of \(items.count) checks", &ok)
         stale.viewWillDisappear()
         if ok { print("  OK   no check on a fresh record, \"2h ago\" shown, the button and a stale record check every tool") }
+    }
+
+    // MARK: R2-PERF-06
+
+    /// When the same inputs stop composing the same digest. Local noon, so no
+    /// runner's time zone lands the fixture on a day boundary (AGENTS.md's
+    /// "YYYY-MM-DD" fixture rule).
+    private static func checkTheDigestsNextChange(_ ok: inout Bool) {
+        print("\n-- R2-PERF-06: the digest's next change --")
+        let calendar = Calendar.current
+        let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: Date()) ?? Date()
+        let parts = calendar.dateComponents([.year, .month, .day], from: noon)
+        let today = String(format: "%04d-%02d-%02d", parts.year ?? 2026, parts.month ?? 1, parts.day ?? 1)
+        let endOfToday = calendar.startOfDay(for: noon).addingTimeInterval(24 * 60 * 60)
+        func at(_ hour: Int, _ minute: Int) -> Date {
+            calendar.date(bySettingHour: hour, minute: minute, second: 0, of: noon) ?? noon
+        }
+        func task(_ time: String?, _ status: ShiftTaskStatus = .todo, day: String? = nil) -> ShiftTask {
+            var t = ShiftTask.fresh()
+            t.dueDate = day ?? today
+            t.dueTime = time
+            t.status = status
+            return t
+        }
+        var inputs = DailyReviewInputs()
+        inputs.now = noon
+        check(DailyReviewComposer.nextChange(for: inputs) == endOfToday, "with nothing due the digest does not hold to midnight", &ok)
+        inputs.tasks = .available([task(nil)])
+        check(DailyReviewComposer.nextChange(for: inputs) == endOfToday,
+              "a date-only task due today does not turn at the end of the day", &ok)
+        inputs.tasks = .available([task("15:00"), task(nil), task("13:00", .completed), task("09:00")])
+        check(DailyReviewComposer.nextChange(for: inputs) == at(15, 0),
+              "a task due at 15:00 is not the next change (got \(DailyReviewComposer.nextChange(for: inputs)))", &ok)
+        var followUp = ShiftFollowUp.fresh()
+        followUp.followUpAt = today
+        followUp.followUpTime = "14:30"
+        inputs.followUps = .available([followUp])
+        check(DailyReviewComposer.nextChange(for: inputs) == at(14, 30), "a follow-up due at 14:30 is not the next change", &ok)
+        // The digest really does change there - the boundary is not invented.
+        var before = inputs
+        before.now = at(14, 29)
+        var after = inputs
+        after.now = at(14, 31)
+        check(DailyReviewComposer.digest(from: before) != DailyReviewComposer.digest(from: after),
+              "the digest reads the same either side of the follow-up's due time, so the boundary asserts nothing", &ok)
+        if ok { print("  OK   midnight, the next open item due today, done and past items ignored") }
     }
 }
 

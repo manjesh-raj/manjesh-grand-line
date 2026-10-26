@@ -149,6 +149,27 @@ enum DailyReviewComposer {
     static let maxDueTasks = 5
     static let maxFollowUps = 3
 
+    /// R2-PERF-06: the first moment after `inputs.now` at which the digest of
+    /// these same inputs could read differently - an open item due today
+    /// turning overdue, or the day ending (which moves "due today" and every
+    /// "N days late"). Until then the same inputs compose the same digest, so
+    /// a caller may keep the one it has.
+    static func nextChange(for inputs: DailyReviewInputs) -> Date {
+        let now = inputs.now
+        var next = Calendar.current.startOfDay(for: now).addingTimeInterval(24 * 60 * 60)
+        func consider(_ date: String?, _ time: String?) {
+            guard let at = ShiftDue.overdueInstant(date: date, time: time), at > now, at < next else { return }
+            next = at
+        }
+        for task in inputs.tasks.value ?? [] where task.status == .todo || task.status == .inProgress {
+            consider(task.dueDate, task.dueTime)
+        }
+        for item in inputs.followUps.value ?? [] where item.status == .pending {
+            consider(item.followUpAt, item.followUpTime)
+        }
+        return next
+    }
+
     static func digest(from inputs: DailyReviewInputs) -> DailyReviewDigest {
         let now = inputs.now
         let endOfToday = Calendar.current.startOfDay(for: now).addingTimeInterval(24 * 60 * 60)
