@@ -29,6 +29,7 @@ final class AppSettings {
         static let autoReconnect = "fm.autoReconnect"
         static let notifyOnNeedsDecision = "fm.notifyOnNeedsDecision"
         static let notificationMutedSources = "fm.notifications.mutedSources"
+        static let notificationQuietWhileFocusing = "fm.notifications.quietWhileFocusing"
         static let fmHome = "fm.fmHome"
         static let dictationShortcut = "fm.dictationShortcut"
         static let quickCaptureShortcut = "fm.quickCaptureShortcut"
@@ -160,6 +161,16 @@ final class AppSettings {
                 defaults.set(newValue.sorted(), forKey: Keys.notificationMutedSources)
             }
         }
+    }
+
+    /// Hold informational notifications while a focus session runs. On by
+    /// default: the captain approved the behaviour as part of the Bridge
+    /// redesign, and a focus timer that let "3 tools have updates" through
+    /// would not be doing its one job. Action-needed entries always show.
+    var notificationQuietWhileFocusing: Bool {
+        get { defaults.object(forKey: Keys.notificationQuietWhileFocusing) == nil
+                ? true : defaults.bool(forKey: Keys.notificationQuietWhileFocusing) }
+        set { defaults.set(newValue, forKey: Keys.notificationQuietWhileFocusing) }
     }
 
     /// Bootstrap page's "Firstmate home" card - checked by

@@ -536,6 +536,11 @@ final class FocusTimerController {
     }
 
     private func notify() {
+        // The Bridge redesign's "quiet while focusing": the bell holds
+        // informational entries for as long as a session runs. Told here, on
+        // every state change, rather than by an observer someone has to
+        // remember to register - the one timer is the one source of truth.
+        GrandLineNotificationCenter.shared.setFocusSessionActive(isRunning)
         for (_, handler) in observers { handler() }
     }
 

@@ -202,6 +202,47 @@ enum GrandLineNotificationCenterSelfTest {
         check("restoreHidden clears the persisted mutes as well", center.mutedSourceNames.isEmpty)
         center.set(nil, id: "p1")
 
+        // MARK: quiet while a focus session runs (Bridge extra)
+
+        var quietNow = Date(timeIntervalSince1970: 1_800_000_000)
+        center.clock = { quietNow }
+        center.set(AppNotification(id: "q-before", title: "Before", subtext: "x", kind: .informational,
+                                   tint: .info, date: quietNow.addingTimeInterval(-60), navigate: {}),
+                   id: "q-before")
+        center.setFocusSessionActive(true)
+        check("a focus session turns quiet on", center.isFocusQuietActive)
+        quietNow = quietNow.addingTimeInterval(30)
+        center.set(AppNotification(id: "q-info", title: "FYI", subtext: "x", kind: .informational,
+                                   tint: .info, date: quietNow, navigate: {}), id: "q-info")
+        center.set(AppNotification(id: "q-act", title: "Needs you", subtext: "x", kind: .actionNeeded,
+                                   tint: .warn, date: quietNow, navigate: {}), id: "q-act")
+        check("an informational entry arriving mid-session is held",
+              !center.entries.contains { $0.id == "q-info" } && center.heldCount == 1)
+        check("an action-needed entry still shows mid-session", center.entries.contains { $0.id == "q-act" })
+        check("what was already listed when the session started stays",
+              center.entries.contains { $0.id == "q-before" })
+        check("the badge does not count a held entry", center.badgeCount == 2)
+        check("a held entry is not counted as snoozed", center.snoozedCount == 0)
+        center.restoreHidden()
+        check("Restore does not release a held entry", center.heldCount == 1)
+        center.setFocusSessionActive(false)
+        check("ending the session releases what was held",
+              center.entries.contains { $0.id == "q-info" } && center.heldCount == 0)
+        center.setQuietWhileFocusing(false, sessionRunning: false)
+        check("the setting is written to AppDefaults.store",
+              AppDefaults.store.object(forKey: "fm.notifications.quietWhileFocusing") as? Bool == false)
+        center.setFocusSessionActive(true)
+        quietNow = quietNow.addingTimeInterval(30)
+        center.set(AppNotification(id: "q-info2", title: "FYI 2", subtext: "x", kind: .informational,
+                                   tint: .info, date: quietNow, navigate: {}), id: "q-info2")
+        check("with the setting off, nothing is held", center.entries.contains { $0.id == "q-info2" }
+              && !center.isFocusQuietActive)
+        center.setQuietWhileFocusing(true, sessionRunning: true)
+        check("turning the setting on mid-session starts holding", center.isFocusQuietActive)
+        center.setFocusSessionActive(false)
+        for id in ["q-before", "q-info", "q-act", "q-info2"] { center.set(nil, id: id) }
+        center.clock = { Date() }
+
         // MARK: a resolved entry starts genuinely fresh
 
         center.set(note("f1", subtext: "x", kind: .informational), id: "f1")

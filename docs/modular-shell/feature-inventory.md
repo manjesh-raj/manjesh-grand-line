@@ -946,6 +946,7 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.morningBriefingRecord` | Saved preference `fm.morningBriefingRecord` | declared in AppSettings | Home (Morning briefing card's cache) |  |
 | `state.fm.notebook.inspectorVisible` | Saved preference `fm.notebook.inspectorVisible` | declared in NotebookController | Knowledge › Notebook |  |
 | `state.fm.notifications.mutedSources` | Saved preference `fm.notifications.mutedSources` | new (Bridge extras) - before it a mute lasted for the session only | Toolbar (the notifications panel's row menu, Mute <source>; kept across relaunch) |  |
+| `state.fm.notifications.quietWhileFocusing` | Saved preference `fm.notifications.quietWhileFocusing` | new (Bridge extras) | Toolbar (the notifications panel holds informational entries while a focus session runs; unset is on) |  |
 | `state.fm.notifyOnNeedsDecision` | Saved preference `fm.notifyOnNeedsDecision` | declared in AppSettings | Settings › Terminal |  |
 | `state.fm.quickAccess` | Saved preference `fm.quickAccess` | declared in AppSettings | Sidebar (the floating bar's squares read it; the sidebar layout draws no pins since stage 6) |  |
 | `state.fm.quickCaptureShortcut` | Saved preference `fm.quickCaptureShortcut` | declared in AppSettings | Settings › Capture |  |
