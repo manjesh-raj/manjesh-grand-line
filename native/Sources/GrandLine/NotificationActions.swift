@@ -65,9 +65,10 @@ import UserNotifications
 enum NotificationCategory {
     /// A PR is green and ready to merge: Merge / Open PR / Show in app.
     static let prReady = "fm.category.pr-ready"
-    /// A fleet task is blocked or just finished: Open task / Open Fleet.
+    /// A fleet task is blocked or just finished: Open task / Open <the Fleet
+    /// page, named through `PlaceName`>.
     static let fleetTask = "fm.category.fleet-task"
-    /// A fleet task needs the captain's decision: Answer / Open Fleet - the
+    /// A fleet task needs the captain's decision: Answer / Open <Fleet> - the
     /// Bridge panel's own words for the same entry. Its own category only so
     /// the button can say Answer; it routes exactly as `fleetTask` does.
     static let fleetDecision = "fm.category.fleet-decision"
@@ -304,7 +305,9 @@ enum NotificationActionRouting {
         let snooze = UNNotificationAction(
             identifier: NotificationAction.snoozeFollowUpOneHour, title: "Snooze 1 hour", options: [])
         // "Show in app" is named for where it goes, the way the panel's
-        // buttons are: the same identifier, a title per category.
+        // buttons are: the same identifier, a title per category. A place is
+        // named through `PlaceName` (R2-BUG-06), so the sidebar layout's
+        // banner names the Crew page rather than the floating bar's "Fleet".
         func showInApp(_ title: String) -> UNNotificationAction {
             UNNotificationAction(identifier: NotificationAction.showInApp, title: title, options: [.foreground])
         }
@@ -315,10 +318,10 @@ enum NotificationActionRouting {
                 actions: [merge, openPR, showInApp("Review")], intentIdentifiers: [], options: []),
             UNNotificationCategory(
                 identifier: NotificationCategory.fleetTask,
-                actions: [openFleetTask, showInApp("Open Fleet")], intentIdentifiers: [], options: []),
+                actions: [openFleetTask, showInApp("Open \(PlaceName.of(.overview))")], intentIdentifiers: [], options: []),
             UNNotificationCategory(
                 identifier: NotificationCategory.fleetDecision,
-                actions: [answerFleetTask, showInApp("Open Fleet")], intentIdentifiers: [], options: []),
+                actions: [answerFleetTask, showInApp("Open \(PlaceName.of(.overview))")], intentIdentifiers: [], options: []),
             UNNotificationCategory(
                 identifier: NotificationCategory.shiftTask,
                 actions: [openShiftTask, showInApp("Open Tasks")], intentIdentifiers: [], options: []),

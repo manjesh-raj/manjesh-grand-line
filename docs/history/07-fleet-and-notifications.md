@@ -1550,6 +1550,7 @@ The board and the scout's before renders live in the firstmate task `grandline-n
   `FocusTimerController.notify()` tells the store directly, so there is no observer to forget to register.
 - **Banners.** macOS draws them, so only the words match: a subtitle with the panel's source name, and the panel's action names on the buttons.
   A decision now posts under `fm.category.fleet-decision`, whose Answer button is the existing open-fleet-task action.
+  The Fleet page's button names it through `PlaceName` (R2-BUG-06), so the sidebar layout's banner names the page the way its sidebar does.
 
 ### Where the design did not hold as drawn
 

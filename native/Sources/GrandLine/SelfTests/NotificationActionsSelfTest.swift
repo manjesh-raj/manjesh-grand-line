@@ -292,9 +292,10 @@ enum NotificationActionsSelfTest {
         }
         check(titles(NotificationCategory.prReady) == ["Merge", "Open PR", "Review"],
               "the PR banner's buttons are \(titles(NotificationCategory.prReady))")
-        check(titles(NotificationCategory.fleetDecision) == ["Answer", "Open Fleet"],
+        let fleetPlace = "Open \(PlaceName.of(.overview))"
+        check(titles(NotificationCategory.fleetDecision) == ["Answer", fleetPlace],
               "the decision banner's buttons are \(titles(NotificationCategory.fleetDecision))")
-        check(titles(NotificationCategory.fleetTask) == ["Open task", "Open Fleet"],
+        check(titles(NotificationCategory.fleetTask) == ["Open task", fleetPlace],
               "the finished-task banner's buttons are \(titles(NotificationCategory.fleetTask))")
         check(titles(NotificationCategory.shiftTask) == ["Open task", "Open Tasks"],
               "the Shift task banner's buttons are \(titles(NotificationCategory.shiftTask))")
