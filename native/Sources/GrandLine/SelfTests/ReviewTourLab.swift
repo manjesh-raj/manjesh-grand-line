@@ -792,7 +792,8 @@ enum ReviewTourLab {
                     RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
                 }
                 shell.view.layoutSubtreeIfNeeded()
-                log.append("code run (\(code.debugOutputPane.debugStatusText))")
+                let verdict = code.debugWorkbench == nil ? code.debugOutputPane.debugStatusText : code.debugDock.debugChipText
+                log.append("code run (\(verdict))")
             case .settingsCategory(let raw):
                 guard let category = SettingsController.Category(rawValue: raw),
                       let settings = shell.debugSlotController(.settings) as? SettingsController else {

@@ -1676,6 +1676,12 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_SIDEBAR_VIEW_TESTS"] == "1" {
             exit(CodePreviewSidebarViewSelfTest.run() ? 0 : 1)
         }
+        if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_WORKBENCH_TESTS"] == "1" {
+            exit(CodePreviewWorkbenchSelfTest.run() ? 0 : 1)
+        }
+        if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_WORKBENCH_VIEW_TESTS"] == "1" {
+            exit(CodePreviewWorkbenchViewSelfTest.run() ? 0 : 1)
+        }
 
         // `fm/grandline-feature-f11-code-preview-run-format` (F11 of full review #3
         // §8): Run and Format in Code Preview. Split the same way again, and the split
