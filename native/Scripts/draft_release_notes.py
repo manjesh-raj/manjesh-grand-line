@@ -17,10 +17,10 @@ tag, never writes a file and never talks to the network. Every merge into
 first-parent history between the two refs is the list of merged pull
 requests, read with plain `git log`.
 
-The output is a draft for a person to read and edit before cutting a release.
-It is deliberately not a CHANGELOG.md generator: a CHANGELOG is never edited
-by hand in this repository, and whether to adopt a generated one is an open
-decision (see the README's "Releasing" section).
+The output is a draft for a person to read and edit, and it becomes the
+GitHub release's notes. It is deliberately not a CHANGELOG.md generator: this
+repository has no CHANGELOG file, because the release notes are the changelog
+(the captain's call, recorded in the README's "Releasing" section).
 """
 
 import argparse

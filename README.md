@@ -39,13 +39,13 @@ git tag -a v0.2.0 -m "…" && git push origin v0.2.0
 
 R2-PROC-04 of the second full review found one release tag (`v0.1.0`) in 291 commits, so "which build am I on" was a commit hash and there was no known-good build to roll back to.
 The procedure is to tag at each stage boundary, meaning the merge that finishes a stage of planned work (each modular-shell stage was one) or a review's fix set.
-Only the captain cuts a tag. An agent never creates or pushes one.
+Only the captain decides when a tag is cut. An agent creates or pushes one only on the captain's explicit word for that tag.
 
 1. Confirm `main` is green on the commit you mean to tag. The badge at the top of this file shows the latest run.
 2. Draft the notes from the pull requests merged since the last tag, and read them:
 
    ```bash
-   python3 native/Scripts/draft_release_notes.py v0.1.0 main
+   python3 native/Scripts/draft_release_notes.py v0.1.0 main > "$TMPDIR/notes.md"
    ```
 
    The script reads local history only and prints Markdown. It never tags, writes a file or reaches the network.
@@ -58,10 +58,20 @@ Only the captain cuts a tag. An agent never creates or pushes one.
    git push origin v0.2.0
    ```
 
-5. `release.yml` builds and publishes the release.
-   Its notes are GitHub's generated list, and the draft from step 2 can replace them by hand.
+5. Right after pushing the tag, create the GitHub release with the reviewed draft as its notes:
 
-Whether to adopt a generated `CHANGELOG.md` and a release channel the Updates page reads is an open decision, and so is the Developer ID work a signed channel needs.
+   ```bash
+   gh release create v0.2.0 --title v0.2.0 --notes-file "$TMPDIR/notes.md"
+   ```
+
+   `release.yml` builds the `.app` from the tag a few minutes later.
+   Because the release already exists, its own `gh release create` fails and it falls back to uploading the zip and checksum onto this release, so the drafted notes stay.
+
+**There is no CHANGELOG file.**
+The GitHub release notes are the changelog, so nobody adds, edits or generates a `CHANGELOG.md`.
+
+**The Updates page has no feed for Grand Line itself yet.**
+It updates the other tools on the machine, and it waits for signed builds (the Developer ID work below) before it offers Grand Line's own releases.
 
 **Releases are unsigned today.** Developer ID signing and notarization need a paid Apple
 Developer Program membership; the workflow's signing and notarization steps are written
