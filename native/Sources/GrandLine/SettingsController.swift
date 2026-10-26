@@ -206,7 +206,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         var searchKeywords: String {
             switch self {
             case .appearance: return "theme dark light colour color palette font text size system pair sidebar module profile personal operator hide show"
-            case .terminal: return "shell working directory font size shortcut split pane tab ssh reconnect notification bell"
+            case .terminal: return "shell working directory font size shortcut split pane tab ssh reconnect notification bell scrollback history rows memory"
             case .capture: return "capture quick capture hotkey shortcut global option space accessibility permission note task sticky"
             case .menuBar: return "compact dock status item hotkey shortcut overdue badge menubar"
             case .briefings: return "morning briefing claude summary"
@@ -445,6 +445,14 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// Keyed by index into `ChromeTextScale.steps` (GL-32).
     private var uiScaleButtons: [Int: HelmButton] = [:]
     private let autoReconnectSwitch = HelmToggle()
+    /// T4: the scrollback depth, typed, and PERF-07's background trim.
+    private let scrollbackField = HelmTextField(placeholder: "10,000")
+    private var scrollbackRow: SettingsRow?
+    private let trimBackgroundSwitch = HelmToggle()
+    /// How many open panes would lose history at a lower depth. Injected so
+    /// a suite can drive the warning without a live console; the default
+    /// asks every console that is alive.
+    var scrollbackTrimCount: (Int) -> Int = { ConsoleController.panesThatWouldLoseHistory(below: $0) }
     /// R2-UX-01 (b): the sidebar's profile and one switch per module that
     /// can be hidden, in sidebar order.
     private var profileTabs: HelmSegmentedTabs!
@@ -1606,6 +1614,24 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         autoReconnectSwitch.onToggle = { [weak self] in self?.autoReconnectToggled() }
         notifySwitch.onToggle = { [weak self] in self?.notifyToggled() }
 
+        // T4. A typed number rather than a popup of presets: the range is two
+        // orders of magnitude wide, and the captain's number is the setting.
+        configure(scrollbackField)
+        scrollbackField.alignment = .right
+        scrollbackField.setAccessibilityLabel("Scrollback rows")
+        scrollbackField.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        let rowsSuffix = muted(NSTextField(labelWithString: "rows"))
+        rowsSuffix.font = HelmType.caption()
+        let scrollbackControls = NSStackView(views: [scrollbackField, rowsSuffix])
+        scrollbackControls.orientation = .horizontal
+        scrollbackControls.spacing = HelmMetrics.s2
+        let scrollback = SettingsRow(title: "Scrollback",
+                                     description: TerminalScrollback.memoryNote(rows: TerminalScrollback.shared.rows),
+                                     control: scrollbackControls)
+        scrollbackRow = scrollback
+        trimBackgroundSwitch.setAccessibilityLabel("Trim tabs left in the background")
+        trimBackgroundSwitch.onToggle = { [weak self] in self?.trimBackgroundToggled() }
+
         var sections: [SettingsSection] = [
             SettingsSection(heading: "Connection", group: SettingsGroup(rows: [
                 SettingsRow(title: "Working directory",
@@ -1623,6 +1649,12 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                             description: "Surface a desktop notification the moment a crewmate is waiting on your decision.",
                             control: notifySwitch),
             ])),
+            SettingsSection(heading: "History", group: SettingsGroup(rows: [
+                scrollback,
+                SettingsRow(title: "Trim tabs left in the background",
+                            description: "After five minutes out of sight a tab keeps its most recent \(NumberFormatter.localizedString(from: NSNumber(value: ConsoleController.backgroundScrollbackLines), number: .decimal)) rows, and gets its full depth back when you select it. Turn this off to keep every tab's whole history, at the memory cost above.",
+                            control: trimBackgroundSwitch),
+            ]), foot: "A new depth applies to every open tab at once. Lowering it drops the oldest lines of any pane holding more, so you are asked first."),
         ]
 
         // One section per shortcut group, which is the reference's own
@@ -1661,6 +1693,60 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         refreshShortcutControls()
         return sections
+    }
+
+    /// T4: commit the typed depth - on Return and on focus loss, through
+    /// `configure(_:)`'s three wirings (gotcha (19)).
+    ///
+    /// Lowering the depth asks first whenever an open pane holds more than
+    /// the new limit, because `changeScrollback` trims for real and nothing
+    /// brings those lines back. Raising it, or lowering it while nothing
+    /// would be lost, applies at once.
+    private func commitScrollbackField() {
+        let current = TerminalScrollback.shared.rows
+        let digits = scrollbackField.stringValue.filter(\.isNumber)
+        guard let typed = Int(digits) else {
+            showScrollback(current)
+            return
+        }
+        let target = TerminalScrollback.normalised(typed)
+        if target < current {
+            let affected = scrollbackTrimCount(target)
+            if affected > 0 {
+                let rows = NumberFormatter.localizedString(from: NSNumber(value: target), number: .decimal)
+                let panes = affected == 1 ? "1 open pane holds" : "\(affected) open panes hold"
+                let confirmed = HelmConfirm.confirm(
+                    title: "Trim history in open tabs?",
+                    body: "\(panes) more than \(rows) rows. Lowering the limit drops their oldest lines now, and they cannot be brought back.",
+                    confirmTitle: "Trim History", destructive: true, confirmIsDefault: false,
+                    symbol: "scissors", hue: .amber)
+                guard confirmed else {
+                    showScrollback(current)
+                    return
+                }
+            }
+        }
+        TerminalScrollback.shared.setRows(target)
+        showScrollback(target)
+    }
+
+    /// Put `rows` in the field and its cost in the note under it.
+    private func showScrollback(_ rows: Int) {
+        scrollbackField.stringValue = NumberFormatter.localizedString(from: NSNumber(value: rows), number: .decimal)
+        scrollbackRow?.descriptionLabel?.stringValue = TerminalScrollback.memoryNote(rows: rows)
+    }
+
+    /// The live half of the note: what the number being typed would cost,
+    /// before it is committed. A value that does not parse leaves the note on
+    /// the committed depth rather than guessing.
+    fileprivate func scrollbackFieldDidChange() {
+        guard let typed = Int(scrollbackField.stringValue.filter(\.isNumber)) else { return }
+        scrollbackRow?.descriptionLabel?.stringValue =
+            TerminalScrollback.memoryNote(rows: TerminalScrollback.normalised(typed))
+    }
+
+    private func trimBackgroundToggled() {
+        TerminalScrollback.shared.setTrimsBackgroundTabs(trimBackgroundSwitch.isOn)
     }
 
     @objc private func chooseShellCwd() {
@@ -2603,6 +2689,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         switch sender {
         case shellCwdField:
             AppSettings.shared.defaultShellCwd = value.isEmpty ? nil : value
+        case scrollbackField:
+            commitScrollbackField()
         default:
             break
         }
@@ -2622,6 +2710,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                 Int(AppSettings.shared.fontSize) == size ? .primary : .secondary
         }
         autoReconnectSwitch.isOn = AppSettings.shared.autoReconnect
+        showScrollback(TerminalScrollback.shared.rows)
+        trimBackgroundSwitch.isOn = TerminalScrollback.shared.trimsBackgroundTabs
         refreshRelaunchButtons()
         if !appLockCheckInFlight { appLockSwitch.isOn = AppSettings.shared.appLockEnabled != false }
         refreshModuleSwitches()
@@ -2691,7 +2781,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         for recorder in shortcutRecorders.values + [captureShortcutRecorder].compactMap({ $0 }) {
             recorder.applyTheme(theme)
         }
-        for toggle in [autoReconnectSwitch, appLockSwitch, notifySwitch, morningBriefingSwitch,
+        for toggle in [autoReconnectSwitch, trimBackgroundSwitch, appLockSwitch, notifySwitch, morningBriefingSwitch,
                        followSystemSwitch, compactModeSwitch, compactDockSwitch,
                        compactBadgeSwitch] + moduleSwitches.map(\.toggle) {
             toggle.applyTheme(theme)
@@ -2862,9 +2952,14 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// Every toggle on the page, in page order. A suite asserts the count, so
     /// a toggle added without coming here fails by name.
     var debugToggles: [HelmToggle] {
-        [followSystemSwitch, autoReconnectSwitch, appLockSwitch, notifySwitch,
+        [followSystemSwitch, autoReconnectSwitch, trimBackgroundSwitch, appLockSwitch, notifySwitch,
          morningBriefingSwitch, compactModeSwitch, compactDockSwitch, compactBadgeSwitch]
     }
+    /// T4's two controls. The suite types into the real field and sends its
+    /// real action, so these hand out the controls rather than a commit.
+    var debugScrollbackField: HelmTextField { scrollbackField }
+    var debugScrollbackRow: SettingsRow? { scrollbackRow }
+    var debugTrimBackgroundSwitch: HelmToggle { trimBackgroundSwitch }
     #endif
 }
 
@@ -2872,6 +2967,11 @@ extension SettingsController: NSTextFieldDelegate {
     func controlTextDidEndEditing(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
         textFieldChanged(field)
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard (obj.object as? NSTextField) === scrollbackField else { return }
+        scrollbackFieldDidChange()
     }
 }
 

@@ -14,6 +14,13 @@
 // what its screen shows - rather than a flag, because the regression worth
 // catching is memory that is not given back, or a screen that changed.
 //
+// T4 of the Termius-style plan made both the depth and the background trim
+// settings (`TerminalScrollback.swift`), and the last four cases are its:
+// the range, a new depth reaching panes that are already open, the count
+// Settings asks for before it lowers the depth, and the trim's own toggle.
+// Each puts the shared setting back, because the next case in this process
+// reads it.
+//
 // Run with:
 //   swift build && FM_RUN_BACKGROUND_SCROLLBACK_TESTS=1 .build/debug/GrandLine; echo $?
 //
@@ -32,6 +39,10 @@ enum BackgroundScrollbackSelfTest {
             ("selectingATabRestoresItsFullScrollback", test_selectingATabRestoresItsFullScrollback),
             ("switchingWithinTheGracePeriodLosesNothing", test_switchingWithinTheGracePeriodLosesNothing),
             ("aTabScrolledBackIntoItsHistoryIsLeftAlone", test_aTabScrolledBackIntoItsHistoryIsLeftAlone),
+            ("theDepthIsASettingWithAClampedRange", test_theDepthIsASettingWithAClampedRange),
+            ("aNewDepthReachesEveryOpenPane", test_aNewDepthReachesEveryOpenPane),
+            ("loweringTheDepthIsCountedBeforeItTrims", test_loweringTheDepthIsCountedBeforeItTrims),
+            ("turningTheTrimOffKeepsBackgroundTabsWhole", test_turningTheTrimOffKeepsBackgroundTabsWhole),
         ]
         var failed = 0
         for (name, body) in cases {
@@ -206,6 +217,154 @@ enum BackgroundScrollbackSelfTest {
             return "a tab scrolled back into its history was trimmed from \(before) to \(bufferLines(tab)) lines"
         }
         return nil
+    }
+
+    // MARK: T4 - the depth and the trim are settings
+
+    /// Run `body` and put the shared depth and trim back afterwards, whatever
+    /// it set them to.
+    private static func restoringScrollback(_ body: () -> String?) -> String? {
+        let rows = TerminalScrollback.shared.rows
+        let trims = TerminalScrollback.shared.trimsBackgroundTabs
+        defer {
+            TerminalScrollback.shared.setRows(rows)
+            TerminalScrollback.shared.setTrimsBackgroundTabs(trims)
+        }
+        return body()
+    }
+
+    private static func scrollback(_ terminal: CockpitTerminalView) -> Int { terminal.terminal?.options.scrollback ?? -1 }
+
+    /// The range the plan states, read through a scratch defaults domain so
+    /// the unset case is really unset.
+    ///
+    /// Injection: return `requested` unchanged from `normalised` and 0 stays
+    /// 0, which `changeScrollback` would read as "no history at all".
+    private static func test_theDepthIsASettingWithAClampedRange() -> String? {
+        let suite = "fm.selftest.scrollback.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else { return "no scratch defaults domain" }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        guard settings.terminalScrollbackRows == 10_000 else {
+            return "an unset depth reads \(settings.terminalScrollbackRows), want the shipped 10,000"
+        }
+        guard settings.terminalTrimsBackgroundScrollback else { return "the background trim must default to on" }
+        let expectations: [(Int, Int)] = [(0, 100_000), (500, 1_000), (1_000, 1_000), (25_000, 25_000),
+                                          (100_000, 100_000), (250_000, 100_000), (-5, 1_000)]
+        for (typed, want) in expectations {
+            let store = TerminalScrollback(settings: settings)
+            store.setRows(typed)
+            guard store.rows == want else { return "typing \(typed) gave a depth of \(store.rows), want \(want)" }
+        }
+        defaults.set(7, forKey: "fm.terminal.scrollbackRows")
+        guard settings.terminalScrollbackRows == 1_000 else {
+            return "a hand-edited 7 reads back as \(settings.terminalScrollbackRows), not clamped to 1,000"
+        }
+        guard TerminalScrollback.memoryNote(rows: 10_000).contains("52 MB") else {
+            return "the memory note for 10,000 rows no longer says README's 52 MB: \(TerminalScrollback.memoryNote(rows: 10_000))"
+        }
+        return nil
+    }
+
+    /// A new depth reaches every pane that is already open, the background
+    /// trim included - not only tabs opened after it.
+    ///
+    /// Injection: drop the `scrollbackObservation` registration in
+    /// `ConsoleController` and the open tabs keep 10,000.
+    private static func test_aNewDepthReachesEveryOpenPane() -> String? {
+        restoringScrollback {
+            let (console, tabs) = makeConsole(tabs: 2)
+            fill(tabs[1], lines: 3_000, label: "bg")
+            guard tabs.allSatisfy({ scrollback($0.terminal) == TerminalScrollback.shared.rows }) else {
+                return "the fixture's tabs did not start at the configured depth"
+            }
+            TerminalScrollback.shared.setRows(25_000)
+            for (index, tab) in tabs.enumerated() where scrollback(tab.terminal) != 25_000 {
+                return "tab \(index) kept a depth of \(scrollback(tab.terminal)) after Settings chose 25,000"
+            }
+            console.debugEndBackgroundScrollbackGrace()
+            guard tabs[1].terminal.isShrunkForBackground, scrollback(tabs[1].terminal) == 2_000 else {
+                return "the background tab was not trimmed to 2,000 (depth \(scrollback(tabs[1].terminal)))"
+            }
+            // A depth under the trim target pulls the trimmed tab down with
+            // it: a captain who chose 1,500 rows is never handed 2,000.
+            TerminalScrollback.shared.setRows(1_500)
+            guard scrollback(tabs[1].terminal) == 1_500, scrollback(tabs[0].terminal) == 1_500 else {
+                return "at 1,500 the panes hold \(scrollback(tabs[0].terminal)) and \(scrollback(tabs[1].terminal))"
+            }
+            console.debugSelectTab(tabs[1].id)
+            guard scrollback(tabs[1].terminal) == 1_500 else {
+                return "selecting the trimmed tab restored \(scrollback(tabs[1].terminal)) rather than the chosen 1,500"
+            }
+            return nil
+        }
+    }
+
+    /// What Settings asks before lowering the depth: which panes hold more
+    /// than the new limit. Then lowering it really trims, and the screen
+    /// stays as it was.
+    ///
+    /// Injection: make `historyRowCount` return 0 and the count misses the
+    /// 4,000-line pane, so the warning would never be shown.
+    private static func test_loweringTheDepthIsCountedBeforeItTrims() -> String? {
+        restoringScrollback {
+            // The console is held: the live-console registry is weak, and a
+            // console nobody holds is not a console anyone can see.
+            let (console, tabs) = makeConsole(tabs: 1)
+            defer { withExtendedLifetime(console) {} }
+            let tab = tabs[0]
+            fill(tab, lines: 4_000, label: "deep")
+            guard let held = tab.terminal.historyRowCount, held > 3_900, held <= 4_001 else {
+                return "a pane fed 4,000 lines reports \(String(describing: tab.terminal.historyRowCount)) rows of history"
+            }
+            guard tab.terminal.wouldLoseHistory(below: 3_000), !tab.terminal.wouldLoseHistory(below: 5_000) else {
+                return "the pane's would-lose answer is wrong either side of its 4,000 rows"
+            }
+            guard ConsoleController.panesThatWouldLoseHistory(below: 3_000) >= 1 else {
+                return "the live-console count does not see the 4,000-line pane"
+            }
+            let screen = tab.currentViewportLines()
+            TerminalScrollback.shared.setRows(3_000)
+            guard let after = tab.terminal.historyRowCount, after <= 3_000 else {
+                return "lowering the depth to 3,000 left \(String(describing: tab.terminal.historyRowCount)) rows"
+            }
+            guard tab.currentViewportLines() == screen else { return "lowering the depth changed the screen" }
+            return nil
+        }
+    }
+
+    /// The trim's toggle: off schedules nothing and trims nothing, and
+    /// turning it off after a trim gives the tab its full depth back.
+    ///
+    /// Injection: remove the `trimsBackgroundTabs` guard from
+    /// `shrinkScrollbackIfStillInBackground` and the direct call below trims.
+    private static func test_turningTheTrimOffKeepsBackgroundTabsWhole() -> String? {
+        restoringScrollback {
+            TerminalScrollback.shared.setTrimsBackgroundTabs(false)
+            let (console, tabs) = makeConsole(tabs: 2)
+            let background = tabs[1]
+            fill(background, lines: 6_000, label: "kept")
+            let before = bufferLines(background)
+            guard !console.debugBackgroundScrollbackIsPending(forTabID: background.id) else {
+                return "with the trim off a background tab still has a shrink scheduled"
+            }
+            console.shrinkScrollbackIfStillInBackground(background)
+            guard bufferLines(background) == before, !background.terminal.isShrunkForBackground else {
+                return "with the trim off a background tab was trimmed from \(before) to \(bufferLines(background)) lines"
+            }
+            TerminalScrollback.shared.setTrimsBackgroundTabs(true)
+            guard console.debugBackgroundScrollbackIsPending(forTabID: background.id) else {
+                return "turning the trim back on did not schedule the background tab"
+            }
+            console.debugEndBackgroundScrollbackGrace()
+            guard background.terminal.isShrunkForBackground else { return "the trim did not run once it was back on" }
+            TerminalScrollback.shared.setTrimsBackgroundTabs(false)
+            guard !background.terminal.isShrunkForBackground,
+                  scrollback(background.terminal) == TerminalScrollback.shared.rows else {
+                return "turning the trim off left the tab at \(scrollback(background.terminal)) rows"
+            }
+            return nil
+        }
     }
 }
 

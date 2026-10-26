@@ -35,6 +35,12 @@
 // above the visible screen, and only on the normal buffer (a full-screen
 // program's alternate buffer has no scrollback at all), so a tab looks the
 // same when the captain comes back to it.
+//
+// **T4 made both halves settings** (`TerminalScrollback.swift`). The depth a
+// selected tab keeps is the captain's choice now, applied to every open pane
+// the moment it changes, and the background trim is a toggle. A trim target
+// is never deeper than the interactive depth: a captain who chose 1,000 rows
+// is not handed 2,000 by a tab going to the background.
 
 import AppKit
 
@@ -48,13 +54,64 @@ extension ConsoleController {
     /// How long a tab must be out of sight before its scrollback shrinks.
     static let defaultBackgroundScrollbackGrace: TimeInterval = 300
 
+    /// Every console that is alive, so Settings can ask how much history a
+    /// lower depth would cost before it applies one. Weak, and a console
+    /// leaves it in `shutdown()` too, because a host page can be torn down
+    /// mid-session.
+    static let liveConsoles = NSHashTable<ConsoleController>.weakObjects()
+
+    /// How many open panes, across every console, hold more history than
+    /// `rows` - what lowering the depth to `rows` would trim. A pane showing
+    /// a full-screen program counts whenever it is allowed more than `rows`,
+    /// because its history sits in a buffer this cannot measure while the
+    /// alternate one is up, and a warning that undercounts is worse than one
+    /// that says "may".
+    static func panesThatWouldLoseHistory(below rows: Int) -> Int {
+        liveConsoles.allObjects.reduce(0) { total, console in
+            total + console.tabs.flatMap(console.scrollbackTerminals(of:)).filter {
+                $0.wouldLoseHistory(below: rows)
+            }.count
+        }
+    }
+
+    /// The depth a background tab is trimmed to: PERF-07's 2,000, or the
+    /// captain's own depth when that is already smaller.
+    var backgroundScrollbackTarget: Int { min(Self.backgroundScrollbackLines, scrollbackLines) }
+
+    /// Every terminal a tab holds - its split panes and its primary.
+    func scrollbackTerminals(of tab: TabModel) -> [CockpitTerminalView] {
+        var terminals = tab.splits.panes.map(\.terminal)
+        if !terminals.contains(where: { $0 === tab.terminal }) { terminals.append(tab.terminal) }
+        return terminals
+    }
+
+    /// T4: Settings changed the depth or the background toggle. Every pane
+    /// of every tab takes the new depth now (a background-trimmed pane takes
+    /// the new trim target), and the schedule is redone, so turning the trim
+    /// off gives every trimmed tab its full depth back at once.
+    func applyScrollbackSetting() {
+        let interactive = scrollbackLines
+        let background = backgroundScrollbackTarget
+        for tab in tabs {
+            for terminal in scrollbackTerminals(of: tab) {
+                terminal.applyScrollbackDepth(interactive: interactive, background: background)
+            }
+        }
+        syncBackgroundScrollback()
+    }
+
     /// Bring every tab's scrollback in line with whether it is the one on
     /// screen: the current tab gets its full history back at once, and every
     /// other tab is scheduled to shrink once its grace period passes. Called
     /// on every tab selection and whenever a tab is added.
+    ///
+    /// With the background trim turned off (T4) every tab is treated as the
+    /// current one: nothing is scheduled, and anything already trimmed gets
+    /// its full depth back.
     func syncBackgroundScrollback() {
+        let trims = TerminalScrollback.shared.trimsBackgroundTabs
         for tab in tabs {
-            if tab === currentTab {
+            if tab === currentTab || !trims {
                 tab.backgroundScrollbackWork?.cancel()
                 tab.backgroundScrollbackWork = nil
                 for pane in tab.splits.panes { pane.terminal.restoreInteractiveScrollback(scrollbackLines) }
@@ -73,11 +130,10 @@ extension ConsoleController {
 
     /// The grace period's end for one tab.
     func shrinkScrollbackIfStillInBackground(_ tab: TabModel) {
-        guard tab !== currentTab, !tab.isClosing, tabs.contains(where: { $0 === tab }) else { return }
-        var terminals = tab.splits.panes.map(\.terminal)
-        if !terminals.contains(where: { $0 === tab.terminal }) { terminals.append(tab.terminal) }
-        for terminal in terminals {
-            terminal.shrinkScrollbackForBackground(to: Self.backgroundScrollbackLines)
+        guard TerminalScrollback.shared.trimsBackgroundTabs,
+              tab !== currentTab, !tab.isClosing, tabs.contains(where: { $0 === tab }) else { return }
+        for terminal in scrollbackTerminals(of: tab) {
+            terminal.shrinkScrollbackForBackground(to: backgroundScrollbackTarget)
         }
     }
 
@@ -108,6 +164,9 @@ extension CockpitTerminalView {
     @discardableResult
     func shrinkScrollbackForBackground(to lines: Int) -> Bool {
         guard !usesMachineReadableGeometry, !isShrunkForBackground else { return false }
+        // A captain who chose a depth at or under the trim target has nothing
+        // to give back.
+        guard let current = terminal?.options.scrollback, lines < current else { return false }
         if canScroll, scrollPosition < 1 { return false }
         terminal?.changeScrollback(lines)
         isShrunkForBackground = true
@@ -121,5 +180,42 @@ extension CockpitTerminalView {
         isShrunkForBackground = false
         guard !usesMachineReadableGeometry else { return }
         terminal?.changeScrollback(lines)
+    }
+
+    /// T4: take a new depth from Settings. A background-trimmed pane takes
+    /// the trim target instead, and stays trimmed. A no-op when nothing
+    /// moved, because `changeScrollback` reallocates the buffer.
+    func applyScrollbackDepth(interactive: Int, background: Int) {
+        guard !usesMachineReadableGeometry, let terminal else { return }
+        let target = isShrunkForBackground ? background : interactive
+        guard terminal.options.scrollback != target else { return }
+        terminal.changeScrollback(target)
+    }
+
+    /// Rows of history above the screen in the normal buffer, or `nil` while
+    /// a full-screen program has the alternate buffer up and the normal one
+    /// cannot be read through SwiftTerm's public surface.
+    ///
+    /// `getScrollInvariantLine` answers for any row the buffer still holds,
+    /// so a binary search over it finds the buffer's length in about
+    /// seventeen reads at 100,000 rows, with no copy of the text.
+    var historyRowCount: Int? {
+        guard let terminal, !terminal.isCurrentBufferAlternate else { return nil }
+        let top = terminal.buffer.totalLinesTrimmed
+        guard terminal.getScrollInvariantLine(row: top) != nil else { return 0 }
+        var low = 0
+        var high = max(terminal.options.scrollback, 0) + terminal.rows
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if terminal.getScrollInvariantLine(row: top + mid) != nil { low = mid } else { high = mid - 1 }
+        }
+        return max(0, low + 1 - terminal.rows)
+    }
+
+    /// Whether a depth of `rows` would trim anything from this pane.
+    func wouldLoseHistory(below rows: Int) -> Bool {
+        guard !usesMachineReadableGeometry, let terminal else { return false }
+        guard let held = historyRowCount else { return terminal.options.scrollback > rows }
+        return held > rows
     }
 }

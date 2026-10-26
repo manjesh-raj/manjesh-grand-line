@@ -67,8 +67,9 @@ enum SettingsSidebarNavigationSelfTest {
     /// since stage 3 of the modular-shell migration added the Appearance
     /// page's Window card (the window layout: floating bar or sidebar).
     /// Twenty-three since R2-UX-01 (b) added the Appearance page's Sidebar
-    /// card (the profile and a switch per module).
-    private static let expectedCardCount = 23
+    /// card (the profile and a switch per module). Twenty-four since T4 of
+    /// the Termius-style plan added the Terminal page's History card.
+    private static let expectedCardCount = 24
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see

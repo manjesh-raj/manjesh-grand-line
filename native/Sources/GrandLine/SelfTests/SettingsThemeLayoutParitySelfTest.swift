@@ -420,9 +420,10 @@ enum SettingsThemeLayoutParitySelfTest {
         // stage 3 of the modular-shell migration added the Appearance page's
         // Window card (the window layout: floating bar or sidebar).
         // Twenty-three since R2-UX-01 (b) added the Appearance page's Sidebar
-        // card (the profile and a switch per module).
-        guard daylightFP.cardCount == 23 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 23")
+        // card (the profile and a switch per module). Twenty-four since T4 of
+        // the Termius-style plan added the Terminal page's History card.
+        guard daylightFP.cardCount == 24 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 24")
             ok = false
             return
         }

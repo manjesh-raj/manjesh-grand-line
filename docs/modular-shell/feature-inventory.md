@@ -521,10 +521,12 @@ The eight categories and every row whose title is a literal. Rows built in a loo
 | `settings.row.Open the capture panel` | Settings row: Open the capture panel | Settings > Capture | Settings › Capture (unchanged row) |  |
 | `settings.row.Poneglyph vault` | Settings row: Poneglyph vault | Settings > Backup & Restore | Settings › Backup & Restore (unchanged row) |  |
 | `settings.row.Reconnect automatically` | Settings row: Reconnect automatically | Settings > Terminal | Settings › Terminal (unchanged row) |  |
+| `settings.row.Scrollback` | Settings row: Scrollback | new (T4 of the Termius-style plan) - before it the depth was a fixed 10,000 rows | Settings › Terminal › History (a typed depth, 1,000 to 100,000 with 0 meaning 100,000, applied to every open pane at once; lowering it under an open pane's history asks first) |  |
 | `settings.row.Separate icons for Tasks, the vault and the crew` | Settings row: Separate icons for Tasks, the vault and the crew | Settings > Menu Bar | Settings › Menu Bar (unchanged row) |  |
 | `settings.row.Show a morning briefing` | Settings row: Show a morning briefing | Settings > Briefings | Settings › Briefings (the same row; its title no longer names the Fleet page, and its description names where the briefing shows for the running layout, R2-BUG-06) |  |
 | `settings.row.Show the overdue count on the icon` | Settings row: Show the overdue count on the icon | Settings > Menu Bar | Settings › Menu Bar (unchanged row) |  |
 | `settings.row.Terminal scrollback & session state` | Settings row: Terminal scrollback & session state | Settings > Backup & Restore | Settings › Backup & Restore (unchanged row) |  |
+| `settings.row.Trim tabs left in the background` | Settings row: Trim tabs left in the background | new (T4) - before it PERF-07's background trim was always on | Settings › Terminal › History (PERF-07's trim of a tab left out of sight to 2,000 rows, on by default) |  |
 | `settings.row.Touch ID for sudo` | Settings row: Touch ID for sudo | Settings > Security | Settings › Security (unchanged row) |  |
 | `settings.row.Vault settings live in the vault` | Settings row: Vault settings live in the vault | Settings > Security | Settings › Security (unchanged row) |  |
 | `settings.row.Window layout` | Settings row: Window layout | Settings > Appearance - the sidebar shell (the default) or the floating bar, applied the next time the app opens | Settings › Appearance (the switch between the two layouts: the sidebar is the default, the floating bar stays selectable, and a stored choice is kept) |  |
@@ -941,6 +943,8 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.snippetExpansionEnabled` | Saved preference `fm.snippetExpansionEnabled` | declared in AppSettings | Settings › Capture |  |
 | `state.fm.systemDarkThemeID` | Saved preference `fm.systemDarkThemeID` | declared in AppSettings | Settings › Appearance |  |
 | `state.fm.systemLightThemeID` | Saved preference `fm.systemLightThemeID` | declared in AppSettings | Settings › Appearance |  |
+| `state.fm.terminal.scrollbackRows` | Saved preference `fm.terminal.scrollbackRows` | declared in AppSettings (T4) | Settings › Terminal › History (unset is the shipped 10,000) |  |
+| `state.fm.terminal.trimBackgroundScrollback` | Saved preference `fm.terminal.trimBackgroundScrollback` | declared in AppSettings (T4) | Settings › Terminal › History (unset is on) |  |
 | `state.fm.terminalShortcuts` | Saved preference `fm.terminalShortcuts` | declared in AppSettings | Settings › Terminal |  |
 | `state.fm.updatesLastChecks` | Saved record `fm.updatesLastChecks` - the last real check of each tool, with when it was taken | declared in DependencyCheckCache | Setup › Updates (a visit shows a kept answer under 12 hours old, "checked 2h ago", R2-PERF-05) |  |
 | `state.fm.workspaceProfile` | Saved preference `fm.workspaceProfile` | declared in AppSettings | Settings › Appearance (the profile the sidebar started from - Personal on a fresh install, Operator on an existing one, R2-UX-01) |  |

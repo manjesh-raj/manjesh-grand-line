@@ -33,7 +33,8 @@ enum SettingsTerminalShortcutsSelfTest {
         defer { ThemeManager.shared.setTheme(savedTheme) }
 
         var allOK = true
-        for check in [checkTheTourCanSelectASettingsPage] {
+        for check in [checkTheTourCanSelectASettingsPage,
+                      checkTheScrollbackRowCommitsAndWarnsBeforeTrimming] {
             var ok = true
             autoreleasepool { check(&ok) }
             allOK = allOK && ok
@@ -97,6 +98,95 @@ enum SettingsTerminalShortcutsSelfTest {
         check(ReviewTourLab.parse(line: "settings") == .failure(.missingArgument("settings")),
               "a bare settings was accepted", &ok)
         if ok { print("  ok   every page parses, an unknown one is refused") }
+    }
+
+    // MARK: T4 - the scrollback row
+
+    /// The scrollback row: a raise applies at once, a lowering that would
+    /// trim asks first and Cancel leaves everything as it was, 0 means
+    /// 100,000, the note follows the typed number before it is committed, a
+    /// focus-loss commit is a real commit, and the trim toggle writes through.
+    ///
+    /// Injection: drop `case scrollbackField:` from `textFieldChanged` and
+    /// nothing commits; drop the confirm and the cancelled lowering applies.
+    private static func checkTheScrollbackRowCommitsAndWarnsBeforeTrimming(_ ok: inout Bool) {
+        print("\n-- T4: Settings > Terminal's scrollback row --")
+        let savedRows = TerminalScrollback.shared.rows
+        let savedTrim = TerminalScrollback.shared.trimsBackgroundTabs
+        defer {
+            TerminalScrollback.shared.setRows(savedRows)
+            TerminalScrollback.shared.setTrimsBackgroundTabs(savedTrim)
+            HelmConfirm.responderForTests = nil
+        }
+        TerminalScrollback.shared.setRows(10_000)
+        TerminalScrollback.shared.setTrimsBackgroundTabs(true)
+
+        let settings = makeSettings()
+        // Two panes hold more than 5,000 rows, none hold more than that.
+        settings.scrollbackTrimCount = { $0 < 5_000 ? 2 : 0 }
+        let window = mount(settings)
+        defer { withExtendedLifetime(window) {} }
+        settings.select(.terminal)
+        let field = settings.debugScrollbackField
+        guard let note = settings.debugScrollbackRow?.descriptionLabel else {
+            fail("the scrollback row has no note under it", &ok)
+            return
+        }
+        check(digits(field.stringValue) == "10000", "the field opens on the shipped 10,000, shows \(field.stringValue)", &ok)
+        check(note.stringValue.contains("52 MB"), "the note states a full pane's cost: \(note.stringValue)", &ok)
+
+        var asked: [HelmConfirm.Request] = []
+        var answer: HelmConfirm.Response = .cancel
+        HelmConfirm.responderForTests = { request in
+            asked.append(request)
+            return answer
+        }
+
+        type("25000", into: field)
+        check(TerminalScrollback.shared.rows == 25_000, "raising to 25,000 applies, depth \(TerminalScrollback.shared.rows)", &ok)
+        check(asked.isEmpty, "raising the depth must not ask, asked \(asked.count)", &ok)
+        check(digits(field.stringValue) == "25000", "the field shows the committed 25,000, shows \(field.stringValue)", &ok)
+
+        type("3000", into: field)
+        check(asked.count == 1, "lowering under two panes' history asks once, asked \(asked.count)", &ok)
+        check(asked.first?.body.contains("2 open panes") == true,
+              "the warning names how many panes lose lines: \(asked.first?.body ?? "-")", &ok)
+        check(TerminalScrollback.shared.rows == 25_000, "Cancel keeps the depth, now \(TerminalScrollback.shared.rows)", &ok)
+        check(digits(field.stringValue) == "25000", "Cancel puts the field back, shows \(field.stringValue)", &ok)
+
+        answer = .confirm
+        type("3000", into: field)
+        check(TerminalScrollback.shared.rows == 3_000, "confirming applies 3,000, depth \(TerminalScrollback.shared.rows)", &ok)
+        check(digits(note.stringValue).contains("3000"), "the note follows the committed depth: \(note.stringValue)", &ok)
+
+        asked.removeAll()
+        type("0", into: field)
+        check(TerminalScrollback.shared.rows == 100_000, "0 means 100,000, depth \(TerminalScrollback.shared.rows)", &ok)
+        check(digits(field.stringValue) == "100000", "the field says what 0 became, shows \(field.stringValue)", &ok)
+
+        // The live note: what the number being typed would cost, before the
+        // commit. Typed through the window's real field editor, which is what
+        // reaches the delegate on every keystroke.
+        window.makeFirstResponder(field)
+        guard let editor = field.currentEditor() else {
+            fail("the scrollback field did not take an editing session", &ok)
+            return
+        }
+        editor.selectAll(nil)
+        editor.insertText("50000")
+        check(digits(note.stringValue).contains("50000"), "the note follows the typing before a commit: \(note.stringValue)", &ok)
+        check(TerminalScrollback.shared.rows == 100_000, "typing alone must not commit, depth \(TerminalScrollback.shared.rows)", &ok)
+
+        // Gotcha (19): focus loss commits too.
+        window.makeFirstResponder(nil)
+        check(TerminalScrollback.shared.rows == 50_000,
+              "leaving the field commits what was typed, depth \(TerminalScrollback.shared.rows)", &ok)
+
+        let toggle = settings.debugTrimBackgroundSwitch
+        check(toggle.isOn, "the background trim opens on", &ok)
+        _ = toggle.accessibilityPerformPress()
+        check(!TerminalScrollback.shared.trimsBackgroundTabs, "pressing the toggle turns the trim off", &ok)
+        if ok { print("  ok   raise, warned lowering, 0, live note, focus-loss commit and the trim toggle") }
     }
 }
 

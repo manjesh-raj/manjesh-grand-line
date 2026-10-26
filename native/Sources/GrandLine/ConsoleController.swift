@@ -163,8 +163,11 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// Static so a `TabModel` can restore it after a stint as the
     /// Kubernetes feed tab (`CockpitTerminalView.applyMachineReadableGeometry`)
     /// without needing a reference to whichever console owns it.
-    static let interactiveScrollbackLines = 10_000
-    let scrollbackLines = ConsoleController.interactiveScrollbackLines
+    ///
+    /// T4: the captain's Settings > Terminal choice, 10,000 until they make
+    /// one. `TerminalScrollback` owns the range and the live apply.
+    static var interactiveScrollbackLines: Int { TerminalScrollback.shared.rows }
+    var scrollbackLines: Int { ConsoleController.interactiveScrollbackLines }
 
     /// PERF-07: how long a tab must be out of sight before its scrollback
     /// shrinks to `backgroundScrollbackLines`. Per instance so a suite can
@@ -686,6 +689,14 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
             for tab in self.tabs { tab.terminal.font = f }
         }
 
+        // T4: the scrollback depth and the background trim follow Settings
+        // live, the same way - every pane of every open tab takes a new depth
+        // at once rather than only tabs opened after it.
+        Self.liveConsoles.add(self)
+        scrollbackObservation = TerminalScrollback.shared.observe { [weak self] _ in
+            self?.applyScrollbackSetting()
+        }
+
         activityObservation = AppActivityState.shared.observe { [weak self] _ in
             self?.refreshPeriodicWorkGating()
         }
@@ -703,6 +714,7 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
 
     var themeObservation: ThemeObservation?
     var fontSizeObservation: FontSizeObservation?
+    var scrollbackObservation: TerminalScrollbackObservation?
     /// 3.2's push half for the *backgrounded* half of the condition. The
     /// crossing into "away" happens `AppActivityState.backgroundThreshold`
     /// after the app resigns active, not at that moment, so
