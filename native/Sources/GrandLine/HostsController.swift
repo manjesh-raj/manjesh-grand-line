@@ -369,6 +369,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         items: [
             .init("New Host\u{2026}", symbol: "plus") { [weak self] in self?.newHost() },
             .init("Quick Connect", symbol: "bolt") { [weak self] in self?.focusQuickConnect() },
+            .separator,
+            .init("Import from SSH Config\u{2026}", symbol: "square.and.arrow.down") { [weak self] in
+                self?.openSSHConfigImport()
+            },
         ]) { [weak self] in self?.newHost() }
 
     /// K2: New Key's ways in, each straight to the right form.
@@ -422,6 +426,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// Set while the panel's save writes the store, whose reload must not
     /// rebuild the form mid-save.
     var hostPanelIsSaving = false
+    /// X1: the SSH config import's preview, while it is open.
+    var importPanel: SSHConfigImportPanelController?
     /// K7 and K8: the key form in the side panel, and which key it is for -
     /// an id, or `newKeyPanelKey`. `HostsController+KeyPanel.swift`.
     var keyPanel: KeyEditorController?
@@ -2103,6 +2109,9 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
     var inspectorContent: WorkspaceInspectorContent? {
         guard drawsSidebarLayout, let inspectorTitle else { return nil }
         // H6: a saved host, or a new one, is its form in the panel.
+        if activeTab == .hosts, let panel = importPanel {
+            return WorkspaceInspectorContent(title: inspectorTitle, view: panel.view, fillsPane: true)
+        }
         if activeTab == .hosts, let panel = hostPanel {
             return WorkspaceInspectorContent(title: inspectorTitle, view: panel.view, fillsPane: true)
         }

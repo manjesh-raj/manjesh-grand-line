@@ -8,6 +8,8 @@
 //   - H7: the card grid's column plan, and its pixel grid at 1x and 2x for a
 //     half-point column (the case CI's 1x runner hits and a 2x Mac cannot).
 //   - X2: "last connected" in words, and the recent row's order.
+//   - X1: reading an OpenSSH client config - aliases, options, forwards, the
+//     blocks it skips, GL-08's refusal and what is already saved.
 //
 // The window-backed half is `ConnectionsCardsSelfTest`.
 //
@@ -24,7 +26,7 @@ enum ConnectionsLogicSelfTest {
 
     static func run() -> Bool {
         var allOK = true
-        for check in [checkTagChipFit, checkGridPlan, checkLastConnected, checkKeyWords] {
+        for check in [checkTagChipFit, checkGridPlan, checkLastConnected, checkKeyWords, checkSSHConfigParse] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -81,6 +83,73 @@ enum ConnectionsLogicSelfTest {
         check(HostsController.lastUsedText(nil) == "Never used", "K4: a key never used reads \(HostsController.lastUsedText(nil))", &ok)
         let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
         check(HostsController.lastUsedText(now.addingTimeInterval(-5), now: now) == "Used just now", "K4: a key used now reads otherwise", &ok)
+    }
+
+    // MARK: X1
+
+    static let fixtureConfig = """
+    # Fixture only: reserved example.test names and documentation addresses.
+    Host *
+        ServerAliveInterval 30
+        User everyone
+
+    Host web-01 web-02 *.example.test
+        HostName web.example.test
+        User deploy
+        User ignored-second-value
+        Port 2200
+        IdentityFile ~/.ssh/id_ed25519_fixture
+        ForwardAgent yes
+
+    Host db-replica
+        HostName=192.0.2.88
+        User "postgres"
+        ProxyJump bastion.example.test
+        LocalForward 127.0.0.1:5433 localhost:5432
+        DynamicForward 1080
+        RemoteForward 9000 localhost:-bad
+
+    Host edge-proxy-01
+        HostName edge-01.example.test
+        User ops
+
+    Host evil
+        HostName -oProxyCommand=touch
+    Host badport
+        HostName port.example.test
+        Port 99999
+    Match host *.internal
+        User nobody
+    Include ~/.ssh/config.d/*
+    """
+
+    private static func checkSSHConfigParse(_ ok: inout Bool) {
+        let existing = [Host(label: "edge-proxy-01", address: "edge-01.example.test", username: "ops")]
+        let result = SSHConfigImport.parse(fixtureConfig, existing: existing)
+        let labels = result.candidates.map(\.host.label)
+        check(labels == ["web-01", "web-02", "db-replica", "edge-proxy-01", "evil", "badport"],
+              "X1: the candidates are \(labels)", &ok)
+        check(result.skippedPatterns == 1 && result.skippedMatchBlocks == 1 && result.includes == 1,
+              "X1: skipped \(result.skippedPatterns) patterns, \(result.skippedMatchBlocks) Match, \(result.includes) Include", &ok)
+        guard result.candidates.count == 6 else { return }
+        let web = result.candidates[0], db = result.candidates[2]
+        check(web.host.address == "web.example.test" && web.host.username == "deploy" && web.host.port == 2200
+                && web.host.agentForward && web.identityFile == "~/.ssh/id_ed25519_fixture" && web.skipReason == nil,
+              "X1: web-01 read as \(web.host.subtitle), agent \(web.host.agentForward), key \(web.identityFile ?? "-")", &ok)
+        check(result.candidates[1].host.address == "web.example.test", "X1: an alias beside another did not share its block", &ok)
+        check(web.host.username != "everyone", "X1: Host *'s defaults leaked into a host", &ok)
+        check(db.host.address == "192.0.2.88" && db.host.username == "postgres" && db.host.jumpVia == "bastion.example.test",
+              "X1: db-replica read as \(db.host.subtitle) via \(db.host.jumpVia ?? "-")", &ok)
+        let forwards = db.host.portForwards
+        check(forwards.count == 2 && forwards[0].kind == .local && forwards[0].bindAddress == "127.0.0.1"
+                && forwards[0].listenPort == 5433 && forwards[0].destHost == "localhost" && forwards[0].destPort == 5432
+                && forwards[1].kind == .dynamic && forwards[1].listenPort == 1080,
+              "X1: db-replica's forwards are \(forwards.map(\.summary)) - the bad RemoteForward must be dropped", &ok)
+        check(result.candidates[3].skipReason == .alreadySaved, "X1: a saved host is not marked already saved", &ok)
+        check(result.candidates[4].skipReason?.canImport == false && result.candidates[4].skipReason?.text.contains("Address") == true,
+              "X1: a leading-dash address was offered (\(String(describing: result.candidates[4].skipReason)))", &ok)
+        check(result.candidates[5].skipReason?.canImport == false, "X1: a bad port was offered", &ok)
+        check(SSHConfigImport.parse("").candidates.isEmpty, "X1: an empty config named hosts", &ok)
     }
 
     // MARK: H9

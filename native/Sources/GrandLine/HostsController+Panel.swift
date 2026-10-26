@@ -32,6 +32,7 @@ extension HostsController {
     /// H10: an empty form for a new host, in the panel.
     func openNewHostPanel() {
         guard mayLeaveHostPanel(for: Self.newHostPanelKey) else { return }
+        importPanel = nil
         hostsGrid.setSelected(nil, notify: false)
         hostsTable.setSelectedKey(nil, notify: false)
         hostPanel = buildHostPanel(for: nil)
@@ -65,6 +66,46 @@ extension HostsController {
         }
     }
 
+    // MARK: X1 - import from ~/.ssh/config
+
+    static let importPanelTitle = "Import from SSH Config"
+
+    /// X1: the hosts `~/.ssh/config` names, previewed in the panel.
+    func openSSHConfigImport() {
+        select(tab: .hosts)
+        guard mayLeaveHostPanel(for: nil) else { return }
+        hostPanel = nil
+        hostPanelKey = nil
+        hostsGrid.setSelected(nil, notify: false)
+        hostsTable.setSelectedKey(nil, notify: false)
+        let preview = SSHConfigImportPanelController(result: SSHConfigImport.load(existing: hostStore.hosts))
+        preview.onImport = { [weak self] hosts in self?.importHosts(hosts) }
+        preview.onCancel = { [weak self] in
+            self?.importPanel = nil
+            self?.refreshDetailPanel()
+        }
+        _ = preview.view
+        importPanel = preview
+        refreshDetailPanel()
+        onShowInspector?()
+    }
+
+    /// Save the ticked hosts, each a new record, and show the first.
+    private func importHosts(_ hosts: [Host]) {
+        importPanel = nil
+        var first: Host?
+        for var host in hosts {
+            host.id = UUID()
+            hostStore.add(host)
+            if first == nil { first = host }
+        }
+        Toast.show(in: view, message: hosts.count == 1 ? "Imported 1 host" : "Imported \(hosts.count) hosts")
+        if let first {
+            hostsGrid.select(key: first.id.uuidString)
+        }
+        refreshDetailPanel()
+    }
+
     // MARK: Keeping it current
 
     /// Make the panel show what is selected - the selected saved host, or the
@@ -72,6 +113,11 @@ extension HostsController {
     /// has nothing to show (no selection, or Firstmate, whose details are
     /// read-only).
     func syncHostPanel() -> String? {
+        // X1's preview holds the panel until a host is selected.
+        if importPanel != nil {
+            if hostsTable.selectedKey == nil { return Self.importPanelTitle }
+            importPanel = nil
+        }
         if hostPanelIsSaving, let panel = hostPanel { return panel.currentRecord?.label ?? "New Host" }
         if hostPanelKey == Self.newHostPanelKey, hostPanel != nil { return "New Host" }
         guard let key = hostsTable.selectedKey, key != Self.firstmateRowKey,

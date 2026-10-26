@@ -194,6 +194,12 @@ enum ReviewTourLab {
         /// through the page's own selection path - a host, a key, a snippet
         /// or a credential.
         case select(String)
+        /// Connections' empty New host or New key form in the side panel
+        /// (H10, K8): `new host`, `new key`.
+        case newRecord(String)
+        /// X1's preview, reading the config at this path - a fixture, never
+        /// the captain's own: `sshconfig <path>`.
+        case sshConfig(String)
         /// `demo signals`: the sidebar layout's badges with something to say
         /// - a service failing three times, two tool updates and a fork
         /// behind, one live session, and Poneglyph locked if a vault exists -
@@ -405,6 +411,14 @@ enum ReviewTourLab {
             guard !argument.isEmpty else { return .failure(.missingArgument("settings")) }
             guard SettingsController.Category(rawValue: argument) != nil else { return .failure(.badArgument(argument)) }
             return .success(.settingsCategory(argument))
+        case "new":
+            guard argument == "host" || argument == "key" else {
+                return .failure(argument.isEmpty ? .missingArgument(verb) : .badArgument(argument))
+            }
+            return .success(.newRecord(argument))
+        case "sshconfig":
+            guard !argument.isEmpty else { return .failure(.missingArgument(verb)) }
+            return .success(.sshConfig(argument))
         case "textscale":
             guard !argument.isEmpty else { return .failure(.missingArgument("textscale")) }
             guard let step = ChromeTextScale.steps.first(where: { $0.title.lowercased() == argument.lowercased() }) else {
@@ -700,6 +714,17 @@ enum ReviewTourLab {
                 settings.select(category)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("\(step)")
+            case .newRecord(let kind):
+                if kind == "key" { shell.workspace.hostsPanel.openNewKeyPanel(preset: nil) } else { shell.workspace.hostsPanel.newHost() }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("new \(kind)")
+            case .sshConfig(let path):
+                SSHConfigImport.configURLOverrideForTests = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+                shell.workspace.hostsPanel.openSSHConfigImport()
+                RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("sshconfig \(path)")
             case .orderFront:
                 window.orderFront(nil)
                 shell.view.layoutSubtreeIfNeeded()

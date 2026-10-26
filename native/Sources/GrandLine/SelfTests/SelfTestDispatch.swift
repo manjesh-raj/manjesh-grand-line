@@ -294,6 +294,12 @@ enum SelfTestDispatch {
             if (ProcessInfo.processInfo.environment["FM_KEYS_FILE"] ?? "").isEmpty {
                 setenv("FM_KEYS_FILE", scratchRoot.appendingPathComponent("keys.json").path, 1)
             }
+            // X1's import reads `~/.ssh/config`. A suite reads a fixture of its
+            // own; anything else reaching the import reads a scratch path that
+            // does not exist, never the captain's config.
+            if (ProcessInfo.processInfo.environment["FM_SSH_CONFIG_FILE"] ?? "").isEmpty {
+                setenv("FM_SSH_CONFIG_FILE", scratchRoot.appendingPathComponent("ssh-config").path, 1)
+            }
             if (ProcessInfo.processInfo.environment["FM_SNIPPETS_FILE"] ?? "").isEmpty {
                 setenv("FM_SNIPPETS_FILE", scratchRoot.appendingPathComponent("snippets.json").path, 1)
             }

@@ -24,6 +24,8 @@
 //     there; and leaving unsaved changes asks Save, Discard or Cancel.
 //   - K6, K7 and K8: a key is edited, and made, in the side panel too, with
 //     the hosts using it as links to them.
+//   - X1: Import from SSH Config previews a fixture config in the panel and
+//     saves exactly the ticked hosts. No suite reads the captain's own.
 //
 // Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
 // The arithmetic is asserted headless in `ConnectionsLogicSelfTest`.
@@ -57,7 +59,7 @@ enum ConnectionsCardsSelfTest {
             settle(shell)
             for check in [checkTagMatch, checkTagOverflow, checkFindOrConnect, checkSplitButtons, checkKeyCards,
                           checkHostCards, checkHostCardKeyboard, checkGridReflow, checkRecentHosts,
-                          checkHostPanel, checkNewHostPanel, checkUnsavedChanges, checkKeyPanel, checkNewKeyPanel] {
+                          checkHostPanel, checkNewHostPanel, checkUnsavedChanges, checkKeyPanel, checkNewKeyPanel, checkSSHConfigImport] {
                 var ok = true
                 check(shell, window, &ok)
                 allOK = allOK && ok
@@ -716,6 +718,68 @@ enum ConnectionsCardsSelfTest {
         settle(shell)
     }
 
+    // MARK: X1
+
+    private static func checkSSHConfigImport(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        let store = shell.workspace.hostStore
+        let fixture = FileManager.default.temporaryDirectory
+            .appendingPathComponent("connections-ssh-config-\(ProcessInfo.processInfo.processIdentifier)")
+        try? ConnectionsLogicSelfTest.fixtureConfig.write(to: fixture, atomically: true, encoding: .utf8)
+        SSHConfigImport.configURLOverrideForTests = fixture
+        defer {
+            SSHConfigImport.configURLOverrideForTests = nil
+            try? FileManager.default.removeItem(at: fixture)
+        }
+        check(SSHConfigImport.configURL == fixture, "X1: the suite is not reading its fixture config", &ok)
+        let before = store.hosts.count
+        hosts.debugAddHostSplit.debugPick("Import from SSH Config\u{2026}")
+        settle(shell)
+        guard let preview = hosts.importPanel else { return fail("X1: Import from SSH Config opened no preview", &ok) }
+        check(shell.inspector.hostedContentView === preview.view && shell.inspector.debugTitle == "Import from SSH Config",
+              "X1: the panel shows \(shell.inspector.debugTitle)", &ok)
+        let rows = preview.debugRows
+        check(rows.map(\.label) == ["web-01", "web-02", "db-replica", "edge-proxy-01", "evil", "badport"],
+              "X1: the preview lists \(rows.map(\.label))", &ok)
+        check(rows.filter(\.isOn).map(\.label) == ["web-01", "web-02", "db-replica"],
+              "X1: ticked by default: \(rows.filter(\.isOn).map(\.label))", &ok)
+        check(rows.first { $0.label == "edge-proxy-01" }?.canTick == true && rows.first { $0.label == "evil" }?.canTick == false,
+              "X1: an already-saved host cannot be ticked, or an unsafe one can", &ok)
+        check(preview.debugImportButton.title == "Import 3 Hosts", "X1: the button reads \(preview.debugImportButton.title)", &ok)
+
+        // Untick one, and Import saves exactly the ticked two.
+        preview.debugSetTicked("web-02", false)
+        check(preview.debugImportButton.title == "Import 2 Hosts", "X1: unticking did not update the count", &ok)
+        preview.debugImportButton.performClick(nil)
+        settle(shell)
+        let added = store.hosts.dropFirst(before).map(\.label)
+        check(added == ["web-01", "db-replica"], "X1: Import saved \(added)", &ok)
+        check(store.hosts.first { $0.label == "db-replica" }?.portForwards.count == 2, "X1: db-replica's forwards were not saved", &ok)
+        check(hosts.importPanel == nil && shell.inspector.debugTitle == "web-01",
+              "X1: after Import the panel shows \(shell.inspector.debugTitle)", &ok)
+
+        // Cancel saves nothing.
+        hosts.openSSHConfigImport()
+        settle(shell)
+        let count = store.hosts.count
+        hosts.importPanel?.debugCancelButton.performClick(nil)
+        settle(shell)
+        check(store.hosts.count == count && hosts.importPanel == nil, "X1: Cancel saved something, or left the preview", &ok)
+
+        // A missing config says so rather than listing nothing.
+        SSHConfigImport.configURLOverrideForTests = fixture.appendingPathExtension("missing")
+        hosts.openSSHConfigImport()
+        settle(shell)
+        check(hosts.importPanel?.debugRows.isEmpty == true && hosts.importPanel?.debugImportButton.superview == nil,
+              "X1: a missing config still offered an import", &ok)
+        hosts.importPanel?.debugCancelButton.performClick(nil)
+        for label in ["web-01", "db-replica"] {
+            if let host = store.hosts.first(where: { $0.label == label }) { store.delete(id: host.id) }
+        }
+        settle(shell)
+    }
+
     // MARK: K1, K3, K4, K6
 
     private static func checkKeyCards(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
@@ -889,7 +953,8 @@ enum ConnectionsCardsSelfTest {
               "H8: the halves round every corner, so they read as two buttons", &ok)
         check(abs(chevron.frame.minX - main.frame.maxX - HelmSplitButton.dividerWidth) < 0.5,
               "H8: the halves are \(chevron.frame.minX - main.frame.maxX)pt apart", &ok)
-        check(hostSplit.debugMenuTitles == ["New Host\u{2026}", "Quick Connect"], "H8: Add Host's menu is \(hostSplit.debugMenuTitles)", &ok)
+        check(hostSplit.debugMenuTitles == ["New Host\u{2026}", "Quick Connect", "-", "Import from SSH Config\u{2026}"],
+              "H8: Add Host's menu is \(hostSplit.debugMenuTitles)", &ok)
 
         var opened: [Host?] = []
         let savedOpen = hosts.onAddOrEdit
@@ -910,7 +975,8 @@ enum ConnectionsCardsSelfTest {
         check(editor?.isDescendant(of: hosts.debugSearchField) == true || (editor as? NSText)?.delegate.map { ($0 as? NSView)?.isDescendant(of: hosts.debugSearchField) == true } == true,
               "H8: Quick Connect did not focus the find-or-connect field (\(String(describing: window.firstResponder)))", &ok)
         let overflow = hostSplit.workspaceToolbarMenuItems().map { $0.isSeparatorItem ? "-" : $0.title }
-        check(overflow == ["Add Host", "New Host\u{2026}", "Quick Connect"], "H8: the overflow menu form is \(overflow)", &ok)
+        check(overflow == ["Add Host", "New Host\u{2026}", "Quick Connect", "-", "Import from SSH Config\u{2026}"],
+              "H8: the overflow menu form is \(overflow)", &ok)
 
         // K2: New Key, on the Keys tab.
         hosts.selectModuleTab(named: "Keys")
