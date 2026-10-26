@@ -148,6 +148,15 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     private let keysTabView = NSView()
     private let snippetsTabView = NSView()
 
+    /// H3's Connect button, beside the find-or-connect field in the sidebar
+    /// layout. It runs exactly what Return in the field runs.
+    private lazy var findOrConnectButton: HelmButton = {
+        let b = HelmButton(title: "Connect", variant: .secondary, size: .small, symbol: "bolt.fill",
+                           target: self, action: #selector(findOrConnectClicked))
+        b.isEnabled = false
+        return b
+    }()
+
     /// Quick connect / live filter, in the app's own search well
     /// (Phase 0's raw-input purge). An `NSSearchField` paints its own system
     /// chrome and system fill, which is what the audit measured as the
@@ -1242,6 +1251,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         if drawsSidebarLayout { renderHostsTable(hosts, query: query) }
         refreshWorkspacePanel()
         refreshDetailPanel()
+        refreshFindOrConnectButton()
         onDrillSubtitleChanged?()
     }
 
@@ -1320,6 +1330,14 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     var debugOnlineFilter: HelmSegmentedTabs { onlineFilter }
     var debugKeysTouchID: HelmStatusPill { keysTouchID }
     var debugSearchField: NSView { searchField }
+    var debugSearchPlaceholder: String { searchField.placeholderText }
+    var debugFindOrConnectButton: HelmButton { findOrConnectButton }
+    /// Type into the find-or-connect field as the captain would: the text,
+    /// then the field's own change callback.
+    func debugTypeInSearch(_ text: String) {
+        searchField.stringValue = text
+        searchField.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+    }
     var debugFilterRow: NSStackView? { hostsFilterRow }
     var debugTabView: NSView {
         switch activeTab {
@@ -1432,29 +1450,67 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         searchField.focusEditor()
     }
 
-    /// Return in the quick-connect field: match a saved host, else parse an
-    /// ad-hoc `[user@]host[:port]`.
-    private func quickConnectFromField() {
-        let raw = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { NSSound.beep(); return }
-        // Exact label match wins; otherwise a single filtered result is
-        // treated as the intended host.
+    /// What the quick-connect field would connect to.
+    enum QuickConnectTarget {
+        case saved(Host)
+        case adHoc(label: String, args: [String])
+
+        var name: String {
+            switch self {
+            case .saved(let host): return host.label
+            case .adHoc(let label, _): return label
+            }
+        }
+    }
+
+    /// The field's text resolved the way Return always has: an exact label
+    /// match wins, then a single filtered result, then an ad-hoc
+    /// `[user@]host[:port]`.
+    ///
+    /// `explicitAddressOnly` is H3's Connect button. It lights up on a single
+    /// match or a typed `user@host` (or `ssh ...`), not on any word at all -
+    /// Return still connects a bare word as a hostname, exactly as before,
+    /// but a lit button beside a half-typed search would read as "this is a
+    /// host".
+    func quickConnectTarget(for text: String, explicitAddressOnly: Bool = false) -> QuickConnectTarget? {
+        let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
         if let exact = hostStore.hosts.first(where: { $0.label.caseInsensitiveCompare(raw) == .orderedSame }) {
-            connect(exact)
-            return
+            return .saved(exact)
         }
         let visible = filteredHosts(raw)
-        if visible.count == 1 {
-            connect(visible[0])
-            return
-        }
-        if let parsed = HostCatalog.parseQuickConnect(raw) {
-            onConnect?(nil, parsed.label, parsed.args, nil, nil, nil)
+        if visible.count == 1 { return .saved(visible[0]) }
+        if explicitAddressOnly, !raw.contains("@"), !raw.lowercased().hasPrefix("ssh ") { return nil }
+        if let parsed = HostCatalog.parseQuickConnect(raw) { return .adHoc(label: parsed.label, args: parsed.args) }
+        return nil
+    }
+
+    /// Return in the quick-connect field (and H3's Connect button): match a
+    /// saved host, else parse an ad-hoc `[user@]host[:port]`.
+    private func quickConnectFromField() {
+        switch quickConnectTarget(for: searchField.stringValue) {
+        case .saved(let host)?:
+            connect(host)
+        case .adHoc(let label, let args)?:
+            onConnect?(nil, label, args, nil, nil, nil)
             searchField.stringValue = ""
             applyHostFilter("")
-            return
+        case nil:
+            NSSound.beep()
         }
-        NSSound.beep()
+    }
+
+    @objc private func findOrConnectClicked() { quickConnectFromField() }
+
+    /// H3: the Connect button beside the field lights up when the text names
+    /// one host to connect to, and says which.
+    private func refreshFindOrConnectButton() {
+        guard drawsSidebarLayout else { return }
+        let target = quickConnectTarget(for: searchField.stringValue, explicitAddressOnly: true)
+        findOrConnectButton.isEnabled = target != nil
+        let words = target.map { "Connect to \($0.name)" } ?? "Type a host's name, or ssh user@hostname, to connect"
+        findOrConnectButton.toolTip = words
+        findOrConnectButton.setAccessibilityLabel(target.map { "Connect to \($0.name)" } ?? "Connect")
     }
 
     func confirmDeleteHost(_ host: Host) {
@@ -1856,6 +1912,14 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
         top.removeArrangedSubview(searchField)
         searchField.removeFromSuperview()
         row.insertArrangedSubview(searchField, at: 0)
+        // H3: the find-or-connect bar - its own words, and a Connect button
+        // that runs what Return does.
+        searchField.placeholderText = Self.findOrConnectPlaceholder
+        row.insertArrangedSubview(findOrConnectButton, at: 1)
+        findOrConnectButton.setContentHuggingPriority(.required, for: .horizontal)
+        findOrConnectButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        row.setCustomSpacing(HelmMetrics.s1, after: searchField)
+        refreshFindOrConnectButton()
         // Wide enough for its placeholder, and the first thing to give way.
         let width = searchField.widthAnchor.constraint(equalToConstant: Self.sidebarSearchWidth)
         width.priority = HelmDaylightPriority.columnHug
@@ -1868,7 +1932,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
         }
         onlineFilter.setContentHuggingPriority(.required, for: .horizontal)
         onlineFilter.setContentCompressionResistancePriority(.required, for: .horizontal)
-        row.setCustomSpacing(HelmMetrics.s3, after: searchField)
+        row.setCustomSpacing(HelmMetrics.s3, after: findOrConnectButton)
         // X4 before the chips it qualifies, and H9's "+N" after them. Both
         // are fixed-size chrome, so the strip stays what absorbs the slack.
         if let index = row.arrangedSubviews.firstIndex(of: tagsScroll) {
@@ -1890,7 +1954,9 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
     @objc private func tagStripResized() { refitTagChips() }
 
     /// The prototype's search field width, and the least it is squeezed to.
-    static let sidebarSearchWidth: CGFloat = 400
+    /// H3 widened it from 400, for the longer find-or-connect words.
+    static let sidebarSearchWidth: CGFloat = 460
+    static let findOrConnectPlaceholder = "Find a host or ssh user@hostname"
     static let sidebarSearchMinimumWidth: CGFloat = 200
 
     /// "All 7" and "Online 5", from the same reading the stat strip used.

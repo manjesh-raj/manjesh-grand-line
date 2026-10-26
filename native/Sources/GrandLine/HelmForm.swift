@@ -748,6 +748,12 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
     /// file `checkNoRawTextInputs` exempts, for exactly that reason.
     private let editor = NSTextField()
     private let placeholderLabel = NSTextField(labelWithString: "")
+    /// The words shown while the field is empty. Settable after init for a
+    /// page that changes them with its layout (Hosts' find-or-connect bar).
+    var placeholderText: String {
+        get { placeholderLabel.stringValue }
+        set { placeholderLabel.stringValue = newValue }
+    }
     private var hintChip: NSView?
     private var hintLabel: NSTextField?
 

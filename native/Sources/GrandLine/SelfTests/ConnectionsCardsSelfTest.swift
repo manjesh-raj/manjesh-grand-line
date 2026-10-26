@@ -7,6 +7,8 @@
 //   - X4: the tag chips match any selected tag, or all of them.
 //   - H9: the tag chips never run off the filter row; what does not fit is
 //     behind a "+N" chip whose menu toggles the same filter.
+//   - H3: the find-or-connect bar - its words, and a Connect button that
+//     lights up for one host or a typed user@host and runs what Return runs.
 //
 // Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
 // The arithmetic is asserted headless in `ConnectionsLogicSelfTest`.
@@ -38,7 +40,7 @@ enum ConnectionsCardsSelfTest {
             defer { window.orderOut(nil) }
             ReviewTourLab.seedDemoHosts(shell.workspace)
             settle(shell)
-            for check in [checkTagMatch, checkTagOverflow] {
+            for check in [checkTagMatch, checkTagOverflow, checkFindOrConnect] {
                 var ok = true
                 check(shell, window, &ok)
                 allOK = allOK && ok
@@ -116,6 +118,57 @@ enum ConnectionsCardsSelfTest {
         settle(shell)
         check(hosts.debugFilteredHostLabels().count == shell.workspace.hostStore.hosts.count,
               "X4: clearing the tags did not bring every host back", &ok)
+    }
+
+    // MARK: H3
+
+    private static func checkFindOrConnect(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        // Every connect this check makes lands here, never on a real ssh.
+        var connects: [(id: UUID?, label: String, args: [String])] = []
+        let savedConnect = hosts.onConnect
+        hosts.onConnect = { id, label, args, _, _, _ in connects.append((id, label, args)) }
+        defer {
+            hosts.onConnect = savedConnect
+            hosts.debugTypeInSearch("")
+        }
+        let button = hosts.debugFindOrConnectButton
+        check(hosts.debugSearchPlaceholder == "Find a host or ssh user@hostname",
+              "H3: the field reads \"\(hosts.debugSearchPlaceholder)\"", &ok)
+        check(button.window != nil && !button.isHiddenOrHasHiddenAncestor, "H3: the Connect button is not on screen", &ok)
+        let field = hosts.debugSearchField
+        check(button.frame.minX >= field.frame.maxX && abs(button.frame.midY - field.frame.midY) < 2,
+              "H3: the Connect button is not beside the field (\(button.frame) vs \(field.frame))", &ok)
+        check(field.frame.width > HostsController.sidebarSearchMinimumWidth,
+              "H3: the field is squeezed to \(field.frame.width)pt at 1512", &ok)
+        check(!button.isEnabled, "H3: Connect is lit with nothing typed", &ok)
+
+        hosts.debugTypeInSearch("edge")
+        check(!button.isEnabled, "H3: Connect is lit for a word two hosts match", &ok)
+        // Return's own rules are unchanged: a bare word still connects as a
+        // hostname, which is what the button deliberately does not offer.
+        if case .adHoc? = hosts.quickConnectTarget(for: "edge") {} else {
+            fail("H3: Return no longer connects a bare word as a hostname", &ok)
+        }
+
+        hosts.debugTypeInSearch("edge-proxy-01")
+        check(button.isEnabled && button.toolTip == "Connect to edge-proxy-01",
+              "H3: Connect for an exact name reads \(button.isEnabled) \"\(button.toolTip ?? "")\"", &ok)
+        button.performClick(nil)
+        let edgeID = shell.workspace.hostStore.hosts.first { $0.label == "edge-proxy-01" }?.id
+        check(connects.last?.id == edgeID && edgeID != nil, "H3: Connect did not connect the saved host", &ok)
+
+        hosts.debugTypeInSearch("grafa")
+        check(button.isEnabled && button.toolTip == "Connect to grafana", "H3: one match does not light Connect", &ok)
+
+        hosts.debugTypeInSearch("ssh deploy@new.example.test:2200")
+        check(button.isEnabled, "H3: a typed user@host does not light Connect", &ok)
+        button.performClick(nil)
+        let last = connects.last
+        check(last?.id == nil && last?.args.contains("2200") == true && last?.args.last == "deploy@new.example.test",
+              "H3: the ad-hoc connect ran \(String(describing: last?.args))", &ok)
+        check(connects.count == 2, "H3: \(connects.count) connects for two clicks", &ok)
     }
 
     // MARK: H9
