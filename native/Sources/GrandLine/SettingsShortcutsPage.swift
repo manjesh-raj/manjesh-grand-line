@@ -65,7 +65,7 @@ final class SettingsShortcutsPage: NSObject {
 
         view.orientation = .vertical
         view.alignment = .leading
-        view.spacing = 20
+        view.spacing = Self.sectionGap
         view.translatesAutoresizingMaskIntoConstraints = false
 
         searchField.setAccessibilityLabel("Search shortcuts")
@@ -95,7 +95,7 @@ final class SettingsShortcutsPage: NSObject {
 
         listStack.orientation = .vertical
         listStack.alignment = .leading
-        listStack.spacing = 20
+        listStack.spacing = Self.sectionGap
         listStack.translatesAutoresizingMaskIntoConstraints = false
 
         emptyLabel.font = HelmType.caption()
@@ -201,6 +201,11 @@ final class SettingsShortcutsPage: NSObject {
 
     /// The control column's width: the recorders', so a read-only row's
     /// key caps end where a recorder ends and the page reads as one column.
+    /// The gap between sections: the same 20pt every other Settings page's
+    /// stack puts between its sections, spelled in spacing tokens so this
+    /// page matches them without an off-scale literal.
+    static let sectionGap: CGFloat = HelmMetrics.s4 + HelmMetrics.s1
+
     static let controlWidth: CGFloat = 168
     static let resetWidth: CGFloat = 28
     static let resetGap: CGFloat = HelmMetrics.s2
