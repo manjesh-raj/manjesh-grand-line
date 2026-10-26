@@ -338,6 +338,78 @@ real terminal in a real window and asserts a repaint of an unchanged screen
 rebuilds no rows at all, that a single new line rebuilds fewer rows than a first
 render, and that a theme change and a selection both still invalidate.
 
+## Eighth patch: a row highlighting hook (`fm/grandline-termius-keyword-highlighting-1793016790`)
+
+**Files:** `Apple/RowHighlighting.swift` (new: the public `TerminalRowHighlighter`
+protocol, `TerminalRowHighlight`, and `rowHighlightColors(line:cols:)`),
+`Mac/MacTerminalView.swift` / `iOS/iOSTerminalView.swift` (the stored
+`rowHighlighter`, the memo and the `rowHighlightScans` counter), and
+`Apple/AppleTerminalView.swift` (a `highlightVersion` and a `highlightColors`
+field on patch 7's `CachedLineRender`, one comparison in `preparedLineRender`,
+and the glyph pass in `drawTerminalContents` drawing a highlighted run in
+colour groups).
+
+**What it is for.** Grand Line colours keywords in terminal output the way
+Termius does: "error" in red, "warning" in yellow, an IP or MAC address in
+cyan. The app owns the rules and the colours (`TerminalKeywordHighlighting.swift`);
+this patch only gives it a place to answer "what colour is this row's text".
+
+**Why it has to be a patch.** `buildAttributedString`, `getAttributes` and
+`preparedLineRender` are `internal`, and `draw(_:)` is not `open`, so there is
+no way to change the colour a cell is drawn in from outside the module. The
+only alternative is to rewrite the byte stream with SGR codes before `feed`,
+and that changes the buffer - which copy, search, scrollback and every
+`getBufferAsData` reader in the app would then all see. Upstream still has no
+hook at v1.20.0.
+
+**What it does.**
+
+- `rowHighlightColors` runs only when patch 7's cache misses for a row that
+  `draw(_:)` is drawing, so only visible rows are ever looked at and an
+  unchanged screen costs nothing.
+- It builds the row's text as UTF-16 units and asks the highlighter for
+  coloured runs. The answer is memoised by those units plus the highlighter's
+  `highlightVersion`. Once scrollback is full, every frame rotates every
+  `BufferLine` past patch 7's identity check, but a row that moved up one line
+  has the same text, so it is not scanned again.
+- It skips the alternate screen, rows wider than 2,000 columns, and any cell a
+  program styled (any foreground or background other than the default, or
+  inverse, dim or invisible). A run that touches such a cell is dropped whole.
+- The colours are kept on the cached row and applied **in the glyph pass**, by
+  drawing a highlighted run in stretches of one colour each. They are never put
+  in the attributed string. A colour change there splits a CoreText run, and
+  each extra run costs its own background fill, two attribute-dictionary
+  bridges and its own glyph draw. The first version did that, and measured 6.9%
+  slower on the benchmark below.
+- A selected run keeps the selection colours, and `highlightVersion` is part of
+  the cache key, so a settings or theme change repaints every row.
+
+**What it deliberately does not touch.** The buffer, parsing, scrollback,
+selection text, search and `getBufferAsData`. With `rowHighlighter` left `nil`
+(the default), every row renders exactly as before.
+
+**Measured.** `FM_RUN_TERMINAL_HIGHLIGHT_BENCHMARK` pushes a 100 MB synthetic
+log through a 1100x700 pane, drawing at SwiftTerm's own 60 Hz cadence, with
+highlighting off and on in alternating runs, from an optimised build. The
+budget is 5%.
+
+| Version | Off (median of 3) | On (median of 3) | Slower |
+|---|---|---|---|
+| Colours in the attributed string | 1.05 s | 1.12 s | 6.89% |
+| Colours in the glyph pass (shipped) | 1.05 s | 1.06 s | 1.81% |
+
+Matching itself is about 9 ms of each run.
+
+**Re-applying it after a SwiftTerm upgrade:** keep `Apple/RowHighlighting.swift`,
+re-add the storage block to both `TerminalView` classes, add `highlightVersion`
+and `highlightColors` to `CachedLineRender` (compared and filled in
+`preparedLineRender`), and re-add the `runIsHighlighted` branch to the glyph
+loop in `drawTerminalContents`. `VendoredPatchesSelfTest` names the patch if
+any of that is missing, and `FM_RUN_TERMINAL_KEYWORD_HIGHLIGHT_TESTS` is the
+behavioural half: it renders a real terminal and counts red pixels with
+highlighting on and off, and checks the alternate screen, program colours, the
+buffer, the memo and the width cap.
+
 ## Updating this vendored copy, and the scheduled check
 
 **Pinned:** upstream `1.15.0` (`dd2fb8ac5b861e7bf617c872895e338f38165648`).
@@ -345,7 +417,7 @@ render, and that a theme change and a selection both still invalidate.
 **Re-check:** every 183 days (six months), or sooner if upstream publishes a
 security fix.
 
-The seven patches above are the price of this pin, and the review that filed
+The eight patches above are the price of this pin, and the review that filed
 this section (P9 of full review #3) is right that the cost of a sync is
 re-applying every one of them. So the standing decision is **stay pinned and
 re-check on a schedule**, not "bump when a newer tag exists" - and the check
@@ -365,7 +437,7 @@ the next scheduled check:
 
 A newer tag on its own is **not** a reason. Nothing in this app is waiting on
 an upstream feature, and every release since the pin has to be re-diffed against
-all seven patch sites by hand.
+all eight patch sites by hand.
 
 ### The check itself
 
@@ -377,11 +449,11 @@ why it is in `native/MANUAL-CHECKS.md` rather than a suite:
 curl -sS "https://api.github.com/repos/migueldeicaza/SwiftTerm/tags?per_page=5" \
   | python3 -c "import json,sys; [print(t['name']) for t in json.load(sys.stdin)]"
 
-# 2. How big is the gap, and did it touch our seven patch sites?
+# 2. How big is the gap, and did it touch our eight patch sites?
 curl -sS "https://api.github.com/repos/migueldeicaza/SwiftTerm/compare/v1.15.0...v<new>" \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['total_commits'], 'commits,', len(d['files']), 'files'); [print('%+6d/-%-5d %s' % (f['additions'], f['deletions'], f['filename'])) for f in d['files'] if any(w in f['filename'] for w in ('MacExtensions','iOSExtensions','AppleTerminalView','MacTerminalView','MetalTerminalRenderer'))]"
 
-# 3. For each of the seven patches, read the upstream function and answer one
+# 3. For each of the eight patches, read the upstream function and answer one
 #    question: is the root cause fixed, or is there a hook now?
 curl -sS "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/v<new>/Sources/SwiftTerm/Mac/MacExtensions.swift"
 
@@ -391,7 +463,7 @@ curl -sS "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/v<new>/Sourc
 ```
 
 `VendoredPatchesSelfTest` is the automated half, and it deliberately covers the
-*other* hazard: it asserts all seven patches are still present in this tree, so a
+*other* hazard: it asserts all eight patches are still present in this tree, so a
 sync that silently drops one fails by name rather than being found in
 production. It also reads the `Last checked` date above and prints a NOTE (never
 a failure - a date cannot break somebody else's build) once it is older than the
@@ -401,9 +473,11 @@ re-check interval.
 
 *(This check predates the sixth patch, which was added on 2026-09-22 and has no
 upstream question to answer - it is a warning-only edit, not an override of
-upstream behaviour, and the same is true of the seventh, added on 2026-09-26:
+upstream behaviour, and the same is true of the seventh, added on 2026-09-26,
+and the eighth, added on 2026-10-26:
 `buildAttributedString` and `draw(_:)` are both still `internal`/non-`open` at
-v1.20.0, so a per-row cache still has nowhere else to live. The five verdicts
+v1.20.0, so neither a per-row cache nor a highlight hook has anywhere else to
+live. The five verdicts
 below are left exactly as they were recorded.)*
 
 Upstream is **three releases ahead** of the review that filed this (which said
@@ -434,7 +508,7 @@ scheduled check is the place to ask again.
 
 ### Re-applying the patches, if a sync does happen
 
-Replace `Sources/SwiftTerm` with the new tree, then re-apply all seven. Each
+Replace `Sources/SwiftTerm` with the new tree, then re-apply all eight. Each
 patch's own section above ends with the specific hunks; in summary:
 
 | # | Files |
@@ -446,14 +520,16 @@ patch's own section above ends with the specific hunks; in summary:
 | 5 | `Mac/MacTerminalView.swift`, `iOS/iOSTerminalView.swift` (the `minimumColumns` property), `Apple/AppleTerminalView.swift` (two `max(minimumColumns, …)` clamps) |
 | 6 | `Apple/Metal/MetalTerminalRenderer.swift` (a `_ = ` on both `vertices.withUnsafeBytes` calls) |
 | 7 | `Mac/MacTerminalView.swift`, `iOS/iOSTerminalView.swift` (the cache storage + counters), `Apple/AppleTerminalView.swift` (the cache types, `preparedLineRender`, the two `draw(_:)` call sites, the two invalidations) |
+| 8 | `Apple/RowHighlighting.swift` (new file, keep it), `Mac/MacTerminalView.swift`, `iOS/iOSTerminalView.swift` (the `rowHighlighter` storage), `Apple/AppleTerminalView.swift` (the two `CachedLineRender` fields, the `preparedLineRender` comparison, the glyph pass's `runIsHighlighted` branch) |
 
 Then run `FM_RUN_VENDORED_PATCHES_TESTS=1` first - it names any patch that did
 not come back - followed by the terminal suites that prove each one behaves:
 `FM_RUN_CONTRAST_TESTS` (patches 1-2, via `checkVendoredTerminalPairsSelection`),
 `FM_RUN_TERMINAL_WRAP_REDRAW_TESTS` (3),
 `FM_RUN_TERMINAL_DISPLAY_GATING_TESTS` (4), and
-`FM_RUN_KUBE_BRIDGE_TESTS` plus `FM_RUN_KUBERNETES_DESTINATION_TESTS` (5), and
-`FM_RUN_TERMINAL_ROW_RENDER_CACHE_TESTS` (7).
+`FM_RUN_KUBE_BRIDGE_TESTS` plus `FM_RUN_KUBERNETES_DESTINATION_TESTS` (5),
+`FM_RUN_TERMINAL_ROW_RENDER_CACHE_TESTS` (7), and
+`FM_RUN_TERMINAL_KEYWORD_HIGHLIGHT_TESTS` (8).
 Patch 6 has no behavioural suite because it has no behaviour - a warning-clean
 `swift build` is the check, and `FM_RUN_VENDORED_PATCHES_TESTS` is what makes a
 dropped re-apply fail by name rather than only in build output nobody reads.

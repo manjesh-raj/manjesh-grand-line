@@ -948,6 +948,7 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.systemLightThemeID` | Saved preference `fm.systemLightThemeID` | declared in AppSettings | Settings › Appearance |  |
 | `state.fm.terminal.scrollbackRows` | Saved preference `fm.terminal.scrollbackRows` | declared in AppSettings (T4) | Settings › Terminal › History (unset is the shipped 10,000) |  |
 | `state.fm.terminal.trimBackgroundScrollback` | Saved preference `fm.terminal.trimBackgroundScrollback` | declared in AppSettings (T4) | Settings › Terminal › History (unset is on) |  |
+| `state.fm.terminalHighlighting` | Saved preference `fm.terminalHighlighting` (keyword highlighting's switch, classes and rules) | declared in AppSettings | Settings › Terminal |  |
 | `state.fm.terminalShortcuts` | Saved preference `fm.terminalShortcuts` | declared in AppSettings | Settings › Terminal |  |
 | `state.fm.updatesLastChecks` | Saved record `fm.updatesLastChecks` - the last real check of each tool, with when it was taken | declared in DependencyCheckCache | Setup › Updates (a visit shows a kept answer under 12 hours old, "checked 2h ago", R2-PERF-05) |  |
 | `state.fm.workspaceProfile` | Saved preference `fm.workspaceProfile` | declared in AppSettings | Settings › Appearance (the profile the sidebar started from - Personal on a fresh install, Operator on an existing one, R2-UX-01) |  |

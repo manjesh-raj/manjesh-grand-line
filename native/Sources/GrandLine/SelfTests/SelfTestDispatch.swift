@@ -1400,6 +1400,21 @@ enum SelfTestDispatch {
             exit(TerminalRowRenderCacheSelfTest.run() ? 0 : 1)
         }
 
+        // T1 of the Termius-style plan: terminal keyword highlighting. The pure
+        // matcher, colours and storage, then the window-backed half that proves
+        // the colours reach a drawn row and never the buffer.
+        if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_KEYWORD_MATCHER_TESTS"] == "1" {
+            exit(TerminalKeywordMatcherSelfTest.run() ? 0 : 1)
+        }
+        if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_KEYWORD_HIGHLIGHT_TESTS"] == "1" {
+            exit(TerminalKeywordHighlightSelfTest.run() ? 0 : 1)
+        }
+        // Its performance gate, by hand only: `run-all-tests.sh` skips it (see
+        // TerminalHighlightBenchmarkSelfTest.swift's header).
+        if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_HIGHLIGHT_BENCHMARK"] == "1" {
+            exit(TerminalHighlightBenchmarkSelfTest.run() ? 0 : 1)
+        }
+
         // `fm/grand-line-shell-selection-investigate-fix`: same convention, for the
         // Shell tab's own text selection measured from real rendered pixels - see
         // TerminalSelectionRenderSelfTest.swift's header.

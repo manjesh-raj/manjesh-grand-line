@@ -43,6 +43,10 @@ extension ConsoleController {
         // `scrollSensitivity` defaults to a native 1.0. So the WezTerm feel the
         // captain wants is the shell tab's default here; we just give it history.
         term.terminal?.changeScrollback(scrollbackLines)
+        // T1: keyword highlighting, coloured at draw time by the eighth
+        // vendored SwiftTerm patch. Attached before the theme so the first
+        // paint already has the right colours.
+        TerminalKeywordHighlighter.shared.attach(term)
         theme.apply(to: term)
         return term
     }

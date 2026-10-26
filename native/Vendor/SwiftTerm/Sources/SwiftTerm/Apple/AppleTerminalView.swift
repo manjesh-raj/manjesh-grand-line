@@ -745,6 +745,13 @@ extension TerminalView {
         let selectionBackground: TTColor
         let selectionForeground: TTColor
         let styleEpoch: UInt64
+        /// Grand Line patch 8: the row highlighter's version this row was
+        /// coloured with (`0` when highlighting is off).
+        let highlightVersion: UInt64
+        /// Grand Line patch 8: per-column foreground overrides for this row,
+        /// applied by the glyph pass in `draw(_:)`. `nil` for a row with
+        /// nothing highlighted, which is every row while highlighting is off.
+        let highlightColors: [TerminalHighlightColor?]?
         let info: ViewLineInfo
         let prepared: [PreparedLineSegment]
     }
@@ -762,6 +769,7 @@ extension TerminalView {
     func preparedLineRender (row: Int, line: BufferLine, cols: Int) -> CachedLineRender {
         let generation = line.generation
         let selection = selectedColumnsRange(row: row, cols: cols)
+        let highlightVersion = effectiveRowHighlightVersion
         if let cached = lineRenderCache[row],
            cached.line === line,
            cached.generation == generation,
@@ -774,7 +782,8 @@ extension TerminalView {
            cached.useBrightColors == useBrightColors,
            cached.selectionBackground === selectedTextBackgroundColor,
            cached.selectionForeground === selectedTextForegroundColor,
-           cached.styleEpoch == lineRenderStyleEpoch {
+           cached.styleEpoch == lineRenderStyleEpoch,
+           cached.highlightVersion == highlightVersion {
             lineRenderCacheHits &+= 1
             return cached
         }
@@ -799,6 +808,9 @@ extension TerminalView {
                                      selectionBackground: selectedTextBackgroundColor,
                                      selectionForeground: selectedTextForegroundColor,
                                      styleEpoch: lineRenderStyleEpoch,
+                                     highlightVersion: highlightVersion,
+                                     highlightColors: highlightVersion == 0
+                                        ? nil : rowHighlightColors(line: line, cols: cols),
                                      info: info,
                                      prepared: prepared)
         lineRenderCache[row] = entry
@@ -1678,6 +1690,29 @@ extension TerminalView {
                         color.setFill()
                     }
 
+                    // Grand Line patch 8: the row highlighter's colours, applied
+                    // here rather than in the attributed string so a highlighted
+                    // word never splits a CoreText run. A split run costs its
+                    // own background fill, attribute bridging and glyph pass,
+                    // which is what put the first version over its throughput
+                    // budget. A selected run keeps the selection colours.
+                    let runColor = (runAttributes[.foregroundColor] as? TTColor) ?? nativeForegroundColor
+                    let highlightColors = runAttributes.keys.contains(.selectionBackgroundColor)
+                        ? nil : cachedRender.highlightColors
+                    let columnWidth = prepared.segment.columnWidth
+                    func highlightColor(ofGlyph index: Int) -> TTColor? {
+                        guard let highlightColors else { return nil }
+                        let column = startColumn + index * columnWidth
+                        return column >= 0 && column < highlightColors.count ? highlightColors[column] : nil
+                    }
+                    var runIsHighlighted = false
+                    if highlightColors != nil {
+                        for index in 0..<runGlyphsCount where highlightColor(ofGlyph: index) != nil {
+                            runIsHighlighted = true
+                            break
+                        }
+                    }
+
                     // Center full-width (CJK) and substituted glyphs within their
                     // multi-cell slot instead of pinning them to the cell's left
                     // edge. `positions` stays grid-aligned for the decorations
@@ -1708,8 +1743,30 @@ extension TerminalView {
                                 : CTFontCreateCopyWithAttributes(ctRunFont, CTFontGetSize(ctRunFont) * s, nil, nil)
                             var g = runGlyphs[i]
                             var p = glyphPositions[i]
+                            if runIsHighlighted {
+                                (highlightColor(ofGlyph: i) ?? runColor).setFill()
+                            }
                             CTFontDrawGlyphs(drawFont, &g, &p, 1, context)
                         }
+                        if runIsHighlighted { runColor.setFill() }
+                    } else if runIsHighlighted {
+                        // One draw per stretch of glyphs sharing a colour.
+                        runGlyphs.withUnsafeBufferPointer { glyphs in
+                            glyphPositions.withUnsafeBufferPointer { points in
+                                var groupStart = 0
+                                var groupColor = highlightColor(ofGlyph: 0)
+                                for index in 1...runGlyphsCount {
+                                    let color = index < runGlyphsCount ? highlightColor(ofGlyph: index) : nil
+                                    if index < runGlyphsCount && color === groupColor { continue }
+                                    (groupColor ?? runColor).setFill()
+                                    CTFontDrawGlyphs(runFont, glyphs.baseAddress! + groupStart,
+                                                     points.baseAddress! + groupStart, index - groupStart, context)
+                                    groupStart = index
+                                    groupColor = color
+                                }
+                            }
+                        }
+                        runColor.setFill()
                     } else {
                         CTFontDrawGlyphs(runFont, runGlyphs, &glyphPositions, glyphPositions.count, context)
                     }

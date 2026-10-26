@@ -81,6 +81,24 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public internal(set) var lineRenderCacheHits: Int = 0
     public internal(set) var lineRenderCacheMisses: Int = 0
 
+    // MARK: - Grand Line patch 8: row highlighting storage
+    //
+    // The iOS mirror of the macOS storage (see `Mac/MacTerminalView.swift`
+    // and `Vendor/SwiftTerm/README.md`'s "Eighth patch").
+    /// What colours keywords in visible rows. `nil` (the default) is exactly
+    /// the stock rendering. Setting it drops every cached row render.
+    public var rowHighlighter: TerminalRowHighlighter? {
+        didSet {
+            invalidateLineRenderCache()
+            rowHighlightMemo.removeAll()
+        }
+    }
+    var rowHighlightMemo: [[UInt16]: [TerminalRowHighlight]] = [:]
+    var rowHighlightMemoVersion: UInt64 = 0
+    /// How many rows were handed to the highlighter, as opposed to answered
+    /// from the memo. A suite reads it to prove the memo and the skips work.
+    public internal(set) var rowHighlightScans: Int = 0
+
     public func applyMinimumColumnsIfNeeded() {
         guard cellDimension != nil, frame.width > 0, frame.height > 0 else { return }
         _ = processSizeChange(newSize: frame.size)

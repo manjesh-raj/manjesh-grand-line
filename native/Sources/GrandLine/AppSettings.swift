@@ -39,6 +39,7 @@ final class AppSettings {
         static let terminalShortcuts = "fm.terminalShortcuts"
         static let terminalScrollbackRows = "fm.terminal.scrollbackRows"
         static let terminalTrimsBackgroundScrollback = "fm.terminal.trimBackgroundScrollback"
+        static let terminalHighlighting = "fm.terminalHighlighting"
         static let quickAccess = "fm.quickAccess"
         static let hasSeenWelcome = "fm.hasSeenWelcome"
         static let snippetExpansionEnabled = "fm.snippetExpansionEnabled"
@@ -250,6 +251,28 @@ final class AppSettings {
                 ? true : defaults.bool(forKey: Keys.terminalTrimsBackgroundScrollback)
         }
         set { defaults.set(newValue, forKey: Keys.terminalTrimsBackgroundScrollback) }
+    }
+
+    /// Settings > Terminal's keyword highlighting (T1-T3 of the Termius-style
+    /// plan): the master switch, the six built-in classes and the captain's
+    /// own rules.
+    ///
+    /// One JSON value, the same shape as `terminalShortcuts` above (choice C2),
+    /// and per Mac. `KeywordHighlightSettings` decodes every field with a
+    /// default (GL-01), so an unreadable value falls back to the shipped
+    /// defaults rather than to "off".
+    var terminalHighlighting: KeywordHighlightSettings {
+        get {
+            guard let data = defaults.data(forKey: Keys.terminalHighlighting),
+                  let decoded = try? JSONDecoder().decode(KeywordHighlightSettings.self, from: data) else {
+                return .defaults
+            }
+            return decoded
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            defaults.set(data, forKey: Keys.terminalHighlighting)
+        }
     }
 
     /// Dictation's "Clean up my sentences" toggle (phase 3,
