@@ -422,8 +422,10 @@ enum SettingsThemeLayoutParitySelfTest {
         // Twenty-three since R2-UX-01 (b) added the Appearance page's Sidebar
         // card (the profile and a switch per module). Twenty-four since T4 of
         // the Termius-style plan added the Terminal page's History card.
-        guard daylightFP.cardCount == 24 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 24")
+        // Twenty-nine since T5 added the Shortcuts page's five cards (a suite
+        // has no installed menu bar, so none of the menu's sections).
+        guard daylightFP.cardCount == 29 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 29")
             ok = false
             return
         }

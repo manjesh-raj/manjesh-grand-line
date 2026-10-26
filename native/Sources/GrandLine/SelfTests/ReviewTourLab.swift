@@ -1395,11 +1395,16 @@ enum ReviewTourLab {
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
         let dictationStore = DictationStore()
+        let settings = SettingsController(hostStore: hostStore, keyStore: keyStore,
+                                          snippetStore: snippetStore, dictationStore: dictationStore)
+        // A tour installs no main menu, so Settings > Shortcuts reads the one
+        // the app would install, built without installing it.
+        let menu = AppDelegate().buildMenu(installing: false)
+        settings.shortcutsMainMenu = { menu }
         let shell = layout.shellType.init(
             hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
             console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
-            settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
-                                         snippetStore: snippetStore, dictationStore: dictationStore),
+            settings: settings,
             hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: ShiftStore(),
             dictationStore: dictationStore, commandLibraryStore: CommandLibraryStore(),
             scheduleStore: ScheduleStore(),

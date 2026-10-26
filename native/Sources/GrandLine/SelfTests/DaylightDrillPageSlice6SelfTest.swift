@@ -103,8 +103,11 @@ enum DaylightDrillPageSlice6SelfTest {
     /// R2-UX-01 (b) added the Appearance page's Sidebar card (the profile and
     /// a switch per module). Twenty-four since T4 of the Termius-style plan
     /// added the Terminal page's History card (the scrollback depth and the
-    /// background trim).
-    private static let expectedCardCount = 24
+    /// background trim). Twenty-nine since T5 added
+    /// the Shortcuts page, whose five cards in a suite are Terminal, Capture,
+    /// Dictation, Tabs and pages, and Global - a suite has no installed menu
+    /// bar, so none of the menu's sections.
+    private static let expectedCardCount = 29
 
 
     static func run() -> Bool {

@@ -34,7 +34,8 @@ enum SettingsTerminalShortcutsSelfTest {
 
         var allOK = true
         for check in [checkTheTourCanSelectASettingsPage,
-                      checkTheScrollbackRowCommitsAndWarnsBeforeTrimming] {
+                      checkTheScrollbackRowCommitsAndWarnsBeforeTrimming,
+                      checkTheShortcutsPageListsSearchesAndFilters] {
             var ok = true
             autoreleasepool { check(&ok) }
             allOK = allOK && ok
@@ -187,6 +188,90 @@ enum SettingsTerminalShortcutsSelfTest {
         _ = toggle.accessibilityPerformPress()
         check(!TerminalScrollback.shared.trimsBackgroundTabs, "pressing the toggle turns the trim off", &ok)
         if ok { print("  ok   raise, warned lowering, 0, live note, focus-loss commit and the trim toggle") }
+    }
+
+    // MARK: T5 - the Shortcuts page
+
+    /// A menu the page can read without `NSApp`.
+    static let menu = AppDelegate().buildMenu(installing: false)
+
+    static func mountShortcuts() -> (SettingsController, NSWindow) {
+        let settings = makeSettings()
+        settings.shortcutsMainMenu = { menu }
+        let window = mount(settings)
+        settings.select(.shortcuts)
+        window.contentView?.layoutSubtreeIfNeeded()
+        return (settings, window)
+    }
+
+    /// Press one of a segmented control's pills, the way a click does.
+    static func press(_ id: String, in tabs: HelmSegmentedTabs) -> Bool {
+        func find(_ view: NSView) -> HoverHighlightView? {
+            if let hover = view as? HoverHighlightView, hover.identifier?.rawValue == id { return hover }
+            for subview in view.subviews { if let found = find(subview) { return found } }
+            return nil
+        }
+        return find(tabs)?.accessibilityPerformPress() ?? false
+    }
+
+    /// Type into a search field through the window's real field editor.
+    static func search(_ text: String, in field: HelmSearchField, window: NSWindow) {
+        field.focusEditor()
+        guard let editor = window.firstResponder as? NSTextView else { return }
+        editor.selectAll(nil)
+        editor.insertText(text, replacementRange: editor.selectedRange())
+    }
+
+    /// The page lists the menu, searches it as the captain types, filters
+    /// it, says so when a filter leaves nothing, and draws read-only key caps
+    /// in the same trailing column as the recorders.
+    ///
+    /// Injection: drop `onTextChanged` in `SettingsShortcutsPage.init` and
+    /// typing "split" leaves every row showing.
+    private static func checkTheShortcutsPageListsSearchesAndFilters(_ ok: inout Bool) {
+        print("\n-- T5: Settings > Shortcuts --")
+        let (settings, window) = mountShortcuts()
+        defer { withExtendedLifetime(window) {} }
+        let page = settings.debugShortcutsPage
+        check(settings.debugMountedCategory == .shortcuts, "Shortcuts is not the mounted page", &ok)
+        let all = page.debugVisibleRows
+        check(all.count == page.rows.count && all.count > 50,
+              "the page draws \(all.count) rows for a table of \(page.rows.count)", &ok)
+        let headings = page.sections.compactMap { $0.headingLabel?.stringValue }
+        check(headings.first == "Terminal" && headings.contains("Hosts") && headings.contains("Tabs and pages"),
+              "the sections read \(headings)", &ok)
+
+        // The key-cap column and the recorder column end at one x.
+        let recorderRow = all.first { $0.titleLabel.stringValue == "Split right" }
+        let menuRow = all.first { $0.titleLabel.stringValue == "New Host\u{2026}" }
+        if let recorderRow, let menuRow {
+            let a = recorderRow.control.convert(recorderRow.control.bounds, to: nil)
+            let b = menuRow.control.convert(menuRow.control.bounds, to: nil)
+            check(abs(a.maxX - b.maxX) <= 1 && abs(a.width - b.width) <= 1,
+                  "the key caps end at \(b.maxX) (width \(b.width)), the recorders at \(a.maxX) (width \(a.width))", &ok)
+            check(recorderRow.control is KeyChordRecorderView, "a configurable row has no recorder", &ok)
+            check((recorderRow.control.accessibilityLabel() ?? "").contains("Split right"),
+                  "the recorder's VoiceOver label does not name its action", &ok)
+        } else {
+            fail("the page has no Split right or New Host… row", &ok)
+        }
+
+        search("split", in: page.debugSearchField, window: window)
+        let found = page.debugVisibleRows.map(\.titleLabel.stringValue)
+        check(found == ["Split right", "Split left", "Split down"], "typing \"split\" shows \(found)", &ok)
+
+        search("", in: page.debugSearchField, window: window)
+        check(page.debugVisibleRows.count == all.count, "clearing the search did not bring every row back", &ok)
+
+        check(press(ShortcutsTable.Filter.conflicts.rawValue, in: page.debugFilterTabs), "the Conflicts pill did not press", &ok)
+        check(page.debugVisibleRows.isEmpty && page.debugEmptyLabelShown && page.debugEmptyText.hasPrefix("No conflicts"),
+              "Conflicts on the defaults shows \(page.debugVisibleRows.count) rows and \"\(page.debugEmptyText)\"", &ok)
+        check(press(ShortcutsTable.Filter.changed.rawValue, in: page.debugFilterTabs), "the Changed pill did not press", &ok)
+        check(page.debugVisibleRows.isEmpty && page.debugEmptyText.hasPrefix("Every shortcut is on its default"),
+              "Changed on the defaults shows \(page.debugVisibleRows.count) rows", &ok)
+        _ = press(ShortcutsTable.Filter.all.rawValue, in: page.debugFilterTabs)
+        check(!page.debugEmptyLabelShown && page.debugVisibleRows.count == all.count, "All did not bring every row back", &ok)
+        if ok { print("  ok   \(all.count) rows, search, both filters, the empty state and one control column") }
     }
 }
 

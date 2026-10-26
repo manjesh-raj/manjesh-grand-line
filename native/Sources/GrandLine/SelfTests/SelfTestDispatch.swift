@@ -2225,6 +2225,13 @@ enum SelfTestDispatch {
             exit(TerminalShortcutsSelfTest.run() ? 0 : 1)
         }
 
+        // T5/T6 of the Termius-style plan: Settings > Shortcuts' table - the
+        // live menu walk, the fixed rows, physical chords and conflict
+        // detection. Pure logic. See ShortcutsTableSelfTest.swift.
+        if ProcessInfo.processInfo.environment["FM_RUN_SHORTCUTS_TABLE_TESTS"] == "1" {
+            exit(ShortcutsTableSelfTest.run() ? 0 : 1)
+        }
+
         // PR 2 of the Termius-style plan (T4-T7): Settings > Terminal's
         // scrollback row and the Shortcuts page, driven through their real
         // controls in a real window. See SettingsTerminalShortcutsSelfTest.swift.

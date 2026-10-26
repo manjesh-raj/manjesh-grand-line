@@ -301,7 +301,7 @@ The Help menu's shortcut catalog: every menu chord, plus the configurable termin
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
-| `key.dictation` | Dictation hotkey | system-wide; configurable on the Dictation page | System (global hotkey, unchanged; configured on Dictation) |  |
+| `key.dictation` | Dictation hotkey | system-wide; configurable on the Dictation page | System (global hotkey, unchanged; configured on Dictation, and in Settings › Shortcuts since T5) |  |
 | `key.terminal.closePane` | Terminal shortcut: Close pane | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged; still recorded in Settings › Terminal) |  |
 | `key.terminal.focusNextPane` | Terminal shortcut: Focus next pane | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged; still recorded in Settings › Terminal) |  |
 | `key.terminal.focusPreviousPane` | Terminal shortcut: Focus previous pane | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged; still recorded in Settings › Terminal) |  |
@@ -501,6 +501,7 @@ The eight categories and every row whose title is a literal. Rows built in a loo
 | `settings.category.intents` | Settings category: App Intents & Shortcuts | Settings page's own sidebar | Settings › App Intents & Shortcuts (a sidebar child of Settings; the page's private column becomes these children) |  |
 | `settings.category.menuBar` | Settings category: Menu Bar | Settings page's own sidebar | Settings › Menu Bar (a sidebar child of Settings; the page's private column becomes these children) |  |
 | `settings.category.security` | Settings category: Security | Settings page's own sidebar | Settings › Security (a sidebar child of Settings; the page's private column becomes these children) |  |
+| `settings.category.shortcuts` | Settings category: Shortcuts | new (T5 of the Termius-style plan) - before it the chords were spread over Settings > Terminal, Settings > Capture, the Dictation page and the Help menu's sheet | Settings › Shortcuts (a sidebar child of Settings: every chord in one table read from the live menu walk, with search and the Changed and Conflicts filters; ⌘1-⌘9 is one fixed row; the terminal, capture and dictation chords are recorded here) |  |
 | `settings.category.terminal` | Settings category: Terminal | Settings page's own sidebar | Settings › Terminal (a sidebar child of Settings; the page's private column becomes these children) |  |
 | `settings.row.Accessibility permission` | Settings row: Accessibility permission | Settings > Capture | Settings › Capture (unchanged row) |  |
 | `settings.row.Command snippets & dictation` | Settings row: Command snippets & dictation | Settings > Backup & Restore | Settings › Backup & Restore (unchanged row) |  |
@@ -1163,8 +1164,8 @@ The checks that stand between the captain and an irreversible or secret-revealin
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
-| `hotkey.quickCapture` | ⌥Space quick capture from anywhere | System-wide, configurable in Settings > Capture | System (global hotkey, unchanged) | `ShiftQuickCapture.swift` `final class ShiftGlobalHotkey` |
-| `hotkey.dictation` | Dictation hotkey from anywhere | System-wide, configurable on Dictation | System (global hotkey, unchanged) | `DictationHotkey.swift` `final class DictationHotkey` |
+| `hotkey.quickCapture` | ⌥Space quick capture from anywhere | System-wide, configurable in Settings > Capture | System (global hotkey, unchanged; recorded in Settings › Capture and, since T5, Settings › Shortcuts) | `ShiftQuickCapture.swift` `final class ShiftGlobalHotkey` |
+| `hotkey.dictation` | Dictation hotkey from anywhere | System-wide, configurable on Dictation | System (global hotkey, unchanged; recorded on Dictation and, since T5, Settings › Shortcuts) | `DictationHotkey.swift` `final class DictationHotkey` |
 | `hotkey.openApp` | Open Grand Line from anywhere | System-wide, Settings > Menu Bar | System (global hotkey, unchanged) | `CompactMode.swift` `globalMonitor` |
 | `hotkey.snippetExpander` | ;abbrev snippet expansion in any app | System-wide, Settings > Capture | System (unchanged) | `SnippetExpander.swift` `final class SnippetExpander` |
 | `tabkey.newTab` | ⌘T opens a new shell tab | Console and Tools, while showing | Console (unchanged; the key monitor still checks the showing module) | `TabKeyboardShortcuts.swift` `case "t": return .newTab` |

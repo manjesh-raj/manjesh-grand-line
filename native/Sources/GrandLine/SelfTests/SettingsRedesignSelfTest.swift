@@ -126,8 +126,10 @@ enum SettingsRedesignSelfTest {
             // than titles - none of these pages is called "shortcut".
             // Capture joined them in
             // `fm/grandline-capture-global-hotkey-configurable`, which is the
-            // page a captain searching that word most often wants.
-            ("shortcut", [.terminal, .capture, .menuBar, .intents]),
+            // page a captain searching that word most often wants. T5's
+            // Shortcuts page joined them by title as well, and it is now the
+            // page that word most often wants.
+            ("shortcut", [.terminal, .shortcuts, .capture, .menuBar, .intents]),
             // A title match, and one that is not a prefix of the title.
             ("backup", [.backup]),
             // Case-insensitive, and matching a title word.
