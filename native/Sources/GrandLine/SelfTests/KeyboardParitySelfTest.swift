@@ -231,7 +231,14 @@ enum KeyboardParitySelfTest {
                   text.contains("HelmFormSheet(") else { continue }
             if name == "HelmForm.swift" { continue }
             sheets += 1
-            if !text.contains(".setFooter(") { missing.append(name) }
+            // A form shown only in the side panel (`chrome: .panel`) builds
+            // its own footer with `setPanelFooter` - a window-wide key
+            // equivalent there would take Return from the page beside it - so
+            // it must take Return and Escape itself instead. Either way a
+            // form with neither fails.
+            let panelKeys = text.contains("chrome: .panel") && text.contains("func cancelOperation")
+                && text.contains("case 36")
+            if !text.contains(".setFooter(") && !panelKeys { missing.append(name) }
         }
         check(sheets >= 10, "found only \(sheets) form sheets - the guard would be vacuous", &ok)
         check(missing.isEmpty, "form sheets with no setFooter, so no Return or Escape: \(missing)", &ok)

@@ -112,6 +112,28 @@ final class SSHConfigImportPanelController: NSViewController {
 
     @objc private func cancelClicked() { onCancel?() }
 
+    // MARK: Keys
+
+    /// Return imports and Esc cancels, from anywhere in the preview. A panel
+    /// builds its own footer (`setPanelFooter`), so these are not the footer
+    /// buttons' key equivalents: a key equivalent is window-wide, and Return
+    /// in the Hosts search field must stay quick connect. They arrive here up
+    /// the responder chain from whatever in the preview has the keyboard.
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(KeyChord.relevantModifierMask)
+        guard modifiers.isEmpty else { return super.keyDown(with: event) }
+        switch event.keyCode {
+        case 36, 76:
+            if importButton.superview != nil, importButton.isEnabled { importClicked() } else { super.keyDown(with: event) }
+        case 53:
+            cancelClicked()
+        default:
+            super.keyDown(with: event)
+        }
+    }
+
+    override func cancelOperation(_ sender: Any?) { cancelClicked() }
+
     #if FM_SELFTESTS
     var debugRows: [(label: String, isOn: Bool, canTick: Bool, subtitle: String)] {
         rows.map { ($0.candidate.host.label, $0.row.isOn, $0.row.toggle.isEnabled, $0.row.debugSubtitle ?? "") }

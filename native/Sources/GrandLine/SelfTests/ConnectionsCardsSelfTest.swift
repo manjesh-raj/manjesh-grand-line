@@ -767,6 +767,41 @@ enum ConnectionsCardsSelfTest {
         settle(shell)
         check(store.hosts.count == count && hosts.importPanel == nil, "X1: Cancel saved something, or left the preview", &ok)
 
+        // Esc cancels and Return imports, from the keyboard in the preview:
+        // the key goes to the preview's own view and up its responder chain.
+        func press(_ code: UInt16, _ characters: String, in view: NSView) {
+            guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                               timestamp: ProcessInfo.processInfo.systemUptime,
+                                               windowNumber: window.windowNumber, context: nil, characters: characters,
+                                               charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
+            else { return }
+            view.keyDown(with: event)
+        }
+        hosts.openSSHConfigImport()
+        settle(shell)
+        if let preview = hosts.importPanel {
+            press(53, "\u{1b}", in: preview.view)
+            settle(shell)
+            check(hosts.importPanel == nil && store.hosts.count == count, "X1: Esc did not cancel the preview", &ok)
+        }
+        hosts.openSSHConfigImport()
+        settle(shell)
+        if let preview = hosts.importPanel {
+            // web-01 and db-replica were imported above, so they - and web-02,
+            // which shares web-01's destination - are already saved now and
+            // start unticked. An already-saved host can still be ticked.
+            preview.debugSetTicked("web-02", true)
+            let ticked = preview.debugRows.filter(\.isOn).map(\.label)
+            press(36, "\r", in: preview.view)
+            settle(shell)
+            check(!ticked.isEmpty && hosts.importPanel == nil && store.hosts.count == count + ticked.count,
+                  "X1: Return did not import the \(ticked.count) ticked hosts", &ok)
+            for label in ticked {
+                if let host = store.hosts.last(where: { $0.label == label }) { store.delete(id: host.id) }
+            }
+            settle(shell)
+        }
+
         // A missing config says so rather than listing nothing.
         SSHConfigImport.configURLOverrideForTests = fixture.appendingPathExtension("missing")
         hosts.openSSHConfigImport()
