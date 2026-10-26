@@ -1274,3 +1274,16 @@ Seven pages moved code: Hosts (the page column, the side panels, the list rows),
 Five did not, and could not without a rewrite: Fleet, Bootstrap and Automation build their classic header or run card in the same method that wires the button the sidebar layout's toolbar shows, and Log Analyzer and Health draw the sidebar layout by re-parenting the same views.
 `ClassicPresentationSelfTest` (pure logic) pins the structure, and `FeatureInventorySelfTest` reads a `+Classic.swift` file as part of its page, so no inventory id changed.
 
+### The module table is the source (R2-ARCH-03)
+
+Step 0 had restated six tables in `ModuleTable.rows` and checked the restatement against them, so adding a destination still meant editing every old table as well.
+`RailDestination.title`, `.symbol`, `.domainHue` and `.drillSubtitle`, and `DaylightModule.space(forDestination:)`, now read the destination's row, and their switches are gone.
+`WorkspaceModule`'s six switches (title, group, children, symbol, tab host, header) became a second table, `ModuleTable.modules`.
+The per-case comments that explained a glyph, a hue or a line moved with their values, beside each row.
+What the table does not own stays where it was and is still checked against it: the body slot, the eager-mount flag, the Home cards that open a page, ⌘N, the floating bar's grouping and its cards' spaces.
+
+The agreement test could not keep comparing the table with values now derived from it.
+So `ModuleTableSelfTest` asserts three things: the rows agree with what stays elsewhere and every symbol resolves, a typed-out fixture pins every destination's and every module's name, glyph, hue, line, space, module and tab, and the workspace has its planned shape.
+The fixture was captured from the old switches and passed against them before any switch was deleted, which is the proof that nothing was renamed or moved.
+Renaming Console or changing Hosts' glyph in the table fails it by name.
+

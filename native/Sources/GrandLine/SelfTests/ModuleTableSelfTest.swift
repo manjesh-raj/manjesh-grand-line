@@ -1,23 +1,28 @@
 // Grand Line - native macOS app.
 //
-// Step 0 of the modular-shell migration: `ModuleTable` restates six tables as
-// one, and this suite asserts it agrees with each of them.
+// `ModuleTable` is where a destination's identity is written down. Step 0 of
+// the modular-shell migration restated six tables there and this suite checked
+// the restatement against each of them. R2-ARCH-03 made the table the source:
+// `RailDestination.title`, `.symbol`, `.domainHue`, `.drillSubtitle`,
+// `DaylightModule.space(forDestination:)` and the six facts about a sidebar
+// item now read it, and their switches are gone.
 //
-// Two sources of truth are tolerable for a few weeks only if a test says they
-// agree. Each row of `ModuleTable` is checked against:
+// A check of the table against values derived from it asserts nothing, so the
+// suite asserts three other things now:
 //
-//   1. `RailDestination` - title and symbol,
-//   2. `RailDestination.domainHue` - the hue,
-//   3. `DestinationRegistry` - the body slot and the drill subtitle,
-//   4. the `register(...)` lines in `Workspace.registerDestinations` - the
-//      eager-mount flag, read from the source because the workspace cannot
-//      be built headless,
-//   5. `DaylightModule` - the space, and the Home cards that open the page,
-//   6. `ContextualNewAction` - what ⌘N creates there,
-//
-// plus the shape of the planned workspace: every destination in exactly one
-// row, every module reached by at least one destination, and the eighteen
-// sidebar items in the groups the captain's prototype draws.
+//   1. the rows agree with what the table does not own - the body slot
+//      (`DestinationRegistry`), the eager-mount flag (the `register(...)`
+//      lines, read as text because the workspace cannot be built headless),
+//      the Home cards that open a page (`DaylightModule.opens`), what ⌘N
+//      creates (`ContextualNewAction`), the floating bar's own grouping and
+//      its cards' spaces - and every symbol resolves,
+//   2. a typed-out fixture pins what every destination and every sidebar item
+//      is called, its glyph, hue, line, space, module and tab, so changing
+//      one is a deliberate edit in two places (it was captured from the old
+//      switches and passed against them before they were deleted),
+//   3. the shape of the workspace: every destination in exactly one row,
+//      every module reached by at least one destination, and the eighteen
+//      sidebar items in the groups the captain's prototype draws.
 //
 // Pure logic, no window.
 //
@@ -28,15 +33,16 @@
 // `Phase3PolishSelfTest` asserts every file in this directory carries it.
 #if FM_SELFTESTS
 
-import Foundation
+import AppKit
 
 enum ModuleTableSelfTest {
 
     static func run() -> Bool {
         var allOK = true
-        for check in [checkEveryDestinationHasOneRow, checkRowsAgreeWithTheOldTables,
+        for check in [checkEveryDestinationHasOneRow, checkRowsAgreeWithWhatStaysElsewhere,
                       checkEagerMountsAgreeWithTheShell, checkWorkspaceShape,
-                      checkChildrenAreReal] {
+                      checkChildrenAreReal, checkNoDestinationWasRenamedOrMoved,
+                      checkNoModuleWasRenamedOrMoved] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -57,19 +63,17 @@ enum ModuleTableSelfTest {
               "ModuleTable rows are not in RailDestination declaration order", &ok)
     }
 
-    private static func checkRowsAgreeWithTheOldTables(_ ok: inout Bool) {
+    /// What the table does not own, checked against it: the body slot, the
+    /// Home cards that open a destination, what ⌘N creates there, and the
+    /// floating bar's own grouping. Since R2-ARCH-03 the title, symbol, hue,
+    /// line and space are read from the rows themselves, so comparing those
+    /// would compare a value with itself; `checkNoDestinationWasRenamedOrMoved`
+    /// pins them instead.
+    private static func checkRowsAgreeWithWhatStaysElsewhere(_ ok: inout Bool) {
         for row in ModuleTable.rows {
             let route = row.route
             let name = route.rawValue
-            check(row.title == route.title, "\(name): title \"\(row.title)\" but RailDestination says \"\(route.title)\"", &ok)
-            check(row.symbol == route.symbol, "\(name): symbol \(row.symbol) but RailDestination says \(route.symbol)", &ok)
-            check(row.hue == route.domainHue, "\(name): hue \(row.hue) but domainHue says \(route.domainHue)", &ok)
             check(row.slot == route.slot, "\(name): slot \(row.slot) but DestinationRegistry says \(route.slot)", &ok)
-            check(row.subtitle == route.drillSubtitle,
-                  "\(name): subtitle \"\(row.subtitle)\" but drillSubtitle says \"\(route.drillSubtitle)\"", &ok)
-            let space = DaylightModule.space(forDestination: route)
-            check(row.space == space, "\(name): space \(String(describing: row.space)) but DaylightModule says "
-                    + String(describing: space), &ok)
             let cards = DaylightModule.allCases.filter { $0.opens == route }
             check(row.homeCards == cards, "\(name): Home cards \(row.homeCards) but DaylightModule.opens gives \(cards)", &ok)
             let newAction = ContextualNewAction.forDestination(route)
@@ -81,7 +85,27 @@ enum ModuleTableSelfTest {
             check(group == (row.space?.title ?? "Elsewhere"),
                   "\(name): the Go menu groups it under \(group ?? "nothing") but its space is "
                     + (row.space?.title ?? "none"), &ok)
+            check(NSImage(systemSymbolName: row.symbol, accessibilityDescription: nil) != nil,
+                  "\(name)'s symbol \(row.symbol) does not resolve - an invisible icon", &ok)
         }
+        // The floating bar's cards keep spaces of their own, for its canvas.
+        // A card that sits on a space sits on the space of the page it opens:
+        // the two maps cannot disagree about where a page lives.
+        for card in DaylightModule.allCases {
+            guard let space = card.space else { continue }
+            let pageSpace = ModuleTable.descriptor(for: card.opens)?.space
+            check(pageSpace == space || pageSpace == nil,
+                  "the \(card.rawValue) card sits on \(space.title) but its page \(card.opens.rawValue) on "
+                    + (pageSpace?.title ?? "none"), &ok)
+        }
+        for module in WorkspaceModule.allCases {
+            check(ModuleTable.modules.filter { $0.module == module }.count == 1,
+                  "\(module.rawValue) has \(ModuleTable.modules.filter { $0.module == module }.count) module rows, not one", &ok)
+            check(NSImage(systemSymbolName: module.symbol, accessibilityDescription: nil) != nil,
+                  "the \(module.title) sidebar symbol \(module.symbol) does not resolve", &ok)
+        }
+        check(ModuleTable.modules.map(\.module) == WorkspaceModule.allCases,
+              "ModuleTable.modules is not in WorkspaceModule declaration order", &ok)
     }
 
     /// The eager-mount flag lives in the `register(...)` lines, and the
@@ -133,6 +157,105 @@ enum ModuleTableSelfTest {
         }
         let titles = WorkspaceModule.allCases.map(\.title)
         check(Set(titles).count == titles.count, "two modules share a title", &ok)
+    }
+
+    // MARK: R2-ARCH-03 - the table is the source, and the identity is pinned
+
+    /// What every destination is called and where it lives, as it was when
+    /// R2-ARCH-03 made `ModuleTable.rows` the one source of it. Typed out on
+    /// purpose: since the derivation, `RailDestination.title`, `.symbol`,
+    /// `.domainHue`, `.drillSubtitle` and `DaylightModule.space(forDestination:)`
+    /// read the table, so a check of the table against them would assert
+    /// nothing. This fixture is the second copy that makes an edit to the
+    /// table deliberate - change a destination's name, glyph, hue, line,
+    /// space or home and this fails until the fixture says so too.
+    static let pinnedDestinations: [(RailDestination, String, String, HelmDomainHue, String, DaylightSpace?,
+                                     WorkspaceModule, String?)] = [
+        (.homeCanvas, "Home", "sailboat.fill", .blue, "", nil, .home, nil),
+        (.overview, "Fleet", "square.grid.2x2", .blue, "Dispatched crew, decisions and the morning briefing", nil, .crew, "In flight"),
+        (.strawHat, "Straw Hat Pirates", "person.3.fill", .violet, "Ask the crew - every write is yours to confirm", .command, .crew, "Ask the crew"),
+        (.console, "Console", "terminal", .teal, "Terminals, hosts and the shared Firstmate session", .command, .console, nil),
+        (.hosts, "Hosts", "server.rack", .teal, "Saved hosts, SSH keys and snippets", .operations, .connections, "Hosts"),
+        (.shift, "Tasks", "checkmark.circle", .rose, "A task board, follow-ups and projects", .command, .tasks, nil),
+        (.review, "Review", "arrow.triangle.branch", .green, "Open pull requests, ready to merge", .command, .crew, "Review"),
+        (.logAnalyzer, "Log Analyzer", "text.magnifyingglass", .teal, "Collect, analyse and explain captured output", .operations, .logs, nil),
+        (.kubernetes, "Kubernetes", "cube.transparent", .teal, "Read-only cluster browsing and multi-pod log tailing", .operations, .kubernetes, nil),
+        (.tools, "Tools", "wrench.and.screwdriver", .slate, "Nine offline utilities", .stores, .tools, nil),
+        (.whiteboard, "Whiteboard", "scribble.variable", .violet, "An Excalidraw canvas, offline, with AI diagrams", .stores, .whiteboard, nil),
+        (.codePreview, "Code Preview", "chevron.left.forwardslash.chevron.right", .blue, "Paste code and read it properly, synced to your config repo", .stores, .code, nil),
+        (.stickyBoard, "Sticky Board", "note.text", .amber, "A freeform corkboard of quick sticky notes", .stores, .stickyBoard, nil),
+        (.commandLibrary, "DevOps Commands", "books.vertical", .teal, "Your saved shell commands, parameterised and ready to run", .command, .connections, "Commands"),
+        (.vault, "Vault", "lock.shield", .violet, "Secret names and tool hardening status from Automic Vault", .stores, .secrets, "Automic Vault"),
+        (.dictation, "Dictation", "waveform", .rose, "Speech to text, on this machine", .stores, .dictation, nil),
+        (.schedules, "Schedules", "calendar", .violet, "Unattended runs of actions this app already has", .operations, .schedules, nil),
+        (.health, "Health", "waveform.path.ecg", .green, "How this app's own background services are doing", .operations, .health, nil),
+        (.docs, "Docs", "book.closed", .blue, "The DevOps Playbook, browsable offline", .stores, .knowledge, "Docs"),
+        (.notebook, "Notebook", "book.and.wrench", .blue, "Linked markdown pages, in your own config repo", .stores, .knowledge, "Notebook"),
+        (.readingList, "Reading List", "bookmark.fill", .green, "Links you saved to read, with titles read on this machine", .stores, .knowledge, "Reading list"),
+        (.runbooks, "Runbooks", "list.bullet.rectangle", .blue, "Step-by-step operational procedures", .stores, .knowledge, "Runbooks"),
+        (.postmortems, "Postmortems", "doc.text.magnifyingglass", .amber, "Incident write-ups and root causes", .stores, .knowledge, "Postmortems"),
+        (.updates, "Updates", "steeringwheel", .amber, "Every tool in the catalog, and what needs updating", .engineering, .setup, "Updates"),
+        (.bootstrap, "Bootstrap", "hammer", .amber, "Set this machine up, and see what has drifted", .engineering, .setup, "Setup steps"),
+        (.automation, "Automation", "bolt.fill", .amber, "Run every setup step in order, unattended", .engineering, .setup, "Automation"),
+        (.githubSync, "GitHub Sync", "arrow.2.squarepath", .amber, "Pull upstream into each of your personal forks", .engineering, .setup, "GitHub sync"),
+        (.poneglyph, "Poneglyph", "doc.text.image", .amber, "Your credentials, encrypted and one click from the clipboard", .stores, .secrets, "Poneglyph"),
+        (.settings, "Settings", "gearshape", .slate, "Connection, appearance, terminal, security and backup", .engineering, .settings, nil),
+    ]
+
+    private static func checkNoDestinationWasRenamedOrMoved(_ ok: inout Bool) {
+        check(pinnedDestinations.map(\.0) == RailDestination.allCases,
+              "the pinned fixture no longer covers every destination in order", &ok)
+        for (route, title, symbol, hue, subtitle, space, module, child) in pinnedDestinations {
+            let name = route.rawValue
+            check(route.title == title, "\(name) is called \"\(route.title)\", pinned \"\(title)\"", &ok)
+            check(route.symbol == symbol, "\(name)'s symbol is \(route.symbol), pinned \(symbol)", &ok)
+            check(route.domainHue == hue, "\(name)'s hue is \(route.domainHue), pinned \(hue)", &ok)
+            check(route.drillSubtitle == subtitle, "\(name)'s line is \"\(route.drillSubtitle)\", pinned \"\(subtitle)\"", &ok)
+            check(DaylightModule.space(forDestination: route) == space,
+                  "\(name)'s space is \(String(describing: DaylightModule.space(forDestination: route))), pinned "
+                    + String(describing: space), &ok)
+            check(ModuleTable.module(for: route) == module, "\(name) lives in \(ModuleTable.module(for: route)), pinned \(module)", &ok)
+            check(ModuleTable.descriptor(for: route)?.child == child,
+                  "\(name)'s tab is \(ModuleTable.descriptor(for: route)?.child ?? "none"), pinned \(child ?? "none")", &ok)
+        }
+    }
+
+    /// The same for the eighteen sidebar items: each one's title, group,
+    /// children, symbol, the page that draws its own tabs, and whether the
+    /// content column opens with its header.
+    static let pinnedModules: [(WorkspaceModule, String, WorkspaceGroup?, [String], String, RailDestination?, Bool)] = [
+        (.home, "Home", nil, [], "sailboat.fill", nil, true),
+        (.tasks, "Tasks", .work, ["Board", "List", "Calendar", "Weekly review"], "checkmark.circle", .shift, true),
+        (.crew, "Crew", .work, ["Needs you", "In flight", "Review", "Ask the crew", "Log"], "person.3.fill", .overview, true),
+        (.connections, "Connections", .work, ["Hosts", "Keys", "Snippets", "Commands"], "server.rack", .hosts, false),
+        (.console, "Console", .work, [], "terminal", nil, false),
+        (.knowledge, "Knowledge", .work, ["Notebook", "Runbooks", "Postmortems", "Docs", "Reading list"], "books.vertical", nil, true),
+        (.secrets, "Secrets", .work, ["Poneglyph", "Automic Vault"], "key.fill", nil, true),
+        (.kubernetes, "Kubernetes", .observe, ["Cluster", "Log Tail"], "cube.transparent", .kubernetes, true),
+        (.logs, "Logs", .observe, [], "text.magnifyingglass", nil, true),
+        (.health, "Health", .observe, [], "waveform.path.ecg", nil, true),
+        (.schedules, "Schedules", .observe, [], "calendar", nil, true),
+        (.tools, "Tools", .workbench, [], "wrench.and.screwdriver", nil, true),
+        (.whiteboard, "Whiteboard", .workbench, [], "scribble.variable", nil, true),
+        (.stickyBoard, "Sticky Board", .workbench, [], "note.text", nil, true),
+        (.code, "Code", .workbench, [], "chevron.left.forwardslash.chevron.right", nil, true),
+        (.dictation, "Dictation", .workbench, [], "waveform", nil, true),
+        (.setup, "Setup", .machine, ["Updates", "Setup steps", "Automation", "GitHub sync"], "hammer", nil, true),
+        (.settings, "Settings", .machine, SettingsController.Category.allCases.map(\.title), "gearshape", nil, true),
+    ]
+
+    private static func checkNoModuleWasRenamedOrMoved(_ ok: inout Bool) {
+        check(pinnedModules.map(\.0) == WorkspaceModule.allCases,
+              "the pinned fixture no longer covers every sidebar item in order", &ok)
+        for (module, title, group, children, symbol, host, header) in pinnedModules {
+            let name = module.rawValue
+            check(module.title == title, "\(name) is called \"\(module.title)\", pinned \"\(title)\"", &ok)
+            check(module.group == group, "\(name) sits in \(String(describing: module.group)), pinned \(String(describing: group))", &ok)
+            check(module.children == children, "\(name)'s children are \(module.children), pinned \(children)", &ok)
+            check(module.symbol == symbol, "\(name)'s symbol is \(module.symbol), pinned \(symbol)", &ok)
+            check(module.pageTabHost == host, "\(name)'s tab host is \(String(describing: module.pageTabHost)), pinned \(String(describing: host))", &ok)
+            check(module.showsHeader == header, "\(name) showsHeader \(module.showsHeader), pinned \(header)", &ok)
+        }
     }
 
     /// A row's `child` must be one of its module's declared children, and two

@@ -232,114 +232,10 @@ enum RailDestination: String, CaseIterable {
     case homeCanvas
     case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, notebook, readingList, runbooks, postmortems, updates, bootstrap, automation, githubSync, poneglyph, settings
 
-    var symbol: String {
-        switch self {
-        // §4's tile table: the canvas is the app itself, so it takes the
-        // app's own mark.
-        case .homeCanvas: return "sailboat.fill"
-        case .overview: return "square.grid.2x2"
-        // Only the *fallback*, for a `StrawHatFlag` payload that stops
-        // decoding - both tiles that render this destination take the Jolly
-        // Roger itself. A group of people rather than one, and distinct from
-        // `.overview`'s grid and `.shift`'s checkmark.
-        case .strawHat: return "person.3.fill"
-        // fm/grandline-rail-followup-fixes: the captain asked for the menu
-        // bar's Shift/Tasks status item to use the same "sailboat" glyph as
-        // the app's own logo mark, since that standalone item has no nearby
-        // app branding to associate it back to this app (see
-        // `ShiftMenuBarController.init`). The rail's own `.shift` row
-        // deliberately keeps `checkmark.circle` rather than also switching
-        // to `sailboat` - the rail already shows the real sailboat logo mark
-        // directly above this row (`IconRailController.loadView`'s `mark`),
-        // so a second sailboat a few rows down would read as a duplicate
-        // icon rather than a clearer one.
-        case .shift: return "checkmark.circle"
-        case .hosts: return "server.rack"
-        case .console: return "terminal"
-        case .review: return "arrow.triangle.branch"
-        // `fm/grandline-log-analyzer-build`: a magnifier over lines - the
-        // "read this output" idea, distinct from `.review`'s branch glyph
-        // and from Console's bare terminal.
-        case .logAnalyzer: return "text.magnifyingglass"
-        // The Kubernetes logo is literally a ship's helm, which would suit
-        // this app's nautical identity - but `steeringwheel` is already
-        // Updates'. `cube.transparent` is the next-closest read for "a
-        // cluster of things you can see into", and is unclaimed here.
-        case .kubernetes: return "cube.transparent"
-        case .tools: return "wrench.and.screwdriver"
-        // `fm/grand-line-whiteboard-excalidraw`: a hand-drawn scribble - the
-        // one glyph in this family that reads as "sketch on a surface" rather
-        // than as a document or a tool, which is what an infinite hand-drawn
-        // canvas is. Verified to resolve (`NSImage(systemSymbolName:)` returns
-        // nil silently, and this app has shipped an invisible icon that way).
-        case .whiteboard: return "scribble.variable"
-        // `fm/grandline-sticky-board`: a note glyph reads as "a quick thought
-        // written down", distinct from `.docs`' closed book (reference
-        // material) and `.whiteboard`'s scribble (a drawing surface).
-        case .stickyBoard: return "note.text"
-        // `fm/grandline-monaco-code-preview`: the angle-brackets glyph - the
-        // one symbol in this family that reads as "source code" rather than
-        // as a document (`.docs`), a terminal (`.console`) or a tool. Verified
-        // to resolve (`NSImage(systemSymbolName:)` returns nil silently, and
-        // this app has shipped an invisible icon that way).
-        case .codePreview: return "chevron.left.forwardslash.chevron.right"
-        // `fm/grandline-tasks-kanban-devops-split`: a shelf of books - the
-        // one glyph in this family that reads as "a library you look things
-        // up in" rather than as a single document (`.docs`' closed book), a
-        // terminal (`.console`) or a tool. Deliberately not a terminal glyph:
-        // this destination is where commands are *kept*, not where they run.
-        // Verified to resolve - `NSImage(systemSymbolName:)` returns nil
-        // silently, and this app has shipped an invisible icon that way.
-        case .commandLibrary: return "books.vertical"
-        case .vault: return "lock.shield"
-        case .dictation: return "waveform"
-        // `fm/grandline-schedules-sidebar-move`: a calendar - matches
-        // `SchedulesCardView`'s own header icon, so the rail row and the
-        // card it opens onto agree.
-        case .schedules: return "calendar"
-        // `fm/grandline-health-sidebar-move`: matches `HealthCardView`'s own
-        // header icon, so the rail row and the card it opens onto agree.
-        case .health: return "waveform.path.ecg"
-        case .docs: return "book.closed"
-        // `fm/grandline-feature-f1-notebook`: an open book with a pen over it
-        // - the one glyph in this family that reads as "somewhere you write"
-        // rather than as reference material you read (`.docs`' closed book),
-        // a procedure (`.runbooks`' list) or a loose thought
-        // (`.stickyBoard`'s note). Verified to resolve -
-        // `NSImage(systemSymbolName:)` returns nil silently, and this app has
-        // shipped an invisible icon that way.
-        case .notebook: return "book.and.wrench"
-        // `fm/grandline-feature-f4-reading-list`: a bookmark, which is what a
-        // link inbox is - distinct from `.docs`' closed book (reference you
-        // read), `.notebook`'s book-and-pen (somewhere you write) and
-        // `.stickyBoard`'s note (a loose thought). Verified to resolve:
-        // `NSImage(systemSymbolName:)` returns nil silently, and this app has
-        // shipped an invisible icon that way.
-        case .readingList: return "bookmark.fill"
-        // `fm/grandline-docs-split-runbooks-postmortems`: reused verbatim
-        // from the icons this exact file's own Runbooks/Postmortems empty
-        // states already carried before the split, so the destination and
-        // the empty state a captain saw there agree.
-        case .runbooks: return "list.bullet.rectangle"
-        case .postmortems: return "doc.text.magnifyingglass"
-        case .updates: return "steeringwheel"
-        case .bootstrap: return "hammer"
-        case .automation: return "bolt.fill"
-        case .githubSync: return "arrow.2.squarepath"
-        // `fm/implement-grand-line-secrets-vault-poneg-ad`: a Poneglyph is a
-        // stone slab carrying hidden inscriptions - fitting for the captain's
-        // personal credential vault, which is what this destination shows
-        // after `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` reclaimed
-        // "Vault" for Automic Vault's hardening panel (see `VaultController`'s
-        // header for the full history). `doc.text.image` is the closest read
-        // for "an inscribed tablet of secrets" in this family and is
-        // unclaimed here. Verified to resolve - `NSImage(systemSymbolName:)`
-        // returns nil silently, and this app has shipped an invisible icon
-        // that way before.
-        case .poneglyph: return "doc.text.image"
-        case .settings: return "gearshape"
-        }
-    }
+    /// R2-ARCH-03: read from `ModuleTable.rows`, the one place a destination's
+    /// identity is written down. Why each destination has the glyph it has is
+    /// beside its row there.
+    var symbol: String { ModuleTable.descriptor(for: self)?.symbol ?? "questionmark.square" }
 
     /// A raster artwork override for the shell's drill header tile
     /// (`AppShellController.applyDrillHeader` -> `HelmDrillHeader.configure`),
@@ -411,46 +307,8 @@ enum RailDestination: String, CaseIterable {
         }
     }
 
-    var title: String {
-        switch self {
-        case .homeCanvas: return "Home"
-        // **UX issue X3.** "Overview" once named a page here, a space pill,
-        // a group header in the Go menu and an item inside that header -
-        // while "Home" and "Fleet" were each also in use for something
-        // adjacent. Home is the canvas and Fleet is the crew dashboard, and
-        // "Overview" now names nothing, which is what
-        // `NavigationCoherenceSelfTest.checkNavigationNamesAreDistinct`
-        // enforces.
-        case .overview: return "Fleet"
-        case .strawHat: return "Straw Hat Pirates"
-        case .shift: return "Tasks"
-        case .hosts: return "Hosts"
-        case .console: return "Console"
-        case .review: return "Review"
-        case .logAnalyzer: return "Log Analyzer"
-        case .kubernetes: return "Kubernetes"
-        case .tools: return "Tools"
-        case .whiteboard: return "Whiteboard"
-        case .stickyBoard: return "Sticky Board"
-        case .codePreview: return "Code Preview"
-        case .commandLibrary: return "DevOps Commands"
-        case .vault: return "Vault"
-        case .dictation: return "Dictation"
-        case .schedules: return "Schedules"
-        case .health: return "Health"
-        case .docs: return "Docs"
-        case .notebook: return "Notebook"
-        case .readingList: return "Reading List"
-        case .runbooks: return "Runbooks"
-        case .postmortems: return "Postmortems"
-        case .updates: return "Updates"
-        case .bootstrap: return "Bootstrap"
-        case .automation: return "Automation"
-        case .githubSync: return "GitHub Sync"
-        case .poneglyph: return "Poneglyph"
-        case .settings: return "Settings"
-        }
-    }
+    /// R2-ARCH-03: read from `ModuleTable.rows`, like `symbol`.
+    var title: String { ModuleTable.descriptor(for: self)?.title ?? rawValue }
 
     /// The hue this destination's icon carries wherever it is drawn as an
     /// `IconTileView` rather than a bare rail glyph - today that is the Setup

@@ -479,29 +479,20 @@ enum DaylightModule: String, CaseIterable {
         }
     }
 
-    /// B5 (`data/grand-line-e2e-audit/report.md`): the space a given
-    /// destination belongs to, derived from the module table above rather than
-    /// restated - so there is one mapping, not two that can disagree.
+    /// The space a given destination belongs to - the floating bar's map, which
+    /// its Go menu, its ⌘⇧D overlay and its Recents kickers read.
     ///
-    /// `nil` for a destination no module opens (nothing to highlight) and for
-    /// `.overview`/`.homeCanvas`, whose space is whichever one the captain
-    /// last picked, not a property of the destination.
+    /// R2-ARCH-03: read from `ModuleTable.rows`, the one place a destination's
+    /// identity is written down. It was derived from this enum's own card
+    /// table before (B5), preferring the module that lives on a space over an
+    /// Overview-only card that merely deep-links there; `ModuleTableSelfTest`
+    /// now checks the other way round - that every card with a space sits on
+    /// its destination's space.
+    ///
+    /// `nil` for `.overview` and `.homeCanvas`, whose space is whichever one
+    /// the captain last picked, not a property of the destination.
     static func space(forDestination dest: RailDestination) -> DaylightSpace? {
-        guard dest != .overview, dest != .homeCanvas else { return nil }
-        // **More than one module can open the same destination**, and the one
-        // that *owns* it is the one that lives on a space. An Overview-only
-        // module that merely deep-links elsewhere is not that destination's
-        // home - `.claudeStatus` opens `.console` the way the briefing's
-        // `.quota` clause does, and it has no space of its own.
-        //
-        // Preferring a module with a real space rather than taking the first
-        // match makes this independent of declaration order, which `allCases`
-        // otherwise makes load-bearing here. It was not: declaring
-        // `.claudeStatus` before `.console` made Console's own Recents kicker
-        // read "Home" (`RecentDestinationsSelfTest.
-        // kindPropertiesForRailAndHost` caught it by name).
-        let openers = allCases.filter { $0.opens == dest }
-        return openers.first { $0.space != nil }?.space ?? openers.first?.space
+        ModuleTable.descriptor(for: dest)?.space
     }
 
     /// §4's SF Symbol for this module's gradient tile. Every one of these is

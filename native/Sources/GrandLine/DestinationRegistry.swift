@@ -184,78 +184,9 @@ extension RailDestination {
     /// short, static, and about the *area* rather than about live data - live
     /// numbers belong on that page's own header, which Phase 4 builds.
     var drillSubtitle: String {
-        switch self {
-        case .homeCanvas: return ""
-        // `fm/polish-straw-hat-overview-card-and-voice-c8d3` narrowed this: the
-        // crew chat is its own destination now, so Fleet's line is about the
-        // dispatched-crewmate board it actually shows.
-        case .overview: return "Dispatched crew, decisions and the morning briefing"
-        case .strawHat: return "Ask the crew - every write is yours to confirm"
-        case .console: return "Terminals, hosts and the shared Firstmate session"
-        case .hosts: return "Saved hosts, SSH keys and snippets"
-        // `fm/grandline-tasks-kanban-devops-split` narrowed this: DevOps
-        // Commands is its own destination now. In practice this static string
-        // is a fallback only - `ShiftController` conforms to
-        // `DaylightDrillActions` and always supplies its own live subtitle.
-        case .shift: return "A task board, follow-ups and projects"
-        case .review: return "Open pull requests, ready to merge"
-        case .logAnalyzer: return "Collect, analyse and explain captured output"
-        case .kubernetes: return "Read-only cluster browsing and multi-pod log tailing"
-        case .tools: return "Nine offline utilities"
-        case .whiteboard: return "An Excalidraw canvas, offline, with AI diagrams"
-        case .stickyBoard: return "A freeform corkboard of quick sticky notes"
-        case .codePreview: return "Paste code and read it properly, synced to your config repo"
-        case .commandLibrary: return "Your saved shell commands, parameterised and ready to run"
-        // `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` reclaimed `.vault`
-        // for Automic Vault's hardening panel - the credential vault's own
-        // line moved to `.poneglyph` below. In practice this static string is
-        // a fallback only: `VaultController` conforms to
-        // `DaylightDrillActions` and always supplies its own live subtitle
-        // (secret/launcher counts), which `AppShellController.applyDrillHeader`
-        // prefers.
-        case .vault: return "Secret names and tool hardening status from Automic Vault"
-        case .dictation: return "Speech to text, on this machine"
-        case .schedules: return "Unattended runs of actions this app already has"
-        case .health: return "How this app's own background services are doing"
-        // `fm/grandline-docs-split-runbooks-postmortems` narrowed this to
-        // just the Playbook, since Runbooks and Postmortems are their own
-        // destinations now.
-        case .docs: return "The DevOps Playbook, browsable offline"
-        // In practice a fallback only: `NotebookController` conforms to
-        // `DaylightDrillActions` and always supplies its own live line (page
-        // count and sync state).
-        case .notebook: return "Linked markdown pages, in your own config repo"
-        // In practice a fallback only: `ReadingListController` conforms to
-        // `DaylightDrillActions` and always supplies its own live line (unread
-        // and saved counts, plus the sync state).
-        case .readingList: return "Links you saved to read, with titles read on this machine"
-        case .runbooks: return "Step-by-step operational procedures"
-        case .postmortems: return "Incident write-ups and root causes"
-        // `fm/grandline-separate-setup-destinations` split the one line these
-        // four shared ("Toolchain, machine config and fork sync") into four,
-        // now that each is its own page with its own title above it. In
-        // practice all four are fallbacks only: every one of them conforms to
-        // `DaylightDrillActions` and supplies its own live line (update
-        // counts, step counts, fork counts), which
-        // `AppShellController.applyDrillHeader` prefers.
-        case .updates: return "Every tool in the catalog, and what needs updating"
-        case .bootstrap: return "Set this machine up, and see what has drifted"
-        case .automation: return "Run every setup step in order, unattended"
-        case .githubSync: return "Pull upstream into each of your personal forks"
-        // The credential vault's own line, moved here from `.vault` by the
-        // same swap noted above. In practice this static string is a fallback
-        // only: `CredentialVaultController` conforms to `DaylightDrillActions`
-        // directly now (`fm/poneglyph-own-destination-and-strawhat-toolbar-
-        // shortcut` gave it its own slot instead of sharing the
-        // since-retired `SetupContainerController`'s) and always supplies its
-        // own live
-        // subtitle (credential count, lock state), which
-        // `AppShellController.applyDrillHeader` prefers - the same
-        // "conforming page wins, this is just what an unmigrated page would
-        // show" shape every other case in this switch already follows.
-        case .poneglyph: return "Your credentials, encrypted and one click from the clipboard"
-        case .settings: return "Connection, appearance, terminal, security and backup"
-        }
+        // R2-ARCH-03: read from `ModuleTable.rows`; why each line says what it
+        // says is beside its row there.
+        ModuleTable.descriptor(for: self)?.subtitle ?? ""
     }
 }
 
