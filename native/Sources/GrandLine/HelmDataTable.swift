@@ -365,6 +365,16 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
         table.scrollRowToVisible(index)
     }
 
+    /// Move the selection to `key` without reporting it - a grid beside
+    /// this table mirroring a selection the captain made there.
+    func setSelectedKey(_ key: String?, notify: Bool) {
+        guard key != selectedKey else { return }
+        isApplyingRows = !notify
+        defer { isApplyingRows = false }
+        select(key: key)
+        refreshRowStates()
+    }
+
     var selectedKey: String? {
         let row = table.selectedRow
         guard row >= 0, row < rows.count else { return nil }

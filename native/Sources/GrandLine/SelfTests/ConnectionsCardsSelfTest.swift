@@ -11,6 +11,11 @@
 //     lights up for one host or a typed user@host and runs what Return runs.
 //   - H8 and K2: Add Host and New Key are `HelmSplitButton`s in the toolbar,
 //     each menu item opening the form it names.
+//   - H1, H2, H4, H5, H7 and X2: the hosts as cards by default, a Grid / List
+//     switch with one selection between them, a double click that connects,
+//     the bolt and pencil on every card, the grid reflowing as the inspector
+//     opens at 1512, 1100 and 1100.5 on the pixel grid, the keyboard, the
+//     Larger text scale, and the recent row with "last connected".
 //
 // Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
 // The arithmetic is asserted headless in `ConnectionsLogicSelfTest`.
@@ -42,7 +47,8 @@ enum ConnectionsCardsSelfTest {
             defer { window.orderOut(nil) }
             ReviewTourLab.seedDemoHosts(shell.workspace)
             settle(shell)
-            for check in [checkTagMatch, checkTagOverflow, checkFindOrConnect, checkSplitButtons] {
+            for check in [checkHostCards, checkHostCardKeyboard, checkGridReflow, checkRecentHosts, checkTagMatch,
+                          checkTagOverflow, checkFindOrConnect, checkSplitButtons] {
                 var ok = true
                 check(shell, window, &ok)
                 allOK = allOK && ok
@@ -120,6 +126,260 @@ enum ConnectionsCardsSelfTest {
         settle(shell)
         check(hosts.debugFilteredHostLabels().count == shell.workspace.hostStore.hosts.count,
               "X4: clearing the tags did not bring every host back", &ok)
+    }
+
+    // MARK: Real events
+
+    /// A real mouse click at `point` (window coordinates): AppKit's own hit
+    /// test picks the view, and that view's `mouseDown` runs - a button's
+    /// tracking loop finds the mouse-up already queued
+    /// (`BarActiveStateSelfTest.pressAndRelease`'s shape).
+    @discardableResult
+    static func realClick(at point: NSPoint, in window: NSWindow, clickCount: Int = 1) -> NSView? {
+        let app = NSApplication.shared
+        func event(_ type: NSEvent.EventType) -> NSEvent? {
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                               context: nil, eventNumber: 0, clickCount: clickCount,
+                               pressure: type == .leftMouseDown ? 1 : 0)
+        }
+        guard let root = window.contentView?.superview, let hit = root.hitTest(point),
+              let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { return nil }
+        app.postEvent(up, atStart: true)
+        hit.mouseDown(with: down)
+        while app.nextEvent(matching: .any, until: .distantPast, inMode: .default, dequeue: true) != nil {}
+        return hit
+    }
+
+    static func centre(of view: NSView) -> NSPoint {
+        view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
+    }
+
+    /// A point on a card clear of its icon buttons: over its tile.
+    static func cardBody(_ card: NSView) -> NSPoint {
+        card.convert(NSPoint(x: 26, y: card.bounds.midY), to: nil)
+    }
+
+    // MARK: H1, H2, H4, H5
+
+    private static func checkHostCards(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        let grid = hosts.hostsGrid
+        // C4: Grid is the default. This suite's preference domain is its own
+        // (`AppDefaults.store`), so nothing stored it before this point.
+        check(!grid.isHiddenOrHasHiddenAncestor && grid.window != nil, "C4: the host cards are not showing by default", &ok)
+        check(hosts.hostsTable.card.isHidden, "C4: the host table shows beside the cards", &ok)
+        let keys = grid.debugPlaced.map(\.key)
+        check(keys.first == HostsController.firstmateRowKey, "H1: the Firstmate card is not first (\(keys.prefix(2)))", &ok)
+        check(Set(keys.dropFirst()) == Set(shell.workspace.hostStore.hosts.map(\.id.uuidString)),
+              "H1: the cards are not every saved host", &ok)
+        check(grid.debugSectionTitles == ["Observability", "Production", "Staging", "Ungrouped"],
+              "H1: the cards are grouped as \(grid.debugSectionTitles)", &ok)
+        guard let edge = shell.workspace.hostStore.hosts.first(where: { $0.label == "edge-proxy-01" }),
+              let bastion = shell.workspace.hostStore.hosts.first(where: { $0.label == "bastion-stg" }),
+              let edgeCard = grid.debugCardView(key: edge.id.uuidString),
+              let bastionCard = grid.debugCardView(key: bastion.id.uuidString) else {
+            fail("H1: the demo hosts' cards are missing", &ok)
+            return
+        }
+        check(edgeCard.debugTitle == "edge-proxy-01" && edgeCard.debugSubtitle == edge.subtitle,
+              "H1: a card reads \(edgeCard.debugTitle) / \(edgeCard.debugSubtitle)", &ok)
+        check(bastionCard.debugSubtitle == "ops@bastion.stg.example.test:2222", "H1: a non-default port is missing from \(bastionCard.debugSubtitle)", &ok)
+        // Accessibility: one button per card that says what it is, with its
+        // icon buttons reachable as its children.
+        check(edgeCard.accessibilityRole() == .button, "H1: a card is not a button to VoiceOver", &ok)
+        let spoken = edgeCard.accessibilityLabel() ?? ""
+        check(spoken.contains("edge-proxy-01") && spoken.contains(edge.subtitle) && spoken.contains("Production"),
+              "H1: a card reads \"\(spoken)\" to VoiceOver", &ok)
+        let children = (edgeCard.accessibilityChildren() ?? []).compactMap { ($0 as? NSView)?.accessibilityLabel() }
+        check(children == ["Connect to edge-proxy-01", "Edit edge-proxy-01"], "H5: the card's icon buttons read \(children)", &ok)
+
+        // H5 / C5: always there, quiet at rest.
+        let buttons = bastionCard.debugActionButtons
+        check(buttons.count == 2 && buttons.allSatisfy { !$0.isHiddenOrHasHiddenAncestor && $0.tint == nil },
+              "C5: a resting card's bolt and pencil are not both visible at low emphasis", &ok)
+
+        var connects: [UUID?] = []
+        var edits: [Host?] = []
+        let savedConnect = hosts.onConnect, savedEdit = hosts.onAddOrEdit
+        hosts.onConnect = { id, _, _, _, _, _ in connects.append(id) }
+        hosts.onAddOrEdit = { edits.append($0) }
+        defer { hosts.onConnect = savedConnect; hosts.onAddOrEdit = savedEdit }
+
+        // H4: one real click selects and connects nothing; two connect.
+        realClick(at: cardBody(edgeCard), in: window, clickCount: 1)
+        settle(shell)
+        check(grid.selectedKey == edge.id.uuidString, "H4: a click did not select the card", &ok)
+        check(connects.isEmpty, "H4: a single click connected", &ok)
+        check(shell.inspector.debugTitle == "edge-proxy-01", "H1: the inspector shows \(shell.inspector.debugTitle)", &ok)
+        check(hosts.hostsTable.selectedKey == edge.id.uuidString, "H2: the table did not follow the card's selection", &ok)
+        check(edgeCard.debugActionButtons.allSatisfy { $0.tint == .accent }, "C5: a selected card's icons are not at full strength", &ok)
+        realClick(at: cardBody(edgeCard), in: window, clickCount: 2)
+        check(connects == [edge.id], "H4: a double click connected \(connects)", &ok)
+
+        // H5: the bolt and the pencil, by real clicks.
+        connects.removeAll()
+        let bolt = realClick(at: centre(of: buttons[0]), in: window)
+        check(bolt === buttons[0], "H5: a click on the bolt reached \(String(describing: bolt))", &ok)
+        check(connects == [bastion.id], "H5: the bolt connected \(connects)", &ok)
+        realClick(at: centre(of: buttons[1]), in: window)
+        check(edits.last??.id == bastion.id, "H5: the pencil did not open bastion-stg's editor", &ok)
+
+        // H2: List, with the selection carried over, and back.
+        hosts.hostsViewModeControl.debugClickTab(id: HostsController.listModeID)
+        settle(shell)
+        check(!hosts.hostsTable.card.isHidden && grid.isHidden, "H2: List did not swap the cards for the table", &ok)
+        check(AppSettings.shared.connectionsShowList, "H2: List was not remembered", &ok)
+        check(hosts.hostsTable.selectedKey == edge.id.uuidString && shell.inspector.debugTitle == "edge-proxy-01",
+              "H2: the selection did not survive the switch to List", &ok)
+        hosts.hostsViewModeControl.debugClickTab(id: HostsController.gridModeID)
+        settle(shell)
+        check(hosts.hostsTable.card.isHidden && !grid.isHidden && !AppSettings.shared.connectionsShowList,
+              "H2: Grid did not come back", &ok)
+    }
+
+    private static func checkHostCardKeyboard(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        let grid = hosts.hostsGrid
+        let store = shell.workspace.hostStore
+        guard let edge = store.hosts.first(where: { $0.label == "edge-proxy-01" }),
+              let card = grid.debugCardView(key: edge.id.uuidString) else {
+            fail("keyboard: edge-proxy-01's card is missing", &ok)
+            return
+        }
+        var connects: [UUID?] = []
+        var edits: [Host?] = []
+        let savedConnect = hosts.onConnect, savedEdit = hosts.onAddOrEdit
+        hosts.onConnect = { id, _, _, _, _, _ in connects.append(id) }
+        hosts.onAddOrEdit = { edits.append($0) }
+        var confirms: [String] = []
+        HelmConfirm.responderForTests = { request in confirms.append(request.title); return .cancel }
+        defer {
+            hosts.onConnect = savedConnect
+            hosts.onAddOrEdit = savedEdit
+            HelmConfirm.responderForTests = nil
+        }
+        window.makeFirstResponder(card)
+        check(grid.selectedKey == edge.id.uuidString, "keyboard: focusing a card did not select it", &ok)
+        card.debugKey(124)
+        let right = grid.debugPlaced.firstIndex { $0.key == edge.id.uuidString }.map { grid.debugPlaced[$0 + 1].key }
+        check(grid.selectedKey == right, "keyboard: Right did not move to the next card", &ok)
+        (window.firstResponder as? HelmGridCardView)?.debugKey(123)
+        check(grid.selectedKey == edge.id.uuidString, "keyboard: Left did not come back", &ok)
+        card.debugKey(125)
+        let below = grid.debugPlaced.first { $0.key == grid.selectedKey }?.frame
+        let here = grid.debugPlaced.first { $0.key == edge.id.uuidString }?.frame
+        check(below.map { $0.minY > (here?.minY ?? 0) && abs($0.midX - (here?.midX ?? -1)) < 1 } == true,
+              "keyboard: Down did not move to the card below", &ok)
+        window.makeFirstResponder(card)
+        card.debugKey(36, characters: "\r")
+        check(connects == [edge.id], "keyboard: Return connected \(connects)", &ok)
+        shell.setInspectorShown(false)
+        settle(shell)
+        card.debugKey(49, characters: " ")
+        settle(shell)
+        check(!shell.debugInspectorIsCollapsed && shell.inspector.debugTitle == "edge-proxy-01",
+              "keyboard: Space did not open the details", &ok)
+        card.debugKey(14, characters: "e", modifiers: .command)
+        check(edits.last??.id == edge.id, "keyboard: ⌘E did not edit", &ok)
+        card.debugKey(51, characters: "\u{7f}")
+        check(confirms.last?.contains("edge-proxy-01") == true && store.host(id: edge.id) != nil,
+              "keyboard: Delete did not ask first (\(confirms))", &ok)
+
+        // The Larger text scale: taller cards, and a truncated address keeps
+        // its whole self in the tooltip.
+        let baseHeight = card.frame.height
+        ChromeTextScale.shared.setScale(ChromeTextScale.maxScale)
+        settle(shell)
+        let scaled = grid.debugCardView(key: edge.id.uuidString)
+        check((scaled?.frame.height ?? 0) > baseHeight + 1, "Larger text: the card stayed \(baseHeight)pt", &ok)
+        check(scaled?.debugSubtitleLabel.toolTip == edge.subtitle, "Larger text: the address has no tooltip", &ok)
+        let fits = grid.debugPlaced.allSatisfy { $0.frame.maxX <= grid.debugScroll.contentSize.width + 0.5 }
+        check(fits, "Larger text: a card runs past the column", &ok)
+        ChromeTextScale.shared.setScale(ChromeTextScale.minScale)
+        settle(shell)
+    }
+
+    // MARK: H7
+
+    private static func checkGridReflow(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        let hosts = showHosts(shell)
+        let grid = hosts.hostsGrid
+        let scale = window.backingScaleFactor
+        func checkGeometry(_ label: String) {
+            let width = grid.debugScroll.contentSize.width
+            let frames = grid.debugPlaced.map(\.frame)
+            check(!frames.isEmpty, "H7 \(label): no cards were laid out", &ok)
+            check(frames.allSatisfy { $0.minX >= -0.01 && $0.maxX <= width + 0.01 },
+                  "H7 \(label): a card runs past the \(width)pt column", &ok)
+            for (i, a) in frames.enumerated() {
+                for b in frames[(i + 1)...] where a.insetBy(dx: 0.5, dy: 0.5).intersects(b) {
+                    fail("H7 \(label): two cards overlap (\(a), \(b))", &ok)
+                }
+            }
+            let aligned = frames.allSatisfy { f in
+                [f.minX, f.minY, f.width].allSatisfy { abs(HelmCardGrid.pixelAligned($0, scale: scale) - $0) < 0.001 }
+            }
+            check(aligned, "H7 \(label): a card sits off the \(scale)x pixel grid", &ok)
+        }
+        for width: CGFloat in [1512, 1100, 1100.5] {
+            resize(window, width: width, shell)
+            shell.setInspectorShown(false)
+            settle(shell)
+            let closed = grid.columnCount
+            checkGeometry("at \(width), inspector closed")
+            guard let first = shell.workspace.hostStore.hosts.first else { return }
+            grid.select(key: first.id.uuidString)
+            shell.setInspectorShown(true)
+            settle(shell)
+            checkGeometry("at \(width), inspector open")
+            check(!shell.debugInspectorIsCollapsed, "H7 at \(width): the inspector did not open", &ok)
+            // The grid follows the column it is given. At 1512 opening the
+            // inspector narrows it; at 1100 the shell puts its own sidebar
+            // away to make room, so the column barely changes - either way
+            // the count is the one the column's real width calls for.
+            let open = grid.columnCount
+            check(open == HelmCardGrid.plan(width: grid.debugScroll.contentSize.width).columns,
+                  "H7 at \(width): \(open) columns in a \(grid.debugScroll.contentSize.width)pt column", &ok)
+            if width == 1512 {
+                check(open < closed, "H7 at 1512: the grid kept \(closed) columns with the inspector open", &ok)
+            }
+        }
+        resize(window, width: 1512, shell)
+    }
+
+    // MARK: X2
+
+    private static func checkRecentHosts(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        let grid = hosts.hostsGrid
+        let store = shell.workspace.hostStore
+        check(!grid.debugSectionTitles.contains("Recent"), "X2: a recent row shows before anything was connected", &ok)
+        guard let grafana = store.hosts.first(where: { $0.label == "grafana" }),
+              let lab = store.hosts.first(where: { $0.label == "lab-box" }) else {
+            fail("X2: the demo hosts are missing", &ok)
+            return
+        }
+        store.recordConnection(id: lab.id, at: Date().addingTimeInterval(-26 * 3600))
+        store.recordConnection(id: grafana.id, at: Date().addingTimeInterval(-2 * 3600))
+        settle(shell)
+        check(grid.debugSectionTitles.first == "Recent", "X2: the sections are \(grid.debugSectionTitles)", &ok)
+        guard let recent = grid.sections.first(where: { $0.title == "Recent" }) else { return }
+        check(recent.cards.map(\.title) == ["grafana", "lab-box"], "X2: the recent row is \(recent.cards.map(\.title)), newest first", &ok)
+        let detail = grid.debugCardView(key: grafana.id.uuidString)?.debugDetail ?? ""
+        check(detail.hasPrefix("Last connected") && detail.contains("2"), "X2: grafana's card reads \"\(detail)\"", &ok)
+        let row = hosts.hostsTable.debugRows.first { $0.key == grafana.id.uuidString }
+        if case .muted(let text)? = row?.cells["lastConnected"] {
+            check(text == detail, "X2: the table's Last connected reads \(text)", &ok)
+        } else {
+            fail("X2: the table has no Last connected cell for grafana", &ok)
+        }
+        hosts.debugTypeInSearch("graf")
+        check(!grid.debugSectionTitles.contains("Recent"), "X2: the recent row stays while searching", &ok)
+        hosts.debugTypeInSearch("")
     }
 
     // MARK: H3

@@ -157,6 +157,12 @@ enum PageRedesignsSelfTest {
         clickTab("Hosts", shell)
         let hosts = shell.workspace.hostsPanel
         check(hosts.drawsSidebarLayout, "Hosts did not switch to the sidebar layout's presentation", &ok)
+        // C4 of the Termius-style plan made the cards the default view; this
+        // check is the table's, which is the List side of the same switch.
+        // The cards are `ConnectionsCardsSelfTest`'s.
+        hosts.setConnectionsShowList(true)
+        defer { hosts.setConnectionsShowList(false) }
+        settle(shell)
         let table = hosts.debugHostsTable
         check(onScreen(table.card), "the host table is not on screen", &ok)
         check(!onScreen(hosts.debugHostsList.card), "the floating bar's host list still shows in the sidebar layout", &ok)

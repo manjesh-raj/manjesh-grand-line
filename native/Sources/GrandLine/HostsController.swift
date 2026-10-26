@@ -144,7 +144,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// Keys and Snippets (`ModuleTabHosting`, at the end of this file).
     var onModuleTabChanged: (() -> Void)?
 
-    private let hostsTabView = NSView()
+    let hostsTabView = NSView()
     private let keysTabView = NSView()
     private let snippetsTabView = NSView()
 
@@ -162,12 +162,12 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// chrome and system fill, which is what the audit measured as the
     /// wallpaper-tinted field on this page (D2) - forcing its `appearance`
     /// only picks the light-or-dark side of that system colour.
-    private let searchField = HelmSearchField(
+    let searchField = HelmSearchField(
         placeholder: "Find a host, or type ssh user@host to connect")
     private let tagsScroll = NSScrollView()
     private let tagsStack = NSStackView()
     private var tagButtons: [String: HelmButton] = [:]
-    private var selectedTags: Set<String> = []
+    private(set) var selectedTags: Set<String> = []
 
     /// X4: the chips match a host carrying every selected tag, or any one of
     /// them. Read once from `AppSettings` and written back on every change.
@@ -233,7 +233,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// The Hosts tab's search over its filter row, and the filter row - the
     /// sidebar layout puts the search into the row.
     private var hostsTopStack: NSStackView?
-    private var hostsFilterRow: NSStackView?
+    private(set) var hostsFilterRow: NSStackView?
 
     /// The reference mockup's **left** navigation column.
     ///
@@ -293,7 +293,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         b.toolTip = "Show only hosts with a live session"
         return b
     }()
-    private var onlineOnly = false
+    private(set) var onlineOnly = false
 
     /// Review #3's UX6: "the Hosts sidebar should carry *filters* (Online, by
     /// tag, by group)".
@@ -331,7 +331,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// in the popup. A group that stops existing (its last host was edited or
     /// deleted) clears this rather than leaving the list filtered to nothing -
     /// see `rebuildGroupPicker`.
-    private var selectedGroup: String?
+    private(set) var selectedGroup: String?
 
     /// The popup's "no filter" row. A literal rather than an empty string so
     /// it can never collide with a real group of that name - a host group is
@@ -411,7 +411,13 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// selection's details go in the shell's inspector. Never set in the
     /// floating bar, so that layout's page is exactly what it was.
     private(set) var drawsSidebarLayout = false
-    private lazy var hostsTable = Self.makeHostsTable()
+    private(set) lazy var hostsTable = Self.makeHostsTable()
+    /// H1: the hosts as cards, the sidebar layout's default view (C4).
+    /// `HostsController+Cards.swift` fills it.
+    private(set) lazy var hostsGrid = HelmCardGrid()
+    /// H2: Grid or List, over the hosts. One stored choice
+    /// (`AppSettings.connectionsShowList`) for Hosts and Keys.
+    lazy var hostsViewModeControl = makeViewModeControl()
     private lazy var keysTable = Self.makeKeysTable()
     private lazy var snippetsTable = Self.makeSnippetsTable()
     /// The inspector's body for whichever table is showing.
@@ -990,6 +996,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
             expansionStrip.applyTheme(theme)
             onlineFilter.applyTheme(theme)
             tagMatchControl.applyTheme(theme)
+            hostsGrid.applyTheme(theme)
+            hostsViewModeControl.applyTheme(theme)
             keysTouchID.applyTheme(theme)
         }
         sideStack.applyTheme(theme)
@@ -1289,7 +1297,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         onDrillSubtitleChanged?()
     }
 
-    private func filteredHosts(_ query: String) -> [Host] {
+    func filteredHosts(_ query: String) -> [Host] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var hosts = hostStore.hosts
         if !q.isEmpty {
@@ -1349,7 +1357,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// selection path - what the tour lab's `select` verb drives.
     @discardableResult
     func debugSelectRecord(titled title: String) -> Bool {
-        if drawsSidebarLayout { return table(for: activeTab).debugSelect(titled: title) }
+        if drawsSidebarLayout {
+            if let grid = visibleGrid(for: activeTab) { return grid.debugSelect(titled: title) }
+            return table(for: activeTab).debugSelect(titled: title)
+        }
         switch activeTab {
         case .hosts: return hostsList.debugSelect(titled: title)
         case .keys: return keysList.debugSelect(titled: title)
@@ -1385,7 +1396,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     var debugSideDetailShowsRecord: Bool { !sideStack.isHidden && sideStack.detail.isShowingRecord }
     #endif
 
-    private func normalizedGroup(_ host: Host) -> String? {
+    func normalizedGroup(_ host: Host) -> String? {
         let g = host.group?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return g.isEmpty ? nil : g
     }
@@ -1908,6 +1919,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
             table.onSelect = { [weak self] _ in self?.refreshDetailPanel() }
         }
         hostsTable.accessibilityName = "Hosts"
+        adoptHostsGrid()
         keysTable.accessibilityName = "SSH keys"
         snippetsTable.accessibilityName = "Snippets"
         // The prototype's Keys card names what it holds and where it is kept.
@@ -2058,7 +2070,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
 
     // MARK: Tables
 
-    private func table(for tab: HostsTab) -> HelmDataTable {
+    func table(for tab: HostsTab) -> HelmDataTable {
         switch tab {
         case .hosts: return hostsTable
         case .keys: return keysTable
@@ -2075,6 +2087,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
             .init(id: "group", title: "Group", width: 120, hiddenBelow: 720),
             .init(id: "tags", title: "Tags", width: 170, hiddenBelow: 960),
             .init(id: "session", title: "Session", width: 150, hiddenBelow: 640),
+            .init(id: "lastConnected", title: "Last connected", width: 140, hiddenBelow: 1100),
         ], actionsWidth: 140)
     }
 
@@ -2127,6 +2140,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
                 action: filtering ? nil : .init(title: "Add Host", symbol: "plus") { [weak self] in self?.newHost() }))
         }
         hostsTable.setRows(rows)
+        renderHostsGrid(hosts, query: query)
     }
 
     private func firstmateRow() -> HelmDataTable.Row {
@@ -2153,6 +2167,8 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
             "group": normalizedGroup(host).map { .text($0) } ?? .none,
             "tags": .tags(host.tags),
             "session": session.map { .status($0.stateText, tint: $0.isConnected ? .good : .warn) } ?? .none,
+            // X2.
+            "lastConnected": host.lastConnectedAt.map { .muted(Self.lastConnectedText($0)) } ?? .none,
         ]
         if session != nil {
             row.primary = .init(title: "Switch", symbol: "arrow.right.circle.fill") { [weak self] in
@@ -2171,7 +2187,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
 
     /// The host's actions after its headline one - the same list the row's
     /// menu, its ⋯ button and the inspector show.
-    private func hostMenuActions(_ host: Host, live: Bool) -> [WorkspaceDetail.Action] {
+    func hostMenuActions(_ host: Host, live: Bool) -> [WorkspaceDetail.Action] {
         var actions: [WorkspaceDetail.Action] = []
         if live {
             actions.append(.init("End Session", symbol: "xmark.circle") { [weak self] in self?.onEndSession?(host.id) })

@@ -5,6 +5,9 @@
 // without mounting a view, so it runs in CI's blocking headless lane.
 //
 //   - H9: how many tag chips fit the filter row beside the "+N" chip.
+//   - H7: the card grid's column plan, and its pixel grid at 1x and 2x for a
+//     half-point column (the case CI's 1x runner hits and a 2x Mac cannot).
+//   - X2: "last connected" in words, and the recent row's order.
 //
 // The window-backed half is `ConnectionsCardsSelfTest`.
 //
@@ -21,13 +24,52 @@ enum ConnectionsLogicSelfTest {
 
     static func run() -> Bool {
         var allOK = true
-        for check in [checkTagChipFit] {
+        for check in [checkTagChipFit, checkGridPlan, checkLastConnected] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
         }
         print(allOK ? "ConnectionsLogicSelfTest: all checks passed" : "ConnectionsLogicSelfTest: FAILED")
         return allOK
+    }
+
+    // MARK: H7
+
+    private static func checkGridPlan(_ ok: inout Bool) {
+        let minimum = HelmCardGrid.minimumCardWidth, gap = HelmCardGrid.spacing
+        let exact = HelmCardGrid.plan(width: 3 * minimum + 2 * gap)
+        check(exact.columns == 3 && abs(exact.cardWidth - minimum) < 0.001, "H7: three minimum cards fit exactly (\(exact))", &ok)
+        check(HelmCardGrid.plan(width: 3 * minimum + 2 * gap - 1).columns == 2, "H7: a point short drops a column", &ok)
+        check(HelmCardGrid.plan(width: 120).columns == 1, "H7: a narrow column still shows one card", &ok)
+        // A half-point column, at 1x and 2x: every edge lands on a device pixel.
+        let width: CGFloat = 1100.5 - 300
+        let plan = HelmCardGrid.plan(width: width)
+        for scale: CGFloat in [1, 2] {
+            for column in 0..<plan.columns {
+                let x = CGFloat(column) * (plan.cardWidth + gap)
+                let aligned = HelmCardGrid.pixelAligned(x, scale: scale)
+                check(abs(aligned * scale - (aligned * scale).rounded()) < 0.0001 && abs(aligned - x) <= 0.5 / scale + 0.0001,
+                      "H7: column \(column) at \(scale)x lands at \(aligned) for \(x)", &ok)
+            }
+        }
+        check(HelmCardGrid.pixelAligned(10.25, scale: 1) == 10 && HelmCardGrid.pixelAligned(10.25, scale: 2) == 10.5,
+              "H7: the pixel grid rounds differently at 1x and 2x", &ok)
+    }
+
+    // MARK: X2
+
+    private static func checkLastConnected(_ ok: inout Bool) {
+        let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        check(HostsController.lastConnectedText(now.addingTimeInterval(-20), now: now) == "Last connected just now",
+              "X2: a connection seconds ago reads \(HostsController.lastConnectedText(now.addingTimeInterval(-20), now: now))", &ok)
+        let hours = HostsController.lastConnectedText(now.addingTimeInterval(-2 * 3600), now: now)
+        check(hours.hasPrefix("Last connected ") && hours.contains("2"), "X2: two hours ago reads \(hours)", &ok)
+        var a = Host(label: "a", address: "a.example.test"); a.lastConnectedAt = now.addingTimeInterval(-50)
+        var b = Host(label: "b", address: "b.example.test"); b.lastConnectedAt = now
+        let c = Host(label: "c", address: "c.example.test")
+        check(HostsController.recentHosts([a, c, b]).map(\.label) == ["b", "a"],
+              "X2: the recent row is newest first and leaves out a host never connected", &ok)
+        check(HostsController.recentHosts([a, b], limit: 1).map(\.label) == ["b"], "X2: the recent row honours its limit", &ok)
     }
 
     // MARK: H9
