@@ -663,6 +663,13 @@ final class HerdrThemeSync {
 
     private var themeToken: ThemeObservation?
 
+    #if FM_SELFTESTS
+    // R2-ARCH-09: the three seams below are compiled into debug builds only
+    // (GL-27). `configPathOverrideForTests` reached the release binary
+    // before this guard (measured with `nm`); production reads them through
+    // the `…Override` accessors after them, which answer `nil` in a release
+    // build.
+
     /// Test-only seam: `HerdrThemeSyncSelfTest` points this at a real
     /// scratch file so `syncNow` can be driven end to end (read, patch,
     /// atomic write) without ever touching the real
@@ -688,6 +695,31 @@ final class HerdrThemeSync {
     /// lab session or otherwise (see this file's header for why a real one
     /// could not be driven from this task at all).
     static var herdrExecutablePathOverrideForTests: String?
+    #endif
+
+    private static var configPathOverride: URL? {
+        #if FM_SELFTESTS
+        return configPathOverrideForTests
+        #else
+        return nil
+        #endif
+    }
+
+    private static var herdrInstalledOverride: Bool? {
+        #if FM_SELFTESTS
+        return herdrInstalledOverrideForTests
+        #else
+        return nil
+        #endif
+    }
+
+    private static var herdrExecutablePathOverride: String? {
+        #if FM_SELFTESTS
+        return herdrExecutablePathOverrideForTests
+        #else
+        return nil
+        #endif
+    }
 
     /// Registered once at launch. Idempotent.
     func start() {
@@ -731,7 +763,7 @@ final class HerdrThemeSync {
     /// persistence-failure surfaces (`PersistenceFailureReporter`,
     /// scoped to this app's own stores) need to know about.
     func syncNow(theme: HelmTheme) {
-        let installed = Self.herdrInstalledOverrideForTests
+        let installed = Self.herdrInstalledOverride
             ?? (Subprocess.resolveExecutable("herdr") != nil)
         guard installed else { return }
 
@@ -826,7 +858,7 @@ final class HerdrThemeSync {
     /// verbatim for a human to read, and the signal this code itself acts
     /// on is the process's own exit status.
     private func triggerLiveReload() {
-        guard let herdrPath = Self.herdrExecutablePathOverrideForTests
+        guard let herdrPath = Self.herdrExecutablePathOverride
             ?? Subprocess.resolveExecutable("herdr")
         else { return }
 
@@ -893,7 +925,7 @@ final class HerdrThemeSync {
     /// the exact file herdr itself would read, including when the captain
     /// has customised `HERDR_CONFIG_PATH`.
     static func configPath() -> URL {
-        if let override = configPathOverrideForTests { return override }
+        if let override = configPathOverride { return override }
         let env = ProcessInfo.processInfo.environment
         if let herdrOverride = env["HERDR_CONFIG_PATH"], !herdrOverride.isEmpty {
             return URL(fileURLWithPath: herdrOverride)

@@ -81,15 +81,17 @@ final class SnippetExpander {
     /// `Date()` of their own, so a suite can fabricate an instant.
     var clock: () -> Date = { Date() }
 
+    #if FM_SELFTESTS
     /// Set, every expansion is reported here instead of touching the
-    /// pasteboard or posting a synthetic keystroke. Never set in the shipping
-    /// app.
+    /// pasteboard or posting a synthetic keystroke. Compiled into debug
+    /// builds only (GL-27, R2-ARCH-09), so the shipping app cannot set it.
     var injectionSinkForTests: ((SnippetInjection) -> Void)?
 
     /// Set, `currentContext()` returns this instead of asking the OS. Lets a
     /// suite assert the policy against a frontmost app that is not really
-    /// frontmost. Never set in the shipping app.
+    /// frontmost. Debug builds only, like the sink above.
     var contextOverrideForTests: SnippetExpansionContext?
+    #endif
 
     /// The last refusal, so the UI can answer "I typed `;sig` and nothing
     /// happened". Only set when a trigger genuinely matched a snippet.
@@ -334,7 +336,9 @@ final class SnippetExpander {
     // MARK: Context
 
     func currentContext() -> SnippetExpansionContext {
+        #if FM_SELFTESTS
         if let contextOverrideForTests { return contextOverrideForTests }
+        #endif
         let frontmost = NSWorkspace.shared.frontmostApplication
         return SnippetExpansionContext(
             expansionEnabled: AppSettings.shared.snippetExpansionEnabled,
@@ -382,10 +386,12 @@ final class SnippetExpander {
     // MARK: Injection
 
     private func inject(_ injection: SnippetInjection) {
+        #if FM_SELFTESTS
         if let injectionSinkForTests {
             injectionSinkForTests(injection)
             return
         }
+        #endif
         guard isAccessibilityTrusted else { return }
 
         // Preserve the captain's clipboard across the expansion - but only

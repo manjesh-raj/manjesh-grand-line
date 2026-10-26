@@ -554,7 +554,15 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     // Moved from `AppShellController` with the rest of the API in stage 3.
     // They read the workspace, never a shell's chrome, so a suite can drive
     // either layout through the same surface.
+    //
+    // R2-ARCH-09: all of them are compiled into debug builds only (GL-27).
+    // The older ones here used to sit outside the guard and reach the
+    // release binary (nine symbols, measured with `nm`), kept out of it only
+    // by dead-stripping - so a production caller would have shipped them.
+    // `Scripts/check-release-symbols.sh` is what CI's release job runs to
+    // keep it that way.
 
+    #if FM_SELFTESTS
     /// `AppShellBodyWidthSelfTest` reads this rather than `bodyContainer`
     /// directly - everything else only ever needs to add/remove/toggle a
     /// destination view, never measure the container itself.
@@ -616,14 +624,9 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
         return slot.controller.view
     }
 
-    #if FM_SELFTESTS
     /// The shared Firstmate console, so audit 2 §4.1's own case can drive the
     /// real `restoreTabs(from:)` launch path and then read the tabs that
     /// actually landed.
-    ///
-    /// Guarded, unlike some of its older neighbours here: GL-27's lesson is
-    /// that a `debug*` hook living in a production file keeps shipping unless
-    /// it says otherwise, so a *new* one is compiled into debug builds only.
     var debugConsole: ConsoleController { workspace.console }
 
     /// Which destination is showing, in the same terms `show(_:)` takes.

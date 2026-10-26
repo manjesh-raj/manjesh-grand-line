@@ -3759,7 +3759,13 @@ final class HomeCanvasController: NSViewController {
     }
 
     // MARK: Probe / self-test surface
+    //
+    // R2-ARCH-09: compiled into debug builds only (GL-27). Until this guard
+    // covered the whole surface, `debugInputsPinned` - a stored property, so
+    // dead-stripping could not remove its field - shipped in the release
+    // binary, and any production caller of the rest would have shipped it too.
 
+    #if FM_SELFTESTS
     var moduleCardsForTests: [HelmModuleCard] { cards }
     /// The grid's rows as built, so a suite can assert the *placement* and
     /// not merely that five cards exist. The dashboard's whole subject is
@@ -3837,7 +3843,6 @@ final class HomeCanvasController: NSViewController {
     /// the hermeticity hazard that has poisoned whole suite runs before.
     func debugApplyTheme(_ theme: HelmTheme) { applyTheme(theme) }
 
-    #if FM_SELFTESTS
     /// Put one card's reading back to "not read yet", the state a first
     /// launch paints before that reading lands - `claude`, `fleet` or `merge`
     /// (which also forgets the last good PR list, as on a first launch).
