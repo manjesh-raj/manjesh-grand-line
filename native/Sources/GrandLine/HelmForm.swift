@@ -1788,7 +1788,8 @@ final class HelmFormSheet: NSView {
 
         footerContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        if scrolls {
+        // `self.scrolls`: a panel always scrolls, whatever the caller passed.
+        if self.scrolls {
             buildScrollingLayout()
         } else {
             buildFixedLayout()
@@ -1932,6 +1933,16 @@ final class HelmFormSheet: NSView {
         let headerColumn = cappedColumn(in: headerBox)
         let headerContent: NSView = chrome == .panel ? panelHeaderSlot : headerBlock
         headerContent.translatesAutoresizingMaskIntoConstraints = false
+        if chrome == .panel {
+            // A panel with no header of its own (the key form, whose lead
+            // row is its header) must not leave this slot free to take the
+            // scrolling fields' height - measured, an empty slot took 573pt
+            // of a 627pt panel and left the fields 0pt tall. Real content
+            // outranks a low-priority zero.
+            let collapsed = panelHeaderSlot.heightAnchor.constraint(equalToConstant: 0)
+            collapsed.priority = .defaultLow
+            collapsed.isActive = true
+        }
         headerColumn.addSubview(headerContent)
 
         footerDivider.wantsLayer = true

@@ -31,9 +31,38 @@
 // `loadImportFile`/`chooseImportFile`/`copyPublicKey`/`save`/`deleteKey`/
 // `cancel` are byte-for-byte the same logic as before.
 
+// **K7 and K8 of the Termius-style plan: the side panel.** In the sidebar
+// layout this same controller is the key form in the shell's inspector
+// (`presentation: .panel`), with no sheet: a key's label, its public key with
+// Copy, its fingerprint, its passphrase and its certificate, and the hosts
+// that use it as links to them (K6). The footer is Copy Public Key while
+// nothing has changed, then Cancel and Save Key (C1); a new key's form
+// offers generate, import a file and paste, with Cancel and Save Key. Return
+// saves and Esc cancels. The floating bar keeps the sheet.
+
 import AppKit
 
 final class KeyEditorController: NSViewController, NSTextFieldDelegate {
+
+    /// A sheet (the floating bar's), or the sidebar shell's inspector.
+    enum Presentation {
+        case sheet
+        case panel
+    }
+
+    let presentation: Presentation
+
+    /// The panel's menu beside Copy Public Key (Delete), the page's own.
+    var panelMenu: [WorkspaceDetail.Action] = []
+    /// K6: the hosts that use this key, linked to them in the panel.
+    var panelHosts: [(id: UUID, label: String)] = []
+    var onOpenHost: ((UUID) -> Void)?
+    /// Something changed, or the form was saved or reset.
+    var onDirtyChange: ((Bool) -> Void)?
+    /// The panel's Cancel (or Esc).
+    var onPanelCancel: (() -> Void)?
+    /// Whether the form differs from what it opened with.
+    private(set) var isDirty = false
 
     /// `nil` for a brand-new key; set for editing an existing one's label,
     /// certificate, and (optionally) passphrase. Edit mode never re-derives or
@@ -107,7 +136,9 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
     /// Edit mode's single passphrase field ("leave blank to keep current").
     /// `lazy` so its placeholder can read `editing` (set earlier in `init`).
     private lazy var passphraseField = HelmSecureTextField(
-        placeholder: (editing?.hasPassphrase ?? false) ? "Leave blank to keep current passphrase" : "Passphrase (optional)")
+        placeholder: (editing?.hasPassphrase ?? false)
+            ? (presentation == .panel ? "Keep current" : "Leave blank to keep current passphrase")
+            : "Passphrase (optional)")
     /// Generate and Import each need their own passphrase control - one sets
     /// a passphrase on a brand-new key, the other supplies the existing one
     /// to decrypt - so, unlike every other create-mode field, this can't be a
@@ -140,7 +171,8 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
 
     // MARK: Init
 
-    init(key: SSHKey?, usedByHostCount: Int = 0) {
+    init(key: SSHKey?, usedByHostCount: Int = 0, presentation: Presentation = .sheet) {
+        self.presentation = presentation
         self.editing = key
         self.usedByHostCount = usedByHostCount
         super.init(nibName: nil, bundle: nil)
@@ -161,8 +193,11 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
     private var statusTone: HelmTint = .critical
 
     override func loadView() {
+        let panel = presentation == .panel
         let form = HelmFormSheet(title: editing == nil ? "New Key" : "Edit Key",
-                                 domainHue: RailDestination.hosts.domainHue)
+                                 maxContentWidth: panel ? Self.panelContentWidth : HelmFormSheet.width,
+                                 domainHue: RailDestination.hosts.domainHue,
+                                 chrome: panel ? .panel : .sheet)
         self.form = form
         view = form
         form.onApplyTheme = { [weak self] theme in
@@ -202,16 +237,27 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         }
         form.addRow(stack)
 
-        let footer = form.setFooter(target: self,
-                                    confirmTitle: "Save Key",
-                                    confirm: #selector(save),
-                                    cancel: #selector(cancel),
-                                    delete: editing == nil ? nil : (title: "Delete", action: #selector(deleteKey)),
-                                    hint: "Stored securely in macOS Keychain")
-        saveButton = footer.confirm
+        if panel {
+            labelField.delegate = self
+            passphraseField.delegate = self
+            NotificationCenter.default.addObserver(self, selector: #selector(certificateChanged),
+                                                   name: NSText.didChangeNotification, object: certificateView.textView)
+            if editing != nil, !panelHosts.isEmpty { buildHostLinks() }
+            form.setPanelFooter(panelFooter)
+            saveButton = panelSaveButton
+            refreshPanelFooter()
+        } else {
+            let footer = form.setFooter(target: self,
+                                        confirmTitle: "Save Key",
+                                        confirm: #selector(save),
+                                        cancel: #selector(cancel),
+                                        delete: editing == nil ? nil : (title: "Delete", action: #selector(deleteKey)),
+                                        hint: "Stored securely in macOS Keychain")
+            saveButton = footer.confirm
+            form.setSubtitle("Private key material never leaves the Keychain.")
+        }
         updateSaveEnabled()
 
-        form.setSubtitle("Private key material never leaves the Keychain.")
         applyPresetMode()
         form.refreshTheme()
         form.sizeToFitContent()
@@ -522,6 +568,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
                     self.publicKeyView.string = generated.publicKeyLine
                     self.fingerprintField.stringValue = generated.fingerprint
                     self.statusLabel.stringValue = ""
+                    self.fieldsChanged()
                 case .failure(let error):
                     self.setStatusTone(.critical)
                     self.statusLabel.stringValue = error.localizedDescription
@@ -606,6 +653,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
                     self.fingerprintField.stringValue = imported.fingerprint
                     self.statusLabel.stringValue = "Verified \(imported.type.displayName) key."
                     self.setStatusTone(.good)
+                    self.fieldsChanged()
                 case .failure(let error):
                     self.pendingPrivateKey = nil
                     self.setStatusTone(.critical)
@@ -667,8 +715,211 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
             )
             onSave?(key, privateKey, pendingPassphrase)
         }
-        dismiss(self)
+        finishSave()
     }
+
+    /// A sheet dismisses; a panel stays and the page re-reads the key.
+    private func finishSave() {
+        guard presentation == .panel else { dismiss(self); return }
+        isDirty = false
+        refreshPanelFooter()
+        onDirtyChange?(false)
+    }
+
+    // MARK: The panel (K6, K7, K8)
+
+    static let panelContentWidth: CGFloat = WorkspaceInspectorController.width - 2 * HelmFormSheet.panelGutter
+
+    private let panelFooter = NSStackView()
+    private lazy var panelCopyButton = HelmButton(title: "Copy Public Key", variant: .primary, symbol: "doc.on.doc",
+                                                  target: self, action: #selector(copyPublicKey))
+    private lazy var panelMenuButton: HelmButton = {
+        let b = HelmButton(symbol: "ellipsis", variant: .secondary, target: self, action: #selector(panelMenuClicked(_:)))
+        b.toolTip = "More actions"
+        b.setAccessibilityLabel("More actions")
+        return b
+    }()
+    private lazy var panelCancelButton = HelmButton(title: "Cancel", variant: .secondary,
+                                                    target: self, action: #selector(panelCancelClicked))
+    private lazy var panelSaveButton = HelmButton(title: "Save Key", variant: .primary,
+                                                  target: self, action: #selector(panelSaveClicked))
+    private var hostLinks: [HelmButton] = []
+
+    /// K6: each host using this key, a link that jumps to it.
+    private func buildHostLinks() {
+        form.addSection("Hosts using it", number: "04")
+        let links = NSStackView()
+        links.orientation = .vertical
+        links.alignment = .leading
+        links.spacing = HelmMetrics.s0
+        for (index, host) in panelHosts.enumerated() {
+            let link = HelmButton(title: host.label, variant: .quiet, size: .small, symbol: "server.rack",
+                                  target: self, action: #selector(hostLinkClicked(_:)))
+            link.tag = index
+            link.toolTip = "Show \(host.label)"
+            link.setAccessibilityLabel("Show host \(host.label)")
+            hostLinks.append(link)
+            links.addArrangedSubview(link)
+        }
+        form.addRow(links)
+    }
+
+    @objc private func hostLinkClicked(_ sender: NSButton) {
+        guard sender.tag < panelHosts.count else { return }
+        onOpenHost?(panelHosts[sender.tag].id)
+    }
+
+    /// C1: Copy Public Key (and a menu) while nothing changed; Cancel and
+    /// Save Key once something has, and always for a new key.
+    func refreshPanelFooter() {
+        guard presentation == .panel else { return }
+        panelFooter.arrangedSubviews.forEach { panelFooter.removeArrangedSubview($0); $0.removeFromSuperview() }
+        panelFooter.orientation = .horizontal
+        panelFooter.alignment = .centerY
+        panelFooter.spacing = HelmMetrics.s2
+        if isDirty || editing == nil {
+            panelFooter.distribution = .fillEqually
+            panelFooter.addArrangedSubview(panelCancelButton)
+            panelFooter.addArrangedSubview(panelSaveButton)
+        } else {
+            panelFooter.distribution = .fill
+            panelFooter.addArrangedSubview(panelCopyButton)
+            panelCopyButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            if !panelMenu.isEmpty {
+                panelFooter.addArrangedSubview(panelMenuButton)
+                panelMenuButton.setContentHuggingPriority(.required, for: .horizontal)
+            }
+        }
+    }
+
+    /// Re-decide whether the form differs from what it opened with.
+    private func fieldsChanged() {
+        guard presentation == .panel else { return }
+        let label = labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cert = certificateView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        let dirty: Bool
+        if let editing {
+            dirty = label != editing.label || cert != (editing.certificate ?? "") || !passphraseField.stringValue.isEmpty
+        } else {
+            dirty = !label.isEmpty || pendingPrivateKey != nil || !cert.isEmpty
+        }
+        guard dirty != isDirty else { return }
+        isDirty = dirty
+        refreshPanelFooter()
+        onDirtyChange?(dirty)
+    }
+
+    func controlTextDidChange(_ obj: Notification) { fieldsChanged() }
+
+    @objc private func certificateChanged() { fieldsChanged() }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard presentation == .panel else { return false }
+        if commandSelector == #selector(NSResponder.insertNewline(_:)), isDirty || editing == nil {
+            savePanel()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)), isDirty || editing == nil {
+            cancelPanel()
+            return true
+        }
+        return false
+    }
+
+    /// Save from the panel. Returns whether it saved: a new key needs a
+    /// generated or verified key first, and every key a label.
+    @discardableResult
+    func savePanel() -> Bool {
+        let label = labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty else { flag(labelField); return false }
+        guard editing != nil || pendingPrivateKey != nil else {
+            setStatusTone(.critical)
+            statusLabel.stringValue = "Generate, import or paste a key before saving."
+            return false
+        }
+        save()
+        return true
+    }
+
+    func cancelPanel() { onPanelCancel?() }
+
+    @objc private func panelCancelClicked() { cancelPanel() }
+    @objc private func panelSaveClicked() { savePanel() }
+
+    @objc private func panelMenuClicked(_ sender: NSButton) {
+        makePanelMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + HelmMetrics.s1), in: sender)
+    }
+
+    private func makePanelMenu() -> NSMenu {
+        let menu = NSMenu()
+        for (index, action) in panelMenu.enumerated() {
+            let item = NSMenuItem(title: action.title, action: #selector(panelMenuItemPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            if let symbol = action.symbol { item.image = HelmSymbol.image(symbol, pointSize: HelmType.scaled(12)) }
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func panelMenuItemPicked(_ sender: NSMenuItem) {
+        guard sender.tag < panelMenu.count else { return }
+        panelMenu[sender.tag].run()
+    }
+
+    /// The key the form is for, or `nil` for a new key.
+    var currentRecord: SSHKey? { editing }
+
+    /// A preset's first step, in the panel: Import Key File opens the file
+    /// chooser (a sheet does this from `viewDidAppear`).
+    func beginPreset() {
+        if preset == .importFile { chooseImportFile() }
+    }
+
+    func focusFirstField() {
+        switch preset {
+        case .paste?: view.window?.makeFirstResponder(importTextView.textView)
+        case .certificate?: view.window?.makeFirstResponder(certificateView.textView)
+        default: view.window?.makeFirstResponder(labelField)
+        }
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    #if FM_SELFTESTS
+    var debugIsDirty: Bool { isDirty }
+    var debugFooterTitles: [String] {
+        panelFooter.arrangedSubviews.compactMap { ($0 as? HelmButton).map { $0.title.isEmpty ? ($0.accessibilityLabel() ?? "") : $0.title } }
+    }
+    var debugFooterButtons: [HelmButton] { panelFooter.arrangedSubviews.compactMap { $0 as? HelmButton } }
+    var debugLabelField: HelmTextField { labelField }
+    var debugCertificateView: HelmTextView { certificateView }
+    var debugPublicKey: String { publicKeyView.string }
+    var debugFingerprint: String { fingerprintField.stringValue }
+    var debugHostLinks: [HelmButton] { hostLinks }
+    var debugStatus: String { statusLabel.stringValue }
+    var debugPanelMenuTitles: [String] { makePanelMenu().items.map(\.title) }
+    func debugType(_ text: String, into field: NSTextField) {
+        field.stringValue = text
+        controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
+    }
+    @discardableResult
+    func debugCommand(_ selector: Selector, in field: NSTextField) -> Bool {
+        guard let editor = field.window?.fieldEditor(true, for: field) as? NSTextView else { return false }
+        return control(field, textView: editor, doCommandBy: selector)
+    }
+    /// Stand in for a generate or verify that succeeded, with fixture bytes
+    /// that never reach the Keychain from a suite.
+    func debugSetPendingKey(publicKey: String, fingerprint: String) {
+        pendingPrivateKey = Data("fixture".utf8)
+        pendingPublicKeyLine = publicKey
+        pendingFingerprint = fingerprint
+        publicKeyView.string = publicKey
+        fingerprintField.stringValue = fingerprint
+        updateSaveEnabled()
+        fieldsChanged()
+    }
+    #endif
 
     @objc private func deleteKey() {
         guard let id = editing?.id else { return }
@@ -678,6 +929,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
 
     @objc private func cancel() {
         onCancel?()
+        guard presentation == .sheet else { cancelPanel(); return }
         dismiss(self)
     }
 

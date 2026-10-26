@@ -243,8 +243,10 @@ enum PageRedesignsSelfTest {
             settle(shell)
             check(shell.inspector.debugTitle == "ops-ed25519" && !shell.debugInspectorIsCollapsed,
                   "selecting a key did not show it in the inspector", &ok)
-            check(hosts.debugInspectorDetail.debugFieldLabels.contains("Fingerprint"),
-                  "the key inspector has no fingerprint", &ok)
+            // K7 of the Termius-style plan: a key's details are its form in
+            // the panel, fingerprint included.
+            check(shell.inspector.hostedContentView === hosts.keyPanel?.view && hosts.keyPanel?.debugFingerprint == key.fingerprint,
+                  "the key's form in the inspector has no fingerprint", &ok)
             keysTable.debugSelect(key: nil)
             settle(shell)
         } else {

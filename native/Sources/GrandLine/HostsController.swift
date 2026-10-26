@@ -422,6 +422,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// Set while the panel's save writes the store, whose reload must not
     /// rebuild the form mid-save.
     var hostPanelIsSaving = false
+    /// K7 and K8: the key form in the side panel, and which key it is for -
+    /// an id, or `newKeyPanelKey`. `HostsController+KeyPanel.swift`.
+    var keyPanel: KeyEditorController?
+    var keyPanelKey: String?
     /// H2: Grid or List, over the hosts. One stored choice
     /// (`AppSettings.connectionsShowList`) for Hosts and Keys.
     lazy var hostsViewModeControl = makeViewModeControl()
@@ -1613,6 +1617,12 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     }
 
     func presentKeyEditor(for key: SSHKey?, preset: KeyEditorController.Preset? = nil) {
+        // K7 and K8: in the sidebar layout a key is edited, and a new one
+        // made, in the side panel. The floating bar keeps the sheet.
+        if drawsSidebarLayout {
+            if let key { openKeyPanel(forEditing: key, preset: preset) } else { openNewKeyPanel(preset: preset) }
+            return
+        }
         let usedByHostCount = key.map { targetKey in hostStore.hosts.filter { $0.keyID == targetKey.id }.count } ?? 0
         let editor = KeyEditorController(key: key, usedByHostCount: usedByHostCount)
         editor.preset = preset
@@ -1647,7 +1657,15 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     /// Create mode: `SSHKeyStore.addNew` writes the Keychain secrets before
     /// adding the metadata.
-    private func persistNewKey(_ key: SSHKey, privateKeyData: Data, passphrase: String?) {
+    func persistNewKey(_ key: SSHKey, privateKeyData: Data, passphrase: String?) {
+        #if FM_SELFTESTS
+        // A suite never writes a Keychain item, even a scratch-prefixed one.
+        if let writer = Self.newKeyWriterForTests {
+            writer(key, privateKeyData, passphrase)
+            keyStore.add(key)
+            return
+        }
+        #endif
         do {
             try keyStore.addNew(key, privateKeyData: privateKeyData, passphrase: passphrase)
             Toast.show(in: view, message: "\u{201C}\(key.label)\u{201D} saved")
@@ -1658,7 +1676,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     /// Edit mode never touches the private key; a new passphrase (when typed)
     /// overwrites the existing Keychain entry for it.
-    private func persistUpdatedKey(_ key: SSHKey, newPassphrase: String?) {
+    func persistUpdatedKey(_ key: SSHKey, newPassphrase: String?) {
         if let newPassphrase {
             do {
                 try KeychainKeyStore.savePassphrase(id: key.id, passphrase: newPassphrase)
@@ -1784,6 +1802,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// without presenting it, so a suite can read what a menu item opened.
     var lastKeyEditorForTests: KeyEditorController?
     static var suppressesKeyEditorPresentationForTests = false
+    /// Stands in for the Keychain write a new key's save makes.
+    static var newKeyWriterForTests: ((SSHKey, Data, String?) -> Void)?
     /// X4 and H9's controls, as the filter row holds them.
     var debugTagMatchControl: HelmSegmentedTabs { tagMatchControl }
     var debugTagOverflowChip: HelmButton { tagOverflowChip }
@@ -2086,6 +2106,10 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
         if activeTab == .hosts, let panel = hostPanel {
             return WorkspaceInspectorContent(title: inspectorTitle, view: panel.view, fillsPane: true)
         }
+        // K7: a key, or a new one, is its form in the panel.
+        if activeTab == .keys, let panel = keyPanel {
+            return WorkspaceInspectorContent(title: inspectorTitle, view: panel.view, fillsPane: true)
+        }
         return WorkspaceInspectorContent(title: inspectorTitle, view: inspectorDetail)
     }
 
@@ -2300,7 +2324,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
     /// Fill the inspector from the showing table's selection, and tell the
     /// shell.
     private func refreshSidebarInspector() {
-        if activeTab == .hosts, let title = syncHostPanel() {
+        if let title = activeTab == .hosts ? syncHostPanel() : activeTab == .keys ? syncKeyPanel() : nil {
             inspectorTitle = title
             sideStack.detail.clear()
             updateInspectorVisibility()

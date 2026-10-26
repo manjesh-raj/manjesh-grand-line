@@ -61,13 +61,16 @@ extension HostsController {
             grid.topAnchor.constraint(equalTo: keysTopRow.bottomAnchor, constant: HelmMetrics.s3),
             grid.bottomAnchor.constraint(equalTo: list.bottomAnchor),
         ])
+        // H11's rule for keys: leaving unsaved changes asks first.
         grid.onSelect = { [weak self] key in
             guard let self else { return }
+            guard self.mayLeaveKeyPanel(for: key) else { self.restoreKeySelection(); return }
             self.keysTable.setSelectedKey(key, notify: false)
             self.refreshDetailPanel()
         }
         keysTable.onSelect = { [weak self] key in
             guard let self else { return }
+            guard self.mayLeaveKeyPanel(for: key) else { self.restoreKeySelection(); return }
             self.keysGrid.setSelected(key, notify: false)
             self.refreshDetailPanel()
         }
@@ -173,7 +176,8 @@ extension HostsController {
     }
 
     func showKeyDetails(forKey id: String) {
-        keysGrid.select(key: id)
+        guard mayLeaveKeyPanel(for: id) else { return }
+        keysGrid.setSelected(id, notify: false)
         keysTable.setSelectedKey(id, notify: false)
         refreshDetailPanel()
         onShowInspector?()

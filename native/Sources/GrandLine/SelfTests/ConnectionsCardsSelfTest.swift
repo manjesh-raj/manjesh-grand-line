@@ -22,6 +22,8 @@
 //     Connect at its foot until something changes, then Cancel and Save
 //     Changes; Return saves and Esc cancels; a new host is an empty form
 //     there; and leaving unsaved changes asks Save, Discard or Cancel.
+//   - K6, K7 and K8: a key is edited, and made, in the side panel too, with
+//     the hosts using it as links to them.
 //
 // Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
 // The arithmetic is asserted headless in `ConnectionsLogicSelfTest`.
@@ -55,7 +57,7 @@ enum ConnectionsCardsSelfTest {
             settle(shell)
             for check in [checkTagMatch, checkTagOverflow, checkFindOrConnect, checkSplitButtons, checkKeyCards,
                           checkHostCards, checkHostCardKeyboard, checkGridReflow, checkRecentHosts,
-                          checkHostPanel, checkNewHostPanel, checkUnsavedChanges] {
+                          checkHostPanel, checkNewHostPanel, checkUnsavedChanges, checkKeyPanel, checkNewKeyPanel] {
                 var ok = true
                 check(shell, window, &ok)
                 allOK = allOK && ok
@@ -585,6 +587,132 @@ enum ConnectionsCardsSelfTest {
         var restored = bastion
         restored.username = "ops"
         store.update(restored)
+        settle(shell)
+    }
+
+    // MARK: K6 and K7
+
+    private static func checkKeyPanel(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        hosts.selectModuleTab(named: "Keys")
+        settle(shell)
+        let keyStore = shell.workspace.keyStore
+        var asked: [String] = []
+        var answer = HelmConfirm.Response.cancel
+        HelmConfirm.responderForTests = { request in asked.append(request.title); return answer }
+        defer { HelmConfirm.responderForTests = nil; hosts.selectModuleTab(named: "Hosts"); settle(shell) }
+        guard let ops = keyStore.keys.first(where: { $0.label == "ops-ed25519" }),
+              let ci = keyStore.keys.first(where: { $0.label == "ci-deploy" }) else {
+            fail("K7: the demo keys are missing", &ok)
+            return
+        }
+        hosts.keysGrid.select(key: ops.id.uuidString)
+        settle(shell)
+        guard let panel = hosts.keyPanel else { return fail("K7: selecting a key shows no form in the panel", &ok) }
+        check(shell.inspector.hostedContentView === panel.view && shell.inspector.debugTitle == "ops-ed25519"
+                && panel.presentation == .panel,
+              "K7: the inspector shows \(shell.inspector.debugTitle), not the key's form", &ok)
+        check(panel.debugPublicKey == ops.publicKey && panel.debugFingerprint == ops.fingerprint,
+              "K7: the form does not show the public key and fingerprint", &ok)
+        check(panel.debugFooterTitles == ["Copy Public Key", "More actions"], "C1: a clean key form's footer is \(panel.debugFooterTitles)", &ok)
+        check(panel.debugPanelMenuTitles == ["Delete\u{2026}"], "K7: the key form's menu is \(panel.debugPanelMenuTitles)", &ok)
+
+        // K6: the hosts using it are links to them.
+        let users = shell.workspace.hostStore.hosts.filter { $0.keyID == ops.id }
+        check(panel.debugHostLinks.map(\.title) == users.map(\.label), "K6: the host links are \(panel.debugHostLinks.map(\.title))", &ok)
+        if let link = panel.debugHostLinks.first, let first = users.first {
+            link.performClick(nil)
+            settle(shell)
+            check(hosts.currentTab == .hosts && hosts.hostsGrid.selectedKey == first.id.uuidString
+                    && shell.inspector.debugTitle == first.label,
+                  "K6: the link to \(first.label) went to \(hosts.currentTab) / \(shell.inspector.debugTitle)", &ok)
+            hosts.selectModuleTab(named: "Keys")
+            settle(shell)
+        }
+
+        // C1 for keys: an edit brings Cancel and Save Key, and Return saves.
+        hosts.keysGrid.select(key: ops.id.uuidString)
+        settle(shell)
+        guard let form = hosts.keyPanel else { return }
+        form.debugType("ops-ed25519-renamed", into: form.debugLabelField)
+        check(form.debugIsDirty && form.debugFooterTitles == ["Cancel", "Save Key"], "C1: an edited key form's footer is \(form.debugFooterTitles)", &ok)
+        // H11 for keys: Cancel stays put with the edit.
+        answer = .cancel
+        hosts.keysGrid.select(key: ci.id.uuidString)
+        settle(shell)
+        check(hosts.keysGrid.selectedKey == ops.id.uuidString && hosts.keyPanel === form && form.debugIsDirty
+                && asked.last == "Save changes to \u{201C}ops-ed25519\u{201D}?",
+              "H11: leaving a key with unsaved changes did not ask, or lost them (\(asked))", &ok)
+        check(form.debugCommand(#selector(NSResponder.insertNewline(_:)), in: form.debugLabelField), "C1: Return did not save the key", &ok)
+        settle(shell)
+        check(keyStore.key(id: ops.id)?.label == "ops-ed25519-renamed" && hosts.keyPanel?.debugIsDirty == false
+                && shell.inspector.debugTitle == "ops-ed25519-renamed",
+              "C1: Return saved \(keyStore.key(id: ops.id)?.label ?? "nothing")", &ok)
+        // A certificate edit, then Esc puts the stored key back.
+        guard let again = hosts.keyPanel else { return }
+        again.debugCertificateView.string = "ssh-ed25519-cert-v01@openssh.com AAAAfixture"
+        NotificationCenter.default.post(name: NSText.didChangeNotification, object: again.debugCertificateView.textView)
+        check(again.debugIsDirty, "K7: editing the certificate did not mark the form changed", &ok)
+        again.debugCommand(#selector(NSResponder.cancelOperation(_:)), in: again.debugLabelField)
+        settle(shell)
+        check(keyStore.key(id: ops.id)?.certificate == nil && hosts.keyPanel?.debugCertificateView.string == "",
+              "C1: Esc did not put the stored certificate back", &ok)
+        var restored = ops
+        restored.label = "ops-ed25519"
+        keyStore.update(restored)
+        settle(shell)
+    }
+
+    // MARK: K8
+
+    private static func checkNewKeyPanel(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        hosts.selectModuleTab(named: "Keys")
+        settle(shell)
+        let keyStore = shell.workspace.keyStore
+        var written: [String] = []
+        HostsController.newKeyWriterForTests = { key, _, _ in written.append(key.label) }
+        defer { HostsController.newKeyWriterForTests = nil; hosts.selectModuleTab(named: "Hosts"); settle(shell) }
+        let before = keyStore.keys.count
+        hosts.debugAddKeySplit.mainButton.performClick(nil)
+        settle(shell)
+        guard let panel = hosts.keyPanel, hosts.keyPanelKey == HostsController.newKeyPanelKey else {
+            return fail("K8: New Key did not open a new key's form in the panel", &ok)
+        }
+        check(shell.inspector.debugTitle == "New Key" && shell.inspector.hostedContentView === panel.view && panel.view.window != nil,
+              "K8: the panel shows \(shell.inspector.debugTitle)", &ok)
+        check(panel.debugFooterTitles == ["Cancel", "Save Key"], "K8: a new key's footer is \(panel.debugFooterTitles)", &ok)
+        check(panel.debugMode == "generate", "K8: a new key's form opens in \(panel.debugMode)", &ok)
+        // Paste a Key opens the same form on Import.
+        hosts.debugAddKeySplit.debugPick("Paste a Key\u{2026}")
+        settle(shell)
+        check(hosts.keyPanel?.debugMode == "import", "K8: Paste a Key opened \(hosts.keyPanel?.debugMode ?? "-")", &ok)
+        guard let form = hosts.keyPanel else { return }
+        // Save before there is a key refuses, and says why.
+        form.debugType("deploy-2026", into: form.debugLabelField)
+        check(!form.savePanel() && form.debugStatus.contains("before saving") && keyStore.keys.count == before,
+              "K8: Save with no key generated saved, or said \(form.debugStatus)", &ok)
+        form.debugSetPendingKey(publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFixtureOnly fixture@example.test",
+                                fingerprint: "SHA256:fixture0nly000000000000000000000000000000")
+        form.debugFooterButtons.last?.performClick(nil)
+        settle(shell)
+        guard let created = keyStore.keys.first(where: { $0.label == "deploy-2026" }) else {
+            return fail("K8: Save Key saved nothing", &ok)
+        }
+        check(written == ["deploy-2026"], "K8: the Keychain write seam saw \(written)", &ok)
+        check(hosts.keysGrid.selectedKey == created.id.uuidString && shell.inspector.debugTitle == "deploy-2026"
+                && hosts.keyPanel?.debugFooterTitles == ["Copy Public Key", "More actions"],
+              "K8: after Save the panel shows \(shell.inspector.debugTitle)", &ok)
+        keyStore.update(created)
+        // The fixture key leaves the store directly: `delete` also clears
+        // Keychain items, and this suite never wrote any.
+        var keys = keyStore.keys
+        keys.removeAll { $0.id == created.id }
+        if keyStore.key(id: created.id) != nil {
+            keyStore.debugReplaceAll(keys)
+        }
         settle(shell)
     }
 

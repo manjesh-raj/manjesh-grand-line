@@ -198,7 +198,10 @@ extension HostsController {
     /// H11 for the panel's own close button and the toolbar's inspector
     /// button.
     func inspectorShouldClose() -> Bool {
-        guard activeTab == .hosts else { return true }
-        return mayLeaveHostPanel(for: nil)
+        switch activeTab {
+        case .hosts: return mayLeaveHostPanel(for: nil)
+        case .keys: return mayLeaveKeyPanel(for: nil)
+        case .snippets: return true
+        }
     }
 }
