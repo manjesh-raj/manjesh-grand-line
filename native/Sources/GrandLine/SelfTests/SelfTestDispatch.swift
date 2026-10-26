@@ -1269,6 +1269,13 @@ enum SelfTestDispatch {
             exit(ReviewTwoUXSelfTest.run() ? 0 : 1)
         }
 
+        // R2-PERF-01: the launch path's signposts, timed in process - the real
+        // app delegate, its shell per layout and a first display, against this
+        // process's scratch stores. Window-backed.
+        if ProcessInfo.processInfo.environment["FM_RUN_LAUNCH_TIMING_TESTS"] == "1" {
+            exit(LaunchTimingSelfTest.run() ? 0 : 1)
+        }
+
         // The second full review's accessibility and performance findings
         // (R2-A11Y-03 to 05, R2-PERF-01 to 06): the pure half - the label words,
         // the Updates check record and the attention card's staleness check.

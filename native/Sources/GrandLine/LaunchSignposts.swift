@@ -46,18 +46,44 @@ enum LaunchSignposts {
     /// a name is a fixed label for a row in Instruments, never data.
     @discardableResult
     static func measure<T>(_ name: StaticString, _ body: () throws -> T) rethrows -> T {
-        let state = signposter.beginInterval(name)
-        defer { signposter.endInterval(name, state) }
+        let state = begin(name)
+        defer { end(name, state) }
         return try body()
     }
 
     /// The two-call form, for an interval that cannot be wrapped in a closure
     /// - an initialiser that assigns stored properties, or `loadView`.
     static func begin(_ name: StaticString) -> OSSignpostIntervalState {
-        signposter.beginInterval(name)
+        #if FM_SELFTESTS
+        debugBegin(name)
+        #endif
+        return signposter.beginInterval(name)
     }
 
     static func end(_ name: StaticString, _ state: OSSignpostIntervalState) {
         signposter.endInterval(name, state)
+        #if FM_SELFTESTS
+        debugEnd(name)
+        #endif
     }
+
+    #if FM_SELFTESTS
+    /// R2-PERF-01: the same intervals, timed in process, for
+    /// `LaunchTimingSelfTest` - the closest this repository can come to the
+    /// Instruments session without launching an app. `nil` (the default)
+    /// records nothing. Main thread only, like the launch path itself.
+    static var debugRecording: [(name: String, milliseconds: Double)]?
+    private static var debugStarts: [String: [UInt64]] = [:]
+
+    private static func debugBegin(_ name: StaticString) {
+        guard debugRecording != nil else { return }
+        debugStarts["\(name)", default: []].append(DispatchTime.now().uptimeNanoseconds)
+    }
+
+    private static func debugEnd(_ name: StaticString) {
+        guard debugRecording != nil, let start = debugStarts["\(name)"]?.popLast() else { return }
+        let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+        debugRecording?.append(("\(name)", elapsed))
+    }
+    #endif
 }

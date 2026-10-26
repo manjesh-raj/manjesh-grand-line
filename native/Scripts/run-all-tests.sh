@@ -373,6 +373,8 @@ NEEDS_SESSION=(
   # sidebar shell. Its words, caches and source guards
   # (`FM_RUN_REVIEW2_A11Y_PERF_MODEL_TESTS`) are deliberately NOT here.
   "FM_RUN_REVIEW2_A11Y_PERF_TESTS"  # session-not-window: builds its windows via ReviewTourLab.makeOffScreenSplitShell()
+  # R2-PERF-01: the launch path timed in process, in an off-screen window.
+  "FM_RUN_LAUNCH_TIMING_TESTS"
   "FM_RUN_HELM_KIT_VIEW_TESTS"
   # `fm/grandline-claude-widget-refresh-shift`: builds a real `HelmModuleCard`
   # and a real hub in real windows and reads resolved header frames back after
