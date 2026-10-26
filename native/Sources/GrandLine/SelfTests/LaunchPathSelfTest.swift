@@ -334,9 +334,11 @@ enum LaunchPathSelfTest {
     /// turn; this proves the launch path uses it. `applicationDidFinishLaunching`
     /// cannot run in a suite, so it is a source guard on the function body.
     private static func test_sessionRestoreQueuesBackgroundHostPages() -> String? {
-        guard let main = source("main.swift"),
-              let start = main.range(of: "private func restoreSessionIfNeeded(") else {
-            return "could not find restoreSessionIfNeeded in main.swift - the guard would silently pass"
+        // R2-ARCH-02: `SessionRestoreCoordinator.swift` holds it now, part of
+        // the app delegate's source.
+        guard let main = SelfTestSources.appDelegateSource(),
+              let start = main.range(of: "func restoreSessionIfNeeded(") else {
+            return "could not find restoreSessionIfNeeded in the app delegate - the guard would silently pass"
         }
         let rest = main[start.upperBound...]
         let body = String(rest.prefix(upTo: rest.range(of: "\n    }\n")?.lowerBound ?? rest.endIndex))
@@ -357,7 +359,7 @@ enum LaunchPathSelfTest {
     private static func test_theLaunchPathCarriesItsSignposts() -> String? {
         // Stage 3 of the modular-shell migration: the shell's `init` is the
         // base class's, and each window layout has a `loadView` of its own.
-        guard let shell = source("WorkspaceShellController.swift"), let main = source("main.swift"),
+        guard let shell = source("WorkspaceShellController.swift"), let main = SelfTestSources.appDelegateSource(),
               let classic = source("AppShellController.swift"), let split = source("MainSplitShellController.swift") else {
             return "could not read the app's sources - the guard would silently pass"
         }
@@ -370,7 +372,7 @@ enum LaunchPathSelfTest {
             }
         }
         guard main.contains("LaunchSignposts.begin(\"restoreSessionIfNeeded\")") else {
-            return "main.swift has no restoreSessionIfNeeded interval"
+            return "the app delegate has no restoreSessionIfNeeded interval"
         }
         for store in ["HostStore", "SSHKeyStore", "SnippetStore", "ShiftStore", "DictationStore",
                       "CommandLibraryStore", "ScheduleStore", "DocsRunbookStore"] {

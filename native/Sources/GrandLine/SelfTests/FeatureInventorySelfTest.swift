@@ -667,8 +667,14 @@ enum FeatureInventorySelfTest {
             if delegateParts.contains(stem) { return "main" }
             return stem.hasSuffix("+Classic") ? String(stem.dropLast("+Classic".count)) : stem
         }
+        // `main.swift` first, then the delegate's parts in their own order, so
+        // a guard reading positions inside `main` reads them as they ran.
+        let order = SelfTestSources.appDelegateFiles.map { ($0 as NSString).deletingPathExtension }
+        let sorted = files.sorted { lhs, rhs in
+            (order.firstIndex(of: lhs.0) ?? order.count) < (order.firstIndex(of: rhs.0) ?? order.count)
+        }
         var merged: [(String, String)] = []
-        for (stem, text) in files {
+        for (stem, text) in sorted {
             let key = page(stem)
             if let index = merged.firstIndex(where: { $0.0 == key }) {
                 merged[index].1 += "\n" + text

@@ -988,71 +988,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    // MARK: F2 - session restoration
-
-    /// Reopens where the captain was. See `SessionRestore.swift` for exactly
-    /// what is and is not restored.
-    ///
-    /// **GL-31 wins.** A machine with no firstmate home resolved lands on
-    /// Bootstrap, and a saved destination must not drag it away from the page
-    /// that fixes the cause - that landing is the whole point of GL-31's
-    /// exception. Tabs are still restored in that case; only the destination
-    /// defers.
-    private func restoreSessionIfNeeded(_ saved: SessionRestoreState?) {
-        guard let state = saved, !state.isEmpty else { return }
-        // T-14d: the first-frame-to-idle interval PERF-08 is measured by.
-        let interval = LaunchSignposts.begin("restoreSessionIfNeeded")
-        defer { LaunchSignposts.end("restoreSessionIfNeeded", interval) }
-
-        appShell.workspace.navigator.restoreTabs(from: state)
-
-        // Every host that had a page, reconnected with `navigate: false` - so
-        // each page exists but stays hidden, and (per `ConsoleController.
-        // addTab`'s `hasAppeared` guard) forks no `ssh` until the captain
-        // actually opens it. The one that was *showing* is connected
-        // straight away, with navigation, so it is the page that comes up.
-        // `uniquingKeysWith`, never `uniqueKeysWithValues`: the latter traps
-        // on a duplicate key, and this runs on the launch path against a file
-        // that can be hand-edited. `HostStore` should never produce two hosts
-        // with one id, but a crash at launch is a far worse answer to that
-        // than quietly keeping the first.
-        let byID = Dictionary(hostStore.hosts.map { ($0.id.uuidString, $0) }, uniquingKeysWith: { first, _ in first })
-        let plan = SessionRestorePlan.hosts(from: state, knownHostIDs: Set(byID.keys))
-        // PERF-08: queued rather than built here. The shell builds one page
-        // per run-loop turn (and a page the captain switches to at once), so
-        // five restored hosts are five short turns rather than one long one
-        // right after the first frame. Each still gets its strip pill now, in
-        // this order, so the showing host below still registers last.
-        appShell.workspace.hosts.queueRestoredHostConsoles(plan.background.compactMap { id in
-            byID[id].map { ($0, $0.sshArguments(allHosts: hostStore.hosts)) }
-        })
-
-        guard FirstmateHome.homeOk() else {
-            AppLog.lifecycle.info("session restore: tabs restored, destination left to GL-31's Bootstrap landing")
-            return
-        }
-
-        if let showing = plan.showing, let host = byID[showing] {
-            connectToHost(host)
-        } else {
-            appShell.workspace.navigator.restoreDestination(from: state)
-        }
-    }
-
-    /// Records where the captain is, for the next launch.
-    ///
-    /// Called on quit and on every navigation - the second is what makes this
-    /// survive a crash or a force-quit, and it is cheap: the comparison is
-    /// against `SessionRestoreStore`'s in-memory copy (R2-BUG-11), and the
-    /// file is written only when the result actually differs, since most
-    /// navigations change nothing.
-    func saveSessionState() {
-        guard appShell.isViewLoaded else { return }
-        let state = appShell.workspace.navigator.captureSessionState()
-        guard state != AppSettings.shared.sessionRestoreState else { return }
-        AppSettings.shared.sessionRestoreState = state
-    }
-
     /// The main window's saved-frame key. Once the captain resizes or zooms
     /// the window, AppKit restores that instead of the default below.
     static let windowAutosaveName = "GrandLineMainWindow"
@@ -1439,7 +1374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// (`ConsoleController.connectSSHIfNeeded`); this method's only job is
     /// resolving the host's full `ssh` argv, which needs `hostStore.hosts`
     /// for jump-chain resolution (`Host.sshArguments(allHosts:)`).
-    private func connectToHost(_ host: Host) {
+    func connectToHost(_ host: Host) {
         appShell.workspace.hosts.connectHost(host, args: host.sshArguments(allHosts: hostStore.hosts))
     }
 
@@ -1498,128 +1433,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.appShell.showToast(MultiHostSend.resultMessage(outcome))
         }
         appShell.presentAsSheet(picker)
-    }
-
-    // MARK: Host editor window (nav-redesign task, item 3)
-
-    /// Open (or bring forward) the Add/Edit Host form as its own window -
-    /// the same visual weight as Settings, not a sheet cramped into the
-    /// narrow Hosts panel. `HostEditorController`'s fields and its inline
-    /// "+ New Key…" flow (which still opens as a sheet on top of *this*
-    /// window) are unchanged from PR #14.
-    func presentHostEditor(for host: Host?) {
-        let existingLabels = Set(hostStore.hosts.filter { $0.id != host?.id }.map { $0.label } + ["Firstmate"])
-        let editor = HostEditorController(host: host, keyStore: keyStore, snippets: snippetStore.snippets, existingLabels: existingLabels)
-        editor.onSave = { [weak self] saved in
-            guard let self else { return }
-            if self.hostStore.host(id: saved.id) != nil {
-                self.hostStore.update(saved)
-            } else {
-                self.hostStore.add(saved)
-            }
-            self.appShell.showToast("\u{201C}\(saved.label)\u{201D} saved")
-        }
-        // GL-06: the host editor window's Delete button was unconfirmed too,
-        // and deleting a host also tears down that host's live console page
-        // (see `HostStore.observe` in `applicationDidFinishLaunching`). Same
-        // copy as the Hosts list's own row-level confirmation, via the one
-        // shared prompt. Deferred a runloop turn because `deleteHost()` closes
-        // the editor window right after this returns.
-        editor.onDelete = { [weak self] id in
-            DispatchQueue.main.async {
-                guard let self, let host = self.hostStore.host(id: id) else { return }
-                guard DestructiveConfirm.confirm(
-                    message: "Delete \u{201C}\(host.label)\u{201D}?",
-                    detail: "This removes the saved host and closes its console page. "
-                          + "It does not affect any running session."
-                ) else { return }
-                self.hostStore.delete(id: id)
-            }
-        }
-
-        // Reuse one window across repeated Add/Edit calls (matching the Keys/
-        // Snippets windows below) rather than piling up a new one on every
-        // "+" click - only `contentViewController` needs to change since a
-        // fresh `HostEditorController` is built above for whichever host is
-        // being edited this time.
-        let win: NSWindow
-        if let existing = hostEditorWindow {
-            win = existing
-        } else {
-            win = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 640, height: 780),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                backing: .buffered,
-                defer: false
-            )
-            win.isReleasedWhenClosed = false
-            // cockpit-native-host-form-fixes, Fix 1: without this, opening
-            // Add/Edit Host while the main `AppShellController` window is
-            // full screen makes macOS treat this second regular window as a
-            // tile to dock into that same full-screen Space (its default
-            // behavior for a second standard window), stretching the
-            // centered form back out to full width - the exact regression
-            // the centered-form fix (PR #20) was meant to close, just gated
-            // behind full-screen mode. `.fullScreenAuxiliary` tells AppKit
-            // this window is allowed to float over a full-screen Space
-            // instead of tiling into it; `.moveToActiveSpace` matters
-            // because this window is cached and reused (`hostEditorWindow`)
-            // for the app's whole lifetime, so a later reopen always
-            // surfaces on whichever Space (full-screen or not) is active at
-            // that moment, not the Space it happened to be in last time.
-            // `.floating` keeps it visually above the full-screen window's
-            // own content - Space membership alone doesn't guarantee that.
-            win.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
-            win.level = .floating
-            // F2(a): A1's window fusion, applied to the one other real window
-            // this app opens. Before this, the Host editor wore a stock
-            // titlebar with the teal domain ribbon starting *underneath* it -
-            // two stacked strips of chrome, which is precisely the shape A1
-            // removed from the main window. `WindowChromeFusion.apply` makes
-            // the titlebar transparent and titleless while keeping
-            // close/minimise/zoom, so the ribbon runs edge to edge along the
-            // very top and the lights sit over it.
-            //
-            // The lights stay where AppKit puts them: this window has no
-            // floating bar to hand them to, so the natural top-leading cluster
-            // is right, and the sheet reserves room below it rather than the
-            // cluster moving (`reservesWindowChromeInset`).
-            WindowChromeFusion.apply(to: win)
-            win.followHelmTheme()
-            hostEditorWindow = win
-            // GL-09: a `.floating` window stays above the lock overlay - which
-            // is a subview of the *main* window, not a screen-level shield - so
-            // a Host Editor open at lock time remained fully usable, editing and
-            // saving real host records. Registered once, when the window is
-            // created; the gate orders it out on every lock.
-            AppLockGate.shared.registerSecondaryWindow(owner: self) { [weak self] in self?.hostEditorWindow }
-        }
-        // Still set, though `titleVisibility` is `.hidden` under F2(a)'s
-        // fusion: the Window menu, Mission Control and the proxy menu all read
-        // it, and the sheet's own heading is what the captain actually sees.
-        win.title = host == nil ? "New Host" : "Edit Host"
-        win.contentViewController = editor
-        // Set here rather than in the controller so the two halves of F2(a) -
-        // fusing the window and reserving room for the lights it now shows
-        // over the content - sit in one function and cannot drift apart.
-        (editor.view as? HelmFormSheet)?.reservesWindowChromeInset = true
-        // Fix 2 (third round): the form's content column caps at 520pt and
-        // centers (`HostEditorController.maxContentWidth`), so 568pt
-        // (520 + 24pt margin each side) is the narrowest width that shows the
-        // whole column without horizontal clipping - AppKit enforces that as
-        // a live floor via the content view controller's fitting size (verified
-        // with a live probe: dragging the window narrower than 568 settles
-        // back to 568 on the next layout pass, same as any AppKit dialog
-        // window whose content can't shrink further). 580 leaves a hair of
-        // margin above that floor; 640 is the default so the centering is
-        // visibly obvious - not flush with the window edges - without the
-        // captain having to widen it by hand. Height has no such floor (the
-        // form scrolls vertically), so 620 stays the height floor unchanged.
-        win.contentMinSize = NSSize(width: 580, height: 620)
-        win.setContentSize(NSSize(width: 640, height: 780))
-        win.center()
-        win.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: Shift power features (phase 5)
