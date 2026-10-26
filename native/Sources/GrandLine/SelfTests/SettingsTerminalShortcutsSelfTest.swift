@@ -36,7 +36,8 @@ enum SettingsTerminalShortcutsSelfTest {
         for check in [checkTheTourCanSelectASettingsPage,
                       checkTheScrollbackRowCommitsAndWarnsBeforeTrimming,
                       checkTheShortcutsPageListsSearchesAndFilters,
-                      checkRecordingAClashAsksAndResetsPutItBack] {
+                      checkRecordingAClashAsksAndResetsPutItBack,
+                      checkTheLinksBetweenTheSurfaces] {
             var ok = true
             autoreleasepool { check(&ok) }
             allOK = allOK && ok
@@ -388,6 +389,65 @@ enum SettingsTerminalShortcutsSelfTest {
         check(toldCapture.last == .quickCaptureDefault, "the capture hotkey was not told about the restore", &ok)
         check(!page.debugRestoreAllButton.isEnabled, "Restore All stays enabled with nothing changed", &ok)
         if ok { print("  ok   asked with the owner, Cancel, Use Anyway, a free chord, the row reset and Restore All") }
+    }
+
+    // MARK: T7 - the links between surfaces
+
+    /// Settings > Terminal keeps no recorders of its own and its button
+    /// opens Settings > Shortcuts; the Help sheet's Customize… closes the
+    /// sheet and calls through, and is not drawn with nowhere to go; and the
+    /// app's own sheet is built with that call wired to the Shortcuts page.
+    ///
+    /// Injection: drop `onCustomize` from `showKeyboardShortcuts` and the
+    /// source guard fails; drop `select(.shortcuts)` from `openShortcutsPage`
+    /// and the button press fails.
+    private static func checkTheLinksBetweenTheSurfaces(_ ok: inout Bool) {
+        print("\n-- T7: the links between surfaces --")
+        let settings = makeSettings()
+        let window = mount(settings)
+        defer { withExtendedLifetime(window) {} }
+        settings.select(.terminal)
+
+        func recorders(in view: NSView) -> Int {
+            (view is KeyChordRecorderView ? 1 : 0) + view.subviews.reduce(0) { $0 + recorders(in: $1) }
+        }
+        let terminalSections = settings.debugSections(in: .terminal)
+        check(!terminalSections.isEmpty, "the Terminal page built no sections - the check below would be vacuous", &ok)
+        check(terminalSections.reduce(0) { $0 + recorders(in: $1) } == 0,
+              "Settings > Terminal still draws its own shortcut recorders", &ok)
+        let link = terminalSections.flatMap(\.group.rows).first { $0.titleLabel.stringValue == "Tab, split and pane shortcuts" }
+        guard let button = link?.control as? HelmButton else {
+            fail("Settings > Terminal has no link row to Shortcuts", &ok)
+            return
+        }
+        button.performClick(nil)
+        check(settings.debugSelectedCategory == .shortcuts,
+              "the link opened \(settings.debugSelectedCategory), want Shortcuts", &ok)
+
+        var customized = 0
+        let sheet = KeyboardShortcutsSheetController(sections: []) { customized += 1 }
+        _ = sheet.view
+        check(!sheet.debugCustomizeButton.isHidden, "the Help sheet draws no Customize… button", &ok)
+        sheet.debugCustomizeButton.performClick(nil)
+        check(customized == 1, "Customize… called through \(customized) times, want once", &ok)
+        let bare = KeyboardShortcutsSheetController(sections: [])
+        _ = bare.view
+        check(bare.debugCustomizeButton.isHidden, "a sheet with nowhere to send the captain draws a dead Customize…", &ok)
+
+        // The app's own sheet: a behavioural check needs the whole app
+        // delegate, so this one is a source guard on the one call site.
+        if let dir = SelfTestSources.appSourceDirectory(),
+           let text = try? String(contentsOf: dir.appendingPathComponent("AppComposition.swift"), encoding: .utf8),
+           let start = text.range(of: "@objc func showKeyboardShortcuts()") {
+            let body = String(text[start.upperBound...].prefix(900))
+            check(body.contains("KeyboardShortcutsSheetController(sections: sections) {")
+                    && body.contains("showShortcutsSettings()")
+                    && body.contains("settings.select(.shortcuts)"),
+                  "Help › Keyboard Shortcuts… no longer wires Customize… to Settings › Shortcuts", &ok)
+        } else {
+            fail("AppComposition.swift's showKeyboardShortcuts could not be found - the guard would pass silently", &ok)
+        }
+        if ok { print("  ok   no recorders on Terminal, its link, Customize… and the app's wiring") }
     }
 }
 

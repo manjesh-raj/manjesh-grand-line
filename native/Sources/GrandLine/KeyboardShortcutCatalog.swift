@@ -19,7 +19,7 @@
 // has no item for them:
 //
 //   - the terminal shortcuts (`AppSettings.terminalShortcuts`), which are
-//     Settings > Terminal's recorder rows, and
+//     recorded on Settings > Shortcuts, and
 //   - the dictation hotkey (`AppSettings.dictationShortcut`).
 //
 // Both are read through `AppSettings`, which is what UX3's "the same tables

@@ -71,8 +71,10 @@ enum SettingsSidebarNavigationSelfTest {
     /// the Termius-style plan added the Terminal page's History card. Twenty-nine since T5 added
     /// the Shortcuts page, whose five cards in a suite are Terminal, Capture,
     /// Dictation, Tabs and pages, and Global - a suite has no installed menu
-    /// bar, so none of the menu's sections.
-    private static let expectedCardCount = 29
+    /// bar, so none of the menu's sections. Twenty-seven since T7 replaced
+    /// the Terminal page's three shortcut cards (Tabs, Split the terminal,
+    /// Split panes) with one Keyboard shortcuts card that links to Shortcuts.
+    private static let expectedCardCount = 27
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see

@@ -199,7 +199,7 @@ final class AppSettings {
         }
     }
 
-    /// Settings > Terminal Shortcuts' nine configurable Console bindings
+    /// Settings > Shortcuts' nine configurable Console bindings
     /// (`fm/grand-line-terminal-shortcuts-settings`) - moving between tabs,
     /// splitting a terminal, and moving between the panes that produces.
     ///

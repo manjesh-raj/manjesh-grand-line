@@ -667,7 +667,7 @@ final class Workspace {
     /// app delegate wiring it at launch does not build the Dictation page.
     var onKeyChordChanged: ((KeyChord) -> Void)?
 
-    /// Fired whenever a Settings > Terminal Shortcuts recorder captures a new
+    /// Fired whenever a Settings > Shortcuts recorder captures a new
     /// combo, or the captain resets them all. Forwarded to the app delegate,
     /// which owns the live `TabKeyboardShortcuts` monitor - the same
     /// forward-don't-own convention `onKeyChordChanged` above already follows

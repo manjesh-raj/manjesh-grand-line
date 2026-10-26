@@ -174,7 +174,8 @@ final class SettingsShortcutsPage: NSObject {
         }
         let recorder = KeyChordRecorderView(shortcut: shortcut.current(in: settings), mode: shortcut.recorderMode)
         recorder.setAccessibilityLabel("\(row.title) shortcut")
-        // One width for the column, as Settings > Terminal's recorders had:
+        // One width for the column, as Settings > Terminal's recorders had
+        // before T7 moved them here:
         // a recorder sizes itself to its chord, and a ragged column of them
         // does not read as one.
         recorder.widthAnchor.constraint(equalToConstant: Self.controlWidth).isActive = true

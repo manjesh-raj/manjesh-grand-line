@@ -501,19 +501,12 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private lazy var textSizeRelaunchButton = makeRelaunchButton()
     private let notifySwitch = HelmToggle()
 
-    private var shortcutRecorders: [TerminalShortcutAction: KeyChordRecorderView] = [:]
-
     /// T5: Settings > Shortcuts. Built with the other pages in `loadView`.
     /// What it changes is forwarded the same way this page's own recorders
     /// forward, and the Capture page's recorder is refreshed in place.
     private lazy var shortcutsPage: SettingsShortcutsPage = {
         let page = SettingsShortcutsPage(mainMenu: shortcutsMainMenu)
-        page.onTerminalShortcutsChanged = { [weak self] set in
-            guard let self else { return }
-            self.onTerminalShortcutsChanged?(set)
-            for (action, recorder) in self.shortcutRecorders { recorder.shortcut = set[action] }
-            self.refreshShortcutControls()
-        }
+        page.onTerminalShortcutsChanged = { [weak self] set in self?.onTerminalShortcutsChanged?(set) }
         page.onQuickCaptureShortcutChanged = { [weak self] chord in
             self?.onQuickCaptureShortcutChanged?(chord)
             self?.refreshCaptureControls()
@@ -537,7 +530,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// property of the *process*, and a headless runner's answer is whatever
     /// the machine happens to say. Defaults to the real call.
     var quickCaptureAccessibilityTrusted: (() -> Bool)?
-    private var resetShortcutsButton: HelmButton?
 
     private let morningBriefingSwitch = HelmToggle()
 
@@ -1724,41 +1716,18 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             ]), foot: "A new depth applies to every open tab at once. Lowering it drops the oldest lines of any pane holding more, so you are asked first."),
         ]
 
-        // One section per shortcut group, which is the reference's own
-        // arrangement (Tab shortcuts / Split the terminal / Panes) and reads
-        // as three ideas rather than nine rows under one heading.
-        for group in TerminalShortcutAction.Group.allCases {
-            var rows: [SettingsRow] = []
-            for action in TerminalShortcutAction.allCases where action.group == group {
-                // `.command`: a Console shortcut has to be a real key with a
-                // modifier. See `KeyChordRecorderView.Mode`.
-                let recorder = KeyChordRecorderView(shortcut: AppSettings.shared.terminalShortcuts[action],
-                                                    mode: .command)
-                // One width for all nine, so they read as a column: a
-                // recorder sizes itself to whatever chord it shows, and
-                // leaving them natural lands nine controls at nine widths.
-                // Wide enough for the longest shipped default (⌃⌘Return) and
-                // for the recording prompt to stay readable.
-                recorder.widthAnchor.constraint(equalToConstant: 168).isActive = true
-                recorder.onChange = { [weak self] chord in self?.shortcutChanged(action, to: chord) }
-                shortcutRecorders[action] = recorder
-                rows.append(SettingsRow(title: action.title, description: action.detail, control: recorder))
-            }
-            let isLast = group == TerminalShortcutAction.Group.allCases.last
-            var aside: NSView?
-            if isLast {
-                let reset = HelmButton(title: "Restore Defaults", variant: .secondary,
-                                       target: self, action: #selector(resetTerminalShortcuts))
-                resetShortcutsButton = reset
-                aside = reset
-            }
-            sections.append(SettingsSection(
-                heading: group.title,
-                aside: aside,
-                group: SettingsGroup(rows: rows),
-                foot: isLast ? "Click a shortcut, then press the new keys. Esc cancels, Delete clears." : nil))
-        }
-        refreshShortcutControls()
+        // T7: the nine tab, split and pane chords are recorded on Settings >
+        // Shortcuts now, beside every other chord the app has, where a new
+        // one is checked against all of them. This page links there rather
+        // than keeping a second set of recorders that would check nothing.
+        let openShortcuts = HelmButton(title: "Open Shortcuts", variant: .secondary,
+                                       target: self, action: #selector(openShortcutsPage))
+        openShortcuts.setAccessibilityLabel("Open \(PlaceName.of(.settings)), Shortcuts")
+        sections.append(SettingsSection(heading: "Keyboard shortcuts", group: SettingsGroup(rows: [
+            SettingsRow(title: "Tab, split and pane shortcuts",
+                        description: "Moving between tabs, splitting a terminal and moving between its panes. Change them, see what else uses the same keys, or restore the defaults on the Shortcuts page.",
+                        control: openShortcuts),
+        ])))
         return sections
     }
 
@@ -1830,30 +1799,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         AppSettings.shared.defaultShellCwd = url.path
     }
 
-    private func shortcutChanged(_ action: TerminalShortcutAction, to chord: KeyChord) {
-        var set = AppSettings.shared.terminalShortcuts
-        set[action] = chord
-        AppSettings.shared.terminalShortcuts = set
-        onTerminalShortcutsChanged?(set)
-        refreshShortcutControls()
-        shortcutsPage.reload()
-    }
-
-    @objc private func resetTerminalShortcuts() {
-        var set = AppSettings.shared.terminalShortcuts
-        set.reset()
-        AppSettings.shared.terminalShortcuts = set
-        onTerminalShortcutsChanged?(set)
-        // Every recorder, not only the ones the captain changed: `reset()`
-        // clears the whole map, so a row still showing a custom chord would
-        // be showing a binding that no longer exists.
-        for (action, recorder) in shortcutRecorders { recorder.shortcut = set[action] }
-        refreshShortcutControls()
-        shortcutsPage.reload()
-    }
-
-    private func refreshShortcutControls() {
-        resetShortcutsButton?.isEnabled = AppSettings.shared.terminalShortcuts.hasCustomBindings
+    /// T7: Settings > Terminal's link to the page that records its chords.
+    @objc private func openShortcutsPage() {
+        select(.shortcuts)
     }
 
     // MARK: - Capture (fm/grandline-capture-global-hotkey-configurable)
@@ -2845,14 +2793,13 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         for card in themeCards { card.applyTheme(theme) }
         systemLightPopUp.applyTheme(theme)
         systemDarkPopUp.applyTheme(theme)
-        // Every recorder on this page, Capture's included - a
+        // Every recorder on this page - Capture's here, and the Shortcuts
+        // page's through `shortcutsPage.applyTheme` above. A
         // `KeyChordRecorderView` paints its own fill, border and ink from the
         // theme and renders as an unfilled rectangle with default ink until
         // this runs. Missed once while Capture's page was being added, and
         // nothing failed: the control worked perfectly and looked wrong.
-        for recorder in shortcutRecorders.values + [captureShortcutRecorder].compactMap({ $0 }) {
-            recorder.applyTheme(theme)
-        }
+        captureShortcutRecorder?.applyTheme(theme)
         for toggle in [autoReconnectSwitch, trimBackgroundSwitch, appLockSwitch, notifySwitch, morningBriefingSwitch,
                        followSystemSwitch, compactModeSwitch, compactDockSwitch,
                        compactBadgeSwitch] + moduleSwitches.map(\.toggle) {
