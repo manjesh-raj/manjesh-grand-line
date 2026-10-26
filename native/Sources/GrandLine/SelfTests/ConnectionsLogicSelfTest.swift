@@ -24,7 +24,7 @@ enum ConnectionsLogicSelfTest {
 
     static func run() -> Bool {
         var allOK = true
-        for check in [checkTagChipFit, checkGridPlan, checkLastConnected] {
+        for check in [checkTagChipFit, checkGridPlan, checkLastConnected, checkKeyWords] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -70,6 +70,17 @@ enum ConnectionsLogicSelfTest {
         check(HostsController.recentHosts([a, c, b]).map(\.label) == ["b", "a"],
               "X2: the recent row is newest first and leaves out a host never connected", &ok)
         check(HostsController.recentHosts([a, b], limit: 1).map(\.label) == ["b"], "X2: the recent row honours its limit", &ok)
+    }
+
+    // MARK: K4
+
+    private static func checkKeyWords(_ ok: inout Bool) {
+        let short = HostsController.shortFingerprint("SHA256:abcdefghijklmnopqrstuvwxyz0123456789")
+        check(short == "SHA256:abcdefghijkl\u{2026}", "K4: the short fingerprint is \(short)", &ok)
+        check(HostsController.shortFingerprint("SHA256:abc") == "SHA256:abc", "K4: a short hash gains an ellipsis", &ok)
+        check(HostsController.lastUsedText(nil) == "Never used", "K4: a key never used reads \(HostsController.lastUsedText(nil))", &ok)
+        let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        check(HostsController.lastUsedText(now.addingTimeInterval(-5), now: now) == "Used just now", "K4: a key used now reads otherwise", &ok)
     }
 
     // MARK: H9

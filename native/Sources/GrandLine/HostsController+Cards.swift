@@ -90,16 +90,12 @@ extension HostsController {
         applyKeysViewMode(list: list)
     }
 
-    /// The Keys tab's grid - K1 builds it.
-    var keysGridIfBuilt: HelmCardGrid? { nil }
-    func applyKeysViewMode(list: Bool) {}
-
     /// The grid showing on `tab`, or `nil` where the table is.
     func visibleGrid(for tab: HostsTab) -> HelmCardGrid? {
         guard drawsSidebarLayout, !AppSettings.shared.connectionsShowList else { return nil }
         switch tab {
         case .hosts: return hostsGrid
-        case .keys: return keysGridIfBuilt
+        case .keys: return keysGrid
         case .snippets: return nil
         }
     }

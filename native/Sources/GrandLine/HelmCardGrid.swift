@@ -476,6 +476,10 @@ final class HelmGridCardView: HoverHighlightView {
         badgeRow.spacing = HelmMetrics.s2
         badgeRow.alignment = .centerY
         badgeRow.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        // A stack has no intrinsic size, so its own hugging is the one that
+        // keeps the badges together rather than spread over the card
+        // (gotcha (12)).
+        badgeRow.setHuggingPriority(.required, for: .horizontal)
         let text = NSStackView(views: [titleLabel, subtitleLabel, statusPill, detailLabel, badgeRow])
         text.orientation = .vertical
         text.alignment = .leading
@@ -563,6 +567,7 @@ final class HelmGridCardView: HoverHighlightView {
             let item = NSStackView(views: parts)
             item.orientation = .horizontal
             item.spacing = HelmMetrics.s0
+            item.setHuggingPriority(.required, for: .horizontal)
             item.toolTip = badge.toolTip
             item.setAccessibilityElement(true)
             item.setAccessibilityRole(.staticText)

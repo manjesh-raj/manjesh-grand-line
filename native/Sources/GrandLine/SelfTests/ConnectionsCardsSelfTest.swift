@@ -16,6 +16,8 @@
 //     the bolt and pencil on every card, the grid reflowing as the inspector
 //     opens at 1512, 1100 and 1100.5 on the pixel grid, the keyboard, the
 //     Larger text scale, and the recent row with "last connected".
+//   - K1, K3, K4 and K6: the keys as cards, key search, what a key card says,
+//     and Touch ID's chip in the Keys row.
 //
 // Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
 // The arithmetic is asserted headless in `ConnectionsLogicSelfTest`.
@@ -47,7 +49,7 @@ enum ConnectionsCardsSelfTest {
             defer { window.orderOut(nil) }
             ReviewTourLab.seedDemoHosts(shell.workspace)
             settle(shell)
-            for check in [checkHostCards, checkHostCardKeyboard, checkGridReflow, checkRecentHosts, checkTagMatch,
+            for check in [checkKeyCards, checkHostCards, checkHostCardKeyboard, checkGridReflow, checkRecentHosts, checkTagMatch,
                           checkTagOverflow, checkFindOrConnect, checkSplitButtons] {
                 var ok = true
                 check(shell, window, &ok)
@@ -348,6 +350,73 @@ enum ConnectionsCardsSelfTest {
             }
         }
         resize(window, width: 1512, shell)
+    }
+
+    // MARK: K1, K3, K4, K6
+
+    private static func checkKeyCards(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        hosts.selectModuleTab(named: "Keys")
+        settle(shell)
+        defer { hosts.selectModuleTab(named: "Hosts"); settle(shell) }
+        let grid = hosts.keysGrid
+        let keys = shell.workspace.keyStore.keys
+        guard let ops = keys.first(where: { $0.label == "ops-ed25519" }),
+              let ci = keys.first(where: { $0.label == "ci-deploy" }) else {
+            fail("K1: the demo keys are missing", &ok)
+            return
+        }
+        check(!grid.isHiddenOrHasHiddenAncestor && grid.window != nil && hosts.keysTable.card.isHidden,
+              "K1: the keys are not cards by default", &ok)
+        check(Set(grid.debugPlaced.map(\.key)) == Set(keys.map(\.id.uuidString)), "K1: the cards are not every saved key", &ok)
+
+        // K4: what a card says.
+        guard let opsCard = grid.debugCardView(key: ops.id.uuidString),
+              let ciCard = grid.debugCardView(key: ci.id.uuidString) else {
+            fail("K1: a key's card is missing", &ok)
+            return
+        }
+        check(opsCard.debugSubtitle.hasPrefix("Ed25519 \u{00B7} SHA256:") && opsCard.debugSubtitle.count < ops.fingerprint.count + 10,
+              "K4: the card's subtitle is \(opsCard.debugSubtitle)", &ok)
+        let opsUsers = shell.workspace.hostStore.hosts.filter { $0.keyID == ops.id }.count
+        let opsBadges = opsCard.debugBadgeTexts
+        check(opsBadges.contains { $0.hasPrefix("Used by") && $0.contains("edge-proxy-01") }, "K4: no hosts-using badge on ops (\(opsBadges))", &ok)
+        check(opsBadges.contains("Passphrase in the Keychain") && !ciCard.debugBadgeTexts.contains("Passphrase in the Keychain"),
+              "K4: the passphrase lock is on the wrong cards", &ok)
+        check(opsBadges.contains("Not used to connect yet"), "K4: a key never used does not say so (\(opsBadges))", &ok)
+        check((opsCard.accessibilityLabel() ?? "").contains("used by \(opsUsers) hosts"), "K4: VoiceOver reads \(opsCard.accessibilityLabel() ?? "")", &ok)
+        shell.workspace.keyStore.recordUse(id: ci.id)
+        settle(shell)
+        let used = grid.debugCardView(key: ci.id.uuidString)?.debugBadgeTexts ?? []
+        check(used.contains { $0.hasPrefix("Last used") }, "K4/K5: a key used just now does not say so (\(used))", &ok)
+        var certified = ci
+        certified.certificate = "ssh-ed25519-cert-v01@openssh.com AAAAexample fixture"
+        shell.workspace.keyStore.update(certified)
+        settle(shell)
+        check(grid.debugCardView(key: ci.id.uuidString)?.debugBadgeTexts.contains("Has a certificate") == true,
+              "K4: a key with a certificate has no seal", &ok)
+
+        // K3: search, by name, type or fingerprint - the cards and the table.
+        func search(_ text: String) -> [String] {
+            hosts.keySearchField.stringValue = text
+            hosts.keySearchField.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+            settle(shell)
+            return grid.debugPlaced.compactMap { placed in keys.first { $0.id.uuidString == placed.key }?.label }
+        }
+        check(search("ci-") == ["ci-deploy"], "K3: searching a name found \(search("ci-"))", &ok)
+        check(Set(search("ed25519")) == ["ops-ed25519", "ci-deploy"], "K3: searching a type did not find both keys", &ok)
+        check(search("demo0nlyc1") == ["ci-deploy"], "K3: searching a fingerprint found \(search("demo0nlyc1"))", &ok)
+        check(hosts.keysTable.debugRows.compactMap(\.key) == [ci.id.uuidString], "K3: the table did not follow the search", &ok)
+        check(search("nothing-like-this").isEmpty && grid.debugEmptyState != nil, "K3: no match draws no empty state", &ok)
+        _ = search("")
+
+        // K6: Touch ID's reading is a chip in the Keys row, not in a card header.
+        check(hosts.keysTouchID.superview === hosts.keysTopRow && hosts.keysTouchID.window != nil,
+              "K6: the Touch ID chip is not in the Keys row", &ok)
+        check(hosts.keysTouchID.label.stringValue.contains("Touch ID"), "K6: the chip reads \(hosts.keysTouchID.label.stringValue)", &ok)
+        check(hosts.keySearchField.window != nil && hosts.keysViewModeControl.window != nil,
+              "K3: the Keys row has no search or no Grid / List switch", &ok)
     }
 
     // MARK: X2

@@ -177,8 +177,10 @@ enum SidebarPageFixesSelfTest {
         clickTab("Keys", shell)
         let pill = hosts.debugKeysTouchID
         let available = CredentialVaultKeyStore.biometryAvailable
-        check(pill.isDescendant(of: hosts.debugKeysTable.card) && pill.window != nil,
-              "Touch ID's reading is not on the Keys card", &ok)
+        // K6 of the Termius-style plan moved it from the Keys card's header
+        // to the Keys row, over both the cards and the table.
+        check(pill.isDescendant(of: hosts.keysTopRow) && pill.window != nil,
+              "Touch ID's reading is not in the Keys row", &ok)
         check(pill.label.stringValue == HostsKeychainCard.biometryPhrase(available, capitalized: true),
               "the Keys card says \"\(pill.label.stringValue)\" about Touch ID", &ok)
 

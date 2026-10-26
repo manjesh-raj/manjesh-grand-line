@@ -145,7 +145,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     var onModuleTabChanged: (() -> Void)?
 
     let hostsTabView = NSView()
-    private let keysTabView = NSView()
+    let keysTabView = NSView()
     private let snippetsTabView = NSView()
 
     /// H3's Connect button, beside the find-or-connect field in the sidebar
@@ -418,7 +418,15 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// H2: Grid or List, over the hosts. One stored choice
     /// (`AppSettings.connectionsShowList`) for Hosts and Keys.
     lazy var hostsViewModeControl = makeViewModeControl()
-    private lazy var keysTable = Self.makeKeysTable()
+    private(set) lazy var keysTable = Self.makeKeysTable()
+    /// K1: the keys as cards, the same component as the hosts'.
+    private(set) lazy var keysGrid = HelmCardGrid()
+    /// H2's switch on the Keys tab - the same stored choice.
+    lazy var keysViewModeControl = makeViewModeControl()
+    /// K3: key search, by name, type or fingerprint.
+    let keySearchField = HelmSearchField(placeholder: "Find a key by name, type or fingerprint")
+    /// The Keys tab's row over its keys: the search, Touch ID, Grid / List.
+    let keysTopRow = NSStackView()
     private lazy var snippetsTable = Self.makeSnippetsTable()
     /// The inspector's body for whichever table is showing.
     private lazy var inspectorDetail = WorkspaceDetailView()
@@ -441,7 +449,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     static let onlineFilterID = "online"
     /// Touch ID's state on the Keys card, where the floating bar's stat
     /// strip stated it page-wide: it is a fact about where keys are kept.
-    private lazy var keysTouchID = HelmStatusPill(style: .dotWord)
+    private(set) lazy var keysTouchID = HelmStatusPill(style: .dotWord)
     /// The selected record's name, or `nil` with nothing selected - what
     /// `inspectorContent` hands the shell.
     private var inspectorTitle: String?
@@ -998,6 +1006,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
             tagMatchControl.applyTheme(theme)
             hostsGrid.applyTheme(theme)
             hostsViewModeControl.applyTheme(theme)
+            keysGrid.applyTheme(theme)
+            keysViewModeControl.applyTheme(theme)
             keysTouchID.applyTheme(theme)
         }
         sideStack.applyTheme(theme)
@@ -1913,13 +1923,15 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
                     expansionStrip.topAnchor.constraint(equalTo: list.card.topAnchor),
                     table.card.topAnchor.constraint(equalTo: expansionStrip.bottomAnchor, constant: HelmMetrics.s3),
                 ])
-            } else {
+            } else if table !== keysTable {
+                // The keys sit under their own row (`adoptKeysGrid`).
                 table.card.topAnchor.constraint(equalTo: list.card.topAnchor).isActive = true
             }
             table.onSelect = { [weak self] _ in self?.refreshDetailPanel() }
         }
         hostsTable.accessibilityName = "Hosts"
         adoptHostsGrid()
+        adoptKeysGrid()
         keysTable.accessibilityName = "SSH keys"
         snippetsTable.accessibilityName = "Snippets"
         // The prototype's Keys card names what it holds and where it is kept.
@@ -1928,7 +1940,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
         keysSubtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         keysTable.card.setHeader(symbol: "key.fill", tint: .violet,
                                  titleLabel: NSTextField(labelWithString: "SSH keys"),
-                                 subtitleLabel: keysSubtitle, actions: [keysTouchID])
+                                 subtitleLabel: keysSubtitle)
         let snippetsSubtitle = NSTextField(labelWithString: "Run sends a snippet's command, then Enter, to the active terminal tab")
         snippetsSubtitle.lineBreakMode = .byTruncatingTail
         snippetsSubtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -2200,8 +2212,12 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
         return actions
     }
 
+    /// K3: the search changed - re-render both key views.
+    func reloadKeysForSearch() { renderKeysTable() }
+
     private func renderKeysTable() {
-        var rows = keyStore.keys.map { key -> HelmDataTable.Row in
+        let keys = filteredKeys(keySearchField.stringValue)
+        var rows = keys.map { key -> HelmDataTable.Row in
             var row = HelmDataTable.Row.record(key.id.uuidString)
             let usedBy = hostStore.hosts.filter { $0.keyID == key.id }.count
             row.cells = [
@@ -2220,12 +2236,16 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
             ]
             return row
         }
-        if rows.isEmpty {
+        if rows.isEmpty, !keyStore.keys.isEmpty {
+            rows = [.empty(symbol: "line.3.horizontal.decrease.circle", title: "No matching keys",
+                           body: "Nothing matches the search. Clear it to see every saved key.")]
+        } else if rows.isEmpty {
             rows = [.empty(symbol: "key.fill", title: "No saved keys yet",
                            body: "Generate a key, or import an existing PEM or OpenSSH one. Private key material stays in the macOS Keychain.",
                            action: .init(title: "New Key", symbol: "plus") { [weak self] in self?.newKey() })]
         }
         keysTable.setRows(rows)
+        renderKeysGrid(keys)
     }
 
     private func renderSnippetsTable() {
