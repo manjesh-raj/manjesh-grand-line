@@ -15,6 +15,10 @@
 //   - `HelmKeyHint` is the app's existing chord pill, so the chords here look
 //     like the chords everywhere else rather than being a fourth rendering of
 //     the same idea.
+//
+// T7 of the Termius-style plan: the sheet is the reference, and Settings >
+// Shortcuts is where the chords are changed, so the footer carries a
+// "Customize…" that closes the sheet and opens that page.
 
 import AppKit
 
@@ -39,8 +43,15 @@ final class KeyboardShortcutsSheetController: NSViewController {
     private var dividers: [NSView] = []
     private var chordPills: [HelmKeyHint] = []
 
-    init(sections: [KeyboardShortcutSection]) {
+    /// "Customize…": open Settings > Shortcuts. `nil` hides the button, so
+    /// a caller with nowhere to send the captain draws no dead control.
+    private let onCustomize: (() -> Void)?
+    private let customizeButton = HelmButton(title: "Customize\u{2026}", variant: .secondary,
+                                             target: nil, action: nil)
+
+    init(sections: [KeyboardShortcutSection], onCustomize: (() -> Void)? = nil) {
         self.sections = sections
+        self.onCustomize = onCustomize
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -85,9 +96,14 @@ final class KeyboardShortcutsSheetController: NSViewController {
         // that is simply off to the side of the visible one at zero width.
         escape.isHidden = true
 
+        customizeButton.target = self
+        customizeButton.action = #selector(customizeShortcuts)
+        customizeButton.setAccessibilityLabel("Customize shortcuts in \(PlaceName.of(.settings))")
+        customizeButton.isHidden = onCustomize == nil
+
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let footer = NSStackView(views: [spacer, escape, close])
+        let footer = NSStackView(views: [customizeButton, spacer, escape, close])
         footer.orientation = .horizontal
         footer.spacing = HelmMetrics.s2
         footer.translatesAutoresizingMaskIntoConstraints = false
@@ -199,6 +215,19 @@ final class KeyboardShortcutsSheetController: NSViewController {
     }
 
     @objc private func closeSheet() { dismiss(self) }
+
+    /// Close the sheet first, so Settings is not opened underneath it. Only
+    /// a presented sheet is dismissed: AppKit raises on dismissing a
+    /// controller that was never presented, which is a crash for a call
+    /// whose only job is to get out of the way.
+    @objc private func customizeShortcuts() {
+        if presentingViewController != nil { dismiss(self) }
+        onCustomize?()
+    }
+
+    #if FM_SELFTESTS
+    var debugCustomizeButton: HelmButton { customizeButton }
+    #endif
 
     deinit {
         if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }

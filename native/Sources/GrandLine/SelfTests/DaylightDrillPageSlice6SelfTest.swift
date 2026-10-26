@@ -101,8 +101,15 @@ enum DaylightDrillPageSlice6SelfTest {
     /// 3 of the modular-shell migration added the Appearance page's Window
     /// card (the window layout: floating bar or sidebar). Twenty-three since
     /// R2-UX-01 (b) added the Appearance page's Sidebar card (the profile and
-    /// a switch per module).
-    private static let expectedCardCount = 23
+    /// a switch per module). Twenty-four since T4 of the Termius-style plan
+    /// added the Terminal page's History card (the scrollback depth and the
+    /// background trim). Twenty-nine since T5 added
+    /// the Shortcuts page, whose five cards in a suite are Terminal, Capture,
+    /// Dictation, Tabs and pages, and Global - a suite has no installed menu
+    /// bar, so none of the menu's sections. Twenty-seven since T7 replaced
+    /// the Terminal page's three shortcut cards (Tabs, Split the terminal,
+    /// Split panes) with one Keyboard shortcuts card that links to Shortcuts.
+    private static let expectedCardCount = 27
 
 
     static func run() -> Bool {
@@ -807,15 +814,16 @@ enum DaylightDrillPageSlice6SelfTest {
         // is about. Seven since `fm/grandline-remove-today-calendar-1792553365`
         // removed three: the daily review's own switch, its Mac-calendar
         // sub-row and Google Accounts' calendar switch. Eight since R2-UX-01
-        // made the app lock an opt-in with its own switch in Security.
+        // made the app lock an opt-in with its own switch in Security. Nine
+        // since T4 made Terminal's background scrollback trim a toggle.
         let restore = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(restore) }
         ThemeManager.shared.setTheme(daylight)
         let settings = makeSettings()
         let window = mount(settings)
         defer { _ = settings.view.window.map { _ in () }; _ = window }
-        if settings.debugToggles.count != 8 {
-            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 8")
+        if settings.debugToggles.count != 9 {
+            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 9")
             ok = false
         }
         // Reached by **name**, never by an index into `debugToggles`: that

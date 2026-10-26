@@ -160,6 +160,9 @@ final class Workspace {
         let settings = makeSettings()
         settings.onTerminalShortcutsChanged = { [weak self] shortcuts in self?.onTerminalShortcutsChanged?(shortcuts) }
         settings.onQuickCaptureShortcutChanged = { [weak self] chord in self?.onQuickCaptureShortcutChanged?(chord) }
+        // T5: Settings > Shortcuts rebinds dictation too, and the live hotkey
+        // hears it through the same forward the Dictation page's recorder uses.
+        settings.onDictationShortcutChanged = { [weak self] chord in self?.onKeyChordChanged?(chord) }
         // Settings' own sidebar moves the header's subtitle - it names the
         // selected category, the way the reference mockup's "Settings /
         // Shortcuts & Siri" does.
@@ -664,7 +667,7 @@ final class Workspace {
     /// app delegate wiring it at launch does not build the Dictation page.
     var onKeyChordChanged: ((KeyChord) -> Void)?
 
-    /// Fired whenever a Settings > Terminal Shortcuts recorder captures a new
+    /// Fired whenever a Settings > Shortcuts recorder captures a new
     /// combo, or the captain resets them all. Forwarded to the app delegate,
     /// which owns the live `TabKeyboardShortcuts` monitor - the same
     /// forward-don't-own convention `onKeyChordChanged` above already follows

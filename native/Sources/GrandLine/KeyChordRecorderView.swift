@@ -103,6 +103,39 @@ final class KeyChordRecorderView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    // MARK: Keyboard and VoiceOver (T5)
+    //
+    // Settings > Shortcuts puts eleven of these in one list, so a recorder
+    // has to be reachable without a pointer: it is in the key view loop,
+    // draws the standard focus ring (GL-16), starts recording on Space or
+    // Return, and is a button to VoiceOver whose press starts recording too.
+    // Its label is the caller's - "Next tab shortcut" means something, and
+    // the chord alone does not.
+
+    override var canBecomeKeyView: Bool { true }
+    override var focusRingMaskBounds: NSRect { bounds }
+
+    override func drawFocusRingMask() {
+        NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7).fill()
+    }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityValue() -> Any? { isRecording ? label.stringValue : shortcut.displayString }
+
+    override func accessibilityPerformPress() -> Bool {
+        window?.makeFirstResponder(self)
+        beginRecording()
+        return true
+    }
+
+    /// Clicking or tabbing away while recording cancels, as the header
+    /// promises, rather than leaving the control listening.
+    override func resignFirstResponder() -> Bool {
+        if isRecording { cancelRecording() }
+        return super.resignFirstResponder()
+    }
+
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         beginRecording()
@@ -115,9 +148,11 @@ final class KeyChordRecorderView: NSView {
         pendingModifierFlags = []
         updateLabel()
         refreshThemeAppearance()
+        noteFocusRingMaskChanged()
     }
 
     private func cancelRecording() {
+        guard isRecording else { return }
         isRecording = false
         rejection = nil
         pendingModifierKeyCode = nil
@@ -127,6 +162,13 @@ final class KeyChordRecorderView: NSView {
 
     override func keyDown(with event: NSEvent) {
         guard isRecording else {
+            // Space or Return on a focused recorder starts it, the way they
+            // press a focused button.
+            let bare = event.modifierFlags.intersection(KeyChord.relevantModifierMask).isEmpty
+            if bare, event.keyCode == 49 || event.keyCode == 36 {
+                beginRecording()
+                return
+            }
             super.keyDown(with: event)
             return
         }

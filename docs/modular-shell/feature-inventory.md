@@ -301,16 +301,16 @@ The Help menu's shortcut catalog: every menu chord, plus the configurable termin
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
-| `key.dictation` | Dictation hotkey | system-wide; configurable on the Dictation page | System (global hotkey, unchanged; configured on Dictation) |  |
-| `key.terminal.closePane` | Terminal shortcut: Close pane | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged; still recorded in Settings › Terminal) |  |
-| `key.terminal.focusNextPane` | Terminal shortcut: Focus next pane | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged; still recorded in Settings › Terminal) |  |
-| `key.terminal.focusPreviousPane` | Terminal shortcut: Focus previous pane | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged; still recorded in Settings › Terminal) |  |
-| `key.terminal.nextTab` | Terminal shortcut: Next tab | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged; still recorded in Settings › Terminal) |  |
-| `key.terminal.previousTab` | Terminal shortcut: Previous tab | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged; still recorded in Settings › Terminal) |  |
-| `key.terminal.splitDown` | Terminal shortcut: Split down | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged; still recorded in Settings › Terminal) |  |
-| `key.terminal.splitLeft` | Terminal shortcut: Split left | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged; still recorded in Settings › Terminal) |  |
-| `key.terminal.splitRight` | Terminal shortcut: Split right | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged; still recorded in Settings › Terminal) |  |
-| `key.terminal.zoomPane` | Terminal shortcut: Zoom pane | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged; still recorded in Settings › Terminal) |  |
+| `key.dictation` | Dictation hotkey | system-wide; configurable on the Dictation page | System (global hotkey, unchanged; configured on Dictation, and in Settings › Shortcuts since T5) |  |
+| `key.terminal.closePane` | Terminal shortcut: Close pane | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged chord; recorded in Settings › Shortcuts since T7, which checks it for clashes - Settings › Terminal links there) |  |
+| `key.terminal.focusNextPane` | Terminal shortcut: Focus next pane | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged chord; recorded in Settings › Shortcuts since T7, which checks it for clashes - Settings › Terminal links there) |  |
+| `key.terminal.focusPreviousPane` | Terminal shortcut: Focus previous pane | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged chord; recorded in Settings › Shortcuts since T7, which checks it for clashes - Settings › Terminal links there) |  |
+| `key.terminal.nextTab` | Terminal shortcut: Next tab | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged chord; recorded in Settings › Shortcuts since T7, which checks it for clashes - Settings › Terminal links there) |  |
+| `key.terminal.previousTab` | Terminal shortcut: Previous tab | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged chord; recorded in Settings › Shortcuts since T7, which checks it for clashes - Settings › Terminal links there) |  |
+| `key.terminal.splitDown` | Terminal shortcut: Split down | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged chord; recorded in Settings › Shortcuts since T7, which checks it for clashes - Settings › Terminal links there) |  |
+| `key.terminal.splitLeft` | Terminal shortcut: Split left | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged chord; recorded in Settings › Shortcuts since T7, which checks it for clashes - Settings › Terminal links there) |  |
+| `key.terminal.splitRight` | Terminal shortcut: Split right | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged chord; recorded in Settings › Shortcuts since T7, which checks it for clashes - Settings › Terminal links there) |  |
+| `key.terminal.zoomPane` | Terminal shortcut: Zoom pane | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged chord; recorded in Settings › Shortcuts since T7, which checks it for clashes - Settings › Terminal links there) |  |
 | `key.⇧⌘/` | ⇧⌘/ - Keyboard Shortcuts… | Help menu | Main menu › Help (unchanged chord) |  |
 | `key.⇧⌘A` | ⇧⌘A - Create RCA | Log Analyzer menu | Main menu › Log Analyzer (unchanged chord) |  |
 | `key.⇧⌘C` | ⇧⌘C - Copy Analysis | Log Analyzer menu | Main menu › Log Analyzer (unchanged chord) |  |
@@ -501,6 +501,7 @@ The eight categories and every row whose title is a literal. Rows built in a loo
 | `settings.category.intents` | Settings category: App Intents & Shortcuts | Settings page's own sidebar | Settings › App Intents & Shortcuts (a sidebar child of Settings; the page's private column becomes these children) |  |
 | `settings.category.menuBar` | Settings category: Menu Bar | Settings page's own sidebar | Settings › Menu Bar (a sidebar child of Settings; the page's private column becomes these children) |  |
 | `settings.category.security` | Settings category: Security | Settings page's own sidebar | Settings › Security (a sidebar child of Settings; the page's private column becomes these children) |  |
+| `settings.category.shortcuts` | Settings category: Shortcuts | new (T5 of the Termius-style plan) - before it the chords were spread over Settings > Terminal, Settings > Capture, the Dictation page and the Help menu's sheet | Settings › Shortcuts (a sidebar child of Settings: every chord in one table read from the live menu walk, with search and the Changed and Conflicts filters; ⌘1-⌘9 is one fixed row; the terminal, capture and dictation chords are recorded here) |  |
 | `settings.category.terminal` | Settings category: Terminal | Settings page's own sidebar | Settings › Terminal (a sidebar child of Settings; the page's private column becomes these children) |  |
 | `settings.row.Accessibility permission` | Settings row: Accessibility permission | Settings > Capture | Settings › Capture (unchanged row) |  |
 | `settings.row.Command snippets & dictation` | Settings row: Command snippets & dictation | Settings > Backup & Restore | Settings › Backup & Restore (unchanged row) |  |
@@ -521,10 +522,13 @@ The eight categories and every row whose title is a literal. Rows built in a loo
 | `settings.row.Open the capture panel` | Settings row: Open the capture panel | Settings > Capture | Settings › Capture (unchanged row) |  |
 | `settings.row.Poneglyph vault` | Settings row: Poneglyph vault | Settings > Backup & Restore | Settings › Backup & Restore (unchanged row) |  |
 | `settings.row.Reconnect automatically` | Settings row: Reconnect automatically | Settings > Terminal | Settings › Terminal (unchanged row) |  |
+| `settings.row.Scrollback` | Settings row: Scrollback | new (T4 of the Termius-style plan) - before it the depth was a fixed 10,000 rows | Settings › Terminal › History (a typed depth, 1,000 to 100,000 with 0 meaning 100,000, applied to every open pane at once; lowering it under an open pane's history asks first) |  |
 | `settings.row.Separate icons for Tasks, the vault and the crew` | Settings row: Separate icons for Tasks, the vault and the crew | Settings > Menu Bar | Settings › Menu Bar (unchanged row) |  |
 | `settings.row.Show a morning briefing` | Settings row: Show a morning briefing | Settings > Briefings | Settings › Briefings (the same row; its title no longer names the Fleet page, and its description names where the briefing shows for the running layout, R2-BUG-06) |  |
 | `settings.row.Show the overdue count on the icon` | Settings row: Show the overdue count on the icon | Settings > Menu Bar | Settings › Menu Bar (unchanged row) |  |
+| `settings.row.Tab, split and pane shortcuts` | Settings row: Tab, split and pane shortcuts | new (T7) - before it Settings > Terminal drew the nine recorders itself, in three cards | Settings › Terminal › Keyboard shortcuts (a link that opens Settings › Shortcuts, where the nine are recorded and checked for clashes) |  |
 | `settings.row.Terminal scrollback & session state` | Settings row: Terminal scrollback & session state | Settings > Backup & Restore | Settings › Backup & Restore (unchanged row) |  |
+| `settings.row.Trim tabs left in the background` | Settings row: Trim tabs left in the background | new (T4) - before it PERF-07's background trim was always on | Settings › Terminal › History (PERF-07's trim of a tab left out of sight to 2,000 rows, on by default) |  |
 | `settings.row.Touch ID for sudo` | Settings row: Touch ID for sudo | Settings > Security | Settings › Security (unchanged row) |  |
 | `settings.row.Vault settings live in the vault` | Settings row: Vault settings live in the vault | Settings > Security | Settings › Security (unchanged row) |  |
 | `settings.row.Window layout` | Settings row: Window layout | Settings > Appearance - the sidebar shell (the default) or the floating bar, applied the next time the app opens | Settings › Appearance (the switch between the two layouts: the sidebar is the default, the floating bar stays selectable, and a stored choice is kept) |  |
@@ -776,7 +780,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.HostsSidebar` | HostsSidebar controls | `logoutPicked`, `rowClicked`, `settingsPicked` | Connections › Hosts (the column becomes the module's tabs) |  |
 | `action.HostsSidePanels` | HostsSidePanels controls | `actionClicked`, `buttonClicked` | Inspector (a selected host, key or snippet's details and actions; the floating bar keeps its own column) |  |
 | `action.IncidentCardView` | IncidentCardView controls | `addNoteClicked`, `endIncidentClicked`, `openEvidenceClicked` | Console (incident card) |  |
-| `action.KeyboardShortcutsSheetController` | KeyboardShortcutsSheetController controls | `closeSheet` | Main menu › Help (Keyboard Shortcuts sheet, unchanged) |  |
+| `action.KeyboardShortcutsSheetController` | KeyboardShortcutsSheetController controls | `closeSheet`, `customizeShortcuts` | Main menu › Help (Keyboard Shortcuts sheet; T7 added Customize…, which opens Settings › Shortcuts) |  |
 | `action.KeyEditorController` | KeyEditorController controls | `chooseImportFile`, `copyFingerprint`, `copyPublicKey`, `deleteKey`, `generateKey`, `verifyImport` | Connections › Keys (key editor) |  |
 | `action.KubernetesController` | KubernetesController controls | `clearTailTapped`, `closeDescribeTapped`, `copyDescribeTapped`, `duplicateFeedTapped`, `feedTabPicked`, `namespaceCommitted`, `namespacePicked`, `openHostsTapped`, `refreshTapped`, `retryFeedTapped`, `retryStuckClusterRefreshTapped`, `revealHostTapped`, `toggleErrorsOnlyTapped`, `togglePauseTapped` | Kubernetes |  |
 | `action.KubernetesController+Render` | KubernetesController+Render controls | `togglePodSelection` | Kubernetes |  |
@@ -806,7 +810,8 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.SchedulesCardView` | SchedulesCardView controls | `deletePicked`, `editPicked`, `newScheduleClicked`, `openDestinationPicked`, `overflowClicked`, `reviewClicked`, `runNowPicked`, `viewHistoryPicked` | Schedules |  |
 | `action.SchedulesController` | SchedulesController controls | `addExampleScheduleTapped`, `refreshTapped` | Schedules |  |
 | `action.SessionStripView` | SessionStripView controls | `addClicked`, `closeClicked`, `pillClicked` | Console (the Sessions strip; live sessions are also sidebar children of Console) |  |
-| `action.SettingsController` | SettingsController controls | `chooseShellCwd`, `disableSudoTouchIDClicked`, `enableSudoTouchIDClicked`, `exportBackupClicked`, `fontPresetClicked`, `goBack`, `goForward`, `importBackupClicked`, `lockThresholdPicked`, `openAccessibilitySettings`, `openShortcutsApp`, `openVault`, `recheckSudoTouchIDClicked`, `relaunchTapped`, `resetQuickCaptureShortcut`, `resetTerminalShortcuts`, `textFieldChanged`, `themeDisclosureClicked`, `uiScaleClicked` | Settings (R2-UX-08: `goBack` and `goForward` are the floating bar's header arrows; in the sidebar layout the window's Back and Forward walk the categories instead. `relaunchTapped` is the Relaunch Grand Line button beside Window layout and Interface text size) |  |
+| `action.SettingsShortcutsPage` | SettingsShortcutsPage controls | `resetRowClicked`, `restoreAllDefaults` | Settings › Shortcuts (T6: a configurable row's own reset to its default, and Restore All Defaults, which asks first) |  |
+| `action.SettingsController` | SettingsController controls | `chooseShellCwd`, `disableSudoTouchIDClicked`, `enableSudoTouchIDClicked`, `exportBackupClicked`, `fontPresetClicked`, `goBack`, `goForward`, `importBackupClicked`, `lockThresholdPicked`, `openAccessibilitySettings`, `openShortcutsApp`, `openShortcutsPage`, `openVault`, `recheckSudoTouchIDClicked`, `relaunchTapped`, `resetQuickCaptureShortcut`, `textFieldChanged`, `themeDisclosureClicked`, `uiScaleClicked` | Settings (R2-UX-08: `goBack` and `goForward` are the floating bar's header arrows; in the sidebar layout the window's Back and Forward walk the categories instead. `relaunchTapped` is the Relaunch Grand Line button beside Window layout and Interface text size) |  |
 | `action.SettingsThemeCard` | SettingsThemeCard controls | `cardClicked` | Settings › Appearance |  |
 | `action.ShiftBoardViews` | ShiftBoardViews controls | `addTapped`, `chipClicked`, `clearFilterTapped`, `menuDelete`, `menuFocus`, `menuMove`, `menuOpen`, `menuPush` | Tasks › Board |  |
 | `action.ShiftCalendarViews` | ShiftCalendarViews controls | `cellClicked`, `clicked`, `goNext`, `goPrevious`, `goToday` | Tasks › Calendar |  |
@@ -941,6 +946,8 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.snippetExpansionEnabled` | Saved preference `fm.snippetExpansionEnabled` | declared in AppSettings | Settings › Capture |  |
 | `state.fm.systemDarkThemeID` | Saved preference `fm.systemDarkThemeID` | declared in AppSettings | Settings › Appearance |  |
 | `state.fm.systemLightThemeID` | Saved preference `fm.systemLightThemeID` | declared in AppSettings | Settings › Appearance |  |
+| `state.fm.terminal.scrollbackRows` | Saved preference `fm.terminal.scrollbackRows` | declared in AppSettings (T4) | Settings › Terminal › History (unset is the shipped 10,000) |  |
+| `state.fm.terminal.trimBackgroundScrollback` | Saved preference `fm.terminal.trimBackgroundScrollback` | declared in AppSettings (T4) | Settings › Terminal › History (unset is on) |  |
 | `state.fm.terminalShortcuts` | Saved preference `fm.terminalShortcuts` | declared in AppSettings | Settings › Terminal |  |
 | `state.fm.updatesLastChecks` | Saved record `fm.updatesLastChecks` - the last real check of each tool, with when it was taken | declared in DependencyCheckCache | Setup › Updates (a visit shows a kept answer under 12 hours old, "checked 2h ago", R2-PERF-05) |  |
 | `state.fm.workspaceProfile` | Saved preference `fm.workspaceProfile` | declared in AppSettings | Settings › Appearance (the profile the sidebar started from - Personal on a fresh install, Operator on an existing one, R2-UX-01) |  |
@@ -1159,8 +1166,8 @@ The checks that stand between the captain and an irreversible or secret-revealin
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
-| `hotkey.quickCapture` | ⌥Space quick capture from anywhere | System-wide, configurable in Settings > Capture | System (global hotkey, unchanged) | `ShiftQuickCapture.swift` `final class ShiftGlobalHotkey` |
-| `hotkey.dictation` | Dictation hotkey from anywhere | System-wide, configurable on Dictation | System (global hotkey, unchanged) | `DictationHotkey.swift` `final class DictationHotkey` |
+| `hotkey.quickCapture` | ⌥Space quick capture from anywhere | System-wide, configurable in Settings > Capture | System (global hotkey, unchanged; recorded in Settings › Capture and, since T5, Settings › Shortcuts) | `ShiftQuickCapture.swift` `final class ShiftGlobalHotkey` |
+| `hotkey.dictation` | Dictation hotkey from anywhere | System-wide, configurable on Dictation | System (global hotkey, unchanged; recorded on Dictation and, since T5, Settings › Shortcuts) | `DictationHotkey.swift` `final class DictationHotkey` |
 | `hotkey.openApp` | Open Grand Line from anywhere | System-wide, Settings > Menu Bar | System (global hotkey, unchanged) | `CompactMode.swift` `globalMonitor` |
 | `hotkey.snippetExpander` | ;abbrev snippet expansion in any app | System-wide, Settings > Capture | System (unchanged) | `SnippetExpander.swift` `final class SnippetExpander` |
 | `tabkey.newTab` | ⌘T opens a new shell tab | Console and Tools, while showing | Console (unchanged; the key monitor still checks the showing module) | `TabKeyboardShortcuts.swift` `case "t": return .newTab` |

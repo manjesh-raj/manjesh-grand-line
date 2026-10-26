@@ -420,9 +420,14 @@ enum SettingsThemeLayoutParitySelfTest {
         // stage 3 of the modular-shell migration added the Appearance page's
         // Window card (the window layout: floating bar or sidebar).
         // Twenty-three since R2-UX-01 (b) added the Appearance page's Sidebar
-        // card (the profile and a switch per module).
-        guard daylightFP.cardCount == 23 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 23")
+        // card (the profile and a switch per module). Twenty-four since T4 of
+        // the Termius-style plan added the Terminal page's History card.
+        // Twenty-nine since T5 added the Shortcuts page's five cards (a suite
+        // has no installed menu bar, so none of the menu's sections).
+        // Twenty-seven since T7 replaced the Terminal page's three shortcut
+        // cards with one Keyboard shortcuts card that links to Shortcuts.
+        guard daylightFP.cardCount == 27 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 27")
             ok = false
             return
         }

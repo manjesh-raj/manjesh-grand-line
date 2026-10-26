@@ -69,6 +69,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     enum Category: String, CaseIterable {
         case appearance
         case terminal
+        case shortcuts
         case capture
         case menuBar
         case briefings
@@ -78,7 +79,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
         var navGroup: NavGroup {
             switch self {
-            case .appearance, .terminal, .capture, .menuBar: return .personalize
+            case .appearance, .terminal, .shortcuts, .capture, .menuBar: return .personalize
             case .briefings: return .yourDay
             case .intents, .security, .backup: return .system
             }
@@ -90,6 +91,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             switch self {
             case .appearance: return "Appearance"
             case .terminal: return "Terminal"
+            case .shortcuts: return "Shortcuts"
             case .capture: return "Capture"
             case .menuBar: return "Menu Bar"
             case .briefings: return "Briefings"
@@ -105,6 +107,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             switch self {
             case .appearance: return "paintpalette"
             case .terminal: return "terminal"
+            case .shortcuts: return "keyboard"
             case .capture: return "square.and.pencil"
             case .menuBar: return "menubar.rectangle"
             case .briefings: return "sparkles"
@@ -123,7 +126,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         /// are illustrative, and a hardcoded colour would be off-palette in
         /// twenty-five of the twenty-six themes.
         ///
-        /// **Eight pages, six tints, so hues repeat - and what matters is
+        /// **Nine pages, six tints, so hues repeat - and what matters is
         /// *where*.** A count of distinct colours is not the goal; a column
         /// you can scan is, and that only breaks when two rows the eye takes
         /// in together are the same colour. So every repeat is placed across
@@ -157,13 +160,16 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         /// off full ink rather than off the surface, which renders heavy.
         /// That warning is about `.neutral` as the *identity-less default* -
         /// the commonest chip on a page becoming its heaviest. Here it is one
-        /// deliberate row of eight, drawing the reference's own dark slate
+        /// deliberate row of nine, drawing the reference's own dark slate
         /// Terminal tile, and `IconTileView` still corrects the glyph on it to
         /// the 3:1 icon floor.
         var tint: HelmTint {
             switch self {
             case .appearance: return .violet
             case .terminal: return .neutral
+            // T5. Between Terminal's slate and Capture's green, and its only
+            // other use is Briefings, two rows and a group header away.
+            case .shortcuts: return .warn
             // Between Terminal's slate and Menu Bar's blue, and not repeated
             // until Backup at the far end of the System group - the placement
             // rule `checkEveryRowCarriesItsOwnColouredTile` actually asserts.
@@ -182,7 +188,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             case .appearance:
                 return "\(HelmTheme.allThemes.count) instrument-panel palettes, each contrast-verified to WCAG AA. Picking one repaints the whole window."
             case .terminal:
-                return "Where new tabs open, how their text looks, and the keys that move you between tabs and panes."
+                return "Where new tabs open, how their text looks, and how much history each one keeps."
+            case .shortcuts:
+                return "Every keyboard shortcut in one place. Terminal, capture and dictation shortcuts can be changed here."
             case .capture:
                 return "One chord, from any app, for anything you want to write down before it is gone. It files to tasks, notes, stickies, snippets or the vault."
             case .menuBar:
@@ -206,7 +214,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         var searchKeywords: String {
             switch self {
             case .appearance: return "theme dark light colour color palette font text size system pair sidebar module profile personal operator hide show"
-            case .terminal: return "shell working directory font size shortcut split pane tab ssh reconnect notification bell"
+            case .terminal: return "shell working directory font size shortcut split pane tab ssh reconnect notification bell scrollback history rows memory"
+            case .shortcuts: return "keyboard shortcut hotkey chord key binding rebind record conflict menu split pane tab dictation capture"
             case .capture: return "capture quick capture hotkey shortcut global option space accessibility permission note task sticky"
             case .menuBar: return "compact dock status item hotkey shortcut overdue badge menubar"
             case .briefings: return "morning briefing claude summary"
@@ -235,7 +244,25 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         let category: Category
         let container: NSView
         let hero: SettingsHero
-        let sections: [SettingsSection]
+        private let builtSections: [SettingsSection]
+        /// T5: a page whose sections are rebuilt as the captain searches
+        /// (Settings > Shortcuts) hands over the ones on screen now, so every
+        /// card on it is themed, re-wrapped and counted like any other page's.
+        private let liveSections: (() -> [SettingsSection])?
+        var sections: [SettingsSection] { liveSections?() ?? builtSections }
+
+        init(category: Category, container: NSView, hero: SettingsHero, sections: [SettingsSection],
+             liveSections: (() -> [SettingsSection])? = nil,
+             sideBySide: [NSLayoutConstraint] = [], stacked: [NSLayoutConstraint] = [], isSideBySide: Bool? = nil) {
+            self.category = category
+            self.container = container
+            self.hero = hero
+            self.builtSections = sections
+            self.liveSections = liveSections
+            self.sideBySide = sideBySide
+            self.stacked = stacked
+            self.isSideBySide = isSideBySide
+        }
         /// The wide page's two-column stack and the constraint that splits
         /// it, so the page can collapse to one column when it is too narrow
         /// to hold two. `nil` for every ordinary page.
@@ -294,6 +321,11 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// `ShiftGlobalHotkey`, and a chord the captain just recorded has to take
     /// effect on the next keypress rather than the next launch.
     var onQuickCaptureShortcutChanged: ((KeyChord) -> Void)?
+
+    /// "The dictation trigger changed" (T5) - Settings > Shortcuts can rebind
+    /// it now, so the live `DictationHotkey` has to hear about it the way the
+    /// Dictation page's own recorder already reports.
+    var onDictationShortcutChanged: ((KeyChord) -> Void)?
 
     /// What compact mode is wired to. `nil` in every self-test that mounts
     /// this page without an app delegate, and in that case the toggles still
@@ -445,6 +477,14 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// Keyed by index into `ChromeTextScale.steps` (GL-32).
     private var uiScaleButtons: [Int: HelmButton] = [:]
     private let autoReconnectSwitch = HelmToggle()
+    /// T4: the scrollback depth, typed, and PERF-07's background trim.
+    private let scrollbackField = HelmTextField(placeholder: "10,000")
+    private var scrollbackRow: SettingsRow?
+    private let trimBackgroundSwitch = HelmToggle()
+    /// How many open panes would lose history at a lower depth. Injected so
+    /// a suite can drive the warning without a live console; the default
+    /// asks every console that is alive.
+    var scrollbackTrimCount: (Int) -> Int = { ConsoleController.panesThatWouldLoseHistory(below: $0) }
     /// R2-UX-01 (b): the sidebar's profile and one switch per module that
     /// can be hidden, in sidebar order.
     private var profileTabs: HelmSegmentedTabs!
@@ -461,7 +501,23 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private lazy var textSizeRelaunchButton = makeRelaunchButton()
     private let notifySwitch = HelmToggle()
 
-    private var shortcutRecorders: [TerminalShortcutAction: KeyChordRecorderView] = [:]
+    /// T5: Settings > Shortcuts. Built with the other pages in `loadView`.
+    /// What it changes is forwarded the same way this page's own recorders
+    /// forward, and the Capture page's recorder is refreshed in place.
+    private lazy var shortcutsPage: SettingsShortcutsPage = {
+        let page = SettingsShortcutsPage(mainMenu: shortcutsMainMenu)
+        page.onTerminalShortcutsChanged = { [weak self] set in self?.onTerminalShortcutsChanged?(set) }
+        page.onQuickCaptureShortcutChanged = { [weak self] chord in
+            self?.onQuickCaptureShortcutChanged?(chord)
+            self?.refreshCaptureControls()
+        }
+        page.onDictationShortcutChanged = { [weak self] chord in self?.onDictationShortcutChanged?(chord) }
+        return page
+    }()
+
+    /// The menu bar the Shortcuts page reads. Set before the view loads; a
+    /// suite hands it a menu built without installing it.
+    var shortcutsMainMenu: () -> NSMenu? = { NSApp?.mainMenu }
     private var captureShortcutRecorder: KeyChordRecorderView?
     private var resetCaptureShortcutButton: HelmButton?
     private var captureAccessibilityButton: HelmButton?
@@ -474,7 +530,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// property of the *process*, and a headless runner's answer is whatever
     /// the machine happens to say. Defaults to the real call.
     var quickCaptureAccessibilityTrusted: (() -> Bool)?
-    private var resetShortcutsButton: HelmButton?
 
     private let morningBriefingSwitch = HelmToggle()
 
@@ -1080,6 +1135,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         // page with no `preferredMaxLayoutWidth` at all.
         for row in backupRows { row.relayoutDescription(cardWidth: sectionWidth) }
         sudoRowHost?.relayoutDescription(cardWidth: sectionWidth)
+        if selectedCategory == .shortcuts { shortcutsPage.relayoutDescriptions(cardWidth: sectionWidth) }
     }
 
     private func contentColumnWidth() -> CGFloat {
@@ -1125,6 +1181,13 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         switch category {
         case .appearance: sections = buildAppearanceSections()
         case .terminal: sections = buildTerminalSections()
+        // T5: the one page whose rows are rebuilt as the captain searches, so
+        // it owns them (`SettingsShortcutsPage`) and this page holds its view.
+        case .shortcuts:
+            return Page(category: category,
+                        container: Self.singleColumn(views: [hero, shortcutsPage.view]),
+                        hero: hero, sections: [],
+                        liveSections: { [weak self] in self?.shortcutsPage.sections ?? [] })
         case .capture: sections = buildCaptureSections()
         case .menuBar: sections = buildMenuBarSections()
         case .briefings: sections = buildBriefingsSections()
@@ -1145,14 +1208,18 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     /// The ordinary page: hero, then every section stacked.
     private static func singleColumn(sections: [SettingsSection], hero: SettingsHero) -> NSView {
-        let stack = NSStackView(views: [hero] + sections)
+        singleColumn(views: [hero] + sections)
+    }
+
+    private static func singleColumn(views: [NSView]) -> NSView {
+        let stack = NSStackView(views: views)
         stack.orientation = .vertical
         stack.alignment = .leading
         // `.hero { padding: 6px 0 18px }` plus `.section { margin-bottom: 22 }`
         // collapse into one gap here, since the stack owns the spacing.
         stack.spacing = 20
         stack.translatesAutoresizingMaskIntoConstraints = false
-        for view in [hero] + sections as [NSView] {
+        for view in views {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         return stack
@@ -1606,6 +1673,24 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         autoReconnectSwitch.onToggle = { [weak self] in self?.autoReconnectToggled() }
         notifySwitch.onToggle = { [weak self] in self?.notifyToggled() }
 
+        // T4. A typed number rather than a popup of presets: the range is two
+        // orders of magnitude wide, and the captain's number is the setting.
+        configure(scrollbackField)
+        scrollbackField.alignment = .right
+        scrollbackField.setAccessibilityLabel("Scrollback rows")
+        scrollbackField.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        let rowsSuffix = muted(NSTextField(labelWithString: "rows"))
+        rowsSuffix.font = HelmType.caption()
+        let scrollbackControls = NSStackView(views: [scrollbackField, rowsSuffix])
+        scrollbackControls.orientation = .horizontal
+        scrollbackControls.spacing = HelmMetrics.s2
+        let scrollback = SettingsRow(title: "Scrollback",
+                                     description: TerminalScrollback.memoryNote(rows: TerminalScrollback.shared.rows),
+                                     control: scrollbackControls)
+        scrollbackRow = scrollback
+        trimBackgroundSwitch.setAccessibilityLabel("Trim tabs left in the background")
+        trimBackgroundSwitch.onToggle = { [weak self] in self?.trimBackgroundToggled() }
+
         var sections: [SettingsSection] = [
             SettingsSection(heading: "Connection", group: SettingsGroup(rows: [
                 SettingsRow(title: "Working directory",
@@ -1623,44 +1708,81 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                             description: "Surface a desktop notification the moment a crewmate is waiting on your decision.",
                             control: notifySwitch),
             ])),
+            SettingsSection(heading: "History", group: SettingsGroup(rows: [
+                scrollback,
+                SettingsRow(title: "Trim tabs left in the background",
+                            description: "After five minutes out of sight a tab keeps its most recent \(NumberFormatter.localizedString(from: NSNumber(value: ConsoleController.backgroundScrollbackLines), number: .decimal)) rows, and gets its full depth back when you select it. Turn this off to keep every tab's whole history, at the memory cost above.",
+                            control: trimBackgroundSwitch),
+            ]), foot: "A new depth applies to every open tab at once. Lowering it drops the oldest lines of any pane holding more, so you are asked first."),
         ]
 
-        // One section per shortcut group, which is the reference's own
-        // arrangement (Tab shortcuts / Split the terminal / Panes) and reads
-        // as three ideas rather than nine rows under one heading.
-        for group in TerminalShortcutAction.Group.allCases {
-            var rows: [SettingsRow] = []
-            for action in TerminalShortcutAction.allCases where action.group == group {
-                // `.command`: a Console shortcut has to be a real key with a
-                // modifier. See `KeyChordRecorderView.Mode`.
-                let recorder = KeyChordRecorderView(shortcut: AppSettings.shared.terminalShortcuts[action],
-                                                    mode: .command)
-                // One width for all nine, so they read as a column: a
-                // recorder sizes itself to whatever chord it shows, and
-                // leaving them natural lands nine controls at nine widths.
-                // Wide enough for the longest shipped default (⌃⌘Return) and
-                // for the recording prompt to stay readable.
-                recorder.widthAnchor.constraint(equalToConstant: 168).isActive = true
-                recorder.onChange = { [weak self] chord in self?.shortcutChanged(action, to: chord) }
-                shortcutRecorders[action] = recorder
-                rows.append(SettingsRow(title: action.title, description: action.detail, control: recorder))
-            }
-            let isLast = group == TerminalShortcutAction.Group.allCases.last
-            var aside: NSView?
-            if isLast {
-                let reset = HelmButton(title: "Restore Defaults", variant: .secondary,
-                                       target: self, action: #selector(resetTerminalShortcuts))
-                resetShortcutsButton = reset
-                aside = reset
-            }
-            sections.append(SettingsSection(
-                heading: group.title,
-                aside: aside,
-                group: SettingsGroup(rows: rows),
-                foot: isLast ? "Click a shortcut, then press the new keys. Esc cancels, Delete clears." : nil))
-        }
-        refreshShortcutControls()
+        // T7: the nine tab, split and pane chords are recorded on Settings >
+        // Shortcuts now, beside every other chord the app has, where a new
+        // one is checked against all of them. This page links there rather
+        // than keeping a second set of recorders that would check nothing.
+        let openShortcuts = HelmButton(title: "Open Shortcuts", variant: .secondary,
+                                       target: self, action: #selector(openShortcutsPage))
+        openShortcuts.setAccessibilityLabel("Open \(PlaceName.of(.settings)), Shortcuts")
+        sections.append(SettingsSection(heading: "Keyboard shortcuts", group: SettingsGroup(rows: [
+            SettingsRow(title: "Tab, split and pane shortcuts",
+                        description: "Moving between tabs, splitting a terminal and moving between its panes. Change them, see what else uses the same keys, or restore the defaults on the Shortcuts page.",
+                        control: openShortcuts),
+        ])))
         return sections
+    }
+
+    /// T4: commit the typed depth - on Return and on focus loss, through
+    /// `configure(_:)`'s three wirings (gotcha (19)).
+    ///
+    /// Lowering the depth asks first whenever an open pane holds more than
+    /// the new limit, because `changeScrollback` trims for real and nothing
+    /// brings those lines back. Raising it, or lowering it while nothing
+    /// would be lost, applies at once.
+    private func commitScrollbackField() {
+        let current = TerminalScrollback.shared.rows
+        let digits = scrollbackField.stringValue.filter(\.isNumber)
+        guard let typed = Int(digits) else {
+            showScrollback(current)
+            return
+        }
+        let target = TerminalScrollback.normalised(typed)
+        if target < current {
+            let affected = scrollbackTrimCount(target)
+            if affected > 0 {
+                let rows = NumberFormatter.localizedString(from: NSNumber(value: target), number: .decimal)
+                let panes = affected == 1 ? "1 open pane holds" : "\(affected) open panes hold"
+                let confirmed = HelmConfirm.confirm(
+                    title: "Trim history in open tabs?",
+                    body: "\(panes) more than \(rows) rows. Lowering the limit drops their oldest lines now, and they cannot be brought back.",
+                    confirmTitle: "Trim History", destructive: true, confirmIsDefault: false,
+                    symbol: "scissors", hue: .amber)
+                guard confirmed else {
+                    showScrollback(current)
+                    return
+                }
+            }
+        }
+        TerminalScrollback.shared.setRows(target)
+        showScrollback(target)
+    }
+
+    /// Put `rows` in the field and its cost in the note under it.
+    private func showScrollback(_ rows: Int) {
+        scrollbackField.stringValue = NumberFormatter.localizedString(from: NSNumber(value: rows), number: .decimal)
+        scrollbackRow?.descriptionLabel?.stringValue = TerminalScrollback.memoryNote(rows: rows)
+    }
+
+    /// The live half of the note: what the number being typed would cost,
+    /// before it is committed. A value that does not parse leaves the note on
+    /// the committed depth rather than guessing.
+    fileprivate func scrollbackFieldDidChange() {
+        guard let typed = Int(scrollbackField.stringValue.filter(\.isNumber)) else { return }
+        scrollbackRow?.descriptionLabel?.stringValue =
+            TerminalScrollback.memoryNote(rows: TerminalScrollback.normalised(typed))
+    }
+
+    private func trimBackgroundToggled() {
+        TerminalScrollback.shared.setTrimsBackgroundTabs(trimBackgroundSwitch.isOn)
     }
 
     @objc private func chooseShellCwd() {
@@ -1677,28 +1799,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         AppSettings.shared.defaultShellCwd = url.path
     }
 
-    private func shortcutChanged(_ action: TerminalShortcutAction, to chord: KeyChord) {
-        var set = AppSettings.shared.terminalShortcuts
-        set[action] = chord
-        AppSettings.shared.terminalShortcuts = set
-        onTerminalShortcutsChanged?(set)
-        refreshShortcutControls()
-    }
-
-    @objc private func resetTerminalShortcuts() {
-        var set = AppSettings.shared.terminalShortcuts
-        set.reset()
-        AppSettings.shared.terminalShortcuts = set
-        onTerminalShortcutsChanged?(set)
-        // Every recorder, not only the ones the captain changed: `reset()`
-        // clears the whole map, so a row still showing a custom chord would
-        // be showing a binding that no longer exists.
-        for (action, recorder) in shortcutRecorders { recorder.shortcut = set[action] }
-        refreshShortcutControls()
-    }
-
-    private func refreshShortcutControls() {
-        resetShortcutsButton?.isEnabled = AppSettings.shared.terminalShortcuts.hasCustomBindings
+    /// T7: Settings > Terminal's link to the page that records its chords.
+    @objc private func openShortcutsPage() {
+        select(.shortcuts)
     }
 
     // MARK: - Capture (fm/grandline-capture-global-hotkey-configurable)
@@ -1771,6 +1874,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         AppSettings.shared.quickCaptureShortcut = chord
         onQuickCaptureShortcutChanged?(chord)
         refreshCaptureControls()
+        shortcutsPage.reload()
     }
 
     @objc private func resetQuickCaptureShortcut() {
@@ -2603,6 +2707,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         switch sender {
         case shellCwdField:
             AppSettings.shared.defaultShellCwd = value.isEmpty ? nil : value
+        case scrollbackField:
+            commitScrollbackField()
         default:
             break
         }
@@ -2622,6 +2728,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                 Int(AppSettings.shared.fontSize) == size ? .primary : .secondary
         }
         autoReconnectSwitch.isOn = AppSettings.shared.autoReconnect
+        showScrollback(TerminalScrollback.shared.rows)
+        trimBackgroundSwitch.isOn = TerminalScrollback.shared.trimsBackgroundTabs
         refreshRelaunchButtons()
         if !appLockCheckInFlight { appLockSwitch.isOn = AppSettings.shared.appLockEnabled != false }
         refreshModuleSwitches()
@@ -2634,6 +2742,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         followSystemSwitch.isOn = AppSettings.shared.followSystemAppearance
         refreshSystemPairPopUps()
         refreshCaptureControls()
+        shortcutsPage.reload()
         syncDependentRows()
 
         rebuildAppearanceGrid()
@@ -2680,18 +2789,18 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         for row in backupRows { row.applyTheme(theme) }
         sudoRowHost?.applyTheme(theme)
+        shortcutsPage.applyTheme(theme)
         for card in themeCards { card.applyTheme(theme) }
         systemLightPopUp.applyTheme(theme)
         systemDarkPopUp.applyTheme(theme)
-        // Every recorder on this page, Capture's included - a
+        // Every recorder on this page - Capture's here, and the Shortcuts
+        // page's through `shortcutsPage.applyTheme` above. A
         // `KeyChordRecorderView` paints its own fill, border and ink from the
         // theme and renders as an unfilled rectangle with default ink until
         // this runs. Missed once while Capture's page was being added, and
         // nothing failed: the control worked perfectly and looked wrong.
-        for recorder in shortcutRecorders.values + [captureShortcutRecorder].compactMap({ $0 }) {
-            recorder.applyTheme(theme)
-        }
-        for toggle in [autoReconnectSwitch, appLockSwitch, notifySwitch, morningBriefingSwitch,
+        captureShortcutRecorder?.applyTheme(theme)
+        for toggle in [autoReconnectSwitch, trimBackgroundSwitch, appLockSwitch, notifySwitch, morningBriefingSwitch,
                        followSystemSwitch, compactModeSwitch, compactDockSwitch,
                        compactBadgeSwitch] + moduleSwitches.map(\.toggle) {
             toggle.applyTheme(theme)
@@ -2862,9 +2971,15 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// Every toggle on the page, in page order. A suite asserts the count, so
     /// a toggle added without coming here fails by name.
     var debugToggles: [HelmToggle] {
-        [followSystemSwitch, autoReconnectSwitch, appLockSwitch, notifySwitch,
+        [followSystemSwitch, autoReconnectSwitch, trimBackgroundSwitch, appLockSwitch, notifySwitch,
          morningBriefingSwitch, compactModeSwitch, compactDockSwitch, compactBadgeSwitch]
     }
+    /// T4's two controls. The suite types into the real field and sends its
+    /// real action, so these hand out the controls rather than a commit.
+    var debugScrollbackField: HelmTextField { scrollbackField }
+    var debugScrollbackRow: SettingsRow? { scrollbackRow }
+    var debugTrimBackgroundSwitch: HelmToggle { trimBackgroundSwitch }
+    var debugShortcutsPage: SettingsShortcutsPage { shortcutsPage }
     #endif
 }
 
@@ -2872,6 +2987,11 @@ extension SettingsController: NSTextFieldDelegate {
     func controlTextDidEndEditing(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
         textFieldChanged(field)
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard (obj.object as? NSTextField) === scrollbackField else { return }
+        scrollbackFieldDidChange()
     }
 }
 

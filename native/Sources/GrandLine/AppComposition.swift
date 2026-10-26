@@ -696,7 +696,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appShell.workspace.onKeyChordChanged = { [weak self] shortcut in
             self?.dictationHotkey.updateShortcut(shortcut)
         }
-        // Settings > Terminal Shortcuts writes `AppSettings.terminalShortcuts`
+        // Settings > Shortcuts writes `AppSettings.terminalShortcuts`
         // itself and reports the change here so the *live* monitor picks it
         // up on the very next keystroke - the same reason Dictation's
         // recorder reports rather than relying on a settings read per event.
@@ -1470,7 +1470,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// chords). A cached sheet would print yesterday's bindings.
     @objc func showKeyboardShortcuts() {
         let sections = KeyboardShortcutCatalog.all(mainMenu: NSApp.mainMenu, settings: .shared)
-        appShell.presentAsSheet(KeyboardShortcutsSheetController(sections: sections))
+        // T7: the sheet's "Customize…" opens Settings > Shortcuts.
+        appShell.presentAsSheet(KeyboardShortcutsSheetController(sections: sections) { [weak self] in
+            self?.showShortcutsSettings()
+        })
+    }
+
+    /// Settings > Shortcuts, from anywhere: the Settings module, then its
+    /// Shortcuts page.
+    func showShortcutsSettings() {
+        appShell.workspace.navigator.show(.settings)
+        appShell.workspace.settings.select(.shortcuts)
     }
 
     /// Help → "Manual Checks" - UX3's second Help item.

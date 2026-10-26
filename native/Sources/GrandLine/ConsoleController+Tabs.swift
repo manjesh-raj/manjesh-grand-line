@@ -885,6 +885,11 @@ extension ConsoleController {
             AppActivityState.shared.unobserve(activityObservation)
             self.activityObservation = nil
         }
+        Self.liveConsoles.remove(self)
+        if let scrollbackObservation {
+            TerminalScrollback.shared.unobserve(scrollbackObservation)
+            self.scrollbackObservation = nil
+        }
         if let fontSizeObservation {
             FontSizeManager.shared.unobserve(fontSizeObservation)
             self.fontSizeObservation = nil

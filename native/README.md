@@ -269,9 +269,10 @@ before assuming which is which.
 Every tab is a `CockpitTerminalView` (a `LocalProcessTerminalView` subclass -
 **do not touch its paste override**, it is what makes screenshot-paste into
 Claude work). Children are forked **in-process**, so a keystroke makes no
-localhost round trip. 10,000-line scrollback per terminal
-(`ConsoleController.interactiveScrollbackLines`); a tab can be **split** into
-panes (`TerminalSplit.swift`).
+localhost round trip. 10,000-line scrollback per terminal by default
+(`ConsoleController.interactiveScrollbackLines`), which Settings › Terminal can
+set from 1,000 to 100,000 (`TerminalScrollback.swift`); a tab can be **split**
+into panes (`TerminalSplit.swift`).
 
 **What that scrollback costs.**
 A full pane is about **52 MB** at 200 columns: 10,000 rows of 24-byte cells is
@@ -284,8 +285,10 @@ only a pane that has actually filled its history costs this much.
 
 Terminal memory still scales with tabs x panes, so a tab that has been out of
 sight for five minutes keeps only `ConsoleController.backgroundScrollbackLines`
-(2,000, about 10 MB at 200 columns) and gets its full 10,000 back the moment it
+(2,000, about 10 MB at 200 columns) and gets its full depth back the moment it
 is selected.
+Settings › Terminal can turn that trim off, and the depth itself scales the
+figure above: about 5.2 MB per 1,000 rows of a full 200-column pane.
 The trim is real: the oldest lines above the most recent 2,000 are dropped, not
 paged out.
 A pane the captain has scrolled back in, and the Kubernetes feed tab, are left

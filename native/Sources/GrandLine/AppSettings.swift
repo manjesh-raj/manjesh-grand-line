@@ -37,6 +37,8 @@ final class AppSettings {
         static let morningBriefingRecord = "fm.morningBriefingRecord"
         static let didSeedDailyGitHubSyncSchedule = "fm.didSeedDailyGitHubSyncSchedule"
         static let terminalShortcuts = "fm.terminalShortcuts"
+        static let terminalScrollbackRows = "fm.terminal.scrollbackRows"
+        static let terminalTrimsBackgroundScrollback = "fm.terminal.trimBackgroundScrollback"
         static let quickAccess = "fm.quickAccess"
         static let hasSeenWelcome = "fm.hasSeenWelcome"
         static let snippetExpansionEnabled = "fm.snippetExpansionEnabled"
@@ -197,7 +199,7 @@ final class AppSettings {
         }
     }
 
-    /// Settings > Terminal Shortcuts' nine configurable Console bindings
+    /// Settings > Shortcuts' nine configurable Console bindings
     /// (`fm/grand-line-terminal-shortcuts-settings`) - moving between tabs,
     /// splitting a terminal, and moving between the panes that produces.
     ///
@@ -219,6 +221,35 @@ final class AppSettings {
             guard let data = try? JSONEncoder().encode(newValue) else { return }
             defaults.set(data, forKey: Keys.terminalShortcuts)
         }
+    }
+
+    /// Settings > Terminal's scrollback depth (T4) - how many rows of
+    /// history every interactive pane keeps. Read through
+    /// `TerminalScrollback`, which owns the range and the live apply.
+    ///
+    /// A key nobody has written reads as the shipped 10,000, and a stored
+    /// value is normalised on the way out as well as on the way in, so a
+    /// hand-edited preference cannot give a pane a depth nothing here was
+    /// measured against.
+    var terminalScrollbackRows: Int {
+        get {
+            guard defaults.object(forKey: Keys.terminalScrollbackRows) != nil else {
+                return TerminalScrollback.defaultRows
+            }
+            return TerminalScrollback.normalised(defaults.integer(forKey: Keys.terminalScrollbackRows))
+        }
+        set { defaults.set(TerminalScrollback.normalised(newValue), forKey: Keys.terminalScrollbackRows) }
+    }
+
+    /// Settings > Terminal's "Trim tabs left in the background" (T4): PERF-07's
+    /// background trim, which used to be unconditional. On by default, because
+    /// that is what shipped.
+    var terminalTrimsBackgroundScrollback: Bool {
+        get {
+            defaults.object(forKey: Keys.terminalTrimsBackgroundScrollback) == nil
+                ? true : defaults.bool(forKey: Keys.terminalTrimsBackgroundScrollback)
+        }
+        set { defaults.set(newValue, forKey: Keys.terminalTrimsBackgroundScrollback) }
     }
 
     /// Dictation's "Clean up my sentences" toggle (phase 3,

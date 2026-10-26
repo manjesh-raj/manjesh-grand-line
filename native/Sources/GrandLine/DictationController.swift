@@ -257,6 +257,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
     override func viewWillAppear() {
         super.viewWillAppear()
         hasLoadedOnce = true
+        // T5: Settings > Shortcuts can rebind the trigger too, so the
+        // recorder re-reads the stored chord rather than trusting its own.
+        shortcutRecorder.shortcut = AppSettings.shared.dictationShortcut
         view.layoutSubtreeIfNeeded()
         scroll.contentView.scroll(to: .zero)
         scroll.reflectScrolledClipView(scroll.contentView)

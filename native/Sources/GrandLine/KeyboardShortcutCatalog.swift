@@ -19,7 +19,7 @@
 // has no item for them:
 //
 //   - the terminal shortcuts (`AppSettings.terminalShortcuts`), which are
-//     Settings > Terminal's recorder rows, and
+//     recorded on Settings > Shortcuts, and
 //   - the dictation hotkey (`AppSettings.dictationShortcut`).
 //
 // Both are read through `AppSettings`, which is what UX3's "the same tables
@@ -94,10 +94,29 @@ enum KeyboardShortcutCatalog {
     /// A section with no shortcuts at all is dropped: printing a heading over
     /// nothing tells the reader the app has a gap where it has a menu.
     static func sections(from mainMenu: NSMenu) -> [KeyboardShortcutSection] {
-        mainMenu.items.compactMap { topLevel -> KeyboardShortcutSection? in
+        menuItems(from: mainMenu).map { section in
+            KeyboardShortcutSection(title: section.title, entries: section.items.map { item in
+                KeyboardShortcutEntry(
+                    title: item.title,
+                    keys: keycaps(keyEquivalent: item.keyEquivalent,
+                                  modifiers: item.keyEquivalentModifierMask))
+            })
+        }
+    }
+
+    /// The walk itself: every menu item carrying a key equivalent, grouped by
+    /// its top-level menu, as the live `NSMenuItem`s.
+    ///
+    /// Shared by the Help sheet above and by Settings > Shortcuts
+    /// (`ShortcutsTable`, T5 of the Termius-style plan), which needs the raw
+    /// key equivalent and the action to check a recorded chord against the
+    /// menu. One walk, so the page and the sheet cannot disagree about what
+    /// the menu bar binds.
+    static func menuItems(from mainMenu: NSMenu) -> [(title: String, items: [NSMenuItem])] {
+        mainMenu.items.compactMap { topLevel -> (title: String, items: [NSMenuItem])? in
             guard let submenu = topLevel.submenu else { return nil }
-            let entries = collect(from: submenu)
-            guard !entries.isEmpty else { return nil }
+            let items = collect(from: submenu)
+            guard !items.isEmpty else { return nil }
             // `buildMenu` titles each *submenu* and leaves its bar item
             // untitled, and an untitled `NSMenuItem()` reports "NSMenuItem"
             // rather than an empty string - so reading the bar item first
@@ -107,24 +126,21 @@ enum KeyboardShortcutCatalog {
             // submenu is the one left untitled, because AppKit draws the app's
             // name there, so that is the fallback.
             let title = submenu.title.isEmpty ? AppPaths.displayName : submenu.title
-            return KeyboardShortcutSection(title: title, entries: entries)
+            return (title, items)
         }
     }
 
-    private static func collect(from menu: NSMenu) -> [KeyboardShortcutEntry] {
-        var entries: [KeyboardShortcutEntry] = []
+    private static func collect(from menu: NSMenu) -> [NSMenuItem] {
+        var items: [NSMenuItem] = []
         for item in menu.items {
             if let submenu = item.submenu {
-                entries += collect(from: submenu)
+                items += collect(from: submenu)
                 continue
             }
             guard !item.isSeparatorItem, !item.keyEquivalent.isEmpty else { continue }
-            entries.append(KeyboardShortcutEntry(
-                title: item.title,
-                keys: keycaps(keyEquivalent: item.keyEquivalent,
-                              modifiers: item.keyEquivalentModifierMask)))
+            items.append(item)
         }
-        return entries
+        return items
     }
 
     /// The two configurable families the menu bar has no item for.

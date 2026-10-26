@@ -240,6 +240,11 @@ enum ReviewTourLab {
         /// the captain sees after the relaunch Settings offers. Anywhere else
         /// it is a live change.
         case textScale(CGFloat)
+        /// `settings <category>`: show one Settings page, by its
+        /// `SettingsController.Category` raw value (`terminal`, `shortcuts`),
+        /// through the page's own `select`. Settings' categories are its own
+        /// column's rows rather than toolbar tabs, so `tab` cannot reach them.
+        case settingsCategory(String)
         case comment
     }
 
@@ -260,7 +265,7 @@ enum ReviewTourLab {
             case .unknownVerb(let v):
                 return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, renderbar, menu, wait, "
                     + "demo, measure, measurewindow, orderfront, probe, tasks, bar, fleet, inspector, sidebar, "
-                    + "tab, customize, select, textscale)"
+                    + "tab, customize, select, textscale, settings)"
             case .badArgument(let a): return "bad argument \"\(a)\""
             case .unknownDestination(let d): return "unknown destination \"\(d)\""
             case .unknownTheme(let t): return "unknown theme \"\(t)\""
@@ -396,6 +401,10 @@ enum ReviewTourLab {
         case "select":
             guard !argument.isEmpty else { return .failure(.missingArgument("select")) }
             return .success(.select(argument))
+        case "settings":
+            guard !argument.isEmpty else { return .failure(.missingArgument("settings")) }
+            guard SettingsController.Category(rawValue: argument) != nil else { return .failure(.badArgument(argument)) }
+            return .success(.settingsCategory(argument))
         case "textscale":
             guard !argument.isEmpty else { return .failure(.missingArgument("textscale")) }
             guard let step = ChromeTextScale.steps.first(where: { $0.title.lowercased() == argument.lowercased() }) else {
@@ -682,6 +691,15 @@ enum ReviewTourLab {
             case .select(let title):
                 log.append(selectRow(titled: title, shell: shell))
                 shell.view.layoutSubtreeIfNeeded()
+            case .settingsCategory(let raw):
+                guard let category = SettingsController.Category(rawValue: raw),
+                      let settings = shell.debugSlotController(.settings) as? SettingsController else {
+                    log.append("\(step) FAILED - Settings is not mounted (goto settings first)")
+                    continue
+                }
+                settings.select(category)
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("\(step)")
             case .orderFront:
                 window.orderFront(nil)
                 shell.view.layoutSubtreeIfNeeded()
@@ -1377,11 +1395,16 @@ enum ReviewTourLab {
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
         let dictationStore = DictationStore()
+        let settings = SettingsController(hostStore: hostStore, keyStore: keyStore,
+                                          snippetStore: snippetStore, dictationStore: dictationStore)
+        // A tour installs no main menu, so Settings > Shortcuts reads the one
+        // the app would install, built without installing it.
+        let menu = AppDelegate().buildMenu(installing: false)
+        settings.shortcutsMainMenu = { menu }
         let shell = layout.shellType.init(
             hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
             console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
-            settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
-                                         snippetStore: snippetStore, dictationStore: dictationStore),
+            settings: settings,
             hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: ShiftStore(),
             dictationStore: dictationStore, commandLibraryStore: CommandLibraryStore(),
             scheduleStore: ScheduleStore(),

@@ -671,6 +671,9 @@ NEEDS_SESSION=(
   # theme-card presses and reads rendered geometry and dimming back out, in a
   # real window.
   "FM_RUN_SETTINGS_REDESIGN_TESTS"
+  # PR 2 of the Termius-style plan: Settings > Terminal's scrollback row and
+  # the Shortcuts page, through their real controls in a real window.
+  "FM_RUN_SETTINGS_TERMINAL_SHORTCUTS_TESTS"
   "FM_RUN_UPDATES_REFRESH_BUTTON_THEME_TESTS"
   "FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS"
   "FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS"
