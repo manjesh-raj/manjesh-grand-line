@@ -57,6 +57,7 @@
 
 import AppKit
 import Foundation
+import WebKit
 
 enum ReviewTourLab {
 
@@ -263,6 +264,11 @@ enum ReviewTourLab {
         /// through the page's own `select`. Settings' categories are its own
         /// column's rows rather than toolbar tabs, so `tab` cannot reach them.
         case settingsCategory(String)
+        /// `code run`: run the showing Code snippet through the page's own
+        /// Run - the real sandboxed runner, so a tour should only ever seed
+        /// harmless fixtures (`echo`, an `exit 3`). Waits for the run to
+        /// finish, bounded by the runner's own wall clock.
+        case codeRun
         case comment
     }
 
@@ -283,7 +289,7 @@ enum ReviewTourLab {
             case .unknownVerb(let v):
                 return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, renderbar, menu, wait, "
                     + "demo, measure, measurewindow, orderfront, probe, tasks, bar, fleet, inspector, sidebar, "
-                    + "tab, customize, select, textscale, settings, grouped)"
+                    + "tab, customize, select, textscale, settings, grouped, code)"
             case .badArgument(let a): return "bad argument \"\(a)\""
             case .unknownDestination(let d): return "unknown destination \"\(d)\""
             case .unknownTheme(let t): return "unknown theme \"\(t)\""
@@ -440,6 +446,11 @@ enum ReviewTourLab {
         case "sshconfig":
             guard !argument.isEmpty else { return .failure(.missingArgument(verb)) }
             return .success(.sshConfig(argument))
+        case "code":
+            guard argument == "run" else {
+                return .failure(argument.isEmpty ? .missingArgument(verb) : .badArgument(argument))
+            }
+            return .success(.codeRun)
         case "textscale":
             guard !argument.isEmpty else { return .failure(.missingArgument("textscale")) }
             guard let step = ChromeTextScale.steps.first(where: { $0.title.lowercased() == argument.lowercased() }) else {
@@ -763,6 +774,25 @@ enum ReviewTourLab {
             case .select(let title):
                 log.append(selectRow(titled: title, shell: shell))
                 shell.view.layoutSubtreeIfNeeded()
+            case .codeRun:
+                guard let code = shell.debugCurrentDestination.flatMap(shell.debugSlotController) as? CodePreviewController else {
+                    log.append("code run FAILED - the showing page is not Code (goto codePreview first)")
+                    continue
+                }
+                // The runner probes its tools after the editor is ready, and
+                // Run stays disabled until it has.
+                let warm = Date().addingTimeInterval(15)
+                while !code.debugRunButtonEnabled, Date() < warm {
+                    RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+                }
+                code.debugRun()
+                let deadline = Date().addingTimeInterval(CodeRunner.wallClock + 5)
+                RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.1))
+                while code.debugIsRunning, Date() < deadline {
+                    RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+                }
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("code run (\(code.debugOutputPane.debugStatusText))")
             case .settingsCategory(let raw):
                 guard let category = SettingsController.Category(rawValue: raw),
                       let settings = shell.debugSlotController(.settings) as? SettingsController else {
@@ -1193,6 +1223,9 @@ enum ReviewTourLab {
         switch page {
         case let hosts as HostsController:
             selected = hosts.debugSelectRecord(titled: title)
+        case let code as CodePreviewController:
+            code.debugSelect(name: title)
+            selected = code.debugCurrentName == title
         case let vault as CredentialVaultController:
             if let credential = shell.debugPoneglyphStore.credentials.first(where: { $0.title == title }) {
                 vault.debugSelectCredential(id: credential.id)
@@ -1562,6 +1595,9 @@ enum ReviewTourLab {
     static func writeSplitShellPNG(_ shell: MainSplitShellController, window: NSWindow, to url: URL) -> Bool {
         guard let frameView = window.contentView?.superview else { return false }
         frameView.layoutSubtreeIfNeeded()
+        // Taken first, while no graphics context is current: each one pumps
+        // the run loop until WebKit answers.
+        let webSnapshots = webViewSnapshots(in: window.contentView ?? frameView)
         guard frameView.bounds.width > 0, frameView.bounds.height > 0,
               let frameRep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else { return false }
         frameView.cacheDisplay(in: frameView.bounds, to: frameRep)
@@ -1647,11 +1683,76 @@ enum ReviewTourLab {
         // toolbar button's vibrant template image does not survive being
         // rendered on its own).
         if window.effectiveAppearance.isDarkForTour { repaintToolbarGlass(in: frameView, scale: scale) }
+        // `cacheDisplay` draws a `WKWebView` as an empty rectangle (AGENTS.md's
+        // probe rules), so a page hosting one - Code's Monaco editor - is
+        // drawn with its editor blank. Each visible web view's own snapshot
+        // goes back over its visible rectangle.
+        for (webView, image) in webSnapshots {
+            let visible = webView.visibleRect
+            let r = webView.convert(visible, to: nil)
+            let rect = NSRect(x: r.minX * scale, y: r.minY * scale, width: r.width * scale, height: r.height * scale)
+            let source = NSRect(x: visible.minX / max(webView.bounds.width, 1) * image.size.width,
+                                y: (webView.isFlipped ? webView.bounds.height - visible.maxY : visible.minY)
+                                    / max(webView.bounds.height, 1) * image.size.height,
+                                width: visible.width / max(webView.bounds.width, 1) * image.size.width,
+                                height: visible.height / max(webView.bounds.height, 1) * image.size.height)
+            image.draw(in: rect, from: source, operation: .sourceOver, fraction: 1)
+        }
         NSGraphicsContext.restoreGraphicsState()
         guard let data = composite.representation(using: .png, properties: [:]) else { return false }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
         return (try? data.write(to: url)) != nil
+    }
+
+    /// Every visible `WKWebView` under `root`, with WebKit's own snapshot of
+    /// it. Pumps the run loop for each, bounded, because `takeSnapshot`
+    /// answers asynchronously; a view that never answers is left out, and the
+    /// render then shows the blank rectangle `cacheDisplay` drew.
+    static func webViewSnapshots(in root: NSView) -> [(WKWebView, NSImage)] {
+        var found: [WKWebView] = []
+        func walk(_ view: NSView) {
+            if view.isHidden { return }
+            if let web = view as? WKWebView, web.visibleRect.width > 0, web.visibleRect.height > 0 {
+                found.append(web)
+                return
+            }
+            view.subviews.forEach(walk)
+        }
+        walk(root)
+        // A window parked off every screen is occluded, and WebKit stops
+        // painting an occluded window's pages - the snapshot is then the
+        // page's background with none of its content. The tour turns that
+        // detection off for its own web views (a debug-only, SPI key) and
+        // gives the page a moment to paint.
+        let setOcclusion = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
+        for web in found where web.responds(to: setOcclusion) {
+            typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
+            unsafeBitCast(web.method(for: setOcclusion), to: Setter.self)(web, setOcclusion, false)
+            web.needsDisplay = true
+            // The page itself suspended when the window was found occluded,
+            // and Monaco's `automaticLayout` never measured its container, so
+            // it is told it is on screen and asked to measure again.
+            (web as? CodePreviewWebView)?.debugSetOccluded(false)
+            // Monaco draws its lines on an animation frame, and a page whose
+            // window is off every screen is `visibilityState: hidden`, where
+            // none fires - so the page is asked to draw now, synchronously.
+            (web as? CodePreviewWebView)?.call("renderNow")
+        }
+        if !found.isEmpty { RunLoop.main.run(until: Date().addingTimeInterval(1.0)) }
+        return found.compactMap { web in
+            var image: NSImage?
+            var answered = false
+            web.takeSnapshot(with: nil) { snapshot, _ in
+                image = snapshot
+                answered = true
+            }
+            let deadline = Date().addingTimeInterval(5)
+            while !answered, Date() < deadline {
+                RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            }
+            return image.map { (web, $0) }
+        }
     }
 
     /// The toolbar half of `writeSplitShellPNG`, drawing into the current
