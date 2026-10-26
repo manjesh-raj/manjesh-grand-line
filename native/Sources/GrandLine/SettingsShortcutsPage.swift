@@ -3,6 +3,12 @@
 // Settings > Shortcuts (T5 of the Termius-style plan): every keyboard
 // shortcut in one table, with search and the Changed and Conflicts filters.
 //
+// T6 is the rebinding half. A chord the captain records is checked against
+// every other row - the live menu, the fixed tab table, the session chords
+// and every configurable binding - before it is stored, and a clash names
+// the owner and asks Use Anyway or Cancel. Each configurable row has its own
+// reset, and Restore All Defaults puts every one back.
+//
 // The rows come from `ShortcutsTable`, which reads the live menu bar through
 // the same walk the Help menu's sheet uses, so this page cannot list a chord
 // the menu does not bind or miss one it does. The configurable families
@@ -39,6 +45,9 @@ final class SettingsShortcutsPage: NSObject {
     private let filterTabs = HelmSegmentedTabs(
         items: ShortcutsTable.Filter.allCases.map { .init(id: $0.rawValue, title: $0.title) },
         selected: ShortcutsTable.Filter.all.rawValue)
+    private let restoreAllButton = HelmButton(title: "Restore All Defaults", variant: .secondary,
+                                              target: nil, action: nil)
+    private var resetButtons: [ObjectIdentifier: ConfigurableShortcut] = [:]
     private let listStack = NSStackView()
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
 
@@ -73,7 +82,11 @@ final class SettingsShortcutsPage: NSObject {
         filterTabs.setContentCompressionResistancePriority(.required, for: .horizontal)
         searchField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         searchField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let bar = NSStackView(views: [searchField, filterTabs])
+        restoreAllButton.target = self
+        restoreAllButton.action = #selector(restoreAllDefaults)
+        restoreAllButton.setContentHuggingPriority(.required, for: .horizontal)
+        restoreAllButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let bar = NSStackView(views: [searchField, filterTabs, restoreAllButton])
         bar.orientation = .horizontal
         bar.distribution = .fill
         bar.alignment = .centerY
@@ -114,6 +127,8 @@ final class SettingsShortcutsPage: NSObject {
         }
         sections = []
         recorders = [:]
+        resetButtons = [:]
+        restoreAllButton.isEnabled = rows.contains { $0.isChanged }
 
         let visible = ShortcutsTable.visible(rows, filter: filter, search: searchField.stringValue)
         var order: [String] = []
@@ -165,12 +180,29 @@ final class SettingsShortcutsPage: NSObject {
         recorder.widthAnchor.constraint(equalToConstant: Self.controlWidth).isActive = true
         recorder.onChange = { [weak self] chord in self?.recorded(chord, for: shortcut) }
         recorders[shortcut] = recorder
-        return SettingsRow(title: row.title, description: detail, control: recorder)
+
+        // T6: the row's own reset, enabled only while it is off its default.
+        // Always laid out, so the recorder column does not move as rows
+        // change.
+        let reset = HelmButton(symbol: "arrow.uturn.backward", variant: .quiet,
+                               target: self, action: #selector(resetRowClicked(_:)))
+        let label = "Reset \(row.title) to \(shortcut.defaultChord.displayString)"
+        reset.toolTip = label
+        reset.setAccessibilityLabel(label)
+        reset.isEnabled = row.isChanged
+        reset.widthAnchor.constraint(equalToConstant: Self.resetWidth).isActive = true
+        resetButtons[ObjectIdentifier(reset)] = shortcut
+        let control = NSStackView(views: [recorder, reset])
+        control.orientation = .horizontal
+        control.spacing = Self.resetGap
+        return SettingsRow(title: row.title, description: detail, control: control)
     }
 
     /// The control column's width: the recorders', so a read-only row's
     /// key caps end where a recorder ends and the page reads as one column.
     static let controlWidth: CGFloat = 168
+    static let resetWidth: CGFloat = 28
+    static let resetGap: CGFloat = HelmMetrics.s2
 
     /// A key-cap pill, trailing-aligned in a column as wide as a recorder.
     ///
@@ -183,9 +215,11 @@ final class SettingsShortcutsPage: NSObject {
         column.translatesAutoresizingMaskIntoConstraints = false
         pill.translatesAutoresizingMaskIntoConstraints = false
         column.addSubview(pill)
+        // As wide as a recorder plus its reset button, with the caps ending
+        // where the recorders end rather than where the resets do.
         NSLayoutConstraint.activate([
-            column.widthAnchor.constraint(equalToConstant: controlWidth),
-            pill.trailingAnchor.constraint(equalTo: column.trailingAnchor),
+            column.widthAnchor.constraint(equalToConstant: controlWidth + resetGap + resetWidth),
+            pill.trailingAnchor.constraint(equalTo: column.trailingAnchor, constant: -(resetGap + resetWidth)),
             pill.leadingAnchor.constraint(greaterThanOrEqualTo: column.leadingAnchor),
             pill.topAnchor.constraint(equalTo: column.topAnchor),
             pill.bottomAnchor.constraint(equalTo: column.bottomAnchor),
@@ -193,9 +227,58 @@ final class SettingsShortcutsPage: NSObject {
         return column
     }
 
-    /// A recorder captured a chord.
+    /// A recorder captured a chord, or a reset asked for the default.
+    ///
+    /// T6: the chord is checked against every other row before it is stored
+    /// - the live menu, the fixed tab table and ⌘1-⌘9, the session chords
+    /// and every other configurable binding - with masks compared through
+    /// `KeyChord.relevantModifierMask` (gotcha (21)). A clash names its
+    /// owners and asks. Cancel puts the recorder back on the binding it had,
+    /// so the row never shows a chord that was not stored.
     private func recorded(_ chord: KeyChord, for shortcut: ConfigurableShortcut) {
+        let previous = shortcut.current(in: settings)
+        guard !ShortcutsTable.sameKeys(chord, previous) else {
+            recorders[shortcut]?.shortcut = previous
+            return
+        }
+        let owners = ShortcutsTable.owners(of: chord, for: shortcut, in: rows)
+        if !owners.isEmpty {
+            let names = owners.map { "\u{201C}\($0.label)\u{201D}" }.joined(separator: " and ")
+            let confirmed = HelmConfirm.confirm(
+                title: "\(chord.displayString) is already in use",
+                body: "It belongs to \(names). Use it for \u{201C}\(shortcut.title)\u{201D} anyway? Both keep the same keys, and whichever Grand Line checks first wins - a terminal shortcut is checked before the menu while a Console tab is showing.",
+                confirmTitle: "Use Anyway", cancelTitle: "Cancel",
+                confirmIsDefault: false, symbol: "exclamationmark.triangle", hue: .amber)
+            guard confirmed else {
+                recorders[shortcut]?.shortcut = previous
+                return
+            }
+        }
         apply(chord, to: shortcut)
+    }
+
+    @objc private func resetRowClicked(_ sender: NSButton) {
+        guard let shortcut = resetButtons[ObjectIdentifier(sender)] else { return }
+        recorded(shortcut.defaultChord, for: shortcut)
+    }
+
+    /// Every configurable binding back to its default. Asks first, because
+    /// it throws away every choice on the page at once.
+    @objc private func restoreAllDefaults() {
+        let changed = ConfigurableShortcut.all.filter { $0.current(in: settings) != $0.defaultChord }
+        guard !changed.isEmpty else { return }
+        let count = changed.count == 1 ? "1 shortcut you changed goes" : "\(changed.count) shortcuts you changed go"
+        guard HelmConfirm.confirm(title: "Restore every shortcut to its default?",
+                                  body: "\(count) back to the default Grand Line ships with.",
+                                  confirmTitle: "Restore Defaults", symbol: "arrow.uturn.backward", hue: .amber)
+        else { return }
+        for shortcut in changed { shortcut.store(shortcut.defaultChord, in: settings) }
+        if changed.contains(where: { if case .terminal = $0 { return true } else { return false } }) {
+            onTerminalShortcutsChanged?(settings.terminalShortcuts)
+        }
+        if changed.contains(.quickCapture) { onQuickCaptureShortcutChanged?(settings.quickCaptureShortcut) }
+        if changed.contains(.dictation) { onDictationShortcutChanged?(settings.dictationShortcut) }
+        reload()
     }
 
     /// Store a binding, tell its listener, and rebuild the table so the
@@ -230,6 +313,12 @@ final class SettingsShortcutsPage: NSObject {
     #if FM_SELFTESTS
     var debugSearchField: HelmSearchField { searchField }
     var debugFilterTabs: HelmSegmentedTabs { filterTabs }
+    var debugRestoreAllButton: HelmButton { restoreAllButton }
+    func debugResetButton(for shortcut: ConfigurableShortcut) -> HelmButton? {
+        sections.flatMap(\.group.rows).lazy
+            .compactMap { ($0.control as? NSStackView)?.arrangedSubviews.last as? HelmButton }
+            .first { self.resetButtons[ObjectIdentifier($0)] == shortcut }
+    }
     var debugEmptyLabelShown: Bool { !emptyLabel.isHidden }
     var debugEmptyText: String { emptyLabel.stringValue }
     /// Every row on the page as drawn, by title.

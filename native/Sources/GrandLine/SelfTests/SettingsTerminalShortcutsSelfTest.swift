@@ -35,7 +35,8 @@ enum SettingsTerminalShortcutsSelfTest {
         var allOK = true
         for check in [checkTheTourCanSelectASettingsPage,
                       checkTheScrollbackRowCommitsAndWarnsBeforeTrimming,
-                      checkTheShortcutsPageListsSearchesAndFilters] {
+                      checkTheShortcutsPageListsSearchesAndFilters,
+                      checkRecordingAClashAsksAndResetsPutItBack] {
             var ok = true
             autoreleasepool { check(&ok) }
             allOK = allOK && ok
@@ -241,19 +242,23 @@ enum SettingsTerminalShortcutsSelfTest {
         check(headings.first == "Terminal" && headings.contains("Hosts") && headings.contains("Tabs and pages"),
               "the sections read \(headings)", &ok)
 
-        // The key-cap column and the recorder column end at one x.
+        // The key caps end where the recorders end, and the two control
+        // columns are one width, so the page reads as one column.
         let recorderRow = all.first { $0.titleLabel.stringValue == "Split right" }
         let menuRow = all.first { $0.titleLabel.stringValue == "New Host\u{2026}" }
-        if let recorderRow, let menuRow {
-            let a = recorderRow.control.convert(recorderRow.control.bounds, to: nil)
-            let b = menuRow.control.convert(menuRow.control.bounds, to: nil)
-            check(abs(a.maxX - b.maxX) <= 1 && abs(a.width - b.width) <= 1,
-                  "the key caps end at \(b.maxX) (width \(b.width)), the recorders at \(a.maxX) (width \(a.width))", &ok)
-            check(recorderRow.control is KeyChordRecorderView, "a configurable row has no recorder", &ok)
-            check((recorderRow.control.accessibilityLabel() ?? "").contains("Split right"),
+        if let recorderRow, let menuRow, let recorder = page.recorders[.terminal(.splitRight)],
+           let pill = menuRow.control.subviews.first {
+            let a = recorder.convert(recorder.bounds, to: nil)
+            let b = pill.convert(pill.bounds, to: nil)
+            check(abs(a.maxX - b.maxX) <= 1, "the key caps end at \(b.maxX), the recorders at \(a.maxX)", &ok)
+            let columnA = recorderRow.control.convert(recorderRow.control.bounds, to: nil)
+            let columnB = menuRow.control.convert(menuRow.control.bounds, to: nil)
+            check(abs(columnA.maxX - columnB.maxX) <= 1 && abs(columnA.width - columnB.width) <= 1,
+                  "the control columns differ: \(columnA) and \(columnB)", &ok)
+            check((recorder.accessibilityLabel() ?? "").contains("Split right"),
                   "the recorder's VoiceOver label does not name its action", &ok)
         } else {
-            fail("the page has no Split right or New Host… row", &ok)
+            fail("the page has no Split right recorder or New Host… row", &ok)
         }
 
         search("split", in: page.debugSearchField, window: window)
@@ -272,6 +277,117 @@ enum SettingsTerminalShortcutsSelfTest {
         _ = press(ShortcutsTable.Filter.all.rawValue, in: page.debugFilterTabs)
         check(!page.debugEmptyLabelShown && page.debugVisibleRows.count == all.count, "All did not bring every row back", &ok)
         if ok { print("  ok   \(all.count) rows, search, both filters, the empty state and one control column") }
+    }
+
+    // MARK: T6 - rebinding
+
+    /// Press keys into a focused recorder through the window, the way a
+    /// keystroke reaches it.
+    static func pressKeys(_ keyCode: UInt16, _ characters: String, _ modifiers: NSEvent.ModifierFlags,
+                          into recorder: KeyChordRecorderView, window: NSWindow) {
+        window.makeFirstResponder(recorder)
+        _ = recorder.accessibilityPerformPress()
+        guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+                                           timestamp: ProcessInfo.processInfo.systemUptime,
+                                           windowNumber: window.windowNumber, context: nil,
+                                           characters: characters, charactersIgnoringModifiers: characters,
+                                           isARepeat: false, keyCode: keyCode) else { return }
+        window.sendEvent(event)
+    }
+
+    /// Recording a chord another row owns asks, naming the owner. Cancel
+    /// leaves the binding and the recorder as they were; Use Anyway stores
+    /// it, tells the live monitor, and the page shows the clash. The row's
+    /// reset and Restore All Defaults put everything back.
+    ///
+    /// Injection: drop the `owners` check from `recorded(_:for:)` and the
+    /// clash is stored without a question.
+    private static func checkRecordingAClashAsksAndResetsPutItBack(_ ok: inout Bool) {
+        print("\n-- T6: rebinding with conflict detection --")
+        let savedTerminal = AppSettings.shared.terminalShortcuts
+        let savedCapture = AppSettings.shared.quickCaptureShortcut
+        let savedDictation = AppSettings.shared.dictationShortcut
+        defer {
+            AppSettings.shared.terminalShortcuts = savedTerminal
+            AppSettings.shared.quickCaptureShortcut = savedCapture
+            AppSettings.shared.dictationShortcut = savedDictation
+            HelmConfirm.responderForTests = nil
+        }
+        var reset = TerminalShortcutSet.defaults
+        reset.reset()
+        AppSettings.shared.terminalShortcuts = reset
+        AppSettings.shared.quickCaptureShortcut = .quickCaptureDefault
+        AppSettings.shared.dictationShortcut = .dictationDefault
+
+        let (settings, window) = mountShortcuts()
+        defer { withExtendedLifetime(window) {} }
+        var told: [TerminalShortcutSet] = []
+        var toldCapture: [KeyChord] = []
+        settings.onTerminalShortcutsChanged = { told.append($0) }
+        settings.onQuickCaptureShortcutChanged = { toldCapture.append($0) }
+        let page = settings.debugShortcutsPage
+        var asked: [HelmConfirm.Request] = []
+        var answer: HelmConfirm.Response = .cancel
+        HelmConfirm.responderForTests = { request in
+            asked.append(request)
+            return answer
+        }
+        guard let split = page.recorders[.terminal(.splitRight)] else {
+            fail("the page has no Split right recorder", &ok)
+            return
+        }
+        let defaultChord = TerminalShortcutAction.splitRight.defaultChord
+        let commandK = KeyChord(key: 40, [.command])
+
+        pressKeys(40, "k", [.command], into: split, window: window)
+        check(asked.count == 1, "recording ⌘K (Search…) asked \(asked.count) times, want once", &ok)
+        check(asked.first.map { $0.body.contains("Search") && $0.confirmTitle == "Use Anyway" } == true,
+              "the question does not name the owner or offer Use Anyway: \(asked.first?.body ?? "-")", &ok)
+        check(AppSettings.shared.terminalShortcuts[.splitRight] == defaultChord,
+              "Cancel stored the clash: \(AppSettings.shared.terminalShortcuts[.splitRight].displayString)", &ok)
+        check(split.shortcut == defaultChord, "Cancel left the recorder showing \(split.shortcut.displayString)", &ok)
+        check(told.isEmpty, "Cancel told the live monitor about a binding that was never stored", &ok)
+
+        answer = .confirm
+        pressKeys(40, "k", [.command], into: split, window: window)
+        check(ShortcutsTable.sameKeys(AppSettings.shared.terminalShortcuts[.splitRight], commandK),
+              "Use Anyway did not store ⌘K", &ok)
+        check(told.last.map { ShortcutsTable.sameKeys($0[.splitRight], commandK) } == true,
+              "the live monitor was not told about ⌘K", &ok)
+        check(page.rows.first { $0.configurable == .terminal(.splitRight) }?.conflicts.isEmpty == false,
+              "the page does not show the clash it just allowed", &ok)
+        check(page.debugRestoreAllButton.isEnabled, "Restore All Defaults is disabled with a binding changed", &ok)
+
+        // A chord nobody owns goes straight in.
+        asked.removeAll()
+        guard let capture = page.recorders[.quickCapture] else {
+            fail("the page has no capture recorder", &ok)
+            return
+        }
+        pressKeys(8, "c", [.control, .option, .command], into: capture, window: window)
+        check(asked.isEmpty, "a free chord asked anyway", &ok)
+        check(toldCapture.last.map { $0.keyCode == 8 } == true, "the capture hotkey was not told about ⌃⌥⌘C", &ok)
+
+        // The row's own reset.
+        guard let resetSplit = page.debugResetButton(for: .terminal(.splitRight)) else {
+            fail("the Split right row has no reset button", &ok)
+            return
+        }
+        check(resetSplit.isEnabled, "a changed row's reset is disabled", &ok)
+        resetSplit.performClick(nil)
+        check(AppSettings.shared.terminalShortcuts[.splitRight] == defaultChord,
+              "the row's reset left \(AppSettings.shared.terminalShortcuts[.splitRight].displayString)", &ok)
+        check(page.debugResetButton(for: .terminal(.splitRight))?.isEnabled == false,
+              "the reset stays enabled on a row back on its default", &ok)
+
+        // Restore All Defaults puts capture back too, after asking.
+        asked.removeAll()
+        page.debugRestoreAllButton.performClick(nil)
+        check(asked.count == 1 && asked.first?.confirmTitle == "Restore Defaults", "Restore All did not ask once", &ok)
+        check(AppSettings.shared.quickCaptureShortcut == .quickCaptureDefault, "Restore All left capture changed", &ok)
+        check(toldCapture.last == .quickCaptureDefault, "the capture hotkey was not told about the restore", &ok)
+        check(!page.debugRestoreAllButton.isEnabled, "Restore All stays enabled with nothing changed", &ok)
+        if ok { print("  ok   asked with the owner, Cancel, Use Anyway, a free chord, the row reset and Restore All") }
     }
 }
 

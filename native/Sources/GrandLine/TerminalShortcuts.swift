@@ -60,11 +60,14 @@
 //   Close pane         ⌃⌘W     ⌘W closes the whole tab; this closes one pane.
 //   Zoom pane          ⌃⌘⏎     Temporarily fill the tab with the focused pane.
 //
-// A captain can record anything over any of them. Nothing here validates a
-// new chord against the fixed table or the menus - a shortcut recorder that
-// silently refused half the keyboard would be worse than one that lets the
-// captain decide, and the monitor's own ordering makes the consequence
-// bounded and predictable: see `TabKeyboardShortcuts.handle`.
+// A captain can record anything over any of them. Settings > Shortcuts (T6
+// of the Termius-style plan, `SettingsShortcutsPage`) checks a new chord
+// against the live menu, the fixed table, the session chords and every other
+// configurable binding, names the owner of a clash and asks - and Use Anyway
+// is always an answer, because a recorder that silently refused half the
+// keyboard would be worse than one that lets the captain decide. The
+// monitor's own ordering keeps the consequence bounded and predictable: see
+// `TabKeyboardShortcuts.handle`.
 
 import AppKit
 
