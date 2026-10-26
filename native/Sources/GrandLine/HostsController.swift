@@ -584,8 +584,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
 
         hostStore.observe { [weak self] in self?.reloadHosts() }
-        keyStore.onChange = { [weak self] in self?.reloadKeysAndCounts() }
-        snippetStore.onChange = { [weak self] in self?.reloadSnippetsAndCounts() }
+        keyStore.observe { [weak self] in self?.reloadKeysAndCounts() }
+        snippetStore.observe { [weak self] in self?.reloadSnippetsAndCounts() }
 
         select(tab: .hosts, moveTabControl: true)
         reloadHosts()

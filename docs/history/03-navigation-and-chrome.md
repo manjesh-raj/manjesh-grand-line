@@ -1287,3 +1287,19 @@ So `ModuleTableSelfTest` asserts three things: the rows agree with what stays el
 The fixture was captured from the old switches and passed against them before any switch was deleted, which is the proof that nothing was renamed or moved.
 Renaming Console or changing Hosts' glyph in the table fails it by name.
 
+### One way to watch a store (R2-ARCH-08)
+
+Six types exposed a single `var onChange: (() -> Void)?`: `CredentialVaultStore`, `SnippetStore`, `SSHKeyStore`, `ScheduleStore`, `ClipboardHistoryStore` and `TerminalBlockTracker`.
+The last assignment won silently, so every new reader needed a channel of its own: the vault grew `observeLock` for the Secrets badge, and `SnippetStore` had already grown a second, additive list for the snippet expander.
+All six now conform to `StoreObservable` and keep one `StoreObservers` list: any number of readers, each with a token to unobserve, delivered on the main thread.
+A change reported on main is delivered at once, as `onChange` was; one reported from a background queue is hopped to main first.
+The protocol is not named `Observable`, which is the Observation framework's type and would be ambiguous in any file importing SwiftUI.
+No `onChange` shim was kept, because nothing needed one: the five readers (Poneglyph, Hosts' keys and snippets, Schedules, the clipboard picker) observe instead, and the picker drops its token when it goes.
+The vault's `observeLock` stays, as a different signal rather than a workaround: it fires only on a lock or an unlock and carries a Bool.
+
+One trap: the vault's threading suites asserted the thread `onChange` ran on as a stand-in for the mutation's thread.
+With delivery always on main, that check would pass whatever thread the mutation ran on.
+`StoreObservers.notifyThreadForTests` (debug builds only) reports the thread a change was reported from, before the hop, and those suites read it instead.
+`StoreObservableSelfTest` checks that two observers both hear a real change on each of the six, that unobserving one leaves the other, and that an off-main report is delivered on main.
+Going back to last-assignment-wins fails it on every store.
+

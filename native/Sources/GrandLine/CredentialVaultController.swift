@@ -229,7 +229,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         recoveryButton.action = #selector(recoveryTapped)
         recoveryButton.toolTip = "Recovery key and CSV import"
 
-        store.onChange = { [weak self] in self?.render() }
+        store.observe { [weak self] in self?.render() }
         CredentialVaultClipboard.shared.onCountdown = { [weak self] remaining in
             self?.renderClipboardCountdown(remaining)
         }

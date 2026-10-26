@@ -3721,6 +3721,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_APP_LOCK_TESTS"] == "1" {
     exit(AppLockControllerSelfTest.run() ? 0 : 1)
 }
 
+// R2-ARCH-08: every store with a change signal can be watched by any number
+// of readers (`StoreObservableSelfTest`, pure logic).
+if ProcessInfo.processInfo.environment["FM_RUN_STORE_OBSERVABLE_TESTS"] == "1" {
+    exit(StoreObservableSelfTest.run() ? 0 : 1)
+}
+
 // R2-ARCH-04: the floating bar's presentation of each page sits in a
 // `+Classic.swift` file of its own (`ClassicPresentationSelfTest`, pure logic).
 if ProcessInfo.processInfo.environment["FM_RUN_CLASSIC_PRESENTATION_TESTS"] == "1" {

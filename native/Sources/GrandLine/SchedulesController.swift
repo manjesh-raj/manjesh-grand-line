@@ -423,7 +423,7 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
             self.refreshSidebarCounts()
         }
         ScheduleRunner.shared.onRunStateChanged = { [weak self] _ in self?.refreshSchedules() }
-        scheduleStore.onChange = { [weak self] in self?.refreshSchedules() }
+        scheduleStore.observe { [weak self] in self?.refreshSchedules() }
         refreshSchedules()
         return schedulesCard.card
     }

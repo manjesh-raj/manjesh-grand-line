@@ -7,7 +7,7 @@
 
 import Foundation
 
-final class SnippetStore {
+final class SnippetStore: StoreObservable {
 
     private(set) var snippets: [Snippet] = []
 
@@ -19,20 +19,14 @@ final class SnippetStore {
     /// Set when `load()` backed up an undecodable `snippets.json` (GL-01).
     var loadFailureBackupPath: String? { loadStatus.backupPath }
 
-    /// Fired after any mutation so the snippets list can reload.
-    var onChange: (() -> Void)?
-
-    /// F12: a second reader. `onChange` is a single closure the Hosts page
-    /// owns, and the expander needs the same signal to rebuild its trigger
-    /// table - so rather than turning one page's property into a list nobody
-    /// else uses, this is the additive registration `HostStore.observe`
-    /// already established for exactly this situation. No unregister, same as
-    /// there: the registrants live as long as the app does.
-    private var observers: [() -> Void] = []
-
-    func observe(_ handler: @escaping () -> Void) {
-        observers.append(handler)
-    }
+    /// Told after any mutation, so the snippets list can reload and F12's
+    /// expander can rebuild its trigger table.
+    ///
+    /// R2-ARCH-08: this store used to have both mechanisms the review counted -
+    /// an `onChange` closure the Hosts page owned, and beside it a second,
+    /// additive list F12 added because the expander needed the same signal.
+    /// One list now (`StoreObservable`), so a third reader needs nothing new.
+    let observers = StoreObservers()
 
     private let fileURL: URL
 
@@ -91,8 +85,7 @@ final class SnippetStore {
 
     private func persist() {
         if StoreLoadFailure.refusesWrite(loadStatus, what: "snippets", url: fileURL) {
-            onChange?()
-            for observer in observers { observer() }
+            observers.notify()
             return
         }
         do {
@@ -109,7 +102,6 @@ final class SnippetStore {
         } catch {
             PersistenceFailureReporter.report(what: "snippets", path: fileURL.path, error: error)
         }
-        onChange?()
-        for observer in observers { observer() }
+        observers.notify()
     }
 }

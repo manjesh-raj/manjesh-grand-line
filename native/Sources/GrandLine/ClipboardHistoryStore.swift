@@ -339,7 +339,7 @@ enum ClipboardHistoryKey {
 
 // MARK: - The store
 
-final class ClipboardHistoryStore {
+final class ClipboardHistoryStore: StoreObservable {
 
     /// The report's own number: 200 *unpinned* entries. A pin is what takes an
     /// entry out of the rolling window, so the cap never evicts one.
@@ -396,7 +396,10 @@ final class ClipboardHistoryStore {
     /// key mismatch into a loss the captain only found by listing the folder.
     private(set) var shelvedBackups: [URL] = []
 
-    var onChange: (() -> Void)?
+    /// Told after the history changes. R2-ARCH-08: any number of readers,
+    /// through `observe(_:)`, rather than one `onChange` the last assignment
+    /// owned.
+    let observers = StoreObservers()
 
     private let key: CredentialVaultKey?
     private static let sealPurpose = "grand-line-clipboard-history/entries"
@@ -639,7 +642,7 @@ final class ClipboardHistoryStore {
     private var writtenSequence: UInt64 = 0
 
     private func persist() {
-        defer { onChange?() }
+        defer { observers.notify() }
         guard key != nil else { return }
         if StoreLoadFailure.refusesWrite(loadStatus, what: "clipboard history", url: fileURL) { return }
         pendingLock.lock()

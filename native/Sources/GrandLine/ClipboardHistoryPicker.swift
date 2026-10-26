@@ -51,6 +51,8 @@ final class ClipboardHistoryController: NSObject {
     private let content: ClipboardHistoryPanelViewController
     private let store: ClipboardHistoryStore
     private var themeObservation: ThemeObservation?
+    /// R2-ARCH-08: the store's one observer list; dropped when the picker goes.
+    private var storeObservation: StoreObservation?
 
     /// Fired after an entry is put back on the pasteboard, so the shell can
     /// toast it. Forwarded, never owned - this controller has no idea what a
@@ -80,7 +82,7 @@ final class ClipboardHistoryController: NSObject {
         themeObservation = ThemeManager.shared.observe { [weak self] theme in
             self?.content.applyTheme(theme)
         }
-        store.onChange = { [weak self] in
+        storeObservation = store.observe { [weak self] in
             // Only while it is open: a repaint of a panel nobody can see is
             // exactly the work GL-24's "a theme observer repaints, it never
             // fetches" and GL-13 both exist to avoid, and this fires on every
@@ -92,6 +94,7 @@ final class ClipboardHistoryController: NSObject {
 
     deinit {
         if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
+        if let storeObservation { store.unobserve(storeObservation) }
         if let captureToken { CredentialVaultClipboard.shared.unobserveChanges(captureToken) }
     }
 
