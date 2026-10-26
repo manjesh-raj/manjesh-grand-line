@@ -65,12 +65,15 @@ import UserNotifications
 enum NotificationCategory {
     /// A PR is green and ready to merge: Merge / Open PR / Show in app.
     static let prReady = "fm.category.pr-ready"
-    /// A fleet task needs a decision, is blocked, or just finished:
-    /// Open task / Show in app.
+    /// A fleet task is blocked or just finished: Open task / Open Fleet.
     static let fleetTask = "fm.category.fleet-task"
+    /// A fleet task needs the captain's decision: Answer / Open Fleet - the
+    /// Bridge panel's own words for the same entry. Its own category only so
+    /// the button can say Answer; it routes exactly as `fleetTask` does.
+    static let fleetDecision = "fm.category.fleet-decision"
     /// A Shift task is due or overdue: Open task / Show in app.
     static let shiftTask = "fm.category.shift-task"
-    /// A Shift follow-up is due or overdue: Snooze 1h / Open follow-up.
+    /// A Shift follow-up is due or overdue: Snooze 1 hour / Open follow-up.
     static let shiftFollowUp = "fm.category.shift-follow-up"
 }
 
@@ -94,6 +97,25 @@ enum NotificationAction {
 /// launch of the app, so it holds ids and a checks string - never a live
 /// object, an index into an in-memory list, or anything that could go stale
 /// into something that still looks valid.
+/// The Bridge redesign's banner copy. macOS draws the banner itself, so what
+/// can match the panel is the words: the source name the panel's kicker and
+/// row detail use goes in the banner's subtitle, and each button carries the
+/// panel's own action name. Pure, so the suite asserts the strings.
+enum NotificationBannerCopy {
+    /// The source name for a banner about `subject` - the same string the
+    /// matching `NotificationSources` entry carries as `source`.
+    static func source(for subject: NotificationPayload.Subject) -> String {
+        switch subject {
+        case .prReady: return "Review"
+        case .fleetTask: return "Fleet"
+        case .shiftTask, .shiftFollowUp: return "Tasks"
+        }
+    }
+
+    /// The Updates page's own banner, which carries no payload.
+    static let updatesSource = "Updates"
+}
+
 struct NotificationPayload: Equatable {
     enum Subject: String {
         case prReady = "pr-ready"
@@ -269,25 +291,37 @@ enum NotificationActionRouting {
             identifier: NotificationAction.openPR, title: "Open PR", options: [.foreground])
         let openFleetTask = UNNotificationAction(
             identifier: NotificationAction.openFleetTask, title: "Open task", options: [.foreground])
+        // The Bridge panel's "Answer", on the same identifier: the routing is
+        // by identifier, so a decision banner's Answer opens exactly what a
+        // finished task's Open task does.
+        let answerFleetTask = UNNotificationAction(
+            identifier: NotificationAction.openFleetTask, title: "Answer", options: [.foreground])
         let openShiftTask = UNNotificationAction(
             identifier: NotificationAction.openShiftTask, title: "Open task", options: [.foreground])
         let openFollowUp = UNNotificationAction(
             identifier: NotificationAction.openShiftFollowUp, title: "Open follow-up", options: [.foreground])
+        // The Bridge panel's own preset name.
         let snooze = UNNotificationAction(
-            identifier: NotificationAction.snoozeFollowUpOneHour, title: "Snooze 1h", options: [])
-        let showInApp = UNNotificationAction(
-            identifier: NotificationAction.showInApp, title: "Show in app", options: [.foreground])
+            identifier: NotificationAction.snoozeFollowUpOneHour, title: "Snooze 1 hour", options: [])
+        // "Show in app" is named for where it goes, the way the panel's
+        // buttons are: the same identifier, a title per category.
+        func showInApp(_ title: String) -> UNNotificationAction {
+            UNNotificationAction(identifier: NotificationAction.showInApp, title: title, options: [.foreground])
+        }
 
         return [
             UNNotificationCategory(
                 identifier: NotificationCategory.prReady,
-                actions: [merge, openPR, showInApp], intentIdentifiers: [], options: []),
+                actions: [merge, openPR, showInApp("Review")], intentIdentifiers: [], options: []),
             UNNotificationCategory(
                 identifier: NotificationCategory.fleetTask,
-                actions: [openFleetTask, showInApp], intentIdentifiers: [], options: []),
+                actions: [openFleetTask, showInApp("Open Fleet")], intentIdentifiers: [], options: []),
+            UNNotificationCategory(
+                identifier: NotificationCategory.fleetDecision,
+                actions: [answerFleetTask, showInApp("Open Fleet")], intentIdentifiers: [], options: []),
             UNNotificationCategory(
                 identifier: NotificationCategory.shiftTask,
-                actions: [openShiftTask, showInApp], intentIdentifiers: [], options: []),
+                actions: [openShiftTask, showInApp("Open Tasks")], intentIdentifiers: [], options: []),
             UNNotificationCategory(
                 identifier: NotificationCategory.shiftFollowUp,
                 actions: [snooze, openFollowUp], intentIdentifiers: [], options: []),

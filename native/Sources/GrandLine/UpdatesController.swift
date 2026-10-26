@@ -939,6 +939,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     private static func postNotification(title: String, body: String) {
         let content = UNMutableNotificationContent()
         content.title = title
+        content.subtitle = NotificationBannerCopy.updatesSource
         content.body = body
         content.sound = .default
         let request = UNNotificationRequest(identifier: "fm.update.\(UUID().uuidString)", content: content, trigger: nil)

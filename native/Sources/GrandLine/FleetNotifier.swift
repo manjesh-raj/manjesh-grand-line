@@ -213,13 +213,17 @@ final class FleetNotifier {
     private func notify(_ task: FleetTask) {
         let content = UNMutableNotificationContent()
         content.title = task.status == "blocked" ? "Task blocked" : "Task needs your decision"
+        // The Bridge panel's source name, as the subtitle the banner draws
+        // between title and body.
+        content.subtitle = NotificationBannerCopy.source(for: .fleetTask)
         content.body = task.repo != nil ? "\(task.id) (\(task.repo!))" : task.id
         content.sound = .default
         // F4: an "Open task" button, so the captain does not have to activate
         // the app and find Overview by hand. Title/body/identifier/sound are
         // deliberately unchanged - a captain who never touches a button sees
         // exactly the notification this posted before F4.
-        content.categoryIdentifier = NotificationCategory.fleetTask
+        // Answer / Open Fleet, the panel's own words for a decision.
+        content.categoryIdentifier = NotificationCategory.fleetDecision
         content.userInfo = NotificationPayload(subject: .fleetTask, taskID: task.id).userInfo
         let request = UNNotificationRequest(identifier: "fm.needs-decision.\(task.id)", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
@@ -228,6 +232,7 @@ final class FleetNotifier {
     private func notifyFinished(_ task: FleetTask) {
         let content = UNMutableNotificationContent()
         content.title = task.status == "failed" ? "Task failed" : "Task finished"
+        content.subtitle = NotificationBannerCopy.source(for: .fleetTask)
         content.body = task.repo != nil ? "\(task.id) (\(task.repo!))" : task.id
         content.sound = .default
         content.categoryIdentifier = NotificationCategory.fleetTask
@@ -275,6 +280,7 @@ final class FleetNotifier {
         guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
         content.title = "PR ready to merge"
+        content.subtitle = NotificationBannerCopy.source(for: .prReady)
         let label = pr.number != nil ? "PR #\(pr.number!)" : "A pull request"
         let named = pr.title.isEmpty ? label : "\(label) \u{201C}\(pr.title)\u{201D}"
         content.body = pr.repo.isEmpty
