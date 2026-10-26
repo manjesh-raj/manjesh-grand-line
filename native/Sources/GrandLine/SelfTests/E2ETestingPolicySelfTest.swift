@@ -88,10 +88,9 @@ enum E2ETestingPolicySelfTest {
             .appendingPathComponent("README.md")
     }
 
+    /// R2-ARCH-02: the dispatch that used to be the larger half of `main.swift`.
     private static var mainSwift: URL {
-        selfTestsDirectory
-            .deletingLastPathComponent()
-            .appendingPathComponent("main.swift")
+        selfTestsDirectory.appendingPathComponent("SelfTestDispatch.swift")
     }
 
     // MARK: Parsing
@@ -417,7 +416,7 @@ enum E2ETestingPolicySelfTest {
         var enumByFlag: [String: String] = [:]
         for (enumName, flag) in flagsByEnumName(in: mainSource) { enumByFlag[flag] = enumName }
         guard enumByFlag.count >= 90 else {
-            fail("mapped only \(enumByFlag.count) flags to suite enums in main.swift - has the dispatch shape changed?", &ok)
+            fail("mapped only \(enumByFlag.count) flags to suite enums in SelfTestDispatch.swift - has the dispatch shape changed?", &ok)
             return
         }
 
@@ -491,7 +490,7 @@ enum E2ETestingPolicySelfTest {
         }
         let byEnum = flagsByEnumName(in: mainSource)
         guard byEnum.count >= 90 else {
-            fail("mapped only \(byEnum.count) suite enums to flags in main.swift - has the dispatch shape changed?", &ok)
+            fail("mapped only \(byEnum.count) suite enums to flags in SelfTestDispatch.swift - has the dispatch shape changed?", &ok)
             return
         }
 
@@ -539,7 +538,7 @@ enum E2ETestingPolicySelfTest {
         }
 
         if !unmapped.isEmpty {
-            fail("\(unmapped.count) window-backed suite(s) have no FM_RUN_* flag in main.swift: \(unmapped.joined(separator: ", "))", &ok)
+            fail("\(unmapped.count) window-backed suite(s) have no FM_RUN_* flag in SelfTestDispatch.swift: \(unmapped.joined(separator: ", "))", &ok)
         }
         if !missing.isEmpty {
             let listed = missing.map { "      - " + $0 }.joined(separator: "\n")
@@ -604,7 +603,7 @@ enum E2ETestingPolicySelfTest {
 
         for key in required {
             guard let value = env[key], !value.isEmpty else {
-                fail("\(key) is unset in a self-test process - main.swift's redirect block must set it, "
+                fail("\(key) is unset in a self-test process - SelfTestDispatch.swift's redirect block must set it, "
                      + "or a store reached from a bare init() writes to the captain's real data", &ok)
                 continue
             }

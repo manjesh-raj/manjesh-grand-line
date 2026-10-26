@@ -85,6 +85,14 @@ enum SelfTestSources {
     /// Every `.swift` file directly in the app's source root, sorted. Not
     /// recursive: `SelfTests/` is a child of that root and must stay out of
     /// every source guard's view (see above), and nothing else nests today.
+    /// R2-ARCH-02: the self-test dispatch and the redirect block before it,
+    /// which lived in `main.swift` until that file was split. The suites that
+    /// guard the dispatch - its flags, its redirects, its order - read it here.
+    static func selfTestDispatchSource() -> String? {
+        guard let dir = appSourceDirectory() else { return nil }
+        return try? String(contentsOf: dir.appendingPathComponent("SelfTests/SelfTestDispatch.swift"), encoding: .utf8)
+    }
+
     static func appSourceFiles() -> [URL]? {
         guard let dir = appSourceDirectory(),
               let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)

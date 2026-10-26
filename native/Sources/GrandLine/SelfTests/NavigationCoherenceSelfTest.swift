@@ -268,21 +268,20 @@ enum NavigationCoherenceSelfTest {
 
     /// Stage 1 of the modular-shell migration made the feature inventory the
     /// guard against losing a feature, and that guard is only as good as its
-    /// wiring: a suite whose `FM_RUN_*` block is deleted from `main.swift`
+    /// wiring: a suite whose `FM_RUN_*` block is deleted from the dispatch
     /// still compiles and simply never runs (the runner discovers suites from
     /// that file), and an inventory that is moved fails every row at once
     /// rather than catching anything. This keeps both ends attached from a
     /// suite that already guards navigation.
     private static func checkTheFeatureInventoryStaysWired() -> Bool {
         var ok = true
-        guard let dir = SelfTestSources.appSourceDirectory(),
-              let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8) else {
-            fail("modular shell: could not read main.swift - the inventory wiring check cannot run", &ok)
+        guard let main = SelfTestSources.selfTestDispatchSource() else {
+            fail("modular shell: could not read SelfTestDispatch.swift - the inventory wiring check cannot run", &ok)
             return ok
         }
         for flag in ["FM_RUN_FEATURE_INVENTORY_TESTS", "FM_RUN_MODULE_TABLE_TESTS"] {
             check(main.contains("environment[\"\(flag)\"]"),
-                  "modular shell: main.swift no longer dispatches \(flag), so the feature inventory is never checked", &ok)
+                  "modular shell: SelfTestDispatch.swift no longer dispatches \(flag), so the feature inventory is never checked", &ok)
         }
         let rows = FeatureInventorySelfTest.loadInventory() ?? []
         check(rows.count > 300, "modular shell: docs/modular-shell/feature-inventory.md is missing or nearly empty "

@@ -142,14 +142,18 @@ extension SecretBoundariesSelfTest {
                                                    "FM_SHIFT_DIR": "/tmp/s"]).isEmpty,
               "R2-SEC-09: an ordinary launch environment reads as an unknown suite flag", &ok)
 
+        // R2-ARCH-02: the check is the dispatch's last step, and `main.swift`
+        // runs the dispatch before the instance guard.
         guard let dir = SelfTestSources.appSourceDirectory(),
               let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8),
-              let check2 = main.range(of: "SelfTestFlags.unknownSuiteFlags(in: ProcessInfo.processInfo.environment)"),
-              let exit2 = main.range(of: "exit(2)", range: check2.upperBound..<main.endIndex),
+              let dispatch = SelfTestSources.selfTestDispatchSource(),
+              let check2 = dispatch.range(of: "SelfTestFlags.unknownSuiteFlags(in: ProcessInfo.processInfo.environment)"),
+              dispatch.range(of: "exit(2)", range: check2.upperBound..<dispatch.endIndex) != nil,
+              let run = main.range(of: "SelfTestDispatch.run()"),
               let acquire = main.range(of: "switch SingleInstanceGuard.acquire()") else {
-            return fail("R2-SEC-09: main.swift no longer asks SelfTestFlags.unknownSuiteFlags before exit(2)", &ok)
+            return fail("R2-SEC-09: SelfTestDispatch.swift no longer asks SelfTestFlags.unknownSuiteFlags before exit(2)", &ok)
         }
-        check(exit2.upperBound < acquire.lowerBound,
+        check(run.upperBound < acquire.lowerBound,
               "R2-SEC-09: the unknown-flag exit sits after SingleInstanceGuard.acquire()", &ok)
         if ok { print("  OK   every FM_RUN_ key is unknown at the end of the blocks, and exits before the instance guard") }
     }

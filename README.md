@@ -108,7 +108,7 @@ what "the tests" are - and a locally-passing suite that CI skips shows up as a `
 rather than silently disappearing.
 
 Every suite runs with an empty `FM_SCRATCH_ROOT` of its own, which the runner creates
-and removes, and `main.swift`'s redirect block points every store into it. So a run
+and removes, and the self-test redirect block (`SelfTests/SelfTestDispatch.swift`) points every store into it. So a run
 never attempts a real clone of the private config repo, never depends on what the
 runner's home directory happens to contain, and no suite sees the stores another suite
 seeded. CI and a local run isolate suites the same way.
@@ -136,7 +136,7 @@ cd native
 ./Scripts/run-all-tests.sh --ci     # what CI runs: skips session/Keychain suites
 ```
 
-The runner discovers its suite list from `main.swift`, so a newly added suite is picked up automatically.
+The runner discovers its suite list from `SelfTests/SelfTestDispatch.swift`, so a newly added suite is picked up automatically.
 
 Run one directly:
 
@@ -182,14 +182,14 @@ Behaviour overrides. Everything here is optional; the app has working defaults f
 
 These tables are **complete in both directions**, and that is a check rather than a claim: `FM_RUN_ENVIRONMENT_DOCS_TESTS` fails the run when a `FM_*` variable is read with no row here, and when a row here names a variable nothing reads. The second direction is what removed `FM_MIRROR_TARGET` and `FM_BACKEND` - they documented the deleted mirror/backend-detection feature, and a row promising an override that does nothing is worse than no row. Before that guard existed the re-check was a `grep` written down here and run by hand, which is how `FM_SUITE_TIMEOUT`, `FM_PROBE_SCRATCH` and `FM_CODE_RUNNER_SECRET_PROBE` came to be read and unlisted for months.
 
-`FM_RUN_*` is not listed here at all: `./Scripts/run-all-tests.sh --list` is the authoritative list, discovered from `main.swift` (GL-19).
+`FM_RUN_*` is not listed here at all: `./Scripts/run-all-tests.sh --list` is the authoritative list, discovered from `SelfTests/SelfTestDispatch.swift` (GL-19).
 
 ### Data locations (point these at scratch paths in tests)
 
 | Variable | What it overrides |
 | --- | --- |
 | `FM_SCRATCH_ROOT` | **The one that moves everything.** Every file-backed store's *default* is `FM_SCRATCH_ROOT/<name>` instead of `~/Library/Application Support/GrandLine/<name>` (`AppPaths.dataRoot()`), so a probe, a lab build or a suite redirects the whole app with one variable rather than the list below. `Scripts/run-all-tests.sh` gives every suite an empty one of its own, and a self-test or tour process that has none gets a per-process scratch folder rather than the real one (`ProcessMode`). A narrow per-store variable still wins over it. Setting it also skips the rename migrations and the one-time Today/calendar cleanup, since neither is a path. A self-test guard fails the run on a store that resolves Application Support for itself and so drops off this |
-| `FM_KEYCHAIN_SERVICE_PREFIX` | Prepended to every Keychain service name this app owns (`KeychainService.resolve`). **Debug builds only** - a prefix that reached a release build would orphan every saved SSH key. Set per process by `main.swift`'s self-test redirect block, and everything carrying it is deleted at exit, so a suite can no longer leave real items in the login Keychain |
+| `FM_KEYCHAIN_SERVICE_PREFIX` | Prepended to every Keychain service name this app owns (`KeychainService.resolve`). **Debug builds only** - a prefix that reached a release build would orphan every saved SSH key. Set per process by the self-test redirect block (`SelfTests/SelfTestDispatch.swift`), and everything carrying it is deleted at exit, so a suite can no longer leave real items in the login Keychain |
 | `FM_HOME` / `FIRSTMATE_HOME` | The firstmate home the app reads fleet state from |
 | `FM_HOSTS_FILE` | `hosts.json` (saved SSH hosts) |
 | `FM_KEYS_FILE` | `keys.json` (SSH key *metadata*; key material is Keychain-only) |
@@ -233,7 +233,7 @@ Read by the scripts and the suites rather than by the app, and listed for the sa
 
 | Variable | Effect |
 | --- | --- |
-| `FM_DEFAULTS_SUITE` | The `UserDefaults(suiteName:)` a self-test process reads and writes instead of the real `GrandLine` preference domain (`AppDefaults.store`). **Debug builds only**, set per process by `main.swift`'s self-test redirect block with this process's pid, and the domain is removed at exit - so a suite can no longer leave `fm.themeID` behind and two concurrent runs are two domains rather than two writers of one |
+| `FM_DEFAULTS_SUITE` | The `UserDefaults(suiteName:)` a self-test process reads and writes instead of the real `GrandLine` preference domain (`AppDefaults.store`). **Debug builds only**, set per process by the self-test redirect block (`SelfTests/SelfTestDispatch.swift`) with this process's pid, and the domain is removed at exit - so a suite can no longer leave `fm.themeID` behind and two concurrent runs are two domains rather than two writers of one |
 | `FM_REVIEW_TOUR` | Path to a tour file for `ReviewTourLab` - the file-driven probe driver. Mounts an off-screen shell, walks the tour (`goto`/`theme`/`resize`/`render`/`menu`, plus `bar hover <target>`, `bar press <target>`, `bar rest` and `renderbar` for the top bar's squares, and `demo decision`, `fleet reply`, `demo refresh`, `demo loading <card>`, `orderfront` and `measurewindow` for the Fleet reply composer and Home's loading states, and `sidebar show`, `sidebar hide`, `inspector show`, `inspector hide`, `customize on` and `customize off` for the sidebar layout's panes and Home's Customize, and `tab <name>` for a toolbar tab or, in the floating bar, the showing page's own tab of that name, plus `demo hosts`, `demo vault`, `demo knowledge`, `demo automic`, `demo logs` and `demo health` for the redesigned pages' scratch data, `demo signals` for the sidebar layout's badges and Home's Claude card, `demo focus` for a running focus timer's chip, and `select <title>` for a table row) and writes one PNG per `render` beside the tour file. **Debug builds only**, and deliberately not an `FM_RUN_*` name, which the runner discovers suites by |
 | `FM_REVIEW_TOUR_LAYOUT` | Which window layout `ReviewTourLab` mounts for a tour: `sidebar` or `floatingBar`, the same raw values `fm.workspaceLayout` stores, written to the tour's own scratch defaults domain as the captain's choice. Unset, a tour mounts what a first launch gets, which is the sidebar. The `bar` verbs and `renderbar` need `floatingBar`. **Debug builds only** |
 | `FM_SUITE_TIMEOUT` | Per-suite wall-clock bound in `Scripts/run-all-tests.sh`, in real seconds (default 300). A suite that exceeds it is reported as `TIMEOUT <flag>` by name and the run continues |
