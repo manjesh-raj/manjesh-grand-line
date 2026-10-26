@@ -294,6 +294,12 @@ enum SelfTestDispatch {
             if (ProcessInfo.processInfo.environment["FM_KEYS_FILE"] ?? "").isEmpty {
                 setenv("FM_KEYS_FILE", scratchRoot.appendingPathComponent("keys.json").path, 1)
             }
+            // X1's import reads `~/.ssh/config`. A suite reads a fixture of its
+            // own; anything else reaching the import reads a scratch path that
+            // does not exist, never the captain's config.
+            if (ProcessInfo.processInfo.environment["FM_SSH_CONFIG_FILE"] ?? "").isEmpty {
+                setenv("FM_SSH_CONFIG_FILE", scratchRoot.appendingPathComponent("ssh-config").path, 1)
+            }
             if (ProcessInfo.processInfo.environment["FM_SNIPPETS_FILE"] ?? "").isEmpty {
                 setenv("FM_SNIPPETS_FILE", scratchRoot.appendingPathComponent("snippets.json").path, 1)
             }
@@ -1033,6 +1039,14 @@ enum SelfTestDispatch {
         // unchanged.
         if ProcessInfo.processInfo.environment["FM_RUN_PAGE_REDESIGNS_TESTS"] == "1" {
             exit(PageRedesignsSelfTest.run() ? 0 : 1)
+        }
+        // The Termius-style Hosts and Keys work: its pure logic, and the pages
+        // in a real sidebar shell.
+        if ProcessInfo.processInfo.environment["FM_RUN_CONNECTIONS_LOGIC_TESTS"] == "1" {
+            exit(ConnectionsLogicSelfTest.run() ? 0 : 1)
+        }
+        if ProcessInfo.processInfo.environment["FM_RUN_CONNECTIONS_CARDS_TESTS"] == "1" {
+            exit(ConnectionsCardsSelfTest.run() ? 0 : 1)
         }
         // The polish stage: the sidebar layout's badges as pure logic (every honest
         // state, the words, the contrast, and the source guards that keep the

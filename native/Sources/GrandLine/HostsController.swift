@@ -144,21 +144,61 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// Keys and Snippets (`ModuleTabHosting`, at the end of this file).
     var onModuleTabChanged: (() -> Void)?
 
-    private let hostsTabView = NSView()
-    private let keysTabView = NSView()
+    let hostsTabView = NSView()
+    let keysTabView = NSView()
     private let snippetsTabView = NSView()
+
+    /// H3's Connect button, beside the find-or-connect field in the sidebar
+    /// layout. It runs exactly what Return in the field runs.
+    private lazy var findOrConnectButton: HelmButton = {
+        let b = HelmButton(title: "Connect", variant: .secondary, size: .small, symbol: "bolt.fill",
+                           target: self, action: #selector(findOrConnectClicked))
+        b.isEnabled = false
+        return b
+    }()
 
     /// Quick connect / live filter, in the app's own search well
     /// (Phase 0's raw-input purge). An `NSSearchField` paints its own system
     /// chrome and system fill, which is what the audit measured as the
     /// wallpaper-tinted field on this page (D2) - forcing its `appearance`
     /// only picks the light-or-dark side of that system colour.
-    private let searchField = HelmSearchField(
+    let searchField = HelmSearchField(
         placeholder: "Find a host, or type ssh user@host to connect")
     private let tagsScroll = NSScrollView()
     private let tagsStack = NSStackView()
     private var tagButtons: [String: HelmButton] = [:]
-    private var selectedTags: Set<String> = []
+    private(set) var selectedTags: Set<String> = []
+
+    /// X4: the chips match a host carrying every selected tag, or any one of
+    /// them. Read once from `AppSettings` and written back on every change.
+    private var tagMatchAll = AppSettings.shared.hostTagMatchAll
+
+    /// X4's switch, in the sidebar layout's filter row. It only means
+    /// anything with two or more tags selected, so it shows only then.
+    private lazy var tagMatchControl: HelmSegmentedTabs = {
+        let tabs = HelmSegmentedTabs(items: [.init(id: Self.tagMatchAnyID, title: "Any tag"),
+                                            .init(id: Self.tagMatchAllID, title: "All tags")],
+                                     selected: tagMatchAll ? Self.tagMatchAllID : Self.tagMatchAnyID,
+                                     size: .compact)
+        tabs.onSelect = { [weak self] id in self?.setTagMatchAll(id == Self.tagMatchAllID) }
+        tabs.setAccessibilityLabel("Show hosts with any of the selected tags, or with all of them")
+        tabs.toolTip = "Match any selected tag, or all of them"
+        return tabs
+    }()
+    static let tagMatchAnyID = "any"
+    static let tagMatchAllID = "all"
+
+    /// H9: the tags that do not fit the filter row, behind one "+N" chip
+    /// rather than cut off at the row's edge. Sidebar layout only.
+    private lazy var tagOverflowChip: HelmButton = {
+        let b = HelmButton(title: "+0", variant: .secondary, size: .small,
+                           target: self, action: #selector(tagOverflowClicked(_:)))
+        b.toolTip = "More tags"
+        b.isHidden = true
+        return b
+    }()
+    /// How many of the sorted tag chips the row is showing (H9).
+    private var visibleTagChipCount = Int.max
 
     let hostsList = HostsListSection()
     let keysList = HostsListSection()
@@ -193,7 +233,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// The Hosts tab's search over its filter row, and the filter row - the
     /// sidebar layout puts the search into the row.
     private var hostsTopStack: NSStackView?
-    private var hostsFilterRow: NSStackView?
+    private(set) var hostsFilterRow: NSStackView?
 
     /// The reference mockup's **left** navigation column.
     ///
@@ -239,10 +279,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// The reference's `.filterbar`. "Online" is the one of its three chips
     /// this app can actually answer - the app's `HostSessionRegistry` knows
     /// which hosts have a live session (`liveSession`). Its "All environments"
-    /// is what the tag chips beside it already are, and "Recently used" has
-    /// nothing behind it: no store here records when a host was last
-    /// connected to, and inventing a timestamp would be a new field masquerading
-    /// as a filter.
+    /// is what the tag chips beside it already are. "Recently used" is not
+    /// a chip here: since X2 of the Termius-style plan `Host.lastConnectedAt`
+    /// records a connect, and the sidebar layout shows it as a Recent row of
+    /// cards and a Last connected column rather than as a filter.
     private lazy var onlineChip: HelmButton = {
         // UI-50: a dot and a word, not a bordered chip with a bolt. The dot
         // is green while the filter is on, the way a live session reads
@@ -253,7 +293,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         b.toolTip = "Show only hosts with a live session"
         return b
     }()
-    private var onlineOnly = false
+    private(set) var onlineOnly = false
 
     /// Review #3's UX6: "the Hosts sidebar should carry *filters* (Online, by
     /// tag, by group)".
@@ -291,7 +331,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// in the popup. A group that stops existing (its last host was edited or
     /// deleted) clears this rather than leaving the list filtered to nothing -
     /// see `rebuildGroupPicker`.
-    private var selectedGroup: String?
+    private(set) var selectedGroup: String?
 
     /// The popup's "no filter" row. A literal rather than an empty string so
     /// it can never collide with a real group of that name - a host group is
@@ -322,6 +362,40 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         b.toolTip = "New Key (⌘⇧N)"
         return b
     }()
+    /// H8: the sidebar layout's Add Host - the main action, and a menu of
+    /// the other ways to add a host. The floating bar keeps `addHostButton`.
+    private lazy var addHostSplit = HelmSplitButton(
+        title: "Add Host", symbol: "plus", menuLabel: "More ways to add a host",
+        items: [
+            .init("New Host\u{2026}", symbol: "plus") { [weak self] in self?.newHost() },
+            .init("Quick Connect", symbol: "bolt") { [weak self] in self?.focusQuickConnect() },
+            .separator,
+            .init("Import from SSH Config\u{2026}", symbol: "square.and.arrow.down") { [weak self] in
+                self?.openSSHConfigImport()
+            },
+        ]) { [weak self] in self?.newHost() }
+
+    /// K2: New Key's ways in, each straight to the right form.
+    private lazy var addKeySplit = HelmSplitButton(
+        title: "New Key", symbol: "plus", menuLabel: "More ways to add a key",
+        items: [
+            .init("Generate Ed25519 Key\u{2026}", symbol: "wand.and.stars") { [weak self] in
+                self?.openNewKey(preset: .generate(.ed25519))
+            },
+            .init("Generate RSA 3072 Key\u{2026}", symbol: "wand.and.stars") { [weak self] in
+                self?.openNewKey(preset: .generate(.rsa))
+            },
+            .separator,
+            .init("Import Key File\u{2026}", symbol: "doc.badge.plus") { [weak self] in self?.openNewKey(preset: .importFile) },
+            .init("Paste a Key\u{2026}", symbol: "doc.on.clipboard") { [weak self] in self?.openNewKey(preset: .paste) },
+            .separator,
+            .init("Attach Certificate to Selected Key\u{2026}", symbol: "checkmark.seal",
+                  isEnabled: { [weak self] in self?.selectedSSHKey != nil }) { [weak self] in
+                guard let self, let key = self.selectedSSHKey else { return }
+                self.presentKeyEditor(for: key, preset: .certificate)
+            },
+        ]) { [weak self] in self?.newKey() }
+
     private lazy var addSnippetButton: HelmButton = {
         let b = HelmButton(title: "New Snippet", variant: .primary, size: .small,
                            symbol: "plus", target: self, action: #selector(newSnippet))
@@ -341,8 +415,35 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// selection's details go in the shell's inspector. Never set in the
     /// floating bar, so that layout's page is exactly what it was.
     private(set) var drawsSidebarLayout = false
-    private lazy var hostsTable = Self.makeHostsTable()
-    private lazy var keysTable = Self.makeKeysTable()
+    private(set) lazy var hostsTable = Self.makeHostsTable()
+    /// H1: the hosts as cards, the sidebar layout's default view (C4).
+    /// `HostsController+Cards.swift` fills it.
+    private(set) lazy var hostsGrid = HelmCardGrid()
+    /// H6: the host form in the side panel, and which record it is for -
+    /// a host's id, or `newHostPanelKey` (H10). `HostsController+Panel.swift`.
+    var hostPanel: HostEditorController?
+    var hostPanelKey: String?
+    /// Set while the panel's save writes the store, whose reload must not
+    /// rebuild the form mid-save.
+    var hostPanelIsSaving = false
+    /// X1: the SSH config import's preview, while it is open.
+    var importPanel: SSHConfigImportPanelController?
+    /// K7 and K8: the key form in the side panel, and which key it is for -
+    /// an id, or `newKeyPanelKey`. `HostsController+KeyPanel.swift`.
+    var keyPanel: KeyEditorController?
+    var keyPanelKey: String?
+    /// H2: Grid or List, over the hosts. One stored choice
+    /// (`AppSettings.connectionsShowList`) for Hosts and Keys.
+    lazy var hostsViewModeControl = makeViewModeControl()
+    private(set) lazy var keysTable = Self.makeKeysTable()
+    /// K1: the keys as cards, the same component as the hosts'.
+    private(set) lazy var keysGrid = HelmCardGrid()
+    /// H2's switch on the Keys tab - the same stored choice.
+    lazy var keysViewModeControl = makeViewModeControl()
+    /// K3: key search, by name, type or fingerprint.
+    let keySearchField = HelmSearchField(placeholder: "Find a key by name, type or fingerprint")
+    /// The Keys tab's row over its keys: the search, Touch ID, Grid / List.
+    let keysTopRow = NSStackView()
     private lazy var snippetsTable = Self.makeSnippetsTable()
     /// The inspector's body for whichever table is showing.
     private lazy var inspectorDetail = WorkspaceDetailView()
@@ -365,7 +466,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     static let onlineFilterID = "online"
     /// Touch ID's state on the Keys card, where the floating bar's stat
     /// strip stated it page-wide: it is a fact about where keys are kept.
-    private lazy var keysTouchID = HelmStatusPill(style: .dotWord)
+    private(set) lazy var keysTouchID = HelmStatusPill(style: .dotWord)
     /// The selected record's name, or `nil` with nothing selected - what
     /// `inspectorContent` hands the shell.
     private var inspectorTitle: String?
@@ -852,6 +953,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// instances - with the tooltips and targets this page set on them - move
     /// in and out of the header.
     var drillHeaderActions: [NSView] {
+        // The sidebar layout's add actions are H8's and K2's split buttons.
+        // Handing the shell the floating bar's plain button as well would put
+        // a second Add Host among the toolbar's page actions.
+        if drawsSidebarLayout { return [workspacePrimaryAction].compactMap { $0 } }
         switch activeTab {
         case .hosts: return [addHostButton]
         case .keys: return [addKeyButton]
@@ -915,6 +1020,11 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
             snippetsTable.applyTheme(theme)
             expansionStrip.applyTheme(theme)
             onlineFilter.applyTheme(theme)
+            tagMatchControl.applyTheme(theme)
+            hostsGrid.applyTheme(theme)
+            hostsViewModeControl.applyTheme(theme)
+            keysGrid.applyTheme(theme)
+            keysViewModeControl.applyTheme(theme)
             keysTouchID.applyTheme(theme)
         }
         sideStack.applyTheme(theme)
@@ -975,6 +1085,11 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         // Only the tag strip collapses when there are no tags - the "Online"
         // chip beside it is always meaningful.
         tagsScroll.isHidden = allTags.isEmpty
+        if drawsSidebarLayout {
+            visibleTagChipCount = Int.max
+            refreshTagMatchControl()
+            refitTagChips()
+        }
     }
 
     /// One row per distinct group across all hosts, plus "All groups" and -
@@ -1055,7 +1170,104 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         guard let tag = sender.identifier?.rawValue else { return }
         if sender.state == .on { selectedTags.insert(tag) } else { selectedTags.remove(tag) }
         (sender as? HelmButton)?.variant = sender.state == .on ? .primary : .secondary
+        refreshTagMatchControl()
         applyHostFilter(searchField.stringValue)
+    }
+
+    /// X4: switch between matching any selected tag and all of them.
+    private func setTagMatchAll(_ all: Bool) {
+        tagMatchAll = all
+        AppSettings.shared.hostTagMatchAll = all
+        tagMatchControl.select(all ? Self.tagMatchAllID : Self.tagMatchAnyID)
+        applyHostFilter(searchField.stringValue)
+    }
+
+    /// X4's switch shows only while it can change the result.
+    private func refreshTagMatchControl() {
+        guard drawsSidebarLayout else { return }
+        tagMatchControl.isHidden = selectedTags.count < 2
+        refreshTagOverflowChip()
+    }
+
+    // MARK: H9 - tag chips that do not fit
+
+    /// How many of `chipWidths` (in order) the row shows, given the tag
+    /// strip's current width and whether the "+N" chip is showing now.
+    ///
+    /// The overflow chip sits beside the strip, so showing it takes its own
+    /// width out of the strip's. Every chip fits when the strip would hold
+    /// them all with the overflow chip gone; otherwise the count is the most
+    /// that fit beside it. Never fewer than zero, and pure, so a suite can
+    /// assert the arithmetic at any width.
+    static func fittingTagCount(chipWidths: [CGFloat], spacing: CGFloat, stripWidth: CGFloat,
+                                overflowWidth: CGFloat, overflowShown: Bool) -> Int {
+        func span(_ count: Int) -> CGFloat {
+            guard count > 0 else { return 0 }
+            return chipWidths.prefix(count).reduce(0, +) + spacing * CGFloat(count - 1)
+        }
+        let withoutOverflow = overflowShown ? stripWidth + overflowWidth + spacing : stripWidth
+        if span(chipWidths.count) <= withoutOverflow + 0.5 { return chipWidths.count }
+        let besideOverflow = overflowShown ? stripWidth : stripWidth - overflowWidth - spacing
+        var count = 0
+        while count < chipWidths.count, span(count + 1) <= besideOverflow + 0.5 { count += 1 }
+        return count
+    }
+
+    /// Show the chips that fit the strip and put the rest behind "+N".
+    /// Runs whenever the strip changes width and whenever the chips change.
+    private func refitTagChips() {
+        guard drawsSidebarLayout, !tagsScroll.isHidden else { return }
+        let chips = tagsStack.arrangedSubviews
+        let widths = chips.map { $0.fittingSize.width }
+        let count = Self.fittingTagCount(chipWidths: widths, spacing: tagsStack.spacing,
+                                         stripWidth: tagsScroll.contentView.bounds.width,
+                                         overflowWidth: tagOverflowChip.fittingSize.width,
+                                         overflowShown: !tagOverflowChip.isHidden)
+        guard count != visibleTagChipCount || chips.enumerated().contains(where: { $0.element.isHidden != ($0.offset >= count) })
+        else { return }
+        visibleTagChipCount = count
+        for (index, chip) in chips.enumerated() { chip.isHidden = index >= count }
+        refreshTagOverflowChip()
+    }
+
+    /// "+N", filled while any tag behind it is selected - so a filter the
+    /// captain set is never hidden from them.
+    private func refreshTagOverflowChip() {
+        guard drawsSidebarLayout else { return }
+        let hidden = hiddenTags
+        tagOverflowChip.isHidden = hidden.isEmpty || tagsScroll.isHidden
+        tagOverflowChip.title = "+\(hidden.count)"
+        tagOverflowChip.variant = hidden.contains(where: selectedTags.contains) ? .primary : .secondary
+        tagOverflowChip.setAccessibilityLabel("\(hidden.count) more tags")
+    }
+
+    /// The tags whose chips the row is not showing, in chip order.
+    private var hiddenTags: [String] {
+        tagsStack.arrangedSubviews.filter(\.isHidden).compactMap { $0.identifier?.rawValue }
+    }
+
+    @objc private func tagOverflowClicked(_ sender: NSButton) {
+        makeTagOverflowMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + HelmMetrics.s1), in: sender)
+    }
+
+    /// "+N"'s menu: one item per hidden tag, ticked while it is selected.
+    private func makeTagOverflowMenu() -> NSMenu {
+        let menu = NSMenu()
+        for tag in hiddenTags {
+            let item = NSMenuItem(title: tag, action: #selector(tagOverflowItemPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = tag
+            item.state = selectedTags.contains(tag) ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    /// A tag picked from "+N" toggles exactly as its chip would.
+    @objc private func tagOverflowItemPicked(_ sender: NSMenuItem) {
+        guard let tag = sender.representedObject as? String, let chip = tagButtons[tag] else { return }
+        chip.state = chip.state == .on ? .off : .on
+        tagChipClicked(chip)
     }
 
     /// Text filter (label/address/username/tags) + the tag-chip filter,
@@ -1108,10 +1320,11 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         if drawsSidebarLayout { renderHostsTable(hosts, query: query) }
         refreshWorkspacePanel()
         refreshDetailPanel()
+        refreshFindOrConnectButton()
         onDrillSubtitleChanged?()
     }
 
-    private func filteredHosts(_ query: String) -> [Host] {
+    func filteredHosts(_ query: String) -> [Host] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var hosts = hostStore.hosts
         if !q.isEmpty {
@@ -1123,7 +1336,11 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
             }
         }
         if !selectedTags.isEmpty {
-            hosts = hosts.filter { !$0.tags.isEmpty && !selectedTags.isDisjoint(with: $0.tags) }
+            // X4: "all" narrows to hosts carrying every selected tag; "any",
+            // the default, is how the chips have always matched.
+            hosts = tagMatchAll
+                ? hosts.filter { selectedTags.isSubset(of: Set($0.tags)) }
+                : hosts.filter { !$0.tags.isEmpty && !selectedTags.isDisjoint(with: $0.tags) }
         }
         if onlineOnly {
             hosts = hosts.filter { liveSession?($0.id) != nil }
@@ -1167,7 +1384,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// selection path - what the tour lab's `select` verb drives.
     @discardableResult
     func debugSelectRecord(titled title: String) -> Bool {
-        if drawsSidebarLayout { return table(for: activeTab).debugSelect(titled: title) }
+        if drawsSidebarLayout {
+            if let grid = visibleGrid(for: activeTab) { return grid.debugSelect(titled: title) }
+            return table(for: activeTab).debugSelect(titled: title)
+        }
         switch activeTab {
         case .hosts: return hostsList.debugSelect(titled: title)
         case .keys: return keysList.debugSelect(titled: title)
@@ -1182,6 +1402,14 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     var debugOnlineFilter: HelmSegmentedTabs { onlineFilter }
     var debugKeysTouchID: HelmStatusPill { keysTouchID }
     var debugSearchField: NSView { searchField }
+    var debugSearchPlaceholder: String { searchField.placeholderText }
+    var debugFindOrConnectButton: HelmButton { findOrConnectButton }
+    /// Type into the find-or-connect field as the captain would: the text,
+    /// then the field's own change callback.
+    func debugTypeInSearch(_ text: String) {
+        searchField.stringValue = text
+        searchField.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+    }
     var debugFilterRow: NSStackView? { hostsFilterRow }
     var debugTabView: NSView {
         switch activeTab {
@@ -1195,7 +1423,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     var debugSideDetailShowsRecord: Bool { !sideStack.isHidden && sideStack.detail.isShowingRecord }
     #endif
 
-    private func normalizedGroup(_ host: Host) -> String? {
+    func normalizedGroup(_ host: Host) -> String? {
         let g = host.group?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return g.isEmpty ? nil : g
     }
@@ -1277,12 +1505,20 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         var copy = host
         copy.id = UUID()
         copy.label = host.label + " copy"
+        // A copy has never been connected to (X2).
+        copy.lastConnectedAt = nil
         hostStore.add(copy)
     }
 
     /// ⌘N / the card header's "Add Host": add a new host.
     @objc func newHost() {
         select(tab: .hosts)
+        // H10: in the sidebar layout a new host is an empty form in the side
+        // panel; the floating bar keeps its window.
+        if drawsSidebarLayout {
+            openNewHostPanel()
+            return
+        }
         onAddOrEdit?(nil)
     }
 
@@ -1292,29 +1528,67 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         searchField.focusEditor()
     }
 
-    /// Return in the quick-connect field: match a saved host, else parse an
-    /// ad-hoc `[user@]host[:port]`.
-    private func quickConnectFromField() {
-        let raw = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { NSSound.beep(); return }
-        // Exact label match wins; otherwise a single filtered result is
-        // treated as the intended host.
+    /// What the quick-connect field would connect to.
+    enum QuickConnectTarget {
+        case saved(Host)
+        case adHoc(label: String, args: [String])
+
+        var name: String {
+            switch self {
+            case .saved(let host): return host.label
+            case .adHoc(let label, _): return label
+            }
+        }
+    }
+
+    /// The field's text resolved the way Return always has: an exact label
+    /// match wins, then a single filtered result, then an ad-hoc
+    /// `[user@]host[:port]`.
+    ///
+    /// `explicitAddressOnly` is H3's Connect button. It lights up on a single
+    /// match or a typed `user@host` (or `ssh ...`), not on any word at all -
+    /// Return still connects a bare word as a hostname, exactly as before,
+    /// but a lit button beside a half-typed search would read as "this is a
+    /// host".
+    func quickConnectTarget(for text: String, explicitAddressOnly: Bool = false) -> QuickConnectTarget? {
+        let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
         if let exact = hostStore.hosts.first(where: { $0.label.caseInsensitiveCompare(raw) == .orderedSame }) {
-            connect(exact)
-            return
+            return .saved(exact)
         }
         let visible = filteredHosts(raw)
-        if visible.count == 1 {
-            connect(visible[0])
-            return
-        }
-        if let parsed = HostCatalog.parseQuickConnect(raw) {
-            onConnect?(nil, parsed.label, parsed.args, nil, nil, nil)
+        if visible.count == 1 { return .saved(visible[0]) }
+        if explicitAddressOnly, !raw.contains("@"), !raw.lowercased().hasPrefix("ssh ") { return nil }
+        if let parsed = HostCatalog.parseQuickConnect(raw) { return .adHoc(label: parsed.label, args: parsed.args) }
+        return nil
+    }
+
+    /// Return in the quick-connect field (and H3's Connect button): match a
+    /// saved host, else parse an ad-hoc `[user@]host[:port]`.
+    private func quickConnectFromField() {
+        switch quickConnectTarget(for: searchField.stringValue) {
+        case .saved(let host)?:
+            connect(host)
+        case .adHoc(let label, let args)?:
+            onConnect?(nil, label, args, nil, nil, nil)
             searchField.stringValue = ""
             applyHostFilter("")
-            return
+        case nil:
+            NSSound.beep()
         }
-        NSSound.beep()
+    }
+
+    @objc private func findOrConnectClicked() { quickConnectFromField() }
+
+    /// H3: the Connect button beside the field lights up when the text names
+    /// one host to connect to, and says which.
+    private func refreshFindOrConnectButton() {
+        guard drawsSidebarLayout else { return }
+        let target = quickConnectTarget(for: searchField.stringValue, explicitAddressOnly: true)
+        findOrConnectButton.isEnabled = target != nil
+        let words = target.map { "Connect to \($0.name)" } ?? "Type a host's name, or ssh user@hostname, to connect"
+        findOrConnectButton.toolTip = words
+        findOrConnectButton.setAccessibilityLabel(target.map { "Connect to \($0.name)" } ?? "Connect")
     }
 
     func confirmDeleteHost(_ host: Host) {
@@ -1333,13 +1607,35 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     /// ⌘⇧N / the card header's "New Key".
     @objc func newKey() {
-        select(tab: .keys)
-        presentKeyEditor(for: nil)
+        openNewKey(preset: nil)
     }
 
-    func presentKeyEditor(for key: SSHKey?) {
+    /// K2: New Key, opened in the mode one of its menu items names.
+    func openNewKey(preset: KeyEditorController.Preset?) {
+        select(tab: .keys)
+        presentKeyEditor(for: nil, preset: preset)
+    }
+
+    /// The key the Keys tab has selected, if any.
+    var selectedSSHKey: SSHKey? {
+        guard drawsSidebarLayout, let key = keysTable.selectedKey, let id = UUID(uuidString: key) else { return nil }
+        return keyStore.key(id: id)
+    }
+
+    func presentKeyEditor(for key: SSHKey?, preset: KeyEditorController.Preset? = nil) {
+        // K7 and K8: in the sidebar layout a key is edited, and a new one
+        // made, in the side panel. The floating bar keeps the sheet.
+        if drawsSidebarLayout {
+            if let key { openKeyPanel(forEditing: key, preset: preset) } else { openNewKeyPanel(preset: preset) }
+            return
+        }
         let usedByHostCount = key.map { targetKey in hostStore.hosts.filter { $0.keyID == targetKey.id }.count } ?? 0
         let editor = KeyEditorController(key: key, usedByHostCount: usedByHostCount)
+        editor.preset = preset
+        #if FM_SELFTESTS
+        lastKeyEditorForTests = editor
+        if Self.suppressesKeyEditorPresentationForTests { return }
+        #endif
         editor.onSave = { [weak self] newKey, privateKeyData, passphrase in
             self?.persistNewKey(newKey, privateKeyData: privateKeyData, passphrase: passphrase)
         }
@@ -1367,7 +1663,15 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     /// Create mode: `SSHKeyStore.addNew` writes the Keychain secrets before
     /// adding the metadata.
-    private func persistNewKey(_ key: SSHKey, privateKeyData: Data, passphrase: String?) {
+    func persistNewKey(_ key: SSHKey, privateKeyData: Data, passphrase: String?) {
+        #if FM_SELFTESTS
+        // A suite never writes a Keychain item, even a scratch-prefixed one.
+        if let writer = Self.newKeyWriterForTests {
+            writer(key, privateKeyData, passphrase)
+            keyStore.add(key)
+            return
+        }
+        #endif
         do {
             try keyStore.addNew(key, privateKeyData: privateKeyData, passphrase: passphrase)
             Toast.show(in: view, message: "\u{201C}\(key.label)\u{201D} saved")
@@ -1378,7 +1682,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     /// Edit mode never touches the private key; a new passphrase (when typed)
     /// overwrites the existing Keychain entry for it.
-    private func persistUpdatedKey(_ key: SSHKey, newPassphrase: String?) {
+    func persistUpdatedKey(_ key: SSHKey, newPassphrase: String?) {
         if let newPassphrase {
             do {
                 try KeychainKeyStore.savePassphrase(id: key.id, passphrase: newPassphrase)
@@ -1498,6 +1802,36 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// The tag chips, in strip order - PERF-05's identity check.
     var debugTagChips: [NSView] { tagsStack.arrangedSubviews }
     var debugOnlineChip: HelmButton { onlineChip }
+    var debugAddHostSplit: HelmSplitButton { addHostSplit }
+    var debugAddKeySplit: HelmSplitButton { addKeySplit }
+    /// The last key editor this page built, and a switch that builds it
+    /// without presenting it, so a suite can read what a menu item opened.
+    var lastKeyEditorForTests: KeyEditorController?
+    static var suppressesKeyEditorPresentationForTests = false
+    /// Stands in for the Keychain write a new key's save makes.
+    static var newKeyWriterForTests: ((SSHKey, Data, String?) -> Void)?
+    /// X4 and H9's controls, as the filter row holds them.
+    var debugTagMatchControl: HelmSegmentedTabs { tagMatchControl }
+    var debugTagOverflowChip: HelmButton { tagOverflowChip }
+    var debugTagStripWidth: CGFloat { tagsScroll.contentView.bounds.width }
+    /// The tag chips the row shows, by tag, in strip order.
+    var debugVisibleTags: [String] {
+        tagsStack.arrangedSubviews.filter { !$0.isHidden }.compactMap { $0.identifier?.rawValue }
+    }
+    var debugHiddenTags: [String] { hiddenTags }
+    func debugTagChip(_ tag: String) -> HelmButton? { tagButtons[tag] }
+    /// The overflow menu's own item for `tag`, fired through its target and
+    /// action - what picking it from "+N" does.
+    @discardableResult
+    func debugPickOverflowTag(_ tag: String) -> Bool {
+        guard let item = makeTagOverflowMenu().items.first(where: { $0.title == tag }),
+              let action = item.action, let target = item.target as? NSObject else { return false }
+        target.perform(action, with: item)
+        return true
+    }
+    var debugOverflowMenuTitles: [String] { makeTagOverflowMenu().items.map(\.title) }
+    /// The labels of the hosts the filters leave, in store order.
+    func debugFilteredHostLabels() -> [String] { filteredHosts(searchField.stringValue).map(\.label) }
     func debugSetOnlineOnly(_ on: Bool) {
         onlineChip.state = on ? .on : .off
         onlineChipClicked(onlineChip)
@@ -1605,6 +1939,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
         drawsSidebarLayout = true
         adoptSidebarFrame()
         adoptSidebarFilterRow()
+        rebuildTagChips()
         for (table, list, container) in [(hostsTable, hostsList, hostsTabView),
                                          (keysTable, keysList, keysTabView),
                                          (snippetsTable, snippetsList, snippetsTabView)] {
@@ -1627,12 +1962,15 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
                     expansionStrip.topAnchor.constraint(equalTo: list.card.topAnchor),
                     table.card.topAnchor.constraint(equalTo: expansionStrip.bottomAnchor, constant: HelmMetrics.s3),
                 ])
-            } else {
+            } else if table !== keysTable {
+                // The keys sit under their own row (`adoptKeysGrid`).
                 table.card.topAnchor.constraint(equalTo: list.card.topAnchor).isActive = true
             }
             table.onSelect = { [weak self] _ in self?.refreshDetailPanel() }
         }
         hostsTable.accessibilityName = "Hosts"
+        adoptHostsGrid()
+        adoptKeysGrid()
         keysTable.accessibilityName = "SSH keys"
         snippetsTable.accessibilityName = "Snippets"
         // The prototype's Keys card names what it holds and where it is kept.
@@ -1641,7 +1979,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
         keysSubtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         keysTable.card.setHeader(symbol: "key.fill", tint: .violet,
                                  titleLabel: NSTextField(labelWithString: "SSH keys"),
-                                 subtitleLabel: keysSubtitle, actions: [keysTouchID])
+                                 subtitleLabel: keysSubtitle)
         let snippetsSubtitle = NSTextField(labelWithString: "Run sends a snippet's command, then Enter, to the active terminal tab")
         snippetsSubtitle.lineBreakMode = .byTruncatingTail
         snippetsSubtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1693,6 +2031,14 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
         top.removeArrangedSubview(searchField)
         searchField.removeFromSuperview()
         row.insertArrangedSubview(searchField, at: 0)
+        // H3: the find-or-connect bar - its own words, and a Connect button
+        // that runs what Return does.
+        searchField.placeholderText = Self.findOrConnectPlaceholder
+        row.insertArrangedSubview(findOrConnectButton, at: 1)
+        findOrConnectButton.setContentHuggingPriority(.required, for: .horizontal)
+        findOrConnectButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        row.setCustomSpacing(HelmMetrics.s1, after: searchField)
+        refreshFindOrConnectButton()
         // Wide enough for its placeholder, and the first thing to give way.
         let width = searchField.widthAnchor.constraint(equalToConstant: Self.sidebarSearchWidth)
         width.priority = HelmDaylightPriority.columnHug
@@ -1705,11 +2051,31 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
         }
         onlineFilter.setContentHuggingPriority(.required, for: .horizontal)
         onlineFilter.setContentCompressionResistancePriority(.required, for: .horizontal)
-        row.setCustomSpacing(HelmMetrics.s3, after: searchField)
+        row.setCustomSpacing(HelmMetrics.s3, after: findOrConnectButton)
+        // X4 before the chips it qualifies, and H9's "+N" after them. Both
+        // are fixed-size chrome, so the strip stays what absorbs the slack.
+        if let index = row.arrangedSubviews.firstIndex(of: tagsScroll) {
+            row.insertArrangedSubview(tagMatchControl, at: index)
+            row.insertArrangedSubview(tagOverflowChip, at: index + 2)
+        }
+        for fixed in [tagMatchControl, tagOverflowChip] as [NSView] {
+            fixed.setContentHuggingPriority(.required, for: .horizontal)
+            fixed.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        tagMatchControl.isHidden = true
+        // H9: the strip refits its chips whenever its width changes.
+        tagsScroll.contentView.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(tagStripResized),
+                                               name: NSView.frameDidChangeNotification,
+                                               object: tagsScroll.contentView)
     }
 
+    @objc private func tagStripResized() { refitTagChips() }
+
     /// The prototype's search field width, and the least it is squeezed to.
-    static let sidebarSearchWidth: CGFloat = 400
+    /// H3 widened it from 400, for the longer find-or-connect words.
+    static let sidebarSearchWidth: CGFloat = 460
+    static let findOrConnectPlaceholder = "Find a host or ssh user@hostname"
     static let sidebarSearchMinimumWidth: CGFloat = 200
 
     /// "All 7" and "Online 5", from the same reading the stat strip used.
@@ -1729,13 +2095,30 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
                               tint: available ? .good : .warn)
     }
 
-    /// The showing tab's add action, at the toolbar's far right.
+    /// The showing tab's add action, at the toolbar's far right: H8's and
+    /// K2's split buttons for Hosts and Keys.
     var workspacePrimaryAction: NSView? {
-        drawsSidebarLayout ? drillHeaderActions.first : nil
+        guard drawsSidebarLayout else { return nil }
+        switch activeTab {
+        case .hosts: return addHostSplit
+        case .keys: return addKeySplit
+        case .snippets: return addSnippetButton
+        }
     }
 
     var inspectorContent: WorkspaceInspectorContent? {
         guard drawsSidebarLayout, let inspectorTitle else { return nil }
+        // H6: a saved host, or a new one, is its form in the panel.
+        if activeTab == .hosts, let panel = importPanel {
+            return WorkspaceInspectorContent(title: inspectorTitle, view: panel.view, fillsPane: true)
+        }
+        if activeTab == .hosts, let panel = hostPanel {
+            return WorkspaceInspectorContent(title: inspectorTitle, view: panel.view, fillsPane: true)
+        }
+        // K7: a key, or a new one, is its form in the panel.
+        if activeTab == .keys, let panel = keyPanel {
+            return WorkspaceInspectorContent(title: inspectorTitle, view: panel.view, fillsPane: true)
+        }
         return WorkspaceInspectorContent(title: inspectorTitle, view: inspectorDetail)
     }
 
@@ -1749,7 +2132,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
 
     // MARK: Tables
 
-    private func table(for tab: HostsTab) -> HelmDataTable {
+    func table(for tab: HostsTab) -> HelmDataTable {
         switch tab {
         case .hosts: return hostsTable
         case .keys: return keysTable
@@ -1766,6 +2149,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
             .init(id: "group", title: "Group", width: 120, hiddenBelow: 720),
             .init(id: "tags", title: "Tags", width: 170, hiddenBelow: 960),
             .init(id: "session", title: "Session", width: 150, hiddenBelow: 640),
+            .init(id: "lastConnected", title: "Last connected", width: 140, hiddenBelow: 1100),
         ], actionsWidth: 140)
     }
 
@@ -1818,6 +2202,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
                 action: filtering ? nil : .init(title: "Add Host", symbol: "plus") { [weak self] in self?.newHost() }))
         }
         hostsTable.setRows(rows)
+        renderHostsGrid(hosts, query: query)
     }
 
     private func firstmateRow() -> HelmDataTable.Row {
@@ -1844,6 +2229,8 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
             "group": normalizedGroup(host).map { .text($0) } ?? .none,
             "tags": .tags(host.tags),
             "session": session.map { .status($0.stateText, tint: $0.isConnected ? .good : .warn) } ?? .none,
+            // X2.
+            "lastConnected": host.lastConnectedAt.map { .muted(Self.lastConnectedText($0)) } ?? .none,
         ]
         if session != nil {
             row.primary = .init(title: "Switch", symbol: "arrow.right.circle.fill") { [weak self] in
@@ -1862,21 +2249,25 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
 
     /// The host's actions after its headline one - the same list the row's
     /// menu, its ⋯ button and the inspector show.
-    private func hostMenuActions(_ host: Host, live: Bool) -> [WorkspaceDetail.Action] {
+    func hostMenuActions(_ host: Host, live: Bool) -> [WorkspaceDetail.Action] {
         var actions: [WorkspaceDetail.Action] = []
         if live {
             actions.append(.init("End Session", symbol: "xmark.circle") { [weak self] in self?.onEndSession?(host.id) })
         }
         actions += [
-            .init("Edit\u{2026}", symbol: "pencil") { [weak self] in self?.onAddOrEdit?(host) },
+            .init("Edit\u{2026}", symbol: "pencil") { [weak self] in self?.editHost(host) },
             .init("Duplicate\u{2026}", symbol: "plus.square.on.square") { [weak self] in self?.duplicate(host) },
             .init("Delete\u{2026}", symbol: "trash", role: .destructive) { [weak self] in self?.confirmDeleteHost(host) },
         ]
         return actions
     }
 
+    /// K3: the search changed - re-render both key views.
+    func reloadKeysForSearch() { renderKeysTable() }
+
     private func renderKeysTable() {
-        var rows = keyStore.keys.map { key -> HelmDataTable.Row in
+        let keys = filteredKeys(keySearchField.stringValue)
+        var rows = keys.map { key -> HelmDataTable.Row in
             var row = HelmDataTable.Row.record(key.id.uuidString)
             let usedBy = hostStore.hosts.filter { $0.keyID == key.id }.count
             row.cells = [
@@ -1895,12 +2286,16 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
             ]
             return row
         }
-        if rows.isEmpty {
+        if rows.isEmpty, !keyStore.keys.isEmpty {
+            rows = [.empty(symbol: "line.3.horizontal.decrease.circle", title: "No matching keys",
+                           body: "Nothing matches the search. Clear it to see every saved key.")]
+        } else if rows.isEmpty {
             rows = [.empty(symbol: "key.fill", title: "No saved keys yet",
                            body: "Generate a key, or import an existing PEM or OpenSSH one. Private key material stays in the macOS Keychain.",
                            action: .init(title: "New Key", symbol: "plus") { [weak self] in self?.newKey() })]
         }
         keysTable.setRows(rows)
+        renderKeysGrid(keys)
     }
 
     private func renderSnippetsTable() {
@@ -1938,6 +2333,13 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
     /// Fill the inspector from the showing table's selection, and tell the
     /// shell.
     private func refreshSidebarInspector() {
+        if let title = activeTab == .hosts ? syncHostPanel() : activeTab == .keys ? syncKeyPanel() : nil {
+            inspectorTitle = title
+            sideStack.detail.clear()
+            updateInspectorVisibility()
+            onInspectorContentChanged?()
+            return
+        }
         let detail = currentWorkspaceDetail()
         if let detail { inspectorDetail.show(detail) }
         inspectorTitle = detail?.title

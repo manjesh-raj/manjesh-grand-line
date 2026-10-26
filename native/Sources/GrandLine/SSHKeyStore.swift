@@ -86,8 +86,25 @@ final class SSHKeyStore: StoreObservable {
         persist()
     }
 
+    #if FM_SELFTESTS
+    /// Replace the metadata without touching the Keychain - for a suite that
+    /// added a fixture key through a seam that never wrote one.
+    func debugReplaceAll(_ keys: [SSHKey]) {
+        self.keys = keys
+        persist()
+    }
+    #endif
+
     func key(id: UUID) -> SSHKey? {
         keys.first { $0.id == id }
+    }
+
+    /// K5: a host just connected with `id`. Metadata only - the Keychain is
+    /// not touched, so this never prompts.
+    func recordUse(id: UUID, at date: Date = Date()) {
+        guard var key = key(id: id) else { return }
+        key.lastUsedAt = date
+        update(key)
     }
 
     // MARK: Disk

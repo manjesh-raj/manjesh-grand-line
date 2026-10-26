@@ -193,6 +193,7 @@ These tables are **complete in both directions**, and that is a check rather tha
 | `FM_HOME` / `FIRSTMATE_HOME` | The firstmate home the app reads fleet state from |
 | `FM_HOSTS_FILE` | `hosts.json` (saved SSH hosts) |
 | `FM_KEYS_FILE` | `keys.json` (SSH key *metadata*; key material is Keychain-only) |
+| `FM_SSH_CONFIG_FILE` | The OpenSSH client config Connections › Hosts' Import from SSH Config reads (read-only; `~/.ssh/config` by default) |
 | `FM_SNIPPETS_FILE` | `snippets.json` |
 | `FM_SESSION_RESTORE_FILE` | `session-restore.json` (which destination, host pages and tabs were open at quit) |
 | `FM_SCHEDULES_FILE` | `schedules.json` (the Automation page's scheduled automations) |

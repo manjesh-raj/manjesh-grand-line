@@ -157,6 +157,12 @@ enum PageRedesignsSelfTest {
         clickTab("Hosts", shell)
         let hosts = shell.workspace.hostsPanel
         check(hosts.drawsSidebarLayout, "Hosts did not switch to the sidebar layout's presentation", &ok)
+        // C4 of the Termius-style plan made the cards the default view; this
+        // check is the table's, which is the List side of the same switch.
+        // The cards are `ConnectionsCardsSelfTest`'s.
+        hosts.setConnectionsShowList(true)
+        defer { hosts.setConnectionsShowList(false) }
+        settle(shell)
         let table = hosts.debugHostsTable
         check(onScreen(table.card), "the host table is not on screen", &ok)
         check(!onScreen(hosts.debugHostsList.card), "the floating bar's host list still shows in the sidebar layout", &ok)
@@ -182,16 +188,19 @@ enum PageRedesignsSelfTest {
         table.debugSelect(key: edge.id.uuidString)
         settle(shell)
         check(!shell.debugInspectorIsCollapsed, "selecting a host did not open the inspector", &ok)
-        check(shell.inspector.hostedContentView === hosts.debugInspectorDetail,
-              "the inspector is not showing the host's details", &ok)
+        // H6 of the Termius-style plan: a host's details are its form in the
+        // panel - every field the read-only details listed, now editable -
+        // with Connect at its foot and the rest of its actions in its menu.
+        // `ConnectionsCardsSelfTest` drives the form itself.
+        let panel = hosts.hostPanel
+        check(panel != nil && shell.inspector.hostedContentView === panel?.view,
+              "the inspector is not showing the host's form", &ok)
         check(shell.inspector.debugTitle == "edge-proxy-01", "the inspector is titled \"\(shell.inspector.debugTitle)\"", &ok)
-        let fields = hosts.debugInspectorDetail.debugFieldLabels
-        for field in ["Environment", "Endpoint", "User", "Credential", "Group", "Tags", "On connect"] {
-            check(fields.contains(field), "the host inspector has no \(field) (it has \(fields))", &ok)
-        }
-        let actions = hosts.debugInspectorDetail.debugActionButtons.map(\.title)
-        check(actions == ["Connect", "Edit\u{2026}", "Duplicate\u{2026}", "Delete\u{2026}"],
-              "the host inspector's actions are \(actions)", &ok)
+        check(panel?.debugAddressField.stringValue == edge.address && panel?.debugUsernameField.stringValue == edge.username,
+              "the host form does not hold the host's address and user", &ok)
+        check(panel?.debugFooterTitles == ["Connect", "More actions"], "the host form's footer is \(panel?.debugFooterTitles ?? [])", &ok)
+        check(panel?.debugPanelMenuTitles == ["Duplicate\u{2026}", "Delete\u{2026}"],
+              "the host form's menu is \(panel?.debugPanelMenuTitles ?? [])", &ok)
         check(hosts.debugSideStackIsHidden, "the page's own detail column shows beside the inspector", &ok)
 
         // The row's menu is the floating bar's overflow, and runs it.
@@ -234,8 +243,10 @@ enum PageRedesignsSelfTest {
             settle(shell)
             check(shell.inspector.debugTitle == "ops-ed25519" && !shell.debugInspectorIsCollapsed,
                   "selecting a key did not show it in the inspector", &ok)
-            check(hosts.debugInspectorDetail.debugFieldLabels.contains("Fingerprint"),
-                  "the key inspector has no fingerprint", &ok)
+            // K7 of the Termius-style plan: a key's details are its form in
+            // the panel, fingerprint included.
+            check(shell.inspector.hostedContentView === hosts.keyPanel?.view && hosts.keyPanel?.debugFingerprint == key.fingerprint,
+                  "the key's form in the inspector has no fingerprint", &ok)
             keysTable.debugSelect(key: nil)
             settle(shell)
         } else {

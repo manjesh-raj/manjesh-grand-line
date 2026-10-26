@@ -104,18 +104,23 @@ enum SidebarPageFixesSelfTest {
         check(shell.toolbar.debugTabNames == WorkspaceModule.connections.tabs.map(\.name),
               "a count leaked into the tab names \(shell.toolbar.debugTabNames)", &ok)
 
-        // The primary action: one button at the far right, after Search.
-        for (tab, title, selector) in [("Hosts", "Add Host", "newHost"), ("Keys", "New Key", "newKey"),
-                                       ("Snippets", "New Snippet", "newSnippet")] {
+        // The primary action: one control at the far right, after Search.
+        // H8 and K2 of the Termius-style plan made Add Host and New Key split
+        // buttons (`HelmSplitButton`), so for those two the far-right control
+        // is the split and its main half carries the title; New Snippet is
+        // still one button with its own selector.
+        for (tab, title, selector) in [("Hosts", "Add Host", nil), ("Keys", "New Key", nil),
+                                       ("Snippets", "New Snippet", "newSnippet") as (String, String, String?)] {
             clickTab(tab, shell)
             let ids = shell.toolbar.debugItemIdentifiers
-            let primary = shell.toolbar.debugPrimaryAction as? HelmButton
+            let primaryView = shell.toolbar.debugPrimaryAction
+            let primary = (primaryView as? HelmSplitButton)?.mainButton ?? primaryView as? HelmButton
             check(ids.last == WorkspaceToolbar.ItemID.primaryAction
                     && ids.firstIndex(of: WorkspaceToolbar.ItemID.primaryAction) == ids.firstIndex(of: WorkspaceToolbar.ItemID.search).map { $0 + 1 },
                   "on \(tab) the primary action is not the last item, right after Search: \(ids.map(\.rawValue))", &ok)
-            check(primary?.title == title && primary?.action == NSSelectorFromString(selector),
+            check(primary?.title == title && (selector.map { primary?.action == NSSelectorFromString($0) } ?? (primaryView is HelmSplitButton)),
                   "on \(tab) the far-right button is \(primary?.title ?? "missing"), want \(title)", &ok)
-            check(!shell.toolbar.debugPageActions.contains { $0 === primary },
+            check(!shell.toolbar.debugPageActions.contains { $0 === primaryView },
                   "on \(tab) \(title) is drawn twice, among the page's other actions too", &ok)
         }
         clickTab("Hosts", shell)
@@ -172,8 +177,10 @@ enum SidebarPageFixesSelfTest {
         clickTab("Keys", shell)
         let pill = hosts.debugKeysTouchID
         let available = CredentialVaultKeyStore.biometryAvailable
-        check(pill.isDescendant(of: hosts.debugKeysTable.card) && pill.window != nil,
-              "Touch ID's reading is not on the Keys card", &ok)
+        // K6 of the Termius-style plan moved it from the Keys card's header
+        // to the Keys row, over both the cards and the table.
+        check(pill.isDescendant(of: hosts.keysTopRow) && pill.window != nil,
+              "Touch ID's reading is not in the Keys row", &ok)
         check(pill.label.stringValue == HostsKeychainCard.biometryPhrase(available, capitalized: true),
               "the Keys card says \"\(pill.label.stringValue)\" about Touch ID", &ok)
 

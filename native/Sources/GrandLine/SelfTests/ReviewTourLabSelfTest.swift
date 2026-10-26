@@ -51,6 +51,14 @@ enum ReviewTourLabSelfTest {
                         .menu],
               "the parsed steps do not match the tour, got \(steps)", &ok)
 
+        // The Termius-style Hosts and Keys verbs: H10's and K8's empty forms
+        // and X1's preview on a fixture config.
+        let (connectionSteps, connectionErrors) = ReviewTourLab.parse(tour: "new host\nnew key\nsshconfig /tmp/fixture-config")
+        check(connectionErrors.isEmpty && connectionSteps == [.newRecord("host"), .newRecord("key"), .sshConfig("/tmp/fixture-config")],
+              "the Connections verbs parsed to \(connectionSteps), \(connectionErrors)", &ok)
+        let (_, connectionBad) = ReviewTourLab.parse(tour: "new snippet\nsshconfig")
+        check(connectionBad.count == 2, "a bad record kind and a missing path must be 2 errors, got \(connectionBad)", &ok)
+
         // The Home fit verbs (`fm/grandline-home-fit-implement`).
         let fit = """
         demo attention 11

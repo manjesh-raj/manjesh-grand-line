@@ -51,6 +51,14 @@ protocol WorkspaceInspectorSource: AnyObject {
     /// The page asking the shell to open the inspector, as the captain's own
     /// request would - a row's Show in Inspector, or a double click.
     var onShowInspector: (() -> Void)? { get set }
+    /// Whether the inspector may close now. A page with an edit in progress
+    /// (H11: a host form with unsaved changes) asks the captain first, and
+    /// answers `false` if they cancel.
+    func inspectorShouldClose() -> Bool
+}
+
+extension WorkspaceInspectorSource {
+    func inspectorShouldClose() -> Bool { true }
 }
 
 /// A page with one primary action, which the sidebar layout draws at the

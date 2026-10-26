@@ -62,6 +62,8 @@ final class AppSettings {
         static let workspaceProfile = "fm.workspaceProfile"
         static let hiddenModules = "fm.hiddenModules"
         static let sidebarWidth = "fm.sidebarWidth"
+        static let connectionsViewMode = "fm.connections.viewMode"
+        static let hostTagMatchAll = "fm.connections.tagMatchAll"
         static let workspaceToolbarItems = "fm.workspaceToolbar.items"
         static let workspaceToolbarDisplayMode = "fm.workspaceToolbar.displayMode"
         static let appLockIdleSeconds = "fm.appLockIdleSeconds"
@@ -298,6 +300,22 @@ final class AppSettings {
     /// `SnippetExpander`'s (see that file's "Keystroke privacy" note). Turning
     /// it off tears the monitors down rather than leaving them installed and
     /// ignored.
+    /// C4 of the Termius-style plan: Connections' Hosts and Keys draw as a
+    /// card grid or as the table. Grid is the default, so an unset key reads
+    /// as grid and only a captain who chose List has anything stored.
+    var connectionsShowList: Bool {
+        get { defaults.string(forKey: Keys.connectionsViewMode) == "list" }
+        set { defaults.set(newValue ? "list" : "grid", forKey: Keys.connectionsViewMode) }
+    }
+
+    /// X4: the Hosts tag chips match a host carrying **all** of the selected
+    /// tags rather than any one of them. Off by default, which is how the
+    /// chips have always matched.
+    var hostTagMatchAll: Bool {
+        get { defaults.bool(forKey: Keys.hostTagMatchAll) }
+        set { defaults.set(newValue, forKey: Keys.hostTagMatchAll) }
+    }
+
     var snippetExpansionEnabled: Bool {
         get { defaults.bool(forKey: Keys.snippetExpansionEnabled) }
         set { defaults.set(newValue, forKey: Keys.snippetExpansionEnabled) }

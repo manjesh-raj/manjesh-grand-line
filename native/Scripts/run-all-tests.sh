@@ -363,6 +363,8 @@ NEEDS_SESSION=(
   "FM_RUN_MAIN_SPLIT_SHELL_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenSplitShell()
   # The later page work: the redesigned pages in a real sidebar shell.
   "FM_RUN_PAGE_REDESIGNS_TESTS"  # session-not-window: builds its windows via ReviewTourLab.makeOffScreenSplitShell() and makeOffScreenShell()
+  # The Termius-style Hosts and Keys cards and side-panel editing.
+  "FM_RUN_CONNECTIONS_CARDS_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenSplitShell()
   # The polish stage: the sidebar layout's motion, badges and status line.
   "FM_RUN_SIDEBAR_POLISH_TESTS"
   "FM_RUN_SIDEBAR_PAGE_FIXES_TESTS"  # session-not-window: builds its windows via ReviewTourLab.makeOffScreenSplitShell() and makeOffScreenShell()

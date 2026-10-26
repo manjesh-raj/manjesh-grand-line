@@ -748,6 +748,12 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
     /// file `checkNoRawTextInputs` exempts, for exactly that reason.
     private let editor = NSTextField()
     private let placeholderLabel = NSTextField(labelWithString: "")
+    /// The words shown while the field is empty. Settable after init for a
+    /// page that changes them with its layout (Hosts' find-or-connect bar).
+    var placeholderText: String {
+        get { placeholderLabel.stringValue }
+        set { placeholderLabel.stringValue = newValue }
+    }
     private var hintChip: NSView?
     private var hintLabel: NSTextField?
 
@@ -1605,6 +1611,26 @@ final class HelmToggleRow: NSView {
 /// hand-rolling. A controller with extra chrome of its own hooks `onApplyTheme`
 /// rather than registering a second observer.
 final class HelmFormSheet: NSView {
+    /// Where the form is drawn.
+    ///
+    /// `.sheet` is every editor's own window or sheet: the heading, the
+    /// Daylight ribbon and close square, its own ground.
+    ///
+    /// `.panel` is the same form hosted in the sidebar shell's inspector (H6
+    /// of the Termius-style plan: hosts and keys are edited in the side
+    /// panel, never a pop-up). The inspector already names the record in its
+    /// title line and paints its own surface, so a panel draws no heading, no
+    /// ribbon and no ground of its own; the caller supplies the header and
+    /// footer it needs (`setPanelHeader`, `setPanelFooter`), and the column
+    /// takes the panel's narrower gutter. Everything between - the sections,
+    /// fields and their theming - is the one scaffold both use.
+    enum Chrome {
+        case sheet
+        case panel
+    }
+
+    let chrome: Chrome
+
     /// The one editor width. The six sheets measured 180 / 261 / 302 / 357 /
     /// 520 / 640 before this (audit §4.7); none of that spread encoded a
     /// decision. 520 is the widest sheet's (the redesigned task editor's) own
@@ -1613,6 +1639,14 @@ final class HelmFormSheet: NSView {
 
     /// The horizontal inset from the sheet's edge to the form column.
     static let gutter: CGFloat = 22
+    /// A panel's gutter: the inspector is 320pt, and its own content sits
+    /// `s4` in from its edges.
+    static let panelGutter: CGFloat = HelmMetrics.s4
+
+    private var columnGutter: CGFloat { chrome == .panel ? Self.panelGutter : Self.gutter }
+
+    /// The caller's header, in a panel - where a sheet has its heading.
+    private let panelHeaderSlot = NSView()
 
     /// §6.10's domain ribbon weight.
     static let ribbonHeight: CGFloat = 6
@@ -1719,8 +1753,9 @@ final class HelmFormSheet: NSView {
     private var fieldHues: [(HelmDomainHue) -> Void] = []
 
     init(title: String, scrolls: Bool = false, maxContentWidth: CGFloat = HelmFormSheet.width,
-         domainHue: HelmDomainHue = .rose) {
-        self.scrolls = scrolls
+         domainHue: HelmDomainHue = .rose, chrome: Chrome = .sheet) {
+        self.chrome = chrome
+        self.scrolls = scrolls || chrome == .panel
         self.maxContentWidth = maxContentWidth
         self.domainHue = domainHue
         super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: 480))
@@ -1753,7 +1788,8 @@ final class HelmFormSheet: NSView {
 
         footerContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        if scrolls {
+        // `self.scrolls`: a panel always scrolls, whatever the caller passed.
+        if self.scrolls {
             buildScrollingLayout()
         } else {
             buildFixedLayout()
@@ -1895,12 +1931,24 @@ final class HelmFormSheet: NSView {
         // words "New Host" in the window while every field below stayed
         // left-aligned in its capped column.
         let headerColumn = cappedColumn(in: headerBox)
-        headerColumn.addSubview(headerBlock)
+        let headerContent: NSView = chrome == .panel ? panelHeaderSlot : headerBlock
+        headerContent.translatesAutoresizingMaskIntoConstraints = false
+        if chrome == .panel {
+            // A panel with no header of its own (the key form, whose lead
+            // row is its header) must not leave this slot free to take the
+            // scrolling fields' height - measured, an empty slot took 573pt
+            // of a 627pt panel and left the fields 0pt tall. Real content
+            // outranks a low-priority zero.
+            let collapsed = panelHeaderSlot.heightAnchor.constraint(equalToConstant: 0)
+            collapsed.priority = .defaultLow
+            collapsed.isActive = true
+        }
+        headerColumn.addSubview(headerContent)
 
         footerDivider.wantsLayer = true
         footerDivider.translatesAutoresizingMaskIntoConstraints = false
         let headerTop = headerColumn.topAnchor.constraint(equalTo: headerBox.topAnchor,
-                                                          constant: Self.headerTopInset)
+                                                          constant: chrome == .panel ? HelmMetrics.s3 : Self.headerTopInset)
         headerTopConstraint = headerTop
         addSubview(headerBox)
         addSubview(scroll)
@@ -1910,12 +1958,12 @@ final class HelmFormSheet: NSView {
             headerBox.leadingAnchor.constraint(equalTo: leadingAnchor),
             headerBox.trailingAnchor.constraint(equalTo: trailingAnchor),
             headerBox.topAnchor.constraint(equalTo: topAnchor),
-            headerBlock.leadingAnchor.constraint(equalTo: headerColumn.leadingAnchor),
-            headerBlock.trailingAnchor.constraint(equalTo: headerColumn.trailingAnchor),
+            headerContent.leadingAnchor.constraint(equalTo: headerColumn.leadingAnchor),
+            headerContent.trailingAnchor.constraint(equalTo: headerColumn.trailingAnchor),
             headerTop,
             headerColumn.bottomAnchor.constraint(equalTo: headerBox.bottomAnchor, constant: -HelmMetrics.s3),
-            headerBlock.topAnchor.constraint(equalTo: headerColumn.topAnchor),
-            headerBlock.bottomAnchor.constraint(equalTo: headerColumn.bottomAnchor),
+            headerContent.topAnchor.constraint(equalTo: headerColumn.topAnchor),
+            headerContent.bottomAnchor.constraint(equalTo: headerColumn.bottomAnchor),
 
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -1956,8 +2004,8 @@ final class HelmFormSheet: NSView {
         column.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(column)
         NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: Self.gutter),
-            column.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -Self.gutter),
+            column.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: columnGutter),
+            column.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -columnGutter),
             column.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             column.widthAnchor.constraint(lessThanOrEqualToConstant: maxContentWidth),
         ])
@@ -2086,9 +2134,48 @@ final class HelmFormSheet: NSView {
     }
 
     /// A labelled field: a small muted caption over a full-width control.
-    func addField(_ label: String, _ control: NSView) {
-        appendFullWidth(labelled(label, control))
+    /// Returns the row it appended, for a caller that shows and hides it.
+    @discardableResult
+    func addField(_ label: String, _ control: NSView) -> NSView {
+        let row = labelled(label, control)
+        appendFullWidth(row)
         register(control)
+        return row
+    }
+
+    // MARK: Panel chrome
+
+    /// A panel's header, over the scrolling fields: the record's tile and
+    /// its one-line summary, say. Replaces any header set before.
+    func setPanelHeader(_ view: NSView) {
+        panelHeaderSlot.subviews.forEach { $0.removeFromSuperview() }
+        view.translatesAutoresizingMaskIntoConstraints = false
+        panelHeaderSlot.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: panelHeaderSlot.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: panelHeaderSlot.trailingAnchor),
+            view.topAnchor.constraint(equalTo: panelHeaderSlot.topAnchor),
+            view.bottomAnchor.constraint(equalTo: panelHeaderSlot.bottomAnchor),
+        ])
+    }
+
+    /// A panel's footer, under the fields - one the caller builds and keeps
+    /// current (a Connect that becomes Cancel and Save once something
+    /// changes). Same capped column as the fields above it.
+    func setPanelFooter(_ view: NSView) {
+        footerContainer.subviews.forEach { $0.removeFromSuperview() }
+        view.translatesAutoresizingMaskIntoConstraints = false
+        let column = cappedColumn(in: footerContainer)
+        column.addSubview(view)
+        NSLayoutConstraint.activate([
+            column.topAnchor.constraint(equalTo: footerContainer.topAnchor, constant: HelmMetrics.s3),
+            column.bottomAnchor.constraint(equalTo: footerContainer.bottomAnchor, constant: -HelmMetrics.s3),
+            view.leadingAnchor.constraint(equalTo: column.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: column.trailingAnchor),
+            view.topAnchor.constraint(equalTo: column.topAnchor),
+            view.bottomAnchor.constraint(equalTo: column.bottomAnchor),
+        ])
+        applyTheme(ThemeManager.shared.theme)
     }
 
     /// Two or more equal-width controls on one row. Used for the short paired
@@ -2444,15 +2531,19 @@ final class HelmFormSheet: NSView {
         // §6.10: the sheet's own ground is `card`, not the page's `paper` -
         // an editor is a floating surface, not a page. Every other palette
         // keeps `backgroundHex`, which is what the six sheets render today.
-        layer?.backgroundColor = theme.isDaylight
-            ? HelmTheme.nsColor(theme.daylightTokens.card).cgColor
-            : HelmTheme.nsColor(theme.backgroundHex).cgColor
+        // A panel paints nothing of its own: the inspector's surface (the
+        // system's on macOS 14 and later) is its ground.
+        layer?.backgroundColor = chrome == .panel ? nil
+            : theme.isDaylight
+                ? HelmTheme.nsColor(theme.daylightTokens.card).cgColor
+                : HelmTheme.nsColor(theme.backgroundHex).cgColor
         // The ribbon shows only under Daylight, and `isHidden` alone is not
         // enough - an ordinary hidden `NSView`'s constraints still hold its
         // 6pt of layout (AGENTS.md gotcha (11)), which would leave a gap above
-        // the heading in every other theme.
-        ribbon.isHidden = !theme.isDaylight
-        ribbonHeightConstraint?.constant = theme.isDaylight ? Self.ribbonHeight : 0
+        // the heading in every other theme. A panel never draws one.
+        let showsRibbon = theme.isDaylight && chrome == .sheet
+        ribbon.isHidden = !showsRibbon
+        ribbonHeightConstraint?.constant = showsRibbon ? Self.ribbonHeight : 0
         let pair = domainHue.pair(in: theme)
         HelmMotion.withoutImplicitAnimation {
             ribbonGradient.colors = [pair.h1.cgColor, pair.h2.cgColor]
