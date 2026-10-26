@@ -209,6 +209,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         outlineView.dataSource = self
         outlineView.delegate = self
         outlineView.setAccessibilityLabel("Sidebar")
+        outlineView.onReturnKey = { [weak self] in self?.activateSelectionNow() }
         let menu = NSMenu()
         menu.delegate = self
         outlineView.menu = menu
@@ -421,9 +422,43 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         }
     }
 
+    /// R2-PERF-03: how long a selection the arrow keys made rests before it
+    /// navigates - the Finder's own wait before it previews. Holding ↓ from
+    /// Home to Settings used to open, and so build, every page on the way.
+    static let keyboardSettle: TimeInterval = 0.12
+    private var pendingKeyboardActivation: DispatchWorkItem?
+
     func outlineViewSelectionDidChange(_ notification: Notification) {
         paintLitRow()
         guard !isApplyingSelection else { return }
+        pendingKeyboardActivation?.cancel()
+        pendingKeyboardActivation = nil
+        let row = outlineView.selectedRow
+        guard row >= 0, let item = outlineView.item(atRow: row) as? WorkspaceSidebarItem else { return }
+        // A click, VoiceOver's press and every other pick navigate at once.
+        guard outlineView.isHandlingKeyDown else {
+            activate(item)
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingKeyboardActivation = nil
+            // The shell may have lit another row meanwhile. Only the row the
+            // keys left selected navigates.
+            guard self.outlineView.selectedRow >= 0,
+                  self.outlineView.item(atRow: self.outlineView.selectedRow) as? WorkspaceSidebarItem === item else { return }
+            self.activate(item)
+        }
+        pendingKeyboardActivation = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.keyboardSettle, execute: work)
+    }
+
+    /// Return in the list: open the selected row now rather than after the
+    /// settle.
+    private func activateSelectionNow() {
+        guard let pending = pendingKeyboardActivation else { return }
+        pending.cancel()
+        pendingKeyboardActivation = nil
         let row = outlineView.selectedRow
         guard row >= 0, let item = outlineView.item(atRow: row) as? WorkspaceSidebarItem else { return }
         activate(item)
@@ -694,8 +729,20 @@ final class WorkspaceSidebarOutlineView: NSOutlineView {
         return resigned
     }
 
+    /// R2-PERF-03: true while a key event is being handled, so the
+    /// controller can tell a selection the arrow keys made from a click.
+    private(set) var isHandlingKeyDown = false
+    /// Return or Enter, which open the selected row at once.
+    var onReturnKey: (() -> Void)?
+
     override func keyDown(with event: NSEvent) {
         if window?.firstResponder === self { showsKeyboardFocus = true }
+        if event.keyCode == 36 || event.keyCode == 76, let onReturnKey {
+            onReturnKey()
+            return
+        }
+        isHandlingKeyDown = true
+        defer { isHandlingKeyDown = false }
         super.keyDown(with: event)
     }
 

@@ -33,7 +33,7 @@ enum ReviewTwoA11yPerfSelfTest {
         defer { window.orderOut(nil) }
         settle(shell)
         for check in [checkTheLabelsSayWhatTheControlsDo, checkHealthReadsInWords, checkTheSidebarFitsAtLarger,
-                          checkAThemeChangeRepaintsTheSidebarInPlace] {
+                          checkAThemeChangeRepaintsTheSidebarInPlace, checkArrowKeysSettleBeforeNavigating] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -403,6 +403,76 @@ enum ReviewTwoA11yPerfSelfTest {
         ChromeTextScale.shared.setScale(savedScale)
         settle(shell)
         if ok { print("  OK   no reload, no scroll, the hover and the lit row kept, the colours moved; a text scale reloads") }
+    }
+
+    // MARK: R2-PERF-03 - the arrow keys settle before they navigate
+
+    static func key(_ keyCode: UInt16, _ characters: String, _ window: NSWindow) -> NSEvent? {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                         windowNumber: window.windowNumber, context: nil, characters: characters,
+                         charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode)
+    }
+
+    private static func checkArrowKeysSettleBeforeNavigating(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                             _ ok: inout Bool) {
+        print("\n-- R2-PERF-03: a burst of arrow keys is one navigation, a click is at once --")
+        let sidebar = shell.sidebar
+        let outline = sidebar.outlineView
+        let wired = sidebar.onSelectModule
+        var opened: [WorkspaceModule] = []
+        sidebar.onSelectModule = { module in
+            opened.append(module)
+            wired?(module)
+        }
+        defer {
+            sidebar.onSelectModule = wired
+            shell.workspace.navigator.show(.homeCanvas)
+            settle(shell)
+        }
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        window.makeFirstResponder(outline)
+        settle(shell)
+        check(sidebar.debugSelectedEntry == .module(.home), "the burst does not start on Home", &ok)
+
+        // Five presses of ↓ in quick succession, through the list's own
+        // keyDown - the path a held key takes.
+        let down = String(Character(UnicodeScalar(NSDownArrowFunctionKey)!))
+        for _ in 0..<5 {
+            guard let event = key(125, down, window) else { fail("no ↓ event", &ok); return }
+            outline.keyDown(with: event)
+        }
+        let landed = sidebar.debugSelectedEntry
+        check(landed != .module(.home), "five ↓ presses left the selection on Home", &ok)
+        check(opened.isEmpty, "the arrow keys navigated before the selection settled: \(opened.map(\.title))", &ok)
+        pump(timeout: 1) { !opened.isEmpty }
+        RunLoop.main.run(until: Date().addingTimeInterval(WorkspaceSidebarController.keyboardSettle * 2))
+        if case .module(let module)? = landed {
+            check(opened == [module], "the burst opened \(opened.map(\.title)), want only \(module.title)", &ok)
+        } else {
+            fail("the burst landed on \(String(describing: landed)), not a module", &ok)
+        }
+
+        // A click opens its row at once, with no settle.
+        opened.removeAll()
+        check(sidebar.debugClick(.module(.health)), "no Health row to click", &ok)
+        check(opened == [.health], "a click opened \(opened.map(\.title)) at once, want Health", &ok)
+        settle(shell)
+
+        // Return opens the selected row without waiting for the settle.
+        opened.removeAll()
+        window.makeFirstResponder(outline)
+        guard let downAgain = key(125, down, window), let enter = key(36, "\r", window) else {
+            fail("no key events", &ok)
+            return
+        }
+        outline.keyDown(with: downAgain)
+        outline.keyDown(with: enter)
+        check(opened.count == 1, "Return after ↓ opened \(opened.map(\.title)) at once", &ok)
+        RunLoop.main.run(until: Date().addingTimeInterval(WorkspaceSidebarController.keyboardSettle * 2))
+        check(opened.count == 1, "the settle opened the row a second time after Return: \(opened.map(\.title))", &ok)
+        window.makeFirstResponder(nil)
+        if ok { print("  OK   five ↓ presses opened one page, a click and Return open at once") }
     }
 
     static func textFields(in view: NSView) -> [NSTextField] {
