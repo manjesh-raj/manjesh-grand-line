@@ -279,10 +279,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// The reference's `.filterbar`. "Online" is the one of its three chips
     /// this app can actually answer - the app's `HostSessionRegistry` knows
     /// which hosts have a live session (`liveSession`). Its "All environments"
-    /// is what the tag chips beside it already are, and "Recently used" has
-    /// nothing behind it: no store here records when a host was last
-    /// connected to, and inventing a timestamp would be a new field masquerading
-    /// as a filter.
+    /// is what the tag chips beside it already are. "Recently used" is not
+    /// a chip here: since X2 of the Termius-style plan `Host.lastConnectedAt`
+    /// records a connect, and the sidebar layout shows it as a Recent row of
+    /// cards and a Last connected column rather than as a filter.
     private lazy var onlineChip: HelmButton = {
         // UI-50: a dot and a word, not a bordered chip with a bolt. The dot
         // is green while the filter is on, the way a live session reads

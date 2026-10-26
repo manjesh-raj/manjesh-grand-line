@@ -57,3 +57,29 @@
 - **Seven injected regressions, each reproducing by name** (scripted file copies, never `git stash` - see this file's own warning about the shared stash stack): the column's width made required (which took every destination down with it, 1100 -> 1220), the column built but never composed, the column built but hidden, the tab/column wiring broken, the reference's fabricated 0.68 bar, a TOOLS row made to latch, and the column never added to the tree - **that last one throws AppKit's "no common ancestor" `NSException` and takes the process down rather than failing by name**, which is the correct outcome for that shape and worth knowing before reading an empty suite log as a pass.
 - **Verified** by `swift build` (clean debug and release, zero warnings in this app's sources), the release binary confirmed to carry no `FM_RUN_*` strings or any of the new debug accessors, the full `./Scripts/run-all-tests.sh` run (154 passed / 0 failed / 1 documented skip), and real off-screen renders of the real mounted page across `daylight`/`dusk`/`helm-light`/`gruvbox-light`/`catppuccin-mocha`, at 1016/1512/1900, and on all three tabs - **without launching the app**, per the README's worktree rule: the captain's real packaged instance was running throughout and shares this bundle identity.
 - **`fm.themeID` was found on `daylight` after that full run and it was NOT this branch**, which is worth recording because the symptom is the documented one: a per-flag bisect over all 155 suites came back clean, and `pgrep` found a **sibling crewmate's `run-all-tests.sh` running concurrently** in another treehouse worktree - exactly the interleaved save/restore this file already warns about. Check `pgrep -fl run-all-tests` *and* `git worktree list` before reading a theme leak as your own, and restore the value rather than chasing it.
+
+## The Termius-style Hosts and Keys (PR 1 of the captain's three)
+
+**`fm/grandline-termius-hosts-keys`: Hosts and Keys became card grids, and both are edited in the side panel rather than a pop-up.**
+The plan, its items (H1-H11, K1-K8, X1, X2, X4) and the captain's five choices are in the scout report `grandline-termius-ui-plan`.
+Everything below is the sidebar layout only; the floating bar's page, window and sheets are unchanged.
+
+- **The shared pieces.**
+  `HelmCardGrid` is the card grid for both tabs, laid out by frame from the scroll view's real content width with every edge on the backing store's pixel grid.
+  `HelmSplitButton` is Add Host and New Key.
+  `HelmFormSheet` gained a panel chrome, and `HostEditorController` and `KeyEditorController` a panel presentation, so the window, the sheet and the panel are one form each.
+- **Read the content width from `NSScrollView.contentSize`, not the clip view.**
+  In the grid's own `layout()` the clip view has not been re-tiled yet, and a grid laid out from it kept a 574pt plan in a 1200pt column.
+- **An empty panel header slot must collapse.**
+  With nothing in it and nothing holding its height, it took 573pt of a 627pt panel and left the fields 0pt tall.
+  A low-priority zero height fixes it, and real content outranks it.
+- **`HelmFormSheet.init` tested its `scrolls` parameter, not the stored value**, so a panel built without `scrolls: true` took the fixed 520pt sheet layout.
+- **The inspector is a fixed 320pt split item, not 340 as the plan read it**, and the shell's column floor and room arithmetic depend on that one width.
+  The plan's widening to 380pt for a form was not done; the forms are laid out for 320pt instead.
+- **Unsaved changes.**
+  A dirty host or key form asks Save, Discard or Cancel before the selection moves, a new form opens, or the panel closes.
+  The shell asks through `WorkspaceInspectorSource.inspectorShouldClose`.
+- **No suite writes a Keychain item or reads the captain's `~/.ssh/config`.**
+  A new key's save goes through `HostsController.newKeyWriterForTests`, and the import reads a fixture (`SSHConfigImport.configURLOverrideForTests`, and `FM_SSH_CONFIG_FILE` in the redirect block).
+- **Verified** by `ConnectionsCardsSelfTest` (window-backed, real mouse and key events) and `ConnectionsLogicSelfTest` (headless), each case confirmed to fail with its change reverted, plus the targeted existing suites and tour-lab renders in Dusk and Daylight at 1512 and 1100.
+
