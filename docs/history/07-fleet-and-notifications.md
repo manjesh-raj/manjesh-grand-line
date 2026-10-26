@@ -1520,3 +1520,56 @@ Found while comparing the floating bar's renders across runs, so both layouts ha
   `MergedPR.displayTitle` is that fallback, and both Review and Home's Merge queue read it.
   `HomeDashboardViewSelfTest.checkAnUntitledPRIsNamed` reads the painted row, which said `["", "No checks"]` before.
 - Stage 4's own account is in [`03-navigation-and-chrome.md`](03-navigation-and-chrome.md).
+
+## The Bridge notification panel (`fm/grandline-notification-bridge-1793030256`)
+
+The captain picked style A, Bridge, from the notification-styles board, with every recommended extra.
+The board and the scout's before renders live in the firstmate task `grandline-notification-designs-1793028844`.
+
+### What shipped
+
+- **The sidebar layout's bell opens the Bridge panel** (`NotificationBridgePanel.swift`).
+  The floating bar is frozen (R2-ARCH-01), so `DaylightBarController` keeps the classic `NotificationPanelViewController`.
+  `NotificationCenterController(style:)` picks the panel, and both panels read the one store.
+- **Three sections from the store's own kinds.**
+  The Now card holds the most urgent action-needed entry (a warning first, then the oldest).
+  Up next lists the other action-needed entries, and "When you have a minute" lists the informational ones, newest first.
+  `NotificationBridgeSections` is the whole rule, and it is pure.
+- **Titles wrap, and every action is visible at rest.**
+  The classic row truncated titles at about four words because its trailing column reserved room for a hover-only button.
+  Bridge items put the buttons under the text, so the title gets the full text column.
+  The wrapping labels take their width from the panel's content width and the rigid columns beside them, never from their own frame (gotcha (22)).
+- **A row is a VoiceOver group, not a button.**
+  An activatable `HoverHighlightView` hides its children because it is the button, which would have hidden the row's own action buttons.
+  So a row has no click recognizer at all: a click on its surface selects it through `mouseDown`, which AppKit only delivers when no nested button was hit.
+  That also rules out gotcha (20) by construction.
+- **`HelmButton` gained two opt-ins**, both off by default: `followsTextScale` (the label scales with the interface text size) and `accessibilityLabelOverride`.
+  Every Bridge button turns on the first, and names its subject with the second ("Answer 1 task needs your decision").
+- **Extras in this PR:** a mute that survives relaunch (`fm.notifications.mutedSources`), quiet while a focus session runs (`fm.notifications.quietWhileFocusing`, on by default), inline snooze presets on every item, and banner wording.
+  A held entry is counted apart from snoozed ones, because Restore cannot release it.
+  `FocusTimerController.notify()` tells the store directly, so there is no observer to forget to register.
+- **Banners.** macOS draws them, so only the words match: a subtitle with the panel's source name, and the panel's action names on the buttons.
+  A decision now posts under `fm.category.fleet-decision`, whose Answer button is the existing open-fleet-task action.
+
+### Where the design did not hold as drawn
+
+- The footer's resting "Updated just now" truncated beside Mark all read and Open Home at the Larger text scale.
+  It reads "Up to date" now, and the footer label wraps to a second line instead of truncating a long toast.
+- Solarized Dark's ink measured 3.98:1 on the accent-washed Now card.
+  The title is corrected against the washed fill with `HelmContrast.legible`, and the suite checks the Now card in all 26 palettes.
+- The board's Up next column shows a 24-hour clock.
+  The panel uses the locale's own clock, so the column grows to fit "9:53 PM" rather than truncating it.
+
+### Deliberately not done here
+
+- **History of resolved entries and the per-source Settings page** follow in a second PR, as the brief allowed, to keep this one reviewable.
+- **Naming the due task in the Now card, with Check off and Start focus.**
+  The Tasks adapter publishes counts, and the brief asked for no new data.
+  The Tasks popover is a parallel PR by another worker.
+- **Host-dropped and calendar sources** were marked NEW on the board and are not part of style A.
+
+### Verification
+
+- `NotificationBridgePanelSelfTest` (window-backed) covers the sections, buttons at rest, wrapping, the Larger scale, keyboard, VoiceOver, hit testing, header and footer, snooze presets, the empty state, every theme and the sidebar-only wiring.
+- `GrandLineNotificationCenterSelfTest` covers persistent mute, the focus hold, the section order and the preset dates, in CI's blocking lane.
+- Each was confirmed to fail with its fix reverted: titles truncating, actions hidden at rest, the ordering rule, the sidebar back on the classic panel, the glyph snoozing directly, a dropped subtitle, and the mute and hold not persisted or not wired.
